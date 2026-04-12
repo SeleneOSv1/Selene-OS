@@ -3,8 +3,8 @@
 use std::cell::RefCell;
 
 use selene_engines::ph1_voice_id::{
-    simulation_profile_embedding_from_seed, EnrolledSpeaker as EngineEnrolledSpeaker,
-    VoiceIdObservation as EngineVoiceIdObservation,
+    reason_codes as voice_id_reason_codes, simulation_profile_embedding_from_seed,
+    EnrolledSpeaker as EngineEnrolledSpeaker, VoiceIdObservation as EngineVoiceIdObservation,
 };
 use selene_engines::ph1e::{Ph1eConfig, Ph1eRuntime};
 use selene_engines::ph1emocore::{
@@ -3071,16 +3071,16 @@ impl AppServerIngressRuntime {
         out.response_text = out.response_text.take().map(|response_text| {
             apply_persona_style_hint_to_response_text(response_text, persona_style_hint.as_deref())
         });
-        out.runtime_execution_envelope =
-            runtime_execution_envelope_with_authority_state_for_outcome(
-                &out,
-                finder_terminal.as_ref(),
-            )?;
-        out.runtime_execution_envelope = self.emit_voice_turn_proof_and_attach(
+        out = self.finalize_voice_turn_outcome(
             store,
-            &out,
+            out,
             finder_terminal.as_ref(),
+            &actor_user_id,
+            actor_device_id.as_ref(),
             actor_tenant_id.as_deref(),
+            request_session_id,
+            correlation_id,
+            turn_id,
             received_at,
             dispatch_now,
         )?;
@@ -3431,6 +3431,62 @@ impl AppServerIngressRuntime {
                 })
             }
         }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn finalize_voice_turn_outcome(
+        &self,
+        store: &mut Ph1fStore,
+        mut out: AppVoiceTurnExecutionOutcome,
+        finder_terminal: Option<&FinderTerminalPacket>,
+        actor_user_id: &UserId,
+        actor_device_id: Option<&DeviceId>,
+        actor_tenant_id: Option<&str>,
+        request_session_id: Option<selene_kernel_contracts::ph1l::SessionId>,
+        correlation_id: CorrelationId,
+        turn_id: TurnId,
+        received_at: MonotonicTimeNs,
+        dispatch_now: MonotonicTimeNs,
+    ) -> Result<AppVoiceTurnExecutionOutcome, StorageError> {
+        out.runtime_execution_envelope =
+            runtime_execution_envelope_with_authority_state_for_outcome(&out, finder_terminal)?;
+        if let Some(recovery_fail_closed) = classify_identity_recovery_fail_closed_outcome(&out) {
+            if let Some(actor_device_id) = actor_device_id {
+                let tenant_id =
+                    normalized_tenant_scope_for_dev_intake(store, actor_user_id, actor_tenant_id)?;
+                let audit_session_id =
+                    request_session_id.filter(|session_id| store.get_session(session_id).is_some());
+                let _ = store.ph1x_respond_commit(
+                    dispatch_now,
+                    tenant_id,
+                    correlation_id,
+                    turn_id,
+                    audit_session_id,
+                    actor_user_id.clone(),
+                    actor_device_id.clone(),
+                    recovery_fail_closed.audit_response_kind.to_string(),
+                    recovery_fail_closed.reason_code,
+                    format!(
+                        "ph1x_identity_recovery_fail_closed:{}:{}:{}",
+                        correlation_id.0, turn_id.0, recovery_fail_closed.audit_response_kind
+                    ),
+                )?;
+            }
+            out.next_move = AppVoiceTurnNextMove::Refused;
+            out.response_text = Some(recovery_fail_closed.user_message.to_string());
+            out.reason_code = Some(recovery_fail_closed.reason_code);
+            out.runtime_execution_envelope =
+                runtime_execution_envelope_with_authority_state_for_outcome(&out, finder_terminal)?;
+        }
+        out.runtime_execution_envelope = self.emit_voice_turn_proof_and_attach(
+            store,
+            &out,
+            finder_terminal,
+            actor_tenant_id,
+            received_at,
+            dispatch_now,
+        )?;
+        Ok(out)
     }
 
     pub fn run_device_artifact_sync_worker_pass(
@@ -4445,6 +4501,55 @@ struct AccessFailClosedBehavior {
     reason_code: ReasonCodeId,
     user_message: &'static str,
     audit_response_kind: &'static str,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct IdentityRecoveryFailClosedBehavior {
+    reason_code: ReasonCodeId,
+    user_message: &'static str,
+    audit_response_kind: &'static str,
+}
+
+fn identity_reason_code_or(
+    identity_state: &IdentityExecutionState,
+    fallback: ReasonCodeId,
+) -> ReasonCodeId {
+    identity_state
+        .reason_code
+        .and_then(|code| u32::try_from(code).ok())
+        .map(ReasonCodeId)
+        .unwrap_or(fallback)
+}
+
+fn classify_identity_recovery_fail_closed_outcome(
+    out: &AppVoiceTurnExecutionOutcome,
+) -> Option<IdentityRecoveryFailClosedBehavior> {
+    if !matches!(
+        out.next_move,
+        AppVoiceTurnNextMove::Dispatch | AppVoiceTurnNextMove::Respond
+    ) {
+        return None;
+    }
+    let identity_state = out.runtime_execution_envelope.identity_state.as_ref()?;
+    match identity_state.recovery_state {
+        IdentityRecoveryState::ReauthRequired => Some(IdentityRecoveryFailClosedBehavior {
+            reason_code: identity_reason_code_or(
+                identity_state,
+                voice_id_reason_codes::VID_REAUTH_REQUIRED,
+            ),
+            user_message: "I need you to reauthenticate before I can continue.",
+            audit_response_kind: "IDENTITY_REAUTH_REQUIRED_FAIL_CLOSED",
+        }),
+        IdentityRecoveryState::ReEnrollmentRequired => Some(IdentityRecoveryFailClosedBehavior {
+            reason_code: identity_reason_code_or(
+                identity_state,
+                voice_id_reason_codes::VID_ENROLLMENT_REQUIRED,
+            ),
+            user_message: "I need you to re-enroll your voice before I can continue.",
+            audit_response_kind: "IDENTITY_REENROLLMENT_REQUIRED_FAIL_CLOSED",
+        }),
+        IdentityRecoveryState::None | IdentityRecoveryState::RecoveryRestricted => None,
+    }
 }
 
 fn classify_access_fail_closed_error(err: &StorageError) -> Option<AccessFailClosedBehavior> {
@@ -6044,6 +6149,24 @@ mod tests {
         )
     }
 
+    fn reenrollment_required_voice_assertion(user_id: UserId) -> Ph1VoiceIdResponse {
+        Ph1VoiceIdResponse::SpeakerAssertionUnknown(
+            SpeakerAssertionUnknown::v1_with_candidate(
+                IdentityConfidence::Medium,
+                voice_id_reason_codes::VID_ENROLLMENT_REQUIRED,
+                vec![DiarizationSegment::v1(
+                    MonotonicTimeNs(1),
+                    MonotonicTimeNs(2),
+                    Some(SpeakerLabel::speaker_a()),
+                )
+                .unwrap()],
+                Some(user_id),
+                None,
+            )
+            .unwrap(),
+        )
+    }
+
     fn spoof_risk_voice_assertion(user_id: UserId) -> Ph1VoiceIdResponse {
         Ph1VoiceIdResponse::SpeakerAssertionUnknown(
             SpeakerAssertionUnknown::v1_with_metrics_and_candidate(
@@ -6369,6 +6492,113 @@ mod tests {
             ),
             ..AppServerIngressRuntime::default()
         }
+    }
+
+    fn run_protected_response_turn_with_identity_assertion(
+        runtime: &AppServerIngressRuntime,
+        store: &mut Ph1fStore,
+        actor_user_id: UserId,
+        device_id: DeviceId,
+        assertion: Ph1VoiceIdResponse,
+        correlation_id: CorrelationId,
+        turn_id: TurnId,
+    ) -> AppVoiceTurnExecutionOutcome {
+        let request = AppVoiceIngressRequest::v1(
+            correlation_id,
+            turn_id,
+            AppPlatform::Desktop,
+            OsVoiceTrigger::Explicit,
+            sample_voice_id_request(MonotonicTimeNs(3), actor_user_id.clone()),
+            actor_user_id.clone(),
+            Some("tenant_1".to_string()),
+            Some(device_id.clone()),
+            Vec::new(),
+            no_observation(),
+        )
+        .unwrap();
+        let request_session_id = request.voice_id_request.session_state_ref.session_id;
+        let request_session_state = request.voice_id_request.session_state_ref.session_state;
+        let received_at = request.voice_id_request.now;
+
+        let outcome = runtime.run_voice_turn(store, request).unwrap();
+        let OsVoiceLiveTurnOutcome::Forwarded(mut forwarded) = outcome else {
+            panic!("expected forwarded voice turn");
+        };
+        forwarded.voice_identity_assertion = assertion;
+
+        let x_build = AppVoicePh1xBuildInput {
+            now: MonotonicTimeNs(17),
+            thread_key: None,
+            thread_state: ThreadState::empty_v1(),
+            session_state: SessionState::Active,
+            policy_context_ref: PolicyContextRef::v1(false, false, SafetyTier::Standard),
+            memory_candidates: vec![],
+            confirm_answer: None,
+            nlp_output: Some(web_search_draft("search the web for selene tool parity")),
+            tool_response: None,
+            interruption: None,
+            locale: Some("en-US".to_string()),
+            last_failure_reason_code: None,
+        };
+        let ph1x_request = runtime
+            .build_ph1x_request_for_forwarded_voice(
+                store,
+                ForwardedVoicePh1xRequestInput {
+                    correlation_id,
+                    turn_id,
+                    app_platform: AppPlatform::Desktop,
+                    forwarded: &forwarded,
+                    request_session_id,
+                    tenant_id: Some("tenant_1"),
+                    x_build,
+                },
+            )
+            .unwrap();
+        let packet = runtime
+            .debug_last_agent_input_packet()
+            .expect("agent packet should be captured");
+        let finder_terminal = runtime
+            .run_finder_terminal_packet_for_turn(
+                store,
+                &actor_user_id,
+                Some("tenant_1"),
+                Some(&packet),
+            )
+            .unwrap();
+        assert!(finder_terminal.is_none());
+        let runtime_execution_envelope = packet
+            .runtime_execution_envelope
+            .clone()
+            .expect("runtime execution envelope must be attached");
+        let out = runtime
+            .run_ph1x_and_dispatch_with_access_fail_closed(
+                store,
+                runtime_execution_envelope,
+                OsVoiceLiveTurnOutcome::Forwarded(forwarded),
+                request_session_state,
+                ph1x_request,
+                &actor_user_id,
+                Some(&device_id),
+                Some("tenant_1"),
+                request_session_id,
+                MonotonicTimeNs(17),
+            )
+            .unwrap();
+        runtime
+            .finalize_voice_turn_outcome(
+                store,
+                out,
+                finder_terminal.as_ref(),
+                &actor_user_id,
+                Some(&device_id),
+                Some("tenant_1"),
+                request_session_id,
+                correlation_id,
+                turn_id,
+                received_at,
+                MonotonicTimeNs(17),
+            )
+            .unwrap()
     }
 
     fn document_understand_draft(query: &str) -> Ph1nResponse {
@@ -7683,6 +7913,88 @@ mod tests {
         assert_eq!(
             identity_state.recovery_state,
             IdentityRecoveryState::ReauthRequired
+        );
+    }
+
+    #[test]
+    fn at_identity_recovery_01_reauth_required_protected_voice_turn_fails_closed_with_explicit_reauth_response(
+    ) {
+        let runtime = runtime_with_search_tool_fixtures();
+        let actor_user_id = UserId::new("tenant_1:identity_reauth_runtime_user").unwrap();
+        let device_id = DeviceId::new("identity_reauth_runtime_device_1").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &actor_user_id, &device_id);
+
+        let out = run_protected_response_turn_with_identity_assertion(
+            &runtime,
+            &mut store,
+            actor_user_id.clone(),
+            device_id,
+            reauth_required_voice_assertion(actor_user_id),
+            CorrelationId(9820),
+            TurnId(9920),
+        );
+
+        assert_eq!(out.next_move, AppVoiceTurnNextMove::Refused);
+        assert_eq!(
+            out.response_text.as_deref(),
+            Some("I need you to reauthenticate before I can continue.")
+        );
+        assert_eq!(
+            out.reason_code,
+            Some(voice_id_reason_codes::VID_REAUTH_REQUIRED)
+        );
+        let response_rows = store.ph1x_audit_rows(CorrelationId(9820));
+        assert!(
+            response_rows.iter().any(|row| {
+                row.payload_min
+                    .entries
+                    .get(&PayloadKey::new("response_kind").unwrap())
+                    .map(|value| value.as_str() == "IDENTITY_REAUTH_REQUIRED_FAIL_CLOSED")
+                    .unwrap_or(false)
+            }),
+            "reauth-required recovery fail-closed response must emit PH1.X audit row"
+        );
+    }
+
+    #[test]
+    fn at_identity_recovery_02_reenrollment_required_protected_voice_turn_fails_closed_with_explicit_reenrollment_response(
+    ) {
+        let runtime = runtime_with_search_tool_fixtures();
+        let actor_user_id = UserId::new("tenant_1:identity_reenroll_runtime_user").unwrap();
+        let device_id = DeviceId::new("identity_reenroll_runtime_device_1").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &actor_user_id, &device_id);
+
+        let out = run_protected_response_turn_with_identity_assertion(
+            &runtime,
+            &mut store,
+            actor_user_id.clone(),
+            device_id,
+            reenrollment_required_voice_assertion(actor_user_id),
+            CorrelationId(9821),
+            TurnId(9921),
+        );
+
+        assert_eq!(out.next_move, AppVoiceTurnNextMove::Refused);
+        assert_eq!(
+            out.response_text.as_deref(),
+            Some("I need you to re-enroll your voice before I can continue.")
+        );
+        assert_eq!(
+            out.reason_code,
+            Some(voice_id_reason_codes::VID_ENROLLMENT_REQUIRED)
+        );
+        let response_rows = store.ph1x_audit_rows(CorrelationId(9821));
+        assert!(
+            response_rows.iter().any(|row| {
+                row.payload_min
+                    .entries
+                    .get(&PayloadKey::new("response_kind").unwrap())
+                    .map(|value| value.as_str() == "IDENTITY_REENROLLMENT_REQUIRED_FAIL_CLOSED")
+                    .unwrap_or(false)
+            }),
+            "reenrollment-required recovery fail-closed response must emit PH1.X audit row"
         );
     }
 
