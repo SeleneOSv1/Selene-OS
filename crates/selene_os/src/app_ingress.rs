@@ -91,8 +91,8 @@ use selene_kernel_contracts::runtime_execution::{
     SimulationCertificationState,
 };
 use selene_kernel_contracts::runtime_governance::{
-    GovernanceClusterConsistency, GovernanceDecisionLogEntry, GovernanceExecutionState,
-    GovernanceProtectedActionClass,
+    GovernanceClusterConsistency, GovernanceDecisionLogEntry, GovernanceDriftSignal,
+    GovernanceExecutionState, GovernanceProtectedActionClass,
 };
 use selene_kernel_contracts::runtime_law::{
     RuntimeLawDecisionLogEntry, RuntimeLawEvaluationContext, RuntimeLawResponseClass,
@@ -3238,10 +3238,11 @@ impl AppServerIngressRuntime {
         Ok(())
     }
 
-    fn run_ph1x_and_dispatch(
+    fn execute_decided_ph1x_response(
         &self,
         store: &mut Ph1fStore,
         input: Ph1xDispatchRunInput<'_>,
+        ph1x_response: Ph1xResponse,
     ) -> Result<AppVoiceTurnExecutionOutcome, StorageError> {
         let Ph1xDispatchRunInput {
             runtime_execution_envelope,
@@ -3251,10 +3252,6 @@ impl AppServerIngressRuntime {
             actor_user_id,
             dispatch_now,
         } = input;
-        let ph1x_response = self
-            .ph1x_runtime
-            .decide(&ph1x_request)
-            .map_err(StorageError::ContractViolation)?;
 
         let mut out = AppVoiceTurnExecutionOutcome {
             runtime_execution_envelope,
@@ -3377,7 +3374,50 @@ impl AppServerIngressRuntime {
     ) -> Result<AppVoiceTurnExecutionOutcome, StorageError> {
         let correlation_id = CorrelationId(ph1x_request.correlation_id);
         let turn_id = TurnId(ph1x_request.turn_id);
-        match self.run_ph1x_and_dispatch(
+        let ph1x_response = self
+            .ph1x_runtime
+            .decide(&ph1x_request)
+            .map_err(StorageError::ContractViolation)?;
+        if let Some(drift_fail_closed) = classify_governance_drift_fail_closed_for_directive(
+            &runtime_execution_envelope,
+            &ph1x_response.directive,
+            ph1x_response.reason_code,
+        ) {
+            if let Some(actor_device_id) = actor_device_id {
+                let tenant_id =
+                    normalized_tenant_scope_for_dev_intake(store, actor_user_id, actor_tenant_id)?;
+                let audit_session_id =
+                    request_session_id.filter(|session_id| store.get_session(session_id).is_some());
+                let _ = store.ph1x_respond_commit(
+                    dispatch_now,
+                    tenant_id,
+                    correlation_id,
+                    turn_id,
+                    audit_session_id,
+                    actor_user_id.clone(),
+                    actor_device_id.clone(),
+                    drift_fail_closed.audit_response_kind.to_string(),
+                    drift_fail_closed.reason_code,
+                    format!(
+                        "ph1x_governance_drift_fail_closed:{}:{}:{}",
+                        correlation_id.0, turn_id.0, drift_fail_closed.audit_response_kind
+                    ),
+                )?;
+            }
+            return Ok(AppVoiceTurnExecutionOutcome {
+                runtime_execution_envelope,
+                voice_outcome,
+                session_state,
+                next_move: AppVoiceTurnNextMove::Refused,
+                ph1x_request: Some(ph1x_request),
+                ph1x_response: Some(ph1x_response),
+                dispatch_outcome: None,
+                tool_response: None,
+                response_text: Some(drift_fail_closed.user_message.to_string()),
+                reason_code: Some(drift_fail_closed.reason_code),
+            });
+        }
+        match self.execute_decided_ph1x_response(
             store,
             Ph1xDispatchRunInput {
                 runtime_execution_envelope: runtime_execution_envelope.clone(),
@@ -3387,6 +3427,7 @@ impl AppServerIngressRuntime {
                 actor_user_id,
                 dispatch_now,
             },
+            ph1x_response,
         ) {
             Ok(outcome) => Ok(outcome),
             Err(err) => {
@@ -4510,6 +4551,13 @@ struct IdentityRecoveryFailClosedBehavior {
     audit_response_kind: &'static str,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct GovernanceDriftFailClosedBehavior {
+    reason_code: ReasonCodeId,
+    user_message: &'static str,
+    audit_response_kind: &'static str,
+}
+
 fn identity_reason_code_or(
     identity_state: &IdentityExecutionState,
     fallback: ReasonCodeId,
@@ -4583,6 +4631,45 @@ fn classify_identity_recovery_fail_closed_outcome(
         }
         IdentityRecoveryState::None | IdentityRecoveryState::RecoveryRestricted => None,
     }
+}
+
+// Drift fail-closed decisions must be made before a protected dispatch executes,
+// so this classifier relies on the already-attached governed identity and
+// governance posture that runtime law would otherwise surface as drift visibility.
+fn classify_governance_drift_fail_closed_for_directive(
+    runtime_execution_envelope: &RuntimeExecutionEnvelope,
+    directive: &Ph1xDirective,
+    reason_code: ReasonCodeId,
+) -> Option<GovernanceDriftFailClosedBehavior> {
+    if !matches!(
+        directive,
+        Ph1xDirective::Respond(_) | Ph1xDirective::Dispatch(_)
+    ) {
+        return None;
+    }
+    let identity_state = runtime_execution_envelope.identity_state.as_ref()?;
+    let governance_state = runtime_execution_envelope.governance_state.as_ref()?;
+    if !identity_state.cluster_drift_detected
+        || governance_state.cluster_consistency == GovernanceClusterConsistency::Consistent
+        || governance_state.safe_mode_active
+    {
+        return None;
+    }
+    if governance_state
+        .drift_signals
+        .contains(&GovernanceDriftSignal::PolicyVersionDrift)
+    {
+        return Some(GovernanceDriftFailClosedBehavior {
+            reason_code,
+            user_message: "I can't continue because policy versions are out of sync right now.",
+            audit_response_kind: "GOVERNANCE_POLICY_DRIFT_FAIL_CLOSED",
+        });
+    }
+    Some(GovernanceDriftFailClosedBehavior {
+        reason_code,
+        user_message: "I can't continue because governance state is out of sync right now.",
+        audit_response_kind: "GOVERNANCE_CLUSTER_DRIFT_FAIL_CLOSED",
+    })
 }
 
 fn classify_access_fail_closed_error(err: &StorageError) -> Option<AccessFailClosedBehavior> {
@@ -6020,6 +6107,7 @@ mod tests {
     use super::*;
     use crate::runtime_governance::{
         attach_identity_state_for_governed_voice_turn, RuntimeGovernanceConfig,
+        RuntimeGovernanceRuntime,
     };
     use selene_engines::ph1_voice_id::reason_codes as voice_id_reason_codes;
     use selene_engines::ph1_voice_id::VoiceIdObservation as EngineVoiceIdObservation;
@@ -6545,6 +6633,44 @@ mod tests {
         }
     }
 
+    fn runtime_with_search_tool_fixtures_and_runtime_governance(
+        runtime_governance: RuntimeGovernanceRuntime,
+    ) -> AppServerIngressRuntime {
+        AppServerIngressRuntime {
+            ph1e_runtime: Ph1eRuntime::new_with_provider_config(
+                Ph1eConfig::mvp_v1(),
+                Ph1eProviderConfig {
+                    brave_api_key: Some("fixture_brave_key".to_string()),
+                    brave_web_url: "https://search.selene.ai/res/v1/web/search".to_string(),
+                    brave_news_url: "https://search.selene.ai/res/v1/news/search".to_string(),
+                    brave_web_fixture_json: Some(
+                        r#"{"web":{"results":[{"title":"Selene web result","url":"https://search.selene.ai/result-1","description":"Provider-backed web snippet"}]}}"#
+                            .to_string(),
+                    ),
+                    brave_news_fixture_json: Some(
+                        r#"{"results":[{"title":"Selene news result","url":"https://news.selene.ai/story-1","description":"Provider-backed news snippet"}]}"#
+                            .to_string(),
+                    ),
+                    openai_api_key: None,
+                    openai_responses_url: "https://api.openai.com/v1/responses".to_string(),
+                    openai_model: "gpt-4o-mini".to_string(),
+                    user_agent: "selene-os-app-ingress-test/1.0".to_string(),
+                    proxy_config: Ph1eProxyConfig {
+                        mode: Ph1eProxyMode::Off,
+                        http_proxy_url: None,
+                        https_proxy_url: None,
+                    },
+                    url_fetch_fixture_html: Some(
+                        "<html><body><h1>Selene URL source</h1><p>This is a deterministic fixture page for URL fetch and citation chunking with provenance metadata.</p></body></html>"
+                            .to_string(),
+                    ),
+                },
+            ),
+            runtime_governance,
+            ..AppServerIngressRuntime::default()
+        }
+    }
+
     fn run_protected_response_turn_with_identity_assertion(
         runtime: &AppServerIngressRuntime,
         store: &mut Ph1fStore,
@@ -6586,6 +6712,117 @@ mod tests {
             memory_candidates: vec![],
             confirm_answer: None,
             nlp_output: Some(web_search_draft("search the web for selene tool parity")),
+            tool_response: None,
+            interruption: None,
+            locale: Some("en-US".to_string()),
+            last_failure_reason_code: None,
+        };
+        let ph1x_request = runtime
+            .build_ph1x_request_for_forwarded_voice(
+                store,
+                ForwardedVoicePh1xRequestInput {
+                    correlation_id,
+                    turn_id,
+                    app_platform: AppPlatform::Desktop,
+                    forwarded: &forwarded,
+                    request_session_id,
+                    tenant_id: Some("tenant_1"),
+                    x_build,
+                },
+            )
+            .unwrap();
+        let packet = runtime
+            .debug_last_agent_input_packet()
+            .expect("agent packet should be captured");
+        let finder_terminal = runtime
+            .run_finder_terminal_packet_for_turn(
+                store,
+                &actor_user_id,
+                Some("tenant_1"),
+                Some(&packet),
+            )
+            .unwrap();
+        assert!(finder_terminal.is_none());
+        let runtime_execution_envelope = packet
+            .runtime_execution_envelope
+            .clone()
+            .expect("runtime execution envelope must be attached");
+        let out = runtime
+            .run_ph1x_and_dispatch_with_access_fail_closed(
+                store,
+                runtime_execution_envelope,
+                OsVoiceLiveTurnOutcome::Forwarded(forwarded),
+                request_session_state,
+                ph1x_request,
+                &actor_user_id,
+                Some(&device_id),
+                Some("tenant_1"),
+                request_session_id,
+                MonotonicTimeNs(17),
+            )
+            .unwrap();
+        runtime
+            .finalize_voice_turn_outcome(
+                store,
+                out,
+                finder_terminal.as_ref(),
+                &actor_user_id,
+                Some(&device_id),
+                Some("tenant_1"),
+                request_session_id,
+                correlation_id,
+                turn_id,
+                received_at,
+                MonotonicTimeNs(17),
+            )
+            .unwrap()
+    }
+
+    fn run_protected_chat_response_turn_with_identity_assertion(
+        runtime: &AppServerIngressRuntime,
+        store: &mut Ph1fStore,
+        actor_user_id: UserId,
+        device_id: DeviceId,
+        assertion: Ph1VoiceIdResponse,
+        correlation_id: CorrelationId,
+        turn_id: TurnId,
+    ) -> AppVoiceTurnExecutionOutcome {
+        let request = AppVoiceIngressRequest::v1(
+            correlation_id,
+            turn_id,
+            AppPlatform::Desktop,
+            OsVoiceTrigger::Explicit,
+            sample_voice_id_request(MonotonicTimeNs(3), actor_user_id.clone()),
+            actor_user_id.clone(),
+            Some("tenant_1".to_string()),
+            Some(device_id.clone()),
+            Vec::new(),
+            no_observation(),
+        )
+        .unwrap();
+        let request_session_id = request.voice_id_request.session_state_ref.session_id;
+        let request_session_state = request.voice_id_request.session_state_ref.session_state;
+        let received_at = request.voice_id_request.now;
+
+        let outcome = runtime.run_voice_turn(store, request).unwrap();
+        let OsVoiceLiveTurnOutcome::Forwarded(mut forwarded) = outcome else {
+            panic!("expected forwarded voice turn");
+        };
+        forwarded.voice_identity_assertion = assertion;
+
+        let x_build = AppVoicePh1xBuildInput {
+            now: MonotonicTimeNs(17),
+            thread_key: None,
+            thread_state: ThreadState::empty_v1(),
+            session_state: SessionState::Active,
+            policy_context_ref: PolicyContextRef::v1(false, false, SafetyTier::Standard),
+            memory_candidates: vec![],
+            confirm_answer: None,
+            nlp_output: Some(
+                Chat::v1("give me a direct answer".to_string(), ReasonCodeId(1))
+                    .map(Ph1nResponse::Chat)
+                    .unwrap(),
+            ),
             tool_response: None,
             interruption: None,
             locale: Some("en-US".to_string()),
@@ -7792,7 +8029,9 @@ mod tests {
         );
         assert_eq!(
             identity_state.reason_code,
-            Some(u64::from(voice_id_reason_codes::VID_DEVICE_CLAIM_REQUIRED.0))
+            Some(u64::from(
+                voice_id_reason_codes::VID_DEVICE_CLAIM_REQUIRED.0
+            ))
         );
         let memory_state = envelope
             .memory_state
@@ -8209,6 +8448,107 @@ mod tests {
                     .unwrap_or(false)
             }),
             "device-claim recovery fail-closed response must emit PH1.X audit row"
+        );
+    }
+
+    #[test]
+    fn at_identity_drift_01_cluster_drift_protected_voice_turn_fails_closed_with_explicit_cluster_drift_response(
+    ) {
+        let runtime = runtime_with_search_tool_fixtures_and_runtime_governance(
+            RuntimeGovernanceRuntime::new(
+                RuntimeGovernanceConfig::mvp_v1().with_policy_window(
+                    selene_kernel_contracts::runtime_governance::GovernancePolicyWindow::v1(
+                        "2026.03.08.v1".to_string(),
+                        "2026.03.08.v1".to_string(),
+                        "2026.04.01.v1".to_string(),
+                    )
+                    .unwrap(),
+                ),
+            ),
+        );
+        let actor_user_id = UserId::new("tenant_1:identity_cluster_drift_runtime_user").unwrap();
+        let device_id = DeviceId::new("identity_cluster_drift_runtime_device_1").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &actor_user_id, &device_id);
+        let _ = runtime
+            .observe_runtime_governance_node_policy_version("node_compat", Some("2026.04.01.v1"));
+
+        let out = run_protected_chat_response_turn_with_identity_assertion(
+            &runtime,
+            &mut store,
+            actor_user_id.clone(),
+            device_id,
+            confirmed_voice_assertion(actor_user_id),
+            CorrelationId(9824),
+            TurnId(9924),
+        );
+
+        assert_eq!(out.next_move, AppVoiceTurnNextMove::Refused);
+        assert_eq!(
+            out.response_text.as_deref(),
+            Some("I can't continue because governance state is out of sync right now.")
+        );
+        assert_eq!(
+            out.reason_code,
+            out.ph1x_response
+                .as_ref()
+                .map(|response| response.reason_code)
+        );
+        let response_rows = store.ph1x_audit_rows(CorrelationId(9824));
+        assert!(
+            response_rows.iter().any(|row| {
+                row.payload_min
+                    .entries
+                    .get(&PayloadKey::new("response_kind").unwrap())
+                    .map(|value| value.as_str() == "GOVERNANCE_CLUSTER_DRIFT_FAIL_CLOSED")
+                    .unwrap_or(false)
+            }),
+            "cluster-drift fail-closed response must emit PH1.X audit row"
+        );
+    }
+
+    #[test]
+    fn at_identity_drift_02_policy_version_drift_protected_voice_turn_fails_closed_with_explicit_policy_drift_response(
+    ) {
+        let runtime = runtime_with_search_tool_fixtures();
+        let actor_user_id = UserId::new("tenant_1:identity_policy_drift_runtime_user").unwrap();
+        let device_id = DeviceId::new("identity_policy_drift_runtime_device_1").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &actor_user_id, &device_id);
+        let _ = runtime
+            .observe_runtime_governance_node_policy_version("node_drift", Some("2026.04.01.v1"));
+
+        let out = run_protected_chat_response_turn_with_identity_assertion(
+            &runtime,
+            &mut store,
+            actor_user_id.clone(),
+            device_id,
+            confirmed_voice_assertion(actor_user_id),
+            CorrelationId(9825),
+            TurnId(9925),
+        );
+
+        assert_eq!(out.next_move, AppVoiceTurnNextMove::Refused);
+        assert_eq!(
+            out.response_text.as_deref(),
+            Some("I can't continue because policy versions are out of sync right now.")
+        );
+        assert_eq!(
+            out.reason_code,
+            out.ph1x_response
+                .as_ref()
+                .map(|response| response.reason_code)
+        );
+        let response_rows = store.ph1x_audit_rows(CorrelationId(9825));
+        assert!(
+            response_rows.iter().any(|row| {
+                row.payload_min
+                    .entries
+                    .get(&PayloadKey::new("response_kind").unwrap())
+                    .map(|value| value.as_str() == "GOVERNANCE_POLICY_DRIFT_FAIL_CLOSED")
+                    .unwrap_or(false)
+            }),
+            "policy-version drift fail-closed response must emit PH1.X audit row"
         );
     }
 
