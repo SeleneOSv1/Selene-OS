@@ -2744,6 +2744,24 @@ mod tests {
         )
     }
 
+    fn low_confidence_voice_assertion(user_id: UserId) -> Ph1VoiceIdResponse {
+        Ph1VoiceIdResponse::SpeakerAssertionUnknown(
+            SpeakerAssertionUnknown::v1_with_candidate(
+                IdentityConfidence::Low,
+                voice_id_reason_codes::VID_FAIL_LOW_CONFIDENCE,
+                vec![DiarizationSegment::v1(
+                    MonotonicTimeNs(1),
+                    MonotonicTimeNs(2),
+                    Some(SpeakerLabel::speaker_a()),
+                )
+                .expect("segment must validate")],
+                Some(user_id),
+                None,
+            )
+            .expect("low-confidence voice assertion must validate"),
+        )
+    }
+
     fn allowed_authority_state() -> AuthorityExecutionState {
         AuthorityExecutionState::v1(
             Some(PolicyContextRef::v1(false, false, SafetyTier::Standard)),
@@ -3589,6 +3607,33 @@ mod tests {
         assert_eq!(
             identity_state.reason_code,
             Some(u64::from(voice_id_reason_codes::VID_DEVICE_CLAIM_REQUIRED.0))
+        );
+    }
+
+    #[test]
+    fn at_runtime_gov_23_low_confidence_assertion_maps_to_degraded_conditional_identity_state() {
+        let runtime = RuntimeGovernanceRuntime::default();
+        let artifact_governed = artifact_governed_envelope(&runtime);
+        let out = runtime
+            .govern_artifact_activation_identity_state_execution(
+                &artifact_governed,
+                &low_confidence_voice_assertion(artifact_governed.actor_identity.clone()),
+            )
+            .expect("low-confidence assertion must still produce bounded identity state");
+        let identity_state = out
+            .identity_state
+            .as_ref()
+            .expect("identity state must attach for low-confidence posture");
+        assert_eq!(
+            identity_state.consistency_level,
+            IdentityVerificationConsistencyLevel::DegradedVerification
+        );
+        assert_eq!(identity_state.trust_tier, IdentityTrustTier::Conditional);
+        assert!(!identity_state.step_up_required);
+        assert_eq!(identity_state.recovery_state, IdentityRecoveryState::None);
+        assert_eq!(
+            identity_state.reason_code,
+            Some(u64::from(voice_id_reason_codes::VID_FAIL_LOW_CONFIDENCE.0))
         );
     }
 
