@@ -4279,20 +4279,33 @@ fn proof_simulation_id_from_voice_outcome(
         return Ok(None);
     };
     if let Some(Ph1nResponse::IntentDraft(intent_draft)) = ph1x_request.nlp_output.as_ref() {
-        let simulation_id = simulation_id_for_intent_draft_v1(intent_draft)?;
-        return SimulationId::new(simulation_id.to_string())
-            .map(Some)
-            .map_err(StorageError::ContractViolation);
+        return proof_simulation_id_for_intent_draft(intent_draft);
     }
     match ph1x_request.thread_state.pending.as_ref() {
         Some(PendingState::Confirm { intent_draft, .. })
         | Some(PendingState::StepUp { intent_draft, .. }) => {
-            let simulation_id = simulation_id_for_intent_draft_v1(intent_draft)?;
-            SimulationId::new(simulation_id.to_string())
-                .map(Some)
-                .map_err(StorageError::ContractViolation)
+            proof_simulation_id_for_intent_draft(intent_draft)
         }
         _ => Ok(None),
+    }
+}
+
+fn proof_simulation_id_for_intent_draft(
+    intent_draft: &IntentDraft,
+) -> Result<Option<SimulationId>, StorageError> {
+    match simulation_id_for_intent_draft_v1(intent_draft) {
+        Ok(simulation_id) => SimulationId::new(simulation_id.to_string())
+            .map(Some)
+            .map_err(StorageError::ContractViolation),
+        Err(StorageError::ContractViolation(ContractViolation::InvalidValue { field, reason }))
+            if field == "simulation_candidate_dispatch.intent_draft.intent_type"
+                && reason == "SIM_DISPATCH_GUARD_SIMULATION_ID_INVALID" =>
+        {
+            // Missing-simulation paths for unsupported intent families have no canonical
+            // simulation id to carry into proof tracing.
+            Ok(None)
+        }
+        Err(err) => Err(err),
     }
 }
 
