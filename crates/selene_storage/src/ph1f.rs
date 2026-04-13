@@ -20999,6 +20999,44 @@ impl Ph1fStore {
         ingest_latency_ms: u32,
         idempotency_key: String,
     ) -> Result<u64, StorageError> {
+        self.ph1feedback_learn_signal_bundle_commit_with_audit_payload_metadata(
+            now,
+            tenant_id,
+            correlation_id,
+            turn_id,
+            session_id,
+            user_id,
+            device_id,
+            feedback_event_type,
+            learn_signal_type,
+            reason_code,
+            evidence_ref,
+            provenance_ref,
+            ingest_latency_ms,
+            idempotency_key,
+            BTreeMap::new(),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn ph1feedback_learn_signal_bundle_commit_with_audit_payload_metadata(
+        &mut self,
+        now: MonotonicTimeNs,
+        tenant_id: String,
+        correlation_id: CorrelationId,
+        turn_id: TurnId,
+        session_id: Option<SessionId>,
+        user_id: UserId,
+        device_id: DeviceId,
+        feedback_event_type: String,
+        learn_signal_type: String,
+        reason_code: ReasonCodeId,
+        evidence_ref: String,
+        provenance_ref: String,
+        ingest_latency_ms: u32,
+        idempotency_key: String,
+        audit_payload_metadata: BTreeMap<String, String>,
+    ) -> Result<u64, StorageError> {
         Self::validate_ph1learn_tenant_id(&tenant_id)?;
         Self::validate_ph1learn_idempotency(
             "ph1feedback_learn_signal_bundle.idempotency_key",
@@ -21083,7 +21121,7 @@ impl Ph1fStore {
         self.ph1feedback_learn_signal_bundle_idempotency_index
             .insert(dedupe_idx, bundle_id);
 
-        let payload = AuditPayloadMin::v1(BTreeMap::from([
+        let mut payload = BTreeMap::from([
             (
                 PayloadKey::new("feedback_event_type")?,
                 PayloadValue::new(Self::feedback_event_type_name(event_type))?,
@@ -21112,7 +21150,30 @@ impl Ph1fStore {
                 PayloadKey::new("bundle_id")?,
                 PayloadValue::new(bundle_id.to_string())?,
             ),
-        ]))?;
+        ]);
+        for (key, value) in audit_payload_metadata {
+            Self::validate_ph1learn_bounded_text(
+                "ph1feedback_learn_signal_bundle.audit_payload_metadata.key",
+                &key,
+                64,
+            )?;
+            Self::validate_ph1learn_bounded_text(
+                "ph1feedback_learn_signal_bundle.audit_payload_metadata.value",
+                &value,
+                128,
+            )?;
+            let payload_key = PayloadKey::new(&key)?;
+            if payload.contains_key(&payload_key) {
+                return Err(StorageError::ContractViolation(
+                    ContractViolation::InvalidValue {
+                        field: "ph1feedback_learn_signal_bundle.audit_payload_metadata.key",
+                        reason: "must not duplicate base payload keys",
+                    },
+                ));
+            }
+            payload.insert(payload_key, PayloadValue::new(value)?);
+        }
+        let payload = AuditPayloadMin::v1(payload)?;
         let learn_audit = AuditEventInput::v1(
             now,
             Some(tenant_id),
@@ -26185,6 +26246,173 @@ mod tests {
                 "VoiceIdFalseReject".to_string(),
                 ReasonCodeId(0xF006),
                 "idem:fdbk:metadata:duplicate".to_string(),
+                duplicate_metadata,
+            )
+            .expect_err("duplicate base payload keys must be rejected");
+        assert!(matches!(err, StorageError::ContractViolation(_)));
+    }
+
+    #[test]
+    fn at_fdbk_06_learn_signal_bundle_metadata_carries_voice_context_without_overwriting_base_keys(
+    ) {
+        let mut s = store_with_user_device_and_session();
+        let mut payload_metadata = std::collections::BTreeMap::new();
+        payload_metadata.insert("voice_decision".to_string(), "OK_LOW_MARGIN".to_string());
+        payload_metadata.insert(
+            "voice_reason_code_hex".to_string(),
+            format!("0x{:X}", ReasonCodeId(0xF006).0),
+        );
+        payload_metadata.insert("voice_score_bp".to_string(), "9700".to_string());
+        payload_metadata.insert("voice_margin_to_next_bp".to_string(), "250".to_string());
+
+        let bundle_id = s
+            .ph1feedback_learn_signal_bundle_commit_with_audit_payload_metadata(
+                MonotonicTimeNs(20),
+                "tenant_1".to_string(),
+                CorrelationId(5107),
+                TurnId(1),
+                Some(SessionId(1)),
+                user(),
+                device(),
+                "VoiceIdFalseAccept".to_string(),
+                "VoiceIdFalseAccept".to_string(),
+                ReasonCodeId(0xF006),
+                "voice_feedback_evidence:user_1:5107:1:VoiceIdFalseAccept".to_string(),
+                "ph1.voice.id:feedback:VoiceIdFalseAccept:v1".to_string(),
+                120,
+                "idem:fdbk:bundle:metadata:1".to_string(),
+                payload_metadata,
+            )
+            .expect("learn signal bundle commit with metadata must succeed");
+
+        let rows = s.ph1feedback_learn_signal_bundle_rows(CorrelationId(5107));
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].bundle_id, bundle_id);
+        assert_eq!(
+            rows[0].feedback_event_type,
+            FeedbackEventType::VoiceIdFalseAccept
+        );
+        assert_eq!(
+            rows[0].learn_signal_type,
+            LearnSignalType::VoiceIdFalseAccept
+        );
+        assert_eq!(rows[0].reason_code, ReasonCodeId(0xF006));
+
+        let learn_rows = s
+            .audit_events_by_correlation(CorrelationId(5107))
+            .into_iter()
+            .filter(|row| {
+                matches!(&row.engine, AuditEngine::Other(engine_id) if engine_id == "PH1.LEARN")
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(learn_rows.len(), 1);
+        let payload = &learn_rows[0].payload_min.entries;
+        assert_eq!(
+            payload
+                .get(&PayloadKey::new("feedback_event_type").unwrap())
+                .expect("feedback_event_type must exist")
+                .as_str(),
+            "VoiceIdFalseAccept"
+        );
+        assert_eq!(
+            payload
+                .get(&PayloadKey::new("learn_signal_type").unwrap())
+                .expect("learn_signal_type must exist")
+                .as_str(),
+            "VoiceIdFalseAccept"
+        );
+        assert_eq!(
+            payload
+                .get(&PayloadKey::new("path_type").unwrap())
+                .expect("path_type must exist")
+                .as_str(),
+            "PathA_Defect"
+        );
+        assert_eq!(
+            payload
+                .get(&PayloadKey::new("evidence_ref").unwrap())
+                .expect("evidence_ref must exist")
+                .as_str(),
+            "voice_feedback_evidence:user_1:5107:1:VoiceIdFalseAccept"
+        );
+        assert_eq!(
+            payload
+                .get(&PayloadKey::new("provenance_ref").unwrap())
+                .expect("provenance_ref must exist")
+                .as_str(),
+            "ph1.voice.id:feedback:VoiceIdFalseAccept:v1"
+        );
+        assert_eq!(
+            payload
+                .get(&PayloadKey::new("voice_decision").unwrap())
+                .expect("voice_decision must exist")
+                .as_str(),
+            "OK_LOW_MARGIN"
+        );
+        assert_eq!(
+            payload
+                .get(&PayloadKey::new("voice_reason_code_hex").unwrap())
+                .expect("voice_reason_code_hex must exist")
+                .as_str(),
+            "0xF006"
+        );
+        assert_eq!(
+            payload
+                .get(&PayloadKey::new("voice_score_bp").unwrap())
+                .expect("voice_score_bp must exist")
+                .as_str(),
+            "9700"
+        );
+        assert_eq!(
+            payload
+                .get(&PayloadKey::new("voice_margin_to_next_bp").unwrap())
+                .expect("voice_margin_to_next_bp must exist")
+                .as_str(),
+            "250"
+        );
+
+        let retry_bundle_id = s
+            .ph1feedback_learn_signal_bundle_commit_with_audit_payload_metadata(
+                MonotonicTimeNs(21),
+                "tenant_1".to_string(),
+                CorrelationId(5107),
+                TurnId(1),
+                Some(SessionId(1)),
+                user(),
+                device(),
+                "VoiceIdFalseAccept".to_string(),
+                "VoiceIdFalseAccept".to_string(),
+                ReasonCodeId(0xF006),
+                "voice_feedback_evidence:user_1:5107:1:VoiceIdFalseAccept".to_string(),
+                "ph1.voice.id:feedback:VoiceIdFalseAccept:v1".to_string(),
+                120,
+                "idem:fdbk:bundle:metadata:1".to_string(),
+                std::collections::BTreeMap::new(),
+            )
+            .expect("retry bundle commit must still dedupe");
+        assert_eq!(retry_bundle_id, bundle_id);
+
+        let mut duplicate_metadata = std::collections::BTreeMap::new();
+        duplicate_metadata.insert(
+            "provenance_ref".to_string(),
+            "ph1.voice.id:feedback:tampered:v1".to_string(),
+        );
+        let err = s
+            .ph1feedback_learn_signal_bundle_commit_with_audit_payload_metadata(
+                MonotonicTimeNs(22),
+                "tenant_1".to_string(),
+                CorrelationId(5108),
+                TurnId(1),
+                Some(SessionId(1)),
+                user(),
+                device(),
+                "VoiceIdFalseAccept".to_string(),
+                "VoiceIdFalseAccept".to_string(),
+                ReasonCodeId(0xF007),
+                "voice_feedback_evidence:user_1:5108:1:VoiceIdFalseAccept".to_string(),
+                "ph1.voice.id:feedback:VoiceIdFalseAccept:v1".to_string(),
+                120,
+                "idem:fdbk:bundle:metadata:duplicate".to_string(),
                 duplicate_metadata,
             )
             .expect_err("duplicate base payload keys must be rejected");
