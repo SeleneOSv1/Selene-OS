@@ -576,11 +576,12 @@ impl Ph1VoiceIdLiveRuntime {
         emit_voice_id_cohort_kpi_audit(
             store,
             req,
-            context,
+            context.clone(),
             &signal_scope,
             &response,
             started.elapsed().as_millis().min(u128::from(u32::MAX)) as u32,
         )?;
+        emit_voice_id_decision_audit(store, context, &signal_scope, &response)?;
         if let Some(signal) = map_voice_response_to_feedback_learn_signal(&response) {
             emit_voice_id_feedback_and_learn_signal(store, &signal_scope, signal)?;
         }
@@ -632,9 +633,10 @@ fn select_artifact_pointer_set(
         selected_idx
     };
     let active_row = rows[active_idx];
-    let rollback_row = rows.iter().enumerate().find_map(|(idx, row)| {
-        (idx > active_idx && !is_revoked(&row)).then_some(*row)
-    });
+    let rollback_row = rows
+        .iter()
+        .enumerate()
+        .find_map(|(idx, row)| (idx > active_idx && !is_revoked(&row)).then_some(*row));
 
     VoiceArtifactPointerSet {
         active: Some(VoiceArtifactPointer {
@@ -714,6 +716,15 @@ struct VoiceIdCohortKpiSnapshot {
     margin_to_next_bp: Option<u16>,
     decision_v1: VoiceIdDecision,
     identity_tier_v2: IdentityTierV2,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct VoiceIdDecisionAuditSnapshot {
+    decision_v1: VoiceIdDecision,
+    identity_tier_v2: IdentityTierV2,
+    score_bp: u16,
+    margin_to_next_bp: Option<u16>,
+    reason_code: ReasonCodeId,
 }
 
 fn feedback_event_type_label(event_type: FeedbackEventType) -> &'static str {
@@ -973,6 +984,76 @@ fn emit_voice_id_cohort_kpi_audit(
     Ok(())
 }
 
+fn emit_voice_id_decision_audit(
+    store: &mut Ph1fStore,
+    context: VoiceIdentityRuntimeContext,
+    signal_scope: &VoiceIdentitySignalScope,
+    response: &Ph1VoiceIdResponse,
+) -> Result<(), StorageError> {
+    let snapshot = voice_decision_audit_snapshot(response);
+    let mut payload_entries = BTreeMap::new();
+    payload_entries.insert(
+        PayloadKey::new("decision_log_family").map_err(StorageError::ContractViolation)?,
+        PayloadValue::new("voice_id_live_assertion").map_err(StorageError::ContractViolation)?,
+    );
+    payload_entries.insert(
+        PayloadKey::new("decision_v1").map_err(StorageError::ContractViolation)?,
+        PayloadValue::new(voice_decision_label(snapshot.decision_v1))
+            .map_err(StorageError::ContractViolation)?,
+    );
+    payload_entries.insert(
+        PayloadKey::new("identity_tier_v2").map_err(StorageError::ContractViolation)?,
+        PayloadValue::new(identity_tier_label(snapshot.identity_tier_v2))
+            .map_err(StorageError::ContractViolation)?,
+    );
+    payload_entries.insert(
+        PayloadKey::new("score_bp").map_err(StorageError::ContractViolation)?,
+        PayloadValue::new(snapshot.score_bp.to_string())
+            .map_err(StorageError::ContractViolation)?,
+    );
+    payload_entries.insert(
+        PayloadKey::new("platform").map_err(StorageError::ContractViolation)?,
+        PayloadValue::new(platform_label(context.platform))
+            .map_err(StorageError::ContractViolation)?,
+    );
+    payload_entries.insert(
+        PayloadKey::new("channel").map_err(StorageError::ContractViolation)?,
+        PayloadValue::new(channel_label(context.channel))
+            .map_err(StorageError::ContractViolation)?,
+    );
+    if let Some(margin) = snapshot.margin_to_next_bp {
+        payload_entries.insert(
+            PayloadKey::new("margin_to_next_bp").map_err(StorageError::ContractViolation)?,
+            PayloadValue::new(margin.to_string()).map_err(StorageError::ContractViolation)?,
+        );
+    }
+
+    let payload = AuditPayloadMin::v1(payload_entries).map_err(StorageError::ContractViolation)?;
+    let event = AuditEventInput::v1(
+        signal_scope.now,
+        signal_scope.tenant_id.clone(),
+        None,
+        None,
+        Some(signal_scope.actor_user_id.clone()),
+        signal_scope.device_id.clone(),
+        AuditEngine::Other(PH1_VOICE_ID_ENGINE_ID.to_string()),
+        AuditEventType::Other,
+        snapshot.reason_code,
+        AuditSeverity::Info,
+        signal_scope.correlation_id,
+        signal_scope.turn_id,
+        payload,
+        None,
+        Some(format!(
+            "voice_decision:{}:{}",
+            signal_scope.correlation_id.0, signal_scope.turn_id.0
+        )),
+    )
+    .map_err(StorageError::ContractViolation)?;
+    Ph1jRuntime::emit(store, event)?;
+    Ok(())
+}
+
 fn voice_kpi_snapshot(response: &Ph1VoiceIdResponse) -> VoiceIdCohortKpiSnapshot {
     match response {
         Ph1VoiceIdResponse::SpeakerAssertionOk(ok) => VoiceIdCohortKpiSnapshot {
@@ -993,6 +1074,19 @@ fn voice_kpi_snapshot(response: &Ph1VoiceIdResponse) -> VoiceIdCohortKpiSnapshot
             decision_v1: VoiceIdDecision::Unknown,
             identity_tier_v2: u.identity_v2.identity_tier_v2,
         },
+    }
+}
+
+fn voice_decision_audit_snapshot(response: &Ph1VoiceIdResponse) -> VoiceIdDecisionAuditSnapshot {
+    VoiceIdDecisionAuditSnapshot {
+        decision_v1: voice_decision_v1(response),
+        identity_tier_v2: response.identity_v2().identity_tier_v2,
+        score_bp: voice_score_bp(response),
+        margin_to_next_bp: match response {
+            Ph1VoiceIdResponse::SpeakerAssertionOk(ok) => ok.margin_to_next_bp,
+            Ph1VoiceIdResponse::SpeakerAssertionUnknown(u) => u.margin_to_next_bp,
+        },
+        reason_code: response_reason_code(response),
     }
 }
 
@@ -1598,9 +1692,9 @@ mod tests {
         reason_codes as engine_voice_reason_codes, simulation_profile_embedding_from_seed,
     };
     use selene_kernel_contracts::ph1_voice_id::{
-        DeviceTrustLevel, Ph1VoiceIdRequest, Ph1VoiceIdResponse, Ph1VoiceIdSimRequest,
-        VoiceIdEnrollStartDraftRequest, VoiceIdSimulationRequest, VoiceIdSimulationType,
-        PH1VOICEID_SIM_CONTRACT_VERSION,
+        DeviceTrustLevel, DiarizationSegment, Ph1VoiceIdRequest, Ph1VoiceIdResponse,
+        Ph1VoiceIdSimRequest, SpeakerAssertionOk, SpeakerLabel, VoiceIdEnrollStartDraftRequest,
+        VoiceIdSimulationRequest, VoiceIdSimulationType, PH1VOICEID_SIM_CONTRACT_VERSION,
     };
     use selene_kernel_contracts::ph1art::{
         ArtifactScopeType, ArtifactStatus, ArtifactType, ArtifactVersion,
@@ -1721,6 +1815,26 @@ mod tests {
                 idempotency_key.to_string(),
             )
             .expect("voice artifact commit must succeed");
+    }
+
+    fn sample_signal_scope(correlation_id: u128, turn_id: u64) -> VoiceIdentitySignalScope {
+        VoiceIdentitySignalScope::v1(
+            MonotonicTimeNs(3),
+            CorrelationId(correlation_id),
+            TurnId(turn_id),
+            UserId::new(&format!("user_audit_{correlation_id}")).unwrap(),
+            None,
+            None,
+        )
+    }
+
+    fn sample_decision_segments() -> Vec<DiarizationSegment> {
+        vec![DiarizationSegment::v1(
+            MonotonicTimeNs(1),
+            MonotonicTimeNs(2),
+            Some(SpeakerLabel::speaker_a()),
+        )
+        .unwrap()]
     }
 
     #[test]
@@ -2464,6 +2578,327 @@ mod tests {
                 .expect("read_contract must exist")
                 .as_str(),
             "V2"
+        );
+    }
+
+    #[test]
+    fn at_vid_live_gate_15_matched_assertion_emits_explicit_decision_audit() {
+        let mut store = Ph1fStore::new_in_memory();
+        let runtime = Ph1VoiceIdLiveRuntime::default();
+        let req = sample_live_request();
+        let context = VoiceIdentityRuntimeContext::from_tenant_app_platform(
+            Some("tenant_audit".to_string()),
+            Some(AppPlatform::Android),
+            VoiceIdentityChannel::Explicit,
+        );
+        let enrolled = vec![EngineEnrolledSpeaker {
+            speaker_id: selene_kernel_contracts::ph1_voice_id::SpeakerId::new("speaker_audit_ok")
+                .unwrap(),
+            user_id: Some(
+                selene_kernel_contracts::ph1_voice_id::UserId::new("user_audit_ok").unwrap(),
+            ),
+            fingerprint: 7,
+            profile_embedding: Some(simulation_profile_embedding_from_seed(7)),
+        }];
+        let out = runtime
+            .run_identity_assertion_with_signal_emission(
+                &mut store,
+                &req,
+                context,
+                enrolled,
+                EngineVoiceIdObservation {
+                    primary_fingerprint: Some(7),
+                    secondary_fingerprint: None,
+                    primary_embedding: Some(simulation_profile_embedding_from_seed(7)),
+                    secondary_embedding: None,
+                    spoof_risk: false,
+                },
+                sample_signal_scope(5515, 1),
+            )
+            .expect("matched identity run with signal emission must succeed");
+
+        assert!(matches!(out, Ph1VoiceIdResponse::SpeakerAssertionOk(_)));
+
+        let rows = store.audit_events_by_correlation(CorrelationId(5515));
+        let decision_row = rows
+            .iter()
+            .copied()
+            .find(|row| {
+                matches!(&row.engine, AuditEngine::Other(engine) if engine == PH1_VOICE_ID_ENGINE_ID)
+                    && row.payload_min.entries.contains_key(
+                        &PayloadKey::new("decision_log_family")
+                            .expect("decision_log_family payload key is valid"),
+                    )
+            })
+            .expect("decision audit row must exist");
+        let decision_payload = &decision_row.payload_min.entries;
+        let expected_score = voice_score_bp(&out).to_string();
+
+        assert_eq!(
+            decision_payload
+                .get(&PayloadKey::new("decision_log_family").unwrap())
+                .expect("decision_log_family must exist")
+                .as_str(),
+            "voice_id_live_assertion"
+        );
+        assert_eq!(
+            decision_payload
+                .get(&PayloadKey::new("decision_v1").unwrap())
+                .expect("decision_v1 must exist")
+                .as_str(),
+            "OK"
+        );
+        assert_eq!(
+            decision_payload
+                .get(&PayloadKey::new("identity_tier_v2").unwrap())
+                .expect("identity_tier_v2 must exist")
+                .as_str(),
+            identity_tier_label(out.identity_v2().identity_tier_v2)
+        );
+        assert_eq!(
+            decision_payload
+                .get(&PayloadKey::new("score_bp").unwrap())
+                .expect("score_bp must exist")
+                .as_str(),
+            expected_score.as_str()
+        );
+        assert_eq!(
+            decision_payload
+                .get(&PayloadKey::new("platform").unwrap())
+                .expect("platform must exist")
+                .as_str(),
+            "android"
+        );
+        assert_eq!(
+            decision_payload
+                .get(&PayloadKey::new("channel").unwrap())
+                .expect("channel must exist")
+                .as_str(),
+            "explicit"
+        );
+        assert_eq!(
+            decision_row.reason_code,
+            engine_voice_reason_codes::VID_OK_MATCHED
+        );
+        assert_eq!(
+            decision_row.idempotency_key.as_deref(),
+            Some("voice_decision:5515:1")
+        );
+        assert!(
+            rows.iter().any(|row| row.payload_min.entries.contains_key(
+                &PayloadKey::new("migration_stage").expect("migration_stage payload key is valid"),
+            )),
+            "migration audit row must still exist"
+        );
+        assert!(
+            rows.iter().any(|row| row.payload_min.entries.contains_key(
+                &PayloadKey::new("metric_family").expect("metric_family payload key is valid"),
+            )),
+            "kpi audit row must still exist"
+        );
+        assert!(
+            !decision_payload.contains_key(&PayloadKey::new("migration_stage").unwrap()),
+            "decision audit row must be distinct from migration audit"
+        );
+        assert!(
+            !decision_payload.contains_key(&PayloadKey::new("metric_family").unwrap()),
+            "decision audit row must be distinct from kpi audit"
+        );
+    }
+
+    #[test]
+    fn at_vid_live_gate_16_unknown_assertion_emits_explicit_decision_audit_with_preserved_reason() {
+        let mut store = Ph1fStore::new_in_memory();
+        let runtime = Ph1VoiceIdLiveRuntime::default();
+        let req = sample_live_request();
+        let context = VoiceIdentityRuntimeContext::from_tenant_app_platform(
+            Some("tenant_audit".to_string()),
+            Some(AppPlatform::Android),
+            VoiceIdentityChannel::Explicit,
+        );
+        let enrolled = vec![EngineEnrolledSpeaker {
+            speaker_id: selene_kernel_contracts::ph1_voice_id::SpeakerId::new(
+                "speaker_audit_unknown",
+            )
+            .unwrap(),
+            user_id: Some(
+                selene_kernel_contracts::ph1_voice_id::UserId::new("user_audit_unknown").unwrap(),
+            ),
+            fingerprint: 7,
+            profile_embedding: Some(simulation_profile_embedding_from_seed(7)),
+        }];
+        let out = runtime
+            .run_identity_assertion_with_signal_emission(
+                &mut store,
+                &req,
+                context,
+                enrolled,
+                EngineVoiceIdObservation {
+                    primary_fingerprint: Some(7),
+                    secondary_fingerprint: None,
+                    primary_embedding: None,
+                    secondary_embedding: None,
+                    spoof_risk: false,
+                },
+                sample_signal_scope(5516, 1),
+            )
+            .expect("unknown identity run with signal emission must succeed");
+
+        assert!(matches!(
+            out,
+            Ph1VoiceIdResponse::SpeakerAssertionUnknown(_)
+        ));
+
+        let rows = store.audit_events_by_correlation(CorrelationId(5516));
+        let decision_row = rows
+            .iter()
+            .copied()
+            .find(|row| {
+                matches!(&row.engine, AuditEngine::Other(engine) if engine == PH1_VOICE_ID_ENGINE_ID)
+                    && row.payload_min.entries.contains_key(
+                        &PayloadKey::new("decision_log_family")
+                            .expect("decision_log_family payload key is valid"),
+                    )
+            })
+            .expect("decision audit row must exist");
+        let decision_payload = &decision_row.payload_min.entries;
+        let expected_score = voice_score_bp(&out).to_string();
+
+        assert_eq!(
+            decision_payload
+                .get(&PayloadKey::new("decision_log_family").unwrap())
+                .expect("decision_log_family must exist")
+                .as_str(),
+            "voice_id_live_assertion"
+        );
+        assert_eq!(
+            decision_payload
+                .get(&PayloadKey::new("decision_v1").unwrap())
+                .expect("decision_v1 must exist")
+                .as_str(),
+            "UNKNOWN"
+        );
+        assert_eq!(
+            decision_payload
+                .get(&PayloadKey::new("identity_tier_v2").unwrap())
+                .expect("identity_tier_v2 must exist")
+                .as_str(),
+            identity_tier_label(out.identity_v2().identity_tier_v2)
+        );
+        assert_eq!(
+            decision_payload
+                .get(&PayloadKey::new("score_bp").unwrap())
+                .expect("score_bp must exist")
+                .as_str(),
+            expected_score.as_str()
+        );
+        assert_eq!(
+            decision_row.reason_code,
+            engine_voice_reason_codes::VID_FAIL_LOW_CONFIDENCE
+        );
+        assert!(
+            !decision_payload.contains_key(&PayloadKey::new("margin_to_next_bp").unwrap()),
+            "unknown low-confidence path should not invent a margin payload"
+        );
+        assert!(
+            rows.iter().any(|row| row.payload_min.entries.contains_key(
+                &PayloadKey::new("migration_stage").expect("migration_stage payload key is valid"),
+            )),
+            "migration audit row must still exist"
+        );
+        assert!(
+            rows.iter().any(|row| row.payload_min.entries.contains_key(
+                &PayloadKey::new("metric_family").expect("metric_family payload key is valid"),
+            )),
+            "kpi audit row must still exist"
+        );
+        assert!(
+            !decision_payload.contains_key(&PayloadKey::new("migration_stage").unwrap()),
+            "decision audit row must be distinct from migration audit"
+        );
+        assert!(
+            !decision_payload.contains_key(&PayloadKey::new("metric_family").unwrap()),
+            "decision audit row must be distinct from kpi audit"
+        );
+    }
+
+    #[test]
+    fn at_vid_live_gate_17_low_margin_ok_decision_audit_preserves_match_reason_and_margin() {
+        let mut store = Ph1fStore::new_in_memory();
+        let response = Ph1VoiceIdResponse::SpeakerAssertionOk(
+            SpeakerAssertionOk::v1_with_metrics(
+                selene_kernel_contracts::ph1_voice_id::SpeakerId::new("speaker_low_margin")
+                    .unwrap(),
+                Some(
+                    selene_kernel_contracts::ph1_voice_id::UserId::new("user_low_margin").unwrap(),
+                ),
+                sample_decision_segments(),
+                SpeakerLabel::speaker_a(),
+                9_700,
+                Some(250),
+                Some(engine_voice_reason_codes::VID_OK_MATCHED),
+                selene_kernel_contracts::ph1_voice_id::SpoofLivenessStatus::Live,
+                vec![],
+            )
+            .expect("low-margin matched response fixture must be valid"),
+        );
+        let signal = map_voice_response_to_feedback_learn_signal(&response)
+            .expect("low-margin matched response should still map to feedback side emission");
+        assert_eq!(
+            signal.reason_code,
+            engine_voice_reason_codes::VID_FAIL_GRAY_ZONE_MARGIN
+        );
+        assert_eq!(signal.decision, "OK_LOW_MARGIN");
+
+        emit_voice_id_decision_audit(
+            &mut store,
+            VoiceIdentityRuntimeContext::from_tenant_app_platform(
+                Some("tenant_audit".to_string()),
+                Some(AppPlatform::Android),
+                VoiceIdentityChannel::Explicit,
+            ),
+            &sample_signal_scope(5517, 1),
+            &response,
+        )
+        .expect("decision audit emission must succeed for low-margin matched response");
+
+        let decision_row = store
+            .audit_events_by_correlation(CorrelationId(5517))
+            .into_iter()
+            .find(|row| {
+                matches!(&row.engine, AuditEngine::Other(engine) if engine == PH1_VOICE_ID_ENGINE_ID)
+                    && row.payload_min.entries.contains_key(
+                        &PayloadKey::new("decision_log_family")
+                            .expect("decision_log_family payload key is valid"),
+                    )
+            })
+            .expect("decision audit row must exist");
+        let decision_payload = &decision_row.payload_min.entries;
+
+        assert_eq!(
+            decision_payload
+                .get(&PayloadKey::new("decision_v1").unwrap())
+                .expect("decision_v1 must exist")
+                .as_str(),
+            "OK"
+        );
+        assert_eq!(
+            decision_row.reason_code,
+            engine_voice_reason_codes::VID_OK_MATCHED
+        );
+        assert_eq!(
+            decision_payload
+                .get(&PayloadKey::new("identity_tier_v2").unwrap())
+                .expect("identity_tier_v2 must exist")
+                .as_str(),
+            identity_tier_label(response.identity_v2().identity_tier_v2)
+        );
+        assert_eq!(
+            decision_payload
+                .get(&PayloadKey::new("margin_to_next_bp").unwrap())
+                .expect("margin_to_next_bp must exist")
+                .as_str(),
+            "250"
         );
     }
 }
