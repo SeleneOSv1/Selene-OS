@@ -2762,6 +2762,24 @@ mod tests {
         )
     }
 
+    fn echo_unsafe_voice_assertion() -> Ph1VoiceIdResponse {
+        Ph1VoiceIdResponse::SpeakerAssertionUnknown(
+            SpeakerAssertionUnknown::v1_with_candidate(
+                IdentityConfidence::Medium,
+                voice_id_reason_codes::VID_FAIL_ECHO_UNSAFE,
+                vec![DiarizationSegment::v1(
+                    MonotonicTimeNs(1),
+                    MonotonicTimeNs(2),
+                    Some(SpeakerLabel::speaker_a()),
+                )
+                .expect("segment must validate")],
+                None,
+                None,
+            )
+            .expect("echo-unsafe voice assertion must validate"),
+        )
+    }
+
     fn allowed_authority_state() -> AuthorityExecutionState {
         AuthorityExecutionState::v1(
             Some(PolicyContextRef::v1(false, false, SafetyTier::Standard)),
@@ -3580,8 +3598,8 @@ mod tests {
     }
 
     #[test]
-    fn at_runtime_gov_22_device_claim_required_assertion_maps_to_restricted_step_up_identity_state(
-    ) {
+    fn at_runtime_gov_22_device_claim_required_assertion_maps_to_restricted_step_up_identity_state()
+    {
         let runtime = RuntimeGovernanceRuntime::default();
         let artifact_governed = artifact_governed_envelope(&runtime);
         let out = runtime
@@ -3606,7 +3624,9 @@ mod tests {
         );
         assert_eq!(
             identity_state.reason_code,
-            Some(u64::from(voice_id_reason_codes::VID_DEVICE_CLAIM_REQUIRED.0))
+            Some(u64::from(
+                voice_id_reason_codes::VID_DEVICE_CLAIM_REQUIRED.0
+            ))
         );
     }
 
@@ -3634,6 +3654,33 @@ mod tests {
         assert_eq!(
             identity_state.reason_code,
             Some(u64::from(voice_id_reason_codes::VID_FAIL_LOW_CONFIDENCE.0))
+        );
+    }
+
+    #[test]
+    fn at_runtime_gov_24_echo_unsafe_assertion_maps_to_degraded_restricted_identity_state() {
+        let runtime = RuntimeGovernanceRuntime::default();
+        let artifact_governed = artifact_governed_envelope(&runtime);
+        let out = runtime
+            .govern_artifact_activation_identity_state_execution(
+                &artifact_governed,
+                &echo_unsafe_voice_assertion(),
+            )
+            .expect("echo-unsafe assertion must still produce bounded identity state");
+        let identity_state = out
+            .identity_state
+            .as_ref()
+            .expect("identity state must attach for echo-unsafe posture");
+        assert_eq!(
+            identity_state.consistency_level,
+            IdentityVerificationConsistencyLevel::DegradedVerification
+        );
+        assert_eq!(identity_state.trust_tier, IdentityTrustTier::Restricted);
+        assert!(!identity_state.step_up_required);
+        assert_eq!(identity_state.recovery_state, IdentityRecoveryState::None);
+        assert_eq!(
+            identity_state.reason_code,
+            Some(u64::from(voice_id_reason_codes::VID_FAIL_ECHO_UNSAFE.0))
         );
     }
 
