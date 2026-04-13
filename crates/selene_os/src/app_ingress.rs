@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
 use std::cell::RefCell;
+use std::collections::BTreeMap;
 
 use selene_engines::ph1_voice_id::{
     reason_codes as voice_id_reason_codes, simulation_profile_embedding_from_seed,
@@ -21,7 +22,8 @@ use selene_engines::ph1simfinder::{
     FinderSimulationCatalogEntry, Ph1SimFinderRuntime,
 };
 use selene_kernel_contracts::ph1_voice_id::{
-    Ph1VoiceIdRequest, SpeakerId, UserId, VoiceEmbeddingCaptureRef,
+    IdentityTierV2, Ph1VoiceIdRequest, SpeakerId, SpoofLivenessStatus, UserId,
+    VoiceEmbeddingCaptureRef,
     VOICE_ID_ENROLL_COMPLETE_COMMIT, VOICE_ID_ENROLL_SAMPLE_COMMIT, VOICE_ID_ENROLL_START_DRAFT,
 };
 use selene_kernel_contracts::ph1agent::AgentInputPacket;
@@ -683,6 +685,75 @@ impl AppServerIngressRuntime {
 
     pub fn runtime_governance_decision_log_snapshot(&self) -> Vec<GovernanceDecisionLogEntry> {
         self.runtime_governance.decision_log_snapshot()
+    }
+
+    fn governance_reason_code_for_state(
+        &self,
+        governance_state: &GovernanceExecutionState,
+    ) -> Option<String> {
+        let sequence = governance_state
+            .decision_log_ref
+            .as_deref()?
+            .strip_prefix("gov_decision_")?
+            .parse::<u64>()
+            .ok()?;
+        self.runtime_governance_decision_log_snapshot()
+            .into_iter()
+            .find(|entry| entry.sequence == sequence)
+            .map(|entry| entry.reason_code)
+    }
+
+    fn ph1x_fail_closed_respond_payload_metadata(
+        &self,
+        runtime_execution_envelope: &RuntimeExecutionEnvelope,
+    ) -> BTreeMap<String, String> {
+        let mut payload_metadata = BTreeMap::new();
+        let Some(identity_state) = runtime_execution_envelope.identity_state.as_ref() else {
+            return payload_metadata;
+        };
+
+        payload_metadata.insert(
+            "identity_consistency_level".to_string(),
+            identity_consistency_level_literal(identity_state.consistency_level).to_string(),
+        );
+        payload_metadata.insert(
+            "identity_trust_tier".to_string(),
+            identity_trust_tier_literal(identity_state.trust_tier).to_string(),
+        );
+        payload_metadata.insert(
+            "identity_recovery_state".to_string(),
+            identity_recovery_state_literal(identity_state.recovery_state).to_string(),
+        );
+        payload_metadata.insert(
+            "identity_tier_v2".to_string(),
+            identity_tier_v2_literal(identity_state.identity_tier_v2).to_string(),
+        );
+        payload_metadata.insert(
+            "identity_spoof_liveness_status".to_string(),
+            spoof_liveness_status_literal(identity_state.spoof_liveness_status).to_string(),
+        );
+        payload_metadata.insert(
+            "identity_step_up_required".to_string(),
+            identity_state.step_up_required.to_string(),
+        );
+        payload_metadata.insert(
+            "identity_cluster_drift_detected".to_string(),
+            identity_state.cluster_drift_detected.to_string(),
+        );
+        if let Some(reason_code) = identity_reason_code(identity_state) {
+            payload_metadata.insert(
+                "identity_reason_code_hex".to_string(),
+                format!("0x{:X}", reason_code.0),
+            );
+        }
+        if let Some(governance_state) = runtime_execution_envelope.governance_state.as_ref() {
+            if let Some(governance_reason_code) = self.governance_reason_code_for_state(governance_state)
+            {
+                payload_metadata.insert("governance_reason_code".to_string(), governance_reason_code);
+            }
+        }
+
+        payload_metadata
     }
 
     pub fn runtime_law_policy_version(&self) -> &str {
@@ -3388,7 +3459,9 @@ impl AppServerIngressRuntime {
                     normalized_tenant_scope_for_dev_intake(store, actor_user_id, actor_tenant_id)?;
                 let audit_session_id =
                     request_session_id.filter(|session_id| store.get_session(session_id).is_some());
-                let _ = store.ph1x_respond_commit(
+                let payload_metadata =
+                    self.ph1x_fail_closed_respond_payload_metadata(&runtime_execution_envelope);
+                let _ = store.ph1x_respond_commit_with_payload_metadata(
                     dispatch_now,
                     tenant_id,
                     correlation_id,
@@ -3402,6 +3475,7 @@ impl AppServerIngressRuntime {
                         "ph1x_governance_drift_fail_closed:{}:{}:{}",
                         correlation_id.0, turn_id.0, drift_fail_closed.audit_response_kind
                     ),
+                    payload_metadata,
                 )?;
             }
             return Ok(AppVoiceTurnExecutionOutcome {
@@ -3497,7 +3571,9 @@ impl AppServerIngressRuntime {
                     normalized_tenant_scope_for_dev_intake(store, actor_user_id, actor_tenant_id)?;
                 let audit_session_id =
                     request_session_id.filter(|session_id| store.get_session(session_id).is_some());
-                let _ = store.ph1x_respond_commit(
+                let payload_metadata =
+                    self.ph1x_fail_closed_respond_payload_metadata(&out.runtime_execution_envelope);
+                let _ = store.ph1x_respond_commit_with_payload_metadata(
                     dispatch_now,
                     tenant_id,
                     correlation_id,
@@ -3511,6 +3587,7 @@ impl AppServerIngressRuntime {
                         "ph1x_identity_recovery_fail_closed:{}:{}:{}",
                         correlation_id.0, turn_id.0, recovery_fail_closed.audit_response_kind
                     ),
+                    payload_metadata,
                 )?;
             }
             out.next_move = AppVoiceTurnNextMove::Refused;
@@ -3527,7 +3604,9 @@ impl AppServerIngressRuntime {
                     normalized_tenant_scope_for_dev_intake(store, actor_user_id, actor_tenant_id)?;
                 let audit_session_id =
                     request_session_id.filter(|session_id| store.get_session(session_id).is_some());
-                let _ = store.ph1x_respond_commit(
+                let payload_metadata =
+                    self.ph1x_fail_closed_respond_payload_metadata(&out.runtime_execution_envelope);
+                let _ = store.ph1x_respond_commit_with_payload_metadata(
                     dispatch_now,
                     tenant_id,
                     correlation_id,
@@ -3545,6 +3624,7 @@ impl AppServerIngressRuntime {
                         turn_id.0,
                         governance_quarantine_fail_closed.audit_response_kind
                     ),
+                    payload_metadata,
                 )?;
             }
             out.next_move = AppVoiceTurnNextMove::Refused;
@@ -3561,7 +3641,9 @@ impl AppServerIngressRuntime {
                     normalized_tenant_scope_for_dev_intake(store, actor_user_id, actor_tenant_id)?;
                 let audit_session_id =
                     request_session_id.filter(|session_id| store.get_session(session_id).is_some());
-                let _ = store.ph1x_respond_commit(
+                let payload_metadata =
+                    self.ph1x_fail_closed_respond_payload_metadata(&out.runtime_execution_envelope);
+                let _ = store.ph1x_respond_commit_with_payload_metadata(
                     dispatch_now,
                     tenant_id,
                     correlation_id,
@@ -3577,6 +3659,7 @@ impl AppServerIngressRuntime {
                         turn_id.0,
                         identity_posture_fail_closed.audit_response_kind
                     ),
+                    payload_metadata,
                 )?;
             }
             out.next_move = AppVoiceTurnNextMove::Refused;
@@ -3593,7 +3676,9 @@ impl AppServerIngressRuntime {
                     normalized_tenant_scope_for_dev_intake(store, actor_user_id, actor_tenant_id)?;
                 let audit_session_id =
                     request_session_id.filter(|session_id| store.get_session(session_id).is_some());
-                let _ = store.ph1x_respond_commit(
+                let payload_metadata =
+                    self.ph1x_fail_closed_respond_payload_metadata(&out.runtime_execution_envelope);
+                let _ = store.ph1x_respond_commit_with_payload_metadata(
                     dispatch_now,
                     tenant_id,
                     correlation_id,
@@ -3609,6 +3694,7 @@ impl AppServerIngressRuntime {
                         turn_id.0,
                         identity_posture_fail_closed.audit_response_kind
                     ),
+                    payload_metadata,
                 )?;
             }
             out.next_move = AppVoiceTurnNextMove::Refused;
@@ -3625,7 +3711,9 @@ impl AppServerIngressRuntime {
                     normalized_tenant_scope_for_dev_intake(store, actor_user_id, actor_tenant_id)?;
                 let audit_session_id =
                     request_session_id.filter(|session_id| store.get_session(session_id).is_some());
-                let _ = store.ph1x_respond_commit(
+                let payload_metadata =
+                    self.ph1x_fail_closed_respond_payload_metadata(&out.runtime_execution_envelope);
+                let _ = store.ph1x_respond_commit_with_payload_metadata(
                     dispatch_now,
                     tenant_id,
                     correlation_id,
@@ -3641,6 +3729,7 @@ impl AppServerIngressRuntime {
                         turn_id.0,
                         identity_posture_fail_closed.audit_response_kind
                     ),
+                    payload_metadata,
                 )?;
             }
             out.next_move = AppVoiceTurnNextMove::Refused;
@@ -3657,7 +3746,9 @@ impl AppServerIngressRuntime {
                     normalized_tenant_scope_for_dev_intake(store, actor_user_id, actor_tenant_id)?;
                 let audit_session_id =
                     request_session_id.filter(|session_id| store.get_session(session_id).is_some());
-                let _ = store.ph1x_respond_commit(
+                let payload_metadata =
+                    self.ph1x_fail_closed_respond_payload_metadata(&out.runtime_execution_envelope);
+                let _ = store.ph1x_respond_commit_with_payload_metadata(
                     dispatch_now,
                     tenant_id,
                     correlation_id,
@@ -3673,6 +3764,7 @@ impl AppServerIngressRuntime {
                         turn_id.0,
                         identity_posture_fail_closed.audit_response_kind
                     ),
+                    payload_metadata,
                 )?;
             }
             out.next_move = AppVoiceTurnNextMove::Refused;
@@ -3689,7 +3781,9 @@ impl AppServerIngressRuntime {
                     normalized_tenant_scope_for_dev_intake(store, actor_user_id, actor_tenant_id)?;
                 let audit_session_id =
                     request_session_id.filter(|session_id| store.get_session(session_id).is_some());
-                let _ = store.ph1x_respond_commit(
+                let payload_metadata =
+                    self.ph1x_fail_closed_respond_payload_metadata(&out.runtime_execution_envelope);
+                let _ = store.ph1x_respond_commit_with_payload_metadata(
                     dispatch_now,
                     tenant_id,
                     correlation_id,
@@ -3705,6 +3799,7 @@ impl AppServerIngressRuntime {
                         turn_id.0,
                         identity_posture_fail_closed.audit_response_kind
                     ),
+                    payload_metadata,
                 )?;
             }
             out.next_move = AppVoiceTurnNextMove::Refused;
@@ -4765,6 +4860,54 @@ struct GovernanceQuarantineFailClosedBehavior {
     audit_reason_code: ReasonCodeId,
     user_message: &'static str,
     audit_response_kind: &'static str,
+}
+
+fn identity_consistency_level_literal(
+    value: IdentityVerificationConsistencyLevel,
+) -> &'static str {
+    match value {
+        IdentityVerificationConsistencyLevel::StrictVerified => "STRICT_VERIFIED",
+        IdentityVerificationConsistencyLevel::HighConfidenceVerified => {
+            "HIGH_CONFIDENCE_VERIFIED"
+        }
+        IdentityVerificationConsistencyLevel::DegradedVerification => "DEGRADED_VERIFICATION",
+        IdentityVerificationConsistencyLevel::RecoveryRestricted => "RECOVERY_RESTRICTED",
+    }
+}
+
+fn identity_trust_tier_literal(value: IdentityTrustTier) -> &'static str {
+    match value {
+        IdentityTrustTier::Verified => "VERIFIED",
+        IdentityTrustTier::HighConfidence => "HIGH_CONFIDENCE",
+        IdentityTrustTier::Conditional => "CONDITIONAL",
+        IdentityTrustTier::Restricted => "RESTRICTED",
+        IdentityTrustTier::Rejected => "REJECTED",
+    }
+}
+
+fn identity_recovery_state_literal(value: IdentityRecoveryState) -> &'static str {
+    match value {
+        IdentityRecoveryState::None => "NONE",
+        IdentityRecoveryState::ReauthRequired => "REAUTH_REQUIRED",
+        IdentityRecoveryState::ReEnrollmentRequired => "RE_ENROLLMENT_REQUIRED",
+        IdentityRecoveryState::RecoveryRestricted => "RECOVERY_RESTRICTED",
+    }
+}
+
+fn identity_tier_v2_literal(value: IdentityTierV2) -> &'static str {
+    match value {
+        IdentityTierV2::Confirmed => "CONFIRMED",
+        IdentityTierV2::Probable => "PROBABLE",
+        IdentityTierV2::Unknown => "UNKNOWN",
+    }
+}
+
+fn spoof_liveness_status_literal(value: SpoofLivenessStatus) -> &'static str {
+    match value {
+        SpoofLivenessStatus::Live => "LIVE",
+        SpoofLivenessStatus::SuspectedSpoof => "SUSPECTED_SPOOF",
+        SpoofLivenessStatus::Unknown => "UNKNOWN",
+    }
 }
 
 fn identity_reason_code_or(
@@ -6872,6 +7015,121 @@ mod tests {
             .into_iter()
             .find(|entry| entry.sequence == sequence)
             .map(|entry| entry.reason_code)
+    }
+
+    fn ph1x_payload_value<'a>(
+        row: &'a selene_kernel_contracts::ph1j::AuditEvent,
+        key: &str,
+    ) -> Option<&'a str> {
+        row.payload_min
+            .entries
+            .get(&PayloadKey::new(key).unwrap())
+            .map(|value| value.as_str())
+    }
+
+    fn assert_ph1x_payload_absent(
+        row: &selene_kernel_contracts::ph1j::AuditEvent,
+        key: &str,
+    ) {
+        assert_eq!(
+            ph1x_payload_value(row, key),
+            None,
+            "{key} must remain absent from PH1.X fail-closed respond rows",
+        );
+    }
+
+    fn find_ph1x_respond_row<'a>(
+        rows: &'a [&'a selene_kernel_contracts::ph1j::AuditEvent],
+        expected_response_kind: &str,
+    ) -> &'a selene_kernel_contracts::ph1j::AuditEvent {
+        rows.iter()
+            .copied()
+            .find(|row| ph1x_payload_value(row, "response_kind") == Some(expected_response_kind))
+            .unwrap_or_else(|| {
+                panic!(
+                    "{expected_response_kind} fail-closed response must emit PH1.X audit row"
+                )
+            })
+    }
+
+    fn assert_ph1x_fail_closed_respond_payload(
+        runtime: &AppServerIngressRuntime,
+        row: &selene_kernel_contracts::ph1j::AuditEvent,
+        out: &AppVoiceTurnExecutionOutcome,
+        expected_response_kind: &str,
+    ) {
+        assert!(
+            out.ph1x_response.is_some(),
+            "fail-closed PH1.X respond rows must retain the PH1.X response"
+        );
+        let identity_state = out
+            .runtime_execution_envelope
+            .identity_state
+            .as_ref()
+            .expect("identity state must remain attached to fail-closed PH1.X rows");
+        let expected_identity_reason_code_hex =
+            identity_reason_code(identity_state).map(|code| format!("0x{:X}", code.0));
+        let expected_governance_reason_code = out
+            .runtime_execution_envelope
+            .governance_state
+            .as_ref()
+            .and_then(|state| governance_reason_code_for_state(runtime, state));
+
+        assert_eq!(ph1x_payload_value(row, "directive"), Some("respond"));
+        assert_eq!(
+            ph1x_payload_value(row, "response_kind"),
+            Some(expected_response_kind)
+        );
+        assert_eq!(
+            ph1x_payload_value(row, "identity_consistency_level"),
+            Some(identity_consistency_level_literal(identity_state.consistency_level))
+        );
+        assert_eq!(
+            ph1x_payload_value(row, "identity_trust_tier"),
+            Some(identity_trust_tier_literal(identity_state.trust_tier))
+        );
+        assert_eq!(
+            ph1x_payload_value(row, "identity_recovery_state"),
+            Some(identity_recovery_state_literal(identity_state.recovery_state))
+        );
+        assert_eq!(
+            ph1x_payload_value(row, "identity_tier_v2"),
+            Some(identity_tier_v2_literal(identity_state.identity_tier_v2))
+        );
+        assert_eq!(
+            ph1x_payload_value(row, "identity_spoof_liveness_status"),
+            Some(spoof_liveness_status_literal(
+                identity_state.spoof_liveness_status
+            ))
+        );
+        assert_eq!(
+            ph1x_payload_value(row, "identity_step_up_required"),
+            Some(if identity_state.step_up_required {
+                "true"
+            } else {
+                "false"
+            })
+        );
+        assert_eq!(
+            ph1x_payload_value(row, "identity_cluster_drift_detected"),
+            Some(if identity_state.cluster_drift_detected {
+                "true"
+            } else {
+                "false"
+            })
+        );
+        assert_eq!(
+            ph1x_payload_value(row, "identity_reason_code_hex"),
+            expected_identity_reason_code_hex.as_deref()
+        );
+        assert_eq!(
+            ph1x_payload_value(row, "governance_reason_code"),
+            expected_governance_reason_code.as_deref()
+        );
+        assert_ph1x_payload_absent(row, "decision_log_family");
+        assert_ph1x_payload_absent(row, "decision_v1");
+        assert_ph1x_payload_absent(row, "voice_decision");
+        assert_ph1x_payload_absent(row, "voice_reason_code_hex");
     }
 
     fn invite_link_draft_missing_contact(recipient: &str, tenant_id: &str) -> Ph1nResponse {
@@ -9514,15 +9772,27 @@ mod tests {
             Some(voice_id_reason_codes::VID_REAUTH_REQUIRED)
         );
         let response_rows = store.ph1x_audit_rows(CorrelationId(9820));
-        assert!(
-            response_rows.iter().any(|row| {
-                row.payload_min
-                    .entries
-                    .get(&PayloadKey::new("response_kind").unwrap())
-                    .map(|value| value.as_str() == "IDENTITY_REAUTH_REQUIRED_FAIL_CLOSED")
-                    .unwrap_or(false)
-            }),
-            "reauth-required recovery fail-closed response must emit PH1.X audit row"
+        let row =
+            find_ph1x_respond_row(&response_rows, "IDENTITY_REAUTH_REQUIRED_FAIL_CLOSED");
+        assert_ph1x_fail_closed_respond_payload(
+            &runtime,
+            row,
+            &out,
+            "IDENTITY_REAUTH_REQUIRED_FAIL_CLOSED",
+        );
+        assert_eq!(
+            ph1x_payload_value(row, "identity_consistency_level"),
+            Some("RECOVERY_RESTRICTED")
+        );
+        assert_eq!(ph1x_payload_value(row, "identity_trust_tier"), Some("RESTRICTED"));
+        assert_eq!(
+            ph1x_payload_value(row, "identity_recovery_state"),
+            Some("REAUTH_REQUIRED")
+        );
+        assert_eq!(ph1x_payload_value(row, "identity_step_up_required"), Some("true"));
+        assert_eq!(
+            ph1x_payload_value(row, "identity_reason_code_hex"),
+            Some("0x56490007")
         );
     }
 
@@ -9555,15 +9825,22 @@ mod tests {
             Some(voice_id_reason_codes::VID_ENROLLMENT_REQUIRED)
         );
         let response_rows = store.ph1x_audit_rows(CorrelationId(9821));
-        assert!(
-            response_rows.iter().any(|row| {
-                row.payload_min
-                    .entries
-                    .get(&PayloadKey::new("response_kind").unwrap())
-                    .map(|value| value.as_str() == "IDENTITY_REENROLLMENT_REQUIRED_FAIL_CLOSED")
-                    .unwrap_or(false)
-            }),
-            "reenrollment-required recovery fail-closed response must emit PH1.X audit row"
+        let row =
+            find_ph1x_respond_row(&response_rows, "IDENTITY_REENROLLMENT_REQUIRED_FAIL_CLOSED");
+        assert_ph1x_fail_closed_respond_payload(
+            &runtime,
+            row,
+            &out,
+            "IDENTITY_REENROLLMENT_REQUIRED_FAIL_CLOSED",
+        );
+        assert_eq!(
+            ph1x_payload_value(row, "identity_recovery_state"),
+            Some("RE_ENROLLMENT_REQUIRED")
+        );
+        assert_eq!(ph1x_payload_value(row, "identity_step_up_required"), Some("false"));
+        assert_eq!(
+            ph1x_payload_value(row, "identity_reason_code_hex"),
+            Some("0x56490006")
         );
     }
 
@@ -9593,15 +9870,30 @@ mod tests {
         );
         assert_eq!(out.reason_code, Some(voice_id_reason_codes::VID_SPOOF_RISK));
         let response_rows = store.ph1x_audit_rows(CorrelationId(9822));
-        assert!(
-            response_rows.iter().any(|row| {
-                row.payload_min
-                    .entries
-                    .get(&PayloadKey::new("response_kind").unwrap())
-                    .map(|value| value.as_str() == "IDENTITY_SPOOF_RISK_FAIL_CLOSED")
-                    .unwrap_or(false)
-            }),
-            "spoof-risk recovery fail-closed response must emit PH1.X audit row"
+        let row = find_ph1x_respond_row(&response_rows, "IDENTITY_SPOOF_RISK_FAIL_CLOSED");
+        assert_ph1x_fail_closed_respond_payload(
+            &runtime,
+            row,
+            &out,
+            "IDENTITY_SPOOF_RISK_FAIL_CLOSED",
+        );
+        assert_eq!(
+            ph1x_payload_value(row, "identity_consistency_level"),
+            Some("RECOVERY_RESTRICTED")
+        );
+        assert_eq!(ph1x_payload_value(row, "identity_trust_tier"), Some("REJECTED"));
+        assert_eq!(
+            ph1x_payload_value(row, "identity_recovery_state"),
+            Some("RECOVERY_RESTRICTED")
+        );
+        assert_eq!(ph1x_payload_value(row, "identity_step_up_required"), Some("true"));
+        assert_eq!(
+            ph1x_payload_value(row, "identity_spoof_liveness_status"),
+            Some("SUSPECTED_SPOOF")
+        );
+        assert_eq!(
+            ph1x_payload_value(row, "identity_reason_code_hex"),
+            Some("0x56490008")
         );
     }
 
@@ -9634,15 +9926,22 @@ mod tests {
             Some(voice_id_reason_codes::VID_DEVICE_CLAIM_REQUIRED)
         );
         let response_rows = store.ph1x_audit_rows(CorrelationId(9823));
-        assert!(
-            response_rows.iter().any(|row| {
-                row.payload_min
-                    .entries
-                    .get(&PayloadKey::new("response_kind").unwrap())
-                    .map(|value| value.as_str() == "IDENTITY_DEVICE_CLAIM_REQUIRED_FAIL_CLOSED")
-                    .unwrap_or(false)
-            }),
-            "device-claim recovery fail-closed response must emit PH1.X audit row"
+        let row =
+            find_ph1x_respond_row(&response_rows, "IDENTITY_DEVICE_CLAIM_REQUIRED_FAIL_CLOSED");
+        assert_ph1x_fail_closed_respond_payload(
+            &runtime,
+            row,
+            &out,
+            "IDENTITY_DEVICE_CLAIM_REQUIRED_FAIL_CLOSED",
+        );
+        assert_eq!(
+            ph1x_payload_value(row, "identity_recovery_state"),
+            Some("REAUTH_REQUIRED")
+        );
+        assert_eq!(ph1x_payload_value(row, "identity_step_up_required"), Some("true"));
+        assert_eq!(
+            ph1x_payload_value(row, "identity_reason_code_hex"),
+            Some("0x56490009")
         );
     }
 
@@ -9676,15 +9975,21 @@ mod tests {
             Some(voice_id_reason_codes::VID_FAIL_PROFILE_NOT_ENROLLED)
         );
         let response_rows = store.ph1x_audit_rows(CorrelationId(9824));
-        assert!(
-            response_rows.iter().any(|row| {
-                row.payload_min
-                    .entries
-                    .get(&PayloadKey::new("response_kind").unwrap())
-                    .map(|value| value.as_str() == "IDENTITY_PROFILE_NOT_ENROLLED_FAIL_CLOSED")
-                    .unwrap_or(false)
-            }),
-            "profile-not-enrolled recovery fail-closed response must emit PH1.X audit row"
+        let row =
+            find_ph1x_respond_row(&response_rows, "IDENTITY_PROFILE_NOT_ENROLLED_FAIL_CLOSED");
+        assert_ph1x_fail_closed_respond_payload(
+            &runtime,
+            row,
+            &out,
+            "IDENTITY_PROFILE_NOT_ENROLLED_FAIL_CLOSED",
+        );
+        assert_eq!(
+            ph1x_payload_value(row, "identity_recovery_state"),
+            Some("RE_ENROLLMENT_REQUIRED")
+        );
+        assert_eq!(
+            ph1x_payload_value(row, "identity_reason_code_hex"),
+            Some("0x56490005")
         );
     }
 
@@ -9748,18 +10053,25 @@ mod tests {
             Some(crate::runtime_governance::reason_codes::GOV_SUBSYSTEM_CERTIFICATION_REGRESSED)
         );
         let response_rows = store.ph1x_audit_rows(CorrelationId(9825));
-        assert!(
-            response_rows.iter().any(|row| {
-                row.payload_min
-                    .entries
-                    .get(&PayloadKey::new("response_kind").unwrap())
-                    .map(|value| {
-                        value.as_str() == "IDENTITY_GOVERNANCE_QUARANTINE_FAIL_CLOSED"
-                    })
-                    .unwrap_or(false)
-            }),
-            "governance-quarantine recovery fail-closed response must emit PH1.X audit row"
+        let row =
+            find_ph1x_respond_row(&response_rows, "IDENTITY_GOVERNANCE_QUARANTINE_FAIL_CLOSED");
+        assert_ph1x_fail_closed_respond_payload(
+            &runtime,
+            row,
+            &out,
+            "IDENTITY_GOVERNANCE_QUARANTINE_FAIL_CLOSED",
         );
+        assert_eq!(
+            ph1x_payload_value(row, "identity_consistency_level"),
+            Some("RECOVERY_RESTRICTED")
+        );
+        assert_eq!(ph1x_payload_value(row, "identity_trust_tier"), Some("RESTRICTED"));
+        assert_eq!(
+            ph1x_payload_value(row, "identity_recovery_state"),
+            Some("RECOVERY_RESTRICTED")
+        );
+        assert_eq!(ph1x_payload_value(row, "identity_step_up_required"), Some("true"));
+        assert_ph1x_payload_absent(row, "identity_reason_code_hex");
     }
 
     #[test]
@@ -9806,15 +10118,17 @@ mod tests {
                 .map(|response| response.reason_code)
         );
         let response_rows = store.ph1x_audit_rows(CorrelationId(9824));
-        assert!(
-            response_rows.iter().any(|row| {
-                row.payload_min
-                    .entries
-                    .get(&PayloadKey::new("response_kind").unwrap())
-                    .map(|value| value.as_str() == "GOVERNANCE_CLUSTER_DRIFT_FAIL_CLOSED")
-                    .unwrap_or(false)
-            }),
-            "cluster-drift fail-closed response must emit PH1.X audit row"
+        let row =
+            find_ph1x_respond_row(&response_rows, "GOVERNANCE_CLUSTER_DRIFT_FAIL_CLOSED");
+        assert_ph1x_fail_closed_respond_payload(
+            &runtime,
+            row,
+            &out,
+            "GOVERNANCE_CLUSTER_DRIFT_FAIL_CLOSED",
+        );
+        assert_eq!(
+            ph1x_payload_value(row, "identity_cluster_drift_detected"),
+            Some("true")
         );
     }
 
@@ -9851,15 +10165,16 @@ mod tests {
                 .map(|response| response.reason_code)
         );
         let response_rows = store.ph1x_audit_rows(CorrelationId(9825));
-        assert!(
-            response_rows.iter().any(|row| {
-                row.payload_min
-                    .entries
-                    .get(&PayloadKey::new("response_kind").unwrap())
-                    .map(|value| value.as_str() == "GOVERNANCE_POLICY_DRIFT_FAIL_CLOSED")
-                    .unwrap_or(false)
-            }),
-            "policy-version drift fail-closed response must emit PH1.X audit row"
+        let row = find_ph1x_respond_row(&response_rows, "GOVERNANCE_POLICY_DRIFT_FAIL_CLOSED");
+        assert_ph1x_fail_closed_respond_payload(
+            &runtime,
+            row,
+            &out,
+            "GOVERNANCE_POLICY_DRIFT_FAIL_CLOSED",
+        );
+        assert_eq!(
+            ph1x_payload_value(row, "identity_cluster_drift_detected"),
+            Some("true")
         );
     }
 
@@ -9892,15 +10207,24 @@ mod tests {
             Some(voice_id_reason_codes::VID_FAIL_LOW_CONFIDENCE)
         );
         let response_rows = store.ph1x_audit_rows(CorrelationId(9826));
-        assert!(
-            response_rows.iter().any(|row| {
-                row.payload_min
-                    .entries
-                    .get(&PayloadKey::new("response_kind").unwrap())
-                    .map(|value| value.as_str() == "IDENTITY_LOW_CONFIDENCE_FAIL_CLOSED")
-                    .unwrap_or(false)
-            }),
-            "low-confidence fail-closed response must emit PH1.X audit row"
+        let row =
+            find_ph1x_respond_row(&response_rows, "IDENTITY_LOW_CONFIDENCE_FAIL_CLOSED");
+        assert_ph1x_fail_closed_respond_payload(
+            &runtime,
+            row,
+            &out,
+            "IDENTITY_LOW_CONFIDENCE_FAIL_CLOSED",
+        );
+        assert_eq!(
+            ph1x_payload_value(row, "identity_consistency_level"),
+            Some("DEGRADED_VERIFICATION")
+        );
+        assert_eq!(ph1x_payload_value(row, "identity_trust_tier"), Some("CONDITIONAL"));
+        assert_eq!(ph1x_payload_value(row, "identity_recovery_state"), Some("NONE"));
+        assert_eq!(ph1x_payload_value(row, "identity_step_up_required"), Some("false"));
+        assert_eq!(
+            ph1x_payload_value(row, "identity_reason_code_hex"),
+            Some("0x56490002")
         );
     }
 
@@ -9933,15 +10257,23 @@ mod tests {
             Some(voice_id_reason_codes::VID_FAIL_ECHO_UNSAFE)
         );
         let response_rows = store.ph1x_audit_rows(CorrelationId(9827));
-        assert!(
-            response_rows.iter().any(|row| {
-                row.payload_min
-                    .entries
-                    .get(&PayloadKey::new("response_kind").unwrap())
-                    .map(|value| value.as_str() == "IDENTITY_ECHO_UNSAFE_FAIL_CLOSED")
-                    .unwrap_or(false)
-            }),
-            "echo-unsafe fail-closed response must emit PH1.X audit row"
+        let row = find_ph1x_respond_row(&response_rows, "IDENTITY_ECHO_UNSAFE_FAIL_CLOSED");
+        assert_ph1x_fail_closed_respond_payload(
+            &runtime,
+            row,
+            &out,
+            "IDENTITY_ECHO_UNSAFE_FAIL_CLOSED",
+        );
+        assert_eq!(
+            ph1x_payload_value(row, "identity_consistency_level"),
+            Some("DEGRADED_VERIFICATION")
+        );
+        assert_eq!(ph1x_payload_value(row, "identity_trust_tier"), Some("RESTRICTED"));
+        assert_eq!(ph1x_payload_value(row, "identity_recovery_state"), Some("NONE"));
+        assert_eq!(ph1x_payload_value(row, "identity_step_up_required"), Some("false"));
+        assert_eq!(
+            ph1x_payload_value(row, "identity_reason_code_hex"),
+            Some("0x56490004")
         );
     }
 
@@ -9974,15 +10306,23 @@ mod tests {
             Some(voice_id_reason_codes::VID_FAIL_NO_SPEECH)
         );
         let response_rows = store.ph1x_audit_rows(CorrelationId(9828));
-        assert!(
-            response_rows.iter().any(|row| {
-                row.payload_min
-                    .entries
-                    .get(&PayloadKey::new("response_kind").unwrap())
-                    .map(|value| value.as_str() == "IDENTITY_NO_SPEECH_FAIL_CLOSED")
-                    .unwrap_or(false)
-            }),
-            "no-speech fail-closed response must emit PH1.X audit row"
+        let row = find_ph1x_respond_row(&response_rows, "IDENTITY_NO_SPEECH_FAIL_CLOSED");
+        assert_ph1x_fail_closed_respond_payload(
+            &runtime,
+            row,
+            &out,
+            "IDENTITY_NO_SPEECH_FAIL_CLOSED",
+        );
+        assert_eq!(
+            ph1x_payload_value(row, "identity_consistency_level"),
+            Some("DEGRADED_VERIFICATION")
+        );
+        assert_eq!(ph1x_payload_value(row, "identity_trust_tier"), Some("RESTRICTED"));
+        assert_eq!(ph1x_payload_value(row, "identity_recovery_state"), Some("NONE"));
+        assert_eq!(ph1x_payload_value(row, "identity_step_up_required"), Some("false"));
+        assert_eq!(
+            ph1x_payload_value(row, "identity_reason_code_hex"),
+            Some("0x56490001")
         );
     }
 
@@ -10015,15 +10355,24 @@ mod tests {
             Some(voice_id_reason_codes::VID_FAIL_MULTI_SPEAKER_PRESENT)
         );
         let response_rows = store.ph1x_audit_rows(CorrelationId(9829));
-        assert!(
-            response_rows.iter().any(|row| {
-                row.payload_min
-                    .entries
-                    .get(&PayloadKey::new("response_kind").unwrap())
-                    .map(|value| value.as_str() == "IDENTITY_MULTI_SPEAKER_FAIL_CLOSED")
-                    .unwrap_or(false)
-            }),
-            "multi-speaker fail-closed response must emit PH1.X audit row"
+        let row =
+            find_ph1x_respond_row(&response_rows, "IDENTITY_MULTI_SPEAKER_FAIL_CLOSED");
+        assert_ph1x_fail_closed_respond_payload(
+            &runtime,
+            row,
+            &out,
+            "IDENTITY_MULTI_SPEAKER_FAIL_CLOSED",
+        );
+        assert_eq!(
+            ph1x_payload_value(row, "identity_consistency_level"),
+            Some("DEGRADED_VERIFICATION")
+        );
+        assert_eq!(ph1x_payload_value(row, "identity_trust_tier"), Some("RESTRICTED"));
+        assert_eq!(ph1x_payload_value(row, "identity_recovery_state"), Some("NONE"));
+        assert_eq!(ph1x_payload_value(row, "identity_step_up_required"), Some("false"));
+        assert_eq!(
+            ph1x_payload_value(row, "identity_reason_code_hex"),
+            Some("0x56490003")
         );
     }
 
@@ -10056,15 +10405,24 @@ mod tests {
             Some(voice_id_reason_codes::VID_FAIL_GRAY_ZONE_MARGIN)
         );
         let response_rows = store.ph1x_audit_rows(CorrelationId(9830));
-        assert!(
-            response_rows.iter().any(|row| {
-                row.payload_min
-                    .entries
-                    .get(&PayloadKey::new("response_kind").unwrap())
-                    .map(|value| value.as_str() == "IDENTITY_GRAY_ZONE_MARGIN_FAIL_CLOSED")
-                    .unwrap_or(false)
-            }),
-            "gray-zone-margin fail-closed response must emit PH1.X audit row"
+        let row =
+            find_ph1x_respond_row(&response_rows, "IDENTITY_GRAY_ZONE_MARGIN_FAIL_CLOSED");
+        assert_ph1x_fail_closed_respond_payload(
+            &runtime,
+            row,
+            &out,
+            "IDENTITY_GRAY_ZONE_MARGIN_FAIL_CLOSED",
+        );
+        assert_eq!(
+            ph1x_payload_value(row, "identity_consistency_level"),
+            Some("DEGRADED_VERIFICATION")
+        );
+        assert_eq!(ph1x_payload_value(row, "identity_trust_tier"), Some("CONDITIONAL"));
+        assert_eq!(ph1x_payload_value(row, "identity_recovery_state"), Some("NONE"));
+        assert_eq!(ph1x_payload_value(row, "identity_step_up_required"), Some("false"));
+        assert_eq!(
+            ph1x_payload_value(row, "identity_reason_code_hex"),
+            Some("0x5649000A")
         );
     }
 

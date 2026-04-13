@@ -347,6 +347,179 @@ fn at_x_db_05_interrupt_branch_reason_codes_are_auditable() {
 }
 
 #[test]
+fn at_x_db_07_respond_commit_metadata_merges_without_overwriting_base_keys() {
+    let mut s = Ph1fStore::new_in_memory();
+
+    let u = user("tenant_a:user_1");
+    let d = device("tenant_a_device_1");
+    seed_identity_device(&mut s, u.clone(), d.clone());
+
+    let corr = CorrelationId(28001);
+    let mut payload_metadata = std::collections::BTreeMap::new();
+    payload_metadata.insert(
+        "identity_consistency_level".to_string(),
+        "DEGRADED_VERIFICATION".to_string(),
+    );
+    payload_metadata.insert("identity_trust_tier".to_string(), "CONDITIONAL".to_string());
+    payload_metadata.insert("identity_step_up_required".to_string(), "false".to_string());
+
+    s.ph1x_respond_commit_row_with_payload_metadata(
+        MonotonicTimeNs(600),
+        "tenant_a".to_string(),
+        corr,
+        TurnId(1),
+        None,
+        u.clone(),
+        d.clone(),
+        "IDENTITY_LOW_CONFIDENCE_FAIL_CLOSED".to_string(),
+        ReasonCodeId(0x5800_6001),
+        "x-metadata-respond".to_string(),
+        payload_metadata,
+    )
+    .expect("respond rows should accept additive metadata");
+
+    let rows = s.ph1x_audit_rows(corr);
+    assert_eq!(rows.len(), 1);
+    let payload = &rows[0].payload_min.entries;
+    assert_eq!(
+        payload
+            .get(&PayloadKey::new("directive").unwrap())
+            .expect("directive payload key must exist")
+            .as_str(),
+        "respond"
+    );
+    assert_eq!(
+        payload
+            .get(&PayloadKey::new("response_kind").unwrap())
+            .expect("response_kind payload key must exist")
+            .as_str(),
+        "IDENTITY_LOW_CONFIDENCE_FAIL_CLOSED"
+    );
+    assert_eq!(
+        payload
+            .get(&PayloadKey::new("identity_consistency_level").unwrap())
+            .expect("identity_consistency_level payload key must exist")
+            .as_str(),
+        "DEGRADED_VERIFICATION"
+    );
+    assert_eq!(
+        payload
+            .get(&PayloadKey::new("identity_trust_tier").unwrap())
+            .expect("identity_trust_tier payload key must exist")
+            .as_str(),
+        "CONDITIONAL"
+    );
+    assert_eq!(
+        payload
+            .get(&PayloadKey::new("identity_step_up_required").unwrap())
+            .expect("identity_step_up_required payload key must exist")
+            .as_str(),
+        "false"
+    );
+
+    let mut duplicate_base_key = std::collections::BTreeMap::new();
+    duplicate_base_key.insert("response_kind".to_string(), "OVERRIDE".to_string());
+    let err = s
+        .ph1x_respond_commit_row_with_payload_metadata(
+            MonotonicTimeNs(601),
+            "tenant_a".to_string(),
+            CorrelationId(28002),
+            TurnId(1),
+            None,
+            u,
+            d,
+            "IDENTITY_LOW_CONFIDENCE_FAIL_CLOSED".to_string(),
+            ReasonCodeId(0x5800_6002),
+            "x-metadata-duplicate-response-kind".to_string(),
+            duplicate_base_key,
+        )
+        .expect_err("duplicate base payload keys must be rejected");
+    assert!(matches!(err, StorageError::ContractViolation(_)));
+}
+
+#[test]
+fn at_x_db_08_respond_commit_metadata_preserves_idempotency_and_first_payload() {
+    let mut s = Ph1fStore::new_in_memory();
+
+    let u = user("tenant_a:user_1");
+    let d = device("tenant_a_device_1");
+    seed_identity_device(&mut s, u.clone(), d.clone());
+
+    let corr = CorrelationId(28003);
+    let mut first_payload_metadata = std::collections::BTreeMap::new();
+    first_payload_metadata.insert(
+        "identity_reason_code_hex".to_string(),
+        "0x58006003".to_string(),
+    );
+    first_payload_metadata.insert("identity_step_up_required".to_string(), "true".to_string());
+
+    let first = s
+        .ph1x_respond_commit_row_with_payload_metadata(
+            MonotonicTimeNs(610),
+            "tenant_a".to_string(),
+            corr,
+            TurnId(1),
+            None,
+            u.clone(),
+            d.clone(),
+            "IDENTITY_SPOOF_RISK_FAIL_CLOSED".to_string(),
+            ReasonCodeId(0x5800_6003),
+            "x-metadata-idem".to_string(),
+            first_payload_metadata,
+        )
+        .expect("first metadata-bearing respond row must commit");
+
+    let mut second_payload_metadata = std::collections::BTreeMap::new();
+    second_payload_metadata.insert(
+        "identity_reason_code_hex".to_string(),
+        "0x58006004".to_string(),
+    );
+    second_payload_metadata.insert("identity_step_up_required".to_string(), "false".to_string());
+
+    let second = s
+        .ph1x_respond_commit_row_with_payload_metadata(
+            MonotonicTimeNs(611),
+            "tenant_a".to_string(),
+            corr,
+            TurnId(2),
+            None,
+            u,
+            d,
+            "IDENTITY_LOW_CONFIDENCE_FAIL_CLOSED".to_string(),
+            ReasonCodeId(0x5800_6004),
+            "x-metadata-idem".to_string(),
+            second_payload_metadata,
+        )
+        .expect("duplicate idempotency key must dedupe to the first row");
+
+    assert_eq!(first, second);
+    let rows = s.ph1x_audit_rows(corr);
+    assert_eq!(rows.len(), 1);
+    let payload = &rows[0].payload_min.entries;
+    assert_eq!(
+        payload
+            .get(&PayloadKey::new("response_kind").unwrap())
+            .expect("response_kind payload key must exist")
+            .as_str(),
+        "IDENTITY_SPOOF_RISK_FAIL_CLOSED"
+    );
+    assert_eq!(
+        payload
+            .get(&PayloadKey::new("identity_reason_code_hex").unwrap())
+            .expect("identity_reason_code_hex payload key must exist")
+            .as_str(),
+        "0x58006003"
+    );
+    assert_eq!(
+        payload
+            .get(&PayloadKey::new("identity_step_up_required").unwrap())
+            .expect("identity_step_up_required payload key must exist")
+            .as_str(),
+        "true"
+    );
+}
+
+#[test]
 fn at_x_db_06_thread_state_round_trip_is_append_only_and_idempotent() {
     let mut s = Ph1fStore::new_in_memory();
 

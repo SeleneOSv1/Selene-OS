@@ -1063,6 +1063,22 @@ pub trait Ph1xConversationRepo {
     ) -> Result<AuditEventId, StorageError>;
 
     #[allow(clippy::too_many_arguments)]
+    fn ph1x_respond_commit_row_with_payload_metadata(
+        &mut self,
+        now: MonotonicTimeNs,
+        tenant_id: String,
+        correlation_id: CorrelationId,
+        turn_id: TurnId,
+        session_id: Option<SessionId>,
+        user_id: UserId,
+        device_id: DeviceId,
+        response_kind: String,
+        reason_code: ReasonCodeId,
+        idempotency_key: String,
+        payload_metadata: BTreeMap<String, String>,
+    ) -> Result<AuditEventId, StorageError>;
+
+    #[allow(clippy::too_many_arguments)]
     fn ph1x_dispatch_commit_row(
         &mut self,
         now: MonotonicTimeNs,
@@ -3544,6 +3560,35 @@ impl Ph1xConversationRepo for Ph1fStore {
             response_kind,
             reason_code,
             idempotency_key,
+        )
+    }
+
+    fn ph1x_respond_commit_row_with_payload_metadata(
+        &mut self,
+        now: MonotonicTimeNs,
+        tenant_id: String,
+        correlation_id: CorrelationId,
+        turn_id: TurnId,
+        session_id: Option<SessionId>,
+        user_id: UserId,
+        device_id: DeviceId,
+        response_kind: String,
+        reason_code: ReasonCodeId,
+        idempotency_key: String,
+        payload_metadata: BTreeMap<String, String>,
+    ) -> Result<AuditEventId, StorageError> {
+        self.ph1x_respond_commit_with_payload_metadata(
+            now,
+            tenant_id,
+            correlation_id,
+            turn_id,
+            session_id,
+            user_id,
+            device_id,
+            response_kind,
+            reason_code,
+            idempotency_key,
+            payload_metadata,
         )
     }
 

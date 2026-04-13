@@ -19156,18 +19156,63 @@ impl Ph1fStore {
         reason_code: ReasonCodeId,
         idempotency_key: String,
     ) -> Result<AuditEventId, StorageError> {
+        self.ph1x_respond_commit_with_payload_metadata(
+            now,
+            tenant_id,
+            correlation_id,
+            turn_id,
+            session_id,
+            user_id,
+            device_id,
+            response_kind,
+            reason_code,
+            idempotency_key,
+            BTreeMap::new(),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn ph1x_respond_commit_with_payload_metadata(
+        &mut self,
+        now: MonotonicTimeNs,
+        tenant_id: String,
+        correlation_id: CorrelationId,
+        turn_id: TurnId,
+        session_id: Option<SessionId>,
+        user_id: UserId,
+        device_id: DeviceId,
+        response_kind: String,
+        reason_code: ReasonCodeId,
+        idempotency_key: String,
+        payload_metadata: BTreeMap<String, String>,
+    ) -> Result<AuditEventId, StorageError> {
         Self::validate_ph1x_tenant_id(&tenant_id)?;
         Self::validate_ph1x_idempotency("ph1x.idempotency_key", &idempotency_key)?;
         Self::validate_ph1x_bounded_text("ph1x.response_kind", &response_kind, 64)?;
         self.validate_ph1x_scope_and_bindings(&tenant_id, &user_id, &device_id, session_id)?;
 
-        let payload = AuditPayloadMin::v1(BTreeMap::from([
+        let mut payload_entries = BTreeMap::from([
             (PayloadKey::new("directive")?, PayloadValue::new("respond")?),
             (
                 PayloadKey::new("response_kind")?,
                 PayloadValue::new(response_kind)?,
             ),
-        ]))?;
+        ]);
+        for (key, value) in payload_metadata {
+            Self::validate_ph1x_bounded_text("ph1x.payload_metadata.key", &key, 64)?;
+            Self::validate_ph1x_bounded_text("ph1x.payload_metadata.value", &value, 128)?;
+            let payload_key = PayloadKey::new(&key)?;
+            if payload_entries.contains_key(&payload_key) {
+                return Err(StorageError::ContractViolation(
+                    ContractViolation::InvalidValue {
+                        field: "ph1x.payload_metadata.key",
+                        reason: "must not duplicate base payload keys",
+                    },
+                ));
+            }
+            payload_entries.insert(payload_key, PayloadValue::new(value)?);
+        }
+        let payload = AuditPayloadMin::v1(payload_entries)?;
 
         let input = AuditEventInput::v1(
             now,
