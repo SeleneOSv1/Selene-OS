@@ -6,8 +6,8 @@ use selene_kernel_contracts::ph1_voice_id::UserId;
 use selene_kernel_contracts::ph1j::{
     AuditEngine, AuditEventInput, AuditEventType, AuditPayloadMin, AuditSeverity,
     CanonicalProofRecordInput, CorrelationId, DeviceId, PayloadKey, PayloadValue,
-    ProofProtectedActionClass, ProofRetentionClass, ProofSignerIdentityMetadata,
-    ProofWriteOutcome, TurnId,
+    ProofProtectedActionClass, ProofRetentionClass, ProofSignerIdentityMetadata, ProofWriteOutcome,
+    TurnId,
 };
 use selene_kernel_contracts::ph1l::SessionId;
 use selene_kernel_contracts::ph1simcat::{SimulationId, SimulationVersion};
@@ -68,6 +68,17 @@ fn payload_with_gate(gate: &str) -> AuditPayloadMin {
         PayloadValue::new(gate).unwrap(),
     )]))
     .unwrap()
+}
+
+fn payload_with_entry_count(entry_count: usize) -> AuditPayloadMin {
+    let mut entries = BTreeMap::new();
+    for i in 0..entry_count {
+        entries.insert(
+            PayloadKey::new(format!("k{i}")).unwrap(),
+            PayloadValue::new("v").unwrap(),
+        );
+    }
+    AuditPayloadMin::v1(entries).unwrap()
 }
 
 fn proof_input(
@@ -306,6 +317,35 @@ fn at_j_db_04_ledger_only_no_current_rebuild_required() {
 }
 
 #[test]
+fn at_j_db_07_append_audit_row_accepts_twenty_four_entry_payload() {
+    let mut s = store_with_identity_device_session();
+    s.append_audit_row(
+        AuditEventInput::v1(
+            MonotonicTimeNs(41),
+            Some("tenant_a".to_string()),
+            Some("wo_24".to_string()),
+            Some(SessionId(1)),
+            Some(user()),
+            Some(device()),
+            AuditEngine::Ph1J,
+            AuditEventType::Other,
+            ReasonCodeId(0x4A00_0031),
+            AuditSeverity::Info,
+            CorrelationId(301),
+            TurnId(1),
+            payload_with_entry_count(24),
+            None,
+            Some("idem_payload_24".to_string()),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+
+    assert_eq!(s.audit_rows().len(), 1);
+    assert_eq!(s.audit_rows()[0].payload_min.entries.len(), 24);
+}
+
+#[test]
 fn at_j_db_05_canonical_proof_record_is_append_only_and_hash_chained() {
     let mut s = store_with_identity_device_session();
     let receipt_1 = s
@@ -355,7 +395,9 @@ fn at_j_db_06_bounded_proof_reconstruction_by_request_and_session_turn() {
     )
     .unwrap();
 
-    let by_request = s.proof_rows_by_request_id_bounded("req_reconstruct", 1).unwrap();
+    let by_request = s
+        .proof_rows_by_request_id_bounded("req_reconstruct", 1)
+        .unwrap();
     assert_eq!(by_request.len(), 1);
     assert_eq!(by_request[0].request_id, "req_reconstruct");
 
@@ -363,8 +405,12 @@ fn at_j_db_06_bounded_proof_reconstruction_by_request_and_session_turn() {
         .proof_rows_by_session_turn_bounded(SessionId(1), TurnId(1), 2)
         .unwrap();
     assert_eq!(by_session_turn.len(), 2);
-    assert!(by_session_turn.iter().all(|row| row.session_id == Some(SessionId(1))));
-    assert!(by_session_turn.iter().all(|row| row.turn_id == Some(TurnId(1))));
+    assert!(by_session_turn
+        .iter()
+        .all(|row| row.session_id == Some(SessionId(1))));
+    assert!(by_session_turn
+        .iter()
+        .all(|row| row.turn_id == Some(TurnId(1))));
 }
 
 #[test]
@@ -402,6 +448,9 @@ fn at_j_db_08_proof_idempotency_reuses_existing_record() {
         )
         .unwrap();
     assert_eq!(receipt_1.proof_event_id, receipt_2.proof_event_id);
-    assert_eq!(receipt_2.proof_write_outcome, ProofWriteOutcome::ReusedExisting);
+    assert_eq!(
+        receipt_2.proof_write_outcome,
+        ProofWriteOutcome::ReusedExisting
+    );
     assert_eq!(s.proof_rows().len(), 1);
 }

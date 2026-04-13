@@ -2,20 +2,20 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::ph1art::{
-    ArtifactIdentityRef, ArtifactTrustBindingRef, ArtifactTrustDecisionId,
-    ArtifactTrustProofEntry, ArtifactTrustProofEntryRef, ArtifactTrustProofRecordRef,
-    ArtifactVerificationFailureClass, ArtifactVerificationOutcome,
-    HistoricalTrustSnapshotRef, NegativeVerificationResultRef, TrustPolicySnapshotRef,
-    TrustSetSnapshotRef, VerificationBasisFingerprint,
-};
 use crate::ph1_voice_id::UserId;
+use crate::ph1art::{
+    ArtifactIdentityRef, ArtifactTrustBindingRef, ArtifactTrustDecisionId, ArtifactTrustProofEntry,
+    ArtifactTrustProofEntryRef, ArtifactTrustProofRecordRef, ArtifactVerificationFailureClass,
+    ArtifactVerificationOutcome, HistoricalTrustSnapshotRef, NegativeVerificationResultRef,
+    TrustPolicySnapshotRef, TrustSetSnapshotRef, VerificationBasisFingerprint,
+};
 use crate::ph1l::SessionId;
 use crate::ph1simcat::{SimulationId, SimulationVersion};
 use crate::{ContractViolation, MonotonicTimeNs, ReasonCodeId, SchemaVersion, Validate};
 
 pub const PH1J_CONTRACT_VERSION: SchemaVersion = SchemaVersion(1);
 pub const PH1J_PROOF_SCHEMA_VERSION: SchemaVersion = SchemaVersion(3);
+pub const AUDIT_PAYLOAD_MIN_MAX_ENTRIES: usize = 24;
 
 fn validate_opt_id(
     field: &'static str,
@@ -511,10 +511,10 @@ impl Validate for AuditPayloadMin {
                 reason: "must match PH1J_CONTRACT_VERSION",
             });
         }
-        if self.entries.len() > 16 {
+        if self.entries.len() > AUDIT_PAYLOAD_MIN_MAX_ENTRIES {
             return Err(ContractViolation::InvalidValue {
                 field: "audit_payload_min.entries",
-                reason: "must be <= 16 entries",
+                reason: "must be <= 24 entries",
             });
         }
         let mut total_bytes: usize = 0;
@@ -1899,8 +1899,7 @@ impl CanonicalProofRecord {
                         .verification_basis_fingerprint
                         .clone(),
                     artifact_verification_outcome: entry.artifact_verification_outcome,
-                    artifact_verification_failure_class: entry
-                        .artifact_verification_failure_class,
+                    artifact_verification_failure_class: entry.artifact_verification_failure_class,
                     negative_verification_result_ref: entry
                         .linkage
                         .negative_verification_result_ref
@@ -2034,7 +2033,8 @@ impl Validate for CanonicalProofRecord {
         let mut authority_decision_ids = BTreeSet::new();
         for (index, artifact_trust_entry) in self.artifact_trust_entries.iter().enumerate() {
             artifact_trust_entry.validate()?;
-            if !authority_decision_ids.insert(artifact_trust_entry.linkage.authority_decision_id.clone())
+            if !authority_decision_ids
+                .insert(artifact_trust_entry.linkage.authority_decision_id.clone())
             {
                 return Err(ContractViolation::InvalidValue {
                     field: "canonical_proof_record.artifact_trust_entries",
@@ -2047,8 +2047,10 @@ impl Validate for CanonicalProofRecord {
                     reason: "proof_record_ref must match proof_event_id-derived record ref",
                 });
             }
-            let expected_proof_entry_ref =
-                artifact_trust_proof_entry_ref_for_event_id_and_ordinal(self.proof_event_id, index)?;
+            let expected_proof_entry_ref = artifact_trust_proof_entry_ref_for_event_id_and_ordinal(
+                self.proof_event_id,
+                index,
+            )?;
             if artifact_trust_entry.linkage.proof_entry_ref != expected_proof_entry_ref {
                 return Err(ContractViolation::InvalidValue {
                     field: "canonical_proof_record.artifact_trust_entries",
@@ -2133,15 +2135,52 @@ mod tests {
     use super::*;
 
     #[test]
-    fn payload_rejects_too_many_entries() {
+    fn payload_accepts_twenty_four_entries() {
         let mut m: BTreeMap<PayloadKey, PayloadValue> = BTreeMap::new();
-        for i in 0..17 {
+        for i in 0..AUDIT_PAYLOAD_MIN_MAX_ENTRIES {
             m.insert(
                 PayloadKey::new(format!("k{i}")).unwrap(),
                 PayloadValue::new("v").unwrap(),
             );
         }
-        assert!(AuditPayloadMin::v1(m).is_err());
+        let payload = AuditPayloadMin::v1(m).expect("24-entry payload must be accepted");
+        assert_eq!(payload.entries.len(), AUDIT_PAYLOAD_MIN_MAX_ENTRIES);
+    }
+
+    #[test]
+    fn payload_rejects_twenty_five_entries() {
+        let mut m: BTreeMap<PayloadKey, PayloadValue> = BTreeMap::new();
+        for i in 0..(AUDIT_PAYLOAD_MIN_MAX_ENTRIES + 1) {
+            m.insert(
+                PayloadKey::new(format!("k{i}")).unwrap(),
+                PayloadValue::new("v").unwrap(),
+            );
+        }
+        let err = AuditPayloadMin::v1(m).expect_err("25-entry payload must be rejected");
+        match err {
+            ContractViolation::InvalidValue { field, reason } => {
+                assert_eq!(field, "audit_payload_min.entries");
+                assert_eq!(reason, "must be <= 24 entries");
+            }
+            _ => panic!("expected InvalidValue"),
+        }
+
+        let mut oversized_payload = BTreeMap::new();
+        for i in 0..8 {
+            oversized_payload.insert(
+                PayloadKey::new(format!("k{i}")).unwrap(),
+                PayloadValue::new("v".repeat(256)).unwrap(),
+            );
+        }
+        let oversized_err =
+            AuditPayloadMin::v1(oversized_payload).expect_err("oversized payload must be rejected");
+        match oversized_err {
+            ContractViolation::InvalidValue { field, reason } => {
+                assert_eq!(field, "audit_payload_min");
+                assert_eq!(reason, "total payload size must be <= 2048 bytes");
+            }
+            _ => panic!("expected InvalidValue"),
+        }
     }
 
     #[test]
@@ -2267,9 +2306,7 @@ mod tests {
             ),
             trust_policy_snapshot_ref: TrustPolicySnapshotRef("policy.snap.1".to_string()),
             trust_set_snapshot_ref: TrustSetSnapshotRef("trust.set.snap.1".to_string()),
-            verification_basis_fingerprint: VerificationBasisFingerprint(
-                "basis.fp.1".to_string(),
-            ),
+            verification_basis_fingerprint: VerificationBasisFingerprint("basis.fp.1".to_string()),
             artifact_verification_outcome: ArtifactVerificationOutcome::Failed,
             artifact_verification_failure_class: None,
             negative_verification_result_ref: Some(NegativeVerificationResultRef(
@@ -2328,16 +2365,12 @@ mod tests {
             TimestampTrustPosture::RuntimeMonotonic,
             Some("request:req_1".to_string()),
             vec![ArtifactTrustProofEntryInput {
-                authority_decision_id: ArtifactTrustDecisionId(
-                    "authority.decision.1".to_string(),
-                ),
+                authority_decision_id: ArtifactTrustDecisionId("authority.decision.1".to_string()),
                 artifact_identity_ref: ArtifactIdentityRef("artifact.identity.1".to_string()),
                 artifact_trust_binding_ref: ArtifactTrustBindingRef(
                     "artifact.trust.binding.1".to_string(),
                 ),
-                trust_policy_snapshot_ref: TrustPolicySnapshotRef(
-                    "policy.snap.1".to_string(),
-                ),
+                trust_policy_snapshot_ref: TrustPolicySnapshotRef("policy.snap.1".to_string()),
                 trust_set_snapshot_ref: TrustSetSnapshotRef("trust.set.snap.1".to_string()),
                 verification_basis_fingerprint: VerificationBasisFingerprint(
                     "basis.fp.1".to_string(),

@@ -1332,22 +1332,19 @@ fn voice_learn_audit_payload_metadata(
     signal: VoiceFeedbackLearnSignal,
     live_context: VoiceIdFeedbackLearnAuditContext,
 ) -> BTreeMap<String, String> {
-    let can_surface_final_decision_context = signal.margin_to_next_bp.is_none();
     let mut payload_metadata = voice_audit_context_payload_metadata(signal, live_context);
     payload_metadata.insert(
         "signal_bucket".to_string(),
         learn_signal_type_label(signal.learn_signal_type).to_string(),
     );
-    if can_surface_final_decision_context {
-        payload_metadata.insert(
-            "final_identity_decision".to_string(),
-            voice_decision_label(live_context.final_identity_decision).to_string(),
-        );
-        payload_metadata.insert(
-            "final_reason_code_hex".to_string(),
-            format!("0x{:X}", live_context.final_reason_code.0),
-        );
-    }
+    payload_metadata.insert(
+        "final_identity_decision".to_string(),
+        voice_decision_label(live_context.final_identity_decision).to_string(),
+    );
+    payload_metadata.insert(
+        "final_reason_code_hex".to_string(),
+        format!("0x{:X}", live_context.final_reason_code.0),
+    );
     payload_metadata
 }
 
@@ -3762,13 +3759,19 @@ mod tests {
                 .as_str(),
             "250"
         );
-        assert!(
-            !learn_payload.contains_key(&PayloadKey::new("final_identity_decision").unwrap()),
-            "low-margin scoped learn row must remain blocked from final_identity_decision"
+        assert_eq!(
+            learn_payload
+                .get(&PayloadKey::new("final_identity_decision").unwrap())
+                .expect("final_identity_decision must exist")
+                .as_str(),
+            "OK"
         );
-        assert!(
-            !learn_payload.contains_key(&PayloadKey::new("final_reason_code_hex").unwrap()),
-            "low-margin scoped learn row must remain blocked from final_reason_code_hex"
+        assert_eq!(
+            learn_payload
+                .get(&PayloadKey::new("final_reason_code_hex").unwrap())
+                .expect("final_reason_code_hex must exist")
+                .as_str(),
+            format!("0x{:X}", engine_voice_reason_codes::VID_OK_MATCHED.0)
         );
         assert!(
             !learn_payload.contains_key(&PayloadKey::new("decision_log_family").unwrap()),
@@ -5693,13 +5696,19 @@ mod tests {
                 .as_str(),
             "250"
         );
-        assert!(
-            !learn_payload.contains_key(&PayloadKey::new("final_identity_decision").unwrap()),
-            "low-margin scoped learn row must remain blocked from final_identity_decision"
+        assert_eq!(
+            learn_payload
+                .get(&PayloadKey::new("final_identity_decision").unwrap())
+                .expect("final_identity_decision must exist")
+                .as_str(),
+            "OK"
         );
-        assert!(
-            !learn_payload.contains_key(&PayloadKey::new("final_reason_code_hex").unwrap()),
-            "low-margin scoped learn row must remain blocked from final_reason_code_hex"
+        assert_eq!(
+            learn_payload
+                .get(&PayloadKey::new("final_reason_code_hex").unwrap())
+                .expect("final_reason_code_hex must exist")
+                .as_str(),
+            format!("0x{:X}", engine_voice_reason_codes::VID_OK_MATCHED.0)
         );
         assert!(
             learn_payload.contains_key(&PayloadKey::new("bundle_id").unwrap()),
@@ -6026,12 +6035,12 @@ mod tests {
             "learn row must not gain decision_v1"
         );
         assert!(
-            !learn_payload.contains_key(&PayloadKey::new("final_identity_decision").unwrap()),
-            "low-margin scoped learn row must remain blocked from final_identity_decision in H176"
+            learn_payload.contains_key(&PayloadKey::new("final_identity_decision").unwrap()),
+            "low-margin scoped learn row must now surface final_identity_decision"
         );
         assert!(
-            !learn_payload.contains_key(&PayloadKey::new("final_reason_code_hex").unwrap()),
-            "low-margin scoped learn row must remain blocked from final_reason_code_hex in H176"
+            learn_payload.contains_key(&PayloadKey::new("final_reason_code_hex").unwrap()),
+            "low-margin scoped learn row must now surface final_reason_code_hex"
         );
     }
 
@@ -6350,19 +6359,23 @@ mod tests {
             .iter()
             .find(|row| matches!(&row.engine, AuditEngine::Other(engine) if engine == "PH1.LEARN"))
             .expect("scoped PH1.LEARN bundle audit row must still exist");
-        assert!(
-            !learn_row
+        assert_eq!(
+            learn_row
                 .payload_min
                 .entries
-                .contains_key(&PayloadKey::new("final_identity_decision").unwrap()),
-            "scoped learn row must remain unchanged in H175"
+                .get(&PayloadKey::new("final_identity_decision").unwrap())
+                .expect("final_identity_decision must now exist on scoped learn row")
+                .as_str(),
+            "OK"
         );
-        assert!(
-            !learn_row
+        assert_eq!(
+            learn_row
                 .payload_min
                 .entries
-                .contains_key(&PayloadKey::new("final_reason_code_hex").unwrap()),
-            "scoped learn row must remain unchanged in H175"
+                .get(&PayloadKey::new("final_reason_code_hex").unwrap())
+                .expect("final_reason_code_hex must now exist on scoped learn row")
+                .as_str(),
+            format!("0x{:X}", engine_voice_reason_codes::VID_OK_MATCHED.0)
         );
     }
 
@@ -6653,8 +6666,8 @@ mod tests {
     }
 
     #[test]
-    fn at_vid_live_gate_42_scoped_unknown_learn_audit_surfaces_final_decision_context_when_margin_absent()
-    {
+    fn at_vid_live_gate_42_scoped_unknown_learn_audit_surfaces_final_decision_context_when_margin_absent(
+    ) {
         let mut store = Ph1fStore::new_in_memory();
         let runtime = Ph1VoiceIdLiveRuntime::default();
         let req = sample_live_request();
@@ -6754,8 +6767,8 @@ mod tests {
     }
 
     #[test]
-    fn at_vid_live_gate_43_scoped_low_score_learn_audit_surfaces_final_decision_context_when_margin_absent()
-    {
+    fn at_vid_live_gate_43_scoped_low_score_learn_audit_surfaces_final_decision_context_when_margin_absent(
+    ) {
         let mut store = Ph1fStore::new_in_memory();
         let signal_scope = sample_scoped_signal_scope(5543, 1);
         seed_scoped_feedback_identity_device(&mut store, &signal_scope);
@@ -6872,8 +6885,8 @@ mod tests {
     }
 
     #[test]
-    fn at_vid_live_gate_44_scoped_low_margin_learn_audit_does_not_surface_final_decision_context_when_margin_present()
-    {
+    fn at_vid_live_gate_44_scoped_low_margin_learn_audit_surfaces_final_decision_context_after_payload_cap_widening(
+    ) {
         let mut store = Ph1fStore::new_in_memory();
         let signal_scope = sample_scoped_signal_scope(5544, 1);
         seed_scoped_feedback_identity_device(&mut store, &signal_scope);
@@ -6957,13 +6970,141 @@ mod tests {
                 .as_str(),
             "VoiceIdFalseAccept"
         );
-        assert!(
-            !learn_payload.contains_key(&PayloadKey::new("final_identity_decision").unwrap()),
-            "low-margin scoped learn row must remain blocked from final_identity_decision"
+        assert_eq!(
+            learn_payload
+                .get(&PayloadKey::new("final_identity_decision").unwrap())
+                .expect("final_identity_decision must exist")
+                .as_str(),
+            "OK"
+        );
+        assert_eq!(
+            learn_payload
+                .get(&PayloadKey::new("final_reason_code_hex").unwrap())
+                .expect("final_reason_code_hex must exist")
+                .as_str(),
+            format!("0x{:X}", engine_voice_reason_codes::VID_OK_MATCHED.0)
         );
         assert!(
-            !learn_payload.contains_key(&PayloadKey::new("final_reason_code_hex").unwrap()),
-            "low-margin scoped learn row must remain blocked from final_reason_code_hex"
+            !learn_payload.contains_key(&PayloadKey::new("decision_log_family").unwrap()),
+            "scoped learn row must remain distinct from the H166 decision row"
+        );
+        assert!(
+            !learn_payload.contains_key(&PayloadKey::new("decision_v1").unwrap()),
+            "scoped learn row must not gain decision_v1"
+        );
+    }
+
+    #[test]
+    fn at_vid_live_gate_45_scoped_low_score_learn_audit_surfaces_final_decision_context_when_margin_present(
+    ) {
+        let mut store = Ph1fStore::new_in_memory();
+        let signal_scope = sample_scoped_signal_scope(5545, 1);
+        seed_scoped_feedback_identity_device(&mut store, &signal_scope);
+        let response = Ph1VoiceIdResponse::SpeakerAssertionOk(
+            SpeakerAssertionOk::v1_with_metrics(
+                selene_kernel_contracts::ph1_voice_id::SpeakerId::new(
+                    "speaker_scoped_low_score_learn_final_context_margin_present",
+                )
+                .unwrap(),
+                Some(
+                    selene_kernel_contracts::ph1_voice_id::UserId::new(
+                        "user_scoped_low_score_learn_final_context_margin_present",
+                    )
+                    .unwrap(),
+                ),
+                sample_decision_segments(),
+                SpeakerLabel::speaker_a(),
+                9_400,
+                Some(350),
+                Some(engine_voice_reason_codes::VID_OK_MATCHED),
+                selene_kernel_contracts::ph1_voice_id::SpoofLivenessStatus::Live,
+                vec![],
+            )
+            .expect("low-score matched response fixture must be valid"),
+        );
+        let signal = map_voice_response_to_feedback_learn_signal(&response)
+            .expect("low-score matched response should map to scoped learn emission");
+        assert_eq!(
+            signal.reason_code,
+            engine_voice_reason_codes::VID_FAIL_LOW_CONFIDENCE
+        );
+        assert_eq!(signal.decision, "OK_LOW_SCORE");
+        assert_eq!(
+            signal.margin_to_next_bp,
+            Some(350),
+            "low-score scoped learn fixture must preserve margin"
+        );
+
+        let context = VoiceIdentityRuntimeContext::from_tenant_app_platform(
+            Some("tenant_audit".to_string()),
+            Some(AppPlatform::Android),
+            VoiceIdentityChannel::Explicit,
+        );
+        let live_context = voice_feedback_learn_audit_context(&context, &response);
+
+        emit_voice_id_feedback_and_learn_signal(&mut store, &signal_scope, signal, live_context)
+            .expect("scoped low-score learn emission must succeed after payload cap widening");
+        emit_voice_id_decision_audit(&mut store, context, &signal_scope, &response)
+            .expect("decision audit emission must succeed for scoped low-score learn test");
+
+        let all_rows = store.audit_events_by_correlation(CorrelationId(5545));
+        let learn_row = all_rows
+            .iter()
+            .find(|row| matches!(&row.engine, AuditEngine::Other(engine) if engine == "PH1.LEARN"))
+            .expect("scoped PH1.LEARN bundle audit row must exist");
+        let learn_payload = &learn_row.payload_min.entries;
+        assert_eq!(
+            learn_payload
+                .get(&PayloadKey::new("final_identity_decision").unwrap())
+                .expect("final_identity_decision must exist")
+                .as_str(),
+            "OK"
+        );
+        assert_eq!(
+            learn_payload
+                .get(&PayloadKey::new("final_reason_code_hex").unwrap())
+                .expect("final_reason_code_hex must exist")
+                .as_str(),
+            format!("0x{:X}", engine_voice_reason_codes::VID_OK_MATCHED.0)
+        );
+        assert_eq!(
+            learn_payload
+                .get(&PayloadKey::new("voice_decision").unwrap())
+                .expect("voice_decision must exist")
+                .as_str(),
+            "OK_LOW_SCORE"
+        );
+        assert_eq!(
+            learn_payload
+                .get(&PayloadKey::new("voice_reason_code_hex").unwrap())
+                .expect("voice_reason_code_hex must exist")
+                .as_str(),
+            format!(
+                "0x{:X}",
+                engine_voice_reason_codes::VID_FAIL_LOW_CONFIDENCE.0
+            )
+        );
+        assert_eq!(
+            learn_payload
+                .get(&PayloadKey::new("signal_bucket").unwrap())
+                .expect("signal_bucket must exist")
+                .as_str(),
+            "VoiceIdReauthFriction"
+        );
+        assert_eq!(
+            learn_payload
+                .get(&PayloadKey::new("voice_margin_to_next_bp").unwrap())
+                .expect("voice_margin_to_next_bp must exist")
+                .as_str(),
+            "350"
+        );
+        assert!(
+            learn_payload.contains_key(&PayloadKey::new("bundle_id").unwrap()),
+            "scoped learn row must preserve bundle_id"
+        );
+        assert!(
+            learn_payload.contains_key(&PayloadKey::new("ingest_latency_ms").unwrap()),
+            "scoped learn row must preserve ingest latency"
         );
         assert!(
             !learn_payload.contains_key(&PayloadKey::new("decision_log_family").unwrap()),
