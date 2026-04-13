@@ -3093,7 +3093,7 @@ impl AppServerIngressRuntime {
                     )?;
                     dev_intake_audit_event_id = Some(dev_intake_event_id);
                     if let Some(actor_device_id) = actor_device_id.as_ref() {
-                        let _ = store.ph1x_respond_commit(
+                        let _ = store.ph1x_respond_commit_with_payload_metadata(
                             dispatch_now,
                             packet.tenant_id.clone(),
                             correlation_id,
@@ -3104,6 +3104,9 @@ impl AppServerIngressRuntime {
                             "MISSING_SIMULATION_NOTIFY_SUBMITTED".to_string(),
                             packet.reason_code,
                             format!("ph1x_missing_sim_notify:{}:{}", correlation_id.0, turn_id.0),
+                            self.ph1x_fail_closed_respond_payload_metadata(
+                                &runtime_execution_envelope,
+                            ),
                         )?;
                     }
                     AppVoiceTurnExecutionOutcome {
@@ -7085,6 +7088,23 @@ mod tests {
             "access fail-closed PH1.X respond rows must not retain the PH1.X response"
         );
         assert_ph1x_fail_closed_respond_payload_core(runtime, row, out, expected_response_kind);
+    }
+
+    fn assert_missing_simulation_notify_respond_payload(
+        runtime: &AppServerIngressRuntime,
+        row: &selene_kernel_contracts::ph1j::AuditEvent,
+        out: &AppVoiceTurnExecutionOutcome,
+    ) {
+        assert!(
+            out.ph1x_response.is_none(),
+            "missing simulation notify PH1.X respond rows must not retain the PH1.X response"
+        );
+        assert_ph1x_fail_closed_respond_payload_core(
+            runtime,
+            row,
+            out,
+            "MISSING_SIMULATION_NOTIFY_SUBMITTED",
+        );
     }
 
     fn assert_ph1x_fail_closed_respond_payload_core(
@@ -11580,8 +11600,12 @@ mod tests {
             }));
     }
 
-    #[test]
-    fn at_finder_exec_03_missing_sim_routes_to_dev_intake_ledger_row() {
+    fn run_missing_sim_invite_link_turn() -> (
+        AppServerIngressRuntime,
+        Ph1fStore,
+        AppVoiceTurnExecutionOutcome,
+        CorrelationId,
+    ) {
         let runtime = AppServerIngressRuntime::default();
         let actor_user_id = UserId::new("tenant_1:finder_exec_missing_user").unwrap();
         let device_id = DeviceId::new("finder_exec_missing_device_1").unwrap();
@@ -11589,8 +11613,9 @@ mod tests {
         seed_actor(&mut store, &actor_user_id, &device_id);
         seed_link_send_access_instance(&mut store, &actor_user_id, "tenant_1");
 
+        let correlation_id = CorrelationId(9804);
         let request = AppVoiceIngressRequest::v1(
-            CorrelationId(9804),
+            correlation_id,
             TurnId(9904),
             AppPlatform::Desktop,
             OsVoiceTrigger::Explicit,
@@ -11623,6 +11648,58 @@ mod tests {
         let out = runtime
             .run_desktop_voice_turn_end_to_end(&mut store, request, x_build)
             .unwrap();
+        (runtime, store, out, correlation_id)
+    }
+
+    fn run_missing_sim_unsupported_intent_turn() -> (
+        AppServerIngressRuntime,
+        Ph1fStore,
+        AppVoiceTurnExecutionOutcome,
+        CorrelationId,
+    ) {
+        let runtime = AppServerIngressRuntime::default();
+        let actor_user_id = UserId::new("tenant_1:finder_exec_pizza_user").unwrap();
+        let device_id = DeviceId::new("finder_exec_pizza_device_1").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &actor_user_id, &device_id);
+
+        let correlation_id = CorrelationId(9809);
+        let request = AppVoiceIngressRequest::v1(
+            correlation_id,
+            TurnId(9909),
+            AppPlatform::Desktop,
+            OsVoiceTrigger::Explicit,
+            sample_voice_id_request(MonotonicTimeNs(3), actor_user_id),
+            UserId::new("tenant_1:finder_exec_pizza_user").unwrap(),
+            Some("tenant_1".to_string()),
+            Some(device_id),
+            Vec::new(),
+            no_observation(),
+        )
+        .unwrap();
+        let x_build = AppVoicePh1xBuildInput {
+            now: MonotonicTimeNs(28),
+            thread_key: Some("finder_exec_08_thread".to_string()),
+            thread_state: ThreadState::empty_v1(),
+            session_state: SessionState::Active,
+            policy_context_ref: PolicyContextRef::v1(false, false, SafetyTier::Standard),
+            memory_candidates: vec![],
+            confirm_answer: None,
+            nlp_output: Some(order_pizza_draft()),
+            tool_response: None,
+            interruption: None,
+            locale: Some("en-US".to_string()),
+            last_failure_reason_code: None,
+        };
+        let out = runtime
+            .run_desktop_voice_turn_end_to_end(&mut store, request, x_build)
+            .unwrap();
+        (runtime, store, out, correlation_id)
+    }
+
+    #[test]
+    fn at_finder_exec_03_missing_sim_routes_to_dev_intake_ledger_row() {
+        let (runtime, store, out, correlation_id) = run_missing_sim_invite_link_turn();
         assert_eq!(out.next_move, AppVoiceTurnNextMove::Refused);
         assert_eq!(
             out.response_text.as_deref(),
@@ -11645,7 +11722,7 @@ mod tests {
             FinderTerminalPacket::MissingSimulation(_) => {}
             other => panic!("expected missing simulation packet, got {other:?}"),
         }
-        let rows = store.ph1simfinder_dev_intake_rows(CorrelationId(9804));
+        let rows = store.ph1simfinder_dev_intake_rows(correlation_id);
         assert_eq!(rows.len(), 1);
         let dedupe_fingerprint = rows[0]
             .payload_min
@@ -11671,18 +11748,14 @@ mod tests {
             .as_str()
             .to_string();
         assert_eq!(requester_user_id, "tenant_1:finder_exec_missing_user");
-        let notify_rows = store.ph1x_audit_rows(CorrelationId(9804));
-        assert!(
-            notify_rows.iter().any(|row| {
-                row.payload_min
-                    .entries
-                    .get(&PayloadKey::new("response_kind").unwrap())
-                    .map(|value| value.as_str() == "MISSING_SIMULATION_NOTIFY_SUBMITTED")
-                    .unwrap_or(false)
-            }),
-            "missing simulation path must emit notify stub audit row"
+        let notify_rows = store.ph1x_audit_rows(correlation_id);
+        let row = find_ph1x_respond_row(&notify_rows, "MISSING_SIMULATION_NOTIFY_SUBMITTED");
+        assert_eq!(
+            row.reason_code,
+            out.reason_code
+                .expect("missing simulation path must preserve reason code")
         );
-        let agent_rows = store.agent_execution_ledger_rows_for_correlation(CorrelationId(9804));
+        let agent_rows = store.agent_execution_ledger_rows_for_correlation(correlation_id);
         assert_eq!(agent_rows.len(), 1);
         assert_eq!(agent_rows[0].finder_packet_kind, "MISSING_SIMULATION");
         assert_eq!(agent_rows[0].execution_stage, "MISSING_SIM_DEV_INTAKE");
@@ -12021,42 +12094,7 @@ mod tests {
 
     #[test]
     fn at_finder_exec_08_order_pizza_routes_to_missing_simulation_dev_intake() {
-        let runtime = AppServerIngressRuntime::default();
-        let actor_user_id = UserId::new("tenant_1:finder_exec_pizza_user").unwrap();
-        let device_id = DeviceId::new("finder_exec_pizza_device_1").unwrap();
-        let mut store = Ph1fStore::new_in_memory();
-        seed_actor(&mut store, &actor_user_id, &device_id);
-
-        let request = AppVoiceIngressRequest::v1(
-            CorrelationId(9809),
-            TurnId(9909),
-            AppPlatform::Desktop,
-            OsVoiceTrigger::Explicit,
-            sample_voice_id_request(MonotonicTimeNs(3), actor_user_id),
-            UserId::new("tenant_1:finder_exec_pizza_user").unwrap(),
-            Some("tenant_1".to_string()),
-            Some(device_id),
-            Vec::new(),
-            no_observation(),
-        )
-        .unwrap();
-        let x_build = AppVoicePh1xBuildInput {
-            now: MonotonicTimeNs(28),
-            thread_key: Some("finder_exec_08_thread".to_string()),
-            thread_state: ThreadState::empty_v1(),
-            session_state: SessionState::Active,
-            policy_context_ref: PolicyContextRef::v1(false, false, SafetyTier::Standard),
-            memory_candidates: vec![],
-            confirm_answer: None,
-            nlp_output: Some(order_pizza_draft()),
-            tool_response: None,
-            interruption: None,
-            locale: Some("en-US".to_string()),
-            last_failure_reason_code: None,
-        };
-        let out = runtime
-            .run_desktop_voice_turn_end_to_end(&mut store, request, x_build)
-            .unwrap();
+        let (runtime, store, out, correlation_id) = run_missing_sim_unsupported_intent_turn();
         assert_eq!(out.next_move, AppVoiceTurnNextMove::Refused);
         assert_eq!(
             out.response_text.as_deref(),
@@ -12073,7 +12111,7 @@ mod tests {
             }
             other => panic!("expected missing simulation packet, got {other:?}"),
         }
-        let dev_rows = store.ph1simfinder_dev_intake_rows(CorrelationId(9809));
+        let dev_rows = store.ph1simfinder_dev_intake_rows(correlation_id);
         assert_eq!(dev_rows.len(), 1);
         let capability_name = dev_rows[0]
             .payload_min
@@ -12083,16 +12121,12 @@ mod tests {
             .as_str()
             .to_string();
         assert!(capability_name.contains("booktable"));
-        let notify_rows = store.ph1x_audit_rows(CorrelationId(9809));
-        assert!(
-            notify_rows.iter().any(|row| {
-                row.payload_min
-                    .entries
-                    .get(&PayloadKey::new("response_kind").unwrap())
-                    .map(|value| value.as_str() == "MISSING_SIMULATION_NOTIFY_SUBMITTED")
-                    .unwrap_or(false)
-            }),
-            "missing simulation path must emit notify stub audit row"
+        let notify_rows = store.ph1x_audit_rows(correlation_id);
+        let row = find_ph1x_respond_row(&notify_rows, "MISSING_SIMULATION_NOTIFY_SUBMITTED");
+        assert_eq!(
+            row.reason_code,
+            out.reason_code
+                .expect("missing simulation path must preserve reason code")
         );
     }
 
@@ -12168,6 +12202,35 @@ mod tests {
         assert_eq!(
             ph1x_payload_value(row, "identity_reason_code_hex"),
             Some("0x56490002")
+        );
+    }
+
+    #[test]
+    fn at_finder_exec_12_missing_sim_notify_audit_surfaces_identity_context_for_invite_link_path() {
+        let (runtime, store, out, correlation_id) = run_missing_sim_invite_link_turn();
+        let response_rows = store.ph1x_audit_rows(correlation_id);
+        let row = find_ph1x_respond_row(&response_rows, "MISSING_SIMULATION_NOTIFY_SUBMITTED");
+
+        assert_missing_simulation_notify_respond_payload(&runtime, row, &out);
+        assert_eq!(
+            row.reason_code,
+            out.reason_code
+                .expect("missing simulation notify path must preserve reason code")
+        );
+    }
+
+    #[test]
+    fn at_finder_exec_13_missing_sim_notify_audit_surfaces_identity_context_for_unsupported_intent_path(
+    ) {
+        let (runtime, store, out, correlation_id) = run_missing_sim_unsupported_intent_turn();
+        let response_rows = store.ph1x_audit_rows(correlation_id);
+        let row = find_ph1x_respond_row(&response_rows, "MISSING_SIMULATION_NOTIFY_SUBMITTED");
+
+        assert_missing_simulation_notify_respond_payload(&runtime, row, &out);
+        assert_eq!(
+            row.reason_code,
+            out.reason_code
+                .expect("missing simulation notify path must preserve reason code")
         );
     }
 
