@@ -2722,6 +2722,24 @@ mod tests {
         )
     }
 
+    fn profile_not_enrolled_voice_assertion() -> Ph1VoiceIdResponse {
+        Ph1VoiceIdResponse::SpeakerAssertionUnknown(
+            SpeakerAssertionUnknown::v1_with_candidate(
+                IdentityConfidence::Medium,
+                voice_id_reason_codes::VID_FAIL_PROFILE_NOT_ENROLLED,
+                vec![DiarizationSegment::v1(
+                    MonotonicTimeNs(1),
+                    MonotonicTimeNs(2),
+                    Some(SpeakerLabel::speaker_a()),
+                )
+                .expect("segment must validate")],
+                None,
+                None,
+            )
+            .expect("profile-not-enrolled voice assertion must validate"),
+        )
+    }
+
     fn spoof_risk_voice_assertion(user_id: UserId) -> Ph1VoiceIdResponse {
         Ph1VoiceIdResponse::SpeakerAssertionUnknown(
             SpeakerAssertionUnknown::v1_with_metrics_and_candidate(
@@ -3849,6 +3867,39 @@ mod tests {
         assert_eq!(
             identity_state.recovery_state,
             IdentityRecoveryState::ReEnrollmentRequired
+        );
+    }
+
+    #[test]
+    fn at_runtime_gov_28_profile_not_enrolled_assertion_maps_to_restricted_reenrollment_identity_state(
+    ) {
+        let runtime = RuntimeGovernanceRuntime::default();
+        let artifact_governed = artifact_governed_envelope(&runtime);
+        let out = runtime
+            .govern_artifact_activation_identity_state_execution(
+                &artifact_governed,
+                &profile_not_enrolled_voice_assertion(),
+            )
+            .expect("profile-not-enrolled assertion must still produce bounded identity state");
+        let identity_state = out
+            .identity_state
+            .as_ref()
+            .expect("identity state must attach for profile-not-enrolled posture");
+        assert_eq!(
+            identity_state.consistency_level,
+            IdentityVerificationConsistencyLevel::RecoveryRestricted
+        );
+        assert_eq!(identity_state.trust_tier, IdentityTrustTier::Restricted);
+        assert!(!identity_state.step_up_required);
+        assert_eq!(
+            identity_state.recovery_state,
+            IdentityRecoveryState::ReEnrollmentRequired
+        );
+        assert_eq!(
+            identity_state.reason_code,
+            Some(u64::from(
+                voice_id_reason_codes::VID_FAIL_PROFILE_NOT_ENROLLED.0
+            ))
         );
     }
 
