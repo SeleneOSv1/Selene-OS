@@ -583,9 +583,16 @@ impl Ph1VoiceIdLiveRuntime {
             &response,
             started.elapsed().as_millis().min(u128::from(u32::MAX)) as u32,
         )?;
+        let feedback_learn_audit_context =
+            voice_feedback_learn_audit_context(&context, &response);
         emit_voice_id_decision_audit(store, context, &signal_scope, &response)?;
         if let Some(signal) = map_voice_response_to_feedback_learn_signal(&response) {
-            emit_voice_id_feedback_and_learn_signal(store, &signal_scope, signal)?;
+            emit_voice_id_feedback_and_learn_signal(
+                store,
+                &signal_scope,
+                signal,
+                feedback_learn_audit_context,
+            )?;
         }
         Ok(response)
     }
@@ -727,6 +734,13 @@ struct VoiceIdDecisionAuditSnapshot {
     score_bp: u16,
     margin_to_next_bp: Option<u16>,
     reason_code: ReasonCodeId,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct VoiceIdFeedbackLearnAuditContext {
+    identity_tier_v2: IdentityTierV2,
+    platform: VoiceIdentityPlatform,
+    channel: VoiceIdentityChannel,
 }
 
 fn feedback_event_type_label(event_type: FeedbackEventType) -> &'static str {
@@ -1099,6 +1113,17 @@ fn voice_decision_audit_snapshot(response: &Ph1VoiceIdResponse) -> VoiceIdDecisi
     }
 }
 
+fn voice_feedback_learn_audit_context(
+    context: &VoiceIdentityRuntimeContext,
+    response: &Ph1VoiceIdResponse,
+) -> VoiceIdFeedbackLearnAuditContext {
+    VoiceIdFeedbackLearnAuditContext {
+        identity_tier_v2: response.identity_v2().identity_tier_v2,
+        platform: context.platform,
+        channel: context.channel,
+    }
+}
+
 fn voice_decision_v1(response: &Ph1VoiceIdResponse) -> VoiceIdDecision {
     match response {
         Ph1VoiceIdResponse::SpeakerAssertionOk(_) => VoiceIdDecision::Ok,
@@ -1255,12 +1280,25 @@ fn map_voice_response_to_feedback_learn_signal(
 
 fn voice_audit_context_payload_metadata(
     signal: VoiceFeedbackLearnSignal,
+    live_context: VoiceIdFeedbackLearnAuditContext,
 ) -> BTreeMap<String, String> {
     let mut payload_metadata = BTreeMap::new();
     payload_metadata.insert("voice_decision".to_string(), signal.decision.to_string());
     payload_metadata.insert(
         "voice_reason_code_hex".to_string(),
         format!("0x{:X}", signal.reason_code.0),
+    );
+    payload_metadata.insert(
+        "identity_tier_v2".to_string(),
+        identity_tier_label(live_context.identity_tier_v2).to_string(),
+    );
+    payload_metadata.insert(
+        "platform".to_string(),
+        platform_label(live_context.platform).to_string(),
+    );
+    payload_metadata.insert(
+        "channel".to_string(),
+        channel_label(live_context.channel).to_string(),
     );
     if let Some(score) = signal.score_bp {
         payload_metadata.insert("voice_score_bp".to_string(), score.to_string());
@@ -1273,8 +1311,9 @@ fn voice_audit_context_payload_metadata(
 
 fn voice_learn_audit_payload_metadata(
     signal: VoiceFeedbackLearnSignal,
+    live_context: VoiceIdFeedbackLearnAuditContext,
 ) -> BTreeMap<String, String> {
-    let mut payload_metadata = voice_audit_context_payload_metadata(signal);
+    let mut payload_metadata = voice_audit_context_payload_metadata(signal, live_context);
     payload_metadata.insert(
         "signal_bucket".to_string(),
         learn_signal_type_label(signal.learn_signal_type).to_string(),
@@ -1284,6 +1323,7 @@ fn voice_learn_audit_payload_metadata(
 
 fn unscoped_voice_feedback_learn_payload_base(
     signal: VoiceFeedbackLearnSignal,
+    live_context: VoiceIdFeedbackLearnAuditContext,
     feedback_event_type: &str,
     learn_signal_type: &str,
     evidence_ref: &str,
@@ -1325,6 +1365,21 @@ fn unscoped_voice_feedback_learn_payload_base(
             .map_err(StorageError::ContractViolation)?,
     );
     payload_entries.insert(
+        PayloadKey::new("identity_tier_v2").map_err(StorageError::ContractViolation)?,
+        PayloadValue::new(identity_tier_label(live_context.identity_tier_v2))
+            .map_err(StorageError::ContractViolation)?,
+    );
+    payload_entries.insert(
+        PayloadKey::new("platform").map_err(StorageError::ContractViolation)?,
+        PayloadValue::new(platform_label(live_context.platform))
+            .map_err(StorageError::ContractViolation)?,
+    );
+    payload_entries.insert(
+        PayloadKey::new("channel").map_err(StorageError::ContractViolation)?,
+        PayloadValue::new(channel_label(live_context.channel))
+            .map_err(StorageError::ContractViolation)?,
+    );
+    payload_entries.insert(
         PayloadKey::new("evidence_ref").map_err(StorageError::ContractViolation)?,
         PayloadValue::new(evidence_ref).map_err(StorageError::ContractViolation)?,
     );
@@ -1349,6 +1404,7 @@ fn unscoped_voice_feedback_learn_payload_base(
 
 fn unscoped_voice_feedback_payload(
     signal: VoiceFeedbackLearnSignal,
+    live_context: VoiceIdFeedbackLearnAuditContext,
     feedback_event_type: &str,
     learn_signal_type: &str,
     evidence_ref: &str,
@@ -1356,6 +1412,7 @@ fn unscoped_voice_feedback_payload(
 ) -> Result<AuditPayloadMin, StorageError> {
     unscoped_voice_feedback_learn_payload_base(
         signal,
+        live_context,
         feedback_event_type,
         learn_signal_type,
         evidence_ref,
@@ -1367,6 +1424,7 @@ fn unscoped_voice_feedback_payload(
 
 fn unscoped_voice_learn_payload(
     signal: VoiceFeedbackLearnSignal,
+    live_context: VoiceIdFeedbackLearnAuditContext,
     feedback_event_type: &str,
     learn_signal_type: &str,
     evidence_ref: &str,
@@ -1374,6 +1432,7 @@ fn unscoped_voice_learn_payload(
 ) -> Result<AuditPayloadMin, StorageError> {
     unscoped_voice_feedback_learn_payload_base(
         signal,
+        live_context,
         feedback_event_type,
         learn_signal_type,
         evidence_ref,
@@ -1387,6 +1446,7 @@ fn emit_voice_id_feedback_and_learn_signal(
     store: &mut Ph1fStore,
     signal_scope: &VoiceIdentitySignalScope,
     signal: VoiceFeedbackLearnSignal,
+    live_context: VoiceIdFeedbackLearnAuditContext,
 ) -> Result<(), StorageError> {
     let ingest_started = Instant::now();
     let feedback_event_type = feedback_event_type_label(signal.feedback_event_type);
@@ -1404,8 +1464,9 @@ fn emit_voice_id_feedback_and_learn_signal(
         signal_scope.tenant_id.clone(),
         signal_scope.device_id.clone(),
     ) {
-        let learn_audit_payload_metadata = voice_learn_audit_payload_metadata(signal);
-        let mut feedback_payload_metadata = voice_audit_context_payload_metadata(signal);
+        let learn_audit_payload_metadata = voice_learn_audit_payload_metadata(signal, live_context);
+        let mut feedback_payload_metadata =
+            voice_audit_context_payload_metadata(signal, live_context);
         feedback_payload_metadata.insert("evidence_ref".to_string(), evidence_ref.clone());
         feedback_payload_metadata.insert("provenance_ref".to_string(), provenance_ref.clone());
 
@@ -1463,6 +1524,7 @@ fn emit_voice_id_feedback_and_learn_signal(
 
     let feedback_payload = unscoped_voice_feedback_payload(
         signal,
+        live_context,
         feedback_event_type,
         learn_signal_type,
         evidence_ref.as_str(),
@@ -1496,6 +1558,7 @@ fn emit_voice_id_feedback_and_learn_signal(
 
     let learn_payload = unscoped_voice_learn_payload(
         signal,
+        live_context,
         feedback_event_type,
         learn_signal_type,
         evidence_ref.as_str(),
@@ -3265,15 +3328,17 @@ mod tests {
         );
         assert_eq!(signal.decision, "OK_LOW_MARGIN");
 
-        emit_voice_id_feedback_and_learn_signal(&mut store, &signal_scope, signal)
+        let context = VoiceIdentityRuntimeContext::from_tenant_app_platform(
+            Some("tenant_audit".to_string()),
+            Some(AppPlatform::Android),
+            VoiceIdentityChannel::Explicit,
+        );
+        let live_context = voice_feedback_learn_audit_context(&context, &response);
+        emit_voice_id_feedback_and_learn_signal(&mut store, &signal_scope, signal, live_context)
             .expect("scoped feedback emission must succeed for low-margin matched response");
         emit_voice_id_decision_audit(
             &mut store,
-            VoiceIdentityRuntimeContext::from_tenant_app_platform(
-                Some("tenant_audit".to_string()),
-                Some(AppPlatform::Android),
-                VoiceIdentityChannel::Explicit,
-            ),
+            context,
             &signal_scope,
             &response,
         )
@@ -3558,15 +3623,17 @@ mod tests {
         );
         assert_eq!(signal.decision, "OK_LOW_MARGIN");
 
-        emit_voice_id_feedback_and_learn_signal(&mut store, &signal_scope, signal)
+        let context = VoiceIdentityRuntimeContext::from_tenant_app_platform(
+            Some("tenant_audit".to_string()),
+            Some(AppPlatform::Android),
+            VoiceIdentityChannel::Explicit,
+        );
+        let live_context = voice_feedback_learn_audit_context(&context, &response);
+        emit_voice_id_feedback_and_learn_signal(&mut store, &signal_scope, signal, live_context)
             .expect("scoped feedback emission must succeed for low-margin matched response");
         emit_voice_id_decision_audit(
             &mut store,
-            VoiceIdentityRuntimeContext::from_tenant_app_platform(
-                Some("tenant_audit".to_string()),
-                Some(AppPlatform::Android),
-                VoiceIdentityChannel::Explicit,
-            ),
+            context,
             &signal_scope,
             &response,
         )
@@ -3913,15 +3980,17 @@ mod tests {
         );
         assert_eq!(signal.decision, "OK_LOW_MARGIN");
 
-        emit_voice_id_feedback_and_learn_signal(&mut store, &signal_scope, signal)
+        let context = VoiceIdentityRuntimeContext::from_tenant_app_platform(
+            Some("tenant_audit".to_string()),
+            Some(AppPlatform::Android),
+            VoiceIdentityChannel::Explicit,
+        );
+        let live_context = voice_feedback_learn_audit_context(&context, &response);
+        emit_voice_id_feedback_and_learn_signal(&mut store, &signal_scope, signal, live_context)
             .expect("fallback learn emission must succeed for low-margin matched response");
         emit_voice_id_decision_audit(
             &mut store,
-            VoiceIdentityRuntimeContext::from_tenant_app_platform(
-                Some("tenant_audit".to_string()),
-                Some(AppPlatform::Android),
-                VoiceIdentityChannel::Explicit,
-            ),
+            context,
             &signal_scope,
             &response,
         )
@@ -4097,15 +4166,17 @@ mod tests {
         );
         assert_eq!(signal.decision, "OK_LOW_SCORE");
 
-        emit_voice_id_feedback_and_learn_signal(&mut store, &signal_scope, signal)
+        let context = VoiceIdentityRuntimeContext::from_tenant_app_platform(
+            Some("tenant_audit".to_string()),
+            Some(AppPlatform::Android),
+            VoiceIdentityChannel::Explicit,
+        );
+        let live_context = voice_feedback_learn_audit_context(&context, &response);
+        emit_voice_id_feedback_and_learn_signal(&mut store, &signal_scope, signal, live_context)
             .expect("fallback learn emission must succeed for low-score matched response");
         emit_voice_id_decision_audit(
             &mut store,
-            VoiceIdentityRuntimeContext::from_tenant_app_platform(
-                Some("tenant_audit".to_string()),
-                Some(AppPlatform::Android),
-                VoiceIdentityChannel::Explicit,
-            ),
+            context,
             &signal_scope,
             &response,
         )
@@ -4459,15 +4530,17 @@ mod tests {
         );
         assert_eq!(signal.decision, "OK_LOW_MARGIN");
 
-        emit_voice_id_feedback_and_learn_signal(&mut store, &signal_scope, signal)
+        let context = VoiceIdentityRuntimeContext::from_tenant_app_platform(
+            Some("tenant_audit".to_string()),
+            Some(AppPlatform::Android),
+            VoiceIdentityChannel::Explicit,
+        );
+        let live_context = voice_feedback_learn_audit_context(&context, &response);
+        emit_voice_id_feedback_and_learn_signal(&mut store, &signal_scope, signal, live_context)
             .expect("fallback feedback emission must succeed for low-margin matched response");
         emit_voice_id_decision_audit(
             &mut store,
-            VoiceIdentityRuntimeContext::from_tenant_app_platform(
-                Some("tenant_audit".to_string()),
-                Some(AppPlatform::Android),
-                VoiceIdentityChannel::Explicit,
-            ),
+            context,
             &signal_scope,
             &response,
         )
@@ -4642,15 +4715,17 @@ mod tests {
         );
         assert_eq!(signal.decision, "OK_LOW_SCORE");
 
-        emit_voice_id_feedback_and_learn_signal(&mut store, &signal_scope, signal)
+        let context = VoiceIdentityRuntimeContext::from_tenant_app_platform(
+            Some("tenant_audit".to_string()),
+            Some(AppPlatform::Android),
+            VoiceIdentityChannel::Explicit,
+        );
+        let live_context = voice_feedback_learn_audit_context(&context, &response);
+        emit_voice_id_feedback_and_learn_signal(&mut store, &signal_scope, signal, live_context)
             .expect("fallback feedback emission must succeed for low-score matched response");
         emit_voice_id_decision_audit(
             &mut store,
-            VoiceIdentityRuntimeContext::from_tenant_app_platform(
-                Some("tenant_audit".to_string()),
-                Some(AppPlatform::Android),
-                VoiceIdentityChannel::Explicit,
-            ),
+            context,
             &signal_scope,
             &response,
         )
@@ -5019,15 +5094,17 @@ mod tests {
         );
         assert_eq!(signal.decision, "OK_LOW_MARGIN");
 
-        emit_voice_id_feedback_and_learn_signal(&mut store, &signal_scope, signal)
+        let context = VoiceIdentityRuntimeContext::from_tenant_app_platform(
+            Some("tenant_audit".to_string()),
+            Some(AppPlatform::Android),
+            VoiceIdentityChannel::Explicit,
+        );
+        let live_context = voice_feedback_learn_audit_context(&context, &response);
+        emit_voice_id_feedback_and_learn_signal(&mut store, &signal_scope, signal, live_context)
             .expect("fallback learn emission must succeed for low-margin matched response");
         emit_voice_id_decision_audit(
             &mut store,
-            VoiceIdentityRuntimeContext::from_tenant_app_platform(
-                Some("tenant_audit".to_string()),
-                Some(AppPlatform::Android),
-                VoiceIdentityChannel::Explicit,
-            ),
+            context,
             &signal_scope,
             &response,
         )
@@ -5218,15 +5295,17 @@ mod tests {
         );
         assert_eq!(signal.decision, "OK_LOW_SCORE");
 
-        emit_voice_id_feedback_and_learn_signal(&mut store, &signal_scope, signal)
+        let context = VoiceIdentityRuntimeContext::from_tenant_app_platform(
+            Some("tenant_audit".to_string()),
+            Some(AppPlatform::Android),
+            VoiceIdentityChannel::Explicit,
+        );
+        let live_context = voice_feedback_learn_audit_context(&context, &response);
+        emit_voice_id_feedback_and_learn_signal(&mut store, &signal_scope, signal, live_context)
             .expect("fallback learn emission must succeed for low-score matched response");
         emit_voice_id_decision_audit(
             &mut store,
-            VoiceIdentityRuntimeContext::from_tenant_app_platform(
-                Some("tenant_audit".to_string()),
-                Some(AppPlatform::Android),
-                VoiceIdentityChannel::Explicit,
-            ),
+            context,
             &signal_scope,
             &response,
         )
@@ -5519,15 +5598,17 @@ mod tests {
         let signal = map_voice_response_to_feedback_learn_signal(&response)
             .expect("low-margin matched response should map to scoped learn emission");
 
-        emit_voice_id_feedback_and_learn_signal(&mut store, &signal_scope, signal)
+        let context = VoiceIdentityRuntimeContext::from_tenant_app_platform(
+            Some("tenant_audit".to_string()),
+            Some(AppPlatform::Android),
+            VoiceIdentityChannel::Explicit,
+        );
+        let live_context = voice_feedback_learn_audit_context(&context, &response);
+        emit_voice_id_feedback_and_learn_signal(&mut store, &signal_scope, signal, live_context)
             .expect("scoped low-margin learn emission must succeed");
         emit_voice_id_decision_audit(
             &mut store,
-            VoiceIdentityRuntimeContext::from_tenant_app_platform(
-                Some("tenant_audit".to_string()),
-                Some(AppPlatform::Android),
-                VoiceIdentityChannel::Explicit,
-            ),
+            context,
             &signal_scope,
             &response,
         )
@@ -5621,15 +5702,17 @@ mod tests {
         let signal = map_voice_response_to_feedback_learn_signal(&response)
             .expect("low-score matched response should map to fallback learn emission");
 
-        emit_voice_id_feedback_and_learn_signal(&mut store, &signal_scope, signal)
+        let context = VoiceIdentityRuntimeContext::from_tenant_app_platform(
+            Some("tenant_audit".to_string()),
+            Some(AppPlatform::Android),
+            VoiceIdentityChannel::Explicit,
+        );
+        let live_context = voice_feedback_learn_audit_context(&context, &response);
+        emit_voice_id_feedback_and_learn_signal(&mut store, &signal_scope, signal, live_context)
             .expect("fallback learn emission must succeed for low-score matched response");
         emit_voice_id_decision_audit(
             &mut store,
-            VoiceIdentityRuntimeContext::from_tenant_app_platform(
-                Some("tenant_audit".to_string()),
-                Some(AppPlatform::Android),
-                VoiceIdentityChannel::Explicit,
-            ),
+            context,
             &signal_scope,
             &response,
         )
@@ -5701,6 +5784,379 @@ mod tests {
         assert_ne!(
             learn_row.idempotency_key, feedback_row.idempotency_key,
             "fallback PH1.LEARN row must remain distinct from fallback PH1.FEEDBACK"
+        );
+    }
+
+    #[test]
+    fn at_vid_live_gate_34_scoped_unknown_feedback_audit_surfaces_identity_context() {
+        let mut store = Ph1fStore::new_in_memory();
+        let runtime = Ph1VoiceIdLiveRuntime::default();
+        let req = sample_live_request();
+        let context = VoiceIdentityRuntimeContext::from_tenant_app_platform(
+            Some("tenant_audit".to_string()),
+            Some(AppPlatform::Android),
+            VoiceIdentityChannel::Explicit,
+        );
+        let expected_platform = platform_label(context.platform);
+        let expected_channel = channel_label(context.channel);
+        let signal_scope = sample_scoped_signal_scope(5534, 1);
+        seed_scoped_feedback_identity_device(&mut store, &signal_scope);
+        let enrolled = vec![EngineEnrolledSpeaker {
+            speaker_id: selene_kernel_contracts::ph1_voice_id::SpeakerId::new(
+                "speaker_scoped_unknown_feedback_identity_context",
+            )
+            .unwrap(),
+            user_id: Some(
+                selene_kernel_contracts::ph1_voice_id::UserId::new(
+                    "user_scoped_unknown_feedback_identity_context",
+                )
+                .unwrap(),
+            ),
+            fingerprint: 7,
+            profile_embedding: Some(simulation_profile_embedding_from_seed(7)),
+        }];
+
+        let out = runtime
+            .run_identity_assertion_with_signal_emission(
+                &mut store,
+                &req,
+                context,
+                enrolled,
+                EngineVoiceIdObservation {
+                    primary_fingerprint: Some(7),
+                    secondary_fingerprint: None,
+                    primary_embedding: None,
+                    secondary_embedding: None,
+                    spoof_risk: false,
+                },
+                signal_scope.clone(),
+            )
+            .expect("scoped unknown identity run with signal emission must succeed");
+
+        let feedback_row = store
+            .ph1feedback_audit_rows(CorrelationId(5534))
+            .into_iter()
+            .next()
+            .expect("scoped PH1.FEEDBACK audit row must exist");
+        let feedback_payload = &feedback_row.payload_min.entries;
+        assert_eq!(
+            feedback_payload
+                .get(&PayloadKey::new("identity_tier_v2").unwrap())
+                .expect("identity_tier_v2 must exist")
+                .as_str(),
+            identity_tier_label(out.identity_v2().identity_tier_v2)
+        );
+        assert_eq!(
+            feedback_payload
+                .get(&PayloadKey::new("platform").unwrap())
+                .expect("platform must exist")
+                .as_str(),
+            expected_platform
+        );
+        assert_eq!(
+            feedback_payload
+                .get(&PayloadKey::new("channel").unwrap())
+                .expect("channel must exist")
+                .as_str(),
+            expected_channel
+        );
+        assert!(
+            !feedback_payload.contains_key(&PayloadKey::new("decision_log_family").unwrap()),
+            "feedback row must remain distinct from the H166 decision row"
+        );
+        assert!(
+            !feedback_payload.contains_key(&PayloadKey::new("decision_v1").unwrap()),
+            "feedback row must not gain decision_v1"
+        );
+
+        let decision_row = store
+            .audit_events_by_correlation(CorrelationId(5534))
+            .into_iter()
+            .find(|row| {
+                matches!(&row.engine, AuditEngine::Other(engine) if engine == PH1_VOICE_ID_ENGINE_ID)
+                    && row
+                        .payload_min
+                        .entries
+                        .contains_key(&PayloadKey::new("decision_log_family").unwrap())
+            })
+            .expect("H166 decision audit row must exist");
+        assert_eq!(
+            decision_row
+                .payload_min
+                .entries
+                .get(&PayloadKey::new("decision_v1").unwrap())
+                .expect("decision_v1 must exist")
+                .as_str(),
+            "UNKNOWN"
+        );
+    }
+
+    #[test]
+    fn at_vid_live_gate_35_scoped_low_margin_learn_audit_surfaces_identity_context() {
+        let mut store = Ph1fStore::new_in_memory();
+        let signal_scope = sample_scoped_signal_scope(5535, 1);
+        seed_scoped_feedback_identity_device(&mut store, &signal_scope);
+        let response = Ph1VoiceIdResponse::SpeakerAssertionOk(
+            SpeakerAssertionOk::v1_with_metrics(
+                selene_kernel_contracts::ph1_voice_id::SpeakerId::new(
+                    "speaker_scoped_low_margin_learn_identity_context",
+                )
+                .unwrap(),
+                Some(
+                    selene_kernel_contracts::ph1_voice_id::UserId::new(
+                        "user_scoped_low_margin_learn_identity_context",
+                    )
+                    .unwrap(),
+                ),
+                sample_decision_segments(),
+                SpeakerLabel::speaker_a(),
+                9_700,
+                Some(250),
+                Some(engine_voice_reason_codes::VID_OK_MATCHED),
+                selene_kernel_contracts::ph1_voice_id::SpoofLivenessStatus::Live,
+                vec![],
+            )
+            .expect("low-margin matched response fixture must be valid"),
+        );
+        let signal = map_voice_response_to_feedback_learn_signal(&response)
+            .expect("low-margin matched response should map to scoped learn emission");
+        let context = VoiceIdentityRuntimeContext::from_tenant_app_platform(
+            Some("tenant_audit".to_string()),
+            Some(AppPlatform::Android),
+            VoiceIdentityChannel::Explicit,
+        );
+        let expected_platform = platform_label(context.platform);
+        let expected_channel = channel_label(context.channel);
+        let live_context = voice_feedback_learn_audit_context(&context, &response);
+
+        emit_voice_id_feedback_and_learn_signal(&mut store, &signal_scope, signal, live_context)
+            .expect("scoped low-margin learn emission must succeed");
+        emit_voice_id_decision_audit(
+            &mut store,
+            context,
+            &signal_scope,
+            &response,
+        )
+        .expect("decision audit emission must succeed for scoped low-margin learn test");
+
+        let all_rows = store.audit_events_by_correlation(CorrelationId(5535));
+        let learn_row = all_rows
+            .iter()
+            .find(|row| matches!(&row.engine, AuditEngine::Other(engine) if engine == "PH1.LEARN"))
+            .expect("scoped PH1.LEARN bundle audit row must exist");
+        let learn_payload = &learn_row.payload_min.entries;
+        assert_eq!(
+            learn_payload
+                .get(&PayloadKey::new("identity_tier_v2").unwrap())
+                .expect("identity_tier_v2 must exist")
+                .as_str(),
+            identity_tier_label(response.identity_v2().identity_tier_v2)
+        );
+        assert_eq!(
+            learn_payload
+                .get(&PayloadKey::new("platform").unwrap())
+                .expect("platform must exist")
+                .as_str(),
+            expected_platform
+        );
+        assert_eq!(
+            learn_payload
+                .get(&PayloadKey::new("channel").unwrap())
+                .expect("channel must exist")
+                .as_str(),
+            expected_channel
+        );
+        assert!(
+            learn_payload.contains_key(&PayloadKey::new("bundle_id").unwrap()),
+            "scoped learn row must preserve bundle_id"
+        );
+        assert!(
+            learn_payload.contains_key(&PayloadKey::new("ingest_latency_ms").unwrap()),
+            "scoped learn row must preserve ingest latency"
+        );
+        assert!(
+            !learn_payload.contains_key(&PayloadKey::new("decision_log_family").unwrap()),
+            "learn row must remain distinct from the H166 decision row"
+        );
+        assert!(
+            !learn_payload.contains_key(&PayloadKey::new("decision_v1").unwrap()),
+            "learn row must not gain decision_v1"
+        );
+    }
+
+    #[test]
+    fn at_vid_live_gate_36_unscoped_unknown_feedback_audit_surfaces_identity_context() {
+        let mut store = Ph1fStore::new_in_memory();
+        let runtime = Ph1VoiceIdLiveRuntime::default();
+        let req = sample_live_request();
+        let context = VoiceIdentityRuntimeContext::from_tenant_app_platform(
+            Some("tenant_audit".to_string()),
+            Some(AppPlatform::Android),
+            VoiceIdentityChannel::Explicit,
+        );
+        let expected_platform = platform_label(context.platform);
+        let expected_channel = channel_label(context.channel);
+        let signal_scope = sample_signal_scope(5536, 1);
+        let enrolled = vec![EngineEnrolledSpeaker {
+            speaker_id: selene_kernel_contracts::ph1_voice_id::SpeakerId::new(
+                "speaker_unscoped_unknown_feedback_identity_context",
+            )
+            .unwrap(),
+            user_id: Some(
+                selene_kernel_contracts::ph1_voice_id::UserId::new(
+                    "user_unscoped_unknown_feedback_identity_context",
+                )
+                .unwrap(),
+            ),
+            fingerprint: 7,
+            profile_embedding: Some(simulation_profile_embedding_from_seed(7)),
+        }];
+
+        let out = runtime
+            .run_identity_assertion_with_signal_emission(
+                &mut store,
+                &req,
+                context,
+                enrolled,
+                EngineVoiceIdObservation {
+                    primary_fingerprint: Some(7),
+                    secondary_fingerprint: None,
+                    primary_embedding: None,
+                    secondary_embedding: None,
+                    spoof_risk: false,
+                },
+                signal_scope.clone(),
+            )
+            .expect("unscoped unknown identity run with signal emission must succeed");
+
+        let all_rows = store.audit_events_by_correlation(CorrelationId(5536));
+        let feedback_row = all_rows
+            .iter()
+            .find(
+                |row| matches!(&row.engine, AuditEngine::Other(engine) if engine == "PH1.FEEDBACK"),
+            )
+            .expect("fallback PH1.FEEDBACK audit row must exist");
+        let feedback_payload = &feedback_row.payload_min.entries;
+        assert_eq!(
+            feedback_payload
+                .get(&PayloadKey::new("identity_tier_v2").unwrap())
+                .expect("identity_tier_v2 must exist")
+                .as_str(),
+            identity_tier_label(out.identity_v2().identity_tier_v2)
+        );
+        assert_eq!(
+            feedback_payload
+                .get(&PayloadKey::new("platform").unwrap())
+                .expect("platform must exist")
+                .as_str(),
+            expected_platform
+        );
+        assert_eq!(
+            feedback_payload
+                .get(&PayloadKey::new("channel").unwrap())
+                .expect("channel must exist")
+                .as_str(),
+            expected_channel
+        );
+        assert!(
+            !feedback_payload.contains_key(&PayloadKey::new("decision_log_family").unwrap()),
+            "fallback feedback row must remain distinct from the H166 decision row"
+        );
+        assert!(
+            !feedback_payload.contains_key(&PayloadKey::new("decision_v1").unwrap()),
+            "fallback feedback row must not gain decision_v1"
+        );
+    }
+
+    #[test]
+    fn at_vid_live_gate_37_unscoped_low_score_learn_audit_surfaces_identity_context() {
+        let mut store = Ph1fStore::new_in_memory();
+        let signal_scope = sample_signal_scope(5537, 1);
+        let response = Ph1VoiceIdResponse::SpeakerAssertionOk(
+            SpeakerAssertionOk::v1_with_metrics(
+                selene_kernel_contracts::ph1_voice_id::SpeakerId::new(
+                    "speaker_unscoped_low_score_learn_identity_context",
+                )
+                .unwrap(),
+                Some(
+                    selene_kernel_contracts::ph1_voice_id::UserId::new(
+                        "user_unscoped_low_score_learn_identity_context",
+                    )
+                    .unwrap(),
+                ),
+                sample_decision_segments(),
+                SpeakerLabel::speaker_a(),
+                9_400,
+                Some(350),
+                Some(engine_voice_reason_codes::VID_OK_MATCHED),
+                selene_kernel_contracts::ph1_voice_id::SpoofLivenessStatus::Live,
+                vec![],
+            )
+            .expect("low-score matched response fixture must be valid"),
+        );
+        let signal = map_voice_response_to_feedback_learn_signal(&response)
+            .expect("low-score matched response should map to fallback learn emission");
+        let context = VoiceIdentityRuntimeContext::from_tenant_app_platform(
+            Some("tenant_audit".to_string()),
+            Some(AppPlatform::Android),
+            VoiceIdentityChannel::Explicit,
+        );
+        let expected_platform = platform_label(context.platform);
+        let expected_channel = channel_label(context.channel);
+        let live_context = voice_feedback_learn_audit_context(&context, &response);
+
+        emit_voice_id_feedback_and_learn_signal(&mut store, &signal_scope, signal, live_context)
+            .expect("fallback learn emission must succeed for low-score matched response");
+        emit_voice_id_decision_audit(
+            &mut store,
+            context,
+            &signal_scope,
+            &response,
+        )
+        .expect("decision audit emission must succeed for low-score matched response");
+
+        let all_rows = store.audit_events_by_correlation(CorrelationId(5537));
+        let learn_row = all_rows
+            .iter()
+            .find(|row| matches!(&row.engine, AuditEngine::Other(engine) if engine == "PH1.LEARN"))
+            .expect("fallback PH1.LEARN audit row must exist");
+        let learn_payload = &learn_row.payload_min.entries;
+        assert_eq!(
+            learn_payload
+                .get(&PayloadKey::new("identity_tier_v2").unwrap())
+                .expect("identity_tier_v2 must exist")
+                .as_str(),
+            identity_tier_label(response.identity_v2().identity_tier_v2)
+        );
+        assert_eq!(
+            learn_payload
+                .get(&PayloadKey::new("platform").unwrap())
+                .expect("platform must exist")
+                .as_str(),
+            expected_platform
+        );
+        assert_eq!(
+            learn_payload
+                .get(&PayloadKey::new("channel").unwrap())
+                .expect("channel must exist")
+                .as_str(),
+            expected_channel
+        );
+        assert!(
+            !learn_payload.contains_key(&PayloadKey::new("bundle_id").unwrap()),
+            "fallback learn row must not invent bundle_id"
+        );
+        assert!(
+            !learn_payload.contains_key(&PayloadKey::new("ingest_latency_ms").unwrap()),
+            "fallback learn row must not invent ingest latency"
+        );
+        assert!(
+            !learn_payload.contains_key(&PayloadKey::new("decision_log_family").unwrap()),
+            "fallback learn row must remain distinct from the H166 decision row"
+        );
+        assert!(
+            !learn_payload.contains_key(&PayloadKey::new("decision_v1").unwrap()),
+            "fallback learn row must not gain decision_v1"
         );
     }
 }

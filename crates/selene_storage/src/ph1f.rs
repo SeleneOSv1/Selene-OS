@@ -26623,6 +26623,169 @@ mod tests {
     }
 
     #[test]
+    fn at_fdbk_08_feedback_event_metadata_carries_identity_context_without_overwriting_base_keys()
+    {
+        let mut s = store_with_user_device_and_session();
+        let mut payload_metadata = std::collections::BTreeMap::new();
+        payload_metadata.insert("identity_tier_v2".to_string(), "UNKNOWN".to_string());
+        payload_metadata.insert("platform".to_string(), "android".to_string());
+        payload_metadata.insert("channel".to_string(), "explicit".to_string());
+
+        s.ph1feedback_event_commit_with_payload_metadata(
+            MonotonicTimeNs(40),
+            "tenant_1".to_string(),
+            CorrelationId(5114),
+            TurnId(1),
+            Some(SessionId(1)),
+            user(),
+            device(),
+            "VoiceIdFalseReject".to_string(),
+            "VoiceIdFalseReject".to_string(),
+            ReasonCodeId(0xF00D),
+            "idem:fdbk:metadata:identity_context".to_string(),
+            payload_metadata,
+        )
+        .expect("feedback event commit with identity context metadata must succeed");
+
+        let rows = s.ph1feedback_audit_rows(CorrelationId(5114));
+        assert_eq!(rows.len(), 1);
+        let payload = &rows[0].payload_min.entries;
+        assert_eq!(
+            payload
+                .get(&PayloadKey::new("identity_tier_v2").unwrap())
+                .expect("identity_tier_v2 must exist")
+                .as_str(),
+            "UNKNOWN"
+        );
+        assert_eq!(
+            payload
+                .get(&PayloadKey::new("platform").unwrap())
+                .expect("platform must exist")
+                .as_str(),
+            "android"
+        );
+        assert_eq!(
+            payload
+                .get(&PayloadKey::new("channel").unwrap())
+                .expect("channel must exist")
+                .as_str(),
+            "explicit"
+        );
+
+        let mut duplicate_signal_bucket = std::collections::BTreeMap::new();
+        duplicate_signal_bucket
+            .insert("signal_bucket".to_string(), "VoiceIdFalseAccept".to_string());
+        let err = s
+            .ph1feedback_event_commit_with_payload_metadata(
+                MonotonicTimeNs(41),
+                "tenant_1".to_string(),
+                CorrelationId(5115),
+                TurnId(1),
+                Some(SessionId(1)),
+                user(),
+                device(),
+                "VoiceIdFalseReject".to_string(),
+                "VoiceIdFalseReject".to_string(),
+                ReasonCodeId(0xF00E),
+                "idem:fdbk:metadata:duplicate:signal_bucket".to_string(),
+                duplicate_signal_bucket,
+            )
+            .expect_err("duplicate signal_bucket must be rejected");
+        assert!(matches!(err, StorageError::ContractViolation(_)));
+    }
+
+    #[test]
+    fn at_fdbk_09_learn_signal_bundle_metadata_carries_identity_context_without_overwriting_base_keys(
+    ) {
+        let mut s = store_with_user_device_and_session();
+        let mut payload_metadata = std::collections::BTreeMap::new();
+        payload_metadata.insert("identity_tier_v2".to_string(), "CONFIRMED".to_string());
+        payload_metadata.insert("platform".to_string(), "android".to_string());
+        payload_metadata.insert("channel".to_string(), "explicit".to_string());
+
+        let bundle_id = s
+            .ph1feedback_learn_signal_bundle_commit_with_audit_payload_metadata(
+                MonotonicTimeNs(42),
+                "tenant_1".to_string(),
+                CorrelationId(5116),
+                TurnId(1),
+                Some(SessionId(1)),
+                user(),
+                device(),
+                "VoiceIdFalseAccept".to_string(),
+                "VoiceIdFalseAccept".to_string(),
+                ReasonCodeId(0xF00F),
+                "voice_feedback_evidence:user_1:5116:1:VoiceIdFalseAccept".to_string(),
+                "ph1.voice.id:feedback:VoiceIdFalseAccept:v1".to_string(),
+                120,
+                "idem:fdbk:bundle:metadata:identity_context".to_string(),
+                payload_metadata,
+            )
+            .expect("learn signal bundle commit with identity context metadata must succeed");
+
+        let rows = s.ph1feedback_learn_signal_bundle_rows(CorrelationId(5116));
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].bundle_id, bundle_id);
+
+        let learn_rows = s
+            .audit_events_by_correlation(CorrelationId(5116))
+            .into_iter()
+            .filter(|row| {
+                matches!(&row.engine, AuditEngine::Other(engine_id) if engine_id == "PH1.LEARN")
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(learn_rows.len(), 1);
+        let payload = &learn_rows[0].payload_min.entries;
+        assert_eq!(
+            payload
+                .get(&PayloadKey::new("identity_tier_v2").unwrap())
+                .expect("identity_tier_v2 must exist")
+                .as_str(),
+            "CONFIRMED"
+        );
+        assert_eq!(
+            payload
+                .get(&PayloadKey::new("platform").unwrap())
+                .expect("platform must exist")
+                .as_str(),
+            "android"
+        );
+        assert_eq!(
+            payload
+                .get(&PayloadKey::new("channel").unwrap())
+                .expect("channel must exist")
+                .as_str(),
+            "explicit"
+        );
+
+        let mut duplicate_feedback_event_type = std::collections::BTreeMap::new();
+        duplicate_feedback_event_type.insert(
+            "feedback_event_type".to_string(),
+            "VoiceIdFalseReject".to_string(),
+        );
+        let err = s
+            .ph1feedback_learn_signal_bundle_commit_with_audit_payload_metadata(
+                MonotonicTimeNs(43),
+                "tenant_1".to_string(),
+                CorrelationId(5117),
+                TurnId(1),
+                Some(SessionId(1)),
+                user(),
+                device(),
+                "VoiceIdFalseAccept".to_string(),
+                "VoiceIdFalseAccept".to_string(),
+                ReasonCodeId(0xF010),
+                "voice_feedback_evidence:user_1:5117:1:VoiceIdFalseAccept".to_string(),
+                "ph1.voice.id:feedback:VoiceIdFalseAccept:v1".to_string(),
+                120,
+                "idem:fdbk:bundle:metadata:duplicate:feedback_event_type".to_string(),
+                duplicate_feedback_event_type,
+            )
+            .expect_err("duplicate feedback_event_type must be rejected");
+        assert!(matches!(err, StorageError::ContractViolation(_)));
+    }
+
+    #[test]
     fn at_f_wake_promotion_01_candidate_shadow_canary_active_path() {
         let mut s = Ph1fStore::new_in_memory();
         let v = ArtifactVersion(10);
