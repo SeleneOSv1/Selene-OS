@@ -26253,8 +26253,8 @@ mod tests {
     }
 
     #[test]
-    fn at_fdbk_06_learn_signal_bundle_metadata_carries_voice_context_without_overwriting_base_keys(
-    ) {
+    fn at_fdbk_06_learn_signal_bundle_metadata_carries_voice_context_without_overwriting_base_keys()
+    {
         let mut s = store_with_user_device_and_session();
         let mut payload_metadata = std::collections::BTreeMap::new();
         payload_metadata.insert("voice_decision".to_string(), "OK_LOW_MARGIN".to_string());
@@ -26416,6 +26416,209 @@ mod tests {
                 duplicate_metadata,
             )
             .expect_err("duplicate base payload keys must be rejected");
+        assert!(matches!(err, StorageError::ContractViolation(_)));
+    }
+
+    #[test]
+    fn at_fdbk_07_learn_signal_bundle_metadata_carries_signal_bucket_without_overwriting_base_keys()
+    {
+        let mut s = store_with_user_device_and_session();
+        let mut payload_metadata = std::collections::BTreeMap::new();
+        payload_metadata.insert(
+            "signal_bucket".to_string(),
+            "VoiceIdFalseReject".to_string(),
+        );
+        payload_metadata.insert("voice_decision".to_string(), "UNKNOWN".to_string());
+
+        let bundle_id = s
+            .ph1feedback_learn_signal_bundle_commit_with_audit_payload_metadata(
+                MonotonicTimeNs(30),
+                "tenant_1".to_string(),
+                CorrelationId(5109),
+                TurnId(1),
+                Some(SessionId(1)),
+                user(),
+                device(),
+                "VoiceIdFalseReject".to_string(),
+                "VoiceIdFalseReject".to_string(),
+                ReasonCodeId(0xF008),
+                "voice_feedback_evidence:user_1:5109:1:VoiceIdFalseReject".to_string(),
+                "ph1.voice.id:feedback:VoiceIdFalseReject:v1".to_string(),
+                140,
+                "idem:fdbk:bundle:metadata:signal_bucket".to_string(),
+                payload_metadata,
+            )
+            .expect(
+                "learn signal bundle commit with learn-only signal_bucket metadata must succeed",
+            );
+
+        let rows = s.ph1feedback_learn_signal_bundle_rows(CorrelationId(5109));
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].bundle_id, bundle_id);
+        assert_eq!(
+            rows[0].feedback_event_type,
+            FeedbackEventType::VoiceIdFalseReject
+        );
+        assert_eq!(
+            rows[0].learn_signal_type,
+            LearnSignalType::VoiceIdFalseReject
+        );
+
+        let learn_rows = s
+            .audit_events_by_correlation(CorrelationId(5109))
+            .into_iter()
+            .filter(|row| {
+                matches!(&row.engine, AuditEngine::Other(engine_id) if engine_id == "PH1.LEARN")
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(learn_rows.len(), 1);
+        let payload = &learn_rows[0].payload_min.entries;
+        assert_eq!(
+            payload
+                .get(&PayloadKey::new("feedback_event_type").unwrap())
+                .expect("feedback_event_type must exist")
+                .as_str(),
+            "VoiceIdFalseReject"
+        );
+        assert_eq!(
+            payload
+                .get(&PayloadKey::new("learn_signal_type").unwrap())
+                .expect("learn_signal_type must exist")
+                .as_str(),
+            "VoiceIdFalseReject"
+        );
+        assert_eq!(
+            payload
+                .get(&PayloadKey::new("signal_bucket").unwrap())
+                .expect("signal_bucket must exist")
+                .as_str(),
+            "VoiceIdFalseReject"
+        );
+        assert_eq!(
+            payload
+                .get(&PayloadKey::new("path_type").unwrap())
+                .expect("path_type must exist")
+                .as_str(),
+            "PathA_Defect"
+        );
+        assert_eq!(
+            payload
+                .get(&PayloadKey::new("evidence_ref").unwrap())
+                .expect("evidence_ref must exist")
+                .as_str(),
+            "voice_feedback_evidence:user_1:5109:1:VoiceIdFalseReject"
+        );
+        assert_eq!(
+            payload
+                .get(&PayloadKey::new("provenance_ref").unwrap())
+                .expect("provenance_ref must exist")
+                .as_str(),
+            "ph1.voice.id:feedback:VoiceIdFalseReject:v1"
+        );
+        assert_eq!(
+            payload
+                .get(&PayloadKey::new("voice_decision").unwrap())
+                .expect("voice_decision must exist")
+                .as_str(),
+            "UNKNOWN"
+        );
+
+        let mut duplicate_learn_signal_type = std::collections::BTreeMap::new();
+        duplicate_learn_signal_type.insert(
+            "learn_signal_type".to_string(),
+            "VoiceIdFalseAccept".to_string(),
+        );
+        let err = s
+            .ph1feedback_learn_signal_bundle_commit_with_audit_payload_metadata(
+                MonotonicTimeNs(31),
+                "tenant_1".to_string(),
+                CorrelationId(5110),
+                TurnId(1),
+                Some(SessionId(1)),
+                user(),
+                device(),
+                "VoiceIdFalseReject".to_string(),
+                "VoiceIdFalseReject".to_string(),
+                ReasonCodeId(0xF009),
+                "voice_feedback_evidence:user_1:5110:1:VoiceIdFalseReject".to_string(),
+                "ph1.voice.id:feedback:VoiceIdFalseReject:v1".to_string(),
+                140,
+                "idem:fdbk:bundle:metadata:duplicate:learn_signal_type".to_string(),
+                duplicate_learn_signal_type,
+            )
+            .expect_err("duplicate learn_signal_type must be rejected");
+        assert!(matches!(err, StorageError::ContractViolation(_)));
+
+        let mut duplicate_path_type = std::collections::BTreeMap::new();
+        duplicate_path_type.insert("path_type".to_string(), "PathB_Improvement".to_string());
+        let err = s
+            .ph1feedback_learn_signal_bundle_commit_with_audit_payload_metadata(
+                MonotonicTimeNs(32),
+                "tenant_1".to_string(),
+                CorrelationId(5111),
+                TurnId(1),
+                Some(SessionId(1)),
+                user(),
+                device(),
+                "VoiceIdFalseReject".to_string(),
+                "VoiceIdFalseReject".to_string(),
+                ReasonCodeId(0xF00A),
+                "voice_feedback_evidence:user_1:5111:1:VoiceIdFalseReject".to_string(),
+                "ph1.voice.id:feedback:VoiceIdFalseReject:v1".to_string(),
+                140,
+                "idem:fdbk:bundle:metadata:duplicate:path_type".to_string(),
+                duplicate_path_type,
+            )
+            .expect_err("duplicate path_type must be rejected");
+        assert!(matches!(err, StorageError::ContractViolation(_)));
+
+        let mut duplicate_evidence_ref = std::collections::BTreeMap::new();
+        duplicate_evidence_ref.insert("evidence_ref".to_string(), "tampered:evidence".to_string());
+        let err = s
+            .ph1feedback_learn_signal_bundle_commit_with_audit_payload_metadata(
+                MonotonicTimeNs(33),
+                "tenant_1".to_string(),
+                CorrelationId(5112),
+                TurnId(1),
+                Some(SessionId(1)),
+                user(),
+                device(),
+                "VoiceIdFalseReject".to_string(),
+                "VoiceIdFalseReject".to_string(),
+                ReasonCodeId(0xF00B),
+                "voice_feedback_evidence:user_1:5112:1:VoiceIdFalseReject".to_string(),
+                "ph1.voice.id:feedback:VoiceIdFalseReject:v1".to_string(),
+                140,
+                "idem:fdbk:bundle:metadata:duplicate:evidence_ref".to_string(),
+                duplicate_evidence_ref,
+            )
+            .expect_err("duplicate evidence_ref must be rejected");
+        assert!(matches!(err, StorageError::ContractViolation(_)));
+
+        let mut duplicate_provenance_ref = std::collections::BTreeMap::new();
+        duplicate_provenance_ref.insert(
+            "provenance_ref".to_string(),
+            "ph1.voice.id:feedback:tampered:v1".to_string(),
+        );
+        let err = s
+            .ph1feedback_learn_signal_bundle_commit_with_audit_payload_metadata(
+                MonotonicTimeNs(34),
+                "tenant_1".to_string(),
+                CorrelationId(5113),
+                TurnId(1),
+                Some(SessionId(1)),
+                user(),
+                device(),
+                "VoiceIdFalseReject".to_string(),
+                "VoiceIdFalseReject".to_string(),
+                ReasonCodeId(0xF00C),
+                "voice_feedback_evidence:user_1:5113:1:VoiceIdFalseReject".to_string(),
+                "ph1.voice.id:feedback:VoiceIdFalseReject:v1".to_string(),
+                140,
+                "idem:fdbk:bundle:metadata:duplicate:provenance_ref".to_string(),
+                duplicate_provenance_ref,
+            )
+            .expect_err("duplicate provenance_ref must be rejected");
         assert!(matches!(err, StorageError::ContractViolation(_)));
     }
 
