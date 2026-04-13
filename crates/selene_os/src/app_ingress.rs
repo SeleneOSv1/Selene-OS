@@ -4687,6 +4687,7 @@ fn refused_outcome_requires_step_up(reason_code: Option<ReasonCodeId>) -> bool {
             if code == sim_finder_reason_codes::SIM_FINDER_REFUSE_ACCESS_AP_REQUIRED
                 || code == voice_id_reason_codes::VID_REAUTH_REQUIRED
                 || code == voice_id_reason_codes::VID_DEVICE_CLAIM_REQUIRED
+                || code == voice_id_reason_codes::VID_SPOOF_RISK
     )
 }
 
@@ -10222,9 +10223,9 @@ mod tests {
         assert_authority_state_and_proof_simulation_certification(
             &store,
             &out,
-            AuthorityPolicyDecision::Denied,
-            SimulationCertificationState::NotRequested,
-            "NOT_REQUESTED",
+            AuthorityPolicyDecision::StepUpRequired,
+            SimulationCertificationState::StepUpRequired,
+            "STEP_UP_REQUIRED",
         );
     }
 
