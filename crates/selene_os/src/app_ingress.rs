@@ -4703,6 +4703,9 @@ fn simulation_certification_state_for_outcome(
     {
         return SimulationCertificationState::InactiveSimulation;
     }
+    if out.reason_code == Some(sim_finder_reason_codes::SIM_FINDER_REFUSE_ACCESS_AP_REQUIRED) {
+        return SimulationCertificationState::StepUpRequired;
+    }
     if matches!(
         out.ph1x_response.as_ref().map(|response| &response.directive),
         Some(Ph1xDirective::Dispatch(dispatch))
@@ -12031,6 +12034,27 @@ mod tests {
             &out_2,
             "ACCESS_AP_REQUIRED_FAIL_CLOSED",
         );
+        let authority_state = out_2
+            .runtime_execution_envelope
+            .authority_state
+            .as_ref()
+            .expect("authority state should be attached");
+        assert_eq!(
+            authority_state.policy_decision,
+            AuthorityPolicyDecision::StepUpRequired
+        );
+        assert_eq!(
+            authority_state.simulation_certification_state,
+            SimulationCertificationState::StepUpRequired
+        );
+        let proof_rows = store
+            .proof_records_by_request_id_bounded(&out_2.runtime_execution_envelope.request_id, 4)
+            .expect("proof rows should be readable");
+        assert_eq!(proof_rows.len(), 1);
+        assert_eq!(
+            proof_rows[0].simulation_certification_state.as_deref(),
+            Some("STEP_UP_REQUIRED")
+        );
     }
 
     #[test]
@@ -12154,6 +12178,24 @@ mod tests {
             row,
             &out_2,
             "ACCESS_DENIED_FAIL_CLOSED",
+        );
+        let authority_state = out_2
+            .runtime_execution_envelope
+            .authority_state
+            .as_ref()
+            .expect("authority state should be attached");
+        assert_eq!(authority_state.policy_decision, AuthorityPolicyDecision::Denied);
+        assert_eq!(
+            authority_state.simulation_certification_state,
+            SimulationCertificationState::NotRequested
+        );
+        let proof_rows = store
+            .proof_records_by_request_id_bounded(&out_2.runtime_execution_envelope.request_id, 4)
+            .expect("proof rows should be readable");
+        assert_eq!(proof_rows.len(), 1);
+        assert_eq!(
+            proof_rows[0].simulation_certification_state.as_deref(),
+            Some("NOT_REQUESTED")
         );
     }
 
