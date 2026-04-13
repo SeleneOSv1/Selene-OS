@@ -2762,6 +2762,24 @@ mod tests {
         )
     }
 
+    fn gray_zone_margin_voice_assertion(user_id: UserId) -> Ph1VoiceIdResponse {
+        Ph1VoiceIdResponse::SpeakerAssertionUnknown(
+            SpeakerAssertionUnknown::v1_with_candidate(
+                IdentityConfidence::Medium,
+                voice_id_reason_codes::VID_FAIL_GRAY_ZONE_MARGIN,
+                vec![DiarizationSegment::v1(
+                    MonotonicTimeNs(1),
+                    MonotonicTimeNs(2),
+                    Some(SpeakerLabel::speaker_a()),
+                )
+                .expect("segment must validate")],
+                Some(user_id),
+                None,
+            )
+            .expect("gray-zone margin voice assertion must validate"),
+        )
+    }
+
     fn echo_unsafe_voice_assertion() -> Ph1VoiceIdResponse {
         Ph1VoiceIdResponse::SpeakerAssertionUnknown(
             SpeakerAssertionUnknown::v1_with_candidate(
@@ -3693,6 +3711,35 @@ mod tests {
         assert_eq!(
             identity_state.reason_code,
             Some(u64::from(voice_id_reason_codes::VID_FAIL_LOW_CONFIDENCE.0))
+        );
+    }
+
+    #[test]
+    fn at_runtime_gov_27_gray_zone_margin_assertion_maps_to_degraded_conditional_identity_state() {
+        let runtime = RuntimeGovernanceRuntime::default();
+        let artifact_governed = artifact_governed_envelope(&runtime);
+        let out = runtime
+            .govern_artifact_activation_identity_state_execution(
+                &artifact_governed,
+                &gray_zone_margin_voice_assertion(artifact_governed.actor_identity.clone()),
+            )
+            .expect("gray-zone assertion must still produce bounded identity state");
+        let identity_state = out
+            .identity_state
+            .as_ref()
+            .expect("identity state must attach for gray-zone posture");
+        assert_eq!(
+            identity_state.consistency_level,
+            IdentityVerificationConsistencyLevel::DegradedVerification
+        );
+        assert_eq!(identity_state.trust_tier, IdentityTrustTier::Conditional);
+        assert!(!identity_state.step_up_required);
+        assert_eq!(identity_state.recovery_state, IdentityRecoveryState::None);
+        assert_eq!(
+            identity_state.reason_code,
+            Some(u64::from(
+                voice_id_reason_codes::VID_FAIL_GRAY_ZONE_MARGIN.0
+            ))
         );
     }
 
