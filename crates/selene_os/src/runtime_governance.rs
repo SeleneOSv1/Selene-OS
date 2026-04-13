@@ -2793,6 +2793,32 @@ mod tests {
         )
     }
 
+    fn multi_speaker_voice_assertion() -> Ph1VoiceIdResponse {
+        Ph1VoiceIdResponse::SpeakerAssertionUnknown(
+            SpeakerAssertionUnknown::v1_with_candidate(
+                IdentityConfidence::Low,
+                voice_id_reason_codes::VID_FAIL_MULTI_SPEAKER_PRESENT,
+                vec![
+                    DiarizationSegment::v1(
+                        MonotonicTimeNs(1),
+                        MonotonicTimeNs(2),
+                        Some(SpeakerLabel::speaker_a()),
+                    )
+                    .expect("segment must validate"),
+                    DiarizationSegment::v1(
+                        MonotonicTimeNs(3),
+                        MonotonicTimeNs(4),
+                        Some(SpeakerLabel::speaker_b()),
+                    )
+                    .expect("segment must validate"),
+                ],
+                None,
+                None,
+            )
+            .expect("multi-speaker voice assertion must validate"),
+        )
+    }
+
     fn allowed_authority_state() -> AuthorityExecutionState {
         AuthorityExecutionState::v1(
             Some(PolicyContextRef::v1(false, false, SafetyTier::Standard)),
@@ -3721,6 +3747,35 @@ mod tests {
         assert_eq!(
             identity_state.reason_code,
             Some(u64::from(voice_id_reason_codes::VID_FAIL_NO_SPEECH.0))
+        );
+    }
+
+    #[test]
+    fn at_runtime_gov_26_multi_speaker_assertion_maps_to_degraded_restricted_identity_state() {
+        let runtime = RuntimeGovernanceRuntime::default();
+        let artifact_governed = artifact_governed_envelope(&runtime);
+        let out = runtime
+            .govern_artifact_activation_identity_state_execution(
+                &artifact_governed,
+                &multi_speaker_voice_assertion(),
+            )
+            .expect("multi-speaker assertion must still produce bounded identity state");
+        let identity_state = out
+            .identity_state
+            .as_ref()
+            .expect("identity state must attach for multi-speaker posture");
+        assert_eq!(
+            identity_state.consistency_level,
+            IdentityVerificationConsistencyLevel::DegradedVerification
+        );
+        assert_eq!(identity_state.trust_tier, IdentityTrustTier::Restricted);
+        assert!(!identity_state.step_up_required);
+        assert_eq!(identity_state.recovery_state, IdentityRecoveryState::None);
+        assert_eq!(
+            identity_state.reason_code,
+            Some(u64::from(
+                voice_id_reason_codes::VID_FAIL_MULTI_SPEAKER_PRESENT.0
+            ))
         );
     }
 

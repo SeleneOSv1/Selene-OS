@@ -3615,6 +3615,38 @@ impl AppServerIngressRuntime {
             out.runtime_execution_envelope =
                 runtime_execution_envelope_with_authority_state_for_outcome(&out, finder_terminal)?;
         }
+        if let Some(identity_posture_fail_closed) =
+            classify_multi_speaker_identity_posture_fail_closed_outcome(&out)
+        {
+            if let Some(actor_device_id) = actor_device_id {
+                let tenant_id =
+                    normalized_tenant_scope_for_dev_intake(store, actor_user_id, actor_tenant_id)?;
+                let audit_session_id =
+                    request_session_id.filter(|session_id| store.get_session(session_id).is_some());
+                let _ = store.ph1x_respond_commit(
+                    dispatch_now,
+                    tenant_id,
+                    correlation_id,
+                    turn_id,
+                    audit_session_id,
+                    actor_user_id.clone(),
+                    actor_device_id.clone(),
+                    identity_posture_fail_closed.audit_response_kind.to_string(),
+                    identity_posture_fail_closed.reason_code,
+                    format!(
+                        "ph1x_identity_posture_fail_closed:{}:{}:{}",
+                        correlation_id.0,
+                        turn_id.0,
+                        identity_posture_fail_closed.audit_response_kind
+                    ),
+                )?;
+            }
+            out.next_move = AppVoiceTurnNextMove::Refused;
+            out.response_text = Some(identity_posture_fail_closed.user_message.to_string());
+            out.reason_code = Some(identity_posture_fail_closed.reason_code);
+            out.runtime_execution_envelope =
+                runtime_execution_envelope_with_authority_state_for_outcome(&out, finder_terminal)?;
+        }
         out.runtime_execution_envelope = self.emit_voice_turn_proof_and_attach(
             store,
             &out,
@@ -4821,6 +4853,36 @@ fn classify_no_speech_identity_posture_fail_closed_outcome(
         ),
         user_message: "I couldn't detect speech clearly enough, so I can't continue.",
         audit_response_kind: "IDENTITY_NO_SPEECH_FAIL_CLOSED",
+    })
+}
+
+fn classify_multi_speaker_identity_posture_fail_closed_outcome(
+    out: &AppVoiceTurnExecutionOutcome,
+) -> Option<IdentityPostureFailClosedBehavior> {
+    if !matches!(
+        out.next_move,
+        AppVoiceTurnNextMove::Dispatch | AppVoiceTurnNextMove::Respond
+    ) {
+        return None;
+    }
+    let identity_state = out.runtime_execution_envelope.identity_state.as_ref()?;
+    if identity_state.consistency_level
+        != IdentityVerificationConsistencyLevel::DegradedVerification
+        || identity_state.trust_tier != IdentityTrustTier::Restricted
+        || identity_state.step_up_required
+        || identity_state.recovery_state != IdentityRecoveryState::None
+        || identity_reason_code(identity_state)
+            != Some(voice_id_reason_codes::VID_FAIL_MULTI_SPEAKER_PRESENT)
+    {
+        return None;
+    }
+    Some(IdentityPostureFailClosedBehavior {
+        reason_code: identity_reason_code_or(
+            identity_state,
+            voice_id_reason_codes::VID_FAIL_MULTI_SPEAKER_PRESENT,
+        ),
+        user_message: "I detected multiple speakers, so I can't continue.",
+        audit_response_kind: "IDENTITY_MULTI_SPEAKER_FAIL_CLOSED",
     })
 }
 
@@ -6561,6 +6623,32 @@ mod tests {
                 IdentityConfidence::Low,
                 voice_id_reason_codes::VID_FAIL_NO_SPEECH,
                 vec![],
+                None,
+                None,
+            )
+            .unwrap(),
+        )
+    }
+
+    fn multi_speaker_voice_assertion() -> Ph1VoiceIdResponse {
+        Ph1VoiceIdResponse::SpeakerAssertionUnknown(
+            SpeakerAssertionUnknown::v1_with_candidate(
+                IdentityConfidence::Low,
+                voice_id_reason_codes::VID_FAIL_MULTI_SPEAKER_PRESENT,
+                vec![
+                    DiarizationSegment::v1(
+                        MonotonicTimeNs(1),
+                        MonotonicTimeNs(2),
+                        Some(SpeakerLabel::speaker_a()),
+                    )
+                    .unwrap(),
+                    DiarizationSegment::v1(
+                        MonotonicTimeNs(3),
+                        MonotonicTimeNs(4),
+                        Some(SpeakerLabel::speaker_b()),
+                    )
+                    .unwrap(),
+                ],
                 None,
                 None,
             )
@@ -8538,6 +8626,93 @@ mod tests {
     }
 
     #[test]
+    fn at_harmonize_02g_multi_speaker_identity_attaches_degraded_restricted_trust() {
+        let runtime = AppServerIngressRuntime::default();
+        let actor_user_id = UserId::new("tenant_1:harmonize_multi_speaker_user").unwrap();
+        let device_id = DeviceId::new("harmonize_multi_speaker_device_1").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &actor_user_id, &device_id);
+
+        let request = AppVoiceIngressRequest::v1(
+            CorrelationId(9530),
+            TurnId(9630),
+            AppPlatform::Desktop,
+            OsVoiceTrigger::Explicit,
+            sample_voice_id_request(MonotonicTimeNs(3), actor_user_id.clone()),
+            actor_user_id.clone(),
+            Some("tenant_1".to_string()),
+            Some(device_id),
+            Vec::new(),
+            no_observation(),
+        )
+        .unwrap();
+        let outcome = runtime.run_voice_turn(&mut store, request).unwrap();
+        let OsVoiceLiveTurnOutcome::Forwarded(mut forwarded) = outcome else {
+            panic!("expected forwarded voice turn");
+        };
+        forwarded.voice_identity_assertion = multi_speaker_voice_assertion();
+
+        let x_build = AppVoicePh1xBuildInput {
+            now: MonotonicTimeNs(7),
+            thread_key: None,
+            thread_state: ThreadState::empty_v1(),
+            session_state: SessionState::Active,
+            policy_context_ref: PolicyContextRef::v1(false, false, SafetyTier::Standard),
+            memory_candidates: vec![],
+            confirm_answer: None,
+            nlp_output: Some(invite_link_draft_missing_contact("Jane", "tenant_1")),
+            tool_response: None,
+            interruption: None,
+            locale: None,
+            last_failure_reason_code: None,
+        };
+        runtime
+            .build_ph1x_request_for_forwarded_voice(
+                &mut store,
+                ForwardedVoicePh1xRequestInput {
+                    correlation_id: CorrelationId(9530),
+                    turn_id: TurnId(9630),
+                    app_platform: AppPlatform::Desktop,
+                    forwarded: &forwarded,
+                    request_session_id: None,
+                    tenant_id: Some("tenant_1"),
+                    x_build,
+                },
+            )
+            .unwrap();
+
+        let packet = runtime
+            .debug_last_agent_input_packet()
+            .expect("agent packet should be captured");
+        let envelope = packet
+            .runtime_execution_envelope
+            .expect("agent packet should carry runtime execution envelope");
+        let identity_state = envelope
+            .identity_state
+            .expect("identity state should be attached");
+        assert_eq!(
+            identity_state.consistency_level,
+            IdentityVerificationConsistencyLevel::DegradedVerification
+        );
+        assert_eq!(identity_state.trust_tier, IdentityTrustTier::Restricted);
+        assert!(!identity_state.step_up_required);
+        assert_eq!(identity_state.recovery_state, IdentityRecoveryState::None);
+        assert_eq!(
+            identity_state.reason_code,
+            Some(u64::from(
+                voice_id_reason_codes::VID_FAIL_MULTI_SPEAKER_PRESENT.0
+            ))
+        );
+        let memory_state = envelope
+            .memory_state
+            .expect("memory state should be attached");
+        assert_eq!(
+            memory_state.eligibility_decision,
+            MemoryEligibilityDecision::IdentityScopeBlocked
+        );
+    }
+
+    #[test]
     fn at_harmonize_02b_spoof_risk_identity_is_rejected_and_recovery_restricted() {
         let runtime = AppServerIngressRuntime::default();
         let actor_user_id = UserId::new("tenant_1:harmonize_spoof_user").unwrap();
@@ -9167,6 +9342,47 @@ mod tests {
                     .unwrap_or(false)
             }),
             "no-speech fail-closed response must emit PH1.X audit row"
+        );
+    }
+
+    #[test]
+    fn at_identity_posture_04_multi_speaker_protected_voice_turn_fails_closed_with_explicit_multi_speaker_response(
+    ) {
+        let runtime = runtime_with_search_tool_fixtures();
+        let actor_user_id = UserId::new("tenant_1:identity_multi_speaker_runtime_user").unwrap();
+        let device_id = DeviceId::new("identity_multi_speaker_runtime_device_1").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &actor_user_id, &device_id);
+
+        let out = run_protected_chat_response_turn_with_identity_assertion(
+            &runtime,
+            &mut store,
+            actor_user_id,
+            device_id,
+            multi_speaker_voice_assertion(),
+            CorrelationId(9829),
+            TurnId(9929),
+        );
+
+        assert_eq!(out.next_move, AppVoiceTurnNextMove::Refused);
+        assert_eq!(
+            out.response_text.as_deref(),
+            Some("I detected multiple speakers, so I can't continue.")
+        );
+        assert_eq!(
+            out.reason_code,
+            Some(voice_id_reason_codes::VID_FAIL_MULTI_SPEAKER_PRESENT)
+        );
+        let response_rows = store.ph1x_audit_rows(CorrelationId(9829));
+        assert!(
+            response_rows.iter().any(|row| {
+                row.payload_min
+                    .entries
+                    .get(&PayloadKey::new("response_kind").unwrap())
+                    .map(|value| value.as_str() == "IDENTITY_MULTI_SPEAKER_FAIL_CLOSED")
+                    .unwrap_or(false)
+            }),
+            "multi-speaker fail-closed response must emit PH1.X audit row"
         );
     }
 
