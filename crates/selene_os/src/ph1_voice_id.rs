@@ -19,7 +19,9 @@ use selene_kernel_contracts::ph1_voice_id::{
 use selene_kernel_contracts::ph1art::{
     ArtifactScopeType, ArtifactStatus, ArtifactType, ArtifactVersion,
 };
-use selene_kernel_contracts::ph1feedback::FeedbackEventType;
+use selene_kernel_contracts::ph1feedback::{
+    classify_feedback_path, FeedbackEventType, FeedbackPathType,
+};
 use selene_kernel_contracts::ph1j::{
     AuditEngine, AuditEventInput, AuditEventType, AuditPayloadMin, AuditSeverity, CorrelationId,
     DeviceId, PayloadKey, PayloadValue, TurnId,
@@ -778,6 +780,13 @@ fn learn_signal_type_label(signal_type: LearnSignalType) -> &'static str {
     }
 }
 
+fn feedback_path_type_label(path_type: FeedbackPathType) -> &'static str {
+    match path_type {
+        FeedbackPathType::Defect => "PathA_Defect",
+        FeedbackPathType::Improvement => "PathB_Improvement",
+    }
+}
+
 fn apply_contract_migration_stage(
     response: &mut Ph1VoiceIdResponse,
     stage: VoiceIdContractMigrationStage,
@@ -1260,12 +1269,13 @@ fn voice_audit_context_payload_metadata(signal: VoiceFeedbackLearnSignal) -> BTr
     payload_metadata
 }
 
-fn unscoped_voice_feedback_learn_payload(
+fn unscoped_voice_feedback_learn_payload_base(
     signal: VoiceFeedbackLearnSignal,
     feedback_event_type: &str,
     learn_signal_type: &str,
     evidence_ref: &str,
     provenance_ref: &str,
+    include_feedback_path_fields: bool,
 ) -> Result<AuditPayloadMin, StorageError> {
     let mut payload_entries = BTreeMap::new();
     payload_entries.insert(
@@ -1276,6 +1286,19 @@ fn unscoped_voice_feedback_learn_payload(
         PayloadKey::new("learn_signal_type").map_err(StorageError::ContractViolation)?,
         PayloadValue::new(learn_signal_type).map_err(StorageError::ContractViolation)?,
     );
+    if include_feedback_path_fields {
+        payload_entries.insert(
+            PayloadKey::new("signal_bucket").map_err(StorageError::ContractViolation)?,
+            PayloadValue::new(learn_signal_type).map_err(StorageError::ContractViolation)?,
+        );
+        payload_entries.insert(
+            PayloadKey::new("path_type").map_err(StorageError::ContractViolation)?,
+            PayloadValue::new(feedback_path_type_label(classify_feedback_path(
+                signal.feedback_event_type,
+            )))
+            .map_err(StorageError::ContractViolation)?,
+        );
+    }
     payload_entries.insert(
         PayloadKey::new("voice_decision").map_err(StorageError::ContractViolation)?,
         PayloadValue::new(signal.decision).map_err(StorageError::ContractViolation)?,
@@ -1306,6 +1329,40 @@ fn unscoped_voice_feedback_learn_payload(
         );
     }
     AuditPayloadMin::v1(payload_entries).map_err(StorageError::ContractViolation)
+}
+
+fn unscoped_voice_feedback_payload(
+    signal: VoiceFeedbackLearnSignal,
+    feedback_event_type: &str,
+    learn_signal_type: &str,
+    evidence_ref: &str,
+    provenance_ref: &str,
+) -> Result<AuditPayloadMin, StorageError> {
+    unscoped_voice_feedback_learn_payload_base(
+        signal,
+        feedback_event_type,
+        learn_signal_type,
+        evidence_ref,
+        provenance_ref,
+        true,
+    )
+}
+
+fn unscoped_voice_learn_payload(
+    signal: VoiceFeedbackLearnSignal,
+    feedback_event_type: &str,
+    learn_signal_type: &str,
+    evidence_ref: &str,
+    provenance_ref: &str,
+) -> Result<AuditPayloadMin, StorageError> {
+    unscoped_voice_feedback_learn_payload_base(
+        signal,
+        feedback_event_type,
+        learn_signal_type,
+        evidence_ref,
+        provenance_ref,
+        false,
+    )
 }
 
 fn emit_voice_id_feedback_and_learn_signal(
@@ -1386,7 +1443,7 @@ fn emit_voice_id_feedback_and_learn_signal(
         return Ok(());
     }
 
-    let feedback_payload = unscoped_voice_feedback_learn_payload(
+    let feedback_payload = unscoped_voice_feedback_payload(
         signal,
         feedback_event_type,
         learn_signal_type,
@@ -1419,7 +1476,7 @@ fn emit_voice_id_feedback_and_learn_signal(
     .map_err(StorageError::ContractViolation)?;
     Ph1jRuntime::emit(store, fallback_feedback_event)?;
 
-    let learn_payload = unscoped_voice_feedback_learn_payload(
+    let learn_payload = unscoped_voice_learn_payload(
         signal,
         feedback_event_type,
         learn_signal_type,
@@ -4081,6 +4138,504 @@ mod tests {
             learn_row.idempotency_key,
             feedback_row.idempotency_key,
             "fallback PH1.LEARN idempotency must remain distinct from fallback PH1.FEEDBACK"
+        );
+
+        let decision_row = all_rows
+            .iter()
+            .find(|row| {
+                matches!(&row.engine, AuditEngine::Other(engine) if engine == PH1_VOICE_ID_ENGINE_ID)
+                    && row.payload_min.entries.contains_key(
+                        &PayloadKey::new("decision_log_family").unwrap()
+                    )
+            })
+            .expect("H166 decision audit row must still exist");
+        assert_eq!(
+            decision_row.reason_code,
+            engine_voice_reason_codes::VID_OK_MATCHED
+        );
+        assert_eq!(
+            decision_row
+                .payload_min
+                .entries
+                .get(&PayloadKey::new("decision_v1").unwrap())
+                .expect("decision_v1 must exist")
+                .as_str(),
+            "OK"
+        );
+    }
+
+    #[test]
+    fn at_vid_live_gate_25_unscoped_unknown_feedback_audit_surfaces_bucket_and_path_type() {
+        let mut store = Ph1fStore::new_in_memory();
+        let runtime = Ph1VoiceIdLiveRuntime::default();
+        let req = sample_live_request();
+        let context = VoiceIdentityRuntimeContext::from_tenant_app_platform(
+            Some("tenant_audit".to_string()),
+            Some(AppPlatform::Android),
+            VoiceIdentityChannel::Explicit,
+        );
+        let signal_scope = sample_signal_scope(5525, 1);
+        let enrolled = vec![EngineEnrolledSpeaker {
+            speaker_id: selene_kernel_contracts::ph1_voice_id::SpeakerId::new(
+                "speaker_audit_unknown_feedback_unscoped",
+            )
+            .unwrap(),
+            user_id: Some(
+                selene_kernel_contracts::ph1_voice_id::UserId::new(
+                    "user_audit_unknown_feedback_unscoped",
+                )
+                .unwrap(),
+            ),
+            fingerprint: 7,
+            profile_embedding: Some(simulation_profile_embedding_from_seed(7)),
+        }];
+        let out = runtime
+            .run_identity_assertion_with_signal_emission(
+                &mut store,
+                &req,
+                context,
+                enrolled,
+                EngineVoiceIdObservation {
+                    primary_fingerprint: Some(7),
+                    secondary_fingerprint: None,
+                    primary_embedding: None,
+                    secondary_embedding: None,
+                    spoof_risk: false,
+                },
+                signal_scope.clone(),
+            )
+            .expect("unscoped unknown identity run with signal emission must succeed");
+
+        assert!(matches!(
+            out,
+            Ph1VoiceIdResponse::SpeakerAssertionUnknown(_)
+        ));
+
+        let all_rows = store.audit_events_by_correlation(CorrelationId(5525));
+        let feedback_row = all_rows
+            .iter()
+            .find(|row| matches!(&row.engine, AuditEngine::Other(engine) if engine == "PH1.FEEDBACK"))
+            .expect("fallback PH1.FEEDBACK audit row must exist");
+        let feedback_payload = &feedback_row.payload_min.entries;
+        assert_eq!(
+            feedback_payload
+                .get(&PayloadKey::new("feedback_event_type").unwrap())
+                .expect("feedback_event_type must exist")
+                .as_str(),
+            "VoiceIdFalseReject"
+        );
+        assert_eq!(
+            feedback_payload
+                .get(&PayloadKey::new("learn_signal_type").unwrap())
+                .expect("learn_signal_type must exist")
+                .as_str(),
+            "VoiceIdFalseReject"
+        );
+        assert_eq!(
+            feedback_payload
+                .get(&PayloadKey::new("signal_bucket").unwrap())
+                .expect("signal_bucket must exist")
+                .as_str(),
+            "VoiceIdFalseReject"
+        );
+        assert_eq!(
+            feedback_payload
+                .get(&PayloadKey::new("path_type").unwrap())
+                .expect("path_type must exist")
+                .as_str(),
+            "PathA_Defect"
+        );
+        assert_eq!(
+            feedback_payload
+                .get(&PayloadKey::new("voice_decision").unwrap())
+                .expect("voice_decision must exist")
+                .as_str(),
+            "UNKNOWN"
+        );
+        assert_eq!(
+            feedback_payload
+                .get(&PayloadKey::new("voice_reason_code_hex").unwrap())
+                .expect("voice_reason_code_hex must exist")
+                .as_str(),
+            format!(
+                "0x{:X}",
+                engine_voice_reason_codes::VID_FAIL_LOW_CONFIDENCE.0
+            )
+        );
+        assert_eq!(
+            feedback_payload
+                .get(&PayloadKey::new("voice_score_bp").unwrap())
+                .expect("voice_score_bp must exist")
+                .as_str(),
+            voice_score_bp(&out).to_string()
+        );
+        assert!(
+            !feedback_payload.contains_key(&PayloadKey::new("voice_margin_to_next_bp").unwrap()),
+            "unknown fallback feedback path should not invent margin context"
+        );
+        assert!(
+            !feedback_payload.contains_key(&PayloadKey::new("decision_log_family").unwrap()),
+            "fallback PH1.FEEDBACK row must remain distinct from the H166 decision row"
+        );
+        assert_eq!(
+            feedback_row.reason_code,
+            engine_voice_reason_codes::VID_FAIL_LOW_CONFIDENCE
+        );
+        let expected_feedback_idempotency = format!(
+            "voice_feedback_unscoped:{}:{}:{}:{}",
+            signal_scope.actor_user_id.as_str(),
+            signal_scope.correlation_id.0,
+            signal_scope.turn_id.0,
+            engine_voice_reason_codes::VID_FAIL_LOW_CONFIDENCE.0
+        );
+        assert_eq!(
+            feedback_row.idempotency_key.as_deref(),
+            Some(expected_feedback_idempotency.as_str())
+        );
+
+        let learn_row = all_rows
+            .iter()
+            .find(|row| matches!(&row.engine, AuditEngine::Other(engine) if engine == "PH1.LEARN"))
+            .expect("fallback PH1.LEARN audit row must still exist");
+        let learn_payload = &learn_row.payload_min.entries;
+        assert!(
+            !learn_payload.contains_key(&PayloadKey::new("signal_bucket").unwrap()),
+            "fallback PH1.LEARN row must remain unchanged"
+        );
+        assert!(
+            !learn_payload.contains_key(&PayloadKey::new("path_type").unwrap()),
+            "fallback PH1.LEARN row must remain unchanged"
+        );
+
+        let decision_row = all_rows
+            .iter()
+            .find(|row| {
+                matches!(&row.engine, AuditEngine::Other(engine) if engine == PH1_VOICE_ID_ENGINE_ID)
+                    && row.payload_min.entries.contains_key(
+                        &PayloadKey::new("decision_log_family").unwrap()
+                    )
+            })
+            .expect("H166 decision audit row must still exist");
+        assert_eq!(
+            decision_row
+                .payload_min
+                .entries
+                .get(&PayloadKey::new("decision_v1").unwrap())
+                .expect("decision_v1 must exist")
+                .as_str(),
+            "UNKNOWN"
+        );
+    }
+
+    #[test]
+    fn at_vid_live_gate_26_unscoped_low_margin_feedback_audit_surfaces_bucket_and_path_type() {
+        let mut store = Ph1fStore::new_in_memory();
+        let signal_scope = sample_signal_scope(5526, 1);
+        let response = Ph1VoiceIdResponse::SpeakerAssertionOk(
+            SpeakerAssertionOk::v1_with_metrics(
+                selene_kernel_contracts::ph1_voice_id::SpeakerId::new(
+                    "speaker_low_margin_feedback_unscoped",
+                )
+                .unwrap(),
+                Some(
+                    selene_kernel_contracts::ph1_voice_id::UserId::new(
+                        "user_low_margin_feedback_unscoped",
+                    )
+                    .unwrap(),
+                ),
+                sample_decision_segments(),
+                SpeakerLabel::speaker_a(),
+                9_700,
+                Some(250),
+                Some(engine_voice_reason_codes::VID_OK_MATCHED),
+                selene_kernel_contracts::ph1_voice_id::SpoofLivenessStatus::Live,
+                vec![],
+            )
+            .expect("low-margin matched response fixture must be valid"),
+        );
+        let signal = map_voice_response_to_feedback_learn_signal(&response)
+            .expect("low-margin matched response should map to fallback feedback emission");
+        assert_eq!(
+            signal.reason_code,
+            engine_voice_reason_codes::VID_FAIL_GRAY_ZONE_MARGIN
+        );
+        assert_eq!(signal.decision, "OK_LOW_MARGIN");
+
+        emit_voice_id_feedback_and_learn_signal(&mut store, &signal_scope, signal)
+            .expect("fallback feedback emission must succeed for low-margin matched response");
+        emit_voice_id_decision_audit(
+            &mut store,
+            VoiceIdentityRuntimeContext::from_tenant_app_platform(
+                Some("tenant_audit".to_string()),
+                Some(AppPlatform::Android),
+                VoiceIdentityChannel::Explicit,
+            ),
+            &signal_scope,
+            &response,
+        )
+        .expect("decision audit emission must succeed for low-margin matched response");
+
+        let all_rows = store.audit_events_by_correlation(CorrelationId(5526));
+        let feedback_row = all_rows
+            .iter()
+            .find(|row| matches!(&row.engine, AuditEngine::Other(engine) if engine == "PH1.FEEDBACK"))
+            .expect("fallback PH1.FEEDBACK audit row must exist");
+        let feedback_payload = &feedback_row.payload_min.entries;
+        assert_eq!(
+            feedback_payload
+                .get(&PayloadKey::new("feedback_event_type").unwrap())
+                .expect("feedback_event_type must exist")
+                .as_str(),
+            "VoiceIdFalseAccept"
+        );
+        assert_eq!(
+            feedback_payload
+                .get(&PayloadKey::new("learn_signal_type").unwrap())
+                .expect("learn_signal_type must exist")
+                .as_str(),
+            "VoiceIdFalseAccept"
+        );
+        assert_eq!(
+            feedback_payload
+                .get(&PayloadKey::new("signal_bucket").unwrap())
+                .expect("signal_bucket must exist")
+                .as_str(),
+            "VoiceIdFalseAccept"
+        );
+        assert_eq!(
+            feedback_payload
+                .get(&PayloadKey::new("path_type").unwrap())
+                .expect("path_type must exist")
+                .as_str(),
+            "PathA_Defect"
+        );
+        assert_eq!(
+            feedback_payload
+                .get(&PayloadKey::new("voice_decision").unwrap())
+                .expect("voice_decision must exist")
+                .as_str(),
+            "OK_LOW_MARGIN"
+        );
+        assert_eq!(
+            feedback_payload
+                .get(&PayloadKey::new("voice_reason_code_hex").unwrap())
+                .expect("voice_reason_code_hex must exist")
+                .as_str(),
+            format!(
+                "0x{:X}",
+                engine_voice_reason_codes::VID_FAIL_GRAY_ZONE_MARGIN.0
+            )
+        );
+        assert_eq!(
+            feedback_payload
+                .get(&PayloadKey::new("voice_score_bp").unwrap())
+                .expect("voice_score_bp must exist")
+                .as_str(),
+            "9700"
+        );
+        assert_eq!(
+            feedback_payload
+                .get(&PayloadKey::new("voice_margin_to_next_bp").unwrap())
+                .expect("voice_margin_to_next_bp must exist")
+                .as_str(),
+            "250"
+        );
+        assert_eq!(
+            feedback_row.reason_code,
+            engine_voice_reason_codes::VID_FAIL_GRAY_ZONE_MARGIN
+        );
+        let expected_feedback_idempotency = format!(
+            "voice_feedback_unscoped:{}:{}:{}:{}",
+            signal_scope.actor_user_id.as_str(),
+            signal_scope.correlation_id.0,
+            signal_scope.turn_id.0,
+            engine_voice_reason_codes::VID_FAIL_GRAY_ZONE_MARGIN.0
+        );
+        assert_eq!(
+            feedback_row.idempotency_key.as_deref(),
+            Some(expected_feedback_idempotency.as_str())
+        );
+
+        let learn_row = all_rows
+            .iter()
+            .find(|row| matches!(&row.engine, AuditEngine::Other(engine) if engine == "PH1.LEARN"))
+            .expect("fallback PH1.LEARN audit row must still exist");
+        let learn_payload = &learn_row.payload_min.entries;
+        assert!(
+            !learn_payload.contains_key(&PayloadKey::new("signal_bucket").unwrap()),
+            "fallback PH1.LEARN row must remain unchanged"
+        );
+        assert!(
+            !learn_payload.contains_key(&PayloadKey::new("path_type").unwrap()),
+            "fallback PH1.LEARN row must remain unchanged"
+        );
+
+        let decision_row = all_rows
+            .iter()
+            .find(|row| {
+                matches!(&row.engine, AuditEngine::Other(engine) if engine == PH1_VOICE_ID_ENGINE_ID)
+                    && row.payload_min.entries.contains_key(
+                        &PayloadKey::new("decision_log_family").unwrap()
+                    )
+            })
+            .expect("H166 decision audit row must still exist");
+        assert_eq!(
+            decision_row.reason_code,
+            engine_voice_reason_codes::VID_OK_MATCHED
+        );
+        assert_eq!(
+            decision_row
+                .payload_min
+                .entries
+                .get(&PayloadKey::new("decision_v1").unwrap())
+                .expect("decision_v1 must exist")
+                .as_str(),
+            "OK"
+        );
+    }
+
+    #[test]
+    fn at_vid_live_gate_27_unscoped_low_score_feedback_audit_surfaces_reauth_bucket_and_path_type(
+    ) {
+        let mut store = Ph1fStore::new_in_memory();
+        let signal_scope = sample_signal_scope(5527, 1);
+        let response = Ph1VoiceIdResponse::SpeakerAssertionOk(
+            SpeakerAssertionOk::v1_with_metrics(
+                selene_kernel_contracts::ph1_voice_id::SpeakerId::new(
+                    "speaker_low_score_feedback_unscoped",
+                )
+                .unwrap(),
+                Some(
+                    selene_kernel_contracts::ph1_voice_id::UserId::new(
+                        "user_low_score_feedback_unscoped",
+                    )
+                    .unwrap(),
+                ),
+                sample_decision_segments(),
+                SpeakerLabel::speaker_a(),
+                9_400,
+                Some(350),
+                Some(engine_voice_reason_codes::VID_OK_MATCHED),
+                selene_kernel_contracts::ph1_voice_id::SpoofLivenessStatus::Live,
+                vec![],
+            )
+            .expect("low-score matched response fixture must be valid"),
+        );
+        let signal = map_voice_response_to_feedback_learn_signal(&response)
+            .expect("low-score matched response should map to fallback feedback emission");
+        assert_eq!(
+            signal.reason_code,
+            engine_voice_reason_codes::VID_FAIL_LOW_CONFIDENCE
+        );
+        assert_eq!(signal.decision, "OK_LOW_SCORE");
+
+        emit_voice_id_feedback_and_learn_signal(&mut store, &signal_scope, signal)
+            .expect("fallback feedback emission must succeed for low-score matched response");
+        emit_voice_id_decision_audit(
+            &mut store,
+            VoiceIdentityRuntimeContext::from_tenant_app_platform(
+                Some("tenant_audit".to_string()),
+                Some(AppPlatform::Android),
+                VoiceIdentityChannel::Explicit,
+            ),
+            &signal_scope,
+            &response,
+        )
+        .expect("decision audit emission must succeed for low-score matched response");
+
+        let all_rows = store.audit_events_by_correlation(CorrelationId(5527));
+        let feedback_row = all_rows
+            .iter()
+            .find(|row| matches!(&row.engine, AuditEngine::Other(engine) if engine == "PH1.FEEDBACK"))
+            .expect("fallback PH1.FEEDBACK audit row must exist");
+        let feedback_payload = &feedback_row.payload_min.entries;
+        assert_eq!(
+            feedback_payload
+                .get(&PayloadKey::new("feedback_event_type").unwrap())
+                .expect("feedback_event_type must exist")
+                .as_str(),
+            "VoiceIdReauthFriction"
+        );
+        assert_eq!(
+            feedback_payload
+                .get(&PayloadKey::new("learn_signal_type").unwrap())
+                .expect("learn_signal_type must exist")
+                .as_str(),
+            "VoiceIdReauthFriction"
+        );
+        assert_eq!(
+            feedback_payload
+                .get(&PayloadKey::new("signal_bucket").unwrap())
+                .expect("signal_bucket must exist")
+                .as_str(),
+            "VoiceIdReauthFriction"
+        );
+        assert_eq!(
+            feedback_payload
+                .get(&PayloadKey::new("path_type").unwrap())
+                .expect("path_type must exist")
+                .as_str(),
+            "PathB_Improvement"
+        );
+        assert_eq!(
+            feedback_payload
+                .get(&PayloadKey::new("voice_decision").unwrap())
+                .expect("voice_decision must exist")
+                .as_str(),
+            "OK_LOW_SCORE"
+        );
+        assert_eq!(
+            feedback_payload
+                .get(&PayloadKey::new("voice_reason_code_hex").unwrap())
+                .expect("voice_reason_code_hex must exist")
+                .as_str(),
+            format!(
+                "0x{:X}",
+                engine_voice_reason_codes::VID_FAIL_LOW_CONFIDENCE.0
+            )
+        );
+        assert_eq!(
+            feedback_payload
+                .get(&PayloadKey::new("voice_score_bp").unwrap())
+                .expect("voice_score_bp must exist")
+                .as_str(),
+            "9400"
+        );
+        assert_eq!(
+            feedback_payload
+                .get(&PayloadKey::new("voice_margin_to_next_bp").unwrap())
+                .expect("voice_margin_to_next_bp must exist")
+                .as_str(),
+            "350"
+        );
+        assert_eq!(
+            feedback_row.reason_code,
+            engine_voice_reason_codes::VID_FAIL_LOW_CONFIDENCE
+        );
+        let expected_feedback_idempotency = format!(
+            "voice_feedback_unscoped:{}:{}:{}:{}",
+            signal_scope.actor_user_id.as_str(),
+            signal_scope.correlation_id.0,
+            signal_scope.turn_id.0,
+            engine_voice_reason_codes::VID_FAIL_LOW_CONFIDENCE.0
+        );
+        assert_eq!(
+            feedback_row.idempotency_key.as_deref(),
+            Some(expected_feedback_idempotency.as_str())
+        );
+
+        let learn_row = all_rows
+            .iter()
+            .find(|row| matches!(&row.engine, AuditEngine::Other(engine) if engine == "PH1.LEARN"))
+            .expect("fallback PH1.LEARN audit row must still exist");
+        let learn_payload = &learn_row.payload_min.entries;
+        assert!(
+            !learn_payload.contains_key(&PayloadKey::new("signal_bucket").unwrap()),
+            "fallback PH1.LEARN row must remain unchanged"
+        );
+        assert!(
+            !learn_payload.contains_key(&PayloadKey::new("path_type").unwrap()),
+            "fallback PH1.LEARN row must remain unchanged"
         );
 
         let decision_row = all_rows
