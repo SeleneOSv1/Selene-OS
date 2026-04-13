@@ -4680,6 +4680,16 @@ fn authority_execution_state_for_outcome(
     .map_err(StorageError::ContractViolation)
 }
 
+fn refused_outcome_requires_step_up(reason_code: Option<ReasonCodeId>) -> bool {
+    matches!(
+        reason_code,
+        Some(code)
+            if code == sim_finder_reason_codes::SIM_FINDER_REFUSE_ACCESS_AP_REQUIRED
+                || code == voice_id_reason_codes::VID_REAUTH_REQUIRED
+                || code == voice_id_reason_codes::VID_DEVICE_CLAIM_REQUIRED
+    )
+}
+
 fn simulation_certification_state_for_outcome(
     out: &AppVoiceTurnExecutionOutcome,
     finder_terminal: Option<&FinderTerminalPacket>,
@@ -4703,7 +4713,7 @@ fn simulation_certification_state_for_outcome(
     {
         return SimulationCertificationState::InactiveSimulation;
     }
-    if out.reason_code == Some(sim_finder_reason_codes::SIM_FINDER_REFUSE_ACCESS_AP_REQUIRED) {
+    if refused_outcome_requires_step_up(out.reason_code) {
         return SimulationCertificationState::StepUpRequired;
     }
     if matches!(
@@ -4730,12 +4740,13 @@ fn authority_policy_decision_for_outcome(
             _ => AuthorityPolicyDecision::Allowed,
         },
         AppVoiceTurnNextMove::Respond => AuthorityPolicyDecision::Allowed,
-        AppVoiceTurnNextMove::Refused => match out.reason_code {
-            Some(code) if code == sim_finder_reason_codes::SIM_FINDER_REFUSE_ACCESS_AP_REQUIRED => {
+        AppVoiceTurnNextMove::Refused => {
+            if refused_outcome_requires_step_up(out.reason_code) {
                 AuthorityPolicyDecision::StepUpRequired
+            } else {
+                AuthorityPolicyDecision::Denied
             }
-            _ => AuthorityPolicyDecision::Denied,
-        },
+        }
         AppVoiceTurnNextMove::Wait | AppVoiceTurnNextMove::NotInvokedDisabled => {
             AuthorityPolicyDecision::NotRequested
         }
@@ -7107,6 +7118,33 @@ mod tests {
             row,
             out,
             "MISSING_SIMULATION_NOTIFY_SUBMITTED",
+        );
+    }
+
+    fn assert_authority_state_and_proof_simulation_certification(
+        store: &Ph1fStore,
+        out: &AppVoiceTurnExecutionOutcome,
+        expected_policy_decision: AuthorityPolicyDecision,
+        expected_simulation_certification_state: SimulationCertificationState,
+        expected_proof_state: &str,
+    ) {
+        let authority_state = out
+            .runtime_execution_envelope
+            .authority_state
+            .as_ref()
+            .expect("authority state should be attached");
+        assert_eq!(authority_state.policy_decision, expected_policy_decision);
+        assert_eq!(
+            authority_state.simulation_certification_state,
+            expected_simulation_certification_state
+        );
+        let proof_rows = store
+            .proof_records_by_request_id_bounded(&out.runtime_execution_envelope.request_id, 4)
+            .expect("proof rows should be readable");
+        assert_eq!(proof_rows.len(), 1);
+        assert_eq!(
+            proof_rows[0].simulation_certification_state.as_deref(),
+            Some(expected_proof_state)
         );
     }
 
@@ -10057,6 +10095,13 @@ mod tests {
             ph1x_payload_value(row, "identity_reason_code_hex"),
             Some("0x56490007")
         );
+        assert_authority_state_and_proof_simulation_certification(
+            &store,
+            &out,
+            AuthorityPolicyDecision::StepUpRequired,
+            SimulationCertificationState::StepUpRequired,
+            "STEP_UP_REQUIRED",
+        );
     }
 
     #[test]
@@ -10107,6 +10152,13 @@ mod tests {
         assert_eq!(
             ph1x_payload_value(row, "identity_reason_code_hex"),
             Some("0x56490006")
+        );
+        assert_authority_state_and_proof_simulation_certification(
+            &store,
+            &out,
+            AuthorityPolicyDecision::Denied,
+            SimulationCertificationState::NotRequested,
+            "NOT_REQUESTED",
         );
     }
 
@@ -10167,6 +10219,13 @@ mod tests {
             ph1x_payload_value(row, "identity_reason_code_hex"),
             Some("0x56490008")
         );
+        assert_authority_state_and_proof_simulation_certification(
+            &store,
+            &out,
+            AuthorityPolicyDecision::Denied,
+            SimulationCertificationState::NotRequested,
+            "NOT_REQUESTED",
+        );
     }
 
     #[test]
@@ -10218,6 +10277,13 @@ mod tests {
             ph1x_payload_value(row, "identity_reason_code_hex"),
             Some("0x56490009")
         );
+        assert_authority_state_and_proof_simulation_certification(
+            &store,
+            &out,
+            AuthorityPolicyDecision::StepUpRequired,
+            SimulationCertificationState::StepUpRequired,
+            "STEP_UP_REQUIRED",
+        );
     }
 
     #[test]
@@ -10265,6 +10331,13 @@ mod tests {
         assert_eq!(
             ph1x_payload_value(row, "identity_reason_code_hex"),
             Some("0x56490005")
+        );
+        assert_authority_state_and_proof_simulation_certification(
+            &store,
+            &out,
+            AuthorityPolicyDecision::Denied,
+            SimulationCertificationState::NotRequested,
+            "NOT_REQUESTED",
         );
     }
 
@@ -10353,6 +10426,13 @@ mod tests {
             Some("true")
         );
         assert_ph1x_payload_absent(row, "identity_reason_code_hex");
+        assert_authority_state_and_proof_simulation_certification(
+            &store,
+            &out,
+            AuthorityPolicyDecision::Denied,
+            SimulationCertificationState::NotRequested,
+            "NOT_REQUESTED",
+        );
     }
 
     #[test]
