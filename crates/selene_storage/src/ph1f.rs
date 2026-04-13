@@ -47,11 +47,11 @@ use selene_kernel_contracts::ph1feedback::{
 };
 use selene_kernel_contracts::ph1j::{
     artifact_trust_proof_entry_ref_for_event_id_and_ordinal,
-    artifact_trust_proof_record_ref_for_event_id, ArtifactTrustProofRecordEntry,
-    AuditEngine, AuditEvent, AuditEventId, AuditEventInput, AuditEventType, AuditPayloadMin,
-    AuditSeverity, CanonicalProofRecord, CanonicalProofRecordInput, CorrelationId, DeviceId,
-    PayloadKey, PayloadValue, ProofChainStatus, ProofEventId, ProofFailureClass,
-    ProofVerificationResult, ProofWriteOutcome, ProofWriteReceipt, TurnId,
+    artifact_trust_proof_record_ref_for_event_id, ArtifactTrustProofRecordEntry, AuditEngine,
+    AuditEvent, AuditEventId, AuditEventInput, AuditEventType, AuditPayloadMin, AuditSeverity,
+    CanonicalProofRecord, CanonicalProofRecordInput, CorrelationId, DeviceId, PayloadKey,
+    PayloadValue, ProofChainStatus, ProofEventId, ProofFailureClass, ProofVerificationResult,
+    ProofWriteOutcome, ProofWriteReceipt, TurnId,
 };
 use selene_kernel_contracts::ph1k::{
     AdvancedAudioQualityMetrics, DeviceRoute, InterruptCandidateConfidenceBand,
@@ -6058,12 +6058,11 @@ impl Ph1fStore {
             .map(|(index, entry)| {
                 Ok(ArtifactTrustProofRecordEntry {
                     linkage: selene_kernel_contracts::ph1art::ArtifactTrustProofEntry {
-                        proof_entry_ref:
-                            artifact_trust_proof_entry_ref_for_event_id_and_ordinal(
-                                proof_event_id,
-                                index,
-                            )
-                            .map_err(StorageError::ContractViolation)?,
+                        proof_entry_ref: artifact_trust_proof_entry_ref_for_event_id_and_ordinal(
+                            proof_event_id,
+                            index,
+                        )
+                        .map_err(StorageError::ContractViolation)?,
                         proof_record_ref: artifact_trust_proof_record_ref.clone(),
                         authority_decision_id: entry.authority_decision_id.clone(),
                         artifact_identity_ref: entry.artifact_identity_ref.clone(),
@@ -6079,8 +6078,7 @@ impl Ph1fStore {
                         historical_snapshot_ref: entry.historical_snapshot_ref.clone(),
                     },
                     artifact_verification_outcome: entry.artifact_verification_outcome,
-                    artifact_verification_failure_class: entry
-                        .artifact_verification_failure_class,
+                    artifact_verification_failure_class: entry.artifact_verification_failure_class,
                     provenance_verifier_owner: entry.provenance_verifier_owner.clone(),
                     provenance_verifier_version: entry.provenance_verifier_version.clone(),
                     provenance_evidence_refs: entry.provenance_evidence_refs.clone(),
@@ -13351,10 +13349,7 @@ impl Ph1fStore {
                 row.status
             ),
         };
-        let receipt_ref = format!(
-            "{manifest_prefix}_sync_{}",
-            hash_hex_64(&receipt_material)
-        );
+        let receipt_ref = format!("{manifest_prefix}_sync_{}", hash_hex_64(&receipt_material));
         let artifact_profile_id = format!(
             "{manifest_prefix}_{}",
             hash_hex_64(&format!(
@@ -20832,7 +20827,7 @@ impl Ph1fStore {
         reason_code: ReasonCodeId,
         idempotency_key: String,
     ) -> Result<AuditEventId, StorageError> {
-        self.ph1feedback_event_commit_with_metadata(
+        self.ph1feedback_event_commit_with_metadata_inner(
             now,
             tenant_id,
             correlation_id,
@@ -20849,7 +20844,39 @@ impl Ph1fStore {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn ph1feedback_event_commit_with_metadata(
+    pub fn ph1feedback_event_commit_with_payload_metadata(
+        &mut self,
+        now: MonotonicTimeNs,
+        tenant_id: String,
+        correlation_id: CorrelationId,
+        turn_id: TurnId,
+        session_id: Option<SessionId>,
+        user_id: UserId,
+        device_id: DeviceId,
+        feedback_event_type: String,
+        signal_bucket: String,
+        reason_code: ReasonCodeId,
+        idempotency_key: String,
+        payload_metadata: BTreeMap<String, String>,
+    ) -> Result<AuditEventId, StorageError> {
+        self.ph1feedback_event_commit_with_metadata_inner(
+            now,
+            tenant_id,
+            correlation_id,
+            turn_id,
+            session_id,
+            user_id,
+            device_id,
+            feedback_event_type,
+            signal_bucket,
+            reason_code,
+            idempotency_key,
+            payload_metadata,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn ph1feedback_event_commit_with_metadata_inner(
         &mut self,
         now: MonotonicTimeNs,
         tenant_id: String,
@@ -22898,7 +22925,7 @@ impl Ph1fStore {
             payload_metadata.insert("failover_to_device".to_string(), to_device.clone());
         }
 
-        let feedback_audit_event_id = self.ph1feedback_event_commit_with_metadata(
+        let feedback_audit_event_id = self.ph1feedback_event_commit_with_metadata_inner(
             now,
             tenant_id.clone(),
             correlation_id,
@@ -24390,7 +24417,10 @@ mod tests {
         let current_key = (user(), key);
         let before = s.memory_current().get(&current_key).unwrap().clone();
         assert_eq!(before.expires_at, expires_at);
-        assert_eq!(s.memory_ledger_rows().last().unwrap().expires_at, expires_at);
+        assert_eq!(
+            s.memory_ledger_rows().last().unwrap().expires_at,
+            expires_at
+        );
 
         s.rebuild_memory_current_from_ledger();
 
@@ -26037,6 +26067,127 @@ mod tests {
                 "idem:fdbk:bundle:slo".to_string(),
             )
             .expect_err("bundle commit over SLO must fail closed");
+        assert!(matches!(err, StorageError::ContractViolation(_)));
+    }
+
+    #[test]
+    fn at_fdbk_05_feedback_event_metadata_carries_voice_context_without_overwriting_base_keys() {
+        let mut s = store_with_user_device_and_session();
+        let mut payload_metadata = std::collections::BTreeMap::new();
+        payload_metadata.insert("voice_decision".to_string(), "UNKNOWN".to_string());
+        payload_metadata.insert("voice_reason_code_hex".to_string(), "0xF005".to_string());
+        payload_metadata.insert(
+            "evidence_ref".to_string(),
+            "voice_feedback_evidence:user_1:5105:1:VoiceIdFalseReject".to_string(),
+        );
+        payload_metadata.insert(
+            "provenance_ref".to_string(),
+            "ph1.voice.id:feedback:VoiceIdFalseReject:v1".to_string(),
+        );
+        payload_metadata.insert("voice_score_bp".to_string(), "8300".to_string());
+        payload_metadata.insert("voice_margin_to_next_bp".to_string(), "250".to_string());
+
+        s.ph1feedback_event_commit_with_payload_metadata(
+            MonotonicTimeNs(20),
+            "tenant_1".to_string(),
+            CorrelationId(5105),
+            TurnId(1),
+            Some(SessionId(1)),
+            user(),
+            device(),
+            "VoiceIdFalseReject".to_string(),
+            "VoiceIdFalseReject".to_string(),
+            ReasonCodeId(0xF005),
+            "idem:fdbk:metadata:1".to_string(),
+            payload_metadata,
+        )
+        .expect("feedback event commit with metadata must succeed");
+
+        let rows = s.ph1feedback_audit_rows(CorrelationId(5105));
+        assert_eq!(rows.len(), 1);
+        let payload = &rows[0].payload_min.entries;
+        assert_eq!(
+            payload
+                .get(&PayloadKey::new("feedback_event_type").unwrap())
+                .expect("feedback_event_type must exist")
+                .as_str(),
+            "VoiceIdFalseReject"
+        );
+        assert_eq!(
+            payload
+                .get(&PayloadKey::new("signal_bucket").unwrap())
+                .expect("signal_bucket must exist")
+                .as_str(),
+            "VoiceIdFalseReject"
+        );
+        assert_eq!(
+            payload
+                .get(&PayloadKey::new("path_type").unwrap())
+                .expect("path_type must exist")
+                .as_str(),
+            "PathA_Defect"
+        );
+        assert_eq!(
+            payload
+                .get(&PayloadKey::new("voice_decision").unwrap())
+                .expect("voice_decision must exist")
+                .as_str(),
+            "UNKNOWN"
+        );
+        assert_eq!(
+            payload
+                .get(&PayloadKey::new("voice_reason_code_hex").unwrap())
+                .expect("voice_reason_code_hex must exist")
+                .as_str(),
+            "0xF005"
+        );
+        assert_eq!(
+            payload
+                .get(&PayloadKey::new("evidence_ref").unwrap())
+                .expect("evidence_ref must exist")
+                .as_str(),
+            "voice_feedback_evidence:user_1:5105:1:VoiceIdFalseReject"
+        );
+        assert_eq!(
+            payload
+                .get(&PayloadKey::new("provenance_ref").unwrap())
+                .expect("provenance_ref must exist")
+                .as_str(),
+            "ph1.voice.id:feedback:VoiceIdFalseReject:v1"
+        );
+        assert_eq!(
+            payload
+                .get(&PayloadKey::new("voice_score_bp").unwrap())
+                .expect("voice_score_bp must exist")
+                .as_str(),
+            "8300"
+        );
+        assert_eq!(
+            payload
+                .get(&PayloadKey::new("voice_margin_to_next_bp").unwrap())
+                .expect("voice_margin_to_next_bp must exist")
+                .as_str(),
+            "250"
+        );
+
+        let mut duplicate_metadata = std::collections::BTreeMap::new();
+        duplicate_metadata.insert("path_type".to_string(), "tampered".to_string());
+        let err = s
+            .ph1feedback_event_commit_with_payload_metadata(
+                MonotonicTimeNs(21),
+                "tenant_1".to_string(),
+                CorrelationId(5106),
+                TurnId(1),
+                Some(SessionId(1)),
+                user(),
+                device(),
+                "VoiceIdFalseReject".to_string(),
+                "VoiceIdFalseReject".to_string(),
+                ReasonCodeId(0xF006),
+                "idem:fdbk:metadata:duplicate".to_string(),
+                duplicate_metadata,
+            )
+            .expect_err("duplicate base payload keys must be rejected");
         assert!(matches!(err, StorageError::ContractViolation(_)));
     }
 
