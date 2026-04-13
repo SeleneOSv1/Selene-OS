@@ -2780,6 +2780,19 @@ mod tests {
         )
     }
 
+    fn no_speech_voice_assertion() -> Ph1VoiceIdResponse {
+        Ph1VoiceIdResponse::SpeakerAssertionUnknown(
+            SpeakerAssertionUnknown::v1_with_candidate(
+                IdentityConfidence::Low,
+                voice_id_reason_codes::VID_FAIL_NO_SPEECH,
+                vec![],
+                None,
+                None,
+            )
+            .expect("no-speech voice assertion must validate"),
+        )
+    }
+
     fn allowed_authority_state() -> AuthorityExecutionState {
         AuthorityExecutionState::v1(
             Some(PolicyContextRef::v1(false, false, SafetyTier::Standard)),
@@ -3681,6 +3694,33 @@ mod tests {
         assert_eq!(
             identity_state.reason_code,
             Some(u64::from(voice_id_reason_codes::VID_FAIL_ECHO_UNSAFE.0))
+        );
+    }
+
+    #[test]
+    fn at_runtime_gov_25_no_speech_assertion_maps_to_degraded_restricted_identity_state() {
+        let runtime = RuntimeGovernanceRuntime::default();
+        let artifact_governed = artifact_governed_envelope(&runtime);
+        let out = runtime
+            .govern_artifact_activation_identity_state_execution(
+                &artifact_governed,
+                &no_speech_voice_assertion(),
+            )
+            .expect("no-speech assertion must still produce bounded identity state");
+        let identity_state = out
+            .identity_state
+            .as_ref()
+            .expect("identity state must attach for no-speech posture");
+        assert_eq!(
+            identity_state.consistency_level,
+            IdentityVerificationConsistencyLevel::DegradedVerification
+        );
+        assert_eq!(identity_state.trust_tier, IdentityTrustTier::Restricted);
+        assert!(!identity_state.step_up_required);
+        assert_eq!(identity_state.recovery_state, IdentityRecoveryState::None);
+        assert_eq!(
+            identity_state.reason_code,
+            Some(u64::from(voice_id_reason_codes::VID_FAIL_NO_SPEECH.0))
         );
     }
 
