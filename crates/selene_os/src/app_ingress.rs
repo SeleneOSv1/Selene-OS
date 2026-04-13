@@ -23,8 +23,8 @@ use selene_engines::ph1simfinder::{
 };
 use selene_kernel_contracts::ph1_voice_id::{
     IdentityTierV2, Ph1VoiceIdRequest, SpeakerId, SpoofLivenessStatus, UserId,
-    VoiceEmbeddingCaptureRef,
-    VOICE_ID_ENROLL_COMPLETE_COMMIT, VOICE_ID_ENROLL_SAMPLE_COMMIT, VOICE_ID_ENROLL_START_DRAFT,
+    VoiceEmbeddingCaptureRef, VOICE_ID_ENROLL_COMPLETE_COMMIT, VOICE_ID_ENROLL_SAMPLE_COMMIT,
+    VOICE_ID_ENROLL_START_DRAFT,
 };
 use selene_kernel_contracts::ph1agent::AgentInputPacket;
 use selene_kernel_contracts::ph1d::{PolicyContextRef, SafetyTier};
@@ -747,9 +747,11 @@ impl AppServerIngressRuntime {
             );
         }
         if let Some(governance_state) = runtime_execution_envelope.governance_state.as_ref() {
-            if let Some(governance_reason_code) = self.governance_reason_code_for_state(governance_state)
+            if let Some(governance_reason_code) =
+                self.governance_reason_code_for_state(governance_state)
             {
-                payload_metadata.insert("governance_reason_code".to_string(), governance_reason_code);
+                payload_metadata
+                    .insert("governance_reason_code".to_string(), governance_reason_code);
             }
         }
 
@@ -3516,7 +3518,9 @@ impl AppServerIngressRuntime {
                     )?;
                     let audit_session_id = request_session_id
                         .filter(|session_id| store.get_session(session_id).is_some());
-                    let _ = store.ph1x_respond_commit(
+                    let payload_metadata =
+                        self.ph1x_fail_closed_respond_payload_metadata(&runtime_execution_envelope);
+                    let _ = store.ph1x_respond_commit_with_payload_metadata(
                         dispatch_now,
                         tenant_id,
                         correlation_id,
@@ -3530,6 +3534,7 @@ impl AppServerIngressRuntime {
                             "ph1x_access_fail_closed:{}:{}:{}",
                             correlation_id.0, turn_id.0, access_failure.audit_response_kind
                         ),
+                        payload_metadata,
                     )?;
                 }
                 Ok(AppVoiceTurnExecutionOutcome {
@@ -4862,14 +4867,10 @@ struct GovernanceQuarantineFailClosedBehavior {
     audit_response_kind: &'static str,
 }
 
-fn identity_consistency_level_literal(
-    value: IdentityVerificationConsistencyLevel,
-) -> &'static str {
+fn identity_consistency_level_literal(value: IdentityVerificationConsistencyLevel) -> &'static str {
     match value {
         IdentityVerificationConsistencyLevel::StrictVerified => "STRICT_VERIFIED",
-        IdentityVerificationConsistencyLevel::HighConfidenceVerified => {
-            "HIGH_CONFIDENCE_VERIFIED"
-        }
+        IdentityVerificationConsistencyLevel::HighConfidenceVerified => "HIGH_CONFIDENCE_VERIFIED",
         IdentityVerificationConsistencyLevel::DegradedVerification => "DEGRADED_VERIFICATION",
         IdentityVerificationConsistencyLevel::RecoveryRestricted => "RECOVERY_RESTRICTED",
     }
@@ -4969,7 +4970,8 @@ fn classify_identity_recovery_fail_closed_outcome(
                     identity_state,
                     voice_id_reason_codes::VID_FAIL_PROFILE_NOT_ENROLLED,
                 ),
-                user_message: "I couldn't find an enrolled voice profile for you, so I can't continue.",
+                user_message:
+                    "I couldn't find an enrolled voice profile for you, so I can't continue.",
                 audit_response_kind: "IDENTITY_PROFILE_NOT_ENROLLED_FAIL_CLOSED",
             })
         }
@@ -5009,8 +5011,7 @@ fn classify_governance_quarantine_identity_recovery_fail_closed_outcome(
     }
     let identity_state = out.runtime_execution_envelope.identity_state.as_ref()?;
     let governance_state = out.runtime_execution_envelope.governance_state.as_ref()?;
-    if identity_state.consistency_level
-        != IdentityVerificationConsistencyLevel::RecoveryRestricted
+    if identity_state.consistency_level != IdentityVerificationConsistencyLevel::RecoveryRestricted
         || identity_state.trust_tier != IdentityTrustTier::Restricted
         || !identity_state.step_up_required
         || identity_state.recovery_state != IdentityRecoveryState::RecoveryRestricted
@@ -7027,10 +7028,7 @@ mod tests {
             .map(|value| value.as_str())
     }
 
-    fn assert_ph1x_payload_absent(
-        row: &selene_kernel_contracts::ph1j::AuditEvent,
-        key: &str,
-    ) {
+    fn assert_ph1x_payload_absent(row: &selene_kernel_contracts::ph1j::AuditEvent, key: &str) {
         assert_eq!(
             ph1x_payload_value(row, key),
             None,
@@ -7046,9 +7044,7 @@ mod tests {
             .copied()
             .find(|row| ph1x_payload_value(row, "response_kind") == Some(expected_response_kind))
             .unwrap_or_else(|| {
-                panic!(
-                    "{expected_response_kind} fail-closed response must emit PH1.X audit row"
-                )
+                panic!("{expected_response_kind} fail-closed response must emit PH1.X audit row")
             })
     }
 
@@ -7062,6 +7058,28 @@ mod tests {
             out.ph1x_response.is_some(),
             "fail-closed PH1.X respond rows must retain the PH1.X response"
         );
+        assert_ph1x_fail_closed_respond_payload_core(runtime, row, out, expected_response_kind);
+    }
+
+    fn assert_access_fail_closed_respond_payload(
+        runtime: &AppServerIngressRuntime,
+        row: &selene_kernel_contracts::ph1j::AuditEvent,
+        out: &AppVoiceTurnExecutionOutcome,
+        expected_response_kind: &str,
+    ) {
+        assert!(
+            out.ph1x_response.is_none(),
+            "access fail-closed PH1.X respond rows must not retain the PH1.X response"
+        );
+        assert_ph1x_fail_closed_respond_payload_core(runtime, row, out, expected_response_kind);
+    }
+
+    fn assert_ph1x_fail_closed_respond_payload_core(
+        runtime: &AppServerIngressRuntime,
+        row: &selene_kernel_contracts::ph1j::AuditEvent,
+        out: &AppVoiceTurnExecutionOutcome,
+        expected_response_kind: &str,
+    ) {
         let identity_state = out
             .runtime_execution_envelope
             .identity_state
@@ -7082,7 +7100,9 @@ mod tests {
         );
         assert_eq!(
             ph1x_payload_value(row, "identity_consistency_level"),
-            Some(identity_consistency_level_literal(identity_state.consistency_level))
+            Some(identity_consistency_level_literal(
+                identity_state.consistency_level
+            ))
         );
         assert_eq!(
             ph1x_payload_value(row, "identity_trust_tier"),
@@ -7090,7 +7110,9 @@ mod tests {
         );
         assert_eq!(
             ph1x_payload_value(row, "identity_recovery_state"),
-            Some(identity_recovery_state_literal(identity_state.recovery_state))
+            Some(identity_recovery_state_literal(
+                identity_state.recovery_state
+            ))
         );
         assert_eq!(
             ph1x_payload_value(row, "identity_tier_v2"),
@@ -7130,6 +7152,208 @@ mod tests {
         assert_ph1x_payload_absent(row, "decision_v1");
         assert_ph1x_payload_absent(row, "voice_decision");
         assert_ph1x_payload_absent(row, "voice_reason_code_hex");
+    }
+
+    fn run_access_ap_required_fail_closed_turn() -> (
+        AppServerIngressRuntime,
+        Ph1fStore,
+        AppVoiceTurnExecutionOutcome,
+        CorrelationId,
+    ) {
+        let runtime = AppServerIngressRuntime::default();
+        let actor_user_id = UserId::new("tenant_1:finder_exec_escalate_user").unwrap();
+        let device_id = DeviceId::new("finder_exec_escalate_device_1").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &actor_user_id, &device_id);
+        seed_link_send_escalate_access_instance(&mut store, &actor_user_id, "tenant_1");
+        for (simulation_id, simulation_type) in [
+            (LINK_INVITE_GENERATE_DRAFT, SimulationType::Draft),
+            (BCAST_CREATE_DRAFT, SimulationType::Draft),
+            (BCAST_DELIVER_COMMIT, SimulationType::Commit),
+            (DELIVERY_SEND_COMMIT, SimulationType::Commit),
+        ] {
+            seed_simulation_catalog_status(
+                &mut store,
+                "tenant_1",
+                simulation_id,
+                simulation_type,
+                SimulationStatus::Active,
+            );
+        }
+
+        let request_1 = AppVoiceIngressRequest::v1(
+            CorrelationId(9806),
+            TurnId(9906),
+            AppPlatform::Desktop,
+            OsVoiceTrigger::Explicit,
+            sample_voice_id_request(MonotonicTimeNs(3), actor_user_id.clone()),
+            actor_user_id.clone(),
+            Some("tenant_1".to_string()),
+            Some(device_id.clone()),
+            Vec::new(),
+            no_observation(),
+        )
+        .unwrap();
+        let x_build_1 = AppVoicePh1xBuildInput {
+            now: MonotonicTimeNs(25),
+            thread_key: Some("finder_exec_06_thread".to_string()),
+            thread_state: ThreadState::empty_v1(),
+            session_state: SessionState::Active,
+            policy_context_ref: PolicyContextRef::v1(false, false, SafetyTier::Standard),
+            memory_candidates: vec![],
+            confirm_answer: None,
+            nlp_output: Some(invite_link_send_draft_broken_english(
+                "Tom",
+                "+14155550100",
+                "tenant_1",
+            )),
+            tool_response: None,
+            interruption: None,
+            locale: Some("en-US".to_string()),
+            last_failure_reason_code: None,
+        };
+        let out_1 = runtime
+            .run_desktop_voice_turn_end_to_end(&mut store, request_1, x_build_1)
+            .unwrap();
+        assert_eq!(out_1.next_move, AppVoiceTurnNextMove::Confirm);
+
+        let thread_state_after_confirm = out_1
+            .ph1x_response
+            .expect("confirm run should include ph1x response")
+            .thread_state;
+        let response_correlation_id = CorrelationId(9807);
+        let request_2 = AppVoiceIngressRequest::v1(
+            response_correlation_id,
+            TurnId(9907),
+            AppPlatform::Desktop,
+            OsVoiceTrigger::Explicit,
+            sample_voice_id_request(MonotonicTimeNs(3), actor_user_id.clone()),
+            actor_user_id,
+            Some("tenant_1".to_string()),
+            Some(device_id),
+            Vec::new(),
+            no_observation(),
+        )
+        .unwrap();
+        let x_build_2 = AppVoicePh1xBuildInput {
+            now: MonotonicTimeNs(26),
+            thread_key: Some("finder_exec_06_thread".to_string()),
+            thread_state: thread_state_after_confirm,
+            session_state: SessionState::Active,
+            policy_context_ref: PolicyContextRef::v1(false, false, SafetyTier::Standard),
+            memory_candidates: vec![],
+            confirm_answer: Some(ConfirmAnswer::Yes),
+            nlp_output: None,
+            tool_response: None,
+            interruption: None,
+            locale: Some("en-US".to_string()),
+            last_failure_reason_code: None,
+        };
+        let out_2 = runtime
+            .run_desktop_voice_turn_end_to_end(&mut store, request_2, x_build_2)
+            .expect("escalated access must return deterministic fail-closed response");
+        (runtime, store, out_2, response_correlation_id)
+    }
+
+    fn run_access_denied_fail_closed_turn() -> (
+        AppServerIngressRuntime,
+        Ph1fStore,
+        AppVoiceTurnExecutionOutcome,
+        CorrelationId,
+    ) {
+        let runtime = AppServerIngressRuntime::default();
+        let actor_user_id = UserId::new("tenant_1:finder_exec_deny_user").unwrap();
+        let device_id = DeviceId::new("finder_exec_deny_device_1").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &actor_user_id, &device_id);
+        seed_link_send_denied_access_instance(&mut store, &actor_user_id, "tenant_1");
+        for (simulation_id, simulation_type) in [
+            (LINK_INVITE_GENERATE_DRAFT, SimulationType::Draft),
+            (BCAST_CREATE_DRAFT, SimulationType::Draft),
+            (BCAST_DELIVER_COMMIT, SimulationType::Commit),
+            (DELIVERY_SEND_COMMIT, SimulationType::Commit),
+        ] {
+            seed_simulation_catalog_status(
+                &mut store,
+                "tenant_1",
+                simulation_id,
+                simulation_type,
+                SimulationStatus::Active,
+            );
+        }
+
+        let request_1 = AppVoiceIngressRequest::v1(
+            CorrelationId(9810),
+            TurnId(9910),
+            AppPlatform::Desktop,
+            OsVoiceTrigger::Explicit,
+            sample_voice_id_request(MonotonicTimeNs(3), actor_user_id.clone()),
+            actor_user_id.clone(),
+            Some("tenant_1".to_string()),
+            Some(device_id.clone()),
+            Vec::new(),
+            no_observation(),
+        )
+        .unwrap();
+        let x_build_1 = AppVoicePh1xBuildInput {
+            now: MonotonicTimeNs(29),
+            thread_key: Some("finder_exec_09_thread".to_string()),
+            thread_state: ThreadState::empty_v1(),
+            session_state: SessionState::Active,
+            policy_context_ref: PolicyContextRef::v1(false, false, SafetyTier::Standard),
+            memory_candidates: vec![],
+            confirm_answer: None,
+            nlp_output: Some(invite_link_send_draft_broken_english(
+                "Tom",
+                "+14155550100",
+                "tenant_1",
+            )),
+            tool_response: None,
+            interruption: None,
+            locale: Some("en-US".to_string()),
+            last_failure_reason_code: None,
+        };
+        let out_1 = runtime
+            .run_desktop_voice_turn_end_to_end(&mut store, request_1, x_build_1)
+            .unwrap();
+        assert_eq!(out_1.next_move, AppVoiceTurnNextMove::Confirm);
+
+        let thread_state_after_confirm = out_1
+            .ph1x_response
+            .expect("confirm run should include ph1x response")
+            .thread_state;
+        let response_correlation_id = CorrelationId(9811);
+        let request_2 = AppVoiceIngressRequest::v1(
+            response_correlation_id,
+            TurnId(9911),
+            AppPlatform::Desktop,
+            OsVoiceTrigger::Explicit,
+            sample_voice_id_request(MonotonicTimeNs(3), actor_user_id.clone()),
+            actor_user_id,
+            Some("tenant_1".to_string()),
+            Some(device_id),
+            Vec::new(),
+            no_observation(),
+        )
+        .unwrap();
+        let x_build_2 = AppVoicePh1xBuildInput {
+            now: MonotonicTimeNs(30),
+            thread_key: Some("finder_exec_09_thread".to_string()),
+            thread_state: thread_state_after_confirm,
+            session_state: SessionState::Active,
+            policy_context_ref: PolicyContextRef::v1(false, false, SafetyTier::Standard),
+            memory_candidates: vec![],
+            confirm_answer: Some(ConfirmAnswer::Yes),
+            nlp_output: None,
+            tool_response: None,
+            interruption: None,
+            locale: Some("en-US".to_string()),
+            last_failure_reason_code: None,
+        };
+        let out_2 = runtime
+            .run_desktop_voice_turn_end_to_end(&mut store, request_2, x_build_2)
+            .expect("denied access must return deterministic fail-closed response");
+        (runtime, store, out_2, response_correlation_id)
     }
 
     fn invite_link_draft_missing_contact(recipient: &str, tenant_id: &str) -> Ph1nResponse {
@@ -8899,8 +9123,7 @@ mod tests {
         let OsVoiceLiveTurnOutcome::Forwarded(mut forwarded) = outcome else {
             panic!("expected forwarded voice turn");
         };
-        forwarded.voice_identity_assertion =
-            profile_not_enrolled_voice_assertion(actor_user_id);
+        forwarded.voice_identity_assertion = profile_not_enrolled_voice_assertion(actor_user_id);
 
         let x_build = AppVoicePh1xBuildInput {
             now: MonotonicTimeNs(7),
@@ -8968,8 +9191,7 @@ mod tests {
     #[test]
     fn at_harmonize_02j_governance_quarantine_identity_attaches_recovery_restricted_trust() {
         let runtime = AppServerIngressRuntime::default();
-        let actor_user_id =
-            UserId::new("tenant_1:harmonize_governance_quarantine_user").unwrap();
+        let actor_user_id = UserId::new("tenant_1:harmonize_governance_quarantine_user").unwrap();
         let device_id = DeviceId::new("harmonize_governance_quarantine_device_1").unwrap();
         let mut store = Ph1fStore::new_in_memory();
         seed_actor(&mut store, &actor_user_id, &device_id);
@@ -9772,8 +9994,7 @@ mod tests {
             Some(voice_id_reason_codes::VID_REAUTH_REQUIRED)
         );
         let response_rows = store.ph1x_audit_rows(CorrelationId(9820));
-        let row =
-            find_ph1x_respond_row(&response_rows, "IDENTITY_REAUTH_REQUIRED_FAIL_CLOSED");
+        let row = find_ph1x_respond_row(&response_rows, "IDENTITY_REAUTH_REQUIRED_FAIL_CLOSED");
         assert_ph1x_fail_closed_respond_payload(
             &runtime,
             row,
@@ -9784,12 +10005,18 @@ mod tests {
             ph1x_payload_value(row, "identity_consistency_level"),
             Some("RECOVERY_RESTRICTED")
         );
-        assert_eq!(ph1x_payload_value(row, "identity_trust_tier"), Some("RESTRICTED"));
+        assert_eq!(
+            ph1x_payload_value(row, "identity_trust_tier"),
+            Some("RESTRICTED")
+        );
         assert_eq!(
             ph1x_payload_value(row, "identity_recovery_state"),
             Some("REAUTH_REQUIRED")
         );
-        assert_eq!(ph1x_payload_value(row, "identity_step_up_required"), Some("true"));
+        assert_eq!(
+            ph1x_payload_value(row, "identity_step_up_required"),
+            Some("true")
+        );
         assert_eq!(
             ph1x_payload_value(row, "identity_reason_code_hex"),
             Some("0x56490007")
@@ -9837,7 +10064,10 @@ mod tests {
             ph1x_payload_value(row, "identity_recovery_state"),
             Some("RE_ENROLLMENT_REQUIRED")
         );
-        assert_eq!(ph1x_payload_value(row, "identity_step_up_required"), Some("false"));
+        assert_eq!(
+            ph1x_payload_value(row, "identity_step_up_required"),
+            Some("false")
+        );
         assert_eq!(
             ph1x_payload_value(row, "identity_reason_code_hex"),
             Some("0x56490006")
@@ -9881,12 +10111,18 @@ mod tests {
             ph1x_payload_value(row, "identity_consistency_level"),
             Some("RECOVERY_RESTRICTED")
         );
-        assert_eq!(ph1x_payload_value(row, "identity_trust_tier"), Some("REJECTED"));
+        assert_eq!(
+            ph1x_payload_value(row, "identity_trust_tier"),
+            Some("REJECTED")
+        );
         assert_eq!(
             ph1x_payload_value(row, "identity_recovery_state"),
             Some("RECOVERY_RESTRICTED")
         );
-        assert_eq!(ph1x_payload_value(row, "identity_step_up_required"), Some("true"));
+        assert_eq!(
+            ph1x_payload_value(row, "identity_step_up_required"),
+            Some("true")
+        );
         assert_eq!(
             ph1x_payload_value(row, "identity_spoof_liveness_status"),
             Some("SUSPECTED_SPOOF")
@@ -9938,7 +10174,10 @@ mod tests {
             ph1x_payload_value(row, "identity_recovery_state"),
             Some("REAUTH_REQUIRED")
         );
-        assert_eq!(ph1x_payload_value(row, "identity_step_up_required"), Some("true"));
+        assert_eq!(
+            ph1x_payload_value(row, "identity_step_up_required"),
+            Some("true")
+        );
         assert_eq!(
             ph1x_payload_value(row, "identity_reason_code_hex"),
             Some("0x56490009")
@@ -10065,12 +10304,18 @@ mod tests {
             ph1x_payload_value(row, "identity_consistency_level"),
             Some("RECOVERY_RESTRICTED")
         );
-        assert_eq!(ph1x_payload_value(row, "identity_trust_tier"), Some("RESTRICTED"));
+        assert_eq!(
+            ph1x_payload_value(row, "identity_trust_tier"),
+            Some("RESTRICTED")
+        );
         assert_eq!(
             ph1x_payload_value(row, "identity_recovery_state"),
             Some("RECOVERY_RESTRICTED")
         );
-        assert_eq!(ph1x_payload_value(row, "identity_step_up_required"), Some("true"));
+        assert_eq!(
+            ph1x_payload_value(row, "identity_step_up_required"),
+            Some("true")
+        );
         assert_ph1x_payload_absent(row, "identity_reason_code_hex");
     }
 
@@ -10118,8 +10363,7 @@ mod tests {
                 .map(|response| response.reason_code)
         );
         let response_rows = store.ph1x_audit_rows(CorrelationId(9824));
-        let row =
-            find_ph1x_respond_row(&response_rows, "GOVERNANCE_CLUSTER_DRIFT_FAIL_CLOSED");
+        let row = find_ph1x_respond_row(&response_rows, "GOVERNANCE_CLUSTER_DRIFT_FAIL_CLOSED");
         assert_ph1x_fail_closed_respond_payload(
             &runtime,
             row,
@@ -10207,8 +10451,7 @@ mod tests {
             Some(voice_id_reason_codes::VID_FAIL_LOW_CONFIDENCE)
         );
         let response_rows = store.ph1x_audit_rows(CorrelationId(9826));
-        let row =
-            find_ph1x_respond_row(&response_rows, "IDENTITY_LOW_CONFIDENCE_FAIL_CLOSED");
+        let row = find_ph1x_respond_row(&response_rows, "IDENTITY_LOW_CONFIDENCE_FAIL_CLOSED");
         assert_ph1x_fail_closed_respond_payload(
             &runtime,
             row,
@@ -10219,9 +10462,18 @@ mod tests {
             ph1x_payload_value(row, "identity_consistency_level"),
             Some("DEGRADED_VERIFICATION")
         );
-        assert_eq!(ph1x_payload_value(row, "identity_trust_tier"), Some("CONDITIONAL"));
-        assert_eq!(ph1x_payload_value(row, "identity_recovery_state"), Some("NONE"));
-        assert_eq!(ph1x_payload_value(row, "identity_step_up_required"), Some("false"));
+        assert_eq!(
+            ph1x_payload_value(row, "identity_trust_tier"),
+            Some("CONDITIONAL")
+        );
+        assert_eq!(
+            ph1x_payload_value(row, "identity_recovery_state"),
+            Some("NONE")
+        );
+        assert_eq!(
+            ph1x_payload_value(row, "identity_step_up_required"),
+            Some("false")
+        );
         assert_eq!(
             ph1x_payload_value(row, "identity_reason_code_hex"),
             Some("0x56490002")
@@ -10268,9 +10520,18 @@ mod tests {
             ph1x_payload_value(row, "identity_consistency_level"),
             Some("DEGRADED_VERIFICATION")
         );
-        assert_eq!(ph1x_payload_value(row, "identity_trust_tier"), Some("RESTRICTED"));
-        assert_eq!(ph1x_payload_value(row, "identity_recovery_state"), Some("NONE"));
-        assert_eq!(ph1x_payload_value(row, "identity_step_up_required"), Some("false"));
+        assert_eq!(
+            ph1x_payload_value(row, "identity_trust_tier"),
+            Some("RESTRICTED")
+        );
+        assert_eq!(
+            ph1x_payload_value(row, "identity_recovery_state"),
+            Some("NONE")
+        );
+        assert_eq!(
+            ph1x_payload_value(row, "identity_step_up_required"),
+            Some("false")
+        );
         assert_eq!(
             ph1x_payload_value(row, "identity_reason_code_hex"),
             Some("0x56490004")
@@ -10317,9 +10578,18 @@ mod tests {
             ph1x_payload_value(row, "identity_consistency_level"),
             Some("DEGRADED_VERIFICATION")
         );
-        assert_eq!(ph1x_payload_value(row, "identity_trust_tier"), Some("RESTRICTED"));
-        assert_eq!(ph1x_payload_value(row, "identity_recovery_state"), Some("NONE"));
-        assert_eq!(ph1x_payload_value(row, "identity_step_up_required"), Some("false"));
+        assert_eq!(
+            ph1x_payload_value(row, "identity_trust_tier"),
+            Some("RESTRICTED")
+        );
+        assert_eq!(
+            ph1x_payload_value(row, "identity_recovery_state"),
+            Some("NONE")
+        );
+        assert_eq!(
+            ph1x_payload_value(row, "identity_step_up_required"),
+            Some("false")
+        );
         assert_eq!(
             ph1x_payload_value(row, "identity_reason_code_hex"),
             Some("0x56490001")
@@ -10355,8 +10625,7 @@ mod tests {
             Some(voice_id_reason_codes::VID_FAIL_MULTI_SPEAKER_PRESENT)
         );
         let response_rows = store.ph1x_audit_rows(CorrelationId(9829));
-        let row =
-            find_ph1x_respond_row(&response_rows, "IDENTITY_MULTI_SPEAKER_FAIL_CLOSED");
+        let row = find_ph1x_respond_row(&response_rows, "IDENTITY_MULTI_SPEAKER_FAIL_CLOSED");
         assert_ph1x_fail_closed_respond_payload(
             &runtime,
             row,
@@ -10367,9 +10636,18 @@ mod tests {
             ph1x_payload_value(row, "identity_consistency_level"),
             Some("DEGRADED_VERIFICATION")
         );
-        assert_eq!(ph1x_payload_value(row, "identity_trust_tier"), Some("RESTRICTED"));
-        assert_eq!(ph1x_payload_value(row, "identity_recovery_state"), Some("NONE"));
-        assert_eq!(ph1x_payload_value(row, "identity_step_up_required"), Some("false"));
+        assert_eq!(
+            ph1x_payload_value(row, "identity_trust_tier"),
+            Some("RESTRICTED")
+        );
+        assert_eq!(
+            ph1x_payload_value(row, "identity_recovery_state"),
+            Some("NONE")
+        );
+        assert_eq!(
+            ph1x_payload_value(row, "identity_step_up_required"),
+            Some("false")
+        );
         assert_eq!(
             ph1x_payload_value(row, "identity_reason_code_hex"),
             Some("0x56490003")
@@ -10405,8 +10683,7 @@ mod tests {
             Some(voice_id_reason_codes::VID_FAIL_GRAY_ZONE_MARGIN)
         );
         let response_rows = store.ph1x_audit_rows(CorrelationId(9830));
-        let row =
-            find_ph1x_respond_row(&response_rows, "IDENTITY_GRAY_ZONE_MARGIN_FAIL_CLOSED");
+        let row = find_ph1x_respond_row(&response_rows, "IDENTITY_GRAY_ZONE_MARGIN_FAIL_CLOSED");
         assert_ph1x_fail_closed_respond_payload(
             &runtime,
             row,
@@ -10417,9 +10694,18 @@ mod tests {
             ph1x_payload_value(row, "identity_consistency_level"),
             Some("DEGRADED_VERIFICATION")
         );
-        assert_eq!(ph1x_payload_value(row, "identity_trust_tier"), Some("CONDITIONAL"));
-        assert_eq!(ph1x_payload_value(row, "identity_recovery_state"), Some("NONE"));
-        assert_eq!(ph1x_payload_value(row, "identity_step_up_required"), Some("false"));
+        assert_eq!(
+            ph1x_payload_value(row, "identity_trust_tier"),
+            Some("CONDITIONAL")
+        );
+        assert_eq!(
+            ph1x_payload_value(row, "identity_recovery_state"),
+            Some("NONE")
+        );
+        assert_eq!(
+            ph1x_payload_value(row, "identity_step_up_required"),
+            Some("false")
+        );
         assert_eq!(
             ph1x_payload_value(row, "identity_reason_code_hex"),
             Some("0x5649000A")
@@ -11635,97 +11921,8 @@ mod tests {
 
     #[test]
     fn at_finder_exec_06_access_escalate_fails_closed_ap_required() {
-        let runtime = AppServerIngressRuntime::default();
-        let actor_user_id = UserId::new("tenant_1:finder_exec_escalate_user").unwrap();
-        let device_id = DeviceId::new("finder_exec_escalate_device_1").unwrap();
-        let mut store = Ph1fStore::new_in_memory();
-        seed_actor(&mut store, &actor_user_id, &device_id);
-        seed_link_send_escalate_access_instance(&mut store, &actor_user_id, "tenant_1");
-        for (simulation_id, simulation_type) in [
-            (LINK_INVITE_GENERATE_DRAFT, SimulationType::Draft),
-            (BCAST_CREATE_DRAFT, SimulationType::Draft),
-            (BCAST_DELIVER_COMMIT, SimulationType::Commit),
-            (DELIVERY_SEND_COMMIT, SimulationType::Commit),
-        ] {
-            seed_simulation_catalog_status(
-                &mut store,
-                "tenant_1",
-                simulation_id,
-                simulation_type,
-                SimulationStatus::Active,
-            );
-        }
-
-        let request_1 = AppVoiceIngressRequest::v1(
-            CorrelationId(9806),
-            TurnId(9906),
-            AppPlatform::Desktop,
-            OsVoiceTrigger::Explicit,
-            sample_voice_id_request(MonotonicTimeNs(3), actor_user_id.clone()),
-            actor_user_id.clone(),
-            Some("tenant_1".to_string()),
-            Some(device_id.clone()),
-            Vec::new(),
-            no_observation(),
-        )
-        .unwrap();
-        let x_build_1 = AppVoicePh1xBuildInput {
-            now: MonotonicTimeNs(25),
-            thread_key: Some("finder_exec_06_thread".to_string()),
-            thread_state: ThreadState::empty_v1(),
-            session_state: SessionState::Active,
-            policy_context_ref: PolicyContextRef::v1(false, false, SafetyTier::Standard),
-            memory_candidates: vec![],
-            confirm_answer: None,
-            nlp_output: Some(invite_link_send_draft_broken_english(
-                "Tom",
-                "+14155550100",
-                "tenant_1",
-            )),
-            tool_response: None,
-            interruption: None,
-            locale: Some("en-US".to_string()),
-            last_failure_reason_code: None,
-        };
-        let out_1 = runtime
-            .run_desktop_voice_turn_end_to_end(&mut store, request_1, x_build_1)
-            .unwrap();
-        assert_eq!(out_1.next_move, AppVoiceTurnNextMove::Confirm);
-
-        let thread_state_after_confirm = out_1
-            .ph1x_response
-            .expect("confirm run should include ph1x response")
-            .thread_state;
-        let request_2 = AppVoiceIngressRequest::v1(
-            CorrelationId(9807),
-            TurnId(9907),
-            AppPlatform::Desktop,
-            OsVoiceTrigger::Explicit,
-            sample_voice_id_request(MonotonicTimeNs(3), actor_user_id.clone()),
-            actor_user_id,
-            Some("tenant_1".to_string()),
-            Some(device_id),
-            Vec::new(),
-            no_observation(),
-        )
-        .unwrap();
-        let x_build_2 = AppVoicePh1xBuildInput {
-            now: MonotonicTimeNs(26),
-            thread_key: Some("finder_exec_06_thread".to_string()),
-            thread_state: thread_state_after_confirm,
-            session_state: SessionState::Active,
-            policy_context_ref: PolicyContextRef::v1(false, false, SafetyTier::Standard),
-            memory_candidates: vec![],
-            confirm_answer: Some(ConfirmAnswer::Yes),
-            nlp_output: None,
-            tool_response: None,
-            interruption: None,
-            locale: Some("en-US".to_string()),
-            last_failure_reason_code: None,
-        };
-        let out_2 = runtime
-            .run_desktop_voice_turn_end_to_end(&mut store, request_2, x_build_2)
-            .expect("escalated access must return deterministic fail-closed response");
+        let (runtime, store, out_2, response_correlation_id) =
+            run_access_ap_required_fail_closed_turn();
         assert_eq!(out_2.next_move, AppVoiceTurnNextMove::Refused);
         assert_eq!(
             out_2.response_text.as_deref(),
@@ -11735,16 +11932,18 @@ mod tests {
             out_2.reason_code,
             Some(sim_finder_reason_codes::SIM_FINDER_REFUSE_ACCESS_AP_REQUIRED)
         );
-        let ap_rows = store.ph1x_audit_rows(CorrelationId(9807));
-        assert!(
-            ap_rows.iter().any(|row| {
-                row.payload_min
-                    .entries
-                    .get(&PayloadKey::new("response_kind").unwrap())
-                    .map(|value| value.as_str() == "ACCESS_AP_REQUIRED_FAIL_CLOSED")
-                    .unwrap_or(false)
-            }),
-            "access escalate fail-closed response must emit PH1.X audit row"
+        assert!(out_2.ph1x_response.is_none());
+        let ap_rows = store.ph1x_audit_rows(response_correlation_id);
+        let row = find_ph1x_respond_row(&ap_rows, "ACCESS_AP_REQUIRED_FAIL_CLOSED");
+        assert_eq!(
+            row.reason_code,
+            sim_finder_reason_codes::SIM_FINDER_REFUSE_ACCESS_AP_REQUIRED
+        );
+        assert_access_fail_closed_respond_payload(
+            &runtime,
+            row,
+            &out_2,
+            "ACCESS_AP_REQUIRED_FAIL_CLOSED",
         );
     }
 
@@ -11886,97 +12085,7 @@ mod tests {
 
     #[test]
     fn at_finder_exec_09_access_deny_fails_closed_deterministically() {
-        let runtime = AppServerIngressRuntime::default();
-        let actor_user_id = UserId::new("tenant_1:finder_exec_deny_user").unwrap();
-        let device_id = DeviceId::new("finder_exec_deny_device_1").unwrap();
-        let mut store = Ph1fStore::new_in_memory();
-        seed_actor(&mut store, &actor_user_id, &device_id);
-        seed_link_send_denied_access_instance(&mut store, &actor_user_id, "tenant_1");
-        for (simulation_id, simulation_type) in [
-            (LINK_INVITE_GENERATE_DRAFT, SimulationType::Draft),
-            (BCAST_CREATE_DRAFT, SimulationType::Draft),
-            (BCAST_DELIVER_COMMIT, SimulationType::Commit),
-            (DELIVERY_SEND_COMMIT, SimulationType::Commit),
-        ] {
-            seed_simulation_catalog_status(
-                &mut store,
-                "tenant_1",
-                simulation_id,
-                simulation_type,
-                SimulationStatus::Active,
-            );
-        }
-
-        let request_1 = AppVoiceIngressRequest::v1(
-            CorrelationId(9810),
-            TurnId(9910),
-            AppPlatform::Desktop,
-            OsVoiceTrigger::Explicit,
-            sample_voice_id_request(MonotonicTimeNs(3), actor_user_id.clone()),
-            actor_user_id.clone(),
-            Some("tenant_1".to_string()),
-            Some(device_id.clone()),
-            Vec::new(),
-            no_observation(),
-        )
-        .unwrap();
-        let x_build_1 = AppVoicePh1xBuildInput {
-            now: MonotonicTimeNs(29),
-            thread_key: Some("finder_exec_09_thread".to_string()),
-            thread_state: ThreadState::empty_v1(),
-            session_state: SessionState::Active,
-            policy_context_ref: PolicyContextRef::v1(false, false, SafetyTier::Standard),
-            memory_candidates: vec![],
-            confirm_answer: None,
-            nlp_output: Some(invite_link_send_draft_broken_english(
-                "Tom",
-                "+14155550100",
-                "tenant_1",
-            )),
-            tool_response: None,
-            interruption: None,
-            locale: Some("en-US".to_string()),
-            last_failure_reason_code: None,
-        };
-        let out_1 = runtime
-            .run_desktop_voice_turn_end_to_end(&mut store, request_1, x_build_1)
-            .unwrap();
-        assert_eq!(out_1.next_move, AppVoiceTurnNextMove::Confirm);
-
-        let thread_state_after_confirm = out_1
-            .ph1x_response
-            .expect("confirm run should include ph1x response")
-            .thread_state;
-        let request_2 = AppVoiceIngressRequest::v1(
-            CorrelationId(9811),
-            TurnId(9911),
-            AppPlatform::Desktop,
-            OsVoiceTrigger::Explicit,
-            sample_voice_id_request(MonotonicTimeNs(3), actor_user_id.clone()),
-            actor_user_id,
-            Some("tenant_1".to_string()),
-            Some(device_id),
-            Vec::new(),
-            no_observation(),
-        )
-        .unwrap();
-        let x_build_2 = AppVoicePh1xBuildInput {
-            now: MonotonicTimeNs(30),
-            thread_key: Some("finder_exec_09_thread".to_string()),
-            thread_state: thread_state_after_confirm,
-            session_state: SessionState::Active,
-            policy_context_ref: PolicyContextRef::v1(false, false, SafetyTier::Standard),
-            memory_candidates: vec![],
-            confirm_answer: Some(ConfirmAnswer::Yes),
-            nlp_output: None,
-            tool_response: None,
-            interruption: None,
-            locale: Some("en-US".to_string()),
-            last_failure_reason_code: None,
-        };
-        let out_2 = runtime
-            .run_desktop_voice_turn_end_to_end(&mut store, request_2, x_build_2)
-            .expect("denied access must return deterministic fail-closed response");
+        let (runtime, store, out_2, response_correlation_id) = run_access_denied_fail_closed_turn();
         assert_eq!(out_2.next_move, AppVoiceTurnNextMove::Refused);
         assert_eq!(
             out_2.response_text.as_deref(),
@@ -11986,16 +12095,66 @@ mod tests {
             out_2.reason_code,
             Some(sim_finder_reason_codes::SIM_FINDER_REFUSE_ACCESS_DENIED)
         );
-        let deny_rows = store.ph1x_audit_rows(CorrelationId(9811));
-        assert!(
-            deny_rows.iter().any(|row| {
-                row.payload_min
-                    .entries
-                    .get(&PayloadKey::new("response_kind").unwrap())
-                    .map(|value| value.as_str() == "ACCESS_DENIED_FAIL_CLOSED")
-                    .unwrap_or(false)
-            }),
-            "access deny fail-closed response must emit PH1.X audit row"
+        assert!(out_2.ph1x_response.is_none());
+        let deny_rows = store.ph1x_audit_rows(response_correlation_id);
+        let row = find_ph1x_respond_row(&deny_rows, "ACCESS_DENIED_FAIL_CLOSED");
+        assert_eq!(
+            row.reason_code,
+            sim_finder_reason_codes::SIM_FINDER_REFUSE_ACCESS_DENIED
+        );
+        assert_access_fail_closed_respond_payload(
+            &runtime,
+            row,
+            &out_2,
+            "ACCESS_DENIED_FAIL_CLOSED",
+        );
+    }
+
+    #[test]
+    fn at_finder_exec_10_access_ap_required_fail_closed_audit_surfaces_identity_context() {
+        let (runtime, store, out, response_correlation_id) =
+            run_access_ap_required_fail_closed_turn();
+        let response_rows = store.ph1x_audit_rows(response_correlation_id);
+        let row = find_ph1x_respond_row(&response_rows, "ACCESS_AP_REQUIRED_FAIL_CLOSED");
+
+        assert_access_fail_closed_respond_payload(
+            &runtime,
+            row,
+            &out,
+            "ACCESS_AP_REQUIRED_FAIL_CLOSED",
+        );
+        assert_eq!(
+            row.reason_code,
+            sim_finder_reason_codes::SIM_FINDER_REFUSE_ACCESS_AP_REQUIRED
+        );
+        assert_eq!(
+            ph1x_payload_value(row, "identity_consistency_level"),
+            Some("DEGRADED_VERIFICATION")
+        );
+        assert_eq!(
+            ph1x_payload_value(row, "identity_reason_code_hex"),
+            Some("0x56490002")
+        );
+    }
+
+    #[test]
+    fn at_finder_exec_11_access_denied_fail_closed_audit_surfaces_identity_context() {
+        let (runtime, store, out, response_correlation_id) = run_access_denied_fail_closed_turn();
+        let response_rows = store.ph1x_audit_rows(response_correlation_id);
+        let row = find_ph1x_respond_row(&response_rows, "ACCESS_DENIED_FAIL_CLOSED");
+
+        assert_access_fail_closed_respond_payload(&runtime, row, &out, "ACCESS_DENIED_FAIL_CLOSED");
+        assert_eq!(
+            row.reason_code,
+            sim_finder_reason_codes::SIM_FINDER_REFUSE_ACCESS_DENIED
+        );
+        assert_eq!(
+            ph1x_payload_value(row, "identity_consistency_level"),
+            Some("DEGRADED_VERIFICATION")
+        );
+        assert_eq!(
+            ph1x_payload_value(row, "identity_reason_code_hex"),
+            Some("0x56490002")
         );
     }
 
