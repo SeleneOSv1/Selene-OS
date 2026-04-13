@@ -339,6 +339,30 @@ impl RuntimeGovernanceRuntime {
         &self.config.policy_window.governance_policy_version
     }
 
+    #[cfg(test)]
+    pub(crate) fn debug_quarantine_identity_voice_engine_for_tests(
+        &self,
+        session_id: Option<u128>,
+        turn_id: Option<u64>,
+    ) -> RuntimeGovernanceDecision {
+        self.apply_violation(governance_violation_spec!(
+            RULE_GOVERNANCE_INTEGRITY,
+            SUBSYSTEM_IDENTITY_VOICE_ENGINE,
+            GovernanceDecisionOutcome::Quarantined,
+            GovernanceSeverity::QuarantineRequired,
+            GovernanceResponseClass::Quarantine,
+            reason_codes::GOV_SUBSYSTEM_CERTIFICATION_REGRESSED,
+            session_id,
+            turn_id,
+            Some(GovernanceDriftSignal::SubsystemCertificationRegression),
+            Some(
+                "test helper quarantined the identity voice engine subsystem".to_string(),
+            ),
+            Some(GovernanceCertificationStatus::Quarantined),
+            Some(SUBSYSTEM_IDENTITY_VOICE_ENGINE.to_string()),
+        ))
+    }
+
     pub fn exit_safe_mode(&self, note: &str) -> Result<(), ContractViolation> {
         let mut guard = self
             .state
@@ -3901,6 +3925,71 @@ mod tests {
                 voice_id_reason_codes::VID_FAIL_PROFILE_NOT_ENROLLED.0
             ))
         );
+    }
+
+    #[test]
+    fn at_runtime_gov_29_governance_quarantine_confirmed_identity_maps_to_recovery_restricted_identity_state(
+    ) {
+        let runtime = RuntimeGovernanceRuntime::default();
+        let artifact_governed = artifact_governed_envelope(&runtime);
+        let artifact_governance_state = artifact_governed
+            .governance_state
+            .as_ref()
+            .expect("artifact-governed envelope must carry governance state");
+        let quarantine_decision = runtime.debug_quarantine_identity_voice_engine_for_tests(
+            artifact_governed.session_id.map(|value| value.0),
+            Some(artifact_governed.turn_id.0),
+        );
+        let governance_state = quarantine_decision
+            .governance_state
+            .clone()
+            .with_artifact_trust_linkage(
+                artifact_governance_state.artifact_trust_decision_ids.clone(),
+                artifact_governance_state.artifact_trust_proof_entry_refs.clone(),
+                artifact_governance_state.artifact_trust_proof_record_ref.clone(),
+                artifact_governance_state.artifact_trust_policy_snapshot_refs.clone(),
+                artifact_governance_state.artifact_trust_set_snapshot_refs.clone(),
+                artifact_governance_state.artifact_trust_basis_fingerprints.clone(),
+                artifact_governance_state.artifact_trust_negative_result_refs.clone(),
+            )
+            .expect("quarantine state must preserve artifact trust linkage");
+        let quarantined_envelope = artifact_governed
+            .with_governance_state(Some(governance_state))
+            .expect("quarantined governance state must attach");
+        let out = runtime
+            .govern_artifact_activation_identity_state_execution(
+                &quarantined_envelope,
+                &confirmed_voice_assertion(quarantined_envelope.actor_identity.clone()),
+            )
+            .expect("governance-quarantined confirmed assertion must still produce bounded identity state");
+        let identity_state = out
+            .identity_state
+            .as_ref()
+            .expect("identity state must attach for governance-quarantined posture");
+        assert_eq!(
+            identity_state.consistency_level,
+            IdentityVerificationConsistencyLevel::RecoveryRestricted
+        );
+        assert_eq!(identity_state.trust_tier, IdentityTrustTier::Restricted);
+        assert!(identity_state.step_up_required);
+        assert_eq!(
+            identity_state.recovery_state,
+            IdentityRecoveryState::RecoveryRestricted
+        );
+        assert_eq!(identity_state.reason_code, None);
+        let governance_state = out
+            .governance_state
+            .as_ref()
+            .expect("governance state must remain attached");
+        assert!(governance_state
+            .quarantined_subsystems
+            .iter()
+            .any(|subsystem| subsystem == SUBSYSTEM_IDENTITY_VOICE_ENGINE));
+        assert_eq!(
+            governance_state.last_response_class,
+            Some(GovernanceResponseClass::Quarantine)
+        );
+        assert!(governance_state.decision_log_ref.is_some());
     }
 
     #[test]

@@ -3519,6 +3519,40 @@ impl AppServerIngressRuntime {
             out.runtime_execution_envelope =
                 runtime_execution_envelope_with_authority_state_for_outcome(&out, finder_terminal)?;
         }
+        if let Some(governance_quarantine_fail_closed) =
+            classify_governance_quarantine_identity_recovery_fail_closed_outcome(&out)
+        {
+            if let Some(actor_device_id) = actor_device_id {
+                let tenant_id =
+                    normalized_tenant_scope_for_dev_intake(store, actor_user_id, actor_tenant_id)?;
+                let audit_session_id =
+                    request_session_id.filter(|session_id| store.get_session(session_id).is_some());
+                let _ = store.ph1x_respond_commit(
+                    dispatch_now,
+                    tenant_id,
+                    correlation_id,
+                    turn_id,
+                    audit_session_id,
+                    actor_user_id.clone(),
+                    actor_device_id.clone(),
+                    governance_quarantine_fail_closed
+                        .audit_response_kind
+                        .to_string(),
+                    governance_quarantine_fail_closed.audit_reason_code,
+                    format!(
+                        "ph1x_identity_recovery_fail_closed:{}:{}:{}",
+                        correlation_id.0,
+                        turn_id.0,
+                        governance_quarantine_fail_closed.audit_response_kind
+                    ),
+                )?;
+            }
+            out.next_move = AppVoiceTurnNextMove::Refused;
+            out.response_text = Some(governance_quarantine_fail_closed.user_message.to_string());
+            out.reason_code = None;
+            out.runtime_execution_envelope =
+                runtime_execution_envelope_with_authority_state_for_outcome(&out, finder_terminal)?;
+        }
         if let Some(identity_posture_fail_closed) =
             classify_low_confidence_identity_posture_fail_closed_outcome(&out)
         {
@@ -4188,6 +4222,7 @@ fn runtime_execution_envelope_with_voice_turn_proof(
 
 const GOVERNED_SUBSYSTEM_MEMORY_ENGINE: &str = "MEMORY_ENGINE";
 const GOVERNED_SUBSYSTEM_AUTHORITY_LAYER: &str = "AUTHORITY_LAYER";
+const GOVERNED_SUBSYSTEM_IDENTITY_VOICE_ENGINE: &str = "IDENTITY_VOICE_ENGINE";
 
 fn attach_runtime_execution_envelope_to_voice_outcome(
     outcome: OsVoiceLiveTurnOutcome,
@@ -4725,6 +4760,13 @@ struct GovernanceDriftFailClosedBehavior {
     audit_response_kind: &'static str,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct GovernanceQuarantineFailClosedBehavior {
+    audit_reason_code: ReasonCodeId,
+    user_message: &'static str,
+    audit_response_kind: &'static str,
+}
+
 fn identity_reason_code_or(
     identity_state: &IdentityExecutionState,
     fallback: ReasonCodeId,
@@ -4811,6 +4853,38 @@ fn classify_identity_recovery_fail_closed_outcome(
         }
         IdentityRecoveryState::None | IdentityRecoveryState::RecoveryRestricted => None,
     }
+}
+
+fn classify_governance_quarantine_identity_recovery_fail_closed_outcome(
+    out: &AppVoiceTurnExecutionOutcome,
+) -> Option<GovernanceQuarantineFailClosedBehavior> {
+    if !matches!(
+        out.next_move,
+        AppVoiceTurnNextMove::Dispatch | AppVoiceTurnNextMove::Respond
+    ) {
+        return None;
+    }
+    let identity_state = out.runtime_execution_envelope.identity_state.as_ref()?;
+    let governance_state = out.runtime_execution_envelope.governance_state.as_ref()?;
+    if identity_state.consistency_level
+        != IdentityVerificationConsistencyLevel::RecoveryRestricted
+        || identity_state.trust_tier != IdentityTrustTier::Restricted
+        || !identity_state.step_up_required
+        || identity_state.recovery_state != IdentityRecoveryState::RecoveryRestricted
+        || identity_reason_code(identity_state).is_some()
+        || (!governance_state.safe_mode_active
+            && !governance_quarantines_subsystem(
+                governance_state,
+                GOVERNED_SUBSYSTEM_IDENTITY_VOICE_ENGINE,
+            ))
+    {
+        return None;
+    }
+    Some(GovernanceQuarantineFailClosedBehavior {
+        audit_reason_code: crate::ph1gov::reason_codes::PH1_GOV_INTERNAL_PIPELINE_ERROR,
+        user_message: "I can't continue because identity governance is quarantined right now.",
+        audit_response_kind: "IDENTITY_GOVERNANCE_QUARANTINE_FAIL_CLOSED",
+    })
 }
 
 fn classify_low_confidence_identity_posture_fail_closed_outcome(
@@ -6767,6 +6841,39 @@ mod tests {
         )
     }
 
+    fn governance_quarantined_confirmed_voice_assertion(
+        runtime: &AppServerIngressRuntime,
+        runtime_execution_envelope: &RuntimeExecutionEnvelope,
+    ) -> (Ph1VoiceIdResponse, GovernanceExecutionState) {
+        let decision = runtime
+            .runtime_governance()
+            .debug_quarantine_identity_voice_engine_for_tests(
+                runtime_execution_envelope.session_id.map(|value| value.0),
+                Some(runtime_execution_envelope.turn_id.0),
+            );
+        (
+            confirmed_voice_assertion(runtime_execution_envelope.actor_identity.clone()),
+            decision.governance_state,
+        )
+    }
+
+    fn governance_reason_code_for_state(
+        runtime: &AppServerIngressRuntime,
+        governance_state: &GovernanceExecutionState,
+    ) -> Option<String> {
+        let sequence = governance_state
+            .decision_log_ref
+            .as_deref()?
+            .strip_prefix("gov_decision_")?
+            .parse::<u64>()
+            .ok()?;
+        runtime
+            .runtime_governance_decision_log_snapshot()
+            .into_iter()
+            .find(|entry| entry.sequence == sequence)
+            .map(|entry| entry.reason_code)
+    }
+
     fn invite_link_draft_missing_contact(recipient: &str, tenant_id: &str) -> Ph1nResponse {
         Ph1nResponse::IntentDraft(
             IntentDraft::v1(
@@ -7119,6 +7226,28 @@ mod tests {
         correlation_id: CorrelationId,
         turn_id: TurnId,
     ) -> AppVoiceTurnExecutionOutcome {
+        run_protected_response_turn_with_identity_assertion_and_governance_state(
+            runtime,
+            store,
+            actor_user_id,
+            device_id,
+            assertion,
+            None,
+            correlation_id,
+            turn_id,
+        )
+    }
+
+    fn run_protected_response_turn_with_identity_assertion_and_governance_state(
+        runtime: &AppServerIngressRuntime,
+        store: &mut Ph1fStore,
+        actor_user_id: UserId,
+        device_id: DeviceId,
+        assertion: Ph1VoiceIdResponse,
+        governance_state: Option<GovernanceExecutionState>,
+        correlation_id: CorrelationId,
+        turn_id: TurnId,
+    ) -> AppVoiceTurnExecutionOutcome {
         let request = AppVoiceIngressRequest::v1(
             correlation_id,
             turn_id,
@@ -7141,6 +7270,12 @@ mod tests {
             panic!("expected forwarded voice turn");
         };
         forwarded.voice_identity_assertion = assertion;
+        if let Some(governance_state) = governance_state {
+            forwarded.runtime_execution_envelope = forwarded
+                .runtime_execution_envelope
+                .with_governance_state(Some(governance_state))
+                .unwrap();
+        }
 
         let x_build = AppVoicePh1xBuildInput {
             now: MonotonicTimeNs(17),
@@ -8573,6 +8708,107 @@ mod tests {
     }
 
     #[test]
+    fn at_harmonize_02j_governance_quarantine_identity_attaches_recovery_restricted_trust() {
+        let runtime = AppServerIngressRuntime::default();
+        let actor_user_id =
+            UserId::new("tenant_1:harmonize_governance_quarantine_user").unwrap();
+        let device_id = DeviceId::new("harmonize_governance_quarantine_device_1").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &actor_user_id, &device_id);
+
+        let request = AppVoiceIngressRequest::v1(
+            CorrelationId(9533),
+            TurnId(9633),
+            AppPlatform::Desktop,
+            OsVoiceTrigger::Explicit,
+            sample_voice_id_request(MonotonicTimeNs(3), actor_user_id.clone()),
+            actor_user_id.clone(),
+            Some("tenant_1".to_string()),
+            Some(device_id),
+            Vec::new(),
+            no_observation(),
+        )
+        .unwrap();
+        let outcome = runtime.run_voice_turn(&mut store, request).unwrap();
+        let OsVoiceLiveTurnOutcome::Forwarded(mut forwarded) = outcome else {
+            panic!("expected forwarded voice turn");
+        };
+        let (assertion, governance_state) = governance_quarantined_confirmed_voice_assertion(
+            &runtime,
+            &forwarded.runtime_execution_envelope,
+        );
+        forwarded.voice_identity_assertion = assertion;
+        forwarded.runtime_execution_envelope = forwarded
+            .runtime_execution_envelope
+            .with_governance_state(Some(governance_state))
+            .unwrap();
+
+        let x_build = AppVoicePh1xBuildInput {
+            now: MonotonicTimeNs(7),
+            thread_key: None,
+            thread_state: ThreadState::empty_v1(),
+            session_state: SessionState::Active,
+            policy_context_ref: PolicyContextRef::v1(false, false, SafetyTier::Standard),
+            memory_candidates: vec![],
+            confirm_answer: None,
+            nlp_output: Some(invite_link_draft_missing_contact("Jane", "tenant_1")),
+            tool_response: None,
+            interruption: None,
+            locale: None,
+            last_failure_reason_code: None,
+        };
+        runtime
+            .build_ph1x_request_for_forwarded_voice(
+                &mut store,
+                ForwardedVoicePh1xRequestInput {
+                    correlation_id: CorrelationId(9533),
+                    turn_id: TurnId(9633),
+                    app_platform: AppPlatform::Desktop,
+                    forwarded: &forwarded,
+                    request_session_id: None,
+                    tenant_id: Some("tenant_1"),
+                    x_build,
+                },
+            )
+            .unwrap();
+
+        let packet = runtime
+            .debug_last_agent_input_packet()
+            .expect("agent packet should be captured");
+        let envelope = packet
+            .runtime_execution_envelope
+            .expect("agent packet should carry runtime execution envelope");
+        let identity_state = envelope
+            .identity_state
+            .expect("identity state should be attached");
+        assert_eq!(
+            identity_state.consistency_level,
+            IdentityVerificationConsistencyLevel::RecoveryRestricted
+        );
+        assert_eq!(identity_state.trust_tier, IdentityTrustTier::Restricted);
+        assert!(identity_state.step_up_required);
+        assert_eq!(
+            identity_state.recovery_state,
+            IdentityRecoveryState::RecoveryRestricted
+        );
+        assert_eq!(identity_state.reason_code, None);
+        let governance_state = envelope
+            .governance_state
+            .expect("governance state should remain attached");
+        assert!(governance_state.decision_log_ref.is_some());
+        assert!(governance_state
+            .quarantined_subsystems
+            .contains(&GOVERNED_SUBSYSTEM_IDENTITY_VOICE_ENGINE.to_string()));
+        let memory_state = envelope
+            .memory_state
+            .expect("memory state should be attached");
+        assert_eq!(
+            memory_state.eligibility_decision,
+            MemoryEligibilityDecision::IdentityScopeBlocked
+        );
+    }
+
+    #[test]
     fn at_harmonize_02d_low_confidence_identity_attaches_degraded_conditional_trust() {
         let runtime = AppServerIngressRuntime::default();
         let actor_user_id = UserId::new("tenant_1:harmonize_low_conf_user").unwrap();
@@ -9449,6 +9685,80 @@ mod tests {
                     .unwrap_or(false)
             }),
             "profile-not-enrolled recovery fail-closed response must emit PH1.X audit row"
+        );
+    }
+
+    #[test]
+    fn at_identity_recovery_06_governance_quarantine_protected_voice_turn_fails_closed_with_explicit_governance_quarantine_response(
+    ) {
+        let runtime = runtime_with_search_tool_fixtures();
+        let actor_user_id =
+            UserId::new("tenant_1:identity_governance_quarantine_runtime_user").unwrap();
+        let device_id = DeviceId::new("identity_governance_quarantine_runtime_device_1").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &actor_user_id, &device_id);
+
+        let request = AppVoiceIngressRequest::v1(
+            CorrelationId(9825),
+            TurnId(9925),
+            AppPlatform::Desktop,
+            OsVoiceTrigger::Explicit,
+            sample_voice_id_request(MonotonicTimeNs(3), actor_user_id.clone()),
+            actor_user_id.clone(),
+            Some("tenant_1".to_string()),
+            Some(device_id.clone()),
+            Vec::new(),
+            no_observation(),
+        )
+        .unwrap();
+        let outcome = runtime.run_voice_turn(&mut store, request).unwrap();
+        let OsVoiceLiveTurnOutcome::Forwarded(forwarded) = outcome else {
+            panic!("expected forwarded voice turn");
+        };
+        let (assertion, governance_state) = governance_quarantined_confirmed_voice_assertion(
+            &runtime,
+            &forwarded.runtime_execution_envelope,
+        );
+
+        let out = run_protected_response_turn_with_identity_assertion_and_governance_state(
+            &runtime,
+            &mut store,
+            actor_user_id,
+            device_id,
+            assertion,
+            Some(governance_state),
+            CorrelationId(9825),
+            TurnId(9925),
+        );
+
+        assert_eq!(out.next_move, AppVoiceTurnNextMove::Refused);
+        assert_eq!(
+            out.response_text.as_deref(),
+            Some("I can't continue because identity governance is quarantined right now.")
+        );
+        assert_eq!(out.reason_code, None);
+        let governance_state = out
+            .runtime_execution_envelope
+            .governance_state
+            .as_ref()
+            .expect("governance state must remain attached");
+        assert!(governance_state.decision_log_ref.is_some());
+        assert_eq!(
+            governance_reason_code_for_state(&runtime, governance_state).as_deref(),
+            Some(crate::runtime_governance::reason_codes::GOV_SUBSYSTEM_CERTIFICATION_REGRESSED)
+        );
+        let response_rows = store.ph1x_audit_rows(CorrelationId(9825));
+        assert!(
+            response_rows.iter().any(|row| {
+                row.payload_min
+                    .entries
+                    .get(&PayloadKey::new("response_kind").unwrap())
+                    .map(|value| {
+                        value.as_str() == "IDENTITY_GOVERNANCE_QUARANTINE_FAIL_CLOSED"
+                    })
+                    .unwrap_or(false)
+            }),
+            "governance-quarantine recovery fail-closed response must emit PH1.X audit row"
         );
     }
 
