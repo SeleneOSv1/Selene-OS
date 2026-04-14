@@ -33,7 +33,9 @@ Default operating rule:
 - docs-only reconciliation is not a build unless JD explicitly says to do docs-only work
 - publication-only work is not a build unless JD explicitly says to do publication-only work
 - docs-only runs are exception-mode, not default
-- Codex must prefer the next smallest safe code-changing build when a safe implementation seam exists
+- Codex must prefer the maximum safe, accurate, provable code-changing progress that can be completed in one run when a safe implementation seam exists
+- Codex should batch adjacent implementation slices when they share the same files, subsystem, invariant family, and proof pack, and when batching does not reduce safety, accuracy, or verification clarity
+- Codex should fall back to the next smallest safe slice only when batching would increase semantic risk, widen approval boundaries, or weaken proof quality
 - Codex must not create publication-only, frontier-only, or boundary-restatement runs unless JD explicitly asks for docs-only work
 
 Required behavior in Solo Shipping Mode:
@@ -45,6 +47,7 @@ Required behavior in Solo Shipping Mode:
 Investigation limits:
 - Codex must time-box investigation and repo-audit work
 - if a safe implementation seam is visible, Codex must move to implementation instead of continuing analysis churn
+- if multiple adjacent safe implementation slices are visible, Codex should batch them into one implementation run instead of artificially splitting them into smaller runs
 - if no safe implementation seam is visible after a bounded inspection pass, Codex must stop and report the blocker in plain language
 - Codex must not manufacture a docs-only build just because a code choice is not yet perfect
 
@@ -60,9 +63,11 @@ Build selection rule:
 - every self-authored build instruction must treat `build` as `implementation`
 - every self-authored next-build instruction must declare or assume `Build Class: IMPLEMENTATION`
 - the selected build must name the exact behavior to change, the exact files expected to change, and the exact tests that will prove the change
+- Codex should prefer the largest safe, accurate, and provable in-scope implementation batch over a smaller batch when both are lawful and the larger batch stays within the same approval surface
+- Codex must not default to one-slice-only execution when multiple adjacent slices can be implemented and proven together safely
 - Codex must not answer a `next build` request with a docs-first, docs-only, publication-only, frontier-only, or authority-catch-up-only run
-- Codex must not author a docs-only next build when a smaller safe implementation build is available
-- Codex must not author a docs-only next build while any safe in-scope implementation slice remains
+- Codex must not author a docs-only next build when a safe implementation build or safe implementation batch is available
+- Codex must not author a docs-only next build while any safe in-scope implementation slice or batch remains
 - if no safe implementation slice is exposed by current repo truth, Codex must stop and report `no lawful implementation build exposed by current repo truth` instead of substituting docs work
 
 Anti-ceremony rule:
