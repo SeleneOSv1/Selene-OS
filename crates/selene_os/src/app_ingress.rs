@@ -3575,8 +3575,6 @@ impl AppServerIngressRuntime {
         received_at: MonotonicTimeNs,
         dispatch_now: MonotonicTimeNs,
     ) -> Result<AppVoiceTurnExecutionOutcome, StorageError> {
-        out.runtime_execution_envelope =
-            runtime_execution_envelope_with_authority_state_for_outcome(&out, finder_terminal)?;
         if let Some(recovery_fail_closed) = classify_identity_recovery_fail_closed_outcome(&out)? {
             if let Some(actor_device_id) = actor_device_id {
                 let tenant_id =
@@ -3605,9 +3603,9 @@ impl AppServerIngressRuntime {
             out.next_move = AppVoiceTurnNextMove::Refused;
             out.response_text = Some(recovery_fail_closed.user_message.to_string());
             out.reason_code = Some(recovery_fail_closed.reason_code);
-            out.runtime_execution_envelope =
-                runtime_execution_envelope_with_authority_state_for_outcome(&out, finder_terminal)?;
         }
+        out.runtime_execution_envelope =
+            runtime_execution_envelope_with_authority_state_for_outcome(&out, finder_terminal)?;
         if let Some(governance_quarantine_fail_closed) =
             classify_governance_quarantine_identity_recovery_fail_closed_outcome(&out)
         {
@@ -5354,6 +5352,40 @@ fn require_canonical_recovery_device_owner_user_carriage(
     }
 }
 
+fn require_canonical_recovery_voice_identity_tier_v2(
+    voice_identity_assertion: &SpeakerAssertionUnknown,
+) -> Result<(), StorageError> {
+    if voice_identity_assertion.identity_v2.identity_tier_v2 == IdentityTierV2::Unknown {
+        Ok(())
+    } else {
+        Err(StorageError::ContractViolation(
+            ContractViolation::InvalidValue {
+                field:
+                    "app_voice_turn_execution_outcome.runtime_execution_envelope.voice_identity_assertion.identity_v2.identity_tier_v2",
+                reason:
+                    "must carry canonical Unknown identity tier on recovery voice identity assertion for fail-closed classification",
+            },
+        ))
+    }
+}
+
+fn require_canonical_recovery_voice_spoof_liveness_status(
+    voice_identity_assertion: &SpeakerAssertionUnknown,
+) -> Result<(), StorageError> {
+    if voice_identity_assertion.spoof_liveness_status == SpoofLivenessStatus::Unknown {
+        Ok(())
+    } else {
+        Err(StorageError::ContractViolation(
+            ContractViolation::InvalidValue {
+                field:
+                    "app_voice_turn_execution_outcome.runtime_execution_envelope.voice_identity_assertion.spoof_liveness_status",
+                reason:
+                    "must carry canonical Unknown spoof liveness status on recovery voice identity assertion for fail-closed classification",
+            },
+        ))
+    }
+}
+
 fn canonical_recovery_identity_state_matches_shape(
     identity_state: &IdentityExecutionState,
     recovery_reason_code: ReasonCodeId,
@@ -5518,6 +5550,8 @@ fn canonical_recovery_fail_closed_identity_state(
         unknown_voice_identity_assertion,
         recovery_reason_code,
     )?;
+    require_canonical_recovery_voice_identity_tier_v2(unknown_voice_identity_assertion)?;
+    require_canonical_recovery_voice_spoof_liveness_status(unknown_voice_identity_assertion)?;
     require_canonical_recovery_identity_state_shape(identity_state, recovery_reason_code)?;
     require_canonical_recovery_identity_tier_v2(identity_state)?;
     require_canonical_recovery_spoof_liveness_status(identity_state)?;
@@ -9048,6 +9082,78 @@ mod tests {
         }
     }
 
+    fn assert_recovery_finalization_requires_canonical_voice_identity_tier_v2(
+        runtime: &AppServerIngressRuntime,
+        store: &mut Ph1fStore,
+        mut pending: PendingProtectedResponseTurn,
+        divergent_identity_tier_v2: IdentityTierV2,
+    ) {
+        let voice_identity_assertion = pending
+            .out
+            .runtime_execution_envelope
+            .voice_identity_assertion
+            .as_mut()
+            .expect("recovery voice identity assertion must remain attached");
+        let Ph1VoiceIdResponse::SpeakerAssertionUnknown(unknown) = voice_identity_assertion else {
+            panic!("recovery voice-tier proof must keep the Unknown carrier family");
+        };
+        unknown.identity_v2.identity_tier_v2 = divergent_identity_tier_v2;
+
+        let err = finalize_pending_protected_response_turn(runtime, store, pending)
+            .expect_err("non-canonical recovery voice identity tier must fail closed");
+        match err {
+            StorageError::ContractViolation(ContractViolation::InvalidValue { field, reason }) => {
+                assert_eq!(
+                    field,
+                    "app_voice_turn_execution_outcome.runtime_execution_envelope.voice_identity_assertion.identity_v2.identity_tier_v2"
+                );
+                assert_eq!(
+                    reason,
+                    "must carry canonical Unknown identity tier on recovery voice identity assertion for fail-closed classification"
+                );
+            }
+            other => {
+                panic!("expected recovery voice identity-tier contract violation, got {other:?}")
+            }
+        }
+    }
+
+    fn assert_recovery_finalization_requires_canonical_voice_spoof_liveness_status(
+        runtime: &AppServerIngressRuntime,
+        store: &mut Ph1fStore,
+        mut pending: PendingProtectedResponseTurn,
+        divergent_spoof_liveness_status: SpoofLivenessStatus,
+    ) {
+        let voice_identity_assertion = pending
+            .out
+            .runtime_execution_envelope
+            .voice_identity_assertion
+            .as_mut()
+            .expect("recovery voice identity assertion must remain attached");
+        let Ph1VoiceIdResponse::SpeakerAssertionUnknown(unknown) = voice_identity_assertion else {
+            panic!("recovery voice spoof-liveness proof must keep the Unknown carrier family");
+        };
+        unknown.spoof_liveness_status = divergent_spoof_liveness_status;
+
+        let err = finalize_pending_protected_response_turn(runtime, store, pending)
+            .expect_err("non-canonical recovery voice spoof liveness must fail closed");
+        match err {
+            StorageError::ContractViolation(ContractViolation::InvalidValue { field, reason }) => {
+                assert_eq!(
+                    field,
+                    "app_voice_turn_execution_outcome.runtime_execution_envelope.voice_identity_assertion.spoof_liveness_status"
+                );
+                assert_eq!(
+                    reason,
+                    "must carry canonical Unknown spoof liveness status on recovery voice identity assertion for fail-closed classification"
+                );
+            }
+            other => {
+                panic!("expected recovery voice spoof-liveness contract violation, got {other:?}")
+            }
+        }
+    }
+
     fn run_protected_chat_response_turn_with_identity_assertion(
         runtime: &AppServerIngressRuntime,
         store: &mut Ph1fStore,
@@ -10458,6 +10564,16 @@ mod tests {
         else {
             panic!("packet proof must keep the canonical device-claim Unknown carrier");
         };
+        assert_eq!(
+            unknown_voice_identity_assertion
+                .identity_v2
+                .identity_tier_v2,
+            IdentityTierV2::Unknown
+        );
+        assert_eq!(
+            unknown_voice_identity_assertion.spoof_liveness_status,
+            SpoofLivenessStatus::Unknown
+        );
         assert!(unknown_voice_identity_assertion.candidate_user_id.is_some());
         assert!(unknown_voice_identity_assertion
             .device_owner_user_id
@@ -11449,6 +11565,16 @@ mod tests {
         else {
             panic!("device-claim harmonize proof must keep the Unknown carrier family");
         };
+        assert_eq!(
+            unknown_voice_identity_assertion
+                .identity_v2
+                .identity_tier_v2,
+            IdentityTierV2::Unknown
+        );
+        assert_eq!(
+            unknown_voice_identity_assertion.spoof_liveness_status,
+            SpoofLivenessStatus::Unknown
+        );
         assert!(unknown_voice_identity_assertion.candidate_user_id.is_some());
         assert!(unknown_voice_identity_assertion
             .device_owner_user_id
@@ -12428,6 +12554,16 @@ mod tests {
         };
         assert!(unknown_voice_identity_assertion.candidate_user_id.is_some());
         assert_eq!(
+            unknown_voice_identity_assertion
+                .identity_v2
+                .identity_tier_v2,
+            IdentityTierV2::Unknown
+        );
+        assert_eq!(
+            unknown_voice_identity_assertion.spoof_liveness_status,
+            SpoofLivenessStatus::Unknown
+        );
+        assert_eq!(
             identity_state.consistency_level,
             IdentityVerificationConsistencyLevel::RecoveryRestricted
         );
@@ -12541,6 +12677,16 @@ mod tests {
             panic!("reenrollment proof must preserve the Unknown carrier family");
         };
         assert!(unknown_voice_identity_assertion.candidate_user_id.is_none());
+        assert_eq!(
+            unknown_voice_identity_assertion
+                .identity_v2
+                .identity_tier_v2,
+            IdentityTierV2::Unknown
+        );
+        assert_eq!(
+            unknown_voice_identity_assertion.spoof_liveness_status,
+            SpoofLivenessStatus::Unknown
+        );
         assert_eq!(
             identity_state.consistency_level,
             IdentityVerificationConsistencyLevel::RecoveryRestricted
@@ -12720,6 +12866,16 @@ mod tests {
             panic!("device-claim recovery happy path must keep the Unknown carrier family");
         };
         assert!(unknown_voice_identity_assertion.candidate_user_id.is_some());
+        assert_eq!(
+            unknown_voice_identity_assertion
+                .identity_v2
+                .identity_tier_v2,
+            IdentityTierV2::Unknown
+        );
+        assert_eq!(
+            unknown_voice_identity_assertion.spoof_liveness_status,
+            SpoofLivenessStatus::Unknown
+        );
         assert!(unknown_voice_identity_assertion
             .device_owner_user_id
             .is_some());
@@ -12827,6 +12983,16 @@ mod tests {
             panic!("profile-not-enrolled proof must preserve the Unknown carrier family");
         };
         assert!(unknown_voice_identity_assertion.candidate_user_id.is_none());
+        assert_eq!(
+            unknown_voice_identity_assertion
+                .identity_v2
+                .identity_tier_v2,
+            IdentityTierV2::Unknown
+        );
+        assert_eq!(
+            unknown_voice_identity_assertion.spoof_liveness_status,
+            SpoofLivenessStatus::Unknown
+        );
         assert_eq!(
             identity_state.consistency_level,
             IdentityVerificationConsistencyLevel::RecoveryRestricted
@@ -13570,6 +13736,114 @@ mod tests {
         );
 
         assert_recovery_finalization_requires_canonical_spoof_liveness_status(
+            &runtime,
+            &mut store,
+            pending,
+            SpoofLivenessStatus::SuspectedSpoof,
+        );
+    }
+
+    #[test]
+    fn at_identity_recovery_30_reauth_required_protected_voice_turn_fails_closed_when_voice_assertion_identity_tier_is_not_unknown_for_recovery_family(
+    ) {
+        let runtime = runtime_with_search_tool_fixtures();
+        let actor_user_id = UserId::new("tenant_1:recovery_reauth_bad_voice_tier").unwrap();
+        let device_id = DeviceId::new("recovery_reauth_bad_voice_tier_1").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &actor_user_id, &device_id);
+
+        let pending = prepare_protected_response_turn_with_identity_assertion(
+            &runtime,
+            &mut store,
+            actor_user_id.clone(),
+            device_id,
+            reauth_required_voice_assertion(actor_user_id),
+            CorrelationId(9888),
+            TurnId(9988),
+        );
+
+        assert_recovery_finalization_requires_canonical_voice_identity_tier_v2(
+            &runtime,
+            &mut store,
+            pending,
+            IdentityTierV2::Probable,
+        );
+    }
+
+    #[test]
+    fn at_identity_recovery_31_reenrollment_required_protected_voice_turn_fails_closed_when_voice_assertion_identity_tier_is_not_unknown_for_recovery_family(
+    ) {
+        let runtime = runtime_with_search_tool_fixtures();
+        let actor_user_id = UserId::new("tenant_1:recovery_reenroll_bad_voice_tier").unwrap();
+        let device_id = DeviceId::new("recovery_reenroll_bad_voice_tier_1").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &actor_user_id, &device_id);
+
+        let pending = prepare_protected_response_turn_with_identity_assertion(
+            &runtime,
+            &mut store,
+            actor_user_id.clone(),
+            device_id,
+            reenrollment_required_voice_assertion(actor_user_id),
+            CorrelationId(9889),
+            TurnId(9989),
+        );
+
+        assert_recovery_finalization_requires_canonical_voice_identity_tier_v2(
+            &runtime,
+            &mut store,
+            pending,
+            IdentityTierV2::Probable,
+        );
+    }
+
+    #[test]
+    fn at_identity_recovery_32_reauth_required_protected_voice_turn_fails_closed_when_voice_assertion_spoof_liveness_status_is_not_unknown_for_recovery_family(
+    ) {
+        let runtime = runtime_with_search_tool_fixtures();
+        let actor_user_id = UserId::new("tenant_1:recovery_reauth_bad_voice_spoof").unwrap();
+        let device_id = DeviceId::new("recovery_reauth_bad_voice_spoof_1").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &actor_user_id, &device_id);
+
+        let pending = prepare_protected_response_turn_with_identity_assertion(
+            &runtime,
+            &mut store,
+            actor_user_id.clone(),
+            device_id,
+            reauth_required_voice_assertion(actor_user_id),
+            CorrelationId(9890),
+            TurnId(9990),
+        );
+
+        assert_recovery_finalization_requires_canonical_voice_spoof_liveness_status(
+            &runtime,
+            &mut store,
+            pending,
+            SpoofLivenessStatus::SuspectedSpoof,
+        );
+    }
+
+    #[test]
+    fn at_identity_recovery_33_reenrollment_required_protected_voice_turn_fails_closed_when_voice_assertion_spoof_liveness_status_is_not_unknown_for_recovery_family(
+    ) {
+        let runtime = runtime_with_search_tool_fixtures();
+        let actor_user_id = UserId::new("tenant_1:recovery_reenroll_bad_voice_spoof").unwrap();
+        let device_id = DeviceId::new("recovery_reenroll_bad_voice_spoof_1").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &actor_user_id, &device_id);
+
+        let pending = prepare_protected_response_turn_with_identity_assertion(
+            &runtime,
+            &mut store,
+            actor_user_id.clone(),
+            device_id,
+            reenrollment_required_voice_assertion(actor_user_id),
+            CorrelationId(9891),
+            TurnId(9991),
+        );
+
+        assert_recovery_finalization_requires_canonical_voice_spoof_liveness_status(
             &runtime,
             &mut store,
             pending,
