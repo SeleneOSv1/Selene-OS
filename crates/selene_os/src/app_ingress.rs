@@ -5359,9 +5359,20 @@ fn require_canonical_recovery_device_owner_user_carriage(
     voice_identity_assertion: &SpeakerAssertionUnknown,
     recovery_reason_code: ReasonCodeId,
 ) -> Result<(), StorageError> {
-    if recovery_reason_code != voice_id_reason_codes::VID_DEVICE_CLAIM_REQUIRED
-        || voice_identity_assertion.device_owner_user_id.is_some()
-    {
+    if recovery_reason_code == voice_id_reason_codes::VID_DEVICE_CLAIM_REQUIRED {
+        if voice_identity_assertion.device_owner_user_id.is_some() {
+            Ok(())
+        } else {
+            Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field:
+                        "app_voice_turn_execution_outcome.runtime_execution_envelope.voice_identity_assertion.device_owner_user_id",
+                    reason:
+                        "must carry canonical device-owner carriage for device-claim fail-closed classification",
+                },
+            ))
+        }
+    } else if voice_identity_assertion.device_owner_user_id.is_none() {
         Ok(())
     } else {
         Err(StorageError::ContractViolation(
@@ -5369,7 +5380,7 @@ fn require_canonical_recovery_device_owner_user_carriage(
                 field:
                     "app_voice_turn_execution_outcome.runtime_execution_envelope.voice_identity_assertion.device_owner_user_id",
                 reason:
-                    "must carry canonical device-owner carriage for device-claim fail-closed classification",
+                    "must be absent unless recovery family is device-claim for fail-closed classification",
             },
         ))
     }
@@ -9053,6 +9064,44 @@ mod tests {
         }
     }
 
+    fn assert_recovery_finalization_requires_absent_device_owner_user_carriage(
+        runtime: &AppServerIngressRuntime,
+        store: &mut Ph1fStore,
+        mut pending: PendingProtectedResponseTurn,
+        device_owner_user_id: UserId,
+    ) {
+        let voice_identity_assertion = pending
+            .out
+            .runtime_execution_envelope
+            .voice_identity_assertion
+            .as_mut()
+            .expect("recovery voice identity assertion must remain attached");
+        let Ph1VoiceIdResponse::SpeakerAssertionUnknown(unknown) = voice_identity_assertion else {
+            panic!("recovery absent device-owner proof must keep the Unknown carrier family");
+        };
+        unknown.device_owner_user_id = Some(device_owner_user_id);
+
+        let err = finalize_pending_protected_response_turn(runtime, store, pending)
+            .expect_err("non-device-claim recovery owner carriage must fail closed");
+        match err {
+            StorageError::ContractViolation(ContractViolation::InvalidValue { field, reason }) => {
+                assert_eq!(
+                    field,
+                    "app_voice_turn_execution_outcome.runtime_execution_envelope.voice_identity_assertion.device_owner_user_id"
+                );
+                assert_eq!(
+                    reason,
+                    "must be absent unless recovery family is device-claim for fail-closed classification"
+                );
+            }
+            other => {
+                panic!(
+                    "expected recovery absent device-owner carriage contract violation, got {other:?}"
+                )
+            }
+        }
+    }
+
     fn assert_recovery_finalization_requires_canonical_identity_state_shape(
         runtime: &AppServerIngressRuntime,
         store: &mut Ph1fStore,
@@ -12630,6 +12679,7 @@ mod tests {
             unknown_voice_identity_assertion.candidate_user_id.as_ref(),
             Some(&out.runtime_execution_envelope.actor_identity)
         );
+        assert!(unknown_voice_identity_assertion.device_owner_user_id.is_none());
         assert_eq!(
             unknown_voice_identity_assertion
                 .identity_v2
@@ -12754,6 +12804,7 @@ mod tests {
             panic!("reenrollment proof must preserve the Unknown carrier family");
         };
         assert!(unknown_voice_identity_assertion.candidate_user_id.is_none());
+        assert!(unknown_voice_identity_assertion.device_owner_user_id.is_none());
         assert_eq!(
             unknown_voice_identity_assertion
                 .identity_v2
@@ -13063,6 +13114,7 @@ mod tests {
             panic!("profile-not-enrolled proof must preserve the Unknown carrier family");
         };
         assert!(unknown_voice_identity_assertion.candidate_user_id.is_none());
+        assert!(unknown_voice_identity_assertion.device_owner_user_id.is_none());
         assert_eq!(
             unknown_voice_identity_assertion
                 .identity_v2
@@ -13990,6 +14042,94 @@ mod tests {
             &mut store,
             pending,
             other_user_id,
+        );
+    }
+
+    #[test]
+    fn at_identity_recovery_36_reauth_required_protected_voice_turn_fails_closed_when_device_owner_carriage_is_not_canonical_for_non_device_claim_recovery_family(
+    ) {
+        let runtime = runtime_with_search_tool_fixtures();
+        let actor_user_id = UserId::new("tenant_1:recovery_reauth_bad_device_owner").unwrap();
+        let other_owner_user_id =
+            UserId::new("tenant_1:recovery_reauth_bad_device_owner_other").unwrap();
+        let device_id = DeviceId::new("recovery_reauth_bad_device_owner_1").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &actor_user_id, &device_id);
+
+        let pending = prepare_protected_response_turn_with_identity_assertion(
+            &runtime,
+            &mut store,
+            actor_user_id.clone(),
+            device_id,
+            reauth_required_voice_assertion(actor_user_id),
+            CorrelationId(9894),
+            TurnId(9994),
+        );
+
+        assert_recovery_finalization_requires_absent_device_owner_user_carriage(
+            &runtime,
+            &mut store,
+            pending,
+            other_owner_user_id,
+        );
+    }
+
+    #[test]
+    fn at_identity_recovery_37_reenrollment_required_protected_voice_turn_fails_closed_when_device_owner_carriage_is_not_canonical_for_non_device_claim_recovery_family(
+    ) {
+        let runtime = runtime_with_search_tool_fixtures();
+        let actor_user_id = UserId::new("tenant_1:recovery_reenroll_bad_device_owner").unwrap();
+        let other_owner_user_id =
+            UserId::new("tenant_1:recovery_reenroll_bad_device_owner_other").unwrap();
+        let device_id = DeviceId::new("recovery_reenroll_bad_device_owner_1").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &actor_user_id, &device_id);
+
+        let pending = prepare_protected_response_turn_with_identity_assertion(
+            &runtime,
+            &mut store,
+            actor_user_id.clone(),
+            device_id,
+            reenrollment_required_voice_assertion(actor_user_id),
+            CorrelationId(9895),
+            TurnId(9995),
+        );
+
+        assert_recovery_finalization_requires_absent_device_owner_user_carriage(
+            &runtime,
+            &mut store,
+            pending,
+            other_owner_user_id,
+        );
+    }
+
+    #[test]
+    fn at_identity_recovery_38_profile_not_enrolled_protected_voice_turn_fails_closed_when_device_owner_carriage_is_not_canonical_for_non_device_claim_recovery_family(
+    ) {
+        let runtime = runtime_with_search_tool_fixtures();
+        let actor_user_id =
+            UserId::new("tenant_1:recovery_profile_not_enrolled_bad_device_owner").unwrap();
+        let other_owner_user_id =
+            UserId::new("tenant_1:recovery_profile_not_enrolled_bad_device_owner_other").unwrap();
+        let device_id = DeviceId::new("recovery_profile_not_enrolled_bad_device_owner_1").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &actor_user_id, &device_id);
+
+        let pending = prepare_protected_response_turn_with_identity_assertion(
+            &runtime,
+            &mut store,
+            actor_user_id.clone(),
+            device_id,
+            profile_not_enrolled_voice_assertion(actor_user_id),
+            CorrelationId(9896),
+            TurnId(9996),
+        );
+
+        assert_recovery_finalization_requires_absent_device_owner_user_carriage(
+            &runtime,
+            &mut store,
+            pending,
+            other_owner_user_id,
         );
     }
 
