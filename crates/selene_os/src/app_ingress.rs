@@ -4354,6 +4354,8 @@ fn attach_runtime_execution_envelope_to_voice_outcome(
         OsVoiceLiveTurnOutcome::Refused(refuse) => Ok(OsVoiceLiveTurnOutcome::Refused(refuse)),
         OsVoiceLiveTurnOutcome::Forwarded(mut forwarded) => {
             forwarded.runtime_execution_envelope = runtime_execution_envelope.clone();
+            forwarded.top_level_bundle.runtime_execution_envelope =
+                Some(runtime_execution_envelope.clone());
             Ok(OsVoiceLiveTurnOutcome::Forwarded(forwarded))
         }
     }
@@ -8505,6 +8507,10 @@ mod tests {
             panic!("expected forwarded outcome");
         };
         assert_eq!(forwarded.top_level_bundle.path, OsTopLevelTurnPath::Voice);
+        assert_eq!(
+            forwarded.top_level_bundle.runtime_execution_envelope,
+            Some(forwarded.runtime_execution_envelope.clone())
+        );
         assert!(!forwarded
             .top_level_bundle
             .always_on_sequence
@@ -8523,7 +8529,7 @@ mod tests {
         let mut store = Ph1fStore::new_in_memory();
         seed_actor(&mut store, &actor_user_id, &device_id);
 
-        let request = AppVoiceIngressRequest::v1(
+        let mut request = AppVoiceIngressRequest::v1(
             CorrelationId(9102),
             TurnId(9202),
             AppPlatform::Android,
@@ -8536,6 +8542,26 @@ mod tests {
             no_observation(),
         )
         .unwrap();
+        request.runtime_execution_envelope.platform_context.integrity_status =
+            selene_kernel_contracts::runtime_execution::ClientIntegrityStatus::Attested;
+        request.runtime_execution_envelope.platform_context.attestation_ref =
+            Some("attestation:android:wake:1".to_string());
+        request
+            .runtime_execution_envelope
+            .platform_context
+            .capture_artifact_trust_verified = true;
+        request
+            .runtime_execution_envelope
+            .platform_context
+            .capture_artifact_observed_at_ns = Some(2);
+        request
+            .runtime_execution_envelope
+            .platform_context
+            .capture_artifact_retention_deadline_ns = Some(20);
+        request
+            .runtime_execution_envelope
+            .validate()
+            .expect("attested android wake runtime envelope must validate");
 
         let outcome = runtime.run_voice_turn(&mut store, request).unwrap();
         let OsVoiceLiveTurnOutcome::Forwarded(forwarded) = outcome else {

@@ -1557,7 +1557,7 @@ where
                 Some(input.runtime_execution_envelope.clone()),
             )
             .map_err(StorageError::ContractViolation)?;
-        let top_level_bundle = match top_level_outcome {
+        let mut top_level_bundle = match top_level_outcome {
             OsTopLevelWiringOutcome::NotInvokedDisabled => {
                 self.run_device_artifact_sync_worker_pass(store, now, correlation_id, turn_id)?;
                 return Ok(OsVoiceLiveTurnOutcome::NotInvokedDisabled);
@@ -1614,6 +1614,7 @@ where
             } else {
                 runtime_execution_envelope
             };
+        top_level_bundle.runtime_execution_envelope = Some(runtime_execution_envelope.clone());
         self.run_device_artifact_sync_worker_pass(store, now, correlation_id, turn_id)?;
 
         Ok(OsVoiceLiveTurnOutcome::Forwarded(Box::new(
@@ -4613,6 +4614,10 @@ mod tests {
         assert_eq!(
             forwarded.runtime_execution_envelope.identity_state,
             expected_envelope.identity_state
+        );
+        assert_eq!(
+            forwarded.top_level_bundle.runtime_execution_envelope,
+            Some(forwarded.runtime_execution_envelope.clone())
         );
         assert_eq!(
             forwarded.identity_prompt_scope_key,
