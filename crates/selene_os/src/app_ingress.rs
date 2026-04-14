@@ -4197,6 +4197,12 @@ fn proof_policy_rule_identifiers(
         .collect()
 }
 
+fn proof_authority_reason_token(reason_code: Option<u64>) -> String {
+    reason_code
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "-".to_string())
+}
+
 fn proof_authority_decision_reference(
     runtime_execution_envelope: &RuntimeExecutionEnvelope,
 ) -> Option<String> {
@@ -4222,7 +4228,7 @@ fn proof_authority_decision_reference(
             state.identity_scope_required,
             state.identity_scope_satisfied,
             state.memory_scope_allowed,
-            state.reason_code.unwrap_or_default(),
+            proof_authority_reason_token(state.reason_code),
         )
     })
 }
@@ -7146,6 +7152,25 @@ mod tests {
         assert_eq!(
             proof_rows[0].simulation_certification_state.as_deref(),
             Some(expected_proof_state)
+        );
+    }
+
+    fn assert_proof_authority_reason_token(
+        store: &Ph1fStore,
+        out: &AppVoiceTurnExecutionOutcome,
+        expected_reason_token: &str,
+    ) {
+        let proof_rows = store
+            .proof_records_by_request_id_bounded(&out.runtime_execution_envelope.request_id, 4)
+            .expect("proof rows should be readable");
+        assert_eq!(proof_rows.len(), 1);
+        let authority_reference = proof_rows[0]
+            .authority_decision_reference
+            .as_deref()
+            .expect("proof authority decision reference should be attached");
+        assert!(
+            authority_reference.contains(&format!("reason_code={expected_reason_token}")),
+            "expected authority decision reference '{authority_reference}' to contain reason_code={expected_reason_token}"
         );
     }
 
@@ -10103,6 +10128,11 @@ mod tests {
             SimulationCertificationState::StepUpRequired,
             "STEP_UP_REQUIRED",
         );
+        assert_proof_authority_reason_token(
+            &store,
+            &out,
+            &u64::from(voice_id_reason_codes::VID_REAUTH_REQUIRED.0).to_string(),
+        );
     }
 
     #[test]
@@ -10227,6 +10257,11 @@ mod tests {
             SimulationCertificationState::StepUpRequired,
             "STEP_UP_REQUIRED",
         );
+        assert_proof_authority_reason_token(
+            &store,
+            &out,
+            &u64::from(voice_id_reason_codes::VID_SPOOF_RISK.0).to_string(),
+        );
     }
 
     #[test]
@@ -10285,6 +10320,11 @@ mod tests {
             SimulationCertificationState::StepUpRequired,
             "STEP_UP_REQUIRED",
         );
+        assert_proof_authority_reason_token(
+            &store,
+            &out,
+            &u64::from(voice_id_reason_codes::VID_DEVICE_CLAIM_REQUIRED.0).to_string(),
+        );
     }
 
     #[test]
@@ -10340,6 +10380,7 @@ mod tests {
             SimulationCertificationState::NotRequested,
             "NOT_REQUESTED",
         );
+        assert_proof_authority_reason_token(&store, &out, "-");
     }
 
     #[test]
@@ -12012,6 +12053,7 @@ mod tests {
         let authority_state = out_2
             .runtime_execution_envelope
             .authority_state
+            .as_ref()
             .expect("authority state should be attached");
         assert_eq!(
             authority_state.simulation_certification_state,
@@ -12024,6 +12066,19 @@ mod tests {
         assert_eq!(
             authority_state.onboarding_readiness_state,
             OnboardingReadinessState::NotApplicable
+        );
+        let proof_rows = store
+            .proof_records_by_request_id_bounded(&out_2.runtime_execution_envelope.request_id, 4)
+            .expect("proof rows should be readable");
+        assert_eq!(proof_rows.len(), 1);
+        assert_eq!(
+            proof_rows[0].simulation_certification_state.as_deref(),
+            Some("CERTIFIED_ACTIVE")
+        );
+        assert_proof_authority_reason_token(
+            &store,
+            &out_2,
+            &u64::from(crate::ph1x::reason_codes::X_CONFIRM_YES_DISPATCH.0).to_string(),
         );
     }
 
@@ -12135,6 +12190,11 @@ mod tests {
         assert_eq!(
             proof_rows[0].simulation_certification_state.as_deref(),
             Some("STEP_UP_REQUIRED")
+        );
+        assert_proof_authority_reason_token(
+            &store,
+            &out_2,
+            &u64::from(sim_finder_reason_codes::SIM_FINDER_REFUSE_ACCESS_AP_REQUIRED.0).to_string(),
         );
     }
 
@@ -12265,7 +12325,10 @@ mod tests {
             .authority_state
             .as_ref()
             .expect("authority state should be attached");
-        assert_eq!(authority_state.policy_decision, AuthorityPolicyDecision::Denied);
+        assert_eq!(
+            authority_state.policy_decision,
+            AuthorityPolicyDecision::Denied
+        );
         assert_eq!(
             authority_state.simulation_certification_state,
             SimulationCertificationState::NotRequested
@@ -12277,6 +12340,11 @@ mod tests {
         assert_eq!(
             proof_rows[0].simulation_certification_state.as_deref(),
             Some("NOT_REQUESTED")
+        );
+        assert_proof_authority_reason_token(
+            &store,
+            &out_2,
+            &u64::from(sim_finder_reason_codes::SIM_FINDER_REFUSE_ACCESS_DENIED.0).to_string(),
         );
     }
 
