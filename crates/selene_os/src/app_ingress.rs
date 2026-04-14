@@ -22,9 +22,9 @@ use selene_engines::ph1simfinder::{
     FinderSimulationCatalogEntry, Ph1SimFinderRuntime,
 };
 use selene_kernel_contracts::ph1_voice_id::{
-    IdentityTierV2, Ph1VoiceIdRequest, Ph1VoiceIdResponse, SpeakerAssertionUnknown, SpeakerId,
-    SpoofLivenessStatus, UserId, VoiceEmbeddingCaptureRef, VOICE_ID_ENROLL_COMPLETE_COMMIT,
-    VOICE_ID_ENROLL_SAMPLE_COMMIT, VOICE_ID_ENROLL_START_DRAFT,
+    IdentityConfidence, IdentityTierV2, Ph1VoiceIdRequest, Ph1VoiceIdResponse,
+    SpeakerAssertionUnknown, SpeakerId, SpoofLivenessStatus, UserId, VoiceEmbeddingCaptureRef,
+    VOICE_ID_ENROLL_COMPLETE_COMMIT, VOICE_ID_ENROLL_SAMPLE_COMMIT, VOICE_ID_ENROLL_START_DRAFT,
 };
 use selene_kernel_contracts::ph1agent::AgentInputPacket;
 use selene_kernel_contracts::ph1d::{PolicyContextRef, SafetyTier};
@@ -5136,6 +5136,46 @@ fn require_canonical_posture_voice_spoof_liveness_status(
     }
 }
 
+fn canonical_posture_voice_confidence_matches(
+    voice_identity_assertion: &SpeakerAssertionUnknown,
+    posture_reason_code: ReasonCodeId,
+) -> bool {
+    match posture_reason_code {
+        code if code == voice_id_reason_codes::VID_FAIL_LOW_CONFIDENCE => {
+            voice_identity_assertion.confidence == IdentityConfidence::Low
+        }
+        code if code == voice_id_reason_codes::VID_FAIL_GRAY_ZONE_MARGIN
+            || code == voice_id_reason_codes::VID_FAIL_ECHO_UNSAFE =>
+        {
+            voice_identity_assertion.confidence == IdentityConfidence::Medium
+        }
+        code if code == voice_id_reason_codes::VID_FAIL_NO_SPEECH
+            || code == voice_id_reason_codes::VID_FAIL_MULTI_SPEAKER_PRESENT =>
+        {
+            voice_identity_assertion.confidence == IdentityConfidence::Low
+        }
+        _ => false,
+    }
+}
+
+fn require_canonical_posture_voice_confidence(
+    voice_identity_assertion: &SpeakerAssertionUnknown,
+    posture_reason_code: ReasonCodeId,
+) -> Result<(), StorageError> {
+    if canonical_posture_voice_confidence_matches(voice_identity_assertion, posture_reason_code) {
+        Ok(())
+    } else {
+        Err(StorageError::ContractViolation(
+            ContractViolation::InvalidValue {
+                field:
+                    "app_voice_turn_execution_outcome.runtime_execution_envelope.voice_identity_assertion.confidence",
+                reason:
+                    "must match canonical posture confidence carriage for fail-closed classification",
+            },
+        ))
+    }
+}
+
 fn canonical_posture_candidate_user_carriage_matches(
     voice_identity_assertion: &SpeakerAssertionUnknown,
     posture_reason_code: ReasonCodeId,
@@ -5273,6 +5313,10 @@ fn canonical_posture_fail_closed_identity_state(
         posture_reason_code,
     )?;
     require_absent_posture_device_owner_user_carriage(unknown_voice_identity_assertion)?;
+    require_canonical_posture_voice_confidence(
+        unknown_voice_identity_assertion,
+        posture_reason_code,
+    )?;
     require_canonical_posture_voice_identity_tier_v2(unknown_voice_identity_assertion)?;
     require_canonical_posture_voice_spoof_liveness_status(unknown_voice_identity_assertion)?;
     require_canonical_posture_identity_state_shape(identity_state, posture_reason_code)?;
@@ -5374,7 +5418,8 @@ fn require_canonical_recovery_candidate_actor_binding(
     voice_identity_assertion: &SpeakerAssertionUnknown,
     recovery_reason_code: ReasonCodeId,
 ) -> Result<(), StorageError> {
-    let candidate_must_match_actor = recovery_reason_code == voice_id_reason_codes::VID_REAUTH_REQUIRED
+    let candidate_must_match_actor = recovery_reason_code
+        == voice_id_reason_codes::VID_REAUTH_REQUIRED
         || recovery_reason_code == voice_id_reason_codes::VID_DEVICE_CLAIM_REQUIRED;
     if !candidate_must_match_actor
         || voice_identity_assertion.candidate_user_id.as_ref() == Some(actor_identity)
@@ -9912,6 +9957,42 @@ mod tests {
         }
     }
 
+    fn assert_posture_finalization_requires_canonical_voice_confidence(
+        runtime: &AppServerIngressRuntime,
+        store: &mut Ph1fStore,
+        mut pending: PendingProtectedChatResponseTurn,
+        divergent_confidence: IdentityConfidence,
+    ) {
+        let voice_identity_assertion = pending
+            .out
+            .runtime_execution_envelope
+            .voice_identity_assertion
+            .as_mut()
+            .expect("posture voice identity assertion must remain attached");
+        let Ph1VoiceIdResponse::SpeakerAssertionUnknown(unknown) = voice_identity_assertion else {
+            panic!("posture voice-confidence proof must keep the Unknown carrier family");
+        };
+        unknown.confidence = divergent_confidence;
+
+        let err = finalize_pending_protected_chat_response_turn(runtime, store, pending)
+            .expect_err("non-canonical posture voice confidence must fail closed");
+        match err {
+            StorageError::ContractViolation(ContractViolation::InvalidValue { field, reason }) => {
+                assert_eq!(
+                    field,
+                    "app_voice_turn_execution_outcome.runtime_execution_envelope.voice_identity_assertion.confidence"
+                );
+                assert_eq!(
+                    reason,
+                    "must match canonical posture confidence carriage for fail-closed classification"
+                );
+            }
+            other => {
+                panic!("expected posture voice-confidence contract violation, got {other:?}")
+            }
+        }
+    }
+
     fn document_understand_draft(query: &str) -> Ph1nResponse {
         Ph1nResponse::IntentDraft(
             IntentDraft::v1(
@@ -11619,9 +11700,15 @@ mod tests {
         else {
             panic!("low-confidence harmonize path should keep the Unknown carrier family");
         };
-        assert!(unknown_voice_identity_assertion.identity_v2.may_prompt_identity);
+        assert!(
+            unknown_voice_identity_assertion
+                .identity_v2
+                .may_prompt_identity
+        );
         assert_eq!(
-            unknown_voice_identity_assertion.identity_v2.identity_tier_v2,
+            unknown_voice_identity_assertion
+                .identity_v2
+                .identity_tier_v2,
             IdentityTierV2::Unknown
         );
         assert_eq!(
@@ -11715,9 +11802,15 @@ mod tests {
         else {
             panic!("echo-unsafe harmonize path should keep the Unknown carrier family");
         };
-        assert!(unknown_voice_identity_assertion.identity_v2.may_prompt_identity);
+        assert!(
+            unknown_voice_identity_assertion
+                .identity_v2
+                .may_prompt_identity
+        );
         assert_eq!(
-            unknown_voice_identity_assertion.identity_v2.identity_tier_v2,
+            unknown_voice_identity_assertion
+                .identity_v2
+                .identity_tier_v2,
             IdentityTierV2::Unknown
         );
         assert_eq!(
@@ -12126,6 +12219,19 @@ mod tests {
         let envelope = packet
             .runtime_execution_envelope
             .expect("agent packet should carry runtime execution envelope");
+        let voice_identity_assertion = envelope
+            .voice_identity_assertion
+            .as_ref()
+            .expect("voice identity assertion should be attached");
+        let Ph1VoiceIdResponse::SpeakerAssertionUnknown(unknown_voice_identity_assertion) =
+            voice_identity_assertion
+        else {
+            panic!("low-confidence harmonize path must keep the Unknown carrier family");
+        };
+        assert_eq!(
+            unknown_voice_identity_assertion.confidence,
+            IdentityConfidence::Low
+        );
         let identity_state = envelope
             .identity_state
             .expect("identity state should be attached");
@@ -12212,6 +12318,19 @@ mod tests {
         let envelope = packet
             .runtime_execution_envelope
             .expect("agent packet should carry runtime execution envelope");
+        let voice_identity_assertion = envelope
+            .voice_identity_assertion
+            .as_ref()
+            .expect("voice identity assertion should be attached");
+        let Ph1VoiceIdResponse::SpeakerAssertionUnknown(unknown_voice_identity_assertion) =
+            voice_identity_assertion
+        else {
+            panic!("gray-zone harmonize path must keep the Unknown carrier family");
+        };
+        assert_eq!(
+            unknown_voice_identity_assertion.confidence,
+            IdentityConfidence::Medium
+        );
         let identity_state = envelope
             .identity_state
             .expect("identity state should be attached");
@@ -12300,6 +12419,19 @@ mod tests {
         let envelope = packet
             .runtime_execution_envelope
             .expect("agent packet should carry runtime execution envelope");
+        let voice_identity_assertion = envelope
+            .voice_identity_assertion
+            .as_ref()
+            .expect("voice identity assertion should be attached");
+        let Ph1VoiceIdResponse::SpeakerAssertionUnknown(unknown_voice_identity_assertion) =
+            voice_identity_assertion
+        else {
+            panic!("echo-unsafe harmonize path must keep the Unknown carrier family");
+        };
+        assert_eq!(
+            unknown_voice_identity_assertion.confidence,
+            IdentityConfidence::Medium
+        );
         let identity_state = envelope
             .identity_state
             .expect("identity state should be attached");
@@ -12386,6 +12518,19 @@ mod tests {
         let envelope = packet
             .runtime_execution_envelope
             .expect("agent packet should carry runtime execution envelope");
+        let voice_identity_assertion = envelope
+            .voice_identity_assertion
+            .as_ref()
+            .expect("voice identity assertion should be attached");
+        let Ph1VoiceIdResponse::SpeakerAssertionUnknown(unknown_voice_identity_assertion) =
+            voice_identity_assertion
+        else {
+            panic!("no-speech harmonize path must keep the Unknown carrier family");
+        };
+        assert_eq!(
+            unknown_voice_identity_assertion.confidence,
+            IdentityConfidence::Low
+        );
         let identity_state = envelope
             .identity_state
             .expect("identity state should be attached");
@@ -12472,6 +12617,19 @@ mod tests {
         let envelope = packet
             .runtime_execution_envelope
             .expect("agent packet should carry runtime execution envelope");
+        let voice_identity_assertion = envelope
+            .voice_identity_assertion
+            .as_ref()
+            .expect("voice identity assertion should be attached");
+        let Ph1VoiceIdResponse::SpeakerAssertionUnknown(unknown_voice_identity_assertion) =
+            voice_identity_assertion
+        else {
+            panic!("multi-speaker harmonize path must keep the Unknown carrier family");
+        };
+        assert_eq!(
+            unknown_voice_identity_assertion.confidence,
+            IdentityConfidence::Low
+        );
         let identity_state = envelope
             .identity_state
             .expect("identity state should be attached");
@@ -12822,12 +12980,18 @@ mod tests {
             unknown_voice_identity_assertion.candidate_user_id.as_ref(),
             Some(&out.runtime_execution_envelope.actor_identity)
         );
-        assert!(unknown_voice_identity_assertion.device_owner_user_id.is_none());
+        assert!(unknown_voice_identity_assertion
+            .device_owner_user_id
+            .is_none());
         assert_eq!(
             unknown_voice_identity_assertion
                 .identity_v2
                 .identity_tier_v2,
             IdentityTierV2::Unknown
+        );
+        assert_eq!(
+            unknown_voice_identity_assertion.confidence,
+            IdentityConfidence::Low
         );
         assert_eq!(
             unknown_voice_identity_assertion.spoof_liveness_status,
@@ -12947,12 +13111,18 @@ mod tests {
             panic!("reenrollment proof must preserve the Unknown carrier family");
         };
         assert!(unknown_voice_identity_assertion.candidate_user_id.is_none());
-        assert!(unknown_voice_identity_assertion.device_owner_user_id.is_none());
+        assert!(unknown_voice_identity_assertion
+            .device_owner_user_id
+            .is_none());
         assert_eq!(
             unknown_voice_identity_assertion
                 .identity_v2
                 .identity_tier_v2,
             IdentityTierV2::Unknown
+        );
+        assert_eq!(
+            unknown_voice_identity_assertion.confidence,
+            IdentityConfidence::Medium
         );
         assert_eq!(
             unknown_voice_identity_assertion.spoof_liveness_status,
@@ -13257,7 +13427,9 @@ mod tests {
             panic!("profile-not-enrolled proof must preserve the Unknown carrier family");
         };
         assert!(unknown_voice_identity_assertion.candidate_user_id.is_none());
-        assert!(unknown_voice_identity_assertion.device_owner_user_id.is_none());
+        assert!(unknown_voice_identity_assertion
+            .device_owner_user_id
+            .is_none());
         assert_eq!(
             unknown_voice_identity_assertion
                 .identity_v2
@@ -14547,7 +14719,9 @@ mod tests {
             SpoofLivenessStatus::Unknown
         );
         assert!(unknown_voice_identity_assertion.candidate_user_id.is_none());
-        assert!(unknown_voice_identity_assertion.device_owner_user_id.is_none());
+        assert!(unknown_voice_identity_assertion
+            .device_owner_user_id
+            .is_none());
         let response_rows = store.ph1x_audit_rows(CorrelationId(9827));
         let row = find_ph1x_respond_row(&response_rows, "IDENTITY_ECHO_UNSAFE_FAIL_CLOSED");
         assert_ph1x_fail_closed_respond_payload(
@@ -14606,6 +14780,39 @@ mod tests {
             out.reason_code,
             Some(voice_id_reason_codes::VID_FAIL_NO_SPEECH)
         );
+        let voice_identity_assertion = out
+            .runtime_execution_envelope
+            .voice_identity_assertion
+            .as_ref()
+            .expect("voice identity assertion must remain attached");
+        assert_eq!(
+            voice_identity_reason_code(voice_identity_assertion),
+            Some(voice_id_reason_codes::VID_FAIL_NO_SPEECH)
+        );
+        assert!(voice_identity_assertion.identity_v2().may_prompt_identity);
+        let Ph1VoiceIdResponse::SpeakerAssertionUnknown(unknown_voice_identity_assertion) =
+            voice_identity_assertion
+        else {
+            panic!("no-speech posture happy path must keep the Unknown carrier family");
+        };
+        assert_eq!(
+            unknown_voice_identity_assertion.confidence,
+            IdentityConfidence::Low
+        );
+        assert_eq!(
+            unknown_voice_identity_assertion
+                .identity_v2
+                .identity_tier_v2,
+            IdentityTierV2::Unknown
+        );
+        assert_eq!(
+            unknown_voice_identity_assertion.spoof_liveness_status,
+            SpoofLivenessStatus::Unknown
+        );
+        assert!(unknown_voice_identity_assertion.candidate_user_id.is_none());
+        assert!(unknown_voice_identity_assertion
+            .device_owner_user_id
+            .is_none());
         let response_rows = store.ph1x_audit_rows(CorrelationId(9828));
         let row = find_ph1x_respond_row(&response_rows, "IDENTITY_NO_SPEECH_FAIL_CLOSED");
         assert_ph1x_fail_closed_respond_payload(
@@ -14664,6 +14871,39 @@ mod tests {
             out.reason_code,
             Some(voice_id_reason_codes::VID_FAIL_MULTI_SPEAKER_PRESENT)
         );
+        let voice_identity_assertion = out
+            .runtime_execution_envelope
+            .voice_identity_assertion
+            .as_ref()
+            .expect("voice identity assertion must remain attached");
+        assert_eq!(
+            voice_identity_reason_code(voice_identity_assertion),
+            Some(voice_id_reason_codes::VID_FAIL_MULTI_SPEAKER_PRESENT)
+        );
+        assert!(voice_identity_assertion.identity_v2().may_prompt_identity);
+        let Ph1VoiceIdResponse::SpeakerAssertionUnknown(unknown_voice_identity_assertion) =
+            voice_identity_assertion
+        else {
+            panic!("multi-speaker posture happy path must keep the Unknown carrier family");
+        };
+        assert_eq!(
+            unknown_voice_identity_assertion.confidence,
+            IdentityConfidence::Low
+        );
+        assert_eq!(
+            unknown_voice_identity_assertion
+                .identity_v2
+                .identity_tier_v2,
+            IdentityTierV2::Unknown
+        );
+        assert_eq!(
+            unknown_voice_identity_assertion.spoof_liveness_status,
+            SpoofLivenessStatus::Unknown
+        );
+        assert!(unknown_voice_identity_assertion.candidate_user_id.is_none());
+        assert!(unknown_voice_identity_assertion
+            .device_owner_user_id
+            .is_none());
         let response_rows = store.ph1x_audit_rows(CorrelationId(9829));
         let row = find_ph1x_respond_row(&response_rows, "IDENTITY_MULTI_SPEAKER_FAIL_CLOSED");
         assert_ph1x_fail_closed_respond_payload(
@@ -14722,6 +14962,39 @@ mod tests {
             out.reason_code,
             Some(voice_id_reason_codes::VID_FAIL_GRAY_ZONE_MARGIN)
         );
+        let voice_identity_assertion = out
+            .runtime_execution_envelope
+            .voice_identity_assertion
+            .as_ref()
+            .expect("voice identity assertion must remain attached");
+        assert_eq!(
+            voice_identity_reason_code(voice_identity_assertion),
+            Some(voice_id_reason_codes::VID_FAIL_GRAY_ZONE_MARGIN)
+        );
+        assert!(voice_identity_assertion.identity_v2().may_prompt_identity);
+        let Ph1VoiceIdResponse::SpeakerAssertionUnknown(unknown_voice_identity_assertion) =
+            voice_identity_assertion
+        else {
+            panic!("gray-zone posture happy path must keep the Unknown carrier family");
+        };
+        assert_eq!(
+            unknown_voice_identity_assertion.confidence,
+            IdentityConfidence::Medium
+        );
+        assert_eq!(
+            unknown_voice_identity_assertion
+                .identity_v2
+                .identity_tier_v2,
+            IdentityTierV2::Unknown
+        );
+        assert_eq!(
+            unknown_voice_identity_assertion.spoof_liveness_status,
+            SpoofLivenessStatus::Unknown
+        );
+        assert!(unknown_voice_identity_assertion.candidate_user_id.is_some());
+        assert!(unknown_voice_identity_assertion
+            .device_owner_user_id
+            .is_none());
         let response_rows = store.ph1x_audit_rows(CorrelationId(9830));
         let row = find_ph1x_respond_row(&response_rows, "IDENTITY_GRAY_ZONE_MARGIN_FAIL_CLOSED");
         assert_ph1x_fail_closed_respond_payload(
@@ -15437,6 +15710,141 @@ mod tests {
             &mut store,
             pending,
             SpoofLivenessStatus::Live,
+        );
+    }
+
+    #[test]
+    fn at_identity_posture_32_low_confidence_protected_voice_turn_fails_closed_when_voice_assertion_confidence_is_not_canonical_for_posture_family(
+    ) {
+        let runtime = runtime_with_search_tool_fixtures();
+        let actor_user_id = UserId::new("tenant_1:id_low_conf_bad_voice_confidence").unwrap();
+        let device_id = DeviceId::new("id_low_conf_bad_voice_confidence_1").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &actor_user_id, &device_id);
+
+        let pending = prepare_protected_chat_response_turn_with_identity_assertion(
+            &runtime,
+            &mut store,
+            actor_user_id.clone(),
+            device_id,
+            low_confidence_voice_assertion(actor_user_id),
+            CorrelationId(9857),
+            TurnId(9957),
+        );
+
+        assert_posture_finalization_requires_canonical_voice_confidence(
+            &runtime,
+            &mut store,
+            pending,
+            IdentityConfidence::Medium,
+        );
+    }
+
+    #[test]
+    fn at_identity_posture_33_gray_zone_margin_protected_voice_turn_fails_closed_when_voice_assertion_confidence_is_not_canonical_for_posture_family(
+    ) {
+        let runtime = runtime_with_search_tool_fixtures();
+        let actor_user_id = UserId::new("tenant_1:id_gray_zone_bad_voice_confidence").unwrap();
+        let device_id = DeviceId::new("id_gray_zone_bad_voice_confidence_1").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &actor_user_id, &device_id);
+
+        let pending = prepare_protected_chat_response_turn_with_identity_assertion(
+            &runtime,
+            &mut store,
+            actor_user_id.clone(),
+            device_id,
+            gray_zone_margin_voice_assertion(actor_user_id),
+            CorrelationId(9858),
+            TurnId(9958),
+        );
+
+        assert_posture_finalization_requires_canonical_voice_confidence(
+            &runtime,
+            &mut store,
+            pending,
+            IdentityConfidence::Low,
+        );
+    }
+
+    #[test]
+    fn at_identity_posture_34_echo_unsafe_protected_voice_turn_fails_closed_when_voice_assertion_confidence_is_not_canonical_for_posture_family(
+    ) {
+        let runtime = runtime_with_search_tool_fixtures();
+        let actor_user_id = UserId::new("tenant_1:id_echo_bad_voice_confidence").unwrap();
+        let device_id = DeviceId::new("id_echo_bad_voice_confidence_1").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &actor_user_id, &device_id);
+
+        let pending = prepare_protected_chat_response_turn_with_identity_assertion(
+            &runtime,
+            &mut store,
+            actor_user_id,
+            device_id,
+            echo_unsafe_voice_assertion(),
+            CorrelationId(9859),
+            TurnId(9959),
+        );
+
+        assert_posture_finalization_requires_canonical_voice_confidence(
+            &runtime,
+            &mut store,
+            pending,
+            IdentityConfidence::Low,
+        );
+    }
+
+    #[test]
+    fn at_identity_posture_35_no_speech_protected_voice_turn_fails_closed_when_voice_assertion_confidence_is_not_canonical_for_posture_family(
+    ) {
+        let runtime = runtime_with_search_tool_fixtures();
+        let actor_user_id = UserId::new("tenant_1:id_no_speech_bad_voice_confidence").unwrap();
+        let device_id = DeviceId::new("id_no_speech_bad_voice_confidence_1").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &actor_user_id, &device_id);
+
+        let pending = prepare_protected_chat_response_turn_with_identity_assertion(
+            &runtime,
+            &mut store,
+            actor_user_id,
+            device_id,
+            no_speech_voice_assertion(),
+            CorrelationId(9860),
+            TurnId(9960),
+        );
+
+        assert_posture_finalization_requires_canonical_voice_confidence(
+            &runtime,
+            &mut store,
+            pending,
+            IdentityConfidence::Medium,
+        );
+    }
+
+    #[test]
+    fn at_identity_posture_36_multi_speaker_protected_voice_turn_fails_closed_when_voice_assertion_confidence_is_not_canonical_for_posture_family(
+    ) {
+        let runtime = runtime_with_search_tool_fixtures();
+        let actor_user_id = UserId::new("tenant_1:id_multi_bad_voice_confidence").unwrap();
+        let device_id = DeviceId::new("id_multi_bad_voice_confidence_1").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &actor_user_id, &device_id);
+
+        let pending = prepare_protected_chat_response_turn_with_identity_assertion(
+            &runtime,
+            &mut store,
+            actor_user_id,
+            device_id,
+            multi_speaker_voice_assertion(),
+            CorrelationId(9861),
+            TurnId(9961),
+        );
+
+        assert_posture_finalization_requires_canonical_voice_confidence(
+            &runtime,
+            &mut store,
+            pending,
+            IdentityConfidence::Medium,
         );
     }
 
