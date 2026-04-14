@@ -3577,7 +3577,7 @@ impl AppServerIngressRuntime {
     ) -> Result<AppVoiceTurnExecutionOutcome, StorageError> {
         out.runtime_execution_envelope =
             runtime_execution_envelope_with_authority_state_for_outcome(&out, finder_terminal)?;
-        if let Some(recovery_fail_closed) = classify_identity_recovery_fail_closed_outcome(&out) {
+        if let Some(recovery_fail_closed) = classify_identity_recovery_fail_closed_outcome(&out)? {
             if let Some(actor_device_id) = actor_device_id {
                 let tenant_id =
                     normalized_tenant_scope_for_dev_intake(store, actor_user_id, actor_tenant_id)?;
@@ -5246,60 +5246,189 @@ fn canonical_posture_fail_closed_identity_state(
     Ok(Some(identity_state))
 }
 
-fn classify_identity_recovery_fail_closed_outcome(
+fn recovery_fail_closed_reason_code(reason_code: Option<ReasonCodeId>) -> bool {
+    matches!(
+        reason_code,
+        Some(code)
+            if code == voice_id_reason_codes::VID_REAUTH_REQUIRED
+                || code == voice_id_reason_codes::VID_DEVICE_CLAIM_REQUIRED
+                || code == voice_id_reason_codes::VID_ENROLLMENT_REQUIRED
+                || code == voice_id_reason_codes::VID_FAIL_PROFILE_NOT_ENROLLED
+    )
+}
+
+fn require_canonical_recovery_unknown_voice_identity_assertion(
+    voice_identity_assertion: &Ph1VoiceIdResponse,
+) -> Result<(), StorageError> {
+    if matches!(
+        voice_identity_assertion,
+        Ph1VoiceIdResponse::SpeakerAssertionUnknown(_)
+    ) {
+        Ok(())
+    } else {
+        Err(StorageError::ContractViolation(
+            ContractViolation::InvalidValue {
+                field:
+                    "app_voice_turn_execution_outcome.runtime_execution_envelope.voice_identity_assertion",
+                reason:
+                    "must carry canonical Unknown voice identity assertion for recovery fail-closed classification",
+            },
+        ))
+    }
+}
+
+fn require_canonical_recovery_promptable_voice_identity_assertion(
+    voice_identity_assertion: &Ph1VoiceIdResponse,
+) -> Result<(), StorageError> {
+    if voice_identity_assertion.identity_v2().may_prompt_identity {
+        Ok(())
+    } else {
+        Err(StorageError::ContractViolation(
+            ContractViolation::InvalidValue {
+                field:
+                    "app_voice_turn_execution_outcome.runtime_execution_envelope.voice_identity_assertion.identity_v2.may_prompt_identity",
+                reason:
+                    "must carry canonical promptable voice identity assertion for recovery fail-closed classification",
+            },
+        ))
+    }
+}
+
+fn canonical_recovery_fail_closed_identity_state(
     out: &AppVoiceTurnExecutionOutcome,
-) -> Option<IdentityRecoveryFailClosedBehavior> {
+) -> Result<Option<&IdentityExecutionState>, StorageError> {
     if !matches!(
         out.next_move,
         AppVoiceTurnNextMove::Dispatch | AppVoiceTurnNextMove::Respond
     ) {
-        return None;
+        return Ok(None);
     }
-    let identity_state = out.runtime_execution_envelope.identity_state.as_ref()?;
-    match identity_state.recovery_state {
-        IdentityRecoveryState::ReauthRequired
-            if identity_reason_code(identity_state)
-                == Some(voice_id_reason_codes::VID_DEVICE_CLAIM_REQUIRED) =>
-        {
-            Some(IdentityRecoveryFailClosedBehavior {
+    let identity_state_reason_code = out
+        .runtime_execution_envelope
+        .identity_state
+        .as_ref()
+        .and_then(identity_reason_code);
+    let voice_assertion_reason_code = out
+        .runtime_execution_envelope
+        .voice_identity_assertion
+        .as_ref()
+        .and_then(voice_identity_reason_code);
+    let recovery_reason_code = identity_state_reason_code.or(voice_assertion_reason_code);
+    if !recovery_fail_closed_reason_code(recovery_reason_code) {
+        return Ok(None);
+    }
+    let voice_identity_assertion = out
+        .runtime_execution_envelope
+        .voice_identity_assertion
+        .as_ref()
+        .ok_or(StorageError::ContractViolation(
+            ContractViolation::InvalidValue {
+                field:
+                    "app_voice_turn_execution_outcome.runtime_execution_envelope.voice_identity_assertion",
+                reason:
+                    "must carry canonical voice identity assertion for recovery fail-closed classification",
+            },
+        ))?;
+    let identity_state = out
+        .runtime_execution_envelope
+        .identity_state
+        .as_ref()
+        .ok_or(StorageError::ContractViolation(
+            ContractViolation::InvalidValue {
+                field: "app_voice_turn_execution_outcome.runtime_execution_envelope.identity_state",
+                reason:
+                    "must carry canonical identity state for recovery fail-closed classification",
+            },
+        ))?;
+    let voice_assertion_reason_code = voice_identity_reason_code(voice_identity_assertion);
+    if !recovery_fail_closed_reason_code(voice_assertion_reason_code) {
+        return Err(StorageError::ContractViolation(
+            ContractViolation::InvalidValue {
+                field:
+                    "app_voice_turn_execution_outcome.runtime_execution_envelope.voice_identity_assertion.reason_code",
+                reason:
+                    "must carry canonical recovery reason code for recovery fail-closed classification",
+            },
+        ));
+    }
+    if identity_reason_code(identity_state) != voice_assertion_reason_code {
+        return Err(StorageError::ContractViolation(
+            ContractViolation::InvalidValue {
+                field:
+                    "app_voice_turn_execution_outcome.runtime_execution_envelope.identity_state.reason_code",
+                reason:
+                    "must match canonical voice identity assertion reason code for recovery fail-closed classification",
+            },
+        ));
+    }
+    require_canonical_recovery_unknown_voice_identity_assertion(voice_identity_assertion)?;
+    require_canonical_recovery_promptable_voice_identity_assertion(voice_identity_assertion)?;
+    Ok(Some(identity_state))
+}
+
+fn classify_identity_recovery_fail_closed_outcome(
+    out: &AppVoiceTurnExecutionOutcome,
+) -> Result<Option<IdentityRecoveryFailClosedBehavior>, StorageError> {
+    if !matches!(
+        out.next_move,
+        AppVoiceTurnNextMove::Dispatch | AppVoiceTurnNextMove::Respond
+    ) {
+        return Ok(None);
+    }
+    if let Some(identity_state) = canonical_recovery_fail_closed_identity_state(out)? {
+        return Ok(match identity_state.recovery_state {
+            IdentityRecoveryState::ReauthRequired
+                if identity_reason_code(identity_state)
+                    == Some(voice_id_reason_codes::VID_DEVICE_CLAIM_REQUIRED) =>
+            {
+                Some(IdentityRecoveryFailClosedBehavior {
+                    reason_code: identity_reason_code_or(
+                        identity_state,
+                        voice_id_reason_codes::VID_DEVICE_CLAIM_REQUIRED,
+                    ),
+                    user_message: "I need you to confirm this device before I can continue.",
+                    audit_response_kind: "IDENTITY_DEVICE_CLAIM_REQUIRED_FAIL_CLOSED",
+                })
+            }
+            IdentityRecoveryState::ReauthRequired => Some(IdentityRecoveryFailClosedBehavior {
                 reason_code: identity_reason_code_or(
                     identity_state,
-                    voice_id_reason_codes::VID_DEVICE_CLAIM_REQUIRED,
+                    voice_id_reason_codes::VID_REAUTH_REQUIRED,
                 ),
-                user_message: "I need you to confirm this device before I can continue.",
-                audit_response_kind: "IDENTITY_DEVICE_CLAIM_REQUIRED_FAIL_CLOSED",
-            })
-        }
-        IdentityRecoveryState::ReauthRequired => Some(IdentityRecoveryFailClosedBehavior {
-            reason_code: identity_reason_code_or(
-                identity_state,
-                voice_id_reason_codes::VID_REAUTH_REQUIRED,
-            ),
-            user_message: "I need you to reauthenticate before I can continue.",
-            audit_response_kind: "IDENTITY_REAUTH_REQUIRED_FAIL_CLOSED",
-        }),
-        IdentityRecoveryState::ReEnrollmentRequired
-            if identity_reason_code(identity_state)
-                == Some(voice_id_reason_codes::VID_FAIL_PROFILE_NOT_ENROLLED) =>
-        {
-            Some(IdentityRecoveryFailClosedBehavior {
-                reason_code: identity_reason_code_or(
-                    identity_state,
-                    voice_id_reason_codes::VID_FAIL_PROFILE_NOT_ENROLLED,
-                ),
-                user_message:
-                    "I couldn't find an enrolled voice profile for you, so I can't continue.",
-                audit_response_kind: "IDENTITY_PROFILE_NOT_ENROLLED_FAIL_CLOSED",
-            })
-        }
-        IdentityRecoveryState::ReEnrollmentRequired => Some(IdentityRecoveryFailClosedBehavior {
-            reason_code: identity_reason_code_or(
-                identity_state,
-                voice_id_reason_codes::VID_ENROLLMENT_REQUIRED,
-            ),
-            user_message: "I need you to re-enroll your voice before I can continue.",
-            audit_response_kind: "IDENTITY_REENROLLMENT_REQUIRED_FAIL_CLOSED",
-        }),
+                user_message: "I need you to reauthenticate before I can continue.",
+                audit_response_kind: "IDENTITY_REAUTH_REQUIRED_FAIL_CLOSED",
+            }),
+            IdentityRecoveryState::ReEnrollmentRequired
+                if identity_reason_code(identity_state)
+                    == Some(voice_id_reason_codes::VID_FAIL_PROFILE_NOT_ENROLLED) =>
+            {
+                Some(IdentityRecoveryFailClosedBehavior {
+                    reason_code: identity_reason_code_or(
+                        identity_state,
+                        voice_id_reason_codes::VID_FAIL_PROFILE_NOT_ENROLLED,
+                    ),
+                    user_message:
+                        "I couldn't find an enrolled voice profile for you, so I can't continue.",
+                    audit_response_kind: "IDENTITY_PROFILE_NOT_ENROLLED_FAIL_CLOSED",
+                })
+            }
+            IdentityRecoveryState::ReEnrollmentRequired => {
+                Some(IdentityRecoveryFailClosedBehavior {
+                    reason_code: identity_reason_code_or(
+                        identity_state,
+                        voice_id_reason_codes::VID_ENROLLMENT_REQUIRED,
+                    ),
+                    user_message: "I need you to re-enroll your voice before I can continue.",
+                    audit_response_kind: "IDENTITY_REENROLLMENT_REQUIRED_FAIL_CLOSED",
+                })
+            }
+            IdentityRecoveryState::None | IdentityRecoveryState::RecoveryRestricted => None,
+        });
+    }
+    let Some(identity_state) = out.runtime_execution_envelope.identity_state.as_ref() else {
+        return Ok(None);
+    };
+    Ok(match identity_state.recovery_state {
         IdentityRecoveryState::RecoveryRestricted
             if identity_reason_code(identity_state)
                 == Some(voice_id_reason_codes::VID_SPOOF_RISK) =>
@@ -5314,7 +5443,8 @@ fn classify_identity_recovery_fail_closed_outcome(
             })
         }
         IdentityRecoveryState::None | IdentityRecoveryState::RecoveryRestricted => None,
-    }
+        IdentityRecoveryState::ReauthRequired | IdentityRecoveryState::ReEnrollmentRequired => None,
+    })
 }
 
 fn classify_governance_quarantine_identity_recovery_fail_closed_outcome(
@@ -7166,6 +7296,31 @@ mod tests {
         )
     }
 
+    fn recovery_promptable_non_unknown_voice_assertion(
+        recovery_reason_code: ReasonCodeId,
+        user_id: Option<UserId>,
+    ) -> Ph1VoiceIdResponse {
+        Ph1VoiceIdResponse::SpeakerAssertionOk(
+            SpeakerAssertionOk::v1_with_metrics(
+                SpeakerId::new("spk_recovery_non_unknown").unwrap(),
+                user_id,
+                vec![DiarizationSegment::v1(
+                    MonotonicTimeNs(1),
+                    MonotonicTimeNs(2),
+                    Some(SpeakerLabel::speaker_a()),
+                )
+                .unwrap()],
+                SpeakerLabel::speaker_a(),
+                DEFAULT_CONF_MID_BP,
+                Some(200),
+                Some(recovery_reason_code),
+                SpoofLivenessStatus::Unknown,
+                vec![],
+            )
+            .unwrap(),
+        )
+    }
+
     fn spoof_risk_voice_assertion(user_id: UserId) -> Ph1VoiceIdResponse {
         Ph1VoiceIdResponse::SpeakerAssertionUnknown(
             SpeakerAssertionUnknown::v1_with_metrics_and_candidate(
@@ -8092,16 +8247,16 @@ mod tests {
         correlation_id: CorrelationId,
         turn_id: TurnId,
     ) -> AppVoiceTurnExecutionOutcome {
-        run_protected_response_turn_with_identity_assertion_and_governance_state(
+        let pending = prepare_protected_response_turn_with_identity_assertion(
             runtime,
             store,
             actor_user_id,
             device_id,
             assertion,
-            None,
             correlation_id,
             turn_id,
-        )
+        );
+        finalize_pending_protected_response_turn(runtime, store, pending).unwrap()
     }
 
     fn run_protected_response_turn_with_identity_assertion_and_governance_state(
@@ -8114,6 +8269,61 @@ mod tests {
         correlation_id: CorrelationId,
         turn_id: TurnId,
     ) -> AppVoiceTurnExecutionOutcome {
+        let pending = prepare_protected_response_turn_with_identity_assertion_and_governance_state(
+            runtime,
+            store,
+            actor_user_id,
+            device_id,
+            assertion,
+            governance_state,
+            correlation_id,
+            turn_id,
+        );
+        finalize_pending_protected_response_turn(runtime, store, pending).unwrap()
+    }
+
+    struct PendingProtectedResponseTurn {
+        out: AppVoiceTurnExecutionOutcome,
+        finder_terminal: Option<FinderTerminalPacket>,
+        actor_user_id: UserId,
+        device_id: DeviceId,
+        request_session_id: Option<selene_kernel_contracts::ph1l::SessionId>,
+        correlation_id: CorrelationId,
+        turn_id: TurnId,
+        received_at: MonotonicTimeNs,
+    }
+
+    fn prepare_protected_response_turn_with_identity_assertion(
+        runtime: &AppServerIngressRuntime,
+        store: &mut Ph1fStore,
+        actor_user_id: UserId,
+        device_id: DeviceId,
+        assertion: Ph1VoiceIdResponse,
+        correlation_id: CorrelationId,
+        turn_id: TurnId,
+    ) -> PendingProtectedResponseTurn {
+        prepare_protected_response_turn_with_identity_assertion_and_governance_state(
+            runtime,
+            store,
+            actor_user_id,
+            device_id,
+            assertion,
+            None,
+            correlation_id,
+            turn_id,
+        )
+    }
+
+    fn prepare_protected_response_turn_with_identity_assertion_and_governance_state(
+        runtime: &AppServerIngressRuntime,
+        store: &mut Ph1fStore,
+        actor_user_id: UserId,
+        device_id: DeviceId,
+        assertion: Ph1VoiceIdResponse,
+        governance_state: Option<GovernanceExecutionState>,
+        correlation_id: CorrelationId,
+        turn_id: TurnId,
+    ) -> PendingProtectedResponseTurn {
         let request = AppVoiceIngressRequest::v1(
             correlation_id,
             turn_id,
@@ -8202,21 +8412,241 @@ mod tests {
                 MonotonicTimeNs(17),
             )
             .unwrap();
-        runtime
-            .finalize_voice_turn_outcome(
-                store,
-                out,
-                finder_terminal.as_ref(),
-                &actor_user_id,
-                Some(&device_id),
-                Some("tenant_1"),
-                request_session_id,
-                correlation_id,
-                turn_id,
-                received_at,
-                MonotonicTimeNs(17),
-            )
-            .unwrap()
+        PendingProtectedResponseTurn {
+            out,
+            finder_terminal,
+            actor_user_id,
+            device_id,
+            request_session_id,
+            correlation_id,
+            turn_id,
+            received_at,
+        }
+    }
+
+    fn finalize_pending_protected_response_turn(
+        runtime: &AppServerIngressRuntime,
+        store: &mut Ph1fStore,
+        pending: PendingProtectedResponseTurn,
+    ) -> Result<AppVoiceTurnExecutionOutcome, StorageError> {
+        runtime.finalize_voice_turn_outcome(
+            store,
+            pending.out,
+            pending.finder_terminal.as_ref(),
+            &pending.actor_user_id,
+            Some(&pending.device_id),
+            Some("tenant_1"),
+            pending.request_session_id,
+            pending.correlation_id,
+            pending.turn_id,
+            pending.received_at,
+            MonotonicTimeNs(17),
+        )
+    }
+
+    fn assert_recovery_finalization_requires_canonical_identity_state(
+        runtime: &AppServerIngressRuntime,
+        store: &mut Ph1fStore,
+        mut pending: PendingProtectedResponseTurn,
+    ) {
+        pending.out.runtime_execution_envelope = pending
+            .out
+            .runtime_execution_envelope
+            .with_identity_state(None)
+            .unwrap();
+        let err = finalize_pending_protected_response_turn(runtime, store, pending)
+            .expect_err("missing recovery identity state must fail closed");
+        match err {
+            StorageError::ContractViolation(ContractViolation::InvalidValue { field, reason }) => {
+                assert_eq!(
+                    field,
+                    "app_voice_turn_execution_outcome.runtime_execution_envelope.identity_state"
+                );
+                assert_eq!(
+                    reason,
+                    "must carry canonical identity state for recovery fail-closed classification"
+                );
+            }
+            other => panic!("expected recovery identity-state contract violation, got {other:?}"),
+        }
+    }
+
+    fn assert_recovery_finalization_requires_canonical_voice_identity_assertion(
+        runtime: &AppServerIngressRuntime,
+        store: &mut Ph1fStore,
+        mut pending: PendingProtectedResponseTurn,
+    ) {
+        pending.out.runtime_execution_envelope = pending
+            .out
+            .runtime_execution_envelope
+            .with_voice_identity_assertion(None)
+            .unwrap();
+        let err = finalize_pending_protected_response_turn(runtime, store, pending)
+            .expect_err("missing recovery voice identity assertion must fail closed");
+        match err {
+            StorageError::ContractViolation(ContractViolation::InvalidValue { field, reason }) => {
+                assert_eq!(
+                    field,
+                    "app_voice_turn_execution_outcome.runtime_execution_envelope.voice_identity_assertion"
+                );
+                assert_eq!(
+                    reason,
+                    "must carry canonical voice identity assertion for recovery fail-closed classification"
+                );
+            }
+            other => panic!("expected recovery voice-assertion contract violation, got {other:?}"),
+        }
+    }
+
+    fn assert_recovery_finalization_requires_canonical_voice_assertion_recovery_reason(
+        runtime: &AppServerIngressRuntime,
+        store: &mut Ph1fStore,
+        mut pending: PendingProtectedResponseTurn,
+        divergent_reason_code: ReasonCodeId,
+    ) {
+        assert!(!recovery_fail_closed_reason_code(Some(
+            divergent_reason_code
+        )));
+        let voice_identity_assertion = pending
+            .out
+            .runtime_execution_envelope
+            .voice_identity_assertion
+            .as_mut()
+            .expect("recovery voice identity assertion must remain attached");
+        match voice_identity_assertion {
+            Ph1VoiceIdResponse::SpeakerAssertionOk(ok) => {
+                ok.reason_code = Some(divergent_reason_code);
+            }
+            Ph1VoiceIdResponse::SpeakerAssertionUnknown(unknown) => {
+                unknown.reason_code = divergent_reason_code;
+            }
+        }
+
+        let err = finalize_pending_protected_response_turn(runtime, store, pending)
+            .expect_err("non-recovery voice assertion reason must fail closed");
+        match err {
+            StorageError::ContractViolation(ContractViolation::InvalidValue { field, reason }) => {
+                assert_eq!(
+                    field,
+                    "app_voice_turn_execution_outcome.runtime_execution_envelope.voice_identity_assertion.reason_code"
+                );
+                assert_eq!(
+                    reason,
+                    "must carry canonical recovery reason code for recovery fail-closed classification"
+                );
+            }
+            other => {
+                panic!("expected recovery voice-reason contract violation, got {other:?}")
+            }
+        }
+    }
+
+    fn assert_recovery_finalization_requires_reason_alignment(
+        runtime: &AppServerIngressRuntime,
+        store: &mut Ph1fStore,
+        mut pending: PendingProtectedResponseTurn,
+        divergent_reason_code: ReasonCodeId,
+    ) {
+        let voice_reason_code = pending
+            .out
+            .runtime_execution_envelope
+            .voice_identity_assertion
+            .as_ref()
+            .and_then(voice_identity_reason_code)
+            .expect("recovery voice assertion reason code must remain attached");
+        assert!(recovery_fail_closed_reason_code(Some(voice_reason_code)));
+        let identity_state = pending
+            .out
+            .runtime_execution_envelope
+            .identity_state
+            .as_mut()
+            .expect("recovery identity state must remain attached");
+        identity_state.reason_code = Some(u64::from(divergent_reason_code.0));
+        assert_ne!(
+            identity_reason_code(identity_state),
+            Some(voice_reason_code)
+        );
+
+        let err = finalize_pending_protected_response_turn(runtime, store, pending)
+            .expect_err("divergent recovery reason codes must fail closed");
+        match err {
+            StorageError::ContractViolation(ContractViolation::InvalidValue { field, reason }) => {
+                assert_eq!(
+                    field,
+                    "app_voice_turn_execution_outcome.runtime_execution_envelope.identity_state.reason_code"
+                );
+                assert_eq!(
+                    reason,
+                    "must match canonical voice identity assertion reason code for recovery fail-closed classification"
+                );
+            }
+            other => panic!("expected recovery reason-alignment contract violation, got {other:?}"),
+        }
+    }
+
+    fn assert_recovery_finalization_requires_canonical_unknown_voice_identity_assertion(
+        runtime: &AppServerIngressRuntime,
+        store: &mut Ph1fStore,
+        mut pending: PendingProtectedResponseTurn,
+        replacement_voice_identity_assertion: Ph1VoiceIdResponse,
+    ) {
+        pending.out.runtime_execution_envelope = pending
+            .out
+            .runtime_execution_envelope
+            .with_voice_identity_assertion(Some(replacement_voice_identity_assertion))
+            .unwrap();
+        let err = finalize_pending_protected_response_turn(runtime, store, pending)
+            .expect_err("non-Unknown recovery voice assertion must fail closed");
+        match err {
+            StorageError::ContractViolation(ContractViolation::InvalidValue { field, reason }) => {
+                assert_eq!(
+                    field,
+                    "app_voice_turn_execution_outcome.runtime_execution_envelope.voice_identity_assertion"
+                );
+                assert_eq!(
+                    reason,
+                    "must carry canonical Unknown voice identity assertion for recovery fail-closed classification"
+                );
+            }
+            other => panic!(
+                "expected recovery canonical Unknown voice-assertion contract violation, got {other:?}"
+            ),
+        }
+    }
+
+    fn assert_recovery_finalization_requires_canonical_promptable_voice_identity_assertion(
+        runtime: &AppServerIngressRuntime,
+        store: &mut Ph1fStore,
+        mut pending: PendingProtectedResponseTurn,
+    ) {
+        let voice_identity_assertion = pending
+            .out
+            .runtime_execution_envelope
+            .voice_identity_assertion
+            .as_mut()
+            .expect("recovery voice identity assertion must remain attached");
+        let Ph1VoiceIdResponse::SpeakerAssertionUnknown(unknown) = voice_identity_assertion else {
+            panic!("recovery promptability proof must keep the Unknown carrier family");
+        };
+        unknown.identity_v2 = unknown.identity_v2.with_may_prompt_identity(false);
+
+        let err = finalize_pending_protected_response_turn(runtime, store, pending)
+            .expect_err("non-promptable recovery voice assertion must fail closed");
+        match err {
+            StorageError::ContractViolation(ContractViolation::InvalidValue { field, reason }) => {
+                assert_eq!(
+                    field,
+                    "app_voice_turn_execution_outcome.runtime_execution_envelope.voice_identity_assertion.identity_v2.may_prompt_identity"
+                );
+                assert_eq!(
+                    reason,
+                    "must carry canonical promptable voice identity assertion for recovery fail-closed classification"
+                );
+            }
+            other => panic!(
+                "expected recovery promptable voice-assertion contract violation, got {other:?}"
+            ),
+        }
     }
 
     fn run_protected_chat_response_turn_with_identity_assertion(
@@ -11517,6 +11947,30 @@ mod tests {
             out.reason_code,
             Some(voice_id_reason_codes::VID_REAUTH_REQUIRED)
         );
+        let identity_state = out
+            .runtime_execution_envelope
+            .identity_state
+            .as_ref()
+            .expect("identity state must remain attached");
+        let voice_identity_assertion = out
+            .runtime_execution_envelope
+            .voice_identity_assertion
+            .as_ref()
+            .expect("voice identity assertion must remain attached");
+        assert_eq!(
+            voice_identity_reason_code(voice_identity_assertion),
+            Some(voice_id_reason_codes::VID_REAUTH_REQUIRED)
+        );
+        assert!(matches!(
+            voice_identity_assertion,
+            Ph1VoiceIdResponse::SpeakerAssertionUnknown(_)
+        ));
+        assert!(voice_identity_assertion.identity_v2().may_prompt_identity);
+        assert_eq!(
+            identity_reason_code(identity_state),
+            Some(voice_id_reason_codes::VID_REAUTH_REQUIRED)
+        );
+        assert_eq!(identity_state.identity_tier_v2, IdentityTierV2::Unknown);
         let response_rows = store.ph1x_audit_rows(CorrelationId(9820));
         let row = find_ph1x_respond_row(&response_rows, "IDENTITY_REAUTH_REQUIRED_FAIL_CLOSED");
         assert_ph1x_fail_closed_respond_payload(
@@ -11804,7 +12258,11 @@ mod tests {
             SimulationCertificationState::NotRequested,
             "NOT_REQUESTED",
         );
-        assert_proof_authority_reason_token(&store, &out, "-");
+        assert_proof_authority_reason_token(
+            &store,
+            &out,
+            &u64::from(voice_id_reason_codes::VID_FAIL_PROFILE_NOT_ENROLLED.0).to_string(),
+        );
     }
 
     #[test]
@@ -11898,6 +12356,319 @@ mod tests {
             AuthorityPolicyDecision::Denied,
             SimulationCertificationState::NotRequested,
             "NOT_REQUESTED",
+        );
+    }
+
+    #[test]
+    fn at_identity_recovery_07_reauth_required_protected_voice_turn_fails_closed_when_outcome_lacks_canonical_identity_state(
+    ) {
+        let runtime = runtime_with_search_tool_fixtures();
+        let actor_user_id = UserId::new("tenant_1:recovery_reauth_missing_state").unwrap();
+        let device_id = DeviceId::new("recovery_reauth_missing_state_1").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &actor_user_id, &device_id);
+
+        let pending = prepare_protected_response_turn_with_identity_assertion(
+            &runtime,
+            &mut store,
+            actor_user_id.clone(),
+            device_id,
+            reauth_required_voice_assertion(actor_user_id),
+            CorrelationId(9865),
+            TurnId(9965),
+        );
+
+        assert_recovery_finalization_requires_canonical_identity_state(
+            &runtime, &mut store, pending,
+        );
+    }
+
+    #[test]
+    fn at_identity_recovery_08_reenrollment_required_protected_voice_turn_fails_closed_when_outcome_lacks_canonical_identity_state(
+    ) {
+        let runtime = runtime_with_search_tool_fixtures();
+        let actor_user_id = UserId::new("tenant_1:recovery_reenroll_missing_state").unwrap();
+        let device_id = DeviceId::new("recovery_reenroll_missing_state_1").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &actor_user_id, &device_id);
+
+        let pending = prepare_protected_response_turn_with_identity_assertion(
+            &runtime,
+            &mut store,
+            actor_user_id.clone(),
+            device_id,
+            reenrollment_required_voice_assertion(actor_user_id),
+            CorrelationId(9866),
+            TurnId(9966),
+        );
+
+        assert_recovery_finalization_requires_canonical_identity_state(
+            &runtime, &mut store, pending,
+        );
+    }
+
+    #[test]
+    fn at_identity_recovery_09_reauth_required_protected_voice_turn_fails_closed_when_outcome_lacks_canonical_voice_identity_assertion(
+    ) {
+        let runtime = runtime_with_search_tool_fixtures();
+        let actor_user_id = UserId::new("tenant_1:recovery_reauth_missing_assertion").unwrap();
+        let device_id = DeviceId::new("recovery_reauth_missing_assertion_1").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &actor_user_id, &device_id);
+
+        let pending = prepare_protected_response_turn_with_identity_assertion(
+            &runtime,
+            &mut store,
+            actor_user_id.clone(),
+            device_id,
+            reauth_required_voice_assertion(actor_user_id),
+            CorrelationId(9867),
+            TurnId(9967),
+        );
+
+        assert_recovery_finalization_requires_canonical_voice_identity_assertion(
+            &runtime, &mut store, pending,
+        );
+    }
+
+    #[test]
+    fn at_identity_recovery_10_profile_not_enrolled_protected_voice_turn_fails_closed_when_outcome_lacks_canonical_voice_identity_assertion(
+    ) {
+        let runtime = runtime_with_search_tool_fixtures();
+        let actor_user_id = UserId::new("tenant_1:recovery_profile_missing_assertion").unwrap();
+        let device_id = DeviceId::new("recovery_profile_missing_assertion_1").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &actor_user_id, &device_id);
+
+        let pending = prepare_protected_response_turn_with_identity_assertion(
+            &runtime,
+            &mut store,
+            actor_user_id.clone(),
+            device_id,
+            profile_not_enrolled_voice_assertion(actor_user_id),
+            CorrelationId(9868),
+            TurnId(9968),
+        );
+
+        assert_recovery_finalization_requires_canonical_voice_identity_assertion(
+            &runtime, &mut store, pending,
+        );
+    }
+
+    #[test]
+    fn at_identity_recovery_11_reauth_required_protected_voice_turn_fails_closed_when_voice_assertion_reason_code_is_not_recovery_family(
+    ) {
+        let runtime = runtime_with_search_tool_fixtures();
+        let actor_user_id = UserId::new("tenant_1:recovery_reauth_non_recovery_reason").unwrap();
+        let device_id = DeviceId::new("recovery_reauth_non_recovery_reason_1").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &actor_user_id, &device_id);
+
+        let pending = prepare_protected_response_turn_with_identity_assertion(
+            &runtime,
+            &mut store,
+            actor_user_id.clone(),
+            device_id,
+            reauth_required_voice_assertion(actor_user_id),
+            CorrelationId(9869),
+            TurnId(9969),
+        );
+
+        assert_recovery_finalization_requires_canonical_voice_assertion_recovery_reason(
+            &runtime,
+            &mut store,
+            pending,
+            voice_id_reason_codes::VID_FAIL_LOW_CONFIDENCE,
+        );
+    }
+
+    #[test]
+    fn at_identity_recovery_12_reenrollment_required_protected_voice_turn_fails_closed_when_voice_assertion_reason_code_is_not_recovery_family(
+    ) {
+        let runtime = runtime_with_search_tool_fixtures();
+        let actor_user_id = UserId::new("tenant_1:recovery_reenroll_non_recovery_reason").unwrap();
+        let device_id = DeviceId::new("recovery_reenroll_non_recovery_reason_1").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &actor_user_id, &device_id);
+
+        let pending = prepare_protected_response_turn_with_identity_assertion(
+            &runtime,
+            &mut store,
+            actor_user_id.clone(),
+            device_id,
+            reenrollment_required_voice_assertion(actor_user_id),
+            CorrelationId(9870),
+            TurnId(9970),
+        );
+
+        assert_recovery_finalization_requires_canonical_voice_assertion_recovery_reason(
+            &runtime,
+            &mut store,
+            pending,
+            voice_id_reason_codes::VID_FAIL_ECHO_UNSAFE,
+        );
+    }
+
+    #[test]
+    fn at_identity_recovery_13_reauth_required_protected_voice_turn_fails_closed_when_identity_state_reason_code_diverges_from_canonical_voice_assertion(
+    ) {
+        let runtime = runtime_with_search_tool_fixtures();
+        let actor_user_id = UserId::new("tenant_1:recovery_reauth_reason_diverge").unwrap();
+        let device_id = DeviceId::new("recovery_reauth_reason_diverge_1").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &actor_user_id, &device_id);
+
+        let pending = prepare_protected_response_turn_with_identity_assertion(
+            &runtime,
+            &mut store,
+            actor_user_id.clone(),
+            device_id,
+            reauth_required_voice_assertion(actor_user_id),
+            CorrelationId(9871),
+            TurnId(9971),
+        );
+
+        assert_recovery_finalization_requires_reason_alignment(
+            &runtime,
+            &mut store,
+            pending,
+            voice_id_reason_codes::VID_DEVICE_CLAIM_REQUIRED,
+        );
+    }
+
+    #[test]
+    fn at_identity_recovery_14_profile_not_enrolled_protected_voice_turn_fails_closed_when_identity_state_reason_code_diverges_from_canonical_voice_assertion(
+    ) {
+        let runtime = runtime_with_search_tool_fixtures();
+        let actor_user_id = UserId::new("tenant_1:recovery_profile_reason_diverge").unwrap();
+        let device_id = DeviceId::new("recovery_profile_reason_diverge_1").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &actor_user_id, &device_id);
+
+        let pending = prepare_protected_response_turn_with_identity_assertion(
+            &runtime,
+            &mut store,
+            actor_user_id.clone(),
+            device_id,
+            profile_not_enrolled_voice_assertion(actor_user_id),
+            CorrelationId(9872),
+            TurnId(9972),
+        );
+
+        assert_recovery_finalization_requires_reason_alignment(
+            &runtime,
+            &mut store,
+            pending,
+            voice_id_reason_codes::VID_ENROLLMENT_REQUIRED,
+        );
+    }
+
+    #[test]
+    fn at_identity_recovery_15_reauth_required_protected_voice_turn_fails_closed_when_voice_assertion_is_not_unknown_for_recovery_family(
+    ) {
+        let runtime = runtime_with_search_tool_fixtures();
+        let actor_user_id = UserId::new("tenant_1:recovery_reauth_non_unknown_carrier").unwrap();
+        let device_id = DeviceId::new("recovery_reauth_non_unknown_carrier_1").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &actor_user_id, &device_id);
+
+        let pending = prepare_protected_response_turn_with_identity_assertion(
+            &runtime,
+            &mut store,
+            actor_user_id.clone(),
+            device_id,
+            reauth_required_voice_assertion(actor_user_id.clone()),
+            CorrelationId(9873),
+            TurnId(9973),
+        );
+
+        assert_recovery_finalization_requires_canonical_unknown_voice_identity_assertion(
+            &runtime,
+            &mut store,
+            pending,
+            recovery_promptable_non_unknown_voice_assertion(
+                voice_id_reason_codes::VID_REAUTH_REQUIRED,
+                Some(actor_user_id),
+            ),
+        );
+    }
+
+    #[test]
+    fn at_identity_recovery_16_reenrollment_required_protected_voice_turn_fails_closed_when_voice_assertion_is_not_unknown_for_recovery_family(
+    ) {
+        let runtime = runtime_with_search_tool_fixtures();
+        let actor_user_id = UserId::new("tenant_1:recovery_reenroll_non_unknown_carrier").unwrap();
+        let device_id = DeviceId::new("recovery_reenroll_non_unknown_carrier_1").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &actor_user_id, &device_id);
+
+        let pending = prepare_protected_response_turn_with_identity_assertion(
+            &runtime,
+            &mut store,
+            actor_user_id.clone(),
+            device_id,
+            reenrollment_required_voice_assertion(actor_user_id.clone()),
+            CorrelationId(9874),
+            TurnId(9974),
+        );
+
+        assert_recovery_finalization_requires_canonical_unknown_voice_identity_assertion(
+            &runtime,
+            &mut store,
+            pending,
+            recovery_promptable_non_unknown_voice_assertion(
+                voice_id_reason_codes::VID_ENROLLMENT_REQUIRED,
+                Some(actor_user_id),
+            ),
+        );
+    }
+
+    #[test]
+    fn at_identity_recovery_17_reauth_required_protected_voice_turn_fails_closed_when_voice_assertion_is_not_promptable_for_recovery_family(
+    ) {
+        let runtime = runtime_with_search_tool_fixtures();
+        let actor_user_id = UserId::new("tenant_1:recovery_reauth_non_promptable_carrier").unwrap();
+        let device_id = DeviceId::new("recovery_reauth_non_promptable_carrier_1").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &actor_user_id, &device_id);
+
+        let pending = prepare_protected_response_turn_with_identity_assertion(
+            &runtime,
+            &mut store,
+            actor_user_id.clone(),
+            device_id,
+            reauth_required_voice_assertion(actor_user_id),
+            CorrelationId(9875),
+            TurnId(9975),
+        );
+
+        assert_recovery_finalization_requires_canonical_promptable_voice_identity_assertion(
+            &runtime, &mut store, pending,
+        );
+    }
+
+    #[test]
+    fn at_identity_recovery_18_reenrollment_required_protected_voice_turn_fails_closed_when_voice_assertion_is_not_promptable_for_recovery_family(
+    ) {
+        let runtime = runtime_with_search_tool_fixtures();
+        let actor_user_id =
+            UserId::new("tenant_1:recovery_reenroll_non_promptable_carrier").unwrap();
+        let device_id = DeviceId::new("recovery_reenroll_non_promptable_carrier_1").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &actor_user_id, &device_id);
+
+        let pending = prepare_protected_response_turn_with_identity_assertion(
+            &runtime,
+            &mut store,
+            actor_user_id.clone(),
+            device_id,
+            reenrollment_required_voice_assertion(actor_user_id),
+            CorrelationId(9876),
+            TurnId(9976),
+        );
+
+        assert_recovery_finalization_requires_canonical_promptable_voice_identity_assertion(
+            &runtime, &mut store, pending,
         );
     }
 
