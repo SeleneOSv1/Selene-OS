@@ -5294,6 +5294,46 @@ fn require_canonical_recovery_promptable_voice_identity_assertion(
     }
 }
 
+fn canonical_recovery_candidate_user_carriage_matches(
+    voice_identity_assertion: &SpeakerAssertionUnknown,
+    recovery_reason_code: ReasonCodeId,
+) -> bool {
+    match recovery_reason_code {
+        code if code == voice_id_reason_codes::VID_REAUTH_REQUIRED
+            || code == voice_id_reason_codes::VID_DEVICE_CLAIM_REQUIRED =>
+        {
+            voice_identity_assertion.candidate_user_id.is_some()
+        }
+        code if code == voice_id_reason_codes::VID_ENROLLMENT_REQUIRED
+            || code == voice_id_reason_codes::VID_FAIL_PROFILE_NOT_ENROLLED =>
+        {
+            voice_identity_assertion.candidate_user_id.is_none()
+        }
+        _ => false,
+    }
+}
+
+fn require_canonical_recovery_candidate_user_carriage(
+    voice_identity_assertion: &SpeakerAssertionUnknown,
+    recovery_reason_code: ReasonCodeId,
+) -> Result<(), StorageError> {
+    if canonical_recovery_candidate_user_carriage_matches(
+        voice_identity_assertion,
+        recovery_reason_code,
+    ) {
+        Ok(())
+    } else {
+        Err(StorageError::ContractViolation(
+            ContractViolation::InvalidValue {
+                field:
+                    "app_voice_turn_execution_outcome.runtime_execution_envelope.voice_identity_assertion.candidate_user_id",
+                reason:
+                    "must match canonical recovery candidate carriage for fail-closed classification",
+            },
+        ))
+    }
+}
+
 fn canonical_recovery_fail_closed_identity_state(
     out: &AppVoiceTurnExecutionOutcome,
 ) -> Result<Option<&IdentityExecutionState>, StorageError> {
@@ -5363,6 +5403,19 @@ fn canonical_recovery_fail_closed_identity_state(
     }
     require_canonical_recovery_unknown_voice_identity_assertion(voice_identity_assertion)?;
     require_canonical_recovery_promptable_voice_identity_assertion(voice_identity_assertion)?;
+    let recovery_reason_code = match voice_assertion_reason_code {
+        Some(code) => code,
+        None => unreachable!("recovery reason code must remain present after canonical checks"),
+    };
+    let Ph1VoiceIdResponse::SpeakerAssertionUnknown(unknown_voice_identity_assertion) =
+        voice_identity_assertion
+    else {
+        unreachable!("canonical recovery helper must preserve Unknown voice assertions");
+    };
+    require_canonical_recovery_candidate_user_carriage(
+        unknown_voice_identity_assertion,
+        recovery_reason_code,
+    )?;
     Ok(Some(identity_state))
 }
 
@@ -7260,7 +7313,7 @@ mod tests {
         )
     }
 
-    fn reenrollment_required_voice_assertion(user_id: UserId) -> Ph1VoiceIdResponse {
+    fn reenrollment_required_voice_assertion(_user_id: UserId) -> Ph1VoiceIdResponse {
         Ph1VoiceIdResponse::SpeakerAssertionUnknown(
             SpeakerAssertionUnknown::v1_with_candidate(
                 IdentityConfidence::Medium,
@@ -7271,14 +7324,14 @@ mod tests {
                     Some(SpeakerLabel::speaker_a()),
                 )
                 .unwrap()],
-                Some(user_id),
+                None,
                 None,
             )
             .unwrap(),
         )
     }
 
-    fn profile_not_enrolled_voice_assertion(user_id: UserId) -> Ph1VoiceIdResponse {
+    fn profile_not_enrolled_voice_assertion(_user_id: UserId) -> Ph1VoiceIdResponse {
         Ph1VoiceIdResponse::SpeakerAssertionUnknown(
             SpeakerAssertionUnknown::v1_with_candidate(
                 IdentityConfidence::Medium,
@@ -7289,7 +7342,7 @@ mod tests {
                     Some(SpeakerLabel::speaker_a()),
                 )
                 .unwrap()],
-                Some(user_id),
+                None,
                 None,
             )
             .unwrap(),
@@ -8646,6 +8699,42 @@ mod tests {
             other => panic!(
                 "expected recovery promptable voice-assertion contract violation, got {other:?}"
             ),
+        }
+    }
+
+    fn assert_recovery_finalization_requires_canonical_candidate_user_carriage(
+        runtime: &AppServerIngressRuntime,
+        store: &mut Ph1fStore,
+        mut pending: PendingProtectedResponseTurn,
+        candidate_user_id: Option<UserId>,
+    ) {
+        let voice_identity_assertion = pending
+            .out
+            .runtime_execution_envelope
+            .voice_identity_assertion
+            .as_mut()
+            .expect("recovery voice identity assertion must remain attached");
+        let Ph1VoiceIdResponse::SpeakerAssertionUnknown(unknown) = voice_identity_assertion else {
+            panic!("recovery candidate-carriage proof must keep the Unknown carrier family");
+        };
+        unknown.candidate_user_id = candidate_user_id;
+
+        let err = finalize_pending_protected_response_turn(runtime, store, pending)
+            .expect_err("non-canonical recovery candidate carriage must fail closed");
+        match err {
+            StorageError::ContractViolation(ContractViolation::InvalidValue { field, reason }) => {
+                assert_eq!(
+                    field,
+                    "app_voice_turn_execution_outcome.runtime_execution_envelope.voice_identity_assertion.candidate_user_id"
+                );
+                assert_eq!(
+                    reason,
+                    "must match canonical recovery candidate carriage for fail-closed classification"
+                );
+            }
+            other => {
+                panic!("expected recovery candidate-carriage contract violation, got {other:?}")
+            }
         }
     }
 
@@ -11966,6 +12055,12 @@ mod tests {
             Ph1VoiceIdResponse::SpeakerAssertionUnknown(_)
         ));
         assert!(voice_identity_assertion.identity_v2().may_prompt_identity);
+        let Ph1VoiceIdResponse::SpeakerAssertionUnknown(unknown_voice_identity_assertion) =
+            voice_identity_assertion
+        else {
+            panic!("reauth proof must preserve the Unknown carrier family");
+        };
+        assert!(unknown_voice_identity_assertion.candidate_user_id.is_some());
         assert_eq!(
             identity_reason_code(identity_state),
             Some(voice_id_reason_codes::VID_REAUTH_REQUIRED)
@@ -12041,6 +12136,36 @@ mod tests {
             out.reason_code,
             Some(voice_id_reason_codes::VID_ENROLLMENT_REQUIRED)
         );
+        let identity_state = out
+            .runtime_execution_envelope
+            .identity_state
+            .as_ref()
+            .expect("identity state must remain attached");
+        let voice_identity_assertion = out
+            .runtime_execution_envelope
+            .voice_identity_assertion
+            .as_ref()
+            .expect("voice identity assertion must remain attached");
+        assert_eq!(
+            voice_identity_reason_code(voice_identity_assertion),
+            Some(voice_id_reason_codes::VID_ENROLLMENT_REQUIRED)
+        );
+        assert!(matches!(
+            voice_identity_assertion,
+            Ph1VoiceIdResponse::SpeakerAssertionUnknown(_)
+        ));
+        assert!(voice_identity_assertion.identity_v2().may_prompt_identity);
+        let Ph1VoiceIdResponse::SpeakerAssertionUnknown(unknown_voice_identity_assertion) =
+            voice_identity_assertion
+        else {
+            panic!("reenrollment proof must preserve the Unknown carrier family");
+        };
+        assert!(unknown_voice_identity_assertion.candidate_user_id.is_none());
+        assert_eq!(
+            identity_reason_code(identity_state),
+            Some(voice_id_reason_codes::VID_ENROLLMENT_REQUIRED)
+        );
+        assert_eq!(identity_state.identity_tier_v2, IdentityTierV2::Unknown);
         let response_rows = store.ph1x_audit_rows(CorrelationId(9821));
         let row =
             find_ph1x_respond_row(&response_rows, "IDENTITY_REENROLLMENT_REQUIRED_FAIL_CLOSED");
@@ -12669,6 +12794,118 @@ mod tests {
 
         assert_recovery_finalization_requires_canonical_promptable_voice_identity_assertion(
             &runtime, &mut store, pending,
+        );
+    }
+
+    #[test]
+    fn at_identity_recovery_19_reauth_required_protected_voice_turn_fails_closed_when_candidate_user_carriage_is_not_canonical_for_recovery_family(
+    ) {
+        let runtime = runtime_with_search_tool_fixtures();
+        let actor_user_id =
+            UserId::new("tenant_1:recovery_reauth_non_canonical_candidate").unwrap();
+        let device_id = DeviceId::new("recovery_reauth_non_canonical_candidate_1").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &actor_user_id, &device_id);
+
+        let pending = prepare_protected_response_turn_with_identity_assertion(
+            &runtime,
+            &mut store,
+            actor_user_id.clone(),
+            device_id,
+            reauth_required_voice_assertion(actor_user_id),
+            CorrelationId(9877),
+            TurnId(9977),
+        );
+
+        assert_recovery_finalization_requires_canonical_candidate_user_carriage(
+            &runtime,
+            &mut store,
+            pending,
+            None,
+        );
+    }
+
+    #[test]
+    fn at_identity_recovery_20_device_claim_required_protected_voice_turn_fails_closed_when_candidate_user_carriage_is_not_canonical_for_recovery_family(
+    ) {
+        let runtime = runtime_with_search_tool_fixtures();
+        let actor_user_id =
+            UserId::new("tenant_1:recovery_device_claim_non_canonical_candidate").unwrap();
+        let device_id = DeviceId::new("recovery_device_claim_non_canonical_candidate_1").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &actor_user_id, &device_id);
+
+        let pending = prepare_protected_response_turn_with_identity_assertion(
+            &runtime,
+            &mut store,
+            actor_user_id.clone(),
+            device_id,
+            device_claim_required_voice_assertion(actor_user_id),
+            CorrelationId(9878),
+            TurnId(9978),
+        );
+
+        assert_recovery_finalization_requires_canonical_candidate_user_carriage(
+            &runtime,
+            &mut store,
+            pending,
+            None,
+        );
+    }
+
+    #[test]
+    fn at_identity_recovery_21_reenrollment_required_protected_voice_turn_fails_closed_when_candidate_user_carriage_is_not_canonical_for_recovery_family(
+    ) {
+        let runtime = runtime_with_search_tool_fixtures();
+        let actor_user_id =
+            UserId::new("tenant_1:recovery_reenroll_non_canonical_candidate").unwrap();
+        let device_id = DeviceId::new("recovery_reenroll_non_canonical_candidate_1").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &actor_user_id, &device_id);
+
+        let pending = prepare_protected_response_turn_with_identity_assertion(
+            &runtime,
+            &mut store,
+            actor_user_id.clone(),
+            device_id,
+            reenrollment_required_voice_assertion(actor_user_id.clone()),
+            CorrelationId(9879),
+            TurnId(9979),
+        );
+
+        assert_recovery_finalization_requires_canonical_candidate_user_carriage(
+            &runtime,
+            &mut store,
+            pending,
+            Some(actor_user_id),
+        );
+    }
+
+    #[test]
+    fn at_identity_recovery_22_profile_not_enrolled_protected_voice_turn_fails_closed_when_candidate_user_carriage_is_not_canonical_for_recovery_family(
+    ) {
+        let runtime = runtime_with_search_tool_fixtures();
+        let actor_user_id =
+            UserId::new("tenant_1:recovery_profile_non_canonical_candidate").unwrap();
+        let device_id = DeviceId::new("recovery_profile_non_canonical_candidate_1").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &actor_user_id, &device_id);
+
+        let pending = prepare_protected_response_turn_with_identity_assertion(
+            &runtime,
+            &mut store,
+            actor_user_id.clone(),
+            device_id,
+            profile_not_enrolled_voice_assertion(actor_user_id.clone()),
+            CorrelationId(9880),
+            TurnId(9980),
+        );
+
+        assert_recovery_finalization_requires_canonical_candidate_user_carriage(
+            &runtime,
+            &mut store,
+            pending,
+            Some(actor_user_id),
         );
     }
 
