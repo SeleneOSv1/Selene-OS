@@ -4998,30 +4998,43 @@ fn canonical_posture_fail_closed_identity_state(
     ) {
         return Ok(None);
     }
-    let posture_reason_code = out
+    let identity_state_reason_code = out
         .runtime_execution_envelope
         .identity_state
         .as_ref()
-        .and_then(identity_reason_code)
-        .or_else(|| {
-            out.runtime_execution_envelope
-                .voice_identity_assertion
-                .as_ref()
-                .and_then(voice_identity_reason_code)
-        });
+        .and_then(identity_reason_code);
+    let voice_assertion_reason_code = out
+        .runtime_execution_envelope
+        .voice_identity_assertion
+        .as_ref()
+        .and_then(voice_identity_reason_code);
+    let posture_reason_code = identity_state_reason_code.or(voice_assertion_reason_code);
     if !posture_fail_closed_reason_code(posture_reason_code) {
         return Ok(None);
     }
-    out.runtime_execution_envelope
+    let identity_state = out
+        .runtime_execution_envelope
         .identity_state
         .as_ref()
-        .map(Some)
         .ok_or(StorageError::ContractViolation(
             ContractViolation::InvalidValue {
                 field: "app_voice_turn_execution_outcome.runtime_execution_envelope.identity_state",
                 reason: "must carry canonical identity state for posture fail-closed classification",
             },
-        ))
+        ))?;
+    if posture_fail_closed_reason_code(voice_assertion_reason_code)
+        && identity_reason_code(identity_state) != voice_assertion_reason_code
+    {
+        return Err(StorageError::ContractViolation(
+            ContractViolation::InvalidValue {
+                field:
+                    "app_voice_turn_execution_outcome.runtime_execution_envelope.identity_state.reason_code",
+                reason:
+                    "must match canonical voice identity assertion reason code for posture fail-closed classification",
+            },
+        ));
+    }
+    Ok(Some(identity_state))
 }
 
 fn classify_identity_recovery_fail_closed_outcome(
@@ -8183,6 +8196,46 @@ mod tests {
                 );
             }
             other => panic!("expected posture identity-state contract violation, got {other:?}"),
+        }
+    }
+
+    fn assert_posture_finalization_requires_reason_alignment(
+        runtime: &AppServerIngressRuntime,
+        store: &mut Ph1fStore,
+        mut pending: PendingProtectedChatResponseTurn,
+        divergent_reason_code: ReasonCodeId,
+    ) {
+        let voice_reason_code = pending
+            .out
+            .runtime_execution_envelope
+            .voice_identity_assertion
+            .as_ref()
+            .and_then(voice_identity_reason_code)
+            .expect("posture voice assertion reason code must remain attached");
+        assert!(posture_fail_closed_reason_code(Some(voice_reason_code)));
+        let identity_state = pending
+            .out
+            .runtime_execution_envelope
+            .identity_state
+            .as_mut()
+            .expect("posture identity state must remain attached");
+        identity_state.reason_code = Some(u64::from(divergent_reason_code.0));
+        assert_ne!(identity_reason_code(identity_state), Some(voice_reason_code));
+
+        let err = finalize_pending_protected_chat_response_turn(runtime, store, pending)
+            .expect_err("divergent posture reason codes must fail closed");
+        match err {
+            StorageError::ContractViolation(ContractViolation::InvalidValue { field, reason }) => {
+                assert_eq!(
+                    field,
+                    "app_voice_turn_execution_outcome.runtime_execution_envelope.identity_state.reason_code"
+                );
+                assert_eq!(
+                    reason,
+                    "must match canonical voice identity assertion reason code for posture fail-closed classification"
+                );
+            }
+            other => panic!("expected posture reason-alignment contract violation, got {other:?}"),
         }
     }
 
@@ -11467,7 +11520,24 @@ mod tests {
             out.reason_code,
             Some(voice_id_reason_codes::VID_FAIL_LOW_CONFIDENCE)
         );
-        assert!(out.runtime_execution_envelope.identity_state.is_some());
+        let identity_state = out
+            .runtime_execution_envelope
+            .identity_state
+            .as_ref()
+            .expect("identity state must remain attached");
+        let voice_identity_assertion = out
+            .runtime_execution_envelope
+            .voice_identity_assertion
+            .as_ref()
+            .expect("voice identity assertion must remain attached");
+        assert_eq!(
+            identity_reason_code(identity_state),
+            Some(voice_id_reason_codes::VID_FAIL_LOW_CONFIDENCE)
+        );
+        assert_eq!(
+            identity_reason_code(identity_state),
+            voice_identity_reason_code(voice_identity_assertion)
+        );
         let response_rows = store.ph1x_audit_rows(CorrelationId(9826));
         let row = find_ph1x_respond_row(&response_rows, "IDENTITY_LOW_CONFIDENCE_FAIL_CLOSED");
         assert_ph1x_fail_closed_respond_payload(
@@ -11776,6 +11846,60 @@ mod tests {
 
         assert_posture_finalization_requires_canonical_identity_state(
             &runtime, &mut store, pending,
+        );
+    }
+
+    #[test]
+    fn at_identity_posture_08_low_confidence_protected_voice_turn_fails_closed_when_identity_state_reason_code_diverges_from_canonical_voice_assertion(
+    ) {
+        let runtime = runtime_with_search_tool_fixtures();
+        let actor_user_id = UserId::new("tenant_1:id_low_conf_reason_diverge").unwrap();
+        let device_id = DeviceId::new("id_low_conf_reason_diverge_1").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &actor_user_id, &device_id);
+
+        let pending = prepare_protected_chat_response_turn_with_identity_assertion(
+            &runtime,
+            &mut store,
+            actor_user_id.clone(),
+            device_id,
+            low_confidence_voice_assertion(actor_user_id),
+            CorrelationId(9833),
+            TurnId(9933),
+        );
+
+        assert_posture_finalization_requires_reason_alignment(
+            &runtime,
+            &mut store,
+            pending,
+            voice_id_reason_codes::VID_FAIL_ECHO_UNSAFE,
+        );
+    }
+
+    #[test]
+    fn at_identity_posture_09_echo_unsafe_protected_voice_turn_fails_closed_when_identity_state_reason_code_diverges_from_canonical_voice_assertion(
+    ) {
+        let runtime = runtime_with_search_tool_fixtures();
+        let actor_user_id = UserId::new("tenant_1:id_echo_reason_diverge").unwrap();
+        let device_id = DeviceId::new("id_echo_reason_diverge_1").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &actor_user_id, &device_id);
+
+        let pending = prepare_protected_chat_response_turn_with_identity_assertion(
+            &runtime,
+            &mut store,
+            actor_user_id,
+            device_id,
+            echo_unsafe_voice_assertion(),
+            CorrelationId(9834),
+            TurnId(9934),
+        );
+
+        assert_posture_finalization_requires_reason_alignment(
+            &runtime,
+            &mut store,
+            pending,
+            voice_id_reason_codes::VID_FAIL_LOW_CONFIDENCE,
         );
     }
 
