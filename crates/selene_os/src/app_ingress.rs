@@ -118,10 +118,7 @@ use crate::ph1os::{
 };
 use crate::ph1w::Ph1wRuntime;
 use crate::ph1x::{Ph1xConfig, Ph1xRuntime};
-use crate::runtime_governance::{
-    attach_identity_state_for_governed_voice_turn, RuntimeGovernanceDecision,
-    RuntimeGovernanceRuntime,
-};
+use crate::runtime_governance::{RuntimeGovernanceDecision, RuntimeGovernanceRuntime};
 use crate::runtime_law::{RuntimeLawDecision, RuntimeLawRuntime};
 use crate::simulation_executor::{
     simulation_id_for_intent_draft_v1, SimulationDispatchOutcome, SimulationExecutor,
@@ -3908,12 +3905,11 @@ impl AppServerIngressRuntime {
         x_build: AppVoicePh1xBuildInput,
     ) -> Result<AgentInputPacket, StorageError> {
         *self.agent_input_packet_build_count.borrow_mut() += 1;
-        let runtime_execution_envelope =
-            canonical_governed_voice_runtime_execution_envelope(forwarded)?;
+        let runtime_execution_envelope = forwarded.runtime_execution_envelope.clone();
         let identity_state = runtime_execution_envelope
             .identity_state
             .clone()
-            .expect("canonical runtime governance helper must attach identity state");
+            .expect("live forwarded runtime envelope must already carry canonical identity state");
         let topic_hint = memory_topic_hint_from_nlp_output(x_build.nlp_output.as_ref());
         let runtime_memory_candidates = if memory_governance_blocked(&runtime_execution_envelope) {
             Vec::new()
@@ -4401,24 +4397,6 @@ fn memory_governance_blocked(runtime_execution_envelope: &RuntimeExecutionEnvelo
                 || governance_quarantines_subsystem(state, GOVERNED_SUBSYSTEM_AUTHORITY_LAYER)
         })
         .unwrap_or(false)
-}
-
-fn canonical_governed_voice_runtime_execution_envelope(
-    forwarded: &crate::ph1os::OsVoiceLiveForwardBundle,
-) -> Result<RuntimeExecutionEnvelope, StorageError> {
-    if forwarded
-        .runtime_execution_envelope
-        .identity_state
-        .is_some()
-    {
-        Ok(forwarded.runtime_execution_envelope.clone())
-    } else {
-        attach_identity_state_for_governed_voice_turn(
-            &forwarded.runtime_execution_envelope,
-            &forwarded.voice_identity_assertion,
-        )
-        .map_err(StorageError::ContractViolation)
-    }
 }
 
 fn memory_consistency_level_from_envelope(
@@ -7850,6 +7828,7 @@ mod tests {
                 .with_governance_state(Some(governance_state))
                 .unwrap();
         }
+        recanonicalize_forwarded_bundle_for_tests(&mut forwarded);
 
         let x_build = AppVoicePh1xBuildInput {
             now: MonotonicTimeNs(17),
@@ -7957,6 +7936,7 @@ mod tests {
             panic!("expected forwarded voice turn");
         };
         forwarded.voice_identity_assertion = assertion;
+        recanonicalize_forwarded_bundle_for_tests(&mut forwarded);
 
         let x_build = AppVoicePh1xBuildInput {
             now: MonotonicTimeNs(17),
@@ -8463,6 +8443,24 @@ mod tests {
         .unwrap()
     }
 
+    fn recanonicalize_forwarded_bundle_for_tests(
+        forwarded: &mut crate::ph1os::OsVoiceLiveForwardBundle,
+    ) {
+        let canonical_runtime_execution_envelope = attach_identity_state_for_governed_voice_turn(
+            &forwarded
+                .runtime_execution_envelope
+                .with_identity_state(None)
+                .expect(
+                    "forwarded runtime envelope should allow identity-state reset before test recanonicalization",
+                ),
+            &forwarded.voice_identity_assertion,
+        )
+        .expect("test forwarded runtime envelope must allow canonical identity-state attachment");
+        forwarded.runtime_execution_envelope = canonical_runtime_execution_envelope.clone();
+        forwarded.top_level_bundle.runtime_execution_envelope =
+            Some(canonical_runtime_execution_envelope);
+    }
+
     #[test]
     fn at_ingress_01_ios_explicit_routes_through_os_live_default() {
         let runtime = AppServerIngressRuntime::default();
@@ -8701,6 +8699,87 @@ mod tests {
     }
 
     #[test]
+    fn at_ingress_04c_packet_builder_directly_adopts_forwarded_runtime_execution_envelope() {
+        let runtime = AppServerIngressRuntime::default();
+        let actor_user_id = UserId::new("tenant_1:ingress_packet_direct_user").unwrap();
+        let device_id = DeviceId::new("ingress_packet_direct_device_1").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &actor_user_id, &device_id);
+
+        let request = AppVoiceIngressRequest::v1(
+            CorrelationId(9106),
+            TurnId(9206),
+            AppPlatform::Desktop,
+            OsVoiceTrigger::Explicit,
+            sample_voice_id_request(MonotonicTimeNs(3), actor_user_id.clone()),
+            actor_user_id,
+            Some("tenant_1".to_string()),
+            Some(device_id),
+            Vec::new(),
+            no_observation(),
+        )
+        .unwrap();
+        let outcome = runtime.run_voice_turn(&mut store, request).unwrap();
+        let OsVoiceLiveTurnOutcome::Forwarded(forwarded) = outcome else {
+            panic!("expected forwarded outcome");
+        };
+
+        let x_build = AppVoicePh1xBuildInput {
+            now: MonotonicTimeNs(4),
+            thread_key: None,
+            thread_state: ThreadState::empty_v1(),
+            session_state: SessionState::Active,
+            policy_context_ref: PolicyContextRef::v1(false, false, SafetyTier::Standard),
+            memory_candidates: vec![],
+            confirm_answer: None,
+            nlp_output: Some(Ph1nResponse::Chat(
+                Chat::v1("Hello.".to_string(), ReasonCodeId(1)).unwrap(),
+            )),
+            tool_response: None,
+            interruption: None,
+            locale: None,
+            last_failure_reason_code: None,
+        };
+
+        let ph1x_request = runtime
+            .build_ph1x_request_for_forwarded_voice(
+                &mut store,
+                ForwardedVoicePh1xRequestInput {
+                    correlation_id: CorrelationId(9106),
+                    turn_id: TurnId(9206),
+                    app_platform: AppPlatform::Desktop,
+                    forwarded: &forwarded,
+                    request_session_id: None,
+                    tenant_id: Some("tenant_1"),
+                    x_build,
+                },
+            )
+            .unwrap();
+        let packet = runtime
+            .debug_last_agent_input_packet()
+            .expect("agent packet should be captured");
+        let envelope = packet
+            .runtime_execution_envelope
+            .expect("agent packet should carry runtime execution envelope");
+        assert_eq!(
+            envelope
+                .clone()
+                .with_memory_state(None)
+                .expect("packet runtime envelope should allow memory-state reset"),
+            forwarded.runtime_execution_envelope
+        );
+        assert!(envelope.identity_state.is_some());
+        assert_eq!(
+            ph1x_request.identity_prompt_scope_key,
+            forwarded.identity_prompt_scope_key
+        );
+        assert_eq!(
+            forwarded.top_level_bundle.runtime_execution_envelope,
+            Some(forwarded.runtime_execution_envelope.clone())
+        );
+    }
+
+    #[test]
     fn run5_voice_builder_skips_ph1m_and_ignores_external_memory_when_identity_not_confirmed() {
         let runtime = AppServerIngressRuntime::default();
         let actor_user_id = UserId::new("tenant_1:run5_unknown_user").unwrap();
@@ -8777,6 +8856,7 @@ mod tests {
         };
         let confirmed_assertion = confirmed_voice_assertion(actor_user_id);
         forwarded.voice_identity_assertion = confirmed_assertion.clone();
+        recanonicalize_forwarded_bundle_for_tests(&mut forwarded);
 
         runtime
             .executor
@@ -8884,6 +8964,7 @@ mod tests {
             panic!("expected forwarded voice turn");
         };
         forwarded.voice_identity_assertion = confirmed_voice_assertion(actor_user_id);
+        recanonicalize_forwarded_bundle_for_tests(&mut forwarded);
 
         let x_build = AppVoicePh1xBuildInput {
             now: MonotonicTimeNs(7),
@@ -8962,6 +9043,7 @@ mod tests {
             panic!("expected forwarded voice turn");
         };
         forwarded.voice_identity_assertion = confirmed_voice_assertion(actor_user_id);
+        recanonicalize_forwarded_bundle_for_tests(&mut forwarded);
 
         let x_build = AppVoicePh1xBuildInput {
             now: MonotonicTimeNs(7),
@@ -9027,6 +9109,7 @@ mod tests {
         };
         let confirmed_assertion = confirmed_voice_assertion(actor_user_id.clone());
         forwarded.voice_identity_assertion = confirmed_assertion.clone();
+        recanonicalize_forwarded_bundle_for_tests(&mut forwarded);
         runtime
             .executor
             .debug_seed_memory_candidate_for_tests(
@@ -9119,6 +9202,7 @@ mod tests {
             panic!("expected forwarded voice turn");
         };
         forwarded.voice_identity_assertion = reauth_required_voice_assertion(actor_user_id);
+        recanonicalize_forwarded_bundle_for_tests(&mut forwarded);
 
         let x_build = AppVoicePh1xBuildInput {
             now: MonotonicTimeNs(7),
@@ -9199,6 +9283,7 @@ mod tests {
             panic!("expected forwarded voice turn");
         };
         forwarded.voice_identity_assertion = device_claim_required_voice_assertion(actor_user_id);
+        recanonicalize_forwarded_bundle_for_tests(&mut forwarded);
 
         let x_build = AppVoicePh1xBuildInput {
             now: MonotonicTimeNs(7),
@@ -9285,6 +9370,7 @@ mod tests {
             panic!("expected forwarded voice turn");
         };
         forwarded.voice_identity_assertion = profile_not_enrolled_voice_assertion(actor_user_id);
+        recanonicalize_forwarded_bundle_for_tests(&mut forwarded);
 
         let x_build = AppVoicePh1xBuildInput {
             now: MonotonicTimeNs(7),
@@ -9383,6 +9469,7 @@ mod tests {
             .runtime_execution_envelope
             .with_governance_state(Some(governance_state))
             .unwrap();
+        recanonicalize_forwarded_bundle_for_tests(&mut forwarded);
 
         let x_build = AppVoicePh1xBuildInput {
             now: MonotonicTimeNs(7),
@@ -9475,6 +9562,7 @@ mod tests {
             panic!("expected forwarded voice turn");
         };
         forwarded.voice_identity_assertion = low_confidence_voice_assertion(actor_user_id);
+        recanonicalize_forwarded_bundle_for_tests(&mut forwarded);
 
         let x_build = AppVoicePh1xBuildInput {
             now: MonotonicTimeNs(7),
@@ -9560,6 +9648,7 @@ mod tests {
             panic!("expected forwarded voice turn");
         };
         forwarded.voice_identity_assertion = gray_zone_margin_voice_assertion(actor_user_id);
+        recanonicalize_forwarded_bundle_for_tests(&mut forwarded);
 
         let x_build = AppVoicePh1xBuildInput {
             now: MonotonicTimeNs(7),
@@ -9647,6 +9736,7 @@ mod tests {
             panic!("expected forwarded voice turn");
         };
         forwarded.voice_identity_assertion = echo_unsafe_voice_assertion();
+        recanonicalize_forwarded_bundle_for_tests(&mut forwarded);
 
         let x_build = AppVoicePh1xBuildInput {
             now: MonotonicTimeNs(7),
@@ -9732,6 +9822,7 @@ mod tests {
             panic!("expected forwarded voice turn");
         };
         forwarded.voice_identity_assertion = no_speech_voice_assertion();
+        recanonicalize_forwarded_bundle_for_tests(&mut forwarded);
 
         let x_build = AppVoicePh1xBuildInput {
             now: MonotonicTimeNs(7),
@@ -9817,6 +9908,7 @@ mod tests {
             panic!("expected forwarded voice turn");
         };
         forwarded.voice_identity_assertion = multi_speaker_voice_assertion();
+        recanonicalize_forwarded_bundle_for_tests(&mut forwarded);
 
         let x_build = AppVoicePh1xBuildInput {
             now: MonotonicTimeNs(7),
@@ -9904,6 +9996,7 @@ mod tests {
             panic!("expected forwarded voice turn");
         };
         forwarded.voice_identity_assertion = spoof_risk_voice_assertion(actor_user_id);
+        recanonicalize_forwarded_bundle_for_tests(&mut forwarded);
 
         let x_build = AppVoicePh1xBuildInput {
             now: MonotonicTimeNs(7),
@@ -9980,6 +10073,7 @@ mod tests {
         };
         let confirmed_assertion = confirmed_voice_assertion(actor_user_id.clone());
         forwarded.voice_identity_assertion = confirmed_assertion.clone();
+        recanonicalize_forwarded_bundle_for_tests(&mut forwarded);
         runtime
             .executor
             .debug_seed_memory_candidate_for_tests(
@@ -10081,13 +10175,15 @@ mod tests {
             &forwarded.voice_identity_assertion,
         )
         .expect("canonical runtime governance helper must attach identity state");
-        forwarded.runtime_execution_envelope = expected_envelope.clone();
-        let forwarded_runtime_execution_envelope =
-            canonical_governed_voice_runtime_execution_envelope(&forwarded)
-                .expect("forwarded runtime envelope should preserve canonical identity state");
+        recanonicalize_forwarded_bundle_for_tests(&mut forwarded);
+        let forwarded_runtime_execution_envelope = forwarded.runtime_execution_envelope.clone();
         assert!(
             forwarded_runtime_execution_envelope.identity_state.is_some(),
             "forwarded runtime envelope must now carry canonical identity state before packet build"
+        );
+        assert_eq!(
+            forwarded.top_level_bundle.runtime_execution_envelope,
+            Some(expected_envelope.clone())
         );
 
         let x_build = AppVoicePh1xBuildInput {
