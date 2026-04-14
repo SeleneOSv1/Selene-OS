@@ -6491,7 +6491,7 @@ fn build_ph1x_request_from_agent_input_packet(
 fn canonical_agent_packet_voice_identity_assertion(
     packet: &AgentInputPacket,
 ) -> Result<&Ph1VoiceIdResponse, StorageError> {
-    packet
+    let canonical_voice_identity_assertion = packet
         .runtime_execution_envelope
         .as_ref()
         .and_then(|runtime_execution_envelope| {
@@ -6502,7 +6502,16 @@ fn canonical_agent_packet_voice_identity_assertion(
                 field: "agent_input_packet.runtime_execution_envelope.voice_identity_assertion",
                 reason: "must carry canonical embedded voice identity assertion for ph1x request",
             },
-        ))
+        ))?;
+    if packet.voice_identity_assertion != *canonical_voice_identity_assertion {
+        return Err(StorageError::ContractViolation(
+            ContractViolation::InvalidValue {
+                field: "agent_input_packet.voice_identity_assertion",
+                reason: "must match canonical embedded voice identity assertion for ph1x request",
+            },
+        ));
+    }
+    Ok(canonical_voice_identity_assertion)
 }
 
 fn transcript_text_from_nlp_output(nlp_output: Option<&Ph1nResponse>) -> Option<String> {
@@ -8982,7 +8991,7 @@ mod tests {
             locale: None,
             last_failure_reason_code: None,
         };
-        let mut packet = runtime
+        let packet = runtime
             .build_agent_input_packet_for_forwarded_voice(
                 &mut store,
                 CorrelationId(9108),
@@ -9002,11 +9011,14 @@ mod tests {
             .expect(
                 "packet runtime execution envelope should carry canonical voice identity assertion",
             );
-        packet.voice_identity_assertion = reauth_required_voice_assertion(actor_user_id.clone());
 
         let ph1x_request =
             build_ph1x_request_from_agent_input_packet(AppPlatform::Desktop, &packet)
                 .expect("ph1x request should use canonical embedded voice identity assertion");
+        assert_eq!(
+            packet.voice_identity_assertion,
+            canonical_voice_identity_assertion
+        );
         assert_eq!(
             ph1x_request.identity_context,
             IdentityContext::Voice(canonical_voice_identity_assertion.clone())
@@ -9099,6 +9111,80 @@ mod tests {
                 assert_eq!(
                     reason,
                     "must carry canonical embedded voice identity assertion for ph1x request"
+                );
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn at_ingress_04i_ph1x_request_build_fails_closed_when_packet_voice_identity_assertion_diverges_from_embedded_canonical_assertion(
+    ) {
+        let runtime = AppServerIngressRuntime::default();
+        let actor_user_id = UserId::new("tenant_1:ingress_pkt_assertion_align_fail_user").unwrap();
+        let device_id = DeviceId::new("ingress_pkt_assertion_align_fail_device_1").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &actor_user_id, &device_id);
+
+        let request = AppVoiceIngressRequest::v1(
+            CorrelationId(9112),
+            TurnId(9212),
+            AppPlatform::Desktop,
+            OsVoiceTrigger::Explicit,
+            sample_voice_id_request(MonotonicTimeNs(3), actor_user_id.clone()),
+            actor_user_id.clone(),
+            Some("tenant_1".to_string()),
+            Some(device_id),
+            Vec::new(),
+            no_observation(),
+        )
+        .unwrap();
+        let outcome = runtime.run_voice_turn(&mut store, request).unwrap();
+        let OsVoiceLiveTurnOutcome::Forwarded(mut forwarded) = outcome else {
+            panic!("expected forwarded outcome");
+        };
+        forwarded.voice_identity_assertion = confirmed_voice_assertion(actor_user_id.clone());
+        recanonicalize_forwarded_bundle_for_tests(&mut forwarded);
+
+        let x_build = AppVoicePh1xBuildInput {
+            now: MonotonicTimeNs(4),
+            thread_key: None,
+            thread_state: ThreadState::empty_v1(),
+            session_state: SessionState::Active,
+            policy_context_ref: PolicyContextRef::v1(false, false, SafetyTier::Standard),
+            memory_candidates: vec![],
+            confirm_answer: None,
+            nlp_output: Some(Ph1nResponse::Chat(
+                Chat::v1("Hello.".to_string(), ReasonCodeId(1)).unwrap(),
+            )),
+            tool_response: None,
+            interruption: None,
+            locale: None,
+            last_failure_reason_code: None,
+        };
+        let mut packet = runtime
+            .build_agent_input_packet_for_forwarded_voice(
+                &mut store,
+                CorrelationId(9112),
+                TurnId(9212),
+                &forwarded,
+                None,
+                Some("tenant_1"),
+                x_build,
+            )
+            .unwrap();
+        packet.voice_identity_assertion = reauth_required_voice_assertion(actor_user_id);
+
+        let err = build_ph1x_request_from_agent_input_packet(AppPlatform::Desktop, &packet)
+            .expect_err(
+                "ph1x request build must fail closed when packet voice identity assertion diverges from canonical embedded assertion",
+            );
+        match err {
+            StorageError::ContractViolation(ContractViolation::InvalidValue { field, reason }) => {
+                assert_eq!(field, "agent_input_packet.voice_identity_assertion");
+                assert_eq!(
+                    reason,
+                    "must match canonical embedded voice identity assertion for ph1x request"
                 );
             }
             other => panic!("unexpected error: {other:?}"),
