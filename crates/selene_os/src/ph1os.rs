@@ -68,7 +68,9 @@ use crate::ph1learn::{
 use crate::ph1n::{Ph1nEngine, Ph1nWiring, Ph1nWiringOutcome};
 use crate::ph1pae::{map_pae_bundle_to_promotion_decision, PaeForwardBundle, PaeTurnInput};
 use crate::ph1vision::VisionForwardBundle;
-use crate::runtime_governance::RuntimeGovernanceRuntime;
+use crate::runtime_governance::{
+    attach_identity_state_for_governed_voice_turn, RuntimeGovernanceRuntime,
+};
 use crate::runtime_law::{RuntimeLawDecision, RuntimeLawRuntime};
 
 pub mod reason_codes {
@@ -735,6 +737,19 @@ fn fallback_runtime_execution_envelope_for_os_voice_turn(
         AdmissionState::ExecutionAdmitted,
         None,
     )
+}
+
+fn governed_voice_identity_state_attachment_available(
+    runtime_execution_envelope: &RuntimeExecutionEnvelope,
+) -> bool {
+    runtime_execution_envelope.session_id.is_some()
+        && runtime_execution_envelope.admission_state == AdmissionState::ExecutionAdmitted
+        && runtime_execution_envelope.device_turn_sequence.is_some()
+        && runtime_execution_envelope
+            .governance_state
+            .as_ref()
+            .and_then(|state| state.decision_log_ref.as_ref())
+            .is_some()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1589,6 +1604,16 @@ where
             .runtime_execution_envelope
             .with_voice_identity_assertion(Some(voice_identity_assertion.clone()))
             .map_err(StorageError::ContractViolation)?;
+        let runtime_execution_envelope =
+            if governed_voice_identity_state_attachment_available(&runtime_execution_envelope) {
+                attach_identity_state_for_governed_voice_turn(
+                    &runtime_execution_envelope,
+                    &voice_identity_assertion,
+                )
+                .map_err(StorageError::ContractViolation)?
+            } else {
+                runtime_execution_envelope
+            };
         self.run_device_artifact_sync_worker_pass(store, now, correlation_id, turn_id)?;
 
         Ok(OsVoiceLiveTurnOutcome::Forwarded(Box::new(
@@ -3355,6 +3380,7 @@ mod tests {
     use crate::ph1doc::DocForwardBundle;
     use crate::ph1j::Ph1jRuntime;
     use crate::ph1vision::VisionForwardBundle;
+    use crate::runtime_governance::attach_identity_state_for_governed_voice_turn;
     use crate::runtime_law::RuntimeLawRuntime;
     use selene_engines::ph1_voice_id::VoiceIdObservation as EngineVoiceIdObservation;
     use selene_engines::ph1d::{Ph1dProviderAdapter, Ph1dProviderAdapterError};
@@ -4499,6 +4525,24 @@ mod tests {
             Some(&device_id),
             voice_context_ios_explicit().expect("voice context must exist for voice path"),
         );
+        let top_level_turn_input = OsTopLevelTurnInput::v1(
+            CorrelationId(7801),
+            TurnId(8801),
+            OsTopLevelTurnPath::Voice,
+            voice_context_ios_explicit(),
+            always_on_voice_sequence_explicit(),
+            vec![],
+            1,
+            base_input(),
+        )
+        .unwrap();
+        let governed_runtime_execution_envelope = RuntimeGovernanceRuntime::default()
+            .govern_voice_turn_execution(&runtime_envelope_for_voice_context(
+                &actor_user_id,
+                &device_id,
+                voice_context_ios_explicit().expect("voice context must exist for voice path"),
+            ))
+            .expect("governed PH1.OS carrier must accept the canonical voice envelope");
         let mut store = Ph1fStore::new_in_memory();
         store
             .insert_identity(IdentityRecord::v1(
@@ -4522,18 +4566,9 @@ mod tests {
             )
             .unwrap();
 
-        let input = OsVoiceLiveTurnInput::v1(
-            OsTopLevelTurnInput::v1(
-                CorrelationId(7801),
-                TurnId(8801),
-                OsTopLevelTurnPath::Voice,
-                voice_context_ios_explicit(),
-                always_on_voice_sequence_explicit(),
-                vec![],
-                1,
-                base_input(),
-            )
-            .unwrap(),
+        let input = OsVoiceLiveTurnInput::v1_with_runtime_execution_envelope(
+            top_level_turn_input,
+            governed_runtime_execution_envelope,
             sample_live_voice_id_request(MonotonicTimeNs(3)),
             actor_user_id,
             Some("tenant_1".to_string()),
@@ -4561,6 +4596,23 @@ mod tests {
         assert_eq!(
             forwarded.runtime_execution_envelope.voice_identity_assertion,
             Some(forwarded.voice_identity_assertion.clone())
+        );
+        let expected_envelope = attach_identity_state_for_governed_voice_turn(
+            &forwarded
+                .runtime_execution_envelope
+                .clone()
+                .with_identity_state(None)
+                .expect("runtime execution envelope should allow identity-state reset for comparison"),
+            &forwarded.voice_identity_assertion,
+        )
+        .expect("canonical runtime governance helper must attach identity state");
+        assert!(
+            forwarded.runtime_execution_envelope.identity_state.is_some(),
+            "PH1.OS forwarded envelope must now carry canonical identity_state"
+        );
+        assert_eq!(
+            forwarded.runtime_execution_envelope.identity_state,
+            expected_envelope.identity_state
         );
         assert_eq!(
             forwarded.identity_prompt_scope_key,

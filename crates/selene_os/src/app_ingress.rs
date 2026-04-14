@@ -3901,11 +3901,8 @@ impl AppServerIngressRuntime {
         x_build: AppVoicePh1xBuildInput,
     ) -> Result<AgentInputPacket, StorageError> {
         *self.agent_input_packet_build_count.borrow_mut() += 1;
-        let runtime_execution_envelope = attach_identity_state_for_governed_voice_turn(
-            &forwarded.runtime_execution_envelope,
-            &forwarded.voice_identity_assertion,
-        )
-        .map_err(StorageError::ContractViolation)?;
+        let runtime_execution_envelope =
+            canonical_governed_voice_runtime_execution_envelope(forwarded)?;
         let identity_state = runtime_execution_envelope
             .identity_state
             .clone()
@@ -4393,11 +4390,7 @@ fn runtime_execution_envelope_with_identity_state_for_voice_outcome(
     let OsVoiceLiveTurnOutcome::Forwarded(forwarded) = outcome else {
         return Ok(runtime_execution_envelope.clone());
     };
-    attach_identity_state_for_governed_voice_turn(
-        &forwarded.runtime_execution_envelope,
-        &forwarded.voice_identity_assertion,
-    )
-    .map_err(StorageError::ContractViolation)
+    canonical_governed_voice_runtime_execution_envelope(forwarded)
 }
 
 fn identity_state_allows_memory_scope(identity_state: &IdentityExecutionState) -> bool {
@@ -4427,6 +4420,20 @@ fn memory_governance_blocked(runtime_execution_envelope: &RuntimeExecutionEnvelo
                 || governance_quarantines_subsystem(state, GOVERNED_SUBSYSTEM_AUTHORITY_LAYER)
         })
         .unwrap_or(false)
+}
+
+fn canonical_governed_voice_runtime_execution_envelope(
+    forwarded: &crate::ph1os::OsVoiceLiveForwardBundle,
+) -> Result<RuntimeExecutionEnvelope, StorageError> {
+    if forwarded.runtime_execution_envelope.identity_state.is_some() {
+        Ok(forwarded.runtime_execution_envelope.clone())
+    } else {
+        attach_identity_state_for_governed_voice_turn(
+            &forwarded.runtime_execution_envelope,
+            &forwarded.voice_identity_assertion,
+        )
+        .map_err(StorageError::ContractViolation)
+    }
 }
 
 fn memory_consistency_level_from_envelope(
@@ -10013,10 +10020,21 @@ mod tests {
         forwarded.voice_identity_assertion = reauth_required_voice_assertion(actor_user_id);
 
         let expected_envelope = attach_identity_state_for_governed_voice_turn(
-            &forwarded.runtime_execution_envelope,
+            &forwarded
+                .runtime_execution_envelope
+                .with_identity_state(None)
+                .expect("forwarded runtime envelope should allow identity-state reset before canonical recompute"),
             &forwarded.voice_identity_assertion,
         )
         .expect("canonical runtime governance helper must attach identity state");
+        forwarded.runtime_execution_envelope = expected_envelope.clone();
+        let forwarded_runtime_execution_envelope =
+            canonical_governed_voice_runtime_execution_envelope(&forwarded)
+                .expect("forwarded runtime envelope should preserve canonical identity state");
+        assert!(
+            forwarded_runtime_execution_envelope.identity_state.is_some(),
+            "forwarded runtime envelope must now carry canonical identity state before packet build"
+        );
 
         let x_build = AppVoicePh1xBuildInput {
             now: MonotonicTimeNs(7),
@@ -10053,6 +10071,10 @@ mod tests {
         let envelope = packet
             .runtime_execution_envelope
             .expect("agent packet should carry runtime execution envelope");
+        assert_eq!(
+            forwarded_runtime_execution_envelope.identity_state,
+            expected_envelope.identity_state
+        );
         assert_eq!(envelope.identity_state, expected_envelope.identity_state);
         let identity_state = envelope
             .identity_state
