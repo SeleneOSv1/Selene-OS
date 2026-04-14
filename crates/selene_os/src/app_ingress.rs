@@ -5332,6 +5332,29 @@ fn require_canonical_recovery_candidate_user_carriage(
     }
 }
 
+fn require_canonical_recovery_candidate_actor_binding(
+    actor_identity: &UserId,
+    voice_identity_assertion: &SpeakerAssertionUnknown,
+    recovery_reason_code: ReasonCodeId,
+) -> Result<(), StorageError> {
+    let candidate_must_match_actor = recovery_reason_code == voice_id_reason_codes::VID_REAUTH_REQUIRED
+        || recovery_reason_code == voice_id_reason_codes::VID_DEVICE_CLAIM_REQUIRED;
+    if !candidate_must_match_actor
+        || voice_identity_assertion.candidate_user_id.as_ref() == Some(actor_identity)
+    {
+        Ok(())
+    } else {
+        Err(StorageError::ContractViolation(
+            ContractViolation::InvalidValue {
+                field:
+                    "app_voice_turn_execution_outcome.runtime_execution_envelope.voice_identity_assertion.candidate_user_id",
+                reason:
+                    "must match canonical actor identity for recovery fail-closed classification",
+            },
+        ))
+    }
+}
+
 fn require_canonical_recovery_device_owner_user_carriage(
     voice_identity_assertion: &SpeakerAssertionUnknown,
     recovery_reason_code: ReasonCodeId,
@@ -5543,6 +5566,11 @@ fn canonical_recovery_fail_closed_identity_state(
         unreachable!("canonical recovery helper must preserve Unknown voice assertions");
     };
     require_canonical_recovery_candidate_user_carriage(
+        unknown_voice_identity_assertion,
+        recovery_reason_code,
+    )?;
+    require_canonical_recovery_candidate_actor_binding(
+        &out.runtime_execution_envelope.actor_identity,
         unknown_voice_identity_assertion,
         recovery_reason_code,
     )?;
@@ -8950,6 +8978,46 @@ mod tests {
         }
     }
 
+    fn assert_recovery_finalization_requires_canonical_candidate_actor_binding(
+        runtime: &AppServerIngressRuntime,
+        store: &mut Ph1fStore,
+        mut pending: PendingProtectedResponseTurn,
+        divergent_candidate_user_id: UserId,
+    ) {
+        assert_ne!(
+            pending.out.runtime_execution_envelope.actor_identity,
+            divergent_candidate_user_id
+        );
+        let voice_identity_assertion = pending
+            .out
+            .runtime_execution_envelope
+            .voice_identity_assertion
+            .as_mut()
+            .expect("recovery voice identity assertion must remain attached");
+        let Ph1VoiceIdResponse::SpeakerAssertionUnknown(unknown) = voice_identity_assertion else {
+            panic!("recovery candidate-binding proof must keep the Unknown carrier family");
+        };
+        unknown.candidate_user_id = Some(divergent_candidate_user_id);
+
+        let err = finalize_pending_protected_response_turn(runtime, store, pending)
+            .expect_err("mismatched recovery candidate binding must fail closed");
+        match err {
+            StorageError::ContractViolation(ContractViolation::InvalidValue { field, reason }) => {
+                assert_eq!(
+                    field,
+                    "app_voice_turn_execution_outcome.runtime_execution_envelope.voice_identity_assertion.candidate_user_id"
+                );
+                assert_eq!(
+                    reason,
+                    "must match canonical actor identity for recovery fail-closed classification"
+                );
+            }
+            other => {
+                panic!("expected recovery candidate-binding contract violation, got {other:?}")
+            }
+        }
+    }
+
     fn assert_recovery_finalization_requires_canonical_device_claim_device_owner_carriage(
         runtime: &AppServerIngressRuntime,
         store: &mut Ph1fStore,
@@ -10574,7 +10642,10 @@ mod tests {
             unknown_voice_identity_assertion.spoof_liveness_status,
             SpoofLivenessStatus::Unknown
         );
-        assert!(unknown_voice_identity_assertion.candidate_user_id.is_some());
+        assert_eq!(
+            unknown_voice_identity_assertion.candidate_user_id.as_ref(),
+            Some(&envelope.actor_identity)
+        );
         assert!(unknown_voice_identity_assertion
             .device_owner_user_id
             .is_some());
@@ -11575,7 +11646,10 @@ mod tests {
             unknown_voice_identity_assertion.spoof_liveness_status,
             SpoofLivenessStatus::Unknown
         );
-        assert!(unknown_voice_identity_assertion.candidate_user_id.is_some());
+        assert_eq!(
+            unknown_voice_identity_assertion.candidate_user_id.as_ref(),
+            Some(&actor_user_id)
+        );
         assert!(unknown_voice_identity_assertion
             .device_owner_user_id
             .is_some());
@@ -12552,7 +12626,10 @@ mod tests {
         else {
             panic!("reauth proof must preserve the Unknown carrier family");
         };
-        assert!(unknown_voice_identity_assertion.candidate_user_id.is_some());
+        assert_eq!(
+            unknown_voice_identity_assertion.candidate_user_id.as_ref(),
+            Some(&out.runtime_execution_envelope.actor_identity)
+        );
         assert_eq!(
             unknown_voice_identity_assertion
                 .identity_v2
@@ -12865,7 +12942,10 @@ mod tests {
         else {
             panic!("device-claim recovery happy path must keep the Unknown carrier family");
         };
-        assert!(unknown_voice_identity_assertion.candidate_user_id.is_some());
+        assert_eq!(
+            unknown_voice_identity_assertion.candidate_user_id.as_ref(),
+            Some(&out.runtime_execution_envelope.actor_identity)
+        );
         assert_eq!(
             unknown_voice_identity_assertion
                 .identity_v2
@@ -13848,6 +13928,68 @@ mod tests {
             &mut store,
             pending,
             SpoofLivenessStatus::SuspectedSpoof,
+        );
+    }
+
+    #[test]
+    fn at_identity_recovery_34_reauth_required_protected_voice_turn_fails_closed_when_candidate_user_id_does_not_match_actor_identity_for_recovery_family(
+    ) {
+        let runtime = runtime_with_search_tool_fixtures();
+        let actor_user_id = UserId::new("tenant_1:recovery_reauth_bad_candidate_binding").unwrap();
+        let other_user_id =
+            UserId::new("tenant_1:recovery_reauth_bad_candidate_binding_other").unwrap();
+        let device_id = DeviceId::new("recovery_reauth_bad_candidate_binding_1").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &actor_user_id, &device_id);
+
+        let pending = prepare_protected_response_turn_with_identity_assertion(
+            &runtime,
+            &mut store,
+            actor_user_id.clone(),
+            device_id,
+            reauth_required_voice_assertion(actor_user_id),
+            CorrelationId(9892),
+            TurnId(9992),
+        );
+
+        assert_recovery_finalization_requires_canonical_candidate_actor_binding(
+            &runtime,
+            &mut store,
+            pending,
+            other_user_id,
+        );
+    }
+
+    #[test]
+    fn at_identity_recovery_35_device_claim_required_protected_voice_turn_fails_closed_when_candidate_user_id_does_not_match_actor_identity_for_recovery_family(
+    ) {
+        let runtime = runtime_with_search_tool_fixtures();
+        let actor_user_id =
+            UserId::new("tenant_1:recovery_device_claim_bad_candidate_binding").unwrap();
+        let other_user_id =
+            UserId::new("tenant_1:recovery_device_claim_bad_candidate_binding_other").unwrap();
+        let owner_user_id =
+            UserId::new("tenant_1:recovery_device_claim_bad_candidate_binding_owner").unwrap();
+        let device_id = DeviceId::new("recovery_device_claim_bad_candidate_binding_1").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &actor_user_id, &device_id);
+
+        let pending = prepare_protected_response_turn_with_request_owner_and_identity_assertion(
+            &runtime,
+            &mut store,
+            actor_user_id.clone(),
+            owner_user_id.clone(),
+            device_id,
+            device_claim_required_voice_assertion(actor_user_id, owner_user_id),
+            CorrelationId(9893),
+            TurnId(9993),
+        );
+
+        assert_recovery_finalization_requires_canonical_candidate_actor_binding(
+            &runtime,
+            &mut store,
+            pending,
+            other_user_id,
         );
     }
 
