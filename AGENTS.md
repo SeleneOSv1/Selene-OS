@@ -28,6 +28,10 @@ Execution law must optimize for shipping working product quickly without lowerin
 
 Default operating rule:
 - implementation-first is the default
+- in this workflow, `build` always means `implementation run`
+- `next build` means `next implementation`
+- docs-only reconciliation is not a build unless JD explicitly says to do docs-only work
+- publication-only work is not a build unless JD explicitly says to do publication-only work
 - docs-only runs are exception-mode, not default
 - Codex must prefer the next smallest safe code-changing build when a safe implementation seam exists
 - Codex must not create publication-only, frontier-only, or boundary-restatement runs unless JD explicitly asks for docs-only work
@@ -48,11 +52,18 @@ Docs-only exception rule:
 - docs-only work requires explicit JD request
 - publication-only work requires explicit JD request
 - if JD does not explicitly request docs-only execution, Codex must assume the intended outcome is code progress
+- if JD asks for the next build, Codex must not answer with docs-only or publication-only work
+- master-doc drift alone is never enough to select the next build
 
 Build selection rule:
 - for self-authored next-build instructions, Codex must default to an implementation build
+- every self-authored build instruction must treat `build` as `implementation`
+- every self-authored next-build instruction must declare or assume `Build Class: IMPLEMENTATION`
 - the selected build must name the exact behavior to change, the exact files expected to change, and the exact tests that will prove the change
+- Codex must not answer a `next build` request with a docs-first, docs-only, publication-only, frontier-only, or authority-catch-up-only run
 - Codex must not author a docs-only next build when a smaller safe implementation build is available
+- Codex must not author a docs-only next build while any safe in-scope implementation slice remains
+- if no safe implementation slice is exposed by current repo truth, Codex must stop and report `no lawful implementation build exposed by current repo truth` instead of substituting docs work
 
 Anti-ceremony rule:
 - do not split one real implementation outcome into multiple paperwork-only runs
@@ -62,6 +73,20 @@ Anti-ceremony rule:
 Quality floor:
 - Solo Shipping Mode does not relax determinism, contract safety, idempotency, auditability, file-scope approval, or test proof requirements
 - speed is gained by removing ceremony, not by skipping engineering discipline
+
+Docs tail rule:
+- default is no doc change
+- docs may be updated only as a minimal tail on the same implementation run
+- docs may be touched only when the implementation materially narrows current repo truth and the wording can be updated without overclaiming
+- if JD does not explicitly ask for docs reconciliation, Codex must never select docs work as the main output of a build
+
+Next-build stop rule:
+- if the candidate next run is docs-only, publication-only, or master-doc reconciliation-only, it is not a lawful answer to `next build`
+- if code truth is ahead of docs and a safe implementation slice still exists, Codex must select the implementation slice and defer docs drift
+- if no safe implementation slice remains, Codex must report that directly and must not convert the absence of a code winner into a docs-selection default
+- if a candidate implementation slice depends on overturning a currently preserved contrast, preserved row meaning, or preserved semantic boundary, it is not a lawful automatic next build
+- guarded candidates may be written only as conditional options, not as the default next build, unless current repo truth already exposes them as safe without overturning preserved truth
+- if the only remaining candidate is guarded by a possible contradiction with currently preserved truth, Codex must stop and report `no lawful implementation build exposed by current repo truth`
 
 ## Mandatory First-Read Files for Major Work
 Before any architecture work, design work, or code-editing run, Codex must read:
