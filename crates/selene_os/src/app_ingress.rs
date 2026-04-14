@@ -3907,16 +3907,22 @@ impl AppServerIngressRuntime {
         *self.agent_input_packet_build_count.borrow_mut() += 1;
         let runtime_execution_envelope = forwarded.runtime_execution_envelope.clone();
         let voice_identity_assertion =
-            canonical_forwarded_voice_identity_assertion(&runtime_execution_envelope).clone();
+            canonical_forwarded_voice_identity_assertion(&runtime_execution_envelope)?.clone();
         let identity_state = runtime_execution_envelope
             .identity_state
             .clone()
-            .expect("live forwarded runtime envelope must already carry canonical identity state");
+            .ok_or_else(|| {
+                StorageError::ContractViolation(ContractViolation::InvalidValue {
+                    field: "os_voice_live_forward_bundle.runtime_execution_envelope.identity_state",
+                    reason:
+                        "must carry canonical embedded identity state for forwarded packet build",
+                })
+            })?;
         let topic_hint = memory_topic_hint_from_nlp_output(x_build.nlp_output.as_ref());
         let runtime_memory_candidates = if memory_governance_blocked(&runtime_execution_envelope) {
             Vec::new()
         } else if identity_state_allows_memory_scope(&identity_state)
-            && canonical_forwarded_voice_identity_confirmed(&runtime_execution_envelope)
+            && canonical_forwarded_voice_identity_confirmed(&runtime_execution_envelope)?
         {
             self.executor
                 .collect_context_memory_candidates_for_voice_turn(
@@ -4041,23 +4047,28 @@ fn app_voice_turn_execution_outcome_from_voice_only(
 
 fn canonical_forwarded_voice_identity_assertion(
     runtime_execution_envelope: &RuntimeExecutionEnvelope,
-) -> &Ph1VoiceIdResponse {
+) -> Result<&Ph1VoiceIdResponse, StorageError> {
     runtime_execution_envelope
         .voice_identity_assertion
         .as_ref()
-        .expect(
-            "live forwarded runtime envelope must already carry canonical voice identity assertion",
-        )
+        .ok_or_else(|| {
+            StorageError::ContractViolation(ContractViolation::InvalidValue {
+                field:
+                    "os_voice_live_forward_bundle.runtime_execution_envelope.voice_identity_assertion",
+                reason:
+                    "must carry canonical embedded voice identity assertion for forwarded packet build",
+            })
+        })
 }
 
 fn canonical_forwarded_voice_identity_confirmed(
     runtime_execution_envelope: &RuntimeExecutionEnvelope,
-) -> bool {
-    matches!(
-        canonical_forwarded_voice_identity_assertion(runtime_execution_envelope),
+) -> Result<bool, StorageError> {
+    Ok(matches!(
+        canonical_forwarded_voice_identity_assertion(runtime_execution_envelope)?,
         Ph1VoiceIdResponse::SpeakerAssertionOk(ok)
             if ok.identity_v2.identity_tier_v2 == IdentityTierV2::Confirmed
-    )
+    ))
 }
 
 fn runtime_governance_storage_error(
@@ -8751,6 +8762,10 @@ mod tests {
         let canonical_voice_identity_assertion = envelope.voice_identity_assertion.clone().expect(
             "agent packet runtime envelope should carry canonical voice identity assertion",
         );
+        assert!(
+            envelope.identity_state.is_some(),
+            "agent packet runtime envelope should carry canonical identity state"
+        );
         assert_eq!(
             packet.voice_identity_assertion,
             canonical_voice_identity_assertion
@@ -8907,6 +8922,10 @@ mod tests {
             .expect("agent packet should carry runtime execution envelope");
         let canonical_voice_identity_assertion = envelope.voice_identity_assertion.clone().expect(
             "agent packet runtime envelope should carry canonical voice identity assertion",
+        );
+        assert!(
+            envelope.identity_state.is_some(),
+            "agent packet runtime envelope should carry canonical identity state"
         );
         assert_eq!(
             packet.voice_identity_assertion,
@@ -9080,6 +9099,171 @@ mod tests {
                 assert_eq!(
                     reason,
                     "must carry canonical embedded voice identity assertion for ph1x request"
+                );
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn at_ingress_04g_packet_builder_fails_closed_when_forwarded_bundle_lacks_embedded_canonical_voice_identity_assertion(
+    ) {
+        let runtime = AppServerIngressRuntime::default();
+        let actor_user_id =
+            UserId::new("tenant_1:forwarded_packet_assertion_fail_closed_user").unwrap();
+        let device_id = DeviceId::new("forwarded_packet_assertion_fail_closed_device_1").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &actor_user_id, &device_id);
+
+        let request = AppVoiceIngressRequest::v1(
+            CorrelationId(9110),
+            TurnId(9210),
+            AppPlatform::Desktop,
+            OsVoiceTrigger::Explicit,
+            sample_voice_id_request(MonotonicTimeNs(3), actor_user_id.clone()),
+            actor_user_id.clone(),
+            Some("tenant_1".to_string()),
+            Some(device_id),
+            Vec::new(),
+            no_observation(),
+        )
+        .unwrap();
+        let outcome = runtime.run_voice_turn(&mut store, request).unwrap();
+        let OsVoiceLiveTurnOutcome::Forwarded(mut forwarded) = outcome else {
+            panic!("expected forwarded outcome");
+        };
+        forwarded.voice_identity_assertion = confirmed_voice_assertion(actor_user_id.clone());
+        recanonicalize_forwarded_bundle_for_tests(&mut forwarded);
+        forwarded.runtime_execution_envelope = forwarded
+            .runtime_execution_envelope
+            .with_voice_identity_assertion(None)
+            .expect(
+                "forwarded runtime envelope should allow clearing embedded canonical voice identity assertion",
+            );
+        forwarded.top_level_bundle.runtime_execution_envelope =
+            Some(forwarded.runtime_execution_envelope.clone());
+
+        let x_build = AppVoicePh1xBuildInput {
+            now: MonotonicTimeNs(4),
+            thread_key: None,
+            thread_state: ThreadState::empty_v1(),
+            session_state: SessionState::Active,
+            policy_context_ref: PolicyContextRef::v1(false, false, SafetyTier::Standard),
+            memory_candidates: vec![],
+            confirm_answer: None,
+            nlp_output: Some(Ph1nResponse::Chat(
+                Chat::v1("Hello.".to_string(), ReasonCodeId(1)).unwrap(),
+            )),
+            tool_response: None,
+            interruption: None,
+            locale: None,
+            last_failure_reason_code: None,
+        };
+
+        let err = runtime
+            .build_agent_input_packet_for_forwarded_voice(
+                &mut store,
+                CorrelationId(9110),
+                TurnId(9210),
+                &forwarded,
+                None,
+                Some("tenant_1"),
+                x_build,
+            )
+            .expect_err(
+                "forwarded packet build must fail closed when embedded canonical voice identity assertion is missing",
+            );
+        match err {
+            StorageError::ContractViolation(ContractViolation::InvalidValue { field, reason }) => {
+                assert_eq!(
+                    field,
+                    "os_voice_live_forward_bundle.runtime_execution_envelope.voice_identity_assertion"
+                );
+                assert_eq!(
+                    reason,
+                    "must carry canonical embedded voice identity assertion for forwarded packet build"
+                );
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn at_ingress_04h_packet_builder_fails_closed_when_forwarded_bundle_lacks_embedded_canonical_identity_state(
+    ) {
+        let runtime = AppServerIngressRuntime::default();
+        let actor_user_id = UserId::new("tenant_1:fwd_pkt_idstate_fail_user").unwrap();
+        let device_id = DeviceId::new("fwd_pkt_idstate_fail_device_1").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &actor_user_id, &device_id);
+
+        let request = AppVoiceIngressRequest::v1(
+            CorrelationId(9111),
+            TurnId(9211),
+            AppPlatform::Desktop,
+            OsVoiceTrigger::Explicit,
+            sample_voice_id_request(MonotonicTimeNs(3), actor_user_id.clone()),
+            actor_user_id.clone(),
+            Some("tenant_1".to_string()),
+            Some(device_id),
+            Vec::new(),
+            no_observation(),
+        )
+        .unwrap();
+        let outcome = runtime.run_voice_turn(&mut store, request).unwrap();
+        let OsVoiceLiveTurnOutcome::Forwarded(mut forwarded) = outcome else {
+            panic!("expected forwarded outcome");
+        };
+        forwarded.voice_identity_assertion = confirmed_voice_assertion(actor_user_id);
+        recanonicalize_forwarded_bundle_for_tests(&mut forwarded);
+        forwarded.runtime_execution_envelope = forwarded
+            .runtime_execution_envelope
+            .with_identity_state(None)
+            .expect(
+                "forwarded runtime envelope should allow clearing embedded canonical identity state",
+            );
+        forwarded.top_level_bundle.runtime_execution_envelope =
+            Some(forwarded.runtime_execution_envelope.clone());
+
+        let x_build = AppVoicePh1xBuildInput {
+            now: MonotonicTimeNs(4),
+            thread_key: None,
+            thread_state: ThreadState::empty_v1(),
+            session_state: SessionState::Active,
+            policy_context_ref: PolicyContextRef::v1(false, false, SafetyTier::Standard),
+            memory_candidates: vec![],
+            confirm_answer: None,
+            nlp_output: Some(Ph1nResponse::Chat(
+                Chat::v1("Hello.".to_string(), ReasonCodeId(1)).unwrap(),
+            )),
+            tool_response: None,
+            interruption: None,
+            locale: None,
+            last_failure_reason_code: None,
+        };
+
+        let err = runtime
+            .build_agent_input_packet_for_forwarded_voice(
+                &mut store,
+                CorrelationId(9111),
+                TurnId(9211),
+                &forwarded,
+                None,
+                Some("tenant_1"),
+                x_build,
+            )
+            .expect_err(
+                "forwarded packet build must fail closed when embedded canonical identity state is missing",
+            );
+        match err {
+            StorageError::ContractViolation(ContractViolation::InvalidValue { field, reason }) => {
+                assert_eq!(
+                    field,
+                    "os_voice_live_forward_bundle.runtime_execution_envelope.identity_state"
+                );
+                assert_eq!(
+                    reason,
+                    "must carry canonical embedded identity state for forwarded packet build"
                 );
             }
             other => panic!("unexpected error: {other:?}"),
