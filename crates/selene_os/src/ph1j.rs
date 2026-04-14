@@ -437,6 +437,12 @@ pub fn proof_policy_version(
         .map(|state| state.governance_policy_version.clone())
 }
 
+fn proof_authority_reason_token(reason_code: Option<u64>) -> String {
+    reason_code
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "-".to_string())
+}
+
 pub fn proof_authority_decision_reference(
     runtime_execution_envelope: &RuntimeExecutionEnvelope,
 ) -> Option<String> {
@@ -462,7 +468,7 @@ pub fn proof_authority_decision_reference(
             state.identity_scope_required,
             state.identity_scope_satisfied,
             state.memory_scope_allowed,
-            state.reason_code.unwrap_or_default(),
+            proof_authority_reason_token(state.reason_code),
         )
     })
 }
@@ -501,11 +507,14 @@ mod tests {
         TrustPolicySnapshotRef, TrustSetSnapshotRef, VerificationBasisFingerprint,
     };
     use selene_kernel_contracts::ph1_voice_id::UserId;
+    use selene_kernel_contracts::ph1d::PolicyContextRef;
     use selene_kernel_contracts::ph1j::DeviceId;
     use selene_kernel_contracts::ph1l::SessionId;
     use selene_kernel_contracts::ph1link::AppPlatform;
     use selene_kernel_contracts::runtime_execution::{
-        AdmissionState, PlatformRuntimeContext, RuntimeExecutionEnvelope,
+        AdmissionState, AuthorityExecutionState, AuthorityPolicyDecision,
+        OnboardingReadinessState, PlatformRuntimeContext, RuntimeExecutionEnvelope,
+        SimulationCertificationState,
     };
     use selene_kernel_contracts::SessionState;
     use selene_storage::ph1f::{DeviceRecord, IdentityRecord, IdentityStatus, SessionRecord};
@@ -570,6 +579,26 @@ mod tests {
             None,
         )
         .unwrap()
+    }
+
+    fn sample_envelope_with_authority_reason(
+        reason_code: Option<u64>,
+    ) -> RuntimeExecutionEnvelope {
+        sample_envelope()
+            .with_authority_state(Some(
+                AuthorityExecutionState::v1(
+                    Some(PolicyContextRef::v1(false, false, SafetyTier::Standard)),
+                    SimulationCertificationState::CertifiedActive,
+                    OnboardingReadinessState::Ready,
+                    AuthorityPolicyDecision::Allowed,
+                    true,
+                    true,
+                    true,
+                    reason_code,
+                )
+                .expect("authority state must validate"),
+            ))
+            .expect("authority state must attach")
     }
 
     fn sample_artifact_trust_state() -> ArtifactTrustExecutionState {
@@ -777,6 +806,86 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn at_j_runtime_02a_authority_reference_serializes_absent_reason_as_dash() {
+        let runtime = Ph1jRuntime::default();
+        let mut store = store_with_identity_device_session();
+        let envelope = sample_envelope_with_authority_reason(None);
+
+        let receipt = runtime
+            .emit_protected_proof(
+                &mut store,
+                ProtectedProofWriteRequest::v1(
+                    envelope.clone(),
+                    ProofProtectedActionClass::VoiceTurnExecution,
+                    proof_authority_decision_reference(&envelope),
+                    vec!["RG-PROOF-002A".to_string()],
+                    Some("2026.03.08.v1".to_string()),
+                    None,
+                    None,
+                    Some("CERTIFIED_ACTIVE".to_string()),
+                    "DISPATCH".to_string(),
+                    None,
+                    vec![ReasonCodeId(20)],
+                    MonotonicTimeNs(20),
+                    MonotonicTimeNs(21),
+                    ProofRetentionClass::ComplianceRetention,
+                    Some("request:req_1".to_string()),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+
+        assert_eq!(receipt.proof_write_outcome.as_str(), "WRITTEN");
+        assert_eq!(store.proof_records().len(), 1);
+        assert_eq!(
+            store.proof_records()[0].authority_decision_reference.as_deref(),
+            Some(
+                "policy_decision=ALLOWED;policy_context=privacy_mode=false;do_not_disturb=false;safety_tier=STANDARD;identity_scope_required=true;identity_scope_satisfied=true;memory_scope_allowed=true;reason_code=-"
+            )
+        );
+    }
+
+    #[test]
+    fn at_j_runtime_02b_authority_reference_preserves_numeric_reason_token() {
+        let runtime = Ph1jRuntime::default();
+        let mut store = store_with_identity_device_session();
+        let envelope = sample_envelope_with_authority_reason(Some(77));
+
+        let receipt = runtime
+            .emit_protected_proof(
+                &mut store,
+                ProtectedProofWriteRequest::v1(
+                    envelope.clone(),
+                    ProofProtectedActionClass::VoiceTurnExecution,
+                    proof_authority_decision_reference(&envelope),
+                    vec!["RG-PROOF-002B".to_string()],
+                    Some("2026.03.08.v1".to_string()),
+                    None,
+                    None,
+                    Some("CERTIFIED_ACTIVE".to_string()),
+                    "DISPATCH".to_string(),
+                    None,
+                    vec![ReasonCodeId(21)],
+                    MonotonicTimeNs(22),
+                    MonotonicTimeNs(23),
+                    ProofRetentionClass::ComplianceRetention,
+                    Some("request:req_1".to_string()),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+
+        assert_eq!(receipt.proof_write_outcome.as_str(), "WRITTEN");
+        assert_eq!(store.proof_records().len(), 1);
+        assert_eq!(
+            store.proof_records()[0].authority_decision_reference.as_deref(),
+            Some(
+                "policy_decision=ALLOWED;policy_context=privacy_mode=false;do_not_disturb=false;safety_tier=STANDARD;identity_scope_required=true;identity_scope_satisfied=true;memory_scope_allowed=true;reason_code=77"
+            )
+        );
     }
 
     #[test]
