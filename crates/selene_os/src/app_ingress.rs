@@ -5334,6 +5334,26 @@ fn require_canonical_recovery_candidate_user_carriage(
     }
 }
 
+fn require_canonical_recovery_device_owner_user_carriage(
+    voice_identity_assertion: &SpeakerAssertionUnknown,
+    recovery_reason_code: ReasonCodeId,
+) -> Result<(), StorageError> {
+    if recovery_reason_code != voice_id_reason_codes::VID_DEVICE_CLAIM_REQUIRED
+        || voice_identity_assertion.device_owner_user_id.is_some()
+    {
+        Ok(())
+    } else {
+        Err(StorageError::ContractViolation(
+            ContractViolation::InvalidValue {
+                field:
+                    "app_voice_turn_execution_outcome.runtime_execution_envelope.voice_identity_assertion.device_owner_user_id",
+                reason:
+                    "must carry canonical device-owner carriage for device-claim fail-closed classification",
+            },
+        ))
+    }
+}
+
 fn canonical_recovery_fail_closed_identity_state(
     out: &AppVoiceTurnExecutionOutcome,
 ) -> Result<Option<&IdentityExecutionState>, StorageError> {
@@ -5413,6 +5433,10 @@ fn canonical_recovery_fail_closed_identity_state(
         unreachable!("canonical recovery helper must preserve Unknown voice assertions");
     };
     require_canonical_recovery_candidate_user_carriage(
+        unknown_voice_identity_assertion,
+        recovery_reason_code,
+    )?;
+    require_canonical_recovery_device_owner_user_carriage(
         unknown_voice_identity_assertion,
         recovery_reason_code,
     )?;
@@ -7295,7 +7319,10 @@ mod tests {
         )
     }
 
-    fn device_claim_required_voice_assertion(user_id: UserId) -> Ph1VoiceIdResponse {
+    fn device_claim_required_voice_assertion(
+        candidate_user_id: UserId,
+        owner_user_id: UserId,
+    ) -> Ph1VoiceIdResponse {
         Ph1VoiceIdResponse::SpeakerAssertionUnknown(
             SpeakerAssertionUnknown::v1_with_candidate(
                 IdentityConfidence::Medium,
@@ -7306,8 +7333,8 @@ mod tests {
                     Some(SpeakerLabel::speaker_a()),
                 )
                 .unwrap()],
-                Some(user_id),
-                None,
+                Some(candidate_user_id),
+                Some(owner_user_id),
             )
             .unwrap(),
         )
@@ -8312,6 +8339,29 @@ mod tests {
         finalize_pending_protected_response_turn(runtime, store, pending).unwrap()
     }
 
+    fn run_protected_response_turn_with_request_owner_and_identity_assertion(
+        runtime: &AppServerIngressRuntime,
+        store: &mut Ph1fStore,
+        actor_user_id: UserId,
+        request_owner_user_id: UserId,
+        device_id: DeviceId,
+        assertion: Ph1VoiceIdResponse,
+        correlation_id: CorrelationId,
+        turn_id: TurnId,
+    ) -> AppVoiceTurnExecutionOutcome {
+        let pending = prepare_protected_response_turn_with_request_owner_and_identity_assertion(
+            runtime,
+            store,
+            actor_user_id,
+            request_owner_user_id,
+            device_id,
+            assertion,
+            correlation_id,
+            turn_id,
+        );
+        finalize_pending_protected_response_turn(runtime, store, pending).unwrap()
+    }
+
     fn run_protected_response_turn_with_identity_assertion_and_governance_state(
         runtime: &AppServerIngressRuntime,
         store: &mut Ph1fStore,
@@ -8367,10 +8417,57 @@ mod tests {
         )
     }
 
+    fn prepare_protected_response_turn_with_request_owner_and_identity_assertion(
+        runtime: &AppServerIngressRuntime,
+        store: &mut Ph1fStore,
+        actor_user_id: UserId,
+        request_owner_user_id: UserId,
+        device_id: DeviceId,
+        assertion: Ph1VoiceIdResponse,
+        correlation_id: CorrelationId,
+        turn_id: TurnId,
+    ) -> PendingProtectedResponseTurn {
+        prepare_protected_response_turn_with_request_owner_and_identity_assertion_and_governance_state(
+            runtime,
+            store,
+            actor_user_id,
+            request_owner_user_id,
+            device_id,
+            assertion,
+            None,
+            correlation_id,
+            turn_id,
+        )
+    }
+
     fn prepare_protected_response_turn_with_identity_assertion_and_governance_state(
         runtime: &AppServerIngressRuntime,
         store: &mut Ph1fStore,
         actor_user_id: UserId,
+        device_id: DeviceId,
+        assertion: Ph1VoiceIdResponse,
+        governance_state: Option<GovernanceExecutionState>,
+        correlation_id: CorrelationId,
+        turn_id: TurnId,
+    ) -> PendingProtectedResponseTurn {
+        prepare_protected_response_turn_with_request_owner_and_identity_assertion_and_governance_state(
+            runtime,
+            store,
+            actor_user_id.clone(),
+            actor_user_id,
+            device_id,
+            assertion,
+            governance_state,
+            correlation_id,
+            turn_id,
+        )
+    }
+
+    fn prepare_protected_response_turn_with_request_owner_and_identity_assertion_and_governance_state(
+        runtime: &AppServerIngressRuntime,
+        store: &mut Ph1fStore,
+        actor_user_id: UserId,
+        request_owner_user_id: UserId,
         device_id: DeviceId,
         assertion: Ph1VoiceIdResponse,
         governance_state: Option<GovernanceExecutionState>,
@@ -8382,7 +8479,7 @@ mod tests {
             turn_id,
             AppPlatform::Desktop,
             OsVoiceTrigger::Explicit,
-            sample_voice_id_request(MonotonicTimeNs(3), actor_user_id.clone()),
+            sample_voice_id_request(MonotonicTimeNs(3), request_owner_user_id),
             actor_user_id.clone(),
             Some("tenant_1".to_string()),
             Some(device_id.clone()),
@@ -8734,6 +8831,41 @@ mod tests {
             }
             other => {
                 panic!("expected recovery candidate-carriage contract violation, got {other:?}")
+            }
+        }
+    }
+
+    fn assert_recovery_finalization_requires_canonical_device_claim_device_owner_carriage(
+        runtime: &AppServerIngressRuntime,
+        store: &mut Ph1fStore,
+        mut pending: PendingProtectedResponseTurn,
+    ) {
+        let voice_identity_assertion = pending
+            .out
+            .runtime_execution_envelope
+            .voice_identity_assertion
+            .as_mut()
+            .expect("recovery voice identity assertion must remain attached");
+        let Ph1VoiceIdResponse::SpeakerAssertionUnknown(unknown) = voice_identity_assertion else {
+            panic!("recovery device-owner proof must keep the Unknown carrier family");
+        };
+        unknown.device_owner_user_id = None;
+
+        let err = finalize_pending_protected_response_turn(runtime, store, pending)
+            .expect_err("non-canonical device-claim owner carriage must fail closed");
+        match err {
+            StorageError::ContractViolation(ContractViolation::InvalidValue { field, reason }) => {
+                assert_eq!(
+                    field,
+                    "app_voice_turn_execution_outcome.runtime_execution_envelope.voice_identity_assertion.device_owner_user_id"
+                );
+                assert_eq!(
+                    reason,
+                    "must carry canonical device-owner carriage for device-claim fail-closed classification"
+                );
+            }
+            other => {
+                panic!("expected recovery device-owner carriage contract violation, got {other:?}")
             }
         }
     }
@@ -10062,6 +10194,7 @@ mod tests {
     fn at_ingress_04d_packet_builder_uses_canonical_runtime_envelope_voice_identity_assertion() {
         let runtime = AppServerIngressRuntime::default();
         let actor_user_id = UserId::new("tenant_1:ingress_packet_assertion_user").unwrap();
+        let owner_user_id = UserId::new("tenant_1:ingress_packet_assertion_owner").unwrap();
         let device_id = DeviceId::new("ingress_packet_assertion_device_1").unwrap();
         let mut store = Ph1fStore::new_in_memory();
         seed_actor(&mut store, &actor_user_id, &device_id);
@@ -10071,7 +10204,7 @@ mod tests {
             TurnId(9207),
             AppPlatform::Desktop,
             OsVoiceTrigger::Explicit,
-            sample_voice_id_request(MonotonicTimeNs(3), actor_user_id.clone()),
+            sample_voice_id_request(MonotonicTimeNs(3), owner_user_id.clone()),
             actor_user_id,
             Some("tenant_1".to_string()),
             Some(device_id),
@@ -10080,9 +10213,14 @@ mod tests {
         )
         .unwrap();
         let outcome = runtime.run_voice_turn(&mut store, request).unwrap();
-        let OsVoiceLiveTurnOutcome::Forwarded(forwarded) = outcome else {
+        let OsVoiceLiveTurnOutcome::Forwarded(mut forwarded) = outcome else {
             panic!("expected forwarded outcome");
         };
+        forwarded.voice_identity_assertion = device_claim_required_voice_assertion(
+            forwarded.runtime_execution_envelope.actor_identity.clone(),
+            owner_user_id,
+        );
+        recanonicalize_forwarded_bundle_for_tests(&mut forwarded);
 
         let x_build = AppVoicePh1xBuildInput {
             now: MonotonicTimeNs(4),
@@ -10128,6 +10266,18 @@ mod tests {
             envelope.identity_state.is_some(),
             "agent packet runtime envelope should carry canonical identity state"
         );
+        assert_eq!(
+            voice_identity_reason_code(&canonical_voice_identity_assertion),
+            Some(voice_id_reason_codes::VID_DEVICE_CLAIM_REQUIRED)
+        );
+        assert!(canonical_voice_identity_assertion.identity_v2().may_prompt_identity);
+        let Ph1VoiceIdResponse::SpeakerAssertionUnknown(unknown_voice_identity_assertion) =
+            &canonical_voice_identity_assertion
+        else {
+            panic!("packet proof must keep the canonical device-claim Unknown carrier");
+        };
+        assert!(unknown_voice_identity_assertion.candidate_user_id.is_some());
+        assert!(unknown_voice_identity_assertion.device_owner_user_id.is_some());
         assert_eq!(
             packet.voice_identity_assertion,
             canonical_voice_identity_assertion
@@ -10278,7 +10428,10 @@ mod tests {
                 x_build,
             )
             .unwrap();
-        packet.voice_identity_assertion = device_claim_required_voice_assertion(actor_user_id);
+        let owner_user_id =
+            UserId::new("tenant_1:ingress_identity_context_fail_closed_owner").unwrap();
+        packet.voice_identity_assertion =
+            device_claim_required_voice_assertion(actor_user_id, owner_user_id);
         packet.runtime_execution_envelope = Some(
             packet
                 .runtime_execution_envelope
@@ -11030,6 +11183,7 @@ mod tests {
     fn at_harmonize_02c_device_claim_required_identity_attaches_step_up_and_restricted_trust() {
         let runtime = AppServerIngressRuntime::default();
         let actor_user_id = UserId::new("tenant_1:harmonize_device_claim_user").unwrap();
+        let owner_user_id = UserId::new("tenant_1:harmonize_device_claim_owner").unwrap();
         let device_id = DeviceId::new("harmonize_device_claim_device_1").unwrap();
         let mut store = Ph1fStore::new_in_memory();
         seed_actor(&mut store, &actor_user_id, &device_id);
@@ -11039,7 +11193,7 @@ mod tests {
             TurnId(9623),
             AppPlatform::Desktop,
             OsVoiceTrigger::Explicit,
-            sample_voice_id_request(MonotonicTimeNs(3), actor_user_id.clone()),
+            sample_voice_id_request(MonotonicTimeNs(3), owner_user_id.clone()),
             actor_user_id.clone(),
             Some("tenant_1".to_string()),
             Some(device_id),
@@ -11051,7 +11205,8 @@ mod tests {
         let OsVoiceLiveTurnOutcome::Forwarded(mut forwarded) = outcome else {
             panic!("expected forwarded voice turn");
         };
-        forwarded.voice_identity_assertion = device_claim_required_voice_assertion(actor_user_id);
+        forwarded.voice_identity_assertion =
+            device_claim_required_voice_assertion(actor_user_id.clone(), owner_user_id);
         recanonicalize_forwarded_bundle_for_tests(&mut forwarded);
 
         let x_build = AppVoicePh1xBuildInput {
@@ -11089,15 +11244,40 @@ mod tests {
         let envelope = packet
             .runtime_execution_envelope
             .expect("agent packet should carry runtime execution envelope");
+        let voice_identity_assertion = envelope
+            .voice_identity_assertion
+            .as_ref()
+            .expect("canonical device-claim voice assertion should remain attached");
         let identity_state = envelope
             .identity_state
             .expect("identity state should be attached");
+        assert_eq!(
+            voice_identity_reason_code(voice_identity_assertion),
+            Some(voice_id_reason_codes::VID_DEVICE_CLAIM_REQUIRED)
+        );
+        assert!(matches!(
+            voice_identity_assertion,
+            Ph1VoiceIdResponse::SpeakerAssertionUnknown(_)
+        ));
+        assert!(voice_identity_assertion.identity_v2().may_prompt_identity);
+        let Ph1VoiceIdResponse::SpeakerAssertionUnknown(unknown_voice_identity_assertion) =
+            voice_identity_assertion
+        else {
+            panic!("device-claim harmonize proof must keep the Unknown carrier family");
+        };
+        assert!(unknown_voice_identity_assertion.candidate_user_id.is_some());
+        assert!(unknown_voice_identity_assertion.device_owner_user_id.is_some());
         assert_eq!(identity_state.trust_tier, IdentityTrustTier::Restricted);
         assert!(identity_state.step_up_required);
         assert_eq!(
             identity_state.recovery_state,
             IdentityRecoveryState::ReauthRequired
         );
+        assert_eq!(
+            identity_reason_code(&identity_state),
+            Some(voice_id_reason_codes::VID_DEVICE_CLAIM_REQUIRED)
+        );
+        assert_eq!(identity_state.identity_tier_v2, IdentityTierV2::Unknown);
         assert_eq!(
             identity_state.reason_code,
             Some(u64::from(
@@ -12272,16 +12452,18 @@ mod tests {
     ) {
         let runtime = runtime_with_search_tool_fixtures();
         let actor_user_id = UserId::new("tenant_1:identity_device_claim_runtime_user").unwrap();
+        let owner_user_id = UserId::new("tenant_1:identity_device_claim_runtime_owner").unwrap();
         let device_id = DeviceId::new("identity_device_claim_runtime_device_1").unwrap();
         let mut store = Ph1fStore::new_in_memory();
         seed_actor(&mut store, &actor_user_id, &device_id);
 
-        let out = run_protected_response_turn_with_identity_assertion(
+        let out = run_protected_response_turn_with_request_owner_and_identity_assertion(
             &runtime,
             &mut store,
             actor_user_id.clone(),
+            owner_user_id.clone(),
             device_id,
-            device_claim_required_voice_assertion(actor_user_id),
+            device_claim_required_voice_assertion(actor_user_id.clone(), owner_user_id),
             CorrelationId(9823),
             TurnId(9923),
         );
@@ -12295,6 +12477,37 @@ mod tests {
             out.reason_code,
             Some(voice_id_reason_codes::VID_DEVICE_CLAIM_REQUIRED)
         );
+        let identity_state = out
+            .runtime_execution_envelope
+            .identity_state
+            .as_ref()
+            .expect("identity state must remain attached");
+        let voice_identity_assertion = out
+            .runtime_execution_envelope
+            .voice_identity_assertion
+            .as_ref()
+            .expect("voice identity assertion must remain attached");
+        assert_eq!(
+            identity_reason_code(identity_state),
+            Some(voice_id_reason_codes::VID_DEVICE_CLAIM_REQUIRED)
+        );
+        assert_eq!(
+            identity_reason_code(identity_state),
+            voice_identity_reason_code(voice_identity_assertion)
+        );
+        assert!(matches!(
+            voice_identity_assertion,
+            Ph1VoiceIdResponse::SpeakerAssertionUnknown(_)
+        ));
+        assert!(voice_identity_assertion.identity_v2().may_prompt_identity);
+        let Ph1VoiceIdResponse::SpeakerAssertionUnknown(unknown_voice_identity_assertion) =
+            voice_identity_assertion
+        else {
+            panic!("device-claim recovery happy path must keep the Unknown carrier family");
+        };
+        assert!(unknown_voice_identity_assertion.candidate_user_id.is_some());
+        assert!(unknown_voice_identity_assertion.device_owner_user_id.is_some());
+        assert_eq!(identity_state.identity_tier_v2, IdentityTierV2::Unknown);
         let response_rows = store.ph1x_audit_rows(CorrelationId(9823));
         let row =
             find_ph1x_respond_row(&response_rows, "IDENTITY_DEVICE_CLAIM_REQUIRED_FAIL_CLOSED");
@@ -12831,16 +13044,19 @@ mod tests {
         let runtime = runtime_with_search_tool_fixtures();
         let actor_user_id =
             UserId::new("tenant_1:recovery_device_claim_non_canonical_candidate").unwrap();
+        let owner_user_id =
+            UserId::new("tenant_1:recovery_device_claim_non_canonical_candidate_owner").unwrap();
         let device_id = DeviceId::new("recovery_device_claim_non_canonical_candidate_1").unwrap();
         let mut store = Ph1fStore::new_in_memory();
         seed_actor(&mut store, &actor_user_id, &device_id);
 
-        let pending = prepare_protected_response_turn_with_identity_assertion(
+        let pending = prepare_protected_response_turn_with_request_owner_and_identity_assertion(
             &runtime,
             &mut store,
             actor_user_id.clone(),
+            owner_user_id.clone(),
             device_id,
-            device_claim_required_voice_assertion(actor_user_id),
+            device_claim_required_voice_assertion(actor_user_id, owner_user_id),
             CorrelationId(9878),
             TurnId(9978),
         );
@@ -12850,6 +13066,36 @@ mod tests {
             &mut store,
             pending,
             None,
+        );
+    }
+
+    #[test]
+    fn at_identity_recovery_23_device_claim_required_protected_voice_turn_fails_closed_when_device_owner_carriage_is_not_canonical_for_device_claim_family(
+    ) {
+        let runtime = runtime_with_search_tool_fixtures();
+        let actor_user_id =
+            UserId::new("tenant_1:recovery_device_claim_non_canonical_owner").unwrap();
+        let owner_user_id =
+            UserId::new("tenant_1:recovery_device_claim_non_canonical_owner_owner").unwrap();
+        let device_id = DeviceId::new("recovery_device_claim_non_canonical_owner_1").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &actor_user_id, &device_id);
+
+        let pending = prepare_protected_response_turn_with_request_owner_and_identity_assertion(
+            &runtime,
+            &mut store,
+            actor_user_id.clone(),
+            owner_user_id.clone(),
+            device_id,
+            device_claim_required_voice_assertion(actor_user_id, owner_user_id),
+            CorrelationId(9881),
+            TurnId(9981),
+        );
+
+        assert_recovery_finalization_requires_canonical_device_claim_device_owner_carriage(
+            &runtime,
+            &mut store,
+            pending,
         );
     }
 
