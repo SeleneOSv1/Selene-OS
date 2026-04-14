@@ -5012,6 +5012,17 @@ fn canonical_posture_fail_closed_identity_state(
     if !posture_fail_closed_reason_code(posture_reason_code) {
         return Ok(None);
     }
+    let voice_identity_assertion = out
+        .runtime_execution_envelope
+        .voice_identity_assertion
+        .as_ref()
+        .ok_or(StorageError::ContractViolation(
+            ContractViolation::InvalidValue {
+                field:
+                    "app_voice_turn_execution_outcome.runtime_execution_envelope.voice_identity_assertion",
+                reason: "must carry canonical voice identity assertion for posture fail-closed classification",
+            },
+        ))?;
     let identity_state = out
         .runtime_execution_envelope
         .identity_state
@@ -5022,6 +5033,7 @@ fn canonical_posture_fail_closed_identity_state(
                 reason: "must carry canonical identity state for posture fail-closed classification",
             },
         ))?;
+    let voice_assertion_reason_code = voice_identity_reason_code(voice_identity_assertion);
     if posture_fail_closed_reason_code(voice_assertion_reason_code)
         && identity_reason_code(identity_state) != voice_assertion_reason_code
     {
@@ -8236,6 +8248,33 @@ mod tests {
                 );
             }
             other => panic!("expected posture reason-alignment contract violation, got {other:?}"),
+        }
+    }
+
+    fn assert_posture_finalization_requires_canonical_voice_identity_assertion(
+        runtime: &AppServerIngressRuntime,
+        store: &mut Ph1fStore,
+        mut pending: PendingProtectedChatResponseTurn,
+    ) {
+        pending.out.runtime_execution_envelope = pending
+            .out
+            .runtime_execution_envelope
+            .with_voice_identity_assertion(None)
+            .unwrap();
+        let err = finalize_pending_protected_chat_response_turn(runtime, store, pending)
+            .expect_err("missing posture voice identity assertion must fail closed");
+        match err {
+            StorageError::ContractViolation(ContractViolation::InvalidValue { field, reason }) => {
+                assert_eq!(
+                    field,
+                    "app_voice_turn_execution_outcome.runtime_execution_envelope.voice_identity_assertion"
+                );
+                assert_eq!(
+                    reason,
+                    "must carry canonical voice identity assertion for posture fail-closed classification"
+                );
+            }
+            other => panic!("expected posture voice-assertion contract violation, got {other:?}"),
         }
     }
 
@@ -11900,6 +11939,58 @@ mod tests {
             &mut store,
             pending,
             voice_id_reason_codes::VID_FAIL_LOW_CONFIDENCE,
+        );
+    }
+
+    #[test]
+    fn at_identity_posture_10_low_confidence_protected_voice_turn_fails_closed_when_outcome_lacks_canonical_voice_identity_assertion(
+    ) {
+        let runtime = runtime_with_search_tool_fixtures();
+        let actor_user_id = UserId::new("tenant_1:id_low_conf_missing_assertion").unwrap();
+        let device_id = DeviceId::new("id_low_conf_missing_assertion_1").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &actor_user_id, &device_id);
+
+        let pending = prepare_protected_chat_response_turn_with_identity_assertion(
+            &runtime,
+            &mut store,
+            actor_user_id.clone(),
+            device_id,
+            low_confidence_voice_assertion(actor_user_id),
+            CorrelationId(9835),
+            TurnId(9935),
+        );
+
+        assert_posture_finalization_requires_canonical_voice_identity_assertion(
+            &runtime,
+            &mut store,
+            pending,
+        );
+    }
+
+    #[test]
+    fn at_identity_posture_11_multi_speaker_protected_voice_turn_fails_closed_when_outcome_lacks_canonical_voice_identity_assertion(
+    ) {
+        let runtime = runtime_with_search_tool_fixtures();
+        let actor_user_id = UserId::new("tenant_1:id_multi_missing_assertion").unwrap();
+        let device_id = DeviceId::new("id_multi_missing_assertion_1").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &actor_user_id, &device_id);
+
+        let pending = prepare_protected_chat_response_turn_with_identity_assertion(
+            &runtime,
+            &mut store,
+            actor_user_id,
+            device_id,
+            multi_speaker_voice_assertion(),
+            CorrelationId(9836),
+            TurnId(9936),
+        );
+
+        assert_posture_finalization_requires_canonical_voice_identity_assertion(
+            &runtime,
+            &mut store,
+            pending,
         );
     }
 
