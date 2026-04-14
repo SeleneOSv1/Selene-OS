@@ -949,13 +949,20 @@ impl AppServerIngressRuntime {
         let outcome = self
             .executor
             .execute_os_voice_live_turn(store, live_turn_input)?;
-        let enriched_envelope = runtime_execution_envelope_with_identity_state_for_voice_outcome(
-            &governed_runtime_execution_envelope,
-            &outcome,
-        )?;
-        let enriched_outcome =
-            attach_runtime_execution_envelope_to_voice_outcome(outcome, &enriched_envelope)?;
-        Ok((enriched_outcome, enriched_envelope))
+        match outcome {
+            OsVoiceLiveTurnOutcome::Forwarded(forwarded) => Ok((
+                OsVoiceLiveTurnOutcome::Forwarded(forwarded.clone()),
+                forwarded.runtime_execution_envelope,
+            )),
+            OsVoiceLiveTurnOutcome::NotInvokedDisabled => Ok((
+                OsVoiceLiveTurnOutcome::NotInvokedDisabled,
+                governed_runtime_execution_envelope,
+            )),
+            OsVoiceLiveTurnOutcome::Refused(refuse) => Ok((
+                OsVoiceLiveTurnOutcome::Refused(refuse),
+                governed_runtime_execution_envelope,
+            )),
+        }
     }
 
     pub fn run_invite_link_open_and_start_onboarding(
@@ -4343,24 +4350,6 @@ const GOVERNED_SUBSYSTEM_MEMORY_ENGINE: &str = "MEMORY_ENGINE";
 const GOVERNED_SUBSYSTEM_AUTHORITY_LAYER: &str = "AUTHORITY_LAYER";
 const GOVERNED_SUBSYSTEM_IDENTITY_VOICE_ENGINE: &str = "IDENTITY_VOICE_ENGINE";
 
-fn attach_runtime_execution_envelope_to_voice_outcome(
-    outcome: OsVoiceLiveTurnOutcome,
-    runtime_execution_envelope: &RuntimeExecutionEnvelope,
-) -> Result<OsVoiceLiveTurnOutcome, StorageError> {
-    match outcome {
-        OsVoiceLiveTurnOutcome::NotInvokedDisabled => {
-            Ok(OsVoiceLiveTurnOutcome::NotInvokedDisabled)
-        }
-        OsVoiceLiveTurnOutcome::Refused(refuse) => Ok(OsVoiceLiveTurnOutcome::Refused(refuse)),
-        OsVoiceLiveTurnOutcome::Forwarded(mut forwarded) => {
-            forwarded.runtime_execution_envelope = runtime_execution_envelope.clone();
-            forwarded.top_level_bundle.runtime_execution_envelope =
-                Some(runtime_execution_envelope.clone());
-            Ok(OsVoiceLiveTurnOutcome::Forwarded(forwarded))
-        }
-    }
-}
-
 fn missing_simulation_runtime_execution_envelope(
     ph1comp_runtime: &Ph1CompRuntime,
     runtime_execution_envelope: &RuntimeExecutionEnvelope,
@@ -4383,16 +4372,6 @@ fn missing_simulation_runtime_execution_envelope(
     runtime_execution_envelope
         .with_computation_state(Some(computation_state))
         .map_err(StorageError::ContractViolation)
-}
-
-fn runtime_execution_envelope_with_identity_state_for_voice_outcome(
-    runtime_execution_envelope: &RuntimeExecutionEnvelope,
-    outcome: &OsVoiceLiveTurnOutcome,
-) -> Result<RuntimeExecutionEnvelope, StorageError> {
-    let OsVoiceLiveTurnOutcome::Forwarded(forwarded) = outcome else {
-        return Ok(runtime_execution_envelope.clone());
-    };
-    canonical_governed_voice_runtime_execution_envelope(forwarded)
 }
 
 fn identity_state_allows_memory_scope(identity_state: &IdentityExecutionState) -> bool {
@@ -4427,7 +4406,11 @@ fn memory_governance_blocked(runtime_execution_envelope: &RuntimeExecutionEnvelo
 fn canonical_governed_voice_runtime_execution_envelope(
     forwarded: &crate::ph1os::OsVoiceLiveForwardBundle,
 ) -> Result<RuntimeExecutionEnvelope, StorageError> {
-    if forwarded.runtime_execution_envelope.identity_state.is_some() {
+    if forwarded
+        .runtime_execution_envelope
+        .identity_state
+        .is_some()
+    {
         Ok(forwarded.runtime_execution_envelope.clone())
     } else {
         attach_identity_state_for_governed_voice_turn(
@@ -8522,6 +8505,46 @@ mod tests {
     }
 
     #[test]
+    fn at_ingress_01b_run_voice_turn_with_governed_envelope_adopts_forwarded_canonical_runtime_envelope(
+    ) {
+        let runtime = AppServerIngressRuntime::default();
+        let actor_user_id = UserId::new("tenant_1:ingress_direct_adopt_user").unwrap();
+        let device_id = DeviceId::new("ingress_direct_adopt_device_1").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &actor_user_id, &device_id);
+
+        let request = AppVoiceIngressRequest::v1(
+            CorrelationId(9105),
+            TurnId(9205),
+            AppPlatform::Ios,
+            OsVoiceTrigger::Explicit,
+            sample_voice_id_request(MonotonicTimeNs(3), actor_user_id.clone()),
+            actor_user_id,
+            Some("tenant_1".to_string()),
+            Some(device_id),
+            Vec::new(),
+            no_observation(),
+        )
+        .unwrap();
+
+        let (outcome, runtime_execution_envelope) = runtime
+            .run_voice_turn_with_governed_envelope(&mut store, request)
+            .unwrap();
+        let OsVoiceLiveTurnOutcome::Forwarded(forwarded) = outcome else {
+            panic!("expected forwarded outcome");
+        };
+
+        assert_eq!(
+            runtime_execution_envelope,
+            forwarded.runtime_execution_envelope
+        );
+        assert_eq!(
+            forwarded.top_level_bundle.runtime_execution_envelope,
+            Some(forwarded.runtime_execution_envelope.clone())
+        );
+    }
+
+    #[test]
     fn at_ingress_02_android_wake_routes_with_wake_stage() {
         let runtime = AppServerIngressRuntime::default();
         let actor_user_id = UserId::new("tenant_1:ingress_android_user").unwrap();
@@ -8542,10 +8565,15 @@ mod tests {
             no_observation(),
         )
         .unwrap();
-        request.runtime_execution_envelope.platform_context.integrity_status =
+        request
+            .runtime_execution_envelope
+            .platform_context
+            .integrity_status =
             selene_kernel_contracts::runtime_execution::ClientIntegrityStatus::Attested;
-        request.runtime_execution_envelope.platform_context.attestation_ref =
-            Some("attestation:android:wake:1".to_string());
+        request
+            .runtime_execution_envelope
+            .platform_context
+            .attestation_ref = Some("attestation:android:wake:1".to_string());
         request
             .runtime_execution_envelope
             .platform_context
