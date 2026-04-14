@@ -3646,7 +3646,7 @@ impl AppServerIngressRuntime {
                 runtime_execution_envelope_with_authority_state_for_outcome(&out, finder_terminal)?;
         }
         if let Some(identity_posture_fail_closed) =
-            classify_low_confidence_identity_posture_fail_closed_outcome(&out)
+            classify_low_confidence_identity_posture_fail_closed_outcome(&out)?
         {
             if let Some(actor_device_id) = actor_device_id {
                 let tenant_id =
@@ -3681,7 +3681,7 @@ impl AppServerIngressRuntime {
                 runtime_execution_envelope_with_authority_state_for_outcome(&out, finder_terminal)?;
         }
         if let Some(identity_posture_fail_closed) =
-            classify_gray_zone_margin_identity_posture_fail_closed_outcome(&out)
+            classify_gray_zone_margin_identity_posture_fail_closed_outcome(&out)?
         {
             if let Some(actor_device_id) = actor_device_id {
                 let tenant_id =
@@ -3716,7 +3716,7 @@ impl AppServerIngressRuntime {
                 runtime_execution_envelope_with_authority_state_for_outcome(&out, finder_terminal)?;
         }
         if let Some(identity_posture_fail_closed) =
-            classify_echo_unsafe_identity_posture_fail_closed_outcome(&out)
+            classify_echo_unsafe_identity_posture_fail_closed_outcome(&out)?
         {
             if let Some(actor_device_id) = actor_device_id {
                 let tenant_id =
@@ -3751,7 +3751,7 @@ impl AppServerIngressRuntime {
                 runtime_execution_envelope_with_authority_state_for_outcome(&out, finder_terminal)?;
         }
         if let Some(identity_posture_fail_closed) =
-            classify_no_speech_identity_posture_fail_closed_outcome(&out)
+            classify_no_speech_identity_posture_fail_closed_outcome(&out)?
         {
             if let Some(actor_device_id) = actor_device_id {
                 let tenant_id =
@@ -3786,7 +3786,7 @@ impl AppServerIngressRuntime {
                 runtime_execution_envelope_with_authority_state_for_outcome(&out, finder_terminal)?;
         }
         if let Some(identity_posture_fail_closed) =
-            classify_multi_speaker_identity_posture_fail_closed_outcome(&out)
+            classify_multi_speaker_identity_posture_fail_closed_outcome(&out)?
         {
             if let Some(actor_device_id) = actor_device_id {
                 let tenant_id =
@@ -4970,6 +4970,60 @@ fn identity_reason_code(identity_state: &IdentityExecutionState) -> Option<Reaso
         .map(ReasonCodeId)
 }
 
+fn posture_fail_closed_reason_code(reason_code: Option<ReasonCodeId>) -> bool {
+    matches!(
+        reason_code,
+        Some(code)
+            if code == voice_id_reason_codes::VID_FAIL_LOW_CONFIDENCE
+                || code == voice_id_reason_codes::VID_FAIL_GRAY_ZONE_MARGIN
+                || code == voice_id_reason_codes::VID_FAIL_ECHO_UNSAFE
+                || code == voice_id_reason_codes::VID_FAIL_NO_SPEECH
+                || code == voice_id_reason_codes::VID_FAIL_MULTI_SPEAKER_PRESENT
+    )
+}
+
+fn voice_identity_reason_code(assertion: &Ph1VoiceIdResponse) -> Option<ReasonCodeId> {
+    match assertion {
+        Ph1VoiceIdResponse::SpeakerAssertionOk(ok) => ok.reason_code,
+        Ph1VoiceIdResponse::SpeakerAssertionUnknown(unknown) => Some(unknown.reason_code),
+    }
+}
+
+fn canonical_posture_fail_closed_identity_state(
+    out: &AppVoiceTurnExecutionOutcome,
+) -> Result<Option<&IdentityExecutionState>, StorageError> {
+    if !matches!(
+        out.next_move,
+        AppVoiceTurnNextMove::Dispatch | AppVoiceTurnNextMove::Respond
+    ) {
+        return Ok(None);
+    }
+    let posture_reason_code = out
+        .runtime_execution_envelope
+        .identity_state
+        .as_ref()
+        .and_then(identity_reason_code)
+        .or_else(|| {
+            out.runtime_execution_envelope
+                .voice_identity_assertion
+                .as_ref()
+                .and_then(voice_identity_reason_code)
+        });
+    if !posture_fail_closed_reason_code(posture_reason_code) {
+        return Ok(None);
+    }
+    out.runtime_execution_envelope
+        .identity_state
+        .as_ref()
+        .map(Some)
+        .ok_or(StorageError::ContractViolation(
+            ContractViolation::InvalidValue {
+                field: "app_voice_turn_execution_outcome.runtime_execution_envelope.identity_state",
+                reason: "must carry canonical identity state for posture fail-closed classification",
+            },
+        ))
+}
+
 fn classify_identity_recovery_fail_closed_outcome(
     out: &AppVoiceTurnExecutionOutcome,
 ) -> Option<IdentityRecoveryFailClosedBehavior> {
@@ -5074,14 +5128,10 @@ fn classify_governance_quarantine_identity_recovery_fail_closed_outcome(
 
 fn classify_low_confidence_identity_posture_fail_closed_outcome(
     out: &AppVoiceTurnExecutionOutcome,
-) -> Option<IdentityPostureFailClosedBehavior> {
-    if !matches!(
-        out.next_move,
-        AppVoiceTurnNextMove::Dispatch | AppVoiceTurnNextMove::Respond
-    ) {
-        return None;
-    }
-    let identity_state = out.runtime_execution_envelope.identity_state.as_ref()?;
+) -> Result<Option<IdentityPostureFailClosedBehavior>, StorageError> {
+    let Some(identity_state) = canonical_posture_fail_closed_identity_state(out)? else {
+        return Ok(None);
+    };
     if identity_state.consistency_level
         != IdentityVerificationConsistencyLevel::DegradedVerification
         || identity_state.trust_tier != IdentityTrustTier::Conditional
@@ -5090,28 +5140,24 @@ fn classify_low_confidence_identity_posture_fail_closed_outcome(
         || identity_reason_code(identity_state)
             != Some(voice_id_reason_codes::VID_FAIL_LOW_CONFIDENCE)
     {
-        return None;
+        return Ok(None);
     }
-    Some(IdentityPostureFailClosedBehavior {
+    Ok(Some(IdentityPostureFailClosedBehavior {
         reason_code: identity_reason_code_or(
             identity_state,
             voice_id_reason_codes::VID_FAIL_LOW_CONFIDENCE,
         ),
         user_message: "I couldn't verify your identity strongly enough, so I can't continue.",
         audit_response_kind: "IDENTITY_LOW_CONFIDENCE_FAIL_CLOSED",
-    })
+    }))
 }
 
 fn classify_gray_zone_margin_identity_posture_fail_closed_outcome(
     out: &AppVoiceTurnExecutionOutcome,
-) -> Option<IdentityPostureFailClosedBehavior> {
-    if !matches!(
-        out.next_move,
-        AppVoiceTurnNextMove::Dispatch | AppVoiceTurnNextMove::Respond
-    ) {
-        return None;
-    }
-    let identity_state = out.runtime_execution_envelope.identity_state.as_ref()?;
+) -> Result<Option<IdentityPostureFailClosedBehavior>, StorageError> {
+    let Some(identity_state) = canonical_posture_fail_closed_identity_state(out)? else {
+        return Ok(None);
+    };
     if identity_state.consistency_level
         != IdentityVerificationConsistencyLevel::DegradedVerification
         || identity_state.trust_tier != IdentityTrustTier::Conditional
@@ -5120,28 +5166,24 @@ fn classify_gray_zone_margin_identity_posture_fail_closed_outcome(
         || identity_reason_code(identity_state)
             != Some(voice_id_reason_codes::VID_FAIL_GRAY_ZONE_MARGIN)
     {
-        return None;
+        return Ok(None);
     }
-    Some(IdentityPostureFailClosedBehavior {
+    Ok(Some(IdentityPostureFailClosedBehavior {
         reason_code: identity_reason_code_or(
             identity_state,
             voice_id_reason_codes::VID_FAIL_GRAY_ZONE_MARGIN,
         ),
         user_message: "I got an ambiguous identity result, so I can't continue.",
         audit_response_kind: "IDENTITY_GRAY_ZONE_MARGIN_FAIL_CLOSED",
-    })
+    }))
 }
 
 fn classify_echo_unsafe_identity_posture_fail_closed_outcome(
     out: &AppVoiceTurnExecutionOutcome,
-) -> Option<IdentityPostureFailClosedBehavior> {
-    if !matches!(
-        out.next_move,
-        AppVoiceTurnNextMove::Dispatch | AppVoiceTurnNextMove::Respond
-    ) {
-        return None;
-    }
-    let identity_state = out.runtime_execution_envelope.identity_state.as_ref()?;
+) -> Result<Option<IdentityPostureFailClosedBehavior>, StorageError> {
+    let Some(identity_state) = canonical_posture_fail_closed_identity_state(out)? else {
+        return Ok(None);
+    };
     if identity_state.consistency_level
         != IdentityVerificationConsistencyLevel::DegradedVerification
         || identity_state.trust_tier != IdentityTrustTier::Restricted
@@ -5149,28 +5191,24 @@ fn classify_echo_unsafe_identity_posture_fail_closed_outcome(
         || identity_state.recovery_state != IdentityRecoveryState::None
         || identity_reason_code(identity_state) != Some(voice_id_reason_codes::VID_FAIL_ECHO_UNSAFE)
     {
-        return None;
+        return Ok(None);
     }
-    Some(IdentityPostureFailClosedBehavior {
+    Ok(Some(IdentityPostureFailClosedBehavior {
         reason_code: identity_reason_code_or(
             identity_state,
             voice_id_reason_codes::VID_FAIL_ECHO_UNSAFE,
         ),
         user_message: "I detected an echo-unsafe voice condition, so I can't continue.",
         audit_response_kind: "IDENTITY_ECHO_UNSAFE_FAIL_CLOSED",
-    })
+    }))
 }
 
 fn classify_no_speech_identity_posture_fail_closed_outcome(
     out: &AppVoiceTurnExecutionOutcome,
-) -> Option<IdentityPostureFailClosedBehavior> {
-    if !matches!(
-        out.next_move,
-        AppVoiceTurnNextMove::Dispatch | AppVoiceTurnNextMove::Respond
-    ) {
-        return None;
-    }
-    let identity_state = out.runtime_execution_envelope.identity_state.as_ref()?;
+) -> Result<Option<IdentityPostureFailClosedBehavior>, StorageError> {
+    let Some(identity_state) = canonical_posture_fail_closed_identity_state(out)? else {
+        return Ok(None);
+    };
     if identity_state.consistency_level
         != IdentityVerificationConsistencyLevel::DegradedVerification
         || identity_state.trust_tier != IdentityTrustTier::Restricted
@@ -5178,28 +5216,24 @@ fn classify_no_speech_identity_posture_fail_closed_outcome(
         || identity_state.recovery_state != IdentityRecoveryState::None
         || identity_reason_code(identity_state) != Some(voice_id_reason_codes::VID_FAIL_NO_SPEECH)
     {
-        return None;
+        return Ok(None);
     }
-    Some(IdentityPostureFailClosedBehavior {
+    Ok(Some(IdentityPostureFailClosedBehavior {
         reason_code: identity_reason_code_or(
             identity_state,
             voice_id_reason_codes::VID_FAIL_NO_SPEECH,
         ),
         user_message: "I couldn't detect speech clearly enough, so I can't continue.",
         audit_response_kind: "IDENTITY_NO_SPEECH_FAIL_CLOSED",
-    })
+    }))
 }
 
 fn classify_multi_speaker_identity_posture_fail_closed_outcome(
     out: &AppVoiceTurnExecutionOutcome,
-) -> Option<IdentityPostureFailClosedBehavior> {
-    if !matches!(
-        out.next_move,
-        AppVoiceTurnNextMove::Dispatch | AppVoiceTurnNextMove::Respond
-    ) {
-        return None;
-    }
-    let identity_state = out.runtime_execution_envelope.identity_state.as_ref()?;
+) -> Result<Option<IdentityPostureFailClosedBehavior>, StorageError> {
+    let Some(identity_state) = canonical_posture_fail_closed_identity_state(out)? else {
+        return Ok(None);
+    };
     if identity_state.consistency_level
         != IdentityVerificationConsistencyLevel::DegradedVerification
         || identity_state.trust_tier != IdentityTrustTier::Restricted
@@ -5208,16 +5242,16 @@ fn classify_multi_speaker_identity_posture_fail_closed_outcome(
         || identity_reason_code(identity_state)
             != Some(voice_id_reason_codes::VID_FAIL_MULTI_SPEAKER_PRESENT)
     {
-        return None;
+        return Ok(None);
     }
-    Some(IdentityPostureFailClosedBehavior {
+    Ok(Some(IdentityPostureFailClosedBehavior {
         reason_code: identity_reason_code_or(
             identity_state,
             voice_id_reason_codes::VID_FAIL_MULTI_SPEAKER_PRESENT,
         ),
         user_message: "I detected multiple speakers, so I can't continue.",
         audit_response_kind: "IDENTITY_MULTI_SPEAKER_FAIL_CLOSED",
-    })
+    }))
 }
 
 // Drift fail-closed decisions must be made before a protected dispatch executes,
@@ -7975,6 +8009,38 @@ mod tests {
         correlation_id: CorrelationId,
         turn_id: TurnId,
     ) -> AppVoiceTurnExecutionOutcome {
+        let pending = prepare_protected_chat_response_turn_with_identity_assertion(
+            runtime,
+            store,
+            actor_user_id,
+            device_id,
+            assertion,
+            correlation_id,
+            turn_id,
+        );
+        finalize_pending_protected_chat_response_turn(runtime, store, pending).unwrap()
+    }
+
+    struct PendingProtectedChatResponseTurn {
+        out: AppVoiceTurnExecutionOutcome,
+        finder_terminal: Option<FinderTerminalPacket>,
+        actor_user_id: UserId,
+        device_id: DeviceId,
+        request_session_id: Option<selene_kernel_contracts::ph1l::SessionId>,
+        correlation_id: CorrelationId,
+        turn_id: TurnId,
+        received_at: MonotonicTimeNs,
+    }
+
+    fn prepare_protected_chat_response_turn_with_identity_assertion(
+        runtime: &AppServerIngressRuntime,
+        store: &mut Ph1fStore,
+        actor_user_id: UserId,
+        device_id: DeviceId,
+        assertion: Ph1VoiceIdResponse,
+        correlation_id: CorrelationId,
+        turn_id: TurnId,
+    ) -> PendingProtectedChatResponseTurn {
         let request = AppVoiceIngressRequest::v1(
             correlation_id,
             turn_id,
@@ -8061,21 +8127,63 @@ mod tests {
                 MonotonicTimeNs(17),
             )
             .unwrap();
-        runtime
-            .finalize_voice_turn_outcome(
-                store,
-                out,
-                finder_terminal.as_ref(),
-                &actor_user_id,
-                Some(&device_id),
-                Some("tenant_1"),
-                request_session_id,
-                correlation_id,
-                turn_id,
-                received_at,
-                MonotonicTimeNs(17),
-            )
-            .unwrap()
+        PendingProtectedChatResponseTurn {
+            out,
+            finder_terminal,
+            actor_user_id,
+            device_id,
+            request_session_id,
+            correlation_id,
+            turn_id,
+            received_at,
+        }
+    }
+
+    fn finalize_pending_protected_chat_response_turn(
+        runtime: &AppServerIngressRuntime,
+        store: &mut Ph1fStore,
+        pending: PendingProtectedChatResponseTurn,
+    ) -> Result<AppVoiceTurnExecutionOutcome, StorageError> {
+        runtime.finalize_voice_turn_outcome(
+            store,
+            pending.out,
+            pending.finder_terminal.as_ref(),
+            &pending.actor_user_id,
+            Some(&pending.device_id),
+            Some("tenant_1"),
+            pending.request_session_id,
+            pending.correlation_id,
+            pending.turn_id,
+            pending.received_at,
+            MonotonicTimeNs(17),
+        )
+    }
+
+    fn assert_posture_finalization_requires_canonical_identity_state(
+        runtime: &AppServerIngressRuntime,
+        store: &mut Ph1fStore,
+        mut pending: PendingProtectedChatResponseTurn,
+    ) {
+        pending.out.runtime_execution_envelope = pending
+            .out
+            .runtime_execution_envelope
+            .with_identity_state(None)
+            .unwrap();
+        let err = finalize_pending_protected_chat_response_turn(runtime, store, pending)
+            .expect_err("missing posture identity state must fail closed");
+        match err {
+            StorageError::ContractViolation(ContractViolation::InvalidValue { field, reason }) => {
+                assert_eq!(
+                    field,
+                    "app_voice_turn_execution_outcome.runtime_execution_envelope.identity_state"
+                );
+                assert_eq!(
+                    reason,
+                    "must carry canonical identity state for posture fail-closed classification"
+                );
+            }
+            other => panic!("expected posture identity-state contract violation, got {other:?}"),
+        }
     }
 
     fn document_understand_draft(query: &str) -> Ph1nResponse {
@@ -11359,6 +11467,7 @@ mod tests {
             out.reason_code,
             Some(voice_id_reason_codes::VID_FAIL_LOW_CONFIDENCE)
         );
+        assert!(out.runtime_execution_envelope.identity_state.is_some());
         let response_rows = store.ph1x_audit_rows(CorrelationId(9826));
         let row = find_ph1x_respond_row(&response_rows, "IDENTITY_LOW_CONFIDENCE_FAIL_CLOSED");
         assert_ph1x_fail_closed_respond_payload(
@@ -11618,6 +11727,55 @@ mod tests {
         assert_eq!(
             ph1x_payload_value(row, "identity_reason_code_hex"),
             Some("0x5649000A")
+        );
+    }
+
+    #[test]
+    fn at_identity_posture_06_low_confidence_protected_voice_turn_fails_closed_when_outcome_lacks_canonical_identity_state(
+    ) {
+        let runtime = runtime_with_search_tool_fixtures();
+        let actor_user_id =
+            UserId::new("tenant_1:identity_low_conf_missing_state_runtime_user").unwrap();
+        let device_id = DeviceId::new("identity_low_conf_missing_state_runtime_device_1").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &actor_user_id, &device_id);
+
+        let pending = prepare_protected_chat_response_turn_with_identity_assertion(
+            &runtime,
+            &mut store,
+            actor_user_id.clone(),
+            device_id,
+            low_confidence_voice_assertion(actor_user_id),
+            CorrelationId(9831),
+            TurnId(9931),
+        );
+
+        assert_posture_finalization_requires_canonical_identity_state(
+            &runtime, &mut store, pending,
+        );
+    }
+
+    #[test]
+    fn at_identity_posture_07_multi_speaker_protected_voice_turn_fails_closed_when_outcome_lacks_canonical_identity_state(
+    ) {
+        let runtime = runtime_with_search_tool_fixtures();
+        let actor_user_id = UserId::new("tenant_1:id_multi_speaker_missing_state").unwrap();
+        let device_id = DeviceId::new("id_multi_speaker_missing_state_1").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &actor_user_id, &device_id);
+
+        let pending = prepare_protected_chat_response_turn_with_identity_assertion(
+            &runtime,
+            &mut store,
+            actor_user_id,
+            device_id,
+            multi_speaker_voice_assertion(),
+            CorrelationId(9832),
+            TurnId(9932),
+        );
+
+        assert_posture_finalization_requires_canonical_identity_state(
+            &runtime, &mut store, pending,
         );
     }
 
