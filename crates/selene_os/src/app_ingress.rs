@@ -5051,6 +5051,23 @@ fn require_canonical_posture_identity_tier_v2(
     }
 }
 
+fn require_canonical_posture_spoof_liveness_status(
+    identity_state: &IdentityExecutionState,
+) -> Result<(), StorageError> {
+    if identity_state.spoof_liveness_status == SpoofLivenessStatus::Unknown {
+        Ok(())
+    } else {
+        Err(StorageError::ContractViolation(
+            ContractViolation::InvalidValue {
+                field:
+                    "app_voice_turn_execution_outcome.runtime_execution_envelope.identity_state.spoof_liveness_status",
+                reason:
+                    "must carry canonical Unknown spoof liveness status for posture fail-closed classification",
+            },
+        ))
+    }
+}
+
 fn canonical_posture_fail_closed_identity_state(
     out: &AppVoiceTurnExecutionOutcome,
 ) -> Result<Option<&IdentityExecutionState>, StorageError> {
@@ -5120,6 +5137,7 @@ fn canonical_posture_fail_closed_identity_state(
     }
     require_canonical_posture_identity_state_shape(identity_state, posture_reason_code)?;
     require_canonical_posture_identity_tier_v2(identity_state)?;
+    require_canonical_posture_spoof_liveness_status(identity_state)?;
     Ok(Some(identity_state))
 }
 
@@ -8431,6 +8449,39 @@ mod tests {
         }
     }
 
+    fn assert_posture_finalization_requires_canonical_spoof_liveness_status(
+        runtime: &AppServerIngressRuntime,
+        store: &mut Ph1fStore,
+        mut pending: PendingProtectedChatResponseTurn,
+        divergent_spoof_liveness_status: SpoofLivenessStatus,
+    ) {
+        let identity_state = pending
+            .out
+            .runtime_execution_envelope
+            .identity_state
+            .as_mut()
+            .expect("posture identity state must remain attached");
+        identity_state.spoof_liveness_status = divergent_spoof_liveness_status;
+
+        let err = finalize_pending_protected_chat_response_turn(runtime, store, pending)
+            .expect_err("non-canonical posture spoof liveness must fail closed");
+        match err {
+            StorageError::ContractViolation(ContractViolation::InvalidValue { field, reason }) => {
+                assert_eq!(
+                    field,
+                    "app_voice_turn_execution_outcome.runtime_execution_envelope.identity_state.spoof_liveness_status"
+                );
+                assert_eq!(
+                    reason,
+                    "must carry canonical Unknown spoof liveness status for posture fail-closed classification"
+                );
+            }
+            other => panic!(
+                "expected posture spoof-liveness contract violation, got {other:?}"
+            ),
+        }
+    }
+
     fn document_understand_draft(query: &str) -> Ph1nResponse {
         Ph1nResponse::IntentDraft(
             IntentDraft::v1(
@@ -11731,6 +11782,10 @@ mod tests {
             voice_identity_reason_code(voice_identity_assertion)
         );
         assert_eq!(identity_state.identity_tier_v2, IdentityTierV2::Unknown);
+        assert_eq!(
+            identity_state.spoof_liveness_status,
+            SpoofLivenessStatus::Unknown
+        );
         let response_rows = store.ph1x_audit_rows(CorrelationId(9826));
         let row = find_ph1x_respond_row(&response_rows, "IDENTITY_LOW_CONFIDENCE_FAIL_CLOSED");
         assert_ph1x_fail_closed_respond_payload(
@@ -11760,6 +11815,10 @@ mod tests {
             Some("0x56490002")
         );
         assert_eq!(ph1x_payload_value(row, "identity_tier_v2"), Some("UNKNOWN"));
+        assert_eq!(
+            ph1x_payload_value(row, "identity_spoof_liveness_status"),
+            Some("UNKNOWN")
+        );
     }
 
     #[test]
@@ -12308,6 +12367,60 @@ mod tests {
             &mut store,
             pending,
             IdentityTierV2::Probable,
+        );
+    }
+
+    #[test]
+    fn at_identity_posture_18_low_confidence_protected_voice_turn_fails_closed_when_spoof_liveness_status_is_not_unknown_for_posture_family(
+    ) {
+        let runtime = runtime_with_search_tool_fixtures();
+        let actor_user_id = UserId::new("tenant_1:id_low_conf_bad_spoof").unwrap();
+        let device_id = DeviceId::new("id_low_conf_bad_spoof_1").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &actor_user_id, &device_id);
+
+        let pending = prepare_protected_chat_response_turn_with_identity_assertion(
+            &runtime,
+            &mut store,
+            actor_user_id.clone(),
+            device_id,
+            low_confidence_voice_assertion(actor_user_id),
+            CorrelationId(9843),
+            TurnId(9943),
+        );
+
+        assert_posture_finalization_requires_canonical_spoof_liveness_status(
+            &runtime,
+            &mut store,
+            pending,
+            SpoofLivenessStatus::Live,
+        );
+    }
+
+    #[test]
+    fn at_identity_posture_19_echo_unsafe_protected_voice_turn_fails_closed_when_spoof_liveness_status_is_not_unknown_for_posture_family(
+    ) {
+        let runtime = runtime_with_search_tool_fixtures();
+        let actor_user_id = UserId::new("tenant_1:id_echo_bad_spoof").unwrap();
+        let device_id = DeviceId::new("id_echo_bad_spoof_1").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &actor_user_id, &device_id);
+
+        let pending = prepare_protected_chat_response_turn_with_identity_assertion(
+            &runtime,
+            &mut store,
+            actor_user_id,
+            device_id,
+            echo_unsafe_voice_assertion(),
+            CorrelationId(9844),
+            TurnId(9944),
+        );
+
+        assert_posture_finalization_requires_canonical_spoof_liveness_status(
+            &runtime,
+            &mut store,
+            pending,
+            SpoofLivenessStatus::Live,
         );
     }
 
