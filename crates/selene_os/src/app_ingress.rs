@@ -5176,6 +5176,44 @@ fn require_canonical_posture_voice_confidence(
     }
 }
 
+fn canonical_posture_voice_score_bp_matches(
+    voice_identity_assertion: &SpeakerAssertionUnknown,
+    posture_reason_code: ReasonCodeId,
+) -> bool {
+    match posture_reason_code {
+        code if code == voice_id_reason_codes::VID_FAIL_LOW_CONFIDENCE
+            || code == voice_id_reason_codes::VID_FAIL_NO_SPEECH
+            || code == voice_id_reason_codes::VID_FAIL_MULTI_SPEAKER_PRESENT =>
+        {
+            voice_identity_assertion.score_bp == 2_000
+        }
+        code if code == voice_id_reason_codes::VID_FAIL_GRAY_ZONE_MARGIN
+            || code == voice_id_reason_codes::VID_FAIL_ECHO_UNSAFE =>
+        {
+            voice_identity_assertion.score_bp == 4_500
+        }
+        _ => false,
+    }
+}
+
+fn require_canonical_posture_voice_score_bp(
+    voice_identity_assertion: &SpeakerAssertionUnknown,
+    posture_reason_code: ReasonCodeId,
+) -> Result<(), StorageError> {
+    if canonical_posture_voice_score_bp_matches(voice_identity_assertion, posture_reason_code) {
+        Ok(())
+    } else {
+        Err(StorageError::ContractViolation(
+            ContractViolation::InvalidValue {
+                field:
+                    "app_voice_turn_execution_outcome.runtime_execution_envelope.voice_identity_assertion.score_bp",
+                reason:
+                    "must match canonical posture score_bp carriage for fail-closed classification",
+            },
+        ))
+    }
+}
+
 fn canonical_posture_candidate_user_carriage_matches(
     voice_identity_assertion: &SpeakerAssertionUnknown,
     posture_reason_code: ReasonCodeId,
@@ -5314,6 +5352,10 @@ fn canonical_posture_fail_closed_identity_state(
     )?;
     require_absent_posture_device_owner_user_carriage(unknown_voice_identity_assertion)?;
     require_canonical_posture_voice_confidence(
+        unknown_voice_identity_assertion,
+        posture_reason_code,
+    )?;
+    require_canonical_posture_voice_score_bp(
         unknown_voice_identity_assertion,
         posture_reason_code,
     )?;
@@ -9993,6 +10035,42 @@ mod tests {
         }
     }
 
+    fn assert_posture_finalization_requires_canonical_voice_score_bp(
+        runtime: &AppServerIngressRuntime,
+        store: &mut Ph1fStore,
+        mut pending: PendingProtectedChatResponseTurn,
+        divergent_score_bp: u16,
+    ) {
+        let voice_identity_assertion = pending
+            .out
+            .runtime_execution_envelope
+            .voice_identity_assertion
+            .as_mut()
+            .expect("posture voice identity assertion must remain attached");
+        let Ph1VoiceIdResponse::SpeakerAssertionUnknown(unknown) = voice_identity_assertion else {
+            panic!("posture voice-score proof must keep the Unknown carrier family");
+        };
+        unknown.score_bp = divergent_score_bp;
+
+        let err = finalize_pending_protected_chat_response_turn(runtime, store, pending)
+            .expect_err("non-canonical posture voice score_bp must fail closed");
+        match err {
+            StorageError::ContractViolation(ContractViolation::InvalidValue { field, reason }) => {
+                assert_eq!(
+                    field,
+                    "app_voice_turn_execution_outcome.runtime_execution_envelope.voice_identity_assertion.score_bp"
+                );
+                assert_eq!(
+                    reason,
+                    "must match canonical posture score_bp carriage for fail-closed classification"
+                );
+            }
+            other => {
+                panic!("expected posture voice-score contract violation, got {other:?}")
+            }
+        }
+    }
+
     fn document_understand_draft(query: &str) -> Ph1nResponse {
         Ph1nResponse::IntentDraft(
             IntentDraft::v1(
@@ -12232,6 +12310,7 @@ mod tests {
             unknown_voice_identity_assertion.confidence,
             IdentityConfidence::Low
         );
+        assert_eq!(unknown_voice_identity_assertion.score_bp, 2_000);
         let identity_state = envelope
             .identity_state
             .expect("identity state should be attached");
@@ -12331,6 +12410,7 @@ mod tests {
             unknown_voice_identity_assertion.confidence,
             IdentityConfidence::Medium
         );
+        assert_eq!(unknown_voice_identity_assertion.score_bp, 4_500);
         let identity_state = envelope
             .identity_state
             .expect("identity state should be attached");
@@ -12432,6 +12512,7 @@ mod tests {
             unknown_voice_identity_assertion.confidence,
             IdentityConfidence::Medium
         );
+        assert_eq!(unknown_voice_identity_assertion.score_bp, 4_500);
         let identity_state = envelope
             .identity_state
             .expect("identity state should be attached");
@@ -12531,6 +12612,7 @@ mod tests {
             unknown_voice_identity_assertion.confidence,
             IdentityConfidence::Low
         );
+        assert_eq!(unknown_voice_identity_assertion.score_bp, 2_000);
         let identity_state = envelope
             .identity_state
             .expect("identity state should be attached");
@@ -12630,6 +12712,7 @@ mod tests {
             unknown_voice_identity_assertion.confidence,
             IdentityConfidence::Low
         );
+        assert_eq!(unknown_voice_identity_assertion.score_bp, 2_000);
         let identity_state = envelope
             .identity_state
             .expect("identity state should be attached");
@@ -14608,6 +14691,11 @@ mod tests {
             panic!("low-confidence posture happy path must keep the Unknown carrier family");
         };
         assert_eq!(
+            unknown_voice_identity_assertion.confidence,
+            IdentityConfidence::Low
+        );
+        assert_eq!(unknown_voice_identity_assertion.score_bp, 2_000);
+        assert_eq!(
             unknown_voice_identity_assertion
                 .identity_v2
                 .identity_tier_v2,
@@ -14709,6 +14797,11 @@ mod tests {
             panic!("echo-unsafe posture happy path must keep the Unknown carrier family");
         };
         assert_eq!(
+            unknown_voice_identity_assertion.confidence,
+            IdentityConfidence::Medium
+        );
+        assert_eq!(unknown_voice_identity_assertion.score_bp, 4_500);
+        assert_eq!(
             unknown_voice_identity_assertion
                 .identity_v2
                 .identity_tier_v2,
@@ -14799,6 +14892,7 @@ mod tests {
             unknown_voice_identity_assertion.confidence,
             IdentityConfidence::Low
         );
+        assert_eq!(unknown_voice_identity_assertion.score_bp, 2_000);
         assert_eq!(
             unknown_voice_identity_assertion
                 .identity_v2
@@ -14890,6 +14984,7 @@ mod tests {
             unknown_voice_identity_assertion.confidence,
             IdentityConfidence::Low
         );
+        assert_eq!(unknown_voice_identity_assertion.score_bp, 2_000);
         assert_eq!(
             unknown_voice_identity_assertion
                 .identity_v2
@@ -14981,6 +15076,7 @@ mod tests {
             unknown_voice_identity_assertion.confidence,
             IdentityConfidence::Medium
         );
+        assert_eq!(unknown_voice_identity_assertion.score_bp, 4_500);
         assert_eq!(
             unknown_voice_identity_assertion
                 .identity_v2
@@ -15845,6 +15941,126 @@ mod tests {
             &mut store,
             pending,
             IdentityConfidence::Medium,
+        );
+    }
+
+    #[test]
+    fn at_identity_posture_37_low_confidence_protected_voice_turn_fails_closed_when_voice_assertion_score_bp_is_not_canonical_for_posture_family(
+    ) {
+        let runtime = runtime_with_search_tool_fixtures();
+        let actor_user_id = UserId::new("tenant_1:id_low_conf_bad_voice_score_bp").unwrap();
+        let device_id = DeviceId::new("id_low_conf_bad_voice_score_bp_1").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &actor_user_id, &device_id);
+
+        let pending = prepare_protected_chat_response_turn_with_identity_assertion(
+            &runtime,
+            &mut store,
+            actor_user_id.clone(),
+            device_id,
+            low_confidence_voice_assertion(actor_user_id),
+            CorrelationId(9862),
+            TurnId(9962),
+        );
+
+        assert_posture_finalization_requires_canonical_voice_score_bp(
+            &runtime, &mut store, pending, 4_500,
+        );
+    }
+
+    #[test]
+    fn at_identity_posture_38_gray_zone_margin_protected_voice_turn_fails_closed_when_voice_assertion_score_bp_is_not_canonical_for_posture_family(
+    ) {
+        let runtime = runtime_with_search_tool_fixtures();
+        let actor_user_id = UserId::new("tenant_1:id_gray_zone_bad_voice_score_bp").unwrap();
+        let device_id = DeviceId::new("id_gray_zone_bad_voice_score_bp_1").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &actor_user_id, &device_id);
+
+        let pending = prepare_protected_chat_response_turn_with_identity_assertion(
+            &runtime,
+            &mut store,
+            actor_user_id.clone(),
+            device_id,
+            gray_zone_margin_voice_assertion(actor_user_id),
+            CorrelationId(9863),
+            TurnId(9963),
+        );
+
+        assert_posture_finalization_requires_canonical_voice_score_bp(
+            &runtime, &mut store, pending, 2_000,
+        );
+    }
+
+    #[test]
+    fn at_identity_posture_39_echo_unsafe_protected_voice_turn_fails_closed_when_voice_assertion_score_bp_is_not_canonical_for_posture_family(
+    ) {
+        let runtime = runtime_with_search_tool_fixtures();
+        let actor_user_id = UserId::new("tenant_1:id_echo_bad_voice_score_bp").unwrap();
+        let device_id = DeviceId::new("id_echo_bad_voice_score_bp_1").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &actor_user_id, &device_id);
+
+        let pending = prepare_protected_chat_response_turn_with_identity_assertion(
+            &runtime,
+            &mut store,
+            actor_user_id,
+            device_id,
+            echo_unsafe_voice_assertion(),
+            CorrelationId(9864),
+            TurnId(9964),
+        );
+
+        assert_posture_finalization_requires_canonical_voice_score_bp(
+            &runtime, &mut store, pending, 2_000,
+        );
+    }
+
+    #[test]
+    fn at_identity_posture_40_no_speech_protected_voice_turn_fails_closed_when_voice_assertion_score_bp_is_not_canonical_for_posture_family(
+    ) {
+        let runtime = runtime_with_search_tool_fixtures();
+        let actor_user_id = UserId::new("tenant_1:id_no_speech_bad_voice_score_bp").unwrap();
+        let device_id = DeviceId::new("id_no_speech_bad_voice_score_bp_1").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &actor_user_id, &device_id);
+
+        let pending = prepare_protected_chat_response_turn_with_identity_assertion(
+            &runtime,
+            &mut store,
+            actor_user_id,
+            device_id,
+            no_speech_voice_assertion(),
+            CorrelationId(9865),
+            TurnId(9965),
+        );
+
+        assert_posture_finalization_requires_canonical_voice_score_bp(
+            &runtime, &mut store, pending, 4_500,
+        );
+    }
+
+    #[test]
+    fn at_identity_posture_41_multi_speaker_protected_voice_turn_fails_closed_when_voice_assertion_score_bp_is_not_canonical_for_posture_family(
+    ) {
+        let runtime = runtime_with_search_tool_fixtures();
+        let actor_user_id = UserId::new("tenant_1:id_multi_bad_voice_score_bp").unwrap();
+        let device_id = DeviceId::new("id_multi_bad_voice_score_bp_1").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &actor_user_id, &device_id);
+
+        let pending = prepare_protected_chat_response_turn_with_identity_assertion(
+            &runtime,
+            &mut store,
+            actor_user_id,
+            device_id,
+            multi_speaker_voice_assertion(),
+            CorrelationId(9866),
+            TurnId(9966),
+        );
+
+        assert_posture_finalization_requires_canonical_voice_score_bp(
+            &runtime, &mut store, pending, 4_500,
         );
     }
 
