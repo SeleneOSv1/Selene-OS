@@ -22,7 +22,7 @@ jobs:
   section07-reopen-watch:
     runs-on: ubuntu-latest
     outputs:
-      section07_status: ${{ steps.scan.outputs.section07_status }}
+      section07_status: ${{ steps.publish.outputs.section07_status }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -47,15 +47,24 @@ jobs:
             echo "SECTION07_HEAD_SHA=${{ inputs.head }}" >> "$GITHUB_ENV"
           fi
 
-      - name: Run Section 07 reopen scanner
-        id: scan
+      - name: Run Section 07 reopen guardrail
         shell: bash
         run: |
           set -euo pipefail
-          cargo run -p selene_os --bin section07_reopen_scan -- --repo-root "$GITHUB_WORKSPACE" --base "$SECTION07_BASE_SHA" --head "$SECTION07_HEAD_SHA" | tee section07_reopen_report.txt
-          section07_status="$(grep '^status=' section07_reopen_report.txt | head -n 1 | sed 's/^status=//')"
+          REPORT_PATH="$RUNNER_TEMP/section07_reopen_report.txt"
+          STATUS_PATH="$RUNNER_TEMP/section07_reopen_status.txt"
+          echo "SECTION07_REPORT_PATH=$REPORT_PATH" >> "$GITHUB_ENV"
+          echo "SECTION07_STATUS_PATH=$STATUS_PATH" >> "$GITHUB_ENV"
+          bash "$GITHUB_WORKSPACE/scripts/check_section07_reopen_watch.sh" --repo-root "$GITHUB_WORKSPACE" --base "$SECTION07_BASE_SHA" --head "$SECTION07_HEAD_SHA" --report-path "$REPORT_PATH" --status-path "$STATUS_PATH"
+
+      - name: Publish Section 07 reopen report
+        id: publish
+        shell: bash
+        run: |
+          set -euo pipefail
+          section07_status="$(cat "$SECTION07_STATUS_PATH")"
           if [[ -z "${section07_status}" ]]; then
-            echo "failed to extract Section 07 scanner status" >&2
+            echo "missing Section 07 status file output" >&2
             exit 1
           fi
           echo "section07_status=${section07_status}" >> "$GITHUB_OUTPUT"
@@ -67,7 +76,7 @@ jobs:
             echo "- Status: \`${section07_status}\`"
             echo
             echo '```text'
-            cat section07_reopen_report.txt
+            cat "$SECTION07_REPORT_PATH"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
           case "$section07_status" in
@@ -86,4 +95,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: section07-reopen-report
-          path: section07_reopen_report.txt
+          path: ${{ env.SECTION07_REPORT_PATH }}
