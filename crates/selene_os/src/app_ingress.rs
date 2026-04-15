@@ -5641,8 +5641,7 @@ fn require_canonical_recovery_voice_confidence(
     voice_identity_assertion: &SpeakerAssertionUnknown,
     recovery_reason_code: ReasonCodeId,
 ) -> Result<(), StorageError> {
-    if canonical_recovery_voice_confidence_matches(voice_identity_assertion, recovery_reason_code)
-    {
+    if canonical_recovery_voice_confidence_matches(voice_identity_assertion, recovery_reason_code) {
         Ok(())
     } else {
         Err(StorageError::ContractViolation(
@@ -5651,6 +5650,40 @@ fn require_canonical_recovery_voice_confidence(
                     "app_voice_turn_execution_outcome.runtime_execution_envelope.voice_identity_assertion.confidence",
                 reason:
                     "must match canonical recovery confidence carriage for fail-closed classification",
+            },
+        ))
+    }
+}
+
+fn canonical_recovery_voice_score_bp_matches(
+    voice_identity_assertion: &SpeakerAssertionUnknown,
+    recovery_reason_code: ReasonCodeId,
+) -> bool {
+    match recovery_reason_code {
+        code if code == voice_id_reason_codes::VID_REAUTH_REQUIRED
+            || code == voice_id_reason_codes::VID_DEVICE_CLAIM_REQUIRED
+            || code == voice_id_reason_codes::VID_ENROLLMENT_REQUIRED
+            || code == voice_id_reason_codes::VID_FAIL_PROFILE_NOT_ENROLLED =>
+        {
+            voice_identity_assertion.score_bp == 4_500
+        }
+        _ => false,
+    }
+}
+
+fn require_canonical_recovery_voice_score_bp(
+    voice_identity_assertion: &SpeakerAssertionUnknown,
+    recovery_reason_code: ReasonCodeId,
+) -> Result<(), StorageError> {
+    if canonical_recovery_voice_score_bp_matches(voice_identity_assertion, recovery_reason_code) {
+        Ok(())
+    } else {
+        Err(StorageError::ContractViolation(
+            ContractViolation::InvalidValue {
+                field:
+                    "app_voice_turn_execution_outcome.runtime_execution_envelope.voice_identity_assertion.score_bp",
+                reason:
+                    "must match canonical recovery score_bp carriage for fail-closed classification",
             },
         ))
     }
@@ -5860,6 +5893,10 @@ fn canonical_recovery_fail_closed_identity_state(
         recovery_reason_code,
     )?;
     require_canonical_recovery_voice_confidence(
+        unknown_voice_identity_assertion,
+        recovery_reason_code,
+    )?;
+    require_canonical_recovery_voice_score_bp(
         unknown_voice_identity_assertion,
         recovery_reason_code,
     )?;
@@ -9258,9 +9295,42 @@ mod tests {
                     "must match canonical recovery confidence carriage for fail-closed classification"
                 );
             }
-            other => panic!(
-                "expected recovery voice-confidence contract violation, got {other:?}"
-            ),
+            other => panic!("expected recovery voice-confidence contract violation, got {other:?}"),
+        }
+    }
+
+    fn assert_recovery_finalization_requires_canonical_voice_score_bp(
+        runtime: &AppServerIngressRuntime,
+        store: &mut Ph1fStore,
+        mut pending: PendingProtectedResponseTurn,
+        divergent_score_bp: u16,
+    ) {
+        let voice_identity_assertion = pending
+            .out
+            .runtime_execution_envelope
+            .voice_identity_assertion
+            .as_mut()
+            .expect("recovery voice identity assertion must remain attached");
+        let Ph1VoiceIdResponse::SpeakerAssertionUnknown(unknown) = voice_identity_assertion else {
+            panic!("recovery voice-score proof must keep the Unknown carrier family");
+        };
+        assert_ne!(unknown.score_bp, divergent_score_bp);
+        unknown.score_bp = divergent_score_bp;
+
+        let err = finalize_pending_protected_response_turn(runtime, store, pending)
+            .expect_err("non-canonical recovery voice score_bp must fail closed");
+        match err {
+            StorageError::ContractViolation(ContractViolation::InvalidValue { field, reason }) => {
+                assert_eq!(
+                    field,
+                    "app_voice_turn_execution_outcome.runtime_execution_envelope.voice_identity_assertion.score_bp"
+                );
+                assert_eq!(
+                    reason,
+                    "must match canonical recovery score_bp carriage for fail-closed classification"
+                );
+            }
+            other => panic!("expected recovery voice-score contract violation, got {other:?}"),
         }
     }
 
@@ -12194,6 +12264,11 @@ mod tests {
                 .may_prompt_identity
         );
         assert_eq!(
+            unknown_voice_identity_assertion.confidence,
+            IdentityConfidence::Medium
+        );
+        assert_eq!(unknown_voice_identity_assertion.score_bp, 4_500);
+        assert_eq!(
             unknown_voice_identity_assertion
                 .identity_v2
                 .identity_tier_v2,
@@ -12311,6 +12386,7 @@ mod tests {
             unknown_voice_identity_assertion.confidence,
             IdentityConfidence::Medium
         );
+        assert_eq!(unknown_voice_identity_assertion.score_bp, 4_500);
         assert_eq!(
             unknown_voice_identity_assertion
                 .identity_v2
@@ -12438,6 +12514,7 @@ mod tests {
             unknown_voice_identity_assertion.confidence,
             IdentityConfidence::Medium
         );
+        assert_eq!(unknown_voice_identity_assertion.score_bp, 4_500);
         assert!(unknown_voice_identity_assertion.candidate_user_id.is_none());
         assert!(unknown_voice_identity_assertion
             .device_owner_user_id
@@ -13441,6 +13518,7 @@ mod tests {
             unknown_voice_identity_assertion.confidence,
             IdentityConfidence::Medium
         );
+        assert_eq!(unknown_voice_identity_assertion.score_bp, 4_500);
         assert_eq!(
             unknown_voice_identity_assertion.spoof_liveness_status,
             SpoofLivenessStatus::Unknown
@@ -13572,6 +13650,7 @@ mod tests {
             unknown_voice_identity_assertion.confidence,
             IdentityConfidence::Medium
         );
+        assert_eq!(unknown_voice_identity_assertion.score_bp, 4_500);
         assert_eq!(
             unknown_voice_identity_assertion.spoof_liveness_status,
             SpoofLivenessStatus::Unknown
@@ -13762,6 +13841,7 @@ mod tests {
             unknown_voice_identity_assertion.confidence,
             IdentityConfidence::Medium
         );
+        assert_eq!(unknown_voice_identity_assertion.score_bp, 4_500);
         assert_eq!(
             unknown_voice_identity_assertion
                 .identity_v2
@@ -13886,6 +13966,7 @@ mod tests {
             unknown_voice_identity_assertion.confidence,
             IdentityConfidence::Medium
         );
+        assert_eq!(unknown_voice_identity_assertion.score_bp, 4_500);
         assert_eq!(
             unknown_voice_identity_assertion
                 .identity_v2
@@ -14908,8 +14989,7 @@ mod tests {
     fn at_identity_recovery_39_reauth_required_protected_voice_turn_fails_closed_when_voice_assertion_confidence_is_not_canonical_for_recovery_family(
     ) {
         let runtime = runtime_with_search_tool_fixtures();
-        let actor_user_id =
-            UserId::new("tenant_1:recovery_reauth_bad_voice_confidence").unwrap();
+        let actor_user_id = UserId::new("tenant_1:recovery_reauth_bad_voice_confidence").unwrap();
         let device_id = DeviceId::new("recovery_reauth_bad_voice_confidence_1").unwrap();
         let mut store = Ph1fStore::new_in_memory();
         seed_actor(&mut store, &actor_user_id, &device_id);
@@ -14967,8 +15047,7 @@ mod tests {
     fn at_identity_recovery_41_reenrollment_required_protected_voice_turn_fails_closed_when_voice_assertion_confidence_is_not_canonical_for_recovery_family(
     ) {
         let runtime = runtime_with_search_tool_fixtures();
-        let actor_user_id =
-            UserId::new("tenant_1:recovery_reenroll_bad_voice_confidence").unwrap();
+        let actor_user_id = UserId::new("tenant_1:recovery_reenroll_bad_voice_confidence").unwrap();
         let device_id = DeviceId::new("recovery_reenroll_bad_voice_confidence_1").unwrap();
         let mut store = Ph1fStore::new_in_memory();
         seed_actor(&mut store, &actor_user_id, &device_id);
@@ -15015,6 +15094,105 @@ mod tests {
             &mut store,
             pending,
             IdentityConfidence::Low,
+        );
+    }
+
+    #[test]
+    fn at_identity_recovery_43_reauth_required_protected_voice_turn_fails_closed_when_voice_assertion_score_bp_is_not_canonical_for_recovery_family(
+    ) {
+        let runtime = runtime_with_search_tool_fixtures();
+        let actor_user_id = UserId::new("tenant_1:recovery_reauth_bad_voice_score").unwrap();
+        let device_id = DeviceId::new("recovery_reauth_bad_voice_score_1").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &actor_user_id, &device_id);
+
+        let pending = prepare_protected_response_turn_with_identity_assertion(
+            &runtime,
+            &mut store,
+            actor_user_id.clone(),
+            device_id,
+            reauth_required_voice_assertion(actor_user_id),
+            CorrelationId(9901),
+            TurnId(10001),
+        );
+
+        assert_recovery_finalization_requires_canonical_voice_score_bp(
+            &runtime, &mut store, pending, 2_000,
+        );
+    }
+
+    #[test]
+    fn at_identity_recovery_44_device_claim_required_protected_voice_turn_fails_closed_when_voice_assertion_score_bp_is_not_canonical_for_recovery_family(
+    ) {
+        let runtime = runtime_with_search_tool_fixtures();
+        let actor_user_id = UserId::new("tenant_1:recovery_device_claim_bad_voice_score").unwrap();
+        let owner_user_id =
+            UserId::new("tenant_1:recovery_device_claim_bad_voice_score_owner").unwrap();
+        let device_id = DeviceId::new("recovery_device_claim_bad_voice_score_1").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &actor_user_id, &device_id);
+
+        let pending = prepare_protected_response_turn_with_request_owner_and_identity_assertion(
+            &runtime,
+            &mut store,
+            actor_user_id.clone(),
+            owner_user_id.clone(),
+            device_id,
+            device_claim_required_voice_assertion(actor_user_id, owner_user_id),
+            CorrelationId(9902),
+            TurnId(10002),
+        );
+
+        assert_recovery_finalization_requires_canonical_voice_score_bp(
+            &runtime, &mut store, pending, 2_000,
+        );
+    }
+
+    #[test]
+    fn at_identity_recovery_45_reenrollment_required_protected_voice_turn_fails_closed_when_voice_assertion_score_bp_is_not_canonical_for_recovery_family(
+    ) {
+        let runtime = runtime_with_search_tool_fixtures();
+        let actor_user_id = UserId::new("tenant_1:recovery_reenroll_bad_voice_score").unwrap();
+        let device_id = DeviceId::new("recovery_reenroll_bad_voice_score_1").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &actor_user_id, &device_id);
+
+        let pending = prepare_protected_response_turn_with_identity_assertion(
+            &runtime,
+            &mut store,
+            actor_user_id.clone(),
+            device_id,
+            reenrollment_required_voice_assertion(actor_user_id),
+            CorrelationId(9903),
+            TurnId(10003),
+        );
+
+        assert_recovery_finalization_requires_canonical_voice_score_bp(
+            &runtime, &mut store, pending, 2_000,
+        );
+    }
+
+    #[test]
+    fn at_identity_recovery_46_profile_not_enrolled_protected_voice_turn_fails_closed_when_voice_assertion_score_bp_is_not_canonical_for_recovery_family(
+    ) {
+        let runtime = runtime_with_search_tool_fixtures();
+        let actor_user_id = UserId::new("tenant_1:recovery_pne_bad_score").unwrap();
+        let device_id = DeviceId::new("recovery_pne_bad_score_1").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &actor_user_id, &device_id);
+
+        let pending = prepare_protected_response_turn_with_identity_assertion(
+            &runtime,
+            &mut store,
+            actor_user_id.clone(),
+            device_id,
+            profile_not_enrolled_voice_assertion(actor_user_id),
+            CorrelationId(9904),
+            TurnId(10004),
+        );
+
+        assert_recovery_finalization_requires_canonical_voice_score_bp(
+            &runtime, &mut store, pending, 2_000,
         );
     }
 
