@@ -1458,10 +1458,12 @@ fn govern_builder_completion_after_proof(
     match runtime_law.govern_completion(&envelope_for_law, law_action_class, law_context) {
         Ok(runtime_execution_envelope) => {
             if let Some(error) = proof_error {
-                Err(BuilderGovernedRefusal::Proof(Box::new(BuilderGovernedProofRefusal {
-                    error,
-                    runtime_execution_envelope: Box::new(runtime_execution_envelope),
-                })))
+                Err(BuilderGovernedRefusal::Proof(Box::new(
+                    BuilderGovernedProofRefusal {
+                        error,
+                        runtime_execution_envelope: Box::new(runtime_execution_envelope),
+                    },
+                )))
             } else {
                 Ok(runtime_execution_envelope)
             }
@@ -1470,10 +1472,12 @@ fn govern_builder_completion_after_proof(
             let runtime_execution_envelope = envelope_for_law
                 .with_law_state(Some(decision.law_state.as_ref().clone()))
                 .map_err(BuilderGovernedRefusal::Contract)?;
-            Err(BuilderGovernedRefusal::Law(Box::new(BuilderGovernedLawRefusal {
-                decision,
-                runtime_execution_envelope: Box::new(runtime_execution_envelope),
-            })))
+            Err(BuilderGovernedRefusal::Law(Box::new(
+                BuilderGovernedLawRefusal {
+                    decision,
+                    runtime_execution_envelope: Box::new(runtime_execution_envelope),
+                },
+            )))
         }
     }
 }
@@ -3688,6 +3692,275 @@ fn truncate_token(mut value: String, max_len: usize) -> String {
     }
 }
 
+const SECTION07_PROGRAM_D_WATCHLIST: [&str; 5] = [
+    "crates/selene_os/src/runtime_governance.rs",
+    "crates/selene_os/src/runtime_law.rs",
+    "crates/selene_kernel_contracts/src/runtime_execution.rs",
+    "crates/selene_storage/src/ph1f.rs",
+    "crates/selene_storage/src/repo.rs",
+];
+
+const SECTION07_PROGRAM_E_WATCHLIST: [&str; 6] = [
+    "crates/selene_os/src/ph1j.rs",
+    "crates/selene_kernel_contracts/src/ph1j.rs",
+    "crates/selene_os/src/runtime_governance.rs",
+    "crates/selene_kernel_contracts/src/runtime_execution.rs",
+    "crates/selene_storage/src/ph1f.rs",
+    "crates/selene_storage/src/repo.rs",
+];
+
+const SECTION07_PROGRAM_E_PROOF_RUNTIME_WATCHLIST: [&str; 3] = [
+    "crates/selene_os/src/ph1j.rs",
+    "crates/selene_kernel_contracts/src/ph1j.rs",
+    "crates/selene_os/src/runtime_governance.rs",
+];
+
+const SECTION07_PROGRAM_E_TRANSPORT_WATCHLIST: [&str; 3] = [
+    "crates/selene_kernel_contracts/src/runtime_execution.rs",
+    "crates/selene_storage/src/ph1f.rs",
+    "crates/selene_storage/src/repo.rs",
+];
+
+const SECTION07_PROGRAM_D_RUNTIME_TOKENS: [&str; 6] = [
+    "observe_node_policy_version",
+    "GovernanceDecisionLogEntry",
+    "cluster_consistency",
+    "drift_signals",
+    "quarantined_subsystems",
+    "subsystem_certifications",
+];
+
+const SECTION07_PROGRAM_D_STORAGE_TOKENS: [&str; 8] = [
+    "append_",
+    "commit_row",
+    "insert",
+    "upsert",
+    "persist",
+    "store",
+    "snapshot",
+    "audit",
+];
+
+const SECTION07_PROGRAM_E_TARGET_TOKENS: [&str; 5] = [
+    "IdentityCertification",
+    "identity_certification",
+    "certification_target",
+    "identity_target",
+    "certification_target_ref",
+];
+
+const SECTION07_PROGRAM_E_INSUFFICIENT_TOKENS: [&str; 8] = [
+    "CanonicalProofRecordInput",
+    "artifact_trust_state_from_receipt",
+    "artifact_trust_entries",
+    "artifact_trust_root_registry",
+    "proof_record_ref",
+    "proof_entry_ref",
+    "decision_log_ref",
+    "target_id",
+];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Section07ReopenStatus {
+    StillBlocked,
+    ProgramDReopenCandidate,
+    ProgramEReopenCandidate,
+}
+
+impl Section07ReopenStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Section07ReopenStatus::StillBlocked => "StillBlocked",
+            Section07ReopenStatus::ProgramDReopenCandidate => "ProgramDReopenCandidate",
+            Section07ReopenStatus::ProgramEReopenCandidate => "ProgramEReopenCandidate",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Section07ReopenDetectorInput {
+    pub changed_files: Vec<String>,
+    pub symbol_hits: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Section07ReopenReport {
+    pub status: Section07ReopenStatus,
+    pub matched_watchlist_files: Vec<String>,
+    pub matched_symbols: Vec<String>,
+    pub explanation: String,
+}
+
+pub fn detect_section07_reopen(
+    input: &Section07ReopenDetectorInput,
+) -> Result<Section07ReopenReport, ContractViolation> {
+    let normalized_files = normalize_section07_paths(&input.changed_files);
+    let normalized_symbols = normalize_section07_symbols(&input.symbol_hits);
+
+    let matched_d_files =
+        matched_watchlist_files(&normalized_files, &SECTION07_PROGRAM_D_WATCHLIST);
+    let matched_e_files =
+        matched_watchlist_files(&normalized_files, &SECTION07_PROGRAM_E_WATCHLIST);
+    let matched_e_proof_runtime_files = matched_watchlist_files(
+        &normalized_files,
+        &SECTION07_PROGRAM_E_PROOF_RUNTIME_WATCHLIST,
+    );
+    let matched_e_transport_files =
+        matched_watchlist_files(&normalized_files, &SECTION07_PROGRAM_E_TRANSPORT_WATCHLIST);
+
+    let d_runtime_hits =
+        matched_symbol_tokens(&normalized_symbols, &SECTION07_PROGRAM_D_RUNTIME_TOKENS);
+    let d_storage_hits =
+        matched_symbol_tokens(&normalized_symbols, &SECTION07_PROGRAM_D_STORAGE_TOKENS);
+    let e_target_hits =
+        matched_symbol_tokens(&normalized_symbols, &SECTION07_PROGRAM_E_TARGET_TOKENS);
+    let insufficient_hits = matched_symbol_tokens(
+        &normalized_symbols,
+        &SECTION07_PROGRAM_E_INSUFFICIENT_TOKENS,
+    );
+
+    let matched_watchlist_files = merge_sorted_unique(&matched_d_files, &matched_e_files);
+    let matched_symbols = merge_sorted_unique(
+        &merge_sorted_unique(&d_runtime_hits, &d_storage_hits),
+        &merge_sorted_unique(&e_target_hits, &insufficient_hits),
+    );
+
+    if matched_watchlist_files.is_empty() {
+        return Ok(Section07ReopenReport {
+            status: Section07ReopenStatus::StillBlocked,
+            matched_watchlist_files,
+            matched_symbols: vec![],
+            explanation: "no Section 07 watchlist files changed".to_string(),
+        });
+    }
+
+    let program_d_reopened =
+        !matched_d_files.is_empty() && !d_runtime_hits.is_empty() && !d_storage_hits.is_empty();
+    let program_e_reopened = !matched_e_files.is_empty()
+        && !matched_e_proof_runtime_files.is_empty()
+        && !matched_e_transport_files.is_empty()
+        && !e_target_hits.is_empty();
+
+    let (status, explanation) = if program_d_reopened {
+        let explanation = if program_e_reopened {
+            "Program D reopen candidate criteria matched with runtime-plus-storage bridge evidence; Program E candidate evidence also matched but Program D takes priority".to_string()
+        } else {
+            "Program D reopen candidate criteria matched with runtime producer and storage bridge evidence".to_string()
+        };
+        (Section07ReopenStatus::ProgramDReopenCandidate, explanation)
+    } else if program_e_reopened {
+        (
+            Section07ReopenStatus::ProgramEReopenCandidate,
+            "Program E reopen candidate criteria matched with explicit target-bearing certification evidence plus proof/runtime and transport surface movement".to_string(),
+        )
+    } else {
+        let explanation = if !matched_d_files.is_empty()
+            && !d_runtime_hits.is_empty()
+            && d_storage_hits.is_empty()
+        {
+            "Program D watchlist changed, but runtime drift symbols appeared without storage bridge evidence"
+                .to_string()
+        } else if !matched_e_files.is_empty()
+            && !e_target_hits.is_empty()
+            && (matched_e_proof_runtime_files.is_empty() || matched_e_transport_files.is_empty())
+        {
+            "Program E watchlist changed, but target-bearing symbols appeared without both proof/runtime and transport surface movement"
+                .to_string()
+        } else if !insufficient_hits.is_empty() && e_target_hits.is_empty() {
+            "watchlist files changed, but only adjacent artifact-trust, proof-ref, or generic target carriers matched"
+                .to_string()
+        } else {
+            "watchlist files changed without Program D runtime-plus-storage bridge evidence or Program E target-bearing candidate evidence"
+                .to_string()
+        };
+        (Section07ReopenStatus::StillBlocked, explanation)
+    };
+
+    Ok(Section07ReopenReport {
+        status,
+        matched_watchlist_files,
+        matched_symbols,
+        explanation,
+    })
+}
+
+pub fn render_section07_reopen_report(report: &Section07ReopenReport) -> String {
+    let files = join_or_none(&report.matched_watchlist_files);
+    let symbols = join_or_none(&report.matched_symbols);
+    format!(
+        "status={}\nmatched_watchlist_files={}\nmatched_symbols={}\nexplanation={}",
+        report.status.as_str(),
+        files,
+        symbols,
+        report.explanation
+    )
+}
+
+fn normalize_section07_paths(paths: &[String]) -> Vec<String> {
+    let mut normalized = BTreeSet::new();
+    for path in paths {
+        let candidate = path.trim().replace('\\', "/");
+        if !candidate.is_empty() {
+            normalized.insert(candidate);
+        }
+    }
+    normalized.into_iter().collect()
+}
+
+fn normalize_section07_symbols(symbols: &[String]) -> Vec<String> {
+    let mut normalized = BTreeSet::new();
+    for symbol in symbols {
+        let candidate = symbol.trim().to_string();
+        if !candidate.is_empty() {
+            normalized.insert(candidate);
+        }
+    }
+    normalized.into_iter().collect()
+}
+
+fn matched_watchlist_files(files: &[String], watchlist: &[&str]) -> Vec<String> {
+    let mut matched = BTreeSet::new();
+    for watch in watchlist {
+        if files.iter().any(|file| section07_path_matches(file, watch)) {
+            matched.insert((*watch).to_string());
+        }
+    }
+    matched.into_iter().collect()
+}
+
+fn matched_symbol_tokens(symbols: &[String], tokens: &[&str]) -> Vec<String> {
+    let mut matched = BTreeSet::new();
+    for token in tokens {
+        if symbols.iter().any(|symbol| symbol.contains(token)) {
+            matched.insert((*token).to_string());
+        }
+    }
+    matched.into_iter().collect()
+}
+
+fn section07_path_matches(candidate: &str, watch: &str) -> bool {
+    candidate == watch || candidate.ends_with(&format!("/{watch}"))
+}
+
+fn merge_sorted_unique(left: &[String], right: &[String]) -> Vec<String> {
+    let mut merged = BTreeSet::new();
+    for value in left {
+        merged.insert(value.clone());
+    }
+    for value in right {
+        merged.insert(value.clone());
+    }
+    merged.into_iter().collect()
+}
+
+fn join_or_none(values: &[String]) -> String {
+    if values.is_empty() {
+        "none".to_string()
+    } else {
+        values.join(",")
+    }
+}
+
 trait BuilderProposalAuditCheck {
     fn reason_code_valid(&self) -> bool;
 }
@@ -5375,5 +5648,255 @@ mod tests {
             }
             other => panic!("expected runtime law refusal after PH1.J failure, got {other:?}"),
         }
+    }
+
+    fn section07_reopen_input(
+        changed_files: &[&str],
+        symbol_hits: &[&str],
+    ) -> Section07ReopenDetectorInput {
+        Section07ReopenDetectorInput {
+            changed_files: changed_files
+                .iter()
+                .map(|value| (*value).to_string())
+                .collect(),
+            symbol_hits: symbol_hits
+                .iter()
+                .map(|value| (*value).to_string())
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn at_builder_os_27_section07_reopen_detector_stays_blocked_when_watchlist_is_unmoved() {
+        let input = section07_reopen_input(
+            &["crates/selene_os/src/ph1builder.rs", "docs/notes.txt"],
+            &[
+                "observe_node_policy_version",
+                "append_builder_validation_gate_result_row",
+            ],
+        );
+
+        let report = detect_section07_reopen(&input).unwrap();
+
+        assert_eq!(report.status, Section07ReopenStatus::StillBlocked);
+        assert!(report.matched_watchlist_files.is_empty());
+        assert!(report.matched_symbols.is_empty());
+        assert_eq!(report.explanation, "no Section 07 watchlist files changed");
+    }
+
+    #[test]
+    fn at_builder_os_28_section07_reopen_detector_stays_blocked_for_artifact_trust_and_generic_target_id_only_hits(
+    ) {
+        let input = section07_reopen_input(
+            &[
+                "crates/selene_os/src/ph1j.rs",
+                "crates/selene_storage/src/repo.rs",
+                "crates/selene_os/src/ph1j.rs",
+            ],
+            &[
+                "artifact_trust_entries",
+                "target_id",
+                "proof_record_ref",
+                "artifact_trust_entries",
+            ],
+        );
+
+        let report = detect_section07_reopen(&input).unwrap();
+
+        assert_eq!(report.status, Section07ReopenStatus::StillBlocked);
+        assert_eq!(
+            report.matched_watchlist_files,
+            vec![
+                "crates/selene_os/src/ph1j.rs".to_string(),
+                "crates/selene_storage/src/repo.rs".to_string(),
+            ]
+        );
+        assert_eq!(
+            report.matched_symbols,
+            vec![
+                "artifact_trust_entries".to_string(),
+                "proof_record_ref".to_string(),
+                "target_id".to_string(),
+            ]
+        );
+        assert_eq!(
+            report.explanation,
+            "watchlist files changed, but only adjacent artifact-trust, proof-ref, or generic target carriers matched"
+        );
+    }
+
+    #[test]
+    fn at_builder_os_28b_section07_reopen_detector_stays_blocked_for_target_token_without_transport_pair(
+    ) {
+        let input = section07_reopen_input(
+            &["crates/selene_os/src/ph1j.rs"],
+            &["certification_target_ref"],
+        );
+
+        let report = detect_section07_reopen(&input).unwrap();
+
+        assert_eq!(report.status, Section07ReopenStatus::StillBlocked);
+        assert_eq!(
+            report.matched_watchlist_files,
+            vec!["crates/selene_os/src/ph1j.rs".to_string()]
+        );
+        assert_eq!(
+            report.matched_symbols,
+            vec![
+                "certification_target".to_string(),
+                "certification_target_ref".to_string(),
+            ]
+        );
+        assert_eq!(
+            report.explanation,
+            "Program E watchlist changed, but target-bearing symbols appeared without both proof/runtime and transport surface movement"
+        );
+    }
+
+    #[test]
+    fn at_builder_os_29_section07_reopen_detector_reopens_program_d_when_runtime_and_storage_drift_bridge_hits_appear(
+    ) {
+        let input = section07_reopen_input(
+            &[
+                "crates/selene_os/src/runtime_governance.rs",
+                "crates/selene_storage/src/repo.rs",
+            ],
+            &[
+                "cluster_consistency",
+                "append_builder_validation_gate_result_row",
+                "append_builder_validation_gate_result_row",
+            ],
+        );
+
+        let report = detect_section07_reopen(&input).unwrap();
+
+        assert_eq!(
+            report.status,
+            Section07ReopenStatus::ProgramDReopenCandidate
+        );
+        assert_eq!(
+            report.matched_watchlist_files,
+            vec![
+                "crates/selene_os/src/runtime_governance.rs".to_string(),
+                "crates/selene_storage/src/repo.rs".to_string(),
+            ]
+        );
+        assert_eq!(
+            report.matched_symbols,
+            vec!["append_".to_string(), "cluster_consistency".to_string()]
+        );
+        assert_eq!(
+            report.explanation,
+            "Program D reopen candidate criteria matched with runtime producer and storage bridge evidence"
+        );
+    }
+
+    #[test]
+    fn at_builder_os_30_section07_reopen_detector_reopens_program_e_when_target_bearing_certification_hits_appear(
+    ) {
+        let input = section07_reopen_input(
+            &[
+                "crates/selene_os/src/ph1j.rs",
+                "crates/selene_kernel_contracts/src/runtime_execution.rs",
+            ],
+            &["certification_target_ref", "artifact_trust_entries"],
+        );
+
+        let report = detect_section07_reopen(&input).unwrap();
+
+        assert_eq!(
+            report.status,
+            Section07ReopenStatus::ProgramEReopenCandidate
+        );
+        assert_eq!(
+            report.matched_watchlist_files,
+            vec![
+                "crates/selene_kernel_contracts/src/runtime_execution.rs".to_string(),
+                "crates/selene_os/src/ph1j.rs".to_string(),
+            ]
+        );
+        assert_eq!(
+            report.matched_symbols,
+            vec![
+                "artifact_trust_entries".to_string(),
+                "certification_target".to_string(),
+                "certification_target_ref".to_string(),
+            ]
+        );
+        assert_eq!(
+            report.explanation,
+            "Program E reopen candidate criteria matched with explicit target-bearing certification evidence plus proof/runtime and transport surface movement"
+        );
+    }
+
+    #[test]
+    fn at_builder_os_31_section07_reopen_detector_prioritizes_program_d_when_both_paths_match() {
+        let input = section07_reopen_input(
+            &[
+                "crates/selene_os/src/runtime_governance.rs",
+                "crates/selene_storage/src/repo.rs",
+                "crates/selene_os/src/ph1j.rs",
+            ],
+            &[
+                "quarantined_subsystems",
+                "append_builder_proposal_row",
+                "identity_certification",
+            ],
+        );
+
+        let report = detect_section07_reopen(&input).unwrap();
+
+        assert_eq!(
+            report.status,
+            Section07ReopenStatus::ProgramDReopenCandidate
+        );
+        assert_eq!(
+            report.matched_watchlist_files,
+            vec![
+                "crates/selene_os/src/ph1j.rs".to_string(),
+                "crates/selene_os/src/runtime_governance.rs".to_string(),
+                "crates/selene_storage/src/repo.rs".to_string(),
+            ]
+        );
+        assert_eq!(
+            report.matched_symbols,
+            vec![
+                "append_".to_string(),
+                "identity_certification".to_string(),
+                "quarantined_subsystems".to_string(),
+            ]
+        );
+        assert_eq!(
+            report.explanation,
+            "Program D reopen candidate criteria matched with runtime-plus-storage bridge evidence; Program E candidate evidence also matched but Program D takes priority"
+        );
+    }
+
+    #[test]
+    fn at_builder_os_32_section07_reopen_report_is_deterministic_and_sorted() {
+        let input = section07_reopen_input(
+            &[
+                "/Users/selene/Documents/Selene-OS/crates/selene_storage/src/repo.rs",
+                "crates/selene_os/src/runtime_governance.rs",
+                "/Users/selene/Documents/Selene-OS/crates/selene_storage/src/repo.rs",
+            ],
+            &[
+                "append_builder_proposal_row",
+                "cluster_consistency",
+                "append_builder_proposal_row",
+            ],
+        );
+
+        let report = detect_section07_reopen(&input).unwrap();
+        let rendered = render_section07_reopen_report(&report);
+
+        assert_eq!(
+            report.status,
+            Section07ReopenStatus::ProgramDReopenCandidate
+        );
+        assert_eq!(
+            rendered,
+            "status=ProgramDReopenCandidate\nmatched_watchlist_files=crates/selene_os/src/runtime_governance.rs,crates/selene_storage/src/repo.rs\nmatched_symbols=append_,cluster_consistency\nexplanation=Program D reopen candidate criteria matched with runtime producer and storage bridge evidence"
+        );
     }
 }
