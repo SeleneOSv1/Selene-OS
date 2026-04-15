@@ -5726,6 +5726,43 @@ fn require_canonical_recovery_voice_margin_to_next_bp(
     }
 }
 
+fn canonical_recovery_voice_candidate_set_matches(
+    voice_identity_assertion: &SpeakerAssertionUnknown,
+    recovery_reason_code: ReasonCodeId,
+) -> bool {
+    match recovery_reason_code {
+        code if code == voice_id_reason_codes::VID_REAUTH_REQUIRED
+            || code == voice_id_reason_codes::VID_DEVICE_CLAIM_REQUIRED
+            || code == voice_id_reason_codes::VID_ENROLLMENT_REQUIRED
+            || code == voice_id_reason_codes::VID_FAIL_PROFILE_NOT_ENROLLED =>
+        {
+            voice_identity_assertion.candidate_set.is_empty()
+        }
+        _ => false,
+    }
+}
+
+fn require_canonical_recovery_voice_candidate_set(
+    voice_identity_assertion: &SpeakerAssertionUnknown,
+    recovery_reason_code: ReasonCodeId,
+) -> Result<(), StorageError> {
+    if canonical_recovery_voice_candidate_set_matches(
+        voice_identity_assertion,
+        recovery_reason_code,
+    ) {
+        Ok(())
+    } else {
+        Err(StorageError::ContractViolation(
+            ContractViolation::InvalidValue {
+                field:
+                    "app_voice_turn_execution_outcome.runtime_execution_envelope.voice_identity_assertion.candidate_set",
+                reason:
+                    "must match canonical recovery candidate_set carriage for fail-closed classification",
+            },
+        ))
+    }
+}
+
 fn require_canonical_recovery_voice_identity_tier_v2(
     voice_identity_assertion: &SpeakerAssertionUnknown,
 ) -> Result<(), StorageError> {
@@ -5938,6 +5975,10 @@ fn canonical_recovery_fail_closed_identity_state(
         recovery_reason_code,
     )?;
     require_canonical_recovery_voice_margin_to_next_bp(
+        unknown_voice_identity_assertion,
+        recovery_reason_code,
+    )?;
+    require_canonical_recovery_voice_candidate_set(
         unknown_voice_identity_assertion,
         recovery_reason_code,
     )?;
@@ -9410,6 +9451,46 @@ mod tests {
         }
     }
 
+    fn assert_recovery_finalization_requires_canonical_voice_candidate_set(
+        runtime: &AppServerIngressRuntime,
+        store: &mut Ph1fStore,
+        mut pending: PendingProtectedResponseTurn,
+    ) {
+        let voice_identity_assertion = pending
+            .out
+            .runtime_execution_envelope
+            .voice_identity_assertion
+            .as_mut()
+            .expect("recovery voice identity assertion must remain attached");
+        let Ph1VoiceIdResponse::SpeakerAssertionUnknown(unknown) = voice_identity_assertion else {
+            panic!("recovery voice candidate-set proof must keep the Unknown carrier family");
+        };
+        unknown.candidate_set = vec![selene_kernel_contracts::ph1_voice_id::VoiceIdCandidate::v1(
+            Some(UserId::new("tenant_1:recovery_candidate_set_probe").unwrap()),
+            None,
+            2_500,
+        )
+        .expect("recovery voice candidate-set probe must validate")];
+
+        let err = finalize_pending_protected_response_turn(runtime, store, pending)
+            .expect_err("non-canonical recovery voice candidate_set must fail closed");
+        match err {
+            StorageError::ContractViolation(ContractViolation::InvalidValue { field, reason }) => {
+                assert_eq!(
+                    field,
+                    "app_voice_turn_execution_outcome.runtime_execution_envelope.voice_identity_assertion.candidate_set"
+                );
+                assert_eq!(
+                    reason,
+                    "must match canonical recovery candidate_set carriage for fail-closed classification"
+                );
+            }
+            other => {
+                panic!("expected recovery voice candidate-set contract violation, got {other:?}")
+            }
+        }
+    }
+
     fn assert_recovery_finalization_requires_canonical_candidate_user_carriage(
         runtime: &AppServerIngressRuntime,
         store: &mut Ph1fStore,
@@ -12345,6 +12426,7 @@ mod tests {
         );
         assert_eq!(unknown_voice_identity_assertion.score_bp, 4_500);
         assert_eq!(unknown_voice_identity_assertion.margin_to_next_bp, None);
+        assert!(unknown_voice_identity_assertion.candidate_set.is_empty());
         assert_eq!(
             unknown_voice_identity_assertion
                 .identity_v2
@@ -12465,6 +12547,7 @@ mod tests {
         );
         assert_eq!(unknown_voice_identity_assertion.score_bp, 4_500);
         assert_eq!(unknown_voice_identity_assertion.margin_to_next_bp, None);
+        assert!(unknown_voice_identity_assertion.candidate_set.is_empty());
         assert_eq!(
             unknown_voice_identity_assertion
                 .identity_v2
@@ -12594,6 +12677,7 @@ mod tests {
         );
         assert_eq!(unknown_voice_identity_assertion.score_bp, 4_500);
         assert_eq!(unknown_voice_identity_assertion.margin_to_next_bp, None);
+        assert!(unknown_voice_identity_assertion.candidate_set.is_empty());
         assert!(unknown_voice_identity_assertion.candidate_user_id.is_none());
         assert!(unknown_voice_identity_assertion
             .device_owner_user_id
@@ -13599,6 +13683,7 @@ mod tests {
         );
         assert_eq!(unknown_voice_identity_assertion.score_bp, 4_500);
         assert_eq!(unknown_voice_identity_assertion.margin_to_next_bp, None);
+        assert!(unknown_voice_identity_assertion.candidate_set.is_empty());
         assert_eq!(
             unknown_voice_identity_assertion.spoof_liveness_status,
             SpoofLivenessStatus::Unknown
@@ -13732,6 +13817,7 @@ mod tests {
         );
         assert_eq!(unknown_voice_identity_assertion.score_bp, 4_500);
         assert_eq!(unknown_voice_identity_assertion.margin_to_next_bp, None);
+        assert!(unknown_voice_identity_assertion.candidate_set.is_empty());
         assert_eq!(
             unknown_voice_identity_assertion.spoof_liveness_status,
             SpoofLivenessStatus::Unknown
@@ -13924,6 +14010,7 @@ mod tests {
         );
         assert_eq!(unknown_voice_identity_assertion.score_bp, 4_500);
         assert_eq!(unknown_voice_identity_assertion.margin_to_next_bp, None);
+        assert!(unknown_voice_identity_assertion.candidate_set.is_empty());
         assert_eq!(
             unknown_voice_identity_assertion
                 .identity_v2
@@ -14050,6 +14137,7 @@ mod tests {
         );
         assert_eq!(unknown_voice_identity_assertion.score_bp, 4_500);
         assert_eq!(unknown_voice_identity_assertion.margin_to_next_bp, None);
+        assert!(unknown_voice_identity_assertion.candidate_set.is_empty());
         assert_eq!(
             unknown_voice_identity_assertion
                 .identity_v2
@@ -15307,8 +15395,7 @@ mod tests {
     fn at_identity_recovery_48_device_claim_required_protected_voice_turn_fails_closed_when_voice_assertion_margin_to_next_bp_is_not_canonical_for_recovery_family(
     ) {
         let runtime = runtime_with_search_tool_fixtures();
-        let actor_user_id =
-            UserId::new("tenant_1:recovery_device_claim_bad_voice_margin").unwrap();
+        let actor_user_id = UserId::new("tenant_1:recovery_device_claim_bad_voice_margin").unwrap();
         let owner_user_id =
             UserId::new("tenant_1:recovery_device_claim_bad_voice_margin_owner").unwrap();
         let device_id = DeviceId::new("recovery_device_claim_bad_voice_margin_1").unwrap();
@@ -15376,6 +15463,108 @@ mod tests {
 
         assert_recovery_finalization_requires_canonical_voice_margin_to_next_bp(
             &runtime, &mut store, pending, 2_500,
+        );
+    }
+
+    #[test]
+    fn at_identity_recovery_51_reauth_required_protected_voice_turn_fails_closed_when_voice_assertion_candidate_set_is_not_canonical_for_recovery_family(
+    ) {
+        let runtime = runtime_with_search_tool_fixtures();
+        let actor_user_id =
+            UserId::new("tenant_1:recovery_reauth_bad_voice_candidate_set").unwrap();
+        let device_id = DeviceId::new("recovery_reauth_bad_voice_candidate_set_1").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &actor_user_id, &device_id);
+
+        let pending = prepare_protected_response_turn_with_identity_assertion(
+            &runtime,
+            &mut store,
+            actor_user_id.clone(),
+            device_id,
+            reauth_required_voice_assertion(actor_user_id),
+            CorrelationId(9909),
+            TurnId(10009),
+        );
+
+        assert_recovery_finalization_requires_canonical_voice_candidate_set(
+            &runtime, &mut store, pending,
+        );
+    }
+
+    #[test]
+    fn at_identity_recovery_52_device_claim_required_protected_voice_turn_fails_closed_when_voice_assertion_candidate_set_is_not_canonical_for_recovery_family(
+    ) {
+        let runtime = runtime_with_search_tool_fixtures();
+        let actor_user_id =
+            UserId::new("tenant_1:recovery_device_claim_bad_voice_candidate_set").unwrap();
+        let owner_user_id =
+            UserId::new("tenant_1:recovery_device_claim_bad_voice_candidate_set_owner").unwrap();
+        let device_id = DeviceId::new("recovery_device_claim_bad_voice_candidate_set_1").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &actor_user_id, &device_id);
+
+        let pending = prepare_protected_response_turn_with_request_owner_and_identity_assertion(
+            &runtime,
+            &mut store,
+            actor_user_id.clone(),
+            owner_user_id.clone(),
+            device_id,
+            device_claim_required_voice_assertion(actor_user_id, owner_user_id),
+            CorrelationId(9910),
+            TurnId(10010),
+        );
+
+        assert_recovery_finalization_requires_canonical_voice_candidate_set(
+            &runtime, &mut store, pending,
+        );
+    }
+
+    #[test]
+    fn at_identity_recovery_53_reenrollment_required_protected_voice_turn_fails_closed_when_voice_assertion_candidate_set_is_not_canonical_for_recovery_family(
+    ) {
+        let runtime = runtime_with_search_tool_fixtures();
+        let actor_user_id =
+            UserId::new("tenant_1:recovery_reenroll_bad_voice_candidate_set").unwrap();
+        let device_id = DeviceId::new("recovery_reenroll_bad_voice_candidate_set_1").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &actor_user_id, &device_id);
+
+        let pending = prepare_protected_response_turn_with_identity_assertion(
+            &runtime,
+            &mut store,
+            actor_user_id.clone(),
+            device_id,
+            reenrollment_required_voice_assertion(actor_user_id),
+            CorrelationId(9911),
+            TurnId(10011),
+        );
+
+        assert_recovery_finalization_requires_canonical_voice_candidate_set(
+            &runtime, &mut store, pending,
+        );
+    }
+
+    #[test]
+    fn at_identity_recovery_54_profile_not_enrolled_protected_voice_turn_fails_closed_when_voice_assertion_candidate_set_is_not_canonical_for_recovery_family(
+    ) {
+        let runtime = runtime_with_search_tool_fixtures();
+        let actor_user_id = UserId::new("tenant_1:recovery_pne_bad_candidate_set").unwrap();
+        let device_id = DeviceId::new("recovery_pne_bad_candidate_set_1").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &actor_user_id, &device_id);
+
+        let pending = prepare_protected_response_turn_with_identity_assertion(
+            &runtime,
+            &mut store,
+            actor_user_id.clone(),
+            device_id,
+            profile_not_enrolled_voice_assertion(actor_user_id),
+            CorrelationId(9912),
+            TurnId(10012),
+        );
+
+        assert_recovery_finalization_requires_canonical_voice_candidate_set(
+            &runtime, &mut store, pending,
         );
     }
 
