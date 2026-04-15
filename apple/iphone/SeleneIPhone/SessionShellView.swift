@@ -583,6 +583,7 @@ struct SessionActiveVisibleContext: Identifiable, Equatable {
     let returnCheckPending: Bool?
     let returnCheckExpiresAt: String?
     let resumeBufferLive: Bool?
+    let resumeBufferAnswerID: String?
     let resumeBufferTopicHint: String?
     let interruptClarifyQuestion: String?
     let interruptClarifyWhatIsMissing: String?
@@ -661,6 +662,9 @@ struct SessionActiveVisibleContext: Identifiable, Equatable {
         let resumeBufferLive = Self.canonicalBoolean(
             Self.firstQueryValue(in: queryItems, name: "resume_buffer_live")
         )
+        let resumeBufferAnswerID = Self.boundedHint(
+            Self.firstQueryValue(in: queryItems, name: "resume_buffer_answer_id")
+        )
         let resumeBufferTopicHint = Self.boundedContinuityDetail(
             Self.firstQueryValue(in: queryItems, name: "resume_buffer_topic_hint")
         )
@@ -709,6 +713,7 @@ struct SessionActiveVisibleContext: Identifiable, Equatable {
         self.returnCheckPending = returnCheckPending
         self.returnCheckExpiresAt = returnCheckExpiresAt
         self.resumeBufferLive = resumeBufferLive
+        self.resumeBufferAnswerID = resumeBufferAnswerID
         self.resumeBufferTopicHint = resumeBufferTopicHint
         self.interruptClarifyQuestion = interruptClarifyQuestion
         self.interruptClarifyWhatIsMissing = interruptClarifyWhatIsMissing
@@ -854,6 +859,12 @@ struct SessionActiveVisibleContext: Identifiable, Equatable {
             )
         }
 
+        if let resumeBufferAnswerID {
+            rows.append(
+                EntryMetadataRow(label: "resume_buffer_answer_id", value: resumeBufferAnswerID)
+            )
+        }
+
         if let resumeBufferTopicHint {
             rows.append(
                 EntryMetadataRow(label: "resume_buffer_topic_hint", value: resumeBufferTopicHint)
@@ -920,6 +931,10 @@ struct SessionActiveVisibleContext: Identifiable, Equatable {
         resumeBufferLive == true
     }
 
+    var hasLawfulInterruptResumeBufferAnswerID: Bool {
+        resumeBufferAnswerID != nil
+    }
+
     var hasLawfulInterruptResumeBufferTopicHint: Bool {
         resumeBufferLive == true && resumeBufferTopicHint != nil
     }
@@ -942,6 +957,7 @@ struct SessionActiveVisibleContext: Identifiable, Equatable {
             || returnCheckPending != nil
             || returnCheckExpiresAt != nil
             || resumeBufferLive != nil
+            || resumeBufferAnswerID != nil
             || resumeBufferTopicHint != nil
     }
 
@@ -2975,6 +2991,11 @@ struct SessionShellView: View {
                     interruptResumeBufferLiveCard(resumeBufferLive)
                 }
 
+                if let resumeBufferAnswerID = context.resumeBufferAnswerID,
+                   context.hasLawfulInterruptResumeBufferAnswerID {
+                    interruptResumeBufferAnswerIDCard(resumeBufferAnswerID)
+                }
+
                 if let resumeBufferTopicHint = context.resumeBufferTopicHint,
                    context.hasLawfulInterruptResumeBufferTopicHint {
                     interruptResumeBufferTopicHintCard(resumeBufferTopicHint)
@@ -3454,6 +3475,42 @@ struct SessionShellView: View {
             }
         } label: {
             Text("Resume buffer")
+                .font(.headline)
+        }
+    }
+
+    private func interruptResumeBufferAnswerIDCard(_ resumeBufferAnswerID: String) -> some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Cloud-authored resume-buffer answer-ID evidence only")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                Text("Answer posture")
+                    .font(.subheadline.weight(.semibold))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                HStack(alignment: .top, spacing: 12) {
+                    Text("Resume buffer answer ID")
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
+                        .frame(width: 140, alignment: .leading)
+
+                    Text(resumeBufferAnswerID)
+                        .font(.body.monospaced())
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
+                Text("Exact cloud-authored answer ID only")
+                    .font(.subheadline.weight(.semibold))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                Text("No local resume authoring, no local topic synthesis, and no local dispatch unlock.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        } label: {
+            Text("Resume answer ID")
                 .font(.headline)
         }
     }
