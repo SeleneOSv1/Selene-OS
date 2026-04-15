@@ -5329,6 +5329,30 @@ fn require_canonical_posture_candidate_user_carriage(
     }
 }
 
+fn require_canonical_posture_candidate_actor_binding(
+    actor_identity: &UserId,
+    voice_identity_assertion: &SpeakerAssertionUnknown,
+    posture_reason_code: ReasonCodeId,
+) -> Result<(), StorageError> {
+    let candidate_must_match_actor = posture_reason_code
+        == voice_id_reason_codes::VID_FAIL_LOW_CONFIDENCE
+        || posture_reason_code == voice_id_reason_codes::VID_FAIL_GRAY_ZONE_MARGIN;
+    if !candidate_must_match_actor
+        || voice_identity_assertion.candidate_user_id.as_ref() == Some(actor_identity)
+    {
+        Ok(())
+    } else {
+        Err(StorageError::ContractViolation(
+            ContractViolation::InvalidValue {
+                field:
+                    "app_voice_turn_execution_outcome.runtime_execution_envelope.voice_identity_assertion.candidate_user_id",
+                reason:
+                    "must match canonical actor identity for posture fail-closed classification",
+            },
+        ))
+    }
+}
+
 fn require_absent_posture_device_owner_user_carriage(
     voice_identity_assertion: &SpeakerAssertionUnknown,
 ) -> Result<(), StorageError> {
@@ -5421,6 +5445,11 @@ fn canonical_posture_fail_closed_identity_state(
         unreachable!("posture fail-closed classification must keep the Unknown carrier family");
     };
     require_canonical_posture_candidate_user_carriage(
+        unknown_voice_identity_assertion,
+        posture_reason_code,
+    )?;
+    require_canonical_posture_candidate_actor_binding(
+        &out.runtime_execution_envelope.actor_identity,
         unknown_voice_identity_assertion,
         posture_reason_code,
     )?;
@@ -9973,6 +10002,47 @@ mod tests {
         }
     }
 
+    fn assert_posture_finalization_requires_canonical_candidate_actor_binding(
+        runtime: &AppServerIngressRuntime,
+        store: &mut Ph1fStore,
+        mut pending: PendingProtectedChatResponseTurn,
+        divergent_candidate_user_id: UserId,
+    ) {
+        assert_ne!(
+            pending.out.runtime_execution_envelope.actor_identity,
+            divergent_candidate_user_id
+        );
+        let voice_identity_assertion = pending
+            .out
+            .runtime_execution_envelope
+            .voice_identity_assertion
+            .as_mut()
+            .expect("posture voice identity assertion must remain attached");
+        let Ph1VoiceIdResponse::SpeakerAssertionUnknown(unknown) = voice_identity_assertion else {
+            panic!("posture candidate-binding proof must keep the Unknown carrier family");
+        };
+        unknown.candidate_user_id = Some(divergent_candidate_user_id);
+        unknown.device_owner_user_id = None;
+
+        let err = finalize_pending_protected_chat_response_turn(runtime, store, pending)
+            .expect_err("mismatched posture candidate binding must fail closed");
+        match err {
+            StorageError::ContractViolation(ContractViolation::InvalidValue { field, reason }) => {
+                assert_eq!(
+                    field,
+                    "app_voice_turn_execution_outcome.runtime_execution_envelope.voice_identity_assertion.candidate_user_id"
+                );
+                assert_eq!(
+                    reason,
+                    "must match canonical actor identity for posture fail-closed classification"
+                );
+            }
+            other => {
+                panic!("expected posture candidate-binding contract violation, got {other:?}")
+            }
+        }
+    }
+
     fn assert_posture_finalization_requires_absent_device_owner_user_carriage(
         runtime: &AppServerIngressRuntime,
         store: &mut Ph1fStore,
@@ -12471,6 +12541,10 @@ mod tests {
         assert_eq!(unknown_voice_identity_assertion.score_bp, 2_000);
         assert_eq!(unknown_voice_identity_assertion.margin_to_next_bp, None);
         assert!(unknown_voice_identity_assertion.candidate_set.is_empty());
+        assert_eq!(
+            unknown_voice_identity_assertion.candidate_user_id.as_ref(),
+            Some(&envelope.actor_identity)
+        );
         let identity_state = envelope
             .identity_state
             .expect("identity state should be attached");
@@ -12573,6 +12647,10 @@ mod tests {
         assert_eq!(unknown_voice_identity_assertion.score_bp, 4_500);
         assert_eq!(unknown_voice_identity_assertion.margin_to_next_bp, None);
         assert!(unknown_voice_identity_assertion.candidate_set.is_empty());
+        assert_eq!(
+            unknown_voice_identity_assertion.candidate_user_id.as_ref(),
+            Some(&envelope.actor_identity)
+        );
         let identity_state = envelope
             .identity_state
             .expect("identity state should be attached");
@@ -14875,7 +14953,10 @@ mod tests {
             unknown_voice_identity_assertion.spoof_liveness_status,
             SpoofLivenessStatus::Unknown
         );
-        assert!(unknown_voice_identity_assertion.candidate_user_id.is_some());
+        assert_eq!(
+            unknown_voice_identity_assertion.candidate_user_id.as_ref(),
+            Some(&out.runtime_execution_envelope.actor_identity)
+        );
         assert!(unknown_voice_identity_assertion
             .device_owner_user_id
             .is_none());
@@ -15265,7 +15346,10 @@ mod tests {
             unknown_voice_identity_assertion.spoof_liveness_status,
             SpoofLivenessStatus::Unknown
         );
-        assert!(unknown_voice_identity_assertion.candidate_user_id.is_some());
+        assert_eq!(
+            unknown_voice_identity_assertion.candidate_user_id.as_ref(),
+            Some(&out.runtime_execution_envelope.actor_identity)
+        );
         assert!(unknown_voice_identity_assertion
             .device_owner_user_id
             .is_none());
@@ -16479,6 +16563,62 @@ mod tests {
 
         assert_posture_finalization_requires_canonical_voice_candidate_set(
             &runtime, &mut store, pending,
+        );
+    }
+
+    #[test]
+    fn at_identity_posture_52_low_confidence_protected_voice_turn_fails_closed_when_candidate_user_id_does_not_match_actor_identity_for_posture_family(
+    ) {
+        let runtime = runtime_with_search_tool_fixtures();
+        let actor_user_id =
+            UserId::new("tenant_1:id_low_conf_bad_candidate_actor_binding").unwrap();
+        let device_id = DeviceId::new("id_low_conf_bad_candidate_actor_binding_1").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &actor_user_id, &device_id);
+
+        let pending = prepare_protected_chat_response_turn_with_identity_assertion(
+            &runtime,
+            &mut store,
+            actor_user_id.clone(),
+            device_id,
+            low_confidence_voice_assertion(actor_user_id),
+            CorrelationId(9877),
+            TurnId(9977),
+        );
+
+        assert_posture_finalization_requires_canonical_candidate_actor_binding(
+            &runtime,
+            &mut store,
+            pending,
+            UserId::new("tenant_1:posture_low_conf_candidate_mismatch").unwrap(),
+        );
+    }
+
+    #[test]
+    fn at_identity_posture_53_gray_zone_margin_protected_voice_turn_fails_closed_when_candidate_user_id_does_not_match_actor_identity_for_posture_family(
+    ) {
+        let runtime = runtime_with_search_tool_fixtures();
+        let actor_user_id =
+            UserId::new("tenant_1:id_gray_zone_bad_candidate_actor_binding").unwrap();
+        let device_id = DeviceId::new("id_gray_zone_bad_candidate_actor_binding_1").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &actor_user_id, &device_id);
+
+        let pending = prepare_protected_chat_response_turn_with_identity_assertion(
+            &runtime,
+            &mut store,
+            actor_user_id.clone(),
+            device_id,
+            gray_zone_margin_voice_assertion(actor_user_id),
+            CorrelationId(9878),
+            TurnId(9978),
+        );
+
+        assert_posture_finalization_requires_canonical_candidate_actor_binding(
+            &runtime,
+            &mut store,
+            pending,
+            UserId::new("tenant_1:posture_gray_zone_candidate_mismatch").unwrap(),
         );
     }
 
