@@ -584,6 +584,7 @@ struct SessionActiveVisibleContext: Identifiable, Equatable {
     let returnCheckExpiresAt: String?
     let resumeBufferLive: Bool?
     let resumeBufferAnswerID: String?
+    let resumeBufferSpokenPrefix: String?
     let resumeBufferTopicHint: String?
     let interruptClarifyQuestion: String?
     let interruptClarifyWhatIsMissing: String?
@@ -665,6 +666,9 @@ struct SessionActiveVisibleContext: Identifiable, Equatable {
         let resumeBufferAnswerID = Self.boundedHint(
             Self.firstQueryValue(in: queryItems, name: "resume_buffer_answer_id")
         )
+        let resumeBufferSpokenPrefix = Self.boundedTranscript(
+            Self.firstQueryValue(in: queryItems, name: "resume_buffer_spoken_prefix")
+        )
         let resumeBufferTopicHint = Self.boundedContinuityDetail(
             Self.firstQueryValue(in: queryItems, name: "resume_buffer_topic_hint")
         )
@@ -714,6 +718,7 @@ struct SessionActiveVisibleContext: Identifiable, Equatable {
         self.returnCheckExpiresAt = returnCheckExpiresAt
         self.resumeBufferLive = resumeBufferLive
         self.resumeBufferAnswerID = resumeBufferAnswerID
+        self.resumeBufferSpokenPrefix = resumeBufferSpokenPrefix
         self.resumeBufferTopicHint = resumeBufferTopicHint
         self.interruptClarifyQuestion = interruptClarifyQuestion
         self.interruptClarifyWhatIsMissing = interruptClarifyWhatIsMissing
@@ -865,6 +870,15 @@ struct SessionActiveVisibleContext: Identifiable, Equatable {
             )
         }
 
+        if let resumeBufferSpokenPrefix {
+            rows.append(
+                EntryMetadataRow(
+                    label: "resume_buffer_spoken_prefix",
+                    value: resumeBufferSpokenPrefix
+                )
+            )
+        }
+
         if let resumeBufferTopicHint {
             rows.append(
                 EntryMetadataRow(label: "resume_buffer_topic_hint", value: resumeBufferTopicHint)
@@ -935,6 +949,10 @@ struct SessionActiveVisibleContext: Identifiable, Equatable {
         resumeBufferAnswerID != nil
     }
 
+    var hasLawfulInterruptResumeBufferSpokenPrefix: Bool {
+        resumeBufferLive == true && resumeBufferSpokenPrefix != nil
+    }
+
     var hasLawfulInterruptResumeBufferTopicHint: Bool {
         resumeBufferLive == true && resumeBufferTopicHint != nil
     }
@@ -958,6 +976,7 @@ struct SessionActiveVisibleContext: Identifiable, Equatable {
             || returnCheckExpiresAt != nil
             || resumeBufferLive != nil
             || resumeBufferAnswerID != nil
+            || resumeBufferSpokenPrefix != nil
             || resumeBufferTopicHint != nil
     }
 
@@ -2996,6 +3015,11 @@ struct SessionShellView: View {
                     interruptResumeBufferAnswerIDCard(resumeBufferAnswerID)
                 }
 
+                if let resumeBufferSpokenPrefix = context.resumeBufferSpokenPrefix,
+                   context.hasLawfulInterruptResumeBufferSpokenPrefix {
+                    interruptResumeBufferSpokenPrefixCard(resumeBufferSpokenPrefix)
+                }
+
                 if let resumeBufferTopicHint = context.resumeBufferTopicHint,
                    context.hasLawfulInterruptResumeBufferTopicHint {
                     interruptResumeBufferTopicHintCard(resumeBufferTopicHint)
@@ -3511,6 +3535,42 @@ struct SessionShellView: View {
             }
         } label: {
             Text("Resume answer ID")
+                .font(.headline)
+        }
+    }
+
+    private func interruptResumeBufferSpokenPrefixCard(_ resumeBufferSpokenPrefix: String) -> some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Cloud-authored resume-buffer spoken-prefix evidence only")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                Text("Prefix posture")
+                    .font(.subheadline.weight(.semibold))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                HStack(alignment: .top, spacing: 12) {
+                    Text("Resume buffer spoken prefix")
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
+                        .frame(width: 140, alignment: .leading)
+
+                    Text(resumeBufferSpokenPrefix)
+                        .font(.body.monospaced())
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
+                Text("Exact cloud-authored spoken prefix only")
+                    .font(.subheadline.weight(.semibold))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                Text("No local resume authoring, no local synthesis of the remaining response, and no local dispatch unlock.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        } label: {
+            Text("Resume spoken prefix")
                 .font(.headline)
         }
     }
