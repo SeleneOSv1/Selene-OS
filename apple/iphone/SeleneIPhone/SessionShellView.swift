@@ -585,6 +585,7 @@ struct SessionActiveVisibleContext: Identifiable, Equatable {
     let resumeBufferLive: Bool?
     let resumeBufferAnswerID: String?
     let resumeBufferSpokenPrefix: String?
+    let resumeBufferUnsaidRemainder: String?
     let resumeBufferTopicHint: String?
     let interruptClarifyQuestion: String?
     let interruptClarifyWhatIsMissing: String?
@@ -669,6 +670,9 @@ struct SessionActiveVisibleContext: Identifiable, Equatable {
         let resumeBufferSpokenPrefix = Self.boundedTranscript(
             Self.firstQueryValue(in: queryItems, name: "resume_buffer_spoken_prefix")
         )
+        let resumeBufferUnsaidRemainder = Self.boundedTranscript(
+            Self.firstQueryValue(in: queryItems, name: "resume_buffer_unsaid_remainder")
+        )
         let resumeBufferTopicHint = Self.boundedContinuityDetail(
             Self.firstQueryValue(in: queryItems, name: "resume_buffer_topic_hint")
         )
@@ -719,6 +723,7 @@ struct SessionActiveVisibleContext: Identifiable, Equatable {
         self.resumeBufferLive = resumeBufferLive
         self.resumeBufferAnswerID = resumeBufferAnswerID
         self.resumeBufferSpokenPrefix = resumeBufferSpokenPrefix
+        self.resumeBufferUnsaidRemainder = resumeBufferUnsaidRemainder
         self.resumeBufferTopicHint = resumeBufferTopicHint
         self.interruptClarifyQuestion = interruptClarifyQuestion
         self.interruptClarifyWhatIsMissing = interruptClarifyWhatIsMissing
@@ -879,6 +884,15 @@ struct SessionActiveVisibleContext: Identifiable, Equatable {
             )
         }
 
+        if let resumeBufferUnsaidRemainder {
+            rows.append(
+                EntryMetadataRow(
+                    label: "resume_buffer_unsaid_remainder",
+                    value: resumeBufferUnsaidRemainder
+                )
+            )
+        }
+
         if let resumeBufferTopicHint {
             rows.append(
                 EntryMetadataRow(label: "resume_buffer_topic_hint", value: resumeBufferTopicHint)
@@ -953,6 +967,10 @@ struct SessionActiveVisibleContext: Identifiable, Equatable {
         resumeBufferLive == true && resumeBufferSpokenPrefix != nil
     }
 
+    var hasLawfulInterruptResumeBufferUnsaidRemainder: Bool {
+        resumeBufferLive == true && resumeBufferUnsaidRemainder != nil
+    }
+
     var hasLawfulInterruptResumeBufferTopicHint: Bool {
         resumeBufferLive == true && resumeBufferTopicHint != nil
     }
@@ -977,6 +995,7 @@ struct SessionActiveVisibleContext: Identifiable, Equatable {
             || resumeBufferLive != nil
             || resumeBufferAnswerID != nil
             || resumeBufferSpokenPrefix != nil
+            || resumeBufferUnsaidRemainder != nil
             || resumeBufferTopicHint != nil
     }
 
@@ -3020,6 +3039,11 @@ struct SessionShellView: View {
                     interruptResumeBufferSpokenPrefixCard(resumeBufferSpokenPrefix)
                 }
 
+                if let resumeBufferUnsaidRemainder = context.resumeBufferUnsaidRemainder,
+                   context.hasLawfulInterruptResumeBufferUnsaidRemainder {
+                    interruptResumeBufferUnsaidRemainderCard(resumeBufferUnsaidRemainder)
+                }
+
                 if let resumeBufferTopicHint = context.resumeBufferTopicHint,
                    context.hasLawfulInterruptResumeBufferTopicHint {
                     interruptResumeBufferTopicHintCard(resumeBufferTopicHint)
@@ -3571,6 +3595,42 @@ struct SessionShellView: View {
             }
         } label: {
             Text("Resume spoken prefix")
+                .font(.headline)
+        }
+    }
+
+    private func interruptResumeBufferUnsaidRemainderCard(_ resumeBufferUnsaidRemainder: String) -> some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Cloud-authored resume-buffer unsaid-remainder evidence only")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                Text("Remainder posture")
+                    .font(.subheadline.weight(.semibold))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                HStack(alignment: .top, spacing: 12) {
+                    Text("Resume buffer unsaid remainder")
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
+                        .frame(width: 140, alignment: .leading)
+
+                    Text(resumeBufferUnsaidRemainder)
+                        .font(.body.monospaced())
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
+                Text("Exact cloud-authored unsaid remainder only")
+                    .font(.subheadline.weight(.semibold))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                Text("No local resume authoring, no local completion of the remaining response, and no local dispatch unlock.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        } label: {
+            Text("Resume unsaid remainder")
                 .font(.headline)
         }
     }
