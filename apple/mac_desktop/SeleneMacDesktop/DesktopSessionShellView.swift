@@ -427,6 +427,27 @@ private func collectedInterruptClarifySensitivityLevel(in queryItems: [URLQueryI
     return canonicalValue
 }
 
+private func collectedInterruptSubjectRelationConfidence(in queryItems: [URLQueryItem]) -> String? {
+    let values = queryItems.filter { $0.name == "interrupt_subject_relation_confidence" }
+    guard values.count == 1,
+          let value = values[0].value else {
+        return nil
+    }
+
+    let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty,
+          !trimmed.contains("\n"),
+          !trimmed.contains("\r"),
+          let confidence = Double(trimmed),
+          confidence.isFinite,
+          confidence >= 0.0,
+          confidence <= 1.0 else {
+        return nil
+    }
+
+    return trimmed
+}
+
 private func canonicalSessionAttachOutcome(_ rawValue: String?) -> String? {
     guard let rawValue else {
         return nil
@@ -729,6 +750,7 @@ private struct DesktopSessionActiveVisibleContext: Equatable {
     let interruptClarifyRoutingHints: [String]
     let interruptClarifyRequiresConfirmation: Bool?
     let interruptClarifySensitivityLevel: String?
+    let interruptSubjectRelationConfidence: String?
     let interruptAcceptedAnswerFormats: [String]
 
     init?(url: URL) {
@@ -799,6 +821,9 @@ private struct DesktopSessionActiveVisibleContext: Equatable {
         self.interruptClarifySensitivityLevel = collectedInterruptClarifySensitivityLevel(
             in: queryItems
         )
+        self.interruptSubjectRelationConfidence = collectedInterruptSubjectRelationConfidence(
+            in: queryItems
+        )
         self.interruptAcceptedAnswerFormats = collectedInterruptAcceptedAnswerFormats(in: queryItems)
     }
 
@@ -858,6 +883,10 @@ private struct DesktopSessionActiveVisibleContext: Equatable {
 
     var hasLawfulInterruptClarifySensitivityLevel: Bool {
         interruptClarifySensitivityLevel != nil
+    }
+
+    var hasLawfulInterruptSubjectRelationConfidence: Bool {
+        interruptSubjectRelation != nil && interruptSubjectRelationConfidence != nil
     }
 
     var hasInterruptResponseConflict: Bool {
@@ -1908,6 +1937,11 @@ struct DesktopSessionShellView: View {
                 interruptClarifySensitivityCard(interruptClarifySensitivityLevel)
             }
 
+            if let interruptSubjectRelationConfidence = context.interruptSubjectRelationConfidence,
+               context.hasLawfulInterruptSubjectRelationConfidence {
+                interruptSubjectRelationConfidenceCard(interruptSubjectRelationConfidence)
+            }
+
             ForEach(context.interruptAcceptedAnswerFormats, id: \.self) { answerFormat in
                 if answerFormat == CanonicalInterruptAcceptedAnswerFormat.continuePreviousTopic.rawValue {
                     Button(answerFormat) {
@@ -2086,6 +2120,41 @@ struct DesktopSessionShellView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
 
             Text("No local sensitivity policy, no local authority upgrade.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(nsColor: .controlBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+
+    private func interruptSubjectRelationConfidenceCard(_ confidence: String) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Subject relation confidence")
+                .font(.subheadline.weight(.semibold))
+
+            Text("Cloud-authored continuity confidence evidence only")
+                .font(.footnote.weight(.semibold))
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            Text("Confidence posture")
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            metadataRow(
+                label: "interrupt_subject_relation_confidence",
+                value: confidence
+            )
+
+            Text("Exact cloud-authored confidence only")
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            Text("No local threshold law, no local dispatch unlock.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
