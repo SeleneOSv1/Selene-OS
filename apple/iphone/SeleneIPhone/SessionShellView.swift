@@ -589,6 +589,7 @@ struct SessionActiveVisibleContext: Identifiable, Equatable {
     let resumeBufferTopicHint: String?
     let ttsResumeSnapshotAnswerID: String?
     let ttsResumeSnapshotSpokenCursorByte: String?
+    let ttsResumeSnapshotResponseText: String?
     let interruptClarifyQuestion: String?
     let interruptClarifyWhatIsMissing: String?
     let interruptClarifyAmbiguityFlags: [String]
@@ -684,6 +685,9 @@ struct SessionActiveVisibleContext: Identifiable, Equatable {
         let ttsResumeSnapshotSpokenCursorByte = Self.boundedContinuityDetail(
             Self.firstQueryValue(in: queryItems, name: "tts_resume_snapshot_spoken_cursor_byte")
         )
+        let ttsResumeSnapshotResponseText = Self.boundedTranscript(
+            Self.firstQueryValue(in: queryItems, name: "tts_resume_snapshot_response_text")
+        )
         let interruptClarifyQuestion = Self.boundedClarifyQuestion(
             Self.firstQueryValue(in: queryItems, name: "interrupt_clarify_question")
         )
@@ -735,6 +739,7 @@ struct SessionActiveVisibleContext: Identifiable, Equatable {
         self.resumeBufferTopicHint = resumeBufferTopicHint
         self.ttsResumeSnapshotAnswerID = ttsResumeSnapshotAnswerID
         self.ttsResumeSnapshotSpokenCursorByte = ttsResumeSnapshotSpokenCursorByte
+        self.ttsResumeSnapshotResponseText = ttsResumeSnapshotResponseText
         self.interruptClarifyQuestion = interruptClarifyQuestion
         self.interruptClarifyWhatIsMissing = interruptClarifyWhatIsMissing
         self.interruptClarifyAmbiguityFlags = interruptClarifyAmbiguityFlags
@@ -927,6 +932,15 @@ struct SessionActiveVisibleContext: Identifiable, Equatable {
             )
         }
 
+        if let ttsResumeSnapshotResponseText {
+            rows.append(
+                EntryMetadataRow(
+                    label: "tts_resume_snapshot_response_text",
+                    value: ttsResumeSnapshotResponseText
+                )
+            )
+        }
+
         return rows
     }
 
@@ -1011,6 +1025,12 @@ struct SessionActiveVisibleContext: Identifiable, Equatable {
         resumeBufferLive == true && ttsResumeSnapshotSpokenCursorByte != nil
     }
 
+    var hasLawfulInterruptTtsResumeSnapshotResponseText: Bool {
+        ttsResumeSnapshotAnswerID != nil
+            && ttsResumeSnapshotSpokenCursorByte != nil
+            && ttsResumeSnapshotResponseText != nil
+    }
+
     var hasLawfulInterruptSubjectRelationConfidence: Bool {
         interruptSubjectRelation != nil && interruptSubjectRelationConfidence != nil
     }
@@ -1035,6 +1055,7 @@ struct SessionActiveVisibleContext: Identifiable, Equatable {
             || resumeBufferTopicHint != nil
             || ttsResumeSnapshotAnswerID != nil
             || ttsResumeSnapshotSpokenCursorByte != nil
+            || ttsResumeSnapshotResponseText != nil
     }
 
     private static func hasQueryItem(in queryItems: [URLQueryItem], name: String) -> Bool {
@@ -3099,6 +3120,13 @@ struct SessionShellView: View {
                     )
                 }
 
+                if let ttsResumeSnapshotResponseText = context.ttsResumeSnapshotResponseText,
+                   context.hasLawfulInterruptTtsResumeSnapshotResponseText {
+                    interruptTtsResumeSnapshotResponseTextCard(
+                        ttsResumeSnapshotResponseText
+                    )
+                }
+
                 if let interruptSubjectRelationConfidence = context.interruptSubjectRelationConfidence,
                    context.hasLawfulInterruptSubjectRelationConfidence {
                     interruptSubjectRelationConfidenceCard(interruptSubjectRelationConfidence)
@@ -3793,6 +3821,44 @@ struct SessionShellView: View {
             }
         } label: {
             Text("TTS snapshot answer ID")
+                .font(.headline)
+        }
+    }
+
+    private func interruptTtsResumeSnapshotResponseTextCard(
+        _ ttsResumeSnapshotResponseText: String
+    ) -> some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Cloud-authored TTS resume snapshot response-text evidence only")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                Text("Snapshot response posture")
+                    .font(.subheadline.weight(.semibold))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                HStack(alignment: .top, spacing: 12) {
+                    Text("TTS resume snapshot response text")
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
+                        .frame(width: 140, alignment: .leading)
+
+                    Text(ttsResumeSnapshotResponseText)
+                        .font(.body.monospaced())
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
+                Text("Exact cloud-authored snapshot response text only")
+                    .font(.subheadline.weight(.semibold))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                Text("No local resume authoring, no local cursor math authority, no local response synthesis, no local completion authority, and no local dispatch unlock.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        } label: {
+            Text("TTS snapshot response text")
                 .font(.headline)
         }
     }
