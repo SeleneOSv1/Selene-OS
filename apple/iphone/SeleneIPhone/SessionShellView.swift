@@ -587,6 +587,7 @@ struct SessionActiveVisibleContext: Identifiable, Equatable {
     let resumeBufferSpokenPrefix: String?
     let resumeBufferUnsaidRemainder: String?
     let resumeBufferTopicHint: String?
+    let ttsResumeSnapshotSpokenCursorByte: String?
     let interruptClarifyQuestion: String?
     let interruptClarifyWhatIsMissing: String?
     let interruptClarifyAmbiguityFlags: [String]
@@ -676,6 +677,9 @@ struct SessionActiveVisibleContext: Identifiable, Equatable {
         let resumeBufferTopicHint = Self.boundedContinuityDetail(
             Self.firstQueryValue(in: queryItems, name: "resume_buffer_topic_hint")
         )
+        let ttsResumeSnapshotSpokenCursorByte = Self.boundedContinuityDetail(
+            Self.firstQueryValue(in: queryItems, name: "tts_resume_snapshot_spoken_cursor_byte")
+        )
         let interruptClarifyQuestion = Self.boundedClarifyQuestion(
             Self.firstQueryValue(in: queryItems, name: "interrupt_clarify_question")
         )
@@ -725,6 +729,7 @@ struct SessionActiveVisibleContext: Identifiable, Equatable {
         self.resumeBufferSpokenPrefix = resumeBufferSpokenPrefix
         self.resumeBufferUnsaidRemainder = resumeBufferUnsaidRemainder
         self.resumeBufferTopicHint = resumeBufferTopicHint
+        self.ttsResumeSnapshotSpokenCursorByte = ttsResumeSnapshotSpokenCursorByte
         self.interruptClarifyQuestion = interruptClarifyQuestion
         self.interruptClarifyWhatIsMissing = interruptClarifyWhatIsMissing
         self.interruptClarifyAmbiguityFlags = interruptClarifyAmbiguityFlags
@@ -899,6 +904,15 @@ struct SessionActiveVisibleContext: Identifiable, Equatable {
             )
         }
 
+        if let ttsResumeSnapshotSpokenCursorByte {
+            rows.append(
+                EntryMetadataRow(
+                    label: "tts_resume_snapshot_spoken_cursor_byte",
+                    value: ttsResumeSnapshotSpokenCursorByte
+                )
+            )
+        }
+
         return rows
     }
 
@@ -975,6 +989,10 @@ struct SessionActiveVisibleContext: Identifiable, Equatable {
         resumeBufferLive == true && resumeBufferTopicHint != nil
     }
 
+    var hasLawfulInterruptTtsResumeSnapshotSpokenCursorByte: Bool {
+        resumeBufferLive == true && ttsResumeSnapshotSpokenCursorByte != nil
+    }
+
     var hasLawfulInterruptSubjectRelationConfidence: Bool {
         interruptSubjectRelation != nil && interruptSubjectRelationConfidence != nil
     }
@@ -997,6 +1015,7 @@ struct SessionActiveVisibleContext: Identifiable, Equatable {
             || resumeBufferSpokenPrefix != nil
             || resumeBufferUnsaidRemainder != nil
             || resumeBufferTopicHint != nil
+            || ttsResumeSnapshotSpokenCursorByte != nil
     }
 
     private static func hasQueryItem(in queryItems: [URLQueryItem], name: String) -> Bool {
@@ -3049,6 +3068,13 @@ struct SessionShellView: View {
                     interruptResumeBufferTopicHintCard(resumeBufferTopicHint)
                 }
 
+                if let ttsResumeSnapshotSpokenCursorByte = context.ttsResumeSnapshotSpokenCursorByte,
+                   context.hasLawfulInterruptTtsResumeSnapshotSpokenCursorByte {
+                    interruptTtsResumeSnapshotSpokenCursorByteCard(
+                        ttsResumeSnapshotSpokenCursorByte
+                    )
+                }
+
                 if let interruptSubjectRelationConfidence = context.interruptSubjectRelationConfidence,
                    context.hasLawfulInterruptSubjectRelationConfidence {
                     interruptSubjectRelationConfidenceCard(interruptSubjectRelationConfidence)
@@ -3667,6 +3693,44 @@ struct SessionShellView: View {
             }
         } label: {
             Text("Resume topic hint")
+                .font(.headline)
+        }
+    }
+
+    private func interruptTtsResumeSnapshotSpokenCursorByteCard(
+        _ ttsResumeSnapshotSpokenCursorByte: String
+    ) -> some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Cloud-authored TTS resume snapshot cursor evidence only")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                Text("Cursor posture")
+                    .font(.subheadline.weight(.semibold))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                HStack(alignment: .top, spacing: 12) {
+                    Text("TTS resume snapshot cursor byte")
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
+                        .frame(width: 140, alignment: .leading)
+
+                    Text(ttsResumeSnapshotSpokenCursorByte)
+                        .font(.body.monospaced())
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
+                Text("Exact cloud-authored snapshot cursor only")
+                    .font(.subheadline.weight(.semibold))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                Text("No local resume authoring, no local playback math authority, no local response synthesis, and no local dispatch unlock.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        } label: {
+            Text("TTS snapshot cursor")
                 .font(.headline)
         }
     }
