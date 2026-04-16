@@ -162,6 +162,79 @@ private enum CanonicalReconciliationDecision: String, Equatable {
     }
 }
 
+private func normalizedInterruptEnumToken(_ rawValue: String) -> String {
+    rawValue
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+        .lowercased()
+        .filter { $0.isLetter || $0.isNumber }
+}
+
+private enum CanonicalInterruptSubjectRelation: String, Equatable {
+    case same = "InterruptSubjectRelation::Same"
+    case switchTopic = "InterruptSubjectRelation::Switch"
+    case uncertain = "InterruptSubjectRelation::Uncertain"
+
+    static func parse(_ rawValue: String?) -> CanonicalInterruptSubjectRelation? {
+        guard let rawValue else {
+            return nil
+        }
+
+        switch normalizedInterruptEnumToken(rawValue) {
+        case "same", "interruptsubjectrelationsame":
+            return .same
+        case "switch", "interruptsubjectrelationswitch":
+            return .switchTopic
+        case "uncertain", "interruptsubjectrelationuncertain":
+            return .uncertain
+        default:
+            return nil
+        }
+    }
+}
+
+private enum CanonicalInterruptContinuityOutcome: String, Equatable {
+    case sameSubjectAppend = "InterruptContinuityOutcome::SameSubjectAppend"
+    case switchTopicThenReturnCheck = "InterruptContinuityOutcome::SwitchTopicThenReturnCheck"
+
+    static func parse(_ rawValue: String?) -> CanonicalInterruptContinuityOutcome? {
+        guard let rawValue else {
+            return nil
+        }
+
+        switch normalizedInterruptEnumToken(rawValue) {
+        case "samesubjectappend", "interruptcontinuityoutcomesamesubjectappend":
+            return .sameSubjectAppend
+        case "switchtopicthenreturncheck", "interruptcontinuityoutcomeswitchtopicthenreturncheck":
+            return .switchTopicThenReturnCheck
+        default:
+            return nil
+        }
+    }
+}
+
+private enum CanonicalInterruptResumePolicy: String, Equatable {
+    case resumeNow = "InterruptResumePolicy::ResumeNow"
+    case resumeLater = "InterruptResumePolicy::ResumeLater"
+    case discard = "InterruptResumePolicy::Discard"
+
+    static func parse(_ rawValue: String?) -> CanonicalInterruptResumePolicy? {
+        guard let rawValue else {
+            return nil
+        }
+
+        switch normalizedInterruptEnumToken(rawValue) {
+        case "resumenow", "interruptresumepolicyresumenow":
+            return .resumeNow
+        case "resumelater", "interruptresumepolicyresumelater":
+            return .resumeLater
+        case "discard", "interruptresumepolicydiscard":
+            return .discard
+        default:
+            return nil
+        }
+    }
+}
+
 private func canonicalSessionAttachOutcome(_ rawValue: String?) -> String? {
     guard let rawValue else {
         return nil
@@ -262,6 +335,10 @@ private enum DesktopRecoveryDisplayState: String, Equatable {
     case quarantinedLocalState = "QUARANTINED_LOCAL_STATE"
 }
 
+private enum DesktopInterruptDisplayState: String, Equatable {
+    case interruptVisible = "INTERRUPT_VISIBLE"
+}
+
 private func resolvedRecoveryDisplayState(
     recoveryMode: CanonicalRecoveryMode?,
     reconciliationDecision: CanonicalReconciliationDecision?
@@ -278,6 +355,26 @@ private func resolvedRecoveryDisplayState(
     default:
         return nil
     }
+}
+
+private func resolvedInterruptDisplayState(
+    interruptSubjectRelation: CanonicalInterruptSubjectRelation?,
+    interruptContinuityOutcome: CanonicalInterruptContinuityOutcome?,
+    interruptResumePolicy: CanonicalInterruptResumePolicy?
+) -> DesktopInterruptDisplayState? {
+    if interruptSubjectRelation == .uncertain {
+        return .interruptVisible
+    }
+
+    if interruptContinuityOutcome == .switchTopicThenReturnCheck {
+        return .interruptVisible
+    }
+
+    if interruptResumePolicy == .resumeLater {
+        return .interruptVisible
+    }
+
+    return nil
 }
 
 private func recoveryPostureRowsForVisibleSession(
@@ -365,6 +462,9 @@ private struct DesktopSessionActiveVisibleContext: Equatable {
     let sessionAttachOutcome: String?
     let recoveryMode: CanonicalRecoveryMode?
     let reconciliationDecision: CanonicalReconciliationDecision?
+    let interruptSubjectRelation: CanonicalInterruptSubjectRelation?
+    let interruptContinuityOutcome: CanonicalInterruptContinuityOutcome?
+    let interruptResumePolicy: CanonicalInterruptResumePolicy?
 
     init?(url: URL) {
         guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
@@ -410,6 +510,49 @@ private struct DesktopSessionActiveVisibleContext: Equatable {
         self.reconciliationDecision = CanonicalReconciliationDecision.parse(
             firstQueryValue(in: queryItems, name: "reconciliation_decision")
         )
+        self.interruptSubjectRelation = CanonicalInterruptSubjectRelation.parse(
+            firstQueryValue(in: queryItems, name: "interrupt_subject_relation")
+        )
+        self.interruptContinuityOutcome = CanonicalInterruptContinuityOutcome.parse(
+            firstQueryValue(in: queryItems, name: "interrupt_continuity_outcome")
+        )
+        self.interruptResumePolicy = CanonicalInterruptResumePolicy.parse(
+            firstQueryValue(in: queryItems, name: "interrupt_resume_policy")
+        )
+    }
+
+    var interruptContinuityRows: [(label: String, value: String)] {
+        var rows: [(label: String, value: String)] = []
+
+        if let interruptSubjectRelation {
+            rows.append(("interrupt_subject_relation", interruptSubjectRelation.rawValue))
+        }
+
+        if let interruptContinuityOutcome {
+            rows.append(("interrupt_continuity_outcome", interruptContinuityOutcome.rawValue))
+        }
+
+        if let interruptResumePolicy {
+            rows.append(("interrupt_resume_policy", interruptResumePolicy.rawValue))
+        }
+
+        return rows
+    }
+
+    var acceptedInterruptPostureSummary: String {
+        if interruptSubjectRelation == .uncertain {
+            return "Clarify before continuing remains the lawful cloud-authored posture until subject relation becomes certain again."
+        }
+
+        if interruptContinuityOutcome == .switchTopicThenReturnCheck {
+            return "Switch topic remains lawful now while authoritative continuity keeps a later return check cloud-side."
+        }
+
+        if interruptResumePolicy == .resumeLater {
+            return "Resume later remains the lawful cloud-authored posture for the interrupted topic while the current active session stays visible."
+        }
+
+        return "Continue previous topic remains lawful only while cloud-authored continuity keeps the same active subject visible."
     }
 }
 
@@ -756,6 +899,20 @@ struct DesktopSessionShellView: View {
         )
     }
 
+    private var activeInterruptDisplayState: DesktopInterruptDisplayState? {
+        guard activeRecoveryDisplayState == nil,
+              latestSessionSuspendedVisibleContext == nil,
+              let latestSessionActiveVisibleContext else {
+            return nil
+        }
+
+        return resolvedInterruptDisplayState(
+            interruptSubjectRelation: latestSessionActiveVisibleContext.interruptSubjectRelation,
+            interruptContinuityOutcome: latestSessionActiveVisibleContext.interruptContinuityOutcome,
+            interruptResumePolicy: latestSessionActiveVisibleContext.interruptResumePolicy
+        )
+    }
+
     private var posturePanel: some View {
         GroupBox {
             VStack(alignment: .leading, spacing: 12) {
@@ -1096,16 +1253,15 @@ struct DesktopSessionShellView: View {
 
     private var needsAttentionCard: some View {
         Group {
-            switch activeRecoveryDisplayState {
-            case .some(.recovering):
-                if let activeRecoveryVisibleSurface {
-                    recoveryRestrictionCard(activeRecoveryVisibleSurface, state: .recovering)
-                }
-            case .some(.degradedRecovery):
-                if let activeRecoveryVisibleSurface {
-                    recoveryRestrictionCard(activeRecoveryVisibleSurface, state: .degradedRecovery)
-                }
-            default:
+            if activeRecoveryDisplayState == .recovering, let activeRecoveryVisibleSurface {
+                recoveryRestrictionCard(activeRecoveryVisibleSurface, state: .recovering)
+            } else if activeRecoveryDisplayState == .degradedRecovery, let activeRecoveryVisibleSurface {
+                recoveryRestrictionCard(activeRecoveryVisibleSurface, state: .degradedRecovery)
+            } else if activeInterruptDisplayState == .interruptVisible,
+                      let latestSessionActiveVisibleContext
+            {
+                interruptVisibleCard(latestSessionActiveVisibleContext)
+            } else {
                 sectionCard(
                     title: "Needs Attention",
                     detail: "Bounded actionable placeholder kept separate from transcript history."
@@ -1280,6 +1436,57 @@ struct DesktopSessionShellView: View {
             return "Degraded recovery remains active cloud-side, so normal interaction stays further restricted while the lawful main session surface remains visible in bounded read-only posture."
         case .quarantinedLocalState:
             return "Quarantine removes lawful normal interaction from this desktop surface until authoritative state is reread and the canonical recovery posture clears cloud-side."
+        }
+    }
+
+    private func interruptVisibleCard(_ context: DesktopSessionActiveVisibleContext) -> some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Cloud-authored interrupt continuity evidence only.")
+                    .font(.subheadline.weight(.semibold))
+
+                Text("INTERRUPT_VISIBLE remains bounded, read-only, active-session-bound, and cloud-authoritative while the lawful main active-session surface stays visible.")
+                    .foregroundStyle(.secondary)
+
+                Text("INTERRUPT_VISIBLE")
+                    .font(.headline.monospaced())
+
+                ForEach(context.interruptContinuityRows, id: \.label) { row in
+                    metadataRow(label: row.label, value: row.value)
+                }
+
+                Text(context.acceptedInterruptPostureSummary)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+
+                Text("Lawful interrupt actions remain rendered, not authored, from this bounded desktop surface.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+
+                Button("Clarify before continuing") {}
+                    .buttonStyle(.borderedProminent)
+                    .disabled(true)
+
+                Button("Continue previous topic") {}
+                    .buttonStyle(.bordered)
+                    .disabled(true)
+
+                Button("Switch topic") {}
+                    .buttonStyle(.bordered)
+                    .disabled(true)
+
+                Button("Resume later") {}
+                    .buttonStyle(.bordered)
+                    .disabled(true)
+
+                Text("No local interrupt authority, no local clarify authority, no local continue / switch-topic / resume-later authority, no local resume authoring, no local wake authority, no local governance or law execution, no local transcript authority, and no local dispatch unlock are introduced by this bounded interrupt surface.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        } label: {
+            Text("Needs Attention")
+                .font(.headline)
         }
     }
 
