@@ -1,6 +1,52 @@
+import Foundation
 import SwiftUI
 
+private struct DesktopSessionHeaderContext: Equatable {
+    let sessionState: String
+    let sessionID: String
+
+    init?(url: URL) {
+        guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
+            return nil
+        }
+
+        let queryItems = components.queryItems ?? []
+        guard
+            let sessionState = Self.boundedHint(
+                Self.firstQueryValue(in: queryItems, name: "session_state")
+            ),
+            let sessionID = Self.boundedHint(
+                Self.firstQueryValue(in: queryItems, name: "session_id")
+            )
+        else {
+            return nil
+        }
+
+        self.sessionState = sessionState
+        self.sessionID = sessionID
+    }
+
+    private static func firstQueryValue(in queryItems: [URLQueryItem], name: String) -> String? {
+        queryItems.first(where: { $0.name == name })?.value
+    }
+
+    private static func boundedHint(_ rawValue: String?) -> String? {
+        guard let rawValue else {
+            return nil
+        }
+
+        let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return nil
+        }
+
+        return String(trimmed.prefix(160))
+    }
+}
+
 struct DesktopSessionShellView: View {
+    @State private var latestSessionHeaderContext: DesktopSessionHeaderContext?
+
     var body: some View {
         HStack(alignment: .top, spacing: 20) {
             VStack(alignment: .leading, spacing: 16) {
@@ -14,10 +60,7 @@ struct DesktopSessionShellView: View {
             .frame(width: 270, alignment: .topLeading)
 
             VStack(alignment: .leading, spacing: 16) {
-                sectionCard(
-                    title: "Session",
-                    detail: "One dominant session surface placeholder for the cloud-authoritative Selene runtime."
-                )
+                sessionCard
                 .frame(maxWidth: .infinity, minHeight: 360, alignment: .topLeading)
             }
             .frame(maxWidth: .infinity, alignment: .topLeading)
@@ -38,6 +81,11 @@ struct DesktopSessionShellView: View {
         .padding(24)
         .frame(minWidth: 1180, minHeight: 720, alignment: .topLeading)
         .background(Color(nsColor: .windowBackgroundColor))
+        .onOpenURL { url in
+            if let context = DesktopSessionHeaderContext(url: url) {
+                latestSessionHeaderContext = context
+            }
+        }
     }
 
     private var posturePanel: some View {
@@ -63,6 +111,38 @@ struct DesktopSessionShellView: View {
         }
     }
 
+    private var sessionCard: some View {
+        Group {
+            if let latestSessionHeaderContext {
+                GroupBox {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("Cloud-authored desktop session-header evidence only.")
+                            .font(.subheadline.weight(.semibold))
+
+                        Text("Bounded read-only session posture for the current cloud-authoritative desktop session surface.")
+                            .foregroundStyle(.secondary)
+
+                        metadataRow(label: "session_state", value: latestSessionHeaderContext.sessionState)
+                        metadataRow(label: "session_id", value: latestSessionHeaderContext.sessionID)
+
+                        Text("No local authority, no local resume authoring, no local wake authority, no local governance or law execution, and no transcript or interruption ownership.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                } label: {
+                    Text("Session")
+                        .font(.headline)
+                }
+            } else {
+                sectionCard(
+                    title: "Session",
+                    detail: "One dominant session surface placeholder for the cloud-authoritative Selene runtime."
+                )
+            }
+        }
+    }
+
     private func sectionCard(title: String, detail: String) -> some View {
         GroupBox {
             Text(detail)
@@ -70,6 +150,16 @@ struct DesktopSessionShellView: View {
         } label: {
             Text(title)
                 .font(.headline)
+        }
+    }
+
+    private func metadataRow(label: String, value: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+            Text(label)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+            Text(value)
+                .textSelection(.enabled)
         }
     }
 
