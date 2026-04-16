@@ -393,6 +393,15 @@ private func collectedInterruptClarifyRoutingHints(in queryItems: [URLQueryItem]
     return hints
 }
 
+private func collectedInterruptClarifyRequiresConfirmation(in queryItems: [URLQueryItem]) -> Bool? {
+    let values = queryItems.filter { $0.name == "interrupt_clarify_requires_confirmation" }
+    guard values.count == 1 else {
+        return nil
+    }
+
+    return canonicalBoolean(values[0].value)
+}
+
 private func canonicalSessionAttachOutcome(_ rawValue: String?) -> String? {
     guard let rawValue else {
         return nil
@@ -693,6 +702,7 @@ private struct DesktopSessionActiveVisibleContext: Equatable {
     let interruptClarifyWhatIsMissing: String?
     let interruptClarifyAmbiguityFlags: [String]
     let interruptClarifyRoutingHints: [String]
+    let interruptClarifyRequiresConfirmation: Bool?
     let interruptAcceptedAnswerFormats: [String]
 
     init?(url: URL) {
@@ -757,6 +767,9 @@ private struct DesktopSessionActiveVisibleContext: Equatable {
         self.interruptClarifyWhatIsMissing = collectedInterruptClarifyWhatIsMissing(in: queryItems)
         self.interruptClarifyAmbiguityFlags = collectedInterruptClarifyAmbiguityFlags(in: queryItems)
         self.interruptClarifyRoutingHints = collectedInterruptClarifyRoutingHints(in: queryItems)
+        self.interruptClarifyRequiresConfirmation = collectedInterruptClarifyRequiresConfirmation(
+            in: queryItems
+        )
         self.interruptAcceptedAnswerFormats = collectedInterruptAcceptedAnswerFormats(in: queryItems)
     }
 
@@ -808,6 +821,10 @@ private struct DesktopSessionActiveVisibleContext: Equatable {
 
     var hasLawfulInterruptClarifyRoutingHints: Bool {
         (1...2).contains(interruptClarifyRoutingHints.count)
+    }
+
+    var hasLawfulInterruptClarifyRequiresConfirmation: Bool {
+        interruptClarifyRequiresConfirmation != nil
     }
 
     var hasInterruptResponseConflict: Bool {
@@ -1848,6 +1865,11 @@ struct DesktopSessionShellView: View {
                 interruptClarifyRoutingCard(context.interruptClarifyRoutingHints)
             }
 
+            if let interruptClarifyRequiresConfirmation = context.interruptClarifyRequiresConfirmation,
+               context.hasLawfulInterruptClarifyRequiresConfirmation {
+                interruptClarifyConfirmationCard(interruptClarifyRequiresConfirmation)
+            }
+
             ForEach(context.interruptAcceptedAnswerFormats, id: \.self) { answerFormat in
                 if answerFormat == CanonicalInterruptAcceptedAnswerFormat.continuePreviousTopic.rawValue {
                     Button(answerFormat) {
@@ -1956,6 +1978,41 @@ struct DesktopSessionShellView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
 
             Text("No local routing guidance, no local gate bypass.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(nsColor: .controlBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+
+    private func interruptClarifyConfirmationCard(_ requiresConfirmation: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Clarify confirmation")
+                .font(.subheadline.weight(.semibold))
+
+            Text("Cloud-authored confirmation evidence only")
+                .font(.footnote.weight(.semibold))
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            Text("Confirmation posture")
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            metadataRow(
+                label: "interrupt_clarify_requires_confirmation",
+                value: booleanValue(requiresConfirmation)
+            )
+
+            Text("Exact cloud-authored confirmation truth only")
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            Text("No local confirmation law, no local execution unlock.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
