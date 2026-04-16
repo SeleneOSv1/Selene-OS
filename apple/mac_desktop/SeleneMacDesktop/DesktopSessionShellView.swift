@@ -22,6 +22,23 @@ private func boundedHint(_ rawValue: String?) -> String? {
     return "\(trimmed.prefix(8))...\(trimmed.suffix(4))"
 }
 
+private func boundedTitle(_ rawValue: String?) -> String? {
+    guard let rawValue else {
+        return nil
+    }
+
+    let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else {
+        return nil
+    }
+
+    if trimmed.count <= 72 {
+        return trimmed
+    }
+
+    return "\(trimmed.prefix(69))..."
+}
+
 private func boundedTranscript(_ rawValue: String?) -> String? {
     guard let rawValue else {
         return nil
@@ -56,6 +73,33 @@ private func boundedSummary(_ rawValue: String?) -> String? {
     return "\(trimmed.prefix(217))..."
 }
 
+private func boundedBullet(_ rawValue: String?) -> String? {
+    guard let rawValue else {
+        return nil
+    }
+
+    let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else {
+        return nil
+    }
+
+    if trimmed.count <= 140 {
+        return trimmed
+    }
+
+    return "\(trimmed.prefix(137))..."
+}
+
+private func boundedResumeSummaryBullets(in queryItems: [URLQueryItem]) -> [String] {
+    queryItems.compactMap { queryItem in
+        guard queryItem.name == "resume_summary_bullets" else {
+            return nil
+        }
+
+        return boundedBullet(queryItem.value)
+    }
+}
+
 private func canonicalSessionAttachOutcome(_ rawValue: String?) -> String? {
     guard let rawValue else {
         return nil
@@ -86,6 +130,36 @@ private func canonicalActiveSessionState(_ rawValue: String?) -> String? {
     }
 
     return "SessionState::Active"
+}
+
+private func canonicalSoftClosedSessionState(_ rawValue: String?) -> String? {
+    guard let rawValue else {
+        return nil
+    }
+
+    let normalized = rawValue.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+    guard normalized == "SOFT_CLOSED" else {
+        return nil
+    }
+
+    return "SessionState::SoftClosed"
+}
+
+private func canonicalResumeTier(_ rawValue: String?) -> String? {
+    guard let rawValue else {
+        return nil
+    }
+
+    switch rawValue.trimmingCharacters(in: .whitespacesAndNewlines).uppercased() {
+    case "HOT":
+        return "MemoryResumeTier::Hot"
+    case "WARM":
+        return "MemoryResumeTier::Warm"
+    case "COLD":
+        return "MemoryResumeTier::Cold"
+    default:
+        return nil
+    }
 }
 
 private struct DesktopSessionHeaderContext: Equatable {
@@ -175,9 +249,64 @@ private struct DesktopSessionActiveVisibleContext: Equatable {
     }
 }
 
+private struct DesktopSessionSoftClosedVisibleContext: Equatable {
+    let sessionState: String
+    let sessionID: String
+    let selectedThreadID: String?
+    let selectedThreadTitle: String?
+    let pendingWorkOrderID: String?
+    let resumeTier: String?
+    let resumeSummaryBullets: [String]
+    let archivedUserTurnText: String
+    let archivedSeleneTurnText: String
+
+    init?(url: URL) {
+        guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
+            return nil
+        }
+
+        let queryItems = components.queryItems ?? []
+        guard
+            let sessionState = canonicalSoftClosedSessionState(
+                firstQueryValue(in: queryItems, name: "session_state")
+            ),
+            let sessionID = boundedHint(
+                firstQueryValue(in: queryItems, name: "session_id")
+            ),
+            let archivedUserTurnText = boundedTranscript(
+                firstQueryValue(in: queryItems, name: "archived_user_turn_text")
+            ),
+            let archivedSeleneTurnText = boundedTranscript(
+                firstQueryValue(in: queryItems, name: "archived_selene_turn_text")
+            )
+        else {
+            return nil
+        }
+
+        self.sessionState = sessionState
+        self.sessionID = sessionID
+        self.selectedThreadID = boundedHint(
+            firstQueryValue(in: queryItems, name: "selected_thread_id")
+        )
+        self.selectedThreadTitle = boundedTitle(
+            firstQueryValue(in: queryItems, name: "selected_thread_title")
+        )
+        self.pendingWorkOrderID = boundedHint(
+            firstQueryValue(in: queryItems, name: "pending_work_order_id")
+        )
+        self.resumeTier = canonicalResumeTier(
+            firstQueryValue(in: queryItems, name: "resume_tier")
+        )
+        self.resumeSummaryBullets = boundedResumeSummaryBullets(in: queryItems)
+        self.archivedUserTurnText = archivedUserTurnText
+        self.archivedSeleneTurnText = archivedSeleneTurnText
+    }
+}
+
 struct DesktopSessionShellView: View {
     @State private var latestSessionHeaderContext: DesktopSessionHeaderContext?
     @State private var latestSessionActiveVisibleContext: DesktopSessionActiveVisibleContext?
+    @State private var latestSessionSoftClosedVisibleContext: DesktopSessionSoftClosedVisibleContext?
 
     var body: some View {
         HStack(alignment: .top, spacing: 20) {
@@ -210,6 +339,7 @@ struct DesktopSessionShellView: View {
         .onOpenURL { url in
             if let context = DesktopSessionActiveVisibleContext(url: url) {
                 latestSessionActiveVisibleContext = context
+                latestSessionSoftClosedVisibleContext = nil
 
                 if let sessionAttachOutcome = context.sessionAttachOutcome {
                     latestSessionHeaderContext = DesktopSessionHeaderContext(
@@ -224,9 +354,21 @@ struct DesktopSessionShellView: View {
                 return
             }
 
+            if let context = DesktopSessionSoftClosedVisibleContext(url: url) {
+                latestSessionSoftClosedVisibleContext = context
+                latestSessionActiveVisibleContext = nil
+
+                if latestSessionHeaderContext?.sessionID != context.sessionID {
+                    latestSessionHeaderContext = nil
+                }
+
+                return
+            }
+
             if let context = DesktopSessionHeaderContext(url: url) {
                 latestSessionHeaderContext = context
                 latestSessionActiveVisibleContext = nil
+                latestSessionSoftClosedVisibleContext = nil
             }
         }
     }
@@ -256,7 +398,36 @@ struct DesktopSessionShellView: View {
 
     private var sessionCard: some View {
         Group {
-            if let latestSessionActiveVisibleContext {
+            if let latestSessionSoftClosedVisibleContext {
+                GroupBox {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("Cloud-authored desktop soft-closed evidence only.")
+                            .font(.subheadline.weight(.semibold))
+
+                        Text("Bounded read-only soft-closed session posture for the cloud-authoritative desktop session surface.")
+                            .foregroundStyle(.secondary)
+
+                        metadataRow(label: "session_state", value: latestSessionSoftClosedVisibleContext.sessionState)
+                        metadataRow(label: "session_id", value: latestSessionSoftClosedVisibleContext.sessionID)
+
+                        Text("Visual reset may clear the screen, but archive truth remains durable and the explicit resume affordance remains non-producing here.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+
+                        Button("Resume the selected thread explicitly") {}
+                            .buttonStyle(.borderedProminent)
+                            .disabled(true)
+
+                        Text("No local authority, no local resume authoring, no local wake authority, no local governance or law execution, no local archive fabrication, no local PH1.M synthesis, and no local attach, reopen, or thread-selection authority.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                } label: {
+                    Text("Session")
+                        .font(.headline)
+                }
+            } else if let latestSessionActiveVisibleContext {
                 GroupBox {
                     VStack(alignment: .leading, spacing: 12) {
                         Text("Cloud-authored desktop active-session evidence only.")
@@ -355,6 +526,35 @@ struct DesktopSessionShellView: View {
                     Text("History")
                         .font(.headline)
                 }
+            } else if let latestSessionSoftClosedVisibleContext {
+                GroupBox {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("Cloud-authored archived recent-slice evidence only.")
+                            .font(.subheadline.weight(.semibold))
+
+                        transcriptEntry(
+                            speaker: "You",
+                            posture: "archived_user_turn_text",
+                            body: latestSessionSoftClosedVisibleContext.archivedUserTurnText,
+                            detail: "Archived recent slice remains durable archived conversation truth and stays distinct from bounded PH1.M resume-context output."
+                        )
+
+                        transcriptEntry(
+                            speaker: "Selene",
+                            posture: "archived_selene_turn_text",
+                            body: latestSessionSoftClosedVisibleContext.archivedSeleneTurnText,
+                            detail: "Archived recent slice remains text-visible after visual reset without local auto-reopen, hidden spoken-only output, or local transcript authority."
+                        )
+
+                        Text("Archived recent slice remains distinct from PH1.M memory and stays bounded to durable archive truth only.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                } label: {
+                    Text("History")
+                        .font(.headline)
+                }
             } else {
                 sectionCard(
                     title: "History",
@@ -378,6 +578,47 @@ struct DesktopSessionShellView: View {
                         )
 
                         Text("Bounded summary only. No local governed-output synthesis, no local artifact expansion, and no local dispatch unlock authority are introduced by this desktop surface.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                } label: {
+                    Text("System Activity")
+                        .font(.headline)
+                }
+            } else if let latestSessionSoftClosedVisibleContext {
+                GroupBox {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("Cloud-authored PH1.M resume-context evidence only.")
+                            .font(.subheadline.weight(.semibold))
+
+                        ForEach([
+                            ("selected_thread_id", latestSessionSoftClosedVisibleContext.selectedThreadID ?? "not_provided"),
+                            ("selected_thread_title", latestSessionSoftClosedVisibleContext.selectedThreadTitle ?? "not_provided"),
+                            ("pending_work_order_id", latestSessionSoftClosedVisibleContext.pendingWorkOrderID ?? "not_provided"),
+                            ("resume_tier", latestSessionSoftClosedVisibleContext.resumeTier ?? "not_provided"),
+                        ], id: \.0) { row in
+                            metadataRow(label: row.0, value: row.1)
+                        }
+
+                        if latestSessionSoftClosedVisibleContext.resumeSummaryBullets.isEmpty {
+                            Text("No bounded `resume_summary_bullets` were provided for this soft-closed preview.")
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                        } else {
+                            ForEach(Array(latestSessionSoftClosedVisibleContext.resumeSummaryBullets.prefix(3).enumerated()), id: \.offset) { index, bullet in
+                                HStack(alignment: .firstTextBaseline, spacing: 10) {
+                                    Text("\(index + 1).")
+                                        .font(.caption.weight(.semibold))
+                                        .foregroundStyle(.secondary)
+
+                                    Text(bullet)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                }
+                            }
+                        }
+
+                        Text("Resume context remains bounded PH1.M output only. No local thread-selection authority, no local resume synthesis, and no local dispatch unlock authority are introduced by this desktop surface.")
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                     }
