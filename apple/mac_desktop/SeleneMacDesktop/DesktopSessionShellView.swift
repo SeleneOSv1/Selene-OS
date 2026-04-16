@@ -256,15 +256,71 @@ private func booleanValue(_ value: Bool) -> String {
     value ? "true" : "false"
 }
 
+private enum DesktopRecoveryDisplayState: String, Equatable {
+    case recovering = "RECOVERING"
+    case degradedRecovery = "DEGRADED_RECOVERY"
+    case quarantinedLocalState = "QUARANTINED_LOCAL_STATE"
+}
+
+private func resolvedRecoveryDisplayState(
+    recoveryMode: CanonicalRecoveryMode?,
+    reconciliationDecision: CanonicalReconciliationDecision?
+) -> DesktopRecoveryDisplayState? {
+    if recoveryMode == .quarantinedLocalState || reconciliationDecision == .quarantineLocalState {
+        return .quarantinedLocalState
+    }
+
+    switch recoveryMode {
+    case .recovering:
+        return .recovering
+    case .degradedRecovery:
+        return .degradedRecovery
+    default:
+        return nil
+    }
+}
+
+private func recoveryPostureRowsForVisibleSession(
+    sessionState: String,
+    sessionID: String,
+    recoveryMode: CanonicalRecoveryMode?,
+    reconciliationDecision: CanonicalReconciliationDecision?
+) -> [(label: String, value: String)] {
+    var rows: [(label: String, value: String)] = [
+        ("session_state", sessionState),
+        ("session_id", sessionID),
+    ]
+
+    if let recoveryMode {
+        rows.append(("recovery_mode", recoveryMode.rawValue))
+    }
+
+    if let reconciliationDecision {
+        rows.append(("reconciliation_decision", reconciliationDecision.rawValue))
+    }
+
+    return rows
+}
+
 private struct DesktopSessionHeaderContext: Equatable {
     let sessionState: String
     let sessionID: String
     let sessionAttachOutcome: String
+    let recoveryMode: CanonicalRecoveryMode?
+    let reconciliationDecision: CanonicalReconciliationDecision?
 
-    init(sessionState: String, sessionID: String, sessionAttachOutcome: String) {
+    init(
+        sessionState: String,
+        sessionID: String,
+        sessionAttachOutcome: String,
+        recoveryMode: CanonicalRecoveryMode? = nil,
+        reconciliationDecision: CanonicalReconciliationDecision? = nil
+    ) {
         self.sessionState = sessionState
         self.sessionID = sessionID
         self.sessionAttachOutcome = sessionAttachOutcome
+        self.recoveryMode = recoveryMode
+        self.reconciliationDecision = reconciliationDecision
     }
 
     init?(url: URL) {
@@ -290,6 +346,12 @@ private struct DesktopSessionHeaderContext: Equatable {
         self.sessionState = sessionState
         self.sessionID = sessionID
         self.sessionAttachOutcome = sessionAttachOutcome
+        self.recoveryMode = CanonicalRecoveryMode.parse(
+            firstQueryValue(in: queryItems, name: "recovery_mode")
+        )
+        self.reconciliationDecision = CanonicalReconciliationDecision.parse(
+            firstQueryValue(in: queryItems, name: "reconciliation_decision")
+        )
     }
 }
 
@@ -301,6 +363,8 @@ private struct DesktopSessionActiveVisibleContext: Equatable {
     let currentSeleneTurnText: String
     let currentGovernedOutputSummary: String
     let sessionAttachOutcome: String?
+    let recoveryMode: CanonicalRecoveryMode?
+    let reconciliationDecision: CanonicalReconciliationDecision?
 
     init?(url: URL) {
         guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
@@ -340,6 +404,12 @@ private struct DesktopSessionActiveVisibleContext: Equatable {
         self.sessionAttachOutcome = canonicalSessionAttachOutcome(
             firstQueryValue(in: queryItems, name: "session_attach_outcome")
         )
+        self.recoveryMode = CanonicalRecoveryMode.parse(
+            firstQueryValue(in: queryItems, name: "recovery_mode")
+        )
+        self.reconciliationDecision = CanonicalReconciliationDecision.parse(
+            firstQueryValue(in: queryItems, name: "reconciliation_decision")
+        )
     }
 }
 
@@ -353,6 +423,8 @@ private struct DesktopSessionSoftClosedVisibleContext: Equatable {
     let resumeSummaryBullets: [String]
     let archivedUserTurnText: String
     let archivedSeleneTurnText: String
+    let recoveryMode: CanonicalRecoveryMode?
+    let reconciliationDecision: CanonicalReconciliationDecision?
 
     init?(url: URL) {
         guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
@@ -394,6 +466,12 @@ private struct DesktopSessionSoftClosedVisibleContext: Equatable {
         self.resumeSummaryBullets = boundedResumeSummaryBullets(in: queryItems)
         self.archivedUserTurnText = archivedUserTurnText
         self.archivedSeleneTurnText = archivedSeleneTurnText
+        self.recoveryMode = CanonicalRecoveryMode.parse(
+            firstQueryValue(in: queryItems, name: "recovery_mode")
+        )
+        self.reconciliationDecision = CanonicalReconciliationDecision.parse(
+            firstQueryValue(in: queryItems, name: "reconciliation_decision")
+        )
     }
 }
 
@@ -487,6 +565,76 @@ private struct DesktopSessionSuspendedVisibleContext: Equatable {
     }
 }
 
+private enum DesktopRecoveryVisibleSurface {
+    case sessionHeader(DesktopSessionHeaderContext)
+    case sessionActive(DesktopSessionActiveVisibleContext)
+    case sessionSoftClosed(DesktopSessionSoftClosedVisibleContext)
+
+    var sessionState: String {
+        switch self {
+        case .sessionHeader(let context):
+            return context.sessionState
+        case .sessionActive(let context):
+            return context.sessionState
+        case .sessionSoftClosed(let context):
+            return context.sessionState
+        }
+    }
+
+    var sessionID: String {
+        switch self {
+        case .sessionHeader(let context):
+            return context.sessionID
+        case .sessionActive(let context):
+            return context.sessionID
+        case .sessionSoftClosed(let context):
+            return context.sessionID
+        }
+    }
+
+    var recoveryMode: CanonicalRecoveryMode? {
+        switch self {
+        case .sessionHeader(let context):
+            return context.recoveryMode
+        case .sessionActive(let context):
+            return context.recoveryMode
+        case .sessionSoftClosed(let context):
+            return context.recoveryMode
+        }
+    }
+
+    var reconciliationDecision: CanonicalReconciliationDecision? {
+        switch self {
+        case .sessionHeader(let context):
+            return context.reconciliationDecision
+        case .sessionActive(let context):
+            return context.reconciliationDecision
+        case .sessionSoftClosed(let context):
+            return context.reconciliationDecision
+        }
+    }
+
+    var sourceSurfaceTitle: String {
+        switch self {
+        case .sessionHeader:
+            return "SESSION_OPEN_VISIBLE"
+        case .sessionActive:
+            return "SESSION_ACTIVE_VISIBLE"
+        case .sessionSoftClosed:
+            return "SESSION_SOFT_CLOSED_VISIBLE"
+        }
+    }
+
+    var recoveryPostureRows: [(label: String, value: String)] {
+        recoveryPostureRowsForVisibleSession(
+            sessionState: sessionState,
+            sessionID: sessionID,
+            recoveryMode: recoveryMode,
+            reconciliationDecision: reconciliationDecision
+        )
+    }
+}
+
 struct DesktopSessionShellView: View {
     @State private var latestSessionHeaderContext: DesktopSessionHeaderContext?
     @State private var latestSessionActiveVisibleContext: DesktopSessionActiveVisibleContext?
@@ -511,10 +659,7 @@ struct DesktopSessionShellView: View {
             VStack(alignment: .leading, spacing: 16) {
                 systemActivityCard
 
-                sectionCard(
-                    title: "Needs Attention",
-                    detail: "Bounded actionable placeholder kept separate from transcript history."
-                )
+                needsAttentionCard
             }
             .frame(width: 300, alignment: .topLeading)
         }
@@ -531,7 +676,9 @@ struct DesktopSessionShellView: View {
                     latestSessionHeaderContext = DesktopSessionHeaderContext(
                         sessionState: context.sessionState,
                         sessionID: context.sessionID,
-                        sessionAttachOutcome: sessionAttachOutcome
+                        sessionAttachOutcome: sessionAttachOutcome,
+                        recoveryMode: context.recoveryMode,
+                        reconciliationDecision: context.reconciliationDecision
                     )
                 } else if latestSessionHeaderContext?.sessionID != context.sessionID {
                     latestSessionHeaderContext = nil
@@ -571,6 +718,42 @@ struct DesktopSessionShellView: View {
                 latestSessionSuspendedVisibleContext = nil
             }
         }
+    }
+
+    private var activeRecoveryVisibleSurface: DesktopRecoveryVisibleSurface? {
+        guard latestSessionSuspendedVisibleContext == nil else {
+            return nil
+        }
+
+        if let latestSessionActiveVisibleContext {
+            return .sessionActive(latestSessionActiveVisibleContext)
+        }
+
+        if let latestSessionSoftClosedVisibleContext {
+            return .sessionSoftClosed(latestSessionSoftClosedVisibleContext)
+        }
+
+        if let latestSessionHeaderContext {
+            return .sessionHeader(latestSessionHeaderContext)
+        }
+
+        return nil
+    }
+
+    private var activeRecoveryDisplayState: DesktopRecoveryDisplayState? {
+        guard let activeRecoveryVisibleSurface else {
+            return nil
+        }
+
+        let normalizedSessionState = normalizedRecoveryEnumToken(activeRecoveryVisibleSurface.sessionState)
+        guard normalizedSessionState != "suspended", normalizedSessionState != "sessionstatesuspended" else {
+            return nil
+        }
+
+        return resolvedRecoveryDisplayState(
+            recoveryMode: activeRecoveryVisibleSurface.recoveryMode,
+            reconciliationDecision: activeRecoveryVisibleSurface.reconciliationDecision
+        )
     }
 
     private var posturePanel: some View {
@@ -624,6 +807,10 @@ struct DesktopSessionShellView: View {
                     Text("Session")
                         .font(.headline)
                 }
+            } else if activeRecoveryDisplayState == .quarantinedLocalState,
+                      let activeRecoveryVisibleSurface
+            {
+                quarantinedLocalStateSessionCard(activeRecoveryVisibleSurface)
             } else if let latestSessionSoftClosedVisibleContext {
                 GroupBox {
                     VStack(alignment: .leading, spacing: 12) {
@@ -741,6 +928,8 @@ struct DesktopSessionShellView: View {
                     Text("History")
                         .font(.headline)
                 }
+            } else if activeRecoveryDisplayState == .quarantinedLocalState {
+                quarantinedLocalStateHistoryCard
             } else if let latestSessionActiveVisibleContext {
                 GroupBox {
                     VStack(alignment: .leading, spacing: 12) {
@@ -833,6 +1022,8 @@ struct DesktopSessionShellView: View {
                     Text("System Activity")
                         .font(.headline)
                 }
+            } else if activeRecoveryDisplayState == .quarantinedLocalState {
+                quarantinedLocalStateSystemActivityCard
             } else if let latestSessionActiveVisibleContext {
                 GroupBox {
                     VStack(alignment: .leading, spacing: 12) {
@@ -903,6 +1094,26 @@ struct DesktopSessionShellView: View {
         }
     }
 
+    private var needsAttentionCard: some View {
+        Group {
+            switch activeRecoveryDisplayState {
+            case .some(.recovering):
+                if let activeRecoveryVisibleSurface {
+                    recoveryRestrictionCard(activeRecoveryVisibleSurface, state: .recovering)
+                }
+            case .some(.degradedRecovery):
+                if let activeRecoveryVisibleSurface {
+                    recoveryRestrictionCard(activeRecoveryVisibleSurface, state: .degradedRecovery)
+                }
+            default:
+                sectionCard(
+                    title: "Needs Attention",
+                    detail: "Bounded actionable placeholder kept separate from transcript history."
+                )
+            }
+        }
+    }
+
     private func sectionCard(title: String, detail: String) -> some View {
         GroupBox {
             Text(detail)
@@ -955,6 +1166,120 @@ struct DesktopSessionShellView: View {
             return "Continuity stays on the existing cloud session while authoritative retry reuse remains visible."
         default:
             return "Continuity remains cloud-authoritative and session-bound."
+        }
+    }
+
+    private func recoveryRestrictionCard(
+        _ surface: DesktopRecoveryVisibleSurface,
+        state: DesktopRecoveryDisplayState
+    ) -> some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Cloud-authored recovery restriction evidence only.")
+                    .font(.subheadline.weight(.semibold))
+
+                Text("\(state.rawValue) remains bounded, read-only, and reread from canonical session transport only.")
+                    .foregroundStyle(.secondary)
+
+                metadataRow(label: "source_surface", value: surface.sourceSurfaceTitle)
+
+                ForEach(surface.recoveryPostureRows, id: \.label) { row in
+                    metadataRow(label: row.label, value: row.value)
+                }
+
+                Text("Reread authoritative state before any normal interaction is reconsidered from this bounded desktop surface.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+
+                Text(recoveryRestrictionSummary(for: state))
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+
+                Text("No local authority, no local unsuspend authority, no local reread authority, no local retry authority, no local queue repair authority, no local transcript authority, no local archive fabrication, no local governed-output synthesis, no local PH1.M synthesis, no local resume-buffer synthesis, no local dispatch unlock, and no local attach or reopen authority.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        } label: {
+            Text("Needs Attention")
+                .font(.headline)
+        }
+    }
+
+    private func quarantinedLocalStateSessionCard(_ surface: DesktopRecoveryVisibleSurface) -> some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Cloud-authored quarantine recovery evidence only.")
+                    .font(.subheadline.weight(.semibold))
+
+                Text("QUARANTINED_LOCAL_STATE remains a bounded hard full takeover, so the desktop shell must reread authoritative state before any lawful interaction is reconsidered.")
+                    .foregroundStyle(.secondary)
+
+                metadataRow(label: "source_surface", value: surface.sourceSurfaceTitle)
+
+                ForEach(surface.recoveryPostureRows, id: \.label) { row in
+                    metadataRow(label: row.label, value: row.value)
+                }
+
+                Text("This quarantine posture changes visibility, not ownership. No local override, no trust in stale cache, no hidden replay, and no local attach or reopen authority are introduced here.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        } label: {
+            Text("Session")
+                .font(.headline)
+        }
+    }
+
+    private var quarantinedLocalStateHistoryCard: some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Cloud-authored quarantine explanation only.")
+                    .font(.subheadline.weight(.semibold))
+
+                Text("QUARANTINED_LOCAL_STATE withholds live dual transcript and archived recent-slice visibility from this bounded desktop surface until authoritative state is reread cloud-side.")
+                    .foregroundStyle(.secondary)
+
+                Text("No local transcript authority, no local archive fabrication, and no hidden continuation path are introduced while quarantine remains active.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        } label: {
+            Text("History")
+                .font(.headline)
+        }
+    }
+
+    private var quarantinedLocalStateSystemActivityCard: some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Cloud-authored reread-authoritative-state guidance only.")
+                    .font(.subheadline.weight(.semibold))
+
+                Text("Quarantine withholds governed-output-summary and PH1.M resume-context visibility here until authoritative state is reread and the canonical recovery posture clears cloud-side.")
+                    .foregroundStyle(.secondary)
+
+                Text("No local reread authority, no local retry authority, no local queue repair authority, no local governed-output synthesis, no local PH1.M synthesis, and no local dispatch unlock are introduced by this bounded recovery surface.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        } label: {
+            Text("System Activity")
+                .font(.headline)
+        }
+    }
+
+    private func recoveryRestrictionSummary(for state: DesktopRecoveryDisplayState) -> String {
+        switch state {
+        case .recovering:
+            return "Recovery remains active cloud-side, so normal interaction stays restricted while the lawful main session surface remains visible in bounded read-only posture."
+        case .degradedRecovery:
+            return "Degraded recovery remains active cloud-side, so normal interaction stays further restricted while the lawful main session surface remains visible in bounded read-only posture."
+        case .quarantinedLocalState:
+            return "Quarantine removes lawful normal interaction from this desktop surface until authoritative state is reread and the canonical recovery posture clears cloud-side."
         }
     }
 
