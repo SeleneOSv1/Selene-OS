@@ -525,6 +525,71 @@ private func collectedResumeBufferTopicHint(in queryItems: [URLQueryItem]) -> St
     return trimmed
 }
 
+private func collectedSingleLineInterruptValue(
+    in queryItems: [URLQueryItem],
+    name: String
+) -> String? {
+    let values = queryItems.filter { $0.name == name }
+    guard values.count == 1,
+          let value = values[0].value else {
+        return nil
+    }
+
+    let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty,
+          !trimmed.contains("\n"),
+          !trimmed.contains("\r") else {
+        return nil
+    }
+
+    return trimmed
+}
+
+private func collectedMultilineInterruptValue(
+    in queryItems: [URLQueryItem],
+    name: String
+) -> String? {
+    let values = queryItems.filter { $0.name == name }
+    guard values.count == 1,
+          let value = values[0].value else {
+        return nil
+    }
+
+    let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else {
+        return nil
+    }
+
+    return trimmed
+}
+
+private func collectedResumeBufferAnswerID(in queryItems: [URLQueryItem]) -> String? {
+    collectedSingleLineInterruptValue(in: queryItems, name: "resume_buffer_answer_id")
+}
+
+private func collectedResumeBufferSpokenPrefix(in queryItems: [URLQueryItem]) -> String? {
+    collectedMultilineInterruptValue(in: queryItems, name: "resume_buffer_spoken_prefix")
+}
+
+private func collectedResumeBufferUnsaidRemainder(in queryItems: [URLQueryItem]) -> String? {
+    collectedMultilineInterruptValue(in: queryItems, name: "resume_buffer_unsaid_remainder")
+}
+
+private func collectedTtsResumeSnapshotAnswerID(in queryItems: [URLQueryItem]) -> String? {
+    collectedSingleLineInterruptValue(in: queryItems, name: "tts_resume_snapshot_answer_id")
+}
+
+private func collectedTtsResumeSnapshotSpokenCursorByte(in queryItems: [URLQueryItem]) -> String? {
+    collectedSingleLineInterruptValue(
+        in: queryItems,
+        name: "tts_resume_snapshot_spoken_cursor_byte"
+    )
+}
+
+private func collectedTtsResumeSnapshotResponseText(in queryItems: [URLQueryItem]) -> String? {
+    collectedMultilineInterruptValue(in: queryItems, name: "tts_resume_snapshot_response_text")
+}
+
 private func canonicalSessionAttachOutcome(_ rawValue: String?) -> String? {
     guard let rawValue else {
         return nil
@@ -832,7 +897,13 @@ private struct DesktopSessionActiveVisibleContext: Equatable {
     let interruptedSubjectRef: String?
     let returnCheckExpiresAt: String?
     let resumeBufferLive: Bool?
+    let resumeBufferAnswerID: String?
+    let resumeBufferSpokenPrefix: String?
+    let resumeBufferUnsaidRemainder: String?
     let resumeBufferTopicHint: String?
+    let ttsResumeSnapshotAnswerID: String?
+    let ttsResumeSnapshotSpokenCursorByte: String?
+    let ttsResumeSnapshotResponseText: String?
     let interruptAcceptedAnswerFormats: [String]
 
     init?(url: URL) {
@@ -910,7 +981,17 @@ private struct DesktopSessionActiveVisibleContext: Equatable {
         self.interruptedSubjectRef = collectedInterruptedSubjectRef(in: queryItems)
         self.returnCheckExpiresAt = collectedReturnCheckExpiresAt(in: queryItems)
         self.resumeBufferLive = collectedResumeBufferLive(in: queryItems)
+        self.resumeBufferAnswerID = collectedResumeBufferAnswerID(in: queryItems)
+        self.resumeBufferSpokenPrefix = collectedResumeBufferSpokenPrefix(in: queryItems)
+        self.resumeBufferUnsaidRemainder = collectedResumeBufferUnsaidRemainder(in: queryItems)
         self.resumeBufferTopicHint = collectedResumeBufferTopicHint(in: queryItems)
+        self.ttsResumeSnapshotAnswerID = collectedTtsResumeSnapshotAnswerID(in: queryItems)
+        self.ttsResumeSnapshotSpokenCursorByte = collectedTtsResumeSnapshotSpokenCursorByte(
+            in: queryItems
+        )
+        self.ttsResumeSnapshotResponseText = collectedTtsResumeSnapshotResponseText(
+            in: queryItems
+        )
         self.interruptAcceptedAnswerFormats = collectedInterruptAcceptedAnswerFormats(in: queryItems)
     }
 
@@ -988,8 +1069,34 @@ private struct DesktopSessionActiveVisibleContext: Equatable {
         resumeBufferLive == true
     }
 
+    var hasLawfulInterruptResumeBufferAnswerID: Bool {
+        resumeBufferAnswerID != nil
+    }
+
+    var hasLawfulInterruptResumeBufferSpokenPrefix: Bool {
+        resumeBufferLive == true && resumeBufferSpokenPrefix != nil
+    }
+
+    var hasLawfulInterruptResumeBufferUnsaidRemainder: Bool {
+        resumeBufferLive == true && resumeBufferUnsaidRemainder != nil
+    }
+
     var hasLawfulInterruptResumeBufferTopicHint: Bool {
         resumeBufferLive == true && resumeBufferTopicHint != nil
+    }
+
+    var hasLawfulInterruptTtsResumeSnapshotAnswerID: Bool {
+        ttsResumeSnapshotAnswerID != nil
+    }
+
+    var hasLawfulInterruptTtsResumeSnapshotSpokenCursorByte: Bool {
+        resumeBufferLive == true && ttsResumeSnapshotSpokenCursorByte != nil
+    }
+
+    var hasLawfulInterruptTtsResumeSnapshotResponseText: Bool {
+        ttsResumeSnapshotAnswerID != nil
+            && ttsResumeSnapshotSpokenCursorByte != nil
+            && ttsResumeSnapshotResponseText != nil
     }
 
     var hasInterruptResponseConflict: Bool {
@@ -1935,9 +2042,41 @@ struct DesktopSessionShellView: View {
                     interruptResumeBufferLiveCard(resumeBufferLive)
                 }
 
+                if let resumeBufferAnswerID = context.resumeBufferAnswerID,
+                   context.hasLawfulInterruptResumeBufferAnswerID {
+                    interruptResumeBufferAnswerIDCard(resumeBufferAnswerID)
+                }
+
+                if let resumeBufferSpokenPrefix = context.resumeBufferSpokenPrefix,
+                   context.hasLawfulInterruptResumeBufferSpokenPrefix {
+                    interruptResumeBufferSpokenPrefixCard(resumeBufferSpokenPrefix)
+                }
+
+                if let resumeBufferUnsaidRemainder = context.resumeBufferUnsaidRemainder,
+                   context.hasLawfulInterruptResumeBufferUnsaidRemainder {
+                    interruptResumeBufferUnsaidRemainderCard(resumeBufferUnsaidRemainder)
+                }
+
                 if let resumeBufferTopicHint = context.resumeBufferTopicHint,
                    context.hasLawfulInterruptResumeBufferTopicHint {
                     interruptResumeBufferTopicHintCard(resumeBufferTopicHint)
+                }
+
+                if let ttsResumeSnapshotAnswerID = context.ttsResumeSnapshotAnswerID,
+                   context.hasLawfulInterruptTtsResumeSnapshotAnswerID {
+                    interruptTtsResumeSnapshotAnswerIDCard(ttsResumeSnapshotAnswerID)
+                }
+
+                if let ttsResumeSnapshotSpokenCursorByte = context.ttsResumeSnapshotSpokenCursorByte,
+                   context.hasLawfulInterruptTtsResumeSnapshotSpokenCursorByte {
+                    interruptTtsResumeSnapshotSpokenCursorByteCard(
+                        ttsResumeSnapshotSpokenCursorByte
+                    )
+                }
+
+                if let ttsResumeSnapshotResponseText = context.ttsResumeSnapshotResponseText,
+                   context.hasLawfulInterruptTtsResumeSnapshotResponseText {
+                    interruptTtsResumeSnapshotResponseTextCard(ttsResumeSnapshotResponseText)
                 }
 
                 Text("Lawful interrupt actions remain rendered, not authored, from this bounded desktop surface.")
@@ -2407,6 +2546,115 @@ struct DesktopSessionShellView: View {
         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
 
+    private func interruptResumeBufferAnswerIDCard(_ resumeBufferAnswerID: String) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Resume answer ID")
+                .font(.subheadline.weight(.semibold))
+
+            Text("Cloud-authored resume-buffer answer-ID evidence only")
+                .font(.footnote.weight(.semibold))
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            Text("Answer posture")
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            metadataRow(
+                label: "Resume buffer answer ID",
+                value: resumeBufferAnswerID
+            )
+
+            Text("Exact cloud-authored answer ID only")
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            Text("No local resume authoring, no local topic synthesis, and no local dispatch unlock.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(nsColor: .controlBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+
+    private func interruptResumeBufferSpokenPrefixCard(
+        _ resumeBufferSpokenPrefix: String
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Resume spoken prefix")
+                .font(.subheadline.weight(.semibold))
+
+            Text("Cloud-authored resume-buffer spoken-prefix evidence only")
+                .font(.footnote.weight(.semibold))
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            Text("Prefix posture")
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            metadataRow(
+                label: "Resume buffer spoken prefix",
+                value: resumeBufferSpokenPrefix
+            )
+
+            Text("Exact cloud-authored spoken prefix only")
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            Text("No local resume authoring, no local synthesis of the remaining response, and no local dispatch unlock.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(nsColor: .controlBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+
+    private func interruptResumeBufferUnsaidRemainderCard(
+        _ resumeBufferUnsaidRemainder: String
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Resume unsaid remainder")
+                .font(.subheadline.weight(.semibold))
+
+            Text("Cloud-authored resume-buffer unsaid-remainder evidence only")
+                .font(.footnote.weight(.semibold))
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            Text("Remainder posture")
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            metadataRow(
+                label: "Resume buffer unsaid remainder",
+                value: resumeBufferUnsaidRemainder
+            )
+
+            Text("Exact cloud-authored unsaid remainder only")
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            Text("No local resume authoring, no local completion of the remaining response, and no local dispatch unlock.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(nsColor: .controlBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+
     private func interruptResumeBufferTopicHintCard(_ resumeBufferTopicHint: String) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Resume topic hint")
@@ -2432,6 +2680,117 @@ struct DesktopSessionShellView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
 
             Text("No local topic synthesis, no local dispatch unlock.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(nsColor: .controlBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+
+    private func interruptTtsResumeSnapshotAnswerIDCard(
+        _ ttsResumeSnapshotAnswerID: String
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("TTS snapshot answer ID")
+                .font(.subheadline.weight(.semibold))
+
+            Text("Cloud-authored TTS resume snapshot answer-ID evidence only")
+                .font(.footnote.weight(.semibold))
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            Text("Snapshot answer posture")
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            metadataRow(
+                label: "TTS resume snapshot answer ID",
+                value: ttsResumeSnapshotAnswerID
+            )
+
+            Text("Exact cloud-authored snapshot answer ID only")
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            Text("No local resume authoring, no local snapshot linkage authority, no local response synthesis, and no local dispatch unlock.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(nsColor: .controlBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+
+    private func interruptTtsResumeSnapshotSpokenCursorByteCard(
+        _ ttsResumeSnapshotSpokenCursorByte: String
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("TTS snapshot cursor")
+                .font(.subheadline.weight(.semibold))
+
+            Text("Cloud-authored TTS resume snapshot cursor evidence only")
+                .font(.footnote.weight(.semibold))
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            Text("Cursor posture")
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            metadataRow(
+                label: "TTS resume snapshot cursor byte",
+                value: ttsResumeSnapshotSpokenCursorByte
+            )
+
+            Text("Exact cloud-authored snapshot cursor only")
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            Text("No local resume authoring, no local playback math authority, no local response synthesis, and no local dispatch unlock.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(nsColor: .controlBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+
+    private func interruptTtsResumeSnapshotResponseTextCard(
+        _ ttsResumeSnapshotResponseText: String
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("TTS snapshot response text")
+                .font(.subheadline.weight(.semibold))
+
+            Text("Cloud-authored TTS resume snapshot response-text evidence only")
+                .font(.footnote.weight(.semibold))
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            Text("Snapshot response posture")
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            metadataRow(
+                label: "TTS resume snapshot response text",
+                value: ttsResumeSnapshotResponseText
+            )
+
+            Text("Exact cloud-authored snapshot response text only")
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            Text("No local resume authoring, no local cursor math authority, no local response synthesis, no local completion authority, and no local dispatch unlock.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
