@@ -499,6 +499,15 @@ private func collectedReturnCheckExpiresAt(in queryItems: [URLQueryItem]) -> Str
     return trimmed
 }
 
+private func collectedResumeBufferLive(in queryItems: [URLQueryItem]) -> Bool? {
+    let values = queryItems.filter { $0.name == "resume_buffer_live" }
+    guard values.count == 1 else {
+        return nil
+    }
+
+    return canonicalBoolean(values[0].value)
+}
+
 private func canonicalSessionAttachOutcome(_ rawValue: String?) -> String? {
     guard let rawValue else {
         return nil
@@ -805,6 +814,7 @@ private struct DesktopSessionActiveVisibleContext: Equatable {
     let activeSubjectRef: String?
     let interruptedSubjectRef: String?
     let returnCheckExpiresAt: String?
+    let resumeBufferLive: Bool?
     let interruptAcceptedAnswerFormats: [String]
 
     init?(url: URL) {
@@ -881,6 +891,7 @@ private struct DesktopSessionActiveVisibleContext: Equatable {
         self.activeSubjectRef = collectedActiveSubjectRef(in: queryItems)
         self.interruptedSubjectRef = collectedInterruptedSubjectRef(in: queryItems)
         self.returnCheckExpiresAt = collectedReturnCheckExpiresAt(in: queryItems)
+        self.resumeBufferLive = collectedResumeBufferLive(in: queryItems)
         self.interruptAcceptedAnswerFormats = collectedInterruptAcceptedAnswerFormats(in: queryItems)
     }
 
@@ -952,6 +963,10 @@ private struct DesktopSessionActiveVisibleContext: Equatable {
 
     var hasLawfulInterruptReturnCheckExpiry: Bool {
         returnCheckPending == true && returnCheckExpiresAt != nil
+    }
+
+    var hasLawfulInterruptResumeBufferLive: Bool {
+        resumeBufferLive == true
     }
 
     var hasInterruptResponseConflict: Bool {
@@ -1892,6 +1907,11 @@ struct DesktopSessionShellView: View {
                     interruptReturnCheckExpiryCard(returnCheckExpiresAt)
                 }
 
+                if let resumeBufferLive = context.resumeBufferLive,
+                   context.hasLawfulInterruptResumeBufferLive {
+                    interruptResumeBufferLiveCard(resumeBufferLive)
+                }
+
                 Text("Lawful interrupt actions remain rendered, not authored, from this bounded desktop surface.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
@@ -2314,6 +2334,41 @@ struct DesktopSessionShellView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
 
             Text("No local countdown, no local dispatch unlock.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(nsColor: .controlBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+
+    private func interruptResumeBufferLiveCard(_ resumeBufferLive: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Resume buffer")
+                .font(.subheadline.weight(.semibold))
+
+            Text("Cloud-authored resume-buffer live evidence only")
+                .font(.footnote.weight(.semibold))
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            Text("Resume posture")
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            metadataRow(
+                label: "resume_buffer_live",
+                value: booleanValue(resumeBufferLive)
+            )
+
+            Text("Exact cloud-authored liveness truth only")
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            Text("No local resume authoring, no local dispatch unlock.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
