@@ -90,6 +90,22 @@ private func boundedClarifyQuestion(_ rawValue: String?) -> String? {
     return "\(trimmed.prefix(237))..."
 }
 
+private func boundedClarifyMissingField(_ rawValue: String?) -> String? {
+    guard let rawValue else {
+        return nil
+    }
+
+    let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty,
+          trimmed.count <= 128,
+          !trimmed.contains("\n"),
+          !trimmed.contains("\r") else {
+        return nil
+    }
+
+    return trimmed
+}
+
 private func boundedBullet(_ rawValue: String?) -> String? {
     guard let rawValue else {
         return nil
@@ -293,6 +309,15 @@ private func collectedInterruptAcceptedAnswerFormats(in queryItems: [URLQueryIte
     }
 
     return formats
+}
+
+private func collectedInterruptClarifyWhatIsMissing(in queryItems: [URLQueryItem]) -> String? {
+    let values = queryItems.filter { $0.name == "interrupt_clarify_what_is_missing" }
+    guard values.count == 1 else {
+        return nil
+    }
+
+    return boundedClarifyMissingField(values[0].value)
 }
 
 private func canonicalSessionAttachOutcome(_ rawValue: String?) -> String? {
@@ -592,6 +617,7 @@ private struct DesktopSessionActiveVisibleContext: Equatable {
     let interruptResumePolicy: CanonicalInterruptResumePolicy?
     let returnCheckPending: Bool?
     let interruptClarifyQuestion: String?
+    let interruptClarifyWhatIsMissing: String?
     let interruptAcceptedAnswerFormats: [String]
 
     init?(url: URL) {
@@ -653,6 +679,7 @@ private struct DesktopSessionActiveVisibleContext: Equatable {
         self.interruptClarifyQuestion = boundedClarifyQuestion(
             firstQueryValue(in: queryItems, name: "interrupt_clarify_question")
         )
+        self.interruptClarifyWhatIsMissing = collectedInterruptClarifyWhatIsMissing(in: queryItems)
         self.interruptAcceptedAnswerFormats = collectedInterruptAcceptedAnswerFormats(in: queryItems)
     }
 
@@ -692,6 +719,10 @@ private struct DesktopSessionActiveVisibleContext: Equatable {
 
     var hasLawfulInterruptClarifyDirective: Bool {
         interruptClarifyQuestion != nil && (2...3).contains(interruptAcceptedAnswerFormats.count)
+    }
+
+    var hasLawfulInterruptClarifyMissingField: Bool {
+        hasLawfulInterruptClarifyDirective && interruptClarifyWhatIsMissing != nil
     }
 
     var hasInterruptResponseConflict: Bool {
@@ -1719,6 +1750,11 @@ struct DesktopSessionShellView: View {
                     .textSelection(.enabled)
             }
 
+            if let interruptClarifyWhatIsMissing = context.interruptClarifyWhatIsMissing,
+               context.hasLawfulInterruptClarifyMissingField {
+                interruptClarifyBoundaryCard(interruptClarifyWhatIsMissing)
+            }
+
             ForEach(context.interruptAcceptedAnswerFormats, id: \.self) { answerFormat in
                 if answerFormat == CanonicalInterruptAcceptedAnswerFormat.continuePreviousTopic.rawValue {
                     Button(answerFormat) {
@@ -1736,6 +1772,36 @@ struct DesktopSessionShellView: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func interruptClarifyBoundaryCard(_ missingField: String) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Clarify boundary")
+                .font(.subheadline.weight(.semibold))
+
+            Text("One question, one missing field")
+                .font(.footnote.weight(.semibold))
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            Text("Cloud-authored field key only")
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            metadataRow(
+                label: "interrupt_clarify_what_is_missing",
+                value: missingField
+            )
+
+            Text("No local field inference, no multi-field bundling.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(nsColor: .controlBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
 
     private func interruptReturnCheckResponseSection(
