@@ -448,6 +448,40 @@ private func collectedInterruptSubjectRelationConfidence(in queryItems: [URLQuer
     return trimmed
 }
 
+private func collectedInterruptSubjectRefValue(_ rawValue: String?) -> String? {
+    guard let rawValue else {
+        return nil
+    }
+
+    let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty,
+          !trimmed.contains("\n"),
+          !trimmed.contains("\r"),
+          trimmed.count <= 256 else {
+        return nil
+    }
+
+    return trimmed
+}
+
+private func collectedActiveSubjectRef(in queryItems: [URLQueryItem]) -> String? {
+    let values = queryItems.filter { $0.name == "active_subject_ref" }
+    guard values.count == 1 else {
+        return nil
+    }
+
+    return collectedInterruptSubjectRefValue(values[0].value)
+}
+
+private func collectedInterruptedSubjectRef(in queryItems: [URLQueryItem]) -> String? {
+    let values = queryItems.filter { $0.name == "interrupted_subject_ref" }
+    guard values.count == 1 else {
+        return nil
+    }
+
+    return collectedInterruptSubjectRefValue(values[0].value)
+}
+
 private func canonicalSessionAttachOutcome(_ rawValue: String?) -> String? {
     guard let rawValue else {
         return nil
@@ -751,6 +785,8 @@ private struct DesktopSessionActiveVisibleContext: Equatable {
     let interruptClarifyRequiresConfirmation: Bool?
     let interruptClarifySensitivityLevel: String?
     let interruptSubjectRelationConfidence: String?
+    let activeSubjectRef: String?
+    let interruptedSubjectRef: String?
     let interruptAcceptedAnswerFormats: [String]
 
     init?(url: URL) {
@@ -824,6 +860,8 @@ private struct DesktopSessionActiveVisibleContext: Equatable {
         self.interruptSubjectRelationConfidence = collectedInterruptSubjectRelationConfidence(
             in: queryItems
         )
+        self.activeSubjectRef = collectedActiveSubjectRef(in: queryItems)
+        self.interruptedSubjectRef = collectedInterruptedSubjectRef(in: queryItems)
         self.interruptAcceptedAnswerFormats = collectedInterruptAcceptedAnswerFormats(in: queryItems)
     }
 
@@ -887,6 +925,10 @@ private struct DesktopSessionActiveVisibleContext: Equatable {
 
     var hasLawfulInterruptSubjectRelationConfidence: Bool {
         interruptSubjectRelation != nil && interruptSubjectRelationConfidence != nil
+    }
+
+    var hasLawfulInterruptSubjectReferences: Bool {
+        interruptSubjectRelation != nil && (activeSubjectRef != nil || interruptedSubjectRef != nil)
     }
 
     var hasInterruptResponseConflict: Bool {
@@ -1815,6 +1857,13 @@ struct DesktopSessionShellView: View {
                     .font(.footnote)
                     .foregroundStyle(.secondary)
 
+                if context.hasLawfulInterruptSubjectReferences {
+                    interruptSubjectReferencesCard(
+                        activeSubjectRef: context.activeSubjectRef,
+                        interruptedSubjectRef: context.interruptedSubjectRef
+                    )
+                }
+
                 Text("Lawful interrupt actions remain rendered, not authored, from this bounded desktop surface.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
@@ -2155,6 +2204,53 @@ struct DesktopSessionShellView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
 
             Text("No local threshold law, no local dispatch unlock.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(nsColor: .controlBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+
+    private func interruptSubjectReferencesCard(
+        activeSubjectRef: String?,
+        interruptedSubjectRef: String?
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Subject references")
+                .font(.subheadline.weight(.semibold))
+
+            Text("Cloud-authored continuity subject evidence only")
+                .font(.footnote.weight(.semibold))
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            Text("Subject posture")
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            if let activeSubjectRef {
+                metadataRow(
+                    label: "active_subject_ref",
+                    value: activeSubjectRef
+                )
+            }
+
+            if let interruptedSubjectRef {
+                metadataRow(
+                    label: "interrupted_subject_ref",
+                    value: interruptedSubjectRef
+                )
+            }
+
+            Text("Exact cloud-authored subject refs only")
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            Text("No local subject binding, no local dispatch unlock.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
