@@ -291,6 +291,22 @@ private enum CanonicalInterruptAcceptedAnswerFormat: String, CaseIterable, Ident
     }
 }
 
+private enum CanonicalInterruptClarifyAmbiguityFlag: String, CaseIterable, Identifiable {
+    case referenceAmbiguous = "reference_ambiguous"
+    case recipientAmbiguous = "recipient_ambiguous"
+    case dateAmbiguous = "date_ambiguous"
+    case amountAmbiguous = "amount_ambiguous"
+    case multiIntent = "multi_intent"
+
+    var id: String {
+        rawValue
+    }
+
+    static func parse(_ rawValue: String) -> CanonicalInterruptClarifyAmbiguityFlag? {
+        Self(rawValue: rawValue.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+}
+
 private func collectedInterruptAcceptedAnswerFormats(in queryItems: [URLQueryItem]) -> [String] {
     var formats: [String] = []
 
@@ -318,6 +334,27 @@ private func collectedInterruptClarifyWhatIsMissing(in queryItems: [URLQueryItem
     }
 
     return boundedClarifyMissingField(values[0].value)
+}
+
+private func collectedInterruptClarifyAmbiguityFlags(in queryItems: [URLQueryItem]) -> [String] {
+    var flags: [String] = []
+
+    for queryItem in queryItems where queryItem.name == "interrupt_clarify_ambiguity_flag" {
+        guard let value = queryItem.value,
+              let canonicalValue = CanonicalInterruptClarifyAmbiguityFlag.parse(value)?.rawValue,
+              !flags.contains(canonicalValue),
+              flags.count < 2 else {
+            return []
+        }
+
+        flags.append(canonicalValue)
+    }
+
+    if flags.isEmpty {
+        return []
+    }
+
+    return flags
 }
 
 private func canonicalSessionAttachOutcome(_ rawValue: String?) -> String? {
@@ -618,6 +655,7 @@ private struct DesktopSessionActiveVisibleContext: Equatable {
     let returnCheckPending: Bool?
     let interruptClarifyQuestion: String?
     let interruptClarifyWhatIsMissing: String?
+    let interruptClarifyAmbiguityFlags: [String]
     let interruptAcceptedAnswerFormats: [String]
 
     init?(url: URL) {
@@ -680,6 +718,7 @@ private struct DesktopSessionActiveVisibleContext: Equatable {
             firstQueryValue(in: queryItems, name: "interrupt_clarify_question")
         )
         self.interruptClarifyWhatIsMissing = collectedInterruptClarifyWhatIsMissing(in: queryItems)
+        self.interruptClarifyAmbiguityFlags = collectedInterruptClarifyAmbiguityFlags(in: queryItems)
         self.interruptAcceptedAnswerFormats = collectedInterruptAcceptedAnswerFormats(in: queryItems)
     }
 
@@ -723,6 +762,10 @@ private struct DesktopSessionActiveVisibleContext: Equatable {
 
     var hasLawfulInterruptClarifyMissingField: Bool {
         hasLawfulInterruptClarifyDirective && interruptClarifyWhatIsMissing != nil
+    }
+
+    var hasLawfulInterruptClarifyAmbiguityFlags: Bool {
+        (1...2).contains(interruptClarifyAmbiguityFlags.count)
     }
 
     var hasInterruptResponseConflict: Bool {
@@ -1755,6 +1798,10 @@ struct DesktopSessionShellView: View {
                 interruptClarifyBoundaryCard(interruptClarifyWhatIsMissing)
             }
 
+            if context.hasLawfulInterruptClarifyAmbiguityFlags {
+                interruptClarifyAmbiguityCard(context.interruptClarifyAmbiguityFlags)
+            }
+
             ForEach(context.interruptAcceptedAnswerFormats, id: \.self) { answerFormat in
                 if answerFormat == CanonicalInterruptAcceptedAnswerFormat.continuePreviousTopic.rawValue {
                     Button(answerFormat) {
@@ -1794,6 +1841,38 @@ struct DesktopSessionShellView: View {
             )
 
             Text("No local field inference, no multi-field bundling.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(nsColor: .controlBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+
+    private func interruptClarifyAmbiguityCard(_ ambiguityFlags: [String]) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Clarify ambiguity")
+                .font(.subheadline.weight(.semibold))
+
+            Text("Cloud-authored ambiguity evidence only")
+                .font(.footnote.weight(.semibold))
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            ForEach(ambiguityFlags, id: \.self) { ambiguityFlag in
+                Text(ambiguityFlag)
+                    .font(.body.monospaced())
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .textSelection(.enabled)
+            }
+
+            Text("Exact cloud-authored flags only")
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            Text("No local ambiguity inference, no local rewrite.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
