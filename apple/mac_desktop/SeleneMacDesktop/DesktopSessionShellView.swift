@@ -590,6 +590,24 @@ private func collectedTtsResumeSnapshotResponseText(in queryItems: [URLQueryItem
     collectedMultilineInterruptValue(in: queryItems, name: "tts_resume_snapshot_response_text")
 }
 
+private func collectedTtsResumeSnapshotTopicHint(in queryItems: [URLQueryItem]) -> String? {
+    let values = queryItems.filter { $0.name == "tts_resume_snapshot_topic_hint" }
+    guard values.count == 1,
+          let value = values[0].value else {
+        return nil
+    }
+
+    let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty,
+          !trimmed.contains("\n"),
+          !trimmed.contains("\r"),
+          trimmed.count <= 64 else {
+        return nil
+    }
+
+    return trimmed
+}
+
 private func canonicalSessionAttachOutcome(_ rawValue: String?) -> String? {
     guard let rawValue else {
         return nil
@@ -904,6 +922,7 @@ private struct DesktopSessionActiveVisibleContext: Equatable {
     let ttsResumeSnapshotAnswerID: String?
     let ttsResumeSnapshotSpokenCursorByte: String?
     let ttsResumeSnapshotResponseText: String?
+    let ttsResumeSnapshotTopicHint: String?
     let interruptAcceptedAnswerFormats: [String]
 
     init?(url: URL) {
@@ -992,6 +1011,7 @@ private struct DesktopSessionActiveVisibleContext: Equatable {
         self.ttsResumeSnapshotResponseText = collectedTtsResumeSnapshotResponseText(
             in: queryItems
         )
+        self.ttsResumeSnapshotTopicHint = collectedTtsResumeSnapshotTopicHint(in: queryItems)
         self.interruptAcceptedAnswerFormats = collectedInterruptAcceptedAnswerFormats(in: queryItems)
     }
 
@@ -1097,6 +1117,10 @@ private struct DesktopSessionActiveVisibleContext: Equatable {
         ttsResumeSnapshotAnswerID != nil
             && ttsResumeSnapshotSpokenCursorByte != nil
             && ttsResumeSnapshotResponseText != nil
+    }
+
+    var hasLawfulInterruptTtsResumeSnapshotTopicHint: Bool {
+        ttsResumeSnapshotAnswerID != nil && ttsResumeSnapshotTopicHint != nil
     }
 
     var hasInterruptResponseConflict: Bool {
@@ -2079,6 +2103,11 @@ struct DesktopSessionShellView: View {
                     interruptTtsResumeSnapshotResponseTextCard(ttsResumeSnapshotResponseText)
                 }
 
+                if let ttsResumeSnapshotTopicHint = context.ttsResumeSnapshotTopicHint,
+                   context.hasLawfulInterruptTtsResumeSnapshotTopicHint {
+                    interruptTtsResumeSnapshotTopicHintCard(ttsResumeSnapshotTopicHint)
+                }
+
                 Text("Lawful interrupt actions remain rendered, not authored, from this bounded desktop surface.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
@@ -2791,6 +2820,43 @@ struct DesktopSessionShellView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
 
             Text("No local resume authoring, no local cursor math authority, no local response synthesis, no local completion authority, and no local dispatch unlock.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(nsColor: .controlBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+
+    private func interruptTtsResumeSnapshotTopicHintCard(
+        _ ttsResumeSnapshotTopicHint: String
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("TTS snapshot topic hint")
+                .font(.subheadline.weight(.semibold))
+
+            Text("Cloud-authored TTS resume snapshot topic-hint evidence only")
+                .font(.footnote.weight(.semibold))
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            Text("Snapshot topic posture")
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            metadataRow(
+                label: "TTS resume snapshot topic hint",
+                value: ttsResumeSnapshotTopicHint
+            )
+
+            Text("Exact cloud-authored snapshot topic hint only")
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            Text("No local resume authoring, no local topic synthesis, no local snapshot linkage authority, and no local dispatch unlock.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
