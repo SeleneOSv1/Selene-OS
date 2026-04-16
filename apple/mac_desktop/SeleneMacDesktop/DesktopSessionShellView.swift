@@ -100,6 +100,68 @@ private func boundedResumeSummaryBullets(in queryItems: [URLQueryItem]) -> [Stri
     }
 }
 
+private func normalizedRecoveryEnumToken(_ rawValue: String) -> String {
+    rawValue
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+        .lowercased()
+        .filter { $0.isLetter || $0.isNumber }
+}
+
+private enum CanonicalRecoveryMode: String, Equatable {
+    case normal = "PersistenceRecoveryMode::Normal"
+    case recovering = "PersistenceRecoveryMode::Recovering"
+    case degradedRecovery = "PersistenceRecoveryMode::DegradedRecovery"
+    case quarantinedLocalState = "PersistenceRecoveryMode::QuarantinedLocalState"
+
+    static func parse(_ rawValue: String?) -> CanonicalRecoveryMode? {
+        guard let rawValue else {
+            return nil
+        }
+
+        switch normalizedRecoveryEnumToken(rawValue) {
+        case "normal":
+            return .normal
+        case "recovering":
+            return .recovering
+        case "degradedrecovery":
+            return .degradedRecovery
+        case "quarantinedlocalstate":
+            return .quarantinedLocalState
+        default:
+            return nil
+        }
+    }
+}
+
+private enum CanonicalReconciliationDecision: String, Equatable {
+    case retrySameOperation = "ReconciliationDecision::RetrySameOperation"
+    case reusePriorAuthoritativeOutcome = "ReconciliationDecision::ReusePriorAuthoritativeOutcome"
+    case rejectStaleOperation = "ReconciliationDecision::RejectStaleOperation"
+    case requestFreshSessionState = "ReconciliationDecision::RequestFreshSessionState"
+    case quarantineLocalState = "ReconciliationDecision::QuarantineLocalState"
+
+    static func parse(_ rawValue: String?) -> CanonicalReconciliationDecision? {
+        guard let rawValue else {
+            return nil
+        }
+
+        switch normalizedRecoveryEnumToken(rawValue) {
+        case "retrysameoperation":
+            return .retrySameOperation
+        case "reusepriorauthoritativeoutcome":
+            return .reusePriorAuthoritativeOutcome
+        case "rejectstaleoperation":
+            return .rejectStaleOperation
+        case "requestfreshsessionstate":
+            return .requestFreshSessionState
+        case "quarantinelocalstate":
+            return .quarantineLocalState
+        default:
+            return nil
+        }
+    }
+}
+
 private func canonicalSessionAttachOutcome(_ rawValue: String?) -> String? {
     guard let rawValue else {
         return nil
@@ -145,6 +207,19 @@ private func canonicalSoftClosedSessionState(_ rawValue: String?) -> String? {
     return "SessionState::SoftClosed"
 }
 
+private func canonicalSuspendedSessionState(_ rawValue: String?) -> String? {
+    guard let rawValue else {
+        return nil
+    }
+
+    let normalized = rawValue.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+    guard normalized == "SUSPENDED" else {
+        return nil
+    }
+
+    return "SessionState::Suspended"
+}
+
 private func canonicalResumeTier(_ rawValue: String?) -> String? {
     guard let rawValue else {
         return nil
@@ -160,6 +235,25 @@ private func canonicalResumeTier(_ rawValue: String?) -> String? {
     default:
         return nil
     }
+}
+
+private func canonicalBoolean(_ rawValue: String?) -> Bool? {
+    guard let rawValue else {
+        return nil
+    }
+
+    switch rawValue.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+    case "true":
+        return true
+    case "false":
+        return false
+    default:
+        return nil
+    }
+}
+
+private func booleanValue(_ value: Bool) -> String {
+    value ? "true" : "false"
 }
 
 private struct DesktopSessionHeaderContext: Equatable {
@@ -303,10 +397,101 @@ private struct DesktopSessionSoftClosedVisibleContext: Equatable {
     }
 }
 
+private struct DesktopSessionSuspendedVisibleContext: Equatable {
+    let sessionState: String
+    let sessionID: String
+    let nextAllowedActionsMaySpeak: Bool
+    let nextAllowedActionsMustWait: Bool
+    let nextAllowedActionsMustRewake: Bool
+    let recoveryMode: CanonicalRecoveryMode?
+    let reconciliationDecision: CanonicalReconciliationDecision?
+
+    init?(url: URL) {
+        guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
+            return nil
+        }
+
+        let queryItems = components.queryItems ?? []
+        guard
+            let sessionState = canonicalSuspendedSessionState(
+                firstQueryValue(in: queryItems, name: "session_state")
+            ),
+            let sessionID = boundedHint(
+                firstQueryValue(in: queryItems, name: "session_id")
+            ),
+            let nextAllowedActionsMaySpeak = canonicalBoolean(
+                firstQueryValue(in: queryItems, name: "next_allowed_actions_may_speak")
+            ),
+            let nextAllowedActionsMustWait = canonicalBoolean(
+                firstQueryValue(in: queryItems, name: "next_allowed_actions_must_wait")
+            ),
+            let nextAllowedActionsMustRewake = canonicalBoolean(
+                firstQueryValue(in: queryItems, name: "next_allowed_actions_must_rewake")
+            )
+        else {
+            return nil
+        }
+
+        self.sessionState = sessionState
+        self.sessionID = sessionID
+        self.nextAllowedActionsMaySpeak = nextAllowedActionsMaySpeak
+        self.nextAllowedActionsMustWait = nextAllowedActionsMustWait
+        self.nextAllowedActionsMustRewake = nextAllowedActionsMustRewake
+        self.recoveryMode = CanonicalRecoveryMode.parse(
+            firstQueryValue(in: queryItems, name: "recovery_mode")
+        )
+        self.reconciliationDecision = CanonicalReconciliationDecision.parse(
+            firstQueryValue(in: queryItems, name: "reconciliation_decision")
+        )
+    }
+
+    var suspendedStatusRows: [(label: String, value: String)] {
+        var rows: [(label: String, value: String)] = [
+            ("session_state", sessionState),
+            ("session_id", sessionID),
+        ]
+
+        if let recoveryMode {
+            rows.append(("recovery_mode", recoveryMode.rawValue))
+        }
+
+        if let reconciliationDecision {
+            rows.append(("reconciliation_decision", reconciliationDecision.rawValue))
+        }
+
+        return rows
+    }
+
+    var allowedNextStepRows: [(label: String, value: String)] {
+        [
+            ("next_allowed_actions_may_speak", booleanValue(nextAllowedActionsMaySpeak)),
+            ("next_allowed_actions_must_wait", booleanValue(nextAllowedActionsMustWait)),
+            ("next_allowed_actions_must_rewake", booleanValue(nextAllowedActionsMustRewake)),
+        ]
+    }
+
+    var allowedNextStepSummary: String {
+        if nextAllowedActionsMustRewake {
+            return "Must re-wake through the lawful explicit-entry path before any next turn can be requested."
+        }
+
+        if nextAllowedActionsMustWait {
+            return "Must wait for authoritative reread or cloud-side recovery review before any next turn can be requested."
+        }
+
+        if nextAllowedActionsMaySpeak {
+            return "A later explicit next step may become lawful only after the authoritative suspended posture clears cloud-side."
+        }
+
+        return "No next turn is currently lawful from this bounded suspended surface."
+    }
+}
+
 struct DesktopSessionShellView: View {
     @State private var latestSessionHeaderContext: DesktopSessionHeaderContext?
     @State private var latestSessionActiveVisibleContext: DesktopSessionActiveVisibleContext?
     @State private var latestSessionSoftClosedVisibleContext: DesktopSessionSoftClosedVisibleContext?
+    @State private var latestSessionSuspendedVisibleContext: DesktopSessionSuspendedVisibleContext?
 
     var body: some View {
         HStack(alignment: .top, spacing: 20) {
@@ -340,6 +525,7 @@ struct DesktopSessionShellView: View {
             if let context = DesktopSessionActiveVisibleContext(url: url) {
                 latestSessionActiveVisibleContext = context
                 latestSessionSoftClosedVisibleContext = nil
+                latestSessionSuspendedVisibleContext = nil
 
                 if let sessionAttachOutcome = context.sessionAttachOutcome {
                     latestSessionHeaderContext = DesktopSessionHeaderContext(
@@ -357,6 +543,19 @@ struct DesktopSessionShellView: View {
             if let context = DesktopSessionSoftClosedVisibleContext(url: url) {
                 latestSessionSoftClosedVisibleContext = context
                 latestSessionActiveVisibleContext = nil
+                latestSessionSuspendedVisibleContext = nil
+
+                if latestSessionHeaderContext?.sessionID != context.sessionID {
+                    latestSessionHeaderContext = nil
+                }
+
+                return
+            }
+
+            if let context = DesktopSessionSuspendedVisibleContext(url: url) {
+                latestSessionSuspendedVisibleContext = context
+                latestSessionActiveVisibleContext = nil
+                latestSessionSoftClosedVisibleContext = nil
 
                 if latestSessionHeaderContext?.sessionID != context.sessionID {
                     latestSessionHeaderContext = nil
@@ -369,6 +568,7 @@ struct DesktopSessionShellView: View {
                 latestSessionHeaderContext = context
                 latestSessionActiveVisibleContext = nil
                 latestSessionSoftClosedVisibleContext = nil
+                latestSessionSuspendedVisibleContext = nil
             }
         }
     }
@@ -398,7 +598,33 @@ struct DesktopSessionShellView: View {
 
     private var sessionCard: some View {
         Group {
-            if let latestSessionSoftClosedVisibleContext {
+            if let latestSessionSuspendedVisibleContext {
+                GroupBox {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("Cloud-authored desktop suspended-session evidence only.")
+                            .font(.subheadline.weight(.semibold))
+
+                        Text("Bounded read-only suspended posture for the cloud-authoritative desktop session surface.")
+                            .foregroundStyle(.secondary)
+
+                        ForEach(latestSessionSuspendedVisibleContext.suspendedStatusRows, id: \.label) { row in
+                            metadataRow(label: row.label, value: row.value)
+                        }
+
+                        Text("This suspended posture remains a hard full takeover. No local unsuspend, local reread, local retry, or local re-wake production is available here.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+
+                        Text("No local authority, no local resume authoring, no local wake authority, no local governance or law execution, no local dispatch unlock, and no local attach or reopen authority are introduced by this bounded suspended surface.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                } label: {
+                    Text("Session")
+                        .font(.headline)
+                }
+            } else if let latestSessionSoftClosedVisibleContext {
                 GroupBox {
                     VStack(alignment: .leading, spacing: 12) {
                         Text("Cloud-authored desktop soft-closed evidence only.")
@@ -497,7 +723,25 @@ struct DesktopSessionShellView: View {
 
     private var historyCard: some View {
         Group {
-            if let latestSessionActiveVisibleContext {
+            if latestSessionSuspendedVisibleContext != nil {
+                GroupBox {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("Cloud-authored suspended-status explanation only.")
+                            .font(.subheadline.weight(.semibold))
+
+                        Text("This bounded desktop surface remains in a dominant suspended posture selected by the authoritative runtime, so live dual transcript and archived recent-slice visibility stay withheld here.")
+                            .foregroundStyle(.secondary)
+
+                        Text("Suspended posture remains explanation-only on macOS in this run: no local transcript authority, no local archive fabrication, no hidden continuation, and no local unsuspend path are introduced.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                } label: {
+                    Text("History")
+                        .font(.headline)
+                }
+            } else if let latestSessionActiveVisibleContext {
                 GroupBox {
                     VStack(alignment: .leading, spacing: 12) {
                         Text("Cloud-authored live dual-transcript evidence only.")
@@ -566,7 +810,30 @@ struct DesktopSessionShellView: View {
 
     private var systemActivityCard: some View {
         Group {
-            if let latestSessionActiveVisibleContext {
+            if let latestSessionSuspendedVisibleContext {
+                GroupBox {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("Cloud-authored allowed-next-step evidence only.")
+                            .font(.subheadline.weight(.semibold))
+
+                        ForEach(latestSessionSuspendedVisibleContext.allowedNextStepRows, id: \.label) { row in
+                            metadataRow(label: row.label, value: row.value)
+                        }
+
+                        Text(latestSessionSuspendedVisibleContext.allowedNextStepSummary)
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+
+                        Text("Allowed-next-step visibility remains read-only and non-producing here. No local retry, local reread, local unsuspend, or local re-wake production authority is introduced by this desktop surface.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                } label: {
+                    Text("System Activity")
+                        .font(.headline)
+                }
+            } else if let latestSessionActiveVisibleContext {
                 GroupBox {
                     VStack(alignment: .leading, spacing: 12) {
                         Text("Cloud-authored governed-output summary evidence only.")
