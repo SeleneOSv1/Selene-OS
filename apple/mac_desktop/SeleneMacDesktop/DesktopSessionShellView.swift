@@ -307,6 +307,21 @@ private enum CanonicalInterruptClarifyAmbiguityFlag: String, CaseIterable, Ident
     }
 }
 
+private enum CanonicalInterruptClarifyRoutingHint: String, CaseIterable, Identifiable {
+    case onboardingStart = "onboarding_start"
+    case onboardingConfirmIdentity = "onboarding_confirm_identity"
+    case onboardingComplete = "onboarding_complete"
+    case onboardingLanguageDetect = "onboarding_language_detect"
+
+    var id: String {
+        rawValue
+    }
+
+    static func parse(_ rawValue: String) -> CanonicalInterruptClarifyRoutingHint? {
+        Self(rawValue: rawValue.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+}
+
 private func collectedInterruptAcceptedAnswerFormats(in queryItems: [URLQueryItem]) -> [String] {
     var formats: [String] = []
 
@@ -355,6 +370,27 @@ private func collectedInterruptClarifyAmbiguityFlags(in queryItems: [URLQueryIte
     }
 
     return flags
+}
+
+private func collectedInterruptClarifyRoutingHints(in queryItems: [URLQueryItem]) -> [String] {
+    var hints: [String] = []
+
+    for queryItem in queryItems where queryItem.name == "interrupt_clarify_routing_hint" {
+        guard let value = queryItem.value,
+              let canonicalValue = CanonicalInterruptClarifyRoutingHint.parse(value)?.rawValue,
+              !hints.contains(canonicalValue),
+              hints.count < 2 else {
+            return []
+        }
+
+        hints.append(canonicalValue)
+    }
+
+    if hints.isEmpty {
+        return []
+    }
+
+    return hints
 }
 
 private func canonicalSessionAttachOutcome(_ rawValue: String?) -> String? {
@@ -656,6 +692,7 @@ private struct DesktopSessionActiveVisibleContext: Equatable {
     let interruptClarifyQuestion: String?
     let interruptClarifyWhatIsMissing: String?
     let interruptClarifyAmbiguityFlags: [String]
+    let interruptClarifyRoutingHints: [String]
     let interruptAcceptedAnswerFormats: [String]
 
     init?(url: URL) {
@@ -719,6 +756,7 @@ private struct DesktopSessionActiveVisibleContext: Equatable {
         )
         self.interruptClarifyWhatIsMissing = collectedInterruptClarifyWhatIsMissing(in: queryItems)
         self.interruptClarifyAmbiguityFlags = collectedInterruptClarifyAmbiguityFlags(in: queryItems)
+        self.interruptClarifyRoutingHints = collectedInterruptClarifyRoutingHints(in: queryItems)
         self.interruptAcceptedAnswerFormats = collectedInterruptAcceptedAnswerFormats(in: queryItems)
     }
 
@@ -766,6 +804,10 @@ private struct DesktopSessionActiveVisibleContext: Equatable {
 
     var hasLawfulInterruptClarifyAmbiguityFlags: Bool {
         (1...2).contains(interruptClarifyAmbiguityFlags.count)
+    }
+
+    var hasLawfulInterruptClarifyRoutingHints: Bool {
+        (1...2).contains(interruptClarifyRoutingHints.count)
     }
 
     var hasInterruptResponseConflict: Bool {
@@ -1802,6 +1844,10 @@ struct DesktopSessionShellView: View {
                 interruptClarifyAmbiguityCard(context.interruptClarifyAmbiguityFlags)
             }
 
+            if context.hasLawfulInterruptClarifyRoutingHints {
+                interruptClarifyRoutingCard(context.interruptClarifyRoutingHints)
+            }
+
             ForEach(context.interruptAcceptedAnswerFormats, id: \.self) { answerFormat in
                 if answerFormat == CanonicalInterruptAcceptedAnswerFormat.continuePreviousTopic.rawValue {
                     Button(answerFormat) {
@@ -1873,6 +1919,43 @@ struct DesktopSessionShellView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
 
             Text("No local ambiguity inference, no local rewrite.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(nsColor: .controlBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+
+    private func interruptClarifyRoutingCard(_ routingHints: [String]) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Clarify routing")
+                .font(.subheadline.weight(.semibold))
+
+            Text("Cloud-authored routing evidence only")
+                .font(.footnote.weight(.semibold))
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            Text("Routing hints")
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            ForEach(routingHints, id: \.self) { routingHint in
+                Text(routingHint)
+                    .font(.body.monospaced())
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .textSelection(.enabled)
+            }
+
+            Text("Exact cloud-authored hints only")
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            Text("No local routing guidance, no local gate bypass.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
