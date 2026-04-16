@@ -4,6 +4,7 @@ import SwiftUI
 private struct DesktopSessionHeaderContext: Equatable {
     let sessionState: String
     let sessionID: String
+    let sessionAttachOutcome: String
 
     init?(url: URL) {
         guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
@@ -17,6 +18,9 @@ private struct DesktopSessionHeaderContext: Equatable {
             ),
             let sessionID = Self.boundedHint(
                 Self.firstQueryValue(in: queryItems, name: "session_id")
+            ),
+            let sessionAttachOutcome = Self.canonicalSessionAttachOutcome(
+                Self.firstQueryValue(in: queryItems, name: "session_attach_outcome")
             )
         else {
             return nil
@@ -24,6 +28,7 @@ private struct DesktopSessionHeaderContext: Equatable {
 
         self.sessionState = sessionState
         self.sessionID = sessionID
+        self.sessionAttachOutcome = sessionAttachOutcome
     }
 
     private static func firstQueryValue(in queryItems: [URLQueryItem], name: String) -> String? {
@@ -41,6 +46,25 @@ private struct DesktopSessionHeaderContext: Equatable {
         }
 
         return String(trimmed.prefix(160))
+    }
+
+    private static func canonicalSessionAttachOutcome(_ rawValue: String?) -> String? {
+        guard let rawValue else {
+            return nil
+        }
+
+        switch rawValue.trimmingCharacters(in: .whitespacesAndNewlines) {
+        case "NEW_SESSION_CREATED":
+            return "NEW_SESSION_CREATED"
+        case "EXISTING_SESSION_REUSED":
+            return "EXISTING_SESSION_REUSED"
+        case "EXISTING_SESSION_ATTACHED":
+            return "EXISTING_SESSION_ATTACHED"
+        case "RETRY_REUSED_RESULT":
+            return "RETRY_REUSED_RESULT"
+        default:
+            return nil
+        }
     }
 }
 
@@ -124,8 +148,16 @@ struct DesktopSessionShellView: View {
 
                         metadataRow(label: "session_state", value: latestSessionHeaderContext.sessionState)
                         metadataRow(label: "session_id", value: latestSessionHeaderContext.sessionID)
+                        metadataRow(
+                            label: "session_attach_outcome",
+                            value: latestSessionHeaderContext.sessionAttachOutcome
+                        )
 
-                        Text("No local authority, no local resume authoring, no local wake authority, no local governance or law execution, and no transcript or interruption ownership.")
+                        Text(continuityLabel(for: latestSessionHeaderContext.sessionAttachOutcome))
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+
+                        Text("No local authority, no local resume authoring, no local wake authority, no local governance or law execution, no transcript or interruption ownership, and no local attach or reopen authority.")
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                     }
@@ -160,6 +192,21 @@ struct DesktopSessionShellView: View {
                 .foregroundStyle(.secondary)
             Text(value)
                 .textSelection(.enabled)
+        }
+    }
+
+    private func continuityLabel(for sessionAttachOutcome: String) -> String {
+        switch sessionAttachOutcome {
+        case "NEW_SESSION_CREATED":
+            return "Continuity follows the newly created cloud session selected by the authoritative runtime."
+        case "EXISTING_SESSION_REUSED":
+            return "Continuity stays on the existing cloud session without creating a new local session."
+        case "EXISTING_SESSION_ATTACHED":
+            return "Continuity attaches to the existing cloud session already selected by the authoritative runtime."
+        case "RETRY_REUSED_RESULT":
+            return "Continuity stays on the existing cloud session while authoritative retry reuse remains visible."
+        default:
+            return "Continuity remains cloud-authoritative and session-bound."
         }
     }
 
