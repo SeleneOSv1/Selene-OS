@@ -508,6 +508,23 @@ private func collectedResumeBufferLive(in queryItems: [URLQueryItem]) -> Bool? {
     return canonicalBoolean(values[0].value)
 }
 
+private func collectedResumeBufferTopicHint(in queryItems: [URLQueryItem]) -> String? {
+    let values = queryItems.filter { $0.name == "resume_buffer_topic_hint" }
+    guard values.count == 1,
+          let value = values[0].value else {
+        return nil
+    }
+
+    let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty,
+          !trimmed.contains("\n"),
+          !trimmed.contains("\r") else {
+        return nil
+    }
+
+    return trimmed
+}
+
 private func canonicalSessionAttachOutcome(_ rawValue: String?) -> String? {
     guard let rawValue else {
         return nil
@@ -815,6 +832,7 @@ private struct DesktopSessionActiveVisibleContext: Equatable {
     let interruptedSubjectRef: String?
     let returnCheckExpiresAt: String?
     let resumeBufferLive: Bool?
+    let resumeBufferTopicHint: String?
     let interruptAcceptedAnswerFormats: [String]
 
     init?(url: URL) {
@@ -892,6 +910,7 @@ private struct DesktopSessionActiveVisibleContext: Equatable {
         self.interruptedSubjectRef = collectedInterruptedSubjectRef(in: queryItems)
         self.returnCheckExpiresAt = collectedReturnCheckExpiresAt(in: queryItems)
         self.resumeBufferLive = collectedResumeBufferLive(in: queryItems)
+        self.resumeBufferTopicHint = collectedResumeBufferTopicHint(in: queryItems)
         self.interruptAcceptedAnswerFormats = collectedInterruptAcceptedAnswerFormats(in: queryItems)
     }
 
@@ -967,6 +986,10 @@ private struct DesktopSessionActiveVisibleContext: Equatable {
 
     var hasLawfulInterruptResumeBufferLive: Bool {
         resumeBufferLive == true
+    }
+
+    var hasLawfulInterruptResumeBufferTopicHint: Bool {
+        resumeBufferLive == true && resumeBufferTopicHint != nil
     }
 
     var hasInterruptResponseConflict: Bool {
@@ -1912,6 +1935,11 @@ struct DesktopSessionShellView: View {
                     interruptResumeBufferLiveCard(resumeBufferLive)
                 }
 
+                if let resumeBufferTopicHint = context.resumeBufferTopicHint,
+                   context.hasLawfulInterruptResumeBufferTopicHint {
+                    interruptResumeBufferTopicHintCard(resumeBufferTopicHint)
+                }
+
                 Text("Lawful interrupt actions remain rendered, not authored, from this bounded desktop surface.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
@@ -2369,6 +2397,41 @@ struct DesktopSessionShellView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
 
             Text("No local resume authoring, no local dispatch unlock.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(nsColor: .controlBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+
+    private func interruptResumeBufferTopicHintCard(_ resumeBufferTopicHint: String) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Resume topic hint")
+                .font(.subheadline.weight(.semibold))
+
+            Text("Cloud-authored resume-buffer topic-hint evidence only")
+                .font(.footnote.weight(.semibold))
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            Text("Topic posture")
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            metadataRow(
+                label: "Resume buffer topic hint",
+                value: resumeBufferTopicHint
+            )
+
+            Text("Exact cloud-authored topic hint only")
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            Text("No local topic synthesis, no local dispatch unlock.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
