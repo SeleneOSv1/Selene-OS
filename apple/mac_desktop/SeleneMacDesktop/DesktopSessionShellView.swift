@@ -482,6 +482,23 @@ private func collectedInterruptedSubjectRef(in queryItems: [URLQueryItem]) -> St
     return collectedInterruptSubjectRefValue(values[0].value)
 }
 
+private func collectedReturnCheckExpiresAt(in queryItems: [URLQueryItem]) -> String? {
+    let values = queryItems.filter { $0.name == "return_check_expires_at" }
+    guard values.count == 1,
+          let value = values[0].value else {
+        return nil
+    }
+
+    let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty,
+          !trimmed.contains("\n"),
+          !trimmed.contains("\r") else {
+        return nil
+    }
+
+    return trimmed
+}
+
 private func canonicalSessionAttachOutcome(_ rawValue: String?) -> String? {
     guard let rawValue else {
         return nil
@@ -787,6 +804,7 @@ private struct DesktopSessionActiveVisibleContext: Equatable {
     let interruptSubjectRelationConfidence: String?
     let activeSubjectRef: String?
     let interruptedSubjectRef: String?
+    let returnCheckExpiresAt: String?
     let interruptAcceptedAnswerFormats: [String]
 
     init?(url: URL) {
@@ -862,6 +880,7 @@ private struct DesktopSessionActiveVisibleContext: Equatable {
         )
         self.activeSubjectRef = collectedActiveSubjectRef(in: queryItems)
         self.interruptedSubjectRef = collectedInterruptedSubjectRef(in: queryItems)
+        self.returnCheckExpiresAt = collectedReturnCheckExpiresAt(in: queryItems)
         self.interruptAcceptedAnswerFormats = collectedInterruptAcceptedAnswerFormats(in: queryItems)
     }
 
@@ -929,6 +948,10 @@ private struct DesktopSessionActiveVisibleContext: Equatable {
 
     var hasLawfulInterruptSubjectReferences: Bool {
         interruptSubjectRelation != nil && (activeSubjectRef != nil || interruptedSubjectRef != nil)
+    }
+
+    var hasLawfulInterruptReturnCheckExpiry: Bool {
+        returnCheckPending == true && returnCheckExpiresAt != nil
     }
 
     var hasInterruptResponseConflict: Bool {
@@ -1864,6 +1887,11 @@ struct DesktopSessionShellView: View {
                     )
                 }
 
+                if let returnCheckExpiresAt = context.returnCheckExpiresAt,
+                   context.hasLawfulInterruptReturnCheckExpiry {
+                    interruptReturnCheckExpiryCard(returnCheckExpiresAt)
+                }
+
                 Text("Lawful interrupt actions remain rendered, not authored, from this bounded desktop surface.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
@@ -2251,6 +2279,41 @@ struct DesktopSessionShellView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
 
             Text("No local subject binding, no local dispatch unlock.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(nsColor: .controlBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+
+    private func interruptReturnCheckExpiryCard(_ returnCheckExpiresAt: String) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Return-check expiry")
+                .font(.subheadline.weight(.semibold))
+
+            Text("Cloud-authored return-check expiry evidence only")
+                .font(.footnote.weight(.semibold))
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            Text("Expiry posture")
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            metadataRow(
+                label: "return_check_expires_at",
+                value: returnCheckExpiresAt
+            )
+
+            Text("Exact cloud-authored expiry only")
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            Text("No local countdown, no local dispatch unlock.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
