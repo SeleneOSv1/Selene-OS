@@ -1,0 +1,23 @@
+# H212 APP_MAC_DESKTOP First Post-H211 Canonical Interrupt Resume-Buffer Heavy-Detail Hydration Frontier `NOT_EXPLICIT` Publication Correction Build Plan
+
+- This is the first canonical post-H211 APP_MAC_DESKTOP interrupt resume-buffer heavy-detail hydration frontier `NOT_EXPLICIT` publication correction.
+- H211 implementation remains live and the native macOS shell already exposes bounded `INTERRUPT_VISIBLE` cloud-authored resume-buffer-topic-hint visibility in lawful bounded read-only posture.
+- H210 implementation remains live and the native macOS shell already exposes bounded `INTERRUPT_VISIBLE` cloud-authored resume-buffer-live visibility in lawful bounded read-only posture.
+- H209-H194 implementation truth remains live in substance.
+- H103 publication remains live as the first post-H70 APP_MAC_DESKTOP native-shell placeholder expansion frontier `NOT_EXPLICIT` publication correction.
+- H104 publication remains live as the post-H103 terminal `NOT_EXPLICIT` completion-mode override selection-law change publication.
+- H102 publication remains live and the exact post-H101 APP_IPHONE interrupt resume-buffer heavy-detail hydration winner is now `NOT_EXPLICIT`.
+- current native macOS shell source parses bounded resume-buffer interruption evidence only through exact `resume_buffer_live` and exact `resume_buffer_topic_hint`.
+- current native macOS shell source does not parse or render exact `resume_buffer_answer_id`, `resume_buffer_spoken_prefix`, `resume_buffer_unsaid_remainder`, `tts_resume_snapshot.answer_id`, `tts_resume_snapshot.spoken_cursor_byte`, or `tts_resume_snapshot.response_text`.
+- current shared source still preserves broader resume-buffer and TTS-resume-snapshot contract carriers.
+- current repo truth does not yet expose one smaller exact APP_MAC_DESKTOP native-shell carrier-backed winner for dedicated heavy resume-buffer detail hydration after H211.
+- therefore the exact post-H211 APP_MAC_DESKTOP interrupt resume-buffer heavy-detail hydration winner is now `NOT_EXPLICIT`.
+- APP_MAC_DESKTOP remains first-class but non-authority, wake-word or explicit-entry as designed, cloud-authoritative, and session-bound.
+- no source code change is required in this run.
+- no implementation occurs in this run.
+- `APP_MAC_DESKTOP-05` remains `PROVEN_COMPLETE`.
+- `APP_MAC_DESKTOP-06` remains `PROVEN_COMPLETE`.
+- `APP_IPHONE-04` remains `PARTIAL`.
+- `APP_IPHONE-05` remains `PROVEN_COMPLETE`.
+- `APP_IPHONE-06` remains `PROVEN_COMPLETE`.
+- no post-H212 next exact winner is published in this run.
