@@ -322,6 +322,20 @@ private enum CanonicalInterruptClarifyRoutingHint: String, CaseIterable, Identif
     }
 }
 
+private enum CanonicalInterruptClarifySensitivityLevel: String, CaseIterable, Identifiable {
+    case `public` = "public"
+    case `private` = "private"
+    case confidential = "confidential"
+
+    var id: String {
+        rawValue
+    }
+
+    static func parse(_ rawValue: String) -> CanonicalInterruptClarifySensitivityLevel? {
+        Self(rawValue: rawValue.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+}
+
 private func collectedInterruptAcceptedAnswerFormats(in queryItems: [URLQueryItem]) -> [String] {
     var formats: [String] = []
 
@@ -400,6 +414,17 @@ private func collectedInterruptClarifyRequiresConfirmation(in queryItems: [URLQu
     }
 
     return canonicalBoolean(values[0].value)
+}
+
+private func collectedInterruptClarifySensitivityLevel(in queryItems: [URLQueryItem]) -> String? {
+    let values = queryItems.filter { $0.name == "interrupt_clarify_sensitivity_level" }
+    guard values.count == 1,
+          let value = values[0].value,
+          let canonicalValue = CanonicalInterruptClarifySensitivityLevel.parse(value)?.rawValue else {
+        return nil
+    }
+
+    return canonicalValue
 }
 
 private func canonicalSessionAttachOutcome(_ rawValue: String?) -> String? {
@@ -703,6 +728,7 @@ private struct DesktopSessionActiveVisibleContext: Equatable {
     let interruptClarifyAmbiguityFlags: [String]
     let interruptClarifyRoutingHints: [String]
     let interruptClarifyRequiresConfirmation: Bool?
+    let interruptClarifySensitivityLevel: String?
     let interruptAcceptedAnswerFormats: [String]
 
     init?(url: URL) {
@@ -770,6 +796,9 @@ private struct DesktopSessionActiveVisibleContext: Equatable {
         self.interruptClarifyRequiresConfirmation = collectedInterruptClarifyRequiresConfirmation(
             in: queryItems
         )
+        self.interruptClarifySensitivityLevel = collectedInterruptClarifySensitivityLevel(
+            in: queryItems
+        )
         self.interruptAcceptedAnswerFormats = collectedInterruptAcceptedAnswerFormats(in: queryItems)
     }
 
@@ -825,6 +854,10 @@ private struct DesktopSessionActiveVisibleContext: Equatable {
 
     var hasLawfulInterruptClarifyRequiresConfirmation: Bool {
         interruptClarifyRequiresConfirmation != nil
+    }
+
+    var hasLawfulInterruptClarifySensitivityLevel: Bool {
+        interruptClarifySensitivityLevel != nil
     }
 
     var hasInterruptResponseConflict: Bool {
@@ -1870,6 +1903,11 @@ struct DesktopSessionShellView: View {
                 interruptClarifyConfirmationCard(interruptClarifyRequiresConfirmation)
             }
 
+            if let interruptClarifySensitivityLevel = context.interruptClarifySensitivityLevel,
+               context.hasLawfulInterruptClarifySensitivityLevel {
+                interruptClarifySensitivityCard(interruptClarifySensitivityLevel)
+            }
+
             ForEach(context.interruptAcceptedAnswerFormats, id: \.self) { answerFormat in
                 if answerFormat == CanonicalInterruptAcceptedAnswerFormat.continuePreviousTopic.rawValue {
                     Button(answerFormat) {
@@ -2013,6 +2051,41 @@ struct DesktopSessionShellView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
 
             Text("No local confirmation law, no local execution unlock.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(nsColor: .controlBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+
+    private func interruptClarifySensitivityCard(_ sensitivityLevel: String) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Clarify sensitivity")
+                .font(.subheadline.weight(.semibold))
+
+            Text("Cloud-authored sensitivity evidence only")
+                .font(.footnote.weight(.semibold))
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            Text("Sensitivity posture")
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            metadataRow(
+                label: "interrupt_clarify_sensitivity_level",
+                value: sensitivityLevel
+            )
+
+            Text("Exact cloud-authored sensitivity level only")
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            Text("No local sensitivity policy, no local authority upgrade.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
