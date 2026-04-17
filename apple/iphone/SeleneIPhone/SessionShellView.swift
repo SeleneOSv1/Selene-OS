@@ -587,6 +587,7 @@ struct SessionActiveVisibleContext: Identifiable, Equatable {
     let resumeBufferSpokenPrefix: String?
     let resumeBufferUnsaidRemainder: String?
     let resumeBufferTopicHint: String?
+    let resumeBufferExpiresAt: String?
     let ttsResumeSnapshotAnswerID: String?
     let ttsResumeSnapshotSpokenCursorByte: String?
     let ttsResumeSnapshotResponseText: String?
@@ -680,6 +681,9 @@ struct SessionActiveVisibleContext: Identifiable, Equatable {
         let resumeBufferTopicHint = Self.boundedContinuityDetail(
             Self.firstQueryValue(in: queryItems, name: "resume_buffer_topic_hint")
         )
+        let resumeBufferExpiresAt = Self.boundedContinuityDetail(
+            Self.firstQueryValue(in: queryItems, name: "resume_buffer_expires_at")
+        )
         let ttsResumeSnapshotAnswerID = Self.boundedHint(
             Self.firstQueryValue(in: queryItems, name: "tts_resume_snapshot_answer_id")
         )
@@ -741,6 +745,7 @@ struct SessionActiveVisibleContext: Identifiable, Equatable {
         self.resumeBufferSpokenPrefix = resumeBufferSpokenPrefix
         self.resumeBufferUnsaidRemainder = resumeBufferUnsaidRemainder
         self.resumeBufferTopicHint = resumeBufferTopicHint
+        self.resumeBufferExpiresAt = resumeBufferExpiresAt
         self.ttsResumeSnapshotAnswerID = ttsResumeSnapshotAnswerID
         self.ttsResumeSnapshotSpokenCursorByte = ttsResumeSnapshotSpokenCursorByte
         self.ttsResumeSnapshotResponseText = ttsResumeSnapshotResponseText
@@ -919,6 +924,15 @@ struct SessionActiveVisibleContext: Identifiable, Equatable {
             )
         }
 
+        if let resumeBufferExpiresAt, resumeBufferLive == true {
+            rows.append(
+                EntryMetadataRow(
+                    label: "resume_buffer_expires_at",
+                    value: resumeBufferExpiresAt
+                )
+            )
+        }
+
         if let ttsResumeSnapshotAnswerID {
             rows.append(
                 EntryMetadataRow(
@@ -1031,6 +1045,10 @@ struct SessionActiveVisibleContext: Identifiable, Equatable {
         resumeBufferLive == true && resumeBufferTopicHint != nil
     }
 
+    var hasLawfulInterruptResumeBufferExpiry: Bool {
+        resumeBufferLive == true && resumeBufferExpiresAt != nil
+    }
+
     var hasLawfulInterruptTtsResumeSnapshotAnswerID: Bool {
         ttsResumeSnapshotAnswerID != nil
     }
@@ -1074,6 +1092,7 @@ struct SessionActiveVisibleContext: Identifiable, Equatable {
             || resumeBufferSpokenPrefix != nil
             || resumeBufferUnsaidRemainder != nil
             || resumeBufferTopicHint != nil
+            || resumeBufferExpiresAt != nil
             || ttsResumeSnapshotAnswerID != nil
             || ttsResumeSnapshotSpokenCursorByte != nil
             || ttsResumeSnapshotResponseText != nil
@@ -3130,6 +3149,11 @@ struct SessionShellView: View {
                     interruptResumeBufferTopicHintCard(resumeBufferTopicHint)
                 }
 
+                if let resumeBufferExpiresAt = context.resumeBufferExpiresAt,
+                   context.hasLawfulInterruptResumeBufferExpiry {
+                    interruptResumeBufferExpiryCard(resumeBufferExpiresAt)
+                }
+
                 if let ttsResumeSnapshotAnswerID = context.ttsResumeSnapshotAnswerID,
                    context.hasLawfulInterruptTtsResumeSnapshotAnswerID {
                     interruptTtsResumeSnapshotAnswerIDCard(ttsResumeSnapshotAnswerID)
@@ -3772,6 +3796,42 @@ struct SessionShellView: View {
             }
         } label: {
             Text("Resume topic hint")
+                .font(.headline)
+        }
+    }
+
+    private func interruptResumeBufferExpiryCard(_ resumeBufferExpiresAt: String) -> some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Cloud-authored resume-buffer expiry evidence only")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                Text("Resume expiry posture")
+                    .font(.subheadline.weight(.semibold))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                HStack(alignment: .top, spacing: 12) {
+                    Text("resume_buffer_expires_at")
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
+                        .frame(width: 140, alignment: .leading)
+
+                    Text(resumeBufferExpiresAt)
+                        .font(.body.monospaced())
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
+                Text("Exact cloud-authored resume-buffer expiry only")
+                    .font(.subheadline.weight(.semibold))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                Text("No local countdown, no local timer law, no local resume authoring, no local dispatch unlock, no local authority upgrade, no wake parity, no side-button producer, and no autonomous unlock.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        } label: {
+            Text("Resume buffer expiry")
                 .font(.headline)
         }
     }
