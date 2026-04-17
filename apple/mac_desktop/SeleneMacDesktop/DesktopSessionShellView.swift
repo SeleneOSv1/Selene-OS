@@ -542,6 +542,26 @@ private func collectedResumeBufferTopicHint(in queryItems: [URLQueryItem]) -> St
     return trimmed
 }
 
+private func collectedAuthorityStateSingleLineValue(
+    in queryItems: [URLQueryItem],
+    name: String
+) -> String? {
+    let values = queryItems.filter { $0.name == name }
+    guard values.count == 1,
+          let value = values[0].value else {
+        return nil
+    }
+
+    let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty,
+          !trimmed.contains("\n"),
+          !trimmed.contains("\r") else {
+        return nil
+    }
+
+    return trimmed
+}
+
 private func collectedSingleLineInterruptValue(
     in queryItems: [URLQueryItem],
     name: String
@@ -941,6 +961,14 @@ private struct DesktopSessionActiveVisibleContext: Equatable {
     let ttsResumeSnapshotSpokenCursorByte: String?
     let ttsResumeSnapshotResponseText: String?
     let ttsResumeSnapshotTopicHint: String?
+    let authorityStatePolicyContextRef: String?
+    let authorityStateSimulationCertificationState: String?
+    let authorityStateOnboardingReadinessState: String?
+    let authorityStatePolicyDecision: String?
+    let authorityStateIdentityScopeRequired: Bool?
+    let authorityStateIdentityScopeSatisfied: Bool?
+    let authorityStateMemoryScopeAllowed: Bool?
+    let authorityStateReasonCode: String?
     let interruptAcceptedAnswerFormats: [String]
 
     init?(url: URL) {
@@ -971,6 +999,26 @@ private struct DesktopSessionActiveVisibleContext: Equatable {
         else {
             return nil
         }
+
+        let authorityStateIdentityScopeRequiredValues = queryItems.filter {
+            $0.name == "authority_state_identity_scope_required"
+        }
+        let authorityStateIdentityScopeRequired = authorityStateIdentityScopeRequiredValues.count == 1
+            ? canonicalBoolean(authorityStateIdentityScopeRequiredValues[0].value)
+            : nil
+        let authorityStateIdentityScopeSatisfiedValues = queryItems.filter {
+            $0.name == "authority_state_identity_scope_satisfied"
+        }
+        let authorityStateIdentityScopeSatisfied =
+            authorityStateIdentityScopeSatisfiedValues.count == 1
+            ? canonicalBoolean(authorityStateIdentityScopeSatisfiedValues[0].value)
+            : nil
+        let authorityStateMemoryScopeAllowedValues = queryItems.filter {
+            $0.name == "authority_state_memory_scope_allowed"
+        }
+        let authorityStateMemoryScopeAllowed = authorityStateMemoryScopeAllowedValues.count == 1
+            ? canonicalBoolean(authorityStateMemoryScopeAllowedValues[0].value)
+            : nil
 
         self.sessionState = sessionState
         self.sessionID = sessionID
@@ -1031,6 +1079,29 @@ private struct DesktopSessionActiveVisibleContext: Equatable {
             in: queryItems
         )
         self.ttsResumeSnapshotTopicHint = collectedTtsResumeSnapshotTopicHint(in: queryItems)
+        self.authorityStatePolicyContextRef = collectedAuthorityStateSingleLineValue(
+            in: queryItems,
+            name: "authority_state_policy_context_ref"
+        )
+        self.authorityStateSimulationCertificationState = collectedAuthorityStateSingleLineValue(
+            in: queryItems,
+            name: "authority_state_simulation_certification_state"
+        )
+        self.authorityStateOnboardingReadinessState = collectedAuthorityStateSingleLineValue(
+            in: queryItems,
+            name: "authority_state_onboarding_readiness_state"
+        )
+        self.authorityStatePolicyDecision = collectedAuthorityStateSingleLineValue(
+            in: queryItems,
+            name: "authority_state_policy_decision"
+        )
+        self.authorityStateIdentityScopeRequired = authorityStateIdentityScopeRequired
+        self.authorityStateIdentityScopeSatisfied = authorityStateIdentityScopeSatisfied
+        self.authorityStateMemoryScopeAllowed = authorityStateMemoryScopeAllowed
+        self.authorityStateReasonCode = collectedAuthorityStateSingleLineValue(
+            in: queryItems,
+            name: "authority_state_reason_code"
+        )
         self.interruptAcceptedAnswerFormats = collectedInterruptAcceptedAnswerFormats(in: queryItems)
     }
 
@@ -1144,6 +1215,15 @@ private struct DesktopSessionActiveVisibleContext: Equatable {
 
     var hasLawfulInterruptTtsResumeSnapshotTopicHint: Bool {
         ttsResumeSnapshotAnswerID != nil && ttsResumeSnapshotTopicHint != nil
+    }
+
+    var hasLawfulAuthorityStateCarrierFamily: Bool {
+        authorityStateSimulationCertificationState != nil
+            && authorityStateOnboardingReadinessState != nil
+            && authorityStatePolicyDecision != nil
+            && authorityStateIdentityScopeRequired != nil
+            && authorityStateIdentityScopeSatisfied != nil
+            && authorityStateMemoryScopeAllowed != nil
     }
 
     var hasInterruptResponseConflict: Bool {
@@ -1798,6 +1878,10 @@ struct DesktopSessionShellView: View {
                             value: latestSessionActiveVisibleContext.currentGovernedOutputSummary
                         )
 
+                        if latestSessionActiveVisibleContext.hasLawfulAuthorityStateCarrierFamily {
+                            authorityStateCard(latestSessionActiveVisibleContext)
+                        }
+
                         Text("Bounded summary only. No local governed-output synthesis, no local artifact expansion, and no local dispatch unlock authority are introduced by this desktop surface.")
                             .font(.footnote)
                             .foregroundStyle(.secondary)
@@ -1893,6 +1977,83 @@ struct DesktopSessionShellView: View {
                 .foregroundStyle(.secondary)
             Text(value)
                 .textSelection(.enabled)
+        }
+    }
+
+    private func authorityStateCard(_ context: DesktopSessionActiveVisibleContext) -> some View {
+        Group {
+            if let authorityStateSimulationCertificationState =
+                context.authorityStateSimulationCertificationState,
+               let authorityStateOnboardingReadinessState =
+                context.authorityStateOnboardingReadinessState,
+               let authorityStatePolicyDecision = context.authorityStatePolicyDecision,
+               let authorityStateIdentityScopeRequired =
+                context.authorityStateIdentityScopeRequired,
+               let authorityStateIdentityScopeSatisfied =
+                context.authorityStateIdentityScopeSatisfied,
+               let authorityStateMemoryScopeAllowed = context.authorityStateMemoryScopeAllowed
+            {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Authority state")
+                        .font(.subheadline.weight(.semibold))
+
+                    Text("Cloud-authored authority-state evidence only")
+                        .font(.footnote.weight(.semibold))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                    Text("Authority posture")
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                    metadataRow(
+                        label: "authority_state_policy_context_ref",
+                        value: context.authorityStatePolicyContextRef ?? "not_provided"
+                    )
+                    metadataRow(
+                        label: "authority_state_simulation_certification_state",
+                        value: authorityStateSimulationCertificationState
+                    )
+                    metadataRow(
+                        label: "authority_state_onboarding_readiness_state",
+                        value: authorityStateOnboardingReadinessState
+                    )
+                    metadataRow(
+                        label: "authority_state_policy_decision",
+                        value: authorityStatePolicyDecision
+                    )
+                    metadataRow(
+                        label: "authority_state_identity_scope_required",
+                        value: booleanValue(authorityStateIdentityScopeRequired)
+                    )
+                    metadataRow(
+                        label: "authority_state_identity_scope_satisfied",
+                        value: booleanValue(authorityStateIdentityScopeSatisfied)
+                    )
+                    metadataRow(
+                        label: "authority_state_memory_scope_allowed",
+                        value: booleanValue(authorityStateMemoryScopeAllowed)
+                    )
+                    metadataRow(
+                        label: "authority_state_reason_code",
+                        value: context.authorityStateReasonCode ?? "not_provided"
+                    )
+
+                    Text("Exact cloud-authored authority-state family only")
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                    Text("No local authority law, no local governance authority, no local proof authority, and no local dispatch unlock.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color(nsColor: .controlBackgroundColor))
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            }
         }
     }
 
