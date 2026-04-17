@@ -542,6 +542,43 @@ private func collectedResumeBufferTopicHint(in queryItems: [URLQueryItem]) -> St
     return trimmed
 }
 
+private func canonicalRemainingPlatformReceiptKind(_ rawValue: String?) -> String? {
+    guard let rawValue else {
+        return nil
+    }
+
+    let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else {
+        return nil
+    }
+
+    switch trimmed {
+    case "install_launch_handshake",
+         "mic_permission_granted",
+         "desktop_wakeword_configured",
+         "desktop_pairing_bound":
+        return trimmed
+    default:
+        return nil
+    }
+}
+
+private func collectedRemainingPlatformReceiptKinds(in queryItems: [URLQueryItem]) -> [String] {
+    var receiptKinds: [String] = []
+
+    for queryItem in queryItems where queryItem.name == "remaining_platform_receipt_kind" {
+        guard let canonicalValue = canonicalRemainingPlatformReceiptKind(queryItem.value),
+              !receiptKinds.contains(canonicalValue),
+              receiptKinds.count < 4 else {
+            return []
+        }
+
+        receiptKinds.append(canonicalValue)
+    }
+
+    return receiptKinds
+}
+
 private func collectedAuthorityStateSingleLineValue(
     in queryItems: [URLQueryItem],
     name: String
@@ -970,6 +1007,7 @@ private struct DesktopSessionActiveVisibleContext: Equatable {
     let authorityStateMemoryScopeAllowed: Bool?
     let authorityStateReasonCode: String?
     let interruptAcceptedAnswerFormats: [String]
+    let remainingPlatformReceiptKinds: [String]
 
     init?(url: URL) {
         guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
@@ -1103,6 +1141,7 @@ private struct DesktopSessionActiveVisibleContext: Equatable {
             name: "authority_state_reason_code"
         )
         self.interruptAcceptedAnswerFormats = collectedInterruptAcceptedAnswerFormats(in: queryItems)
+        self.remainingPlatformReceiptKinds = collectedRemainingPlatformReceiptKinds(in: queryItems)
     }
 
     var interruptContinuityRows: [(label: String, value: String)] {
@@ -1224,6 +1263,10 @@ private struct DesktopSessionActiveVisibleContext: Equatable {
             && authorityStateIdentityScopeRequired != nil
             && authorityStateIdentityScopeSatisfied != nil
             && authorityStateMemoryScopeAllowed != nil
+    }
+
+    var hasLawfulOnboardingPlatformSetupReceiptCarrierFamily: Bool {
+        !remainingPlatformReceiptKinds.isEmpty
     }
 
     var hasInterruptResponseConflict: Bool {
@@ -1878,6 +1921,12 @@ struct DesktopSessionShellView: View {
                             value: latestSessionActiveVisibleContext.currentGovernedOutputSummary
                         )
 
+                        if latestSessionActiveVisibleContext
+                            .hasLawfulOnboardingPlatformSetupReceiptCarrierFamily
+                        {
+                            onboardingPlatformSetupReceiptCard(latestSessionActiveVisibleContext)
+                        }
+
                         if latestSessionActiveVisibleContext.hasLawfulAuthorityStateCarrierFamily {
                             authorityStateCard(latestSessionActiveVisibleContext)
                         }
@@ -1977,6 +2026,60 @@ struct DesktopSessionShellView: View {
                 .foregroundStyle(.secondary)
             Text(value)
                 .textSelection(.enabled)
+        }
+    }
+
+    private func onboardingPlatformSetupReceiptCard(
+        _ context: DesktopSessionActiveVisibleContext
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Onboarding platform-setup receipts")
+                .font(.subheadline.weight(.semibold))
+
+            Text("Cloud-authored onboarding platform-setup receipt evidence only")
+                .font(.footnote.weight(.semibold))
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            metadataRow(
+                label: "remaining_platform_receipt_kinds",
+                value: context.remainingPlatformReceiptKinds.joined(separator: ", ")
+            )
+
+            ForEach(Array(context.remainingPlatformReceiptKinds.enumerated()), id: \.offset) { _, receiptKind in
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(receiptKind)
+                        .font(.caption.monospaced())
+
+                    Text(onboardingPlatformSetupReceiptDetail(for: receiptKind))
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+
+            Text("Read-only platform-setup receipt visibility only. No local onboarding authority, no local wake authority, no local governance authority, no local proof authority, and no local dispatch unlock.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(nsColor: .controlBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+
+    private func onboardingPlatformSetupReceiptDetail(for receiptKind: String) -> String {
+        switch receiptKind {
+        case "install_launch_handshake":
+            return "Canonical install / first-launch handshake receipt family rendered as bounded read-only setup evidence."
+        case "mic_permission_granted":
+            return "Canonical microphone-permission receipt family rendered without mutating device policy locally."
+        case "desktop_wakeword_configured":
+            return "Canonical desktop wake-word setup receipt family rendered as cloud-authored evidence only and not as proven wake-listener authority."
+        case "desktop_pairing_bound":
+            return "Canonical desktop pairing receipt family rendered as bounded setup evidence only and not as local authority adoption."
+        default:
+            return "Unknown receipt family."
         }
     }
 
