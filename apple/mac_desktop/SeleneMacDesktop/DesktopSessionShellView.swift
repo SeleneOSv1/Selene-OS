@@ -579,6 +579,38 @@ private func collectedRemainingPlatformReceiptKinds(in queryItems: [URLQueryItem
     return receiptKinds
 }
 
+private func collectedWakeRuntimeEventCanonicalBoolean(
+    in queryItems: [URLQueryItem],
+    name: String
+) -> Bool? {
+    let values = queryItems.filter { $0.name == name }
+    guard values.count == 1 else {
+        return nil
+    }
+
+    return canonicalBoolean(values[0].value)
+}
+
+private func collectedWakeRuntimeEventSingleLineValue(
+    in queryItems: [URLQueryItem],
+    name: String
+) -> String? {
+    let values = queryItems.filter { $0.name == name }
+    guard values.count == 1,
+          let value = values[0].value else {
+        return nil
+    }
+
+    let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty,
+          !trimmed.contains("\n"),
+          !trimmed.contains("\r") else {
+        return nil
+    }
+
+    return trimmed
+}
+
 private func collectedAuthorityStateSingleLineValue(
     in queryItems: [URLQueryItem],
     name: String
@@ -1006,6 +1038,19 @@ private struct DesktopSessionActiveVisibleContext: Equatable {
     let authorityStateIdentityScopeSatisfied: Bool?
     let authorityStateMemoryScopeAllowed: Bool?
     let authorityStateReasonCode: String?
+    let wakeRuntimeEventCreatedAt: String?
+    let wakeRuntimeEventAccepted: Bool?
+    let wakeRuntimeEventReasonCode: String?
+    let wakeRuntimeEventWakeProfileID: String?
+    let wakeRuntimeEventTtsActiveAtTrigger: Bool?
+    let wakeRuntimeEventMediaPlaybackActiveAtTrigger: Bool?
+    let wakeRuntimeEventSuppressionReasonCode: String?
+    let wakeRuntimeEventLightScoreBP: String?
+    let wakeRuntimeEventStrongScoreBP: String?
+    let wakeRuntimeEventThresholdUsedBP: String?
+    let wakeRuntimeEventModelVersion: String?
+    let wakeRuntimeEventWindowStartNS: String?
+    let wakeRuntimeEventWindowEndNS: String?
     let interruptAcceptedAnswerFormats: [String]
     let remainingPlatformReceiptKinds: [String]
 
@@ -1140,6 +1185,60 @@ private struct DesktopSessionActiveVisibleContext: Equatable {
             in: queryItems,
             name: "authority_state_reason_code"
         )
+        self.wakeRuntimeEventCreatedAt = collectedWakeRuntimeEventSingleLineValue(
+            in: queryItems,
+            name: "wake_runtime_event_created_at"
+        )
+        self.wakeRuntimeEventAccepted = collectedWakeRuntimeEventCanonicalBoolean(
+            in: queryItems,
+            name: "wake_runtime_event_accepted"
+        )
+        self.wakeRuntimeEventReasonCode = collectedWakeRuntimeEventSingleLineValue(
+            in: queryItems,
+            name: "wake_runtime_event_reason_code"
+        )
+        self.wakeRuntimeEventWakeProfileID = collectedWakeRuntimeEventSingleLineValue(
+            in: queryItems,
+            name: "wake_runtime_event_wake_profile_id"
+        )
+        self.wakeRuntimeEventTtsActiveAtTrigger = collectedWakeRuntimeEventCanonicalBoolean(
+            in: queryItems,
+            name: "wake_runtime_event_tts_active_at_trigger"
+        )
+        self.wakeRuntimeEventMediaPlaybackActiveAtTrigger =
+            collectedWakeRuntimeEventCanonicalBoolean(
+                in: queryItems,
+                name: "wake_runtime_event_media_playback_active_at_trigger"
+            )
+        self.wakeRuntimeEventSuppressionReasonCode =
+            collectedWakeRuntimeEventSingleLineValue(
+                in: queryItems,
+                name: "wake_runtime_event_suppression_reason_code"
+            )
+        self.wakeRuntimeEventLightScoreBP = collectedWakeRuntimeEventSingleLineValue(
+            in: queryItems,
+            name: "wake_runtime_event_light_score_bp"
+        )
+        self.wakeRuntimeEventStrongScoreBP = collectedWakeRuntimeEventSingleLineValue(
+            in: queryItems,
+            name: "wake_runtime_event_strong_score_bp"
+        )
+        self.wakeRuntimeEventThresholdUsedBP = collectedWakeRuntimeEventSingleLineValue(
+            in: queryItems,
+            name: "wake_runtime_event_threshold_used_bp"
+        )
+        self.wakeRuntimeEventModelVersion = collectedWakeRuntimeEventSingleLineValue(
+            in: queryItems,
+            name: "wake_runtime_event_model_version"
+        )
+        self.wakeRuntimeEventWindowStartNS = collectedWakeRuntimeEventSingleLineValue(
+            in: queryItems,
+            name: "wake_runtime_event_window_start_ns"
+        )
+        self.wakeRuntimeEventWindowEndNS = collectedWakeRuntimeEventSingleLineValue(
+            in: queryItems,
+            name: "wake_runtime_event_window_end_ns"
+        )
         self.interruptAcceptedAnswerFormats = collectedInterruptAcceptedAnswerFormats(in: queryItems)
         self.remainingPlatformReceiptKinds = collectedRemainingPlatformReceiptKinds(in: queryItems)
     }
@@ -1267,6 +1366,62 @@ private struct DesktopSessionActiveVisibleContext: Equatable {
 
     var hasLawfulOnboardingPlatformSetupReceiptCarrierFamily: Bool {
         !remainingPlatformReceiptKinds.isEmpty
+    }
+
+    var hasLawfulWakeRuntimeEventEvidenceCarrierFamily: Bool {
+        wakeRuntimeEventCreatedAt != nil
+            && wakeRuntimeEventAccepted != nil
+            && wakeRuntimeEventReasonCode != nil
+            && wakeRuntimeEventTtsActiveAtTrigger != nil
+            && wakeRuntimeEventMediaPlaybackActiveAtTrigger != nil
+    }
+
+    var wakeRuntimeEventEvidenceRows: [(label: String, value: String)] {
+        guard hasLawfulWakeRuntimeEventEvidenceCarrierFamily,
+              let wakeRuntimeEventCreatedAt,
+              let wakeRuntimeEventAccepted,
+              let wakeRuntimeEventReasonCode,
+              let wakeRuntimeEventTtsActiveAtTrigger,
+              let wakeRuntimeEventMediaPlaybackActiveAtTrigger else {
+            return []
+        }
+
+        return [
+            ("wake_runtime_event_created_at", wakeRuntimeEventCreatedAt),
+            ("wake_runtime_event_accepted", booleanValue(wakeRuntimeEventAccepted)),
+            ("wake_runtime_event_reason_code", wakeRuntimeEventReasonCode),
+            ("wake_runtime_event_wake_profile_id", wakeRuntimeEventWakeProfileID ?? "not_provided"),
+            (
+                "wake_runtime_event_tts_active_at_trigger",
+                booleanValue(wakeRuntimeEventTtsActiveAtTrigger)
+            ),
+            (
+                "wake_runtime_event_media_playback_active_at_trigger",
+                booleanValue(wakeRuntimeEventMediaPlaybackActiveAtTrigger)
+            ),
+            (
+                "wake_runtime_event_suppression_reason_code",
+                wakeRuntimeEventSuppressionReasonCode ?? "not_provided"
+            ),
+            ("wake_runtime_event_light_score_bp", wakeRuntimeEventLightScoreBP ?? "not_provided"),
+            (
+                "wake_runtime_event_strong_score_bp",
+                wakeRuntimeEventStrongScoreBP ?? "not_provided"
+            ),
+            (
+                "wake_runtime_event_threshold_used_bp",
+                wakeRuntimeEventThresholdUsedBP ?? "not_provided"
+            ),
+            (
+                "wake_runtime_event_model_version",
+                wakeRuntimeEventModelVersion ?? "not_provided"
+            ),
+            (
+                "wake_runtime_event_window_start_ns",
+                wakeRuntimeEventWindowStartNS ?? "not_provided"
+            ),
+            ("wake_runtime_event_window_end_ns", wakeRuntimeEventWindowEndNS ?? "not_provided"),
+        ]
     }
 
     var hasInterruptResponseConflict: Bool {
@@ -1931,6 +2086,12 @@ struct DesktopSessionShellView: View {
                             authorityStateCard(latestSessionActiveVisibleContext)
                         }
 
+                        if latestSessionActiveVisibleContext
+                            .hasLawfulWakeRuntimeEventEvidenceCarrierFamily
+                        {
+                            wakeRuntimeEventEvidenceCard(latestSessionActiveVisibleContext)
+                        }
+
                         Text("Bounded summary only. No local governed-output synthesis, no local artifact expansion, and no local dispatch unlock authority are introduced by this desktop surface.")
                             .font(.footnote)
                             .foregroundStyle(.secondary)
@@ -2158,6 +2319,32 @@ struct DesktopSessionShellView: View {
                 .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
             }
         }
+    }
+
+    private func wakeRuntimeEventEvidenceCard(
+        _ context: DesktopSessionActiveVisibleContext
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Wake runtime event evidence")
+                .font(.subheadline.weight(.semibold))
+
+            Text("Cloud-authored wake runtime event evidence only")
+                .font(.footnote.weight(.semibold))
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            ForEach(context.wakeRuntimeEventEvidenceRows, id: \.label) { row in
+                metadataRow(label: row.label, value: row.value)
+            }
+
+            Text("Bounded read-only wake-entry evidence only. No local wake-listener authority, no local threshold law, no local wake runtime law, no local session-open authority, no local entry unlock, no wake parity, and no autonomous unlock.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(nsColor: .controlBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
 
     private func transcriptEntry(
