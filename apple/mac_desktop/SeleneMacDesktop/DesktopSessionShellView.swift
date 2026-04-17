@@ -499,6 +499,23 @@ private func collectedReturnCheckExpiresAt(in queryItems: [URLQueryItem]) -> Str
     return trimmed
 }
 
+private func collectedResumeBufferExpiresAt(in queryItems: [URLQueryItem]) -> String? {
+    let values = queryItems.filter { $0.name == "resume_buffer_expires_at" }
+    guard values.count == 1,
+          let value = values[0].value else {
+        return nil
+    }
+
+    let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty,
+          !trimmed.contains("\n"),
+          !trimmed.contains("\r") else {
+        return nil
+    }
+
+    return trimmed
+}
+
 private func collectedResumeBufferLive(in queryItems: [URLQueryItem]) -> Bool? {
     let values = queryItems.filter { $0.name == "resume_buffer_live" }
     guard values.count == 1 else {
@@ -915,6 +932,7 @@ private struct DesktopSessionActiveVisibleContext: Equatable {
     let interruptedSubjectRef: String?
     let returnCheckExpiresAt: String?
     let resumeBufferLive: Bool?
+    let resumeBufferExpiresAt: String?
     let resumeBufferAnswerID: String?
     let resumeBufferSpokenPrefix: String?
     let resumeBufferUnsaidRemainder: String?
@@ -1000,6 +1018,7 @@ private struct DesktopSessionActiveVisibleContext: Equatable {
         self.interruptedSubjectRef = collectedInterruptedSubjectRef(in: queryItems)
         self.returnCheckExpiresAt = collectedReturnCheckExpiresAt(in: queryItems)
         self.resumeBufferLive = collectedResumeBufferLive(in: queryItems)
+        self.resumeBufferExpiresAt = collectedResumeBufferExpiresAt(in: queryItems)
         self.resumeBufferAnswerID = collectedResumeBufferAnswerID(in: queryItems)
         self.resumeBufferSpokenPrefix = collectedResumeBufferSpokenPrefix(in: queryItems)
         self.resumeBufferUnsaidRemainder = collectedResumeBufferUnsaidRemainder(in: queryItems)
@@ -1087,6 +1106,10 @@ private struct DesktopSessionActiveVisibleContext: Equatable {
 
     var hasLawfulInterruptResumeBufferLive: Bool {
         resumeBufferLive == true
+    }
+
+    var hasLawfulInterruptResumeBufferExpiresAt: Bool {
+        resumeBufferLive == true && resumeBufferExpiresAt != nil
     }
 
     var hasLawfulInterruptResumeBufferAnswerID: Bool {
@@ -2066,6 +2089,11 @@ struct DesktopSessionShellView: View {
                     interruptResumeBufferLiveCard(resumeBufferLive)
                 }
 
+                if let resumeBufferExpiresAt = context.resumeBufferExpiresAt,
+                   context.hasLawfulInterruptResumeBufferExpiresAt {
+                    interruptResumeBufferExpiresAtCard(resumeBufferExpiresAt)
+                }
+
                 if let resumeBufferAnswerID = context.resumeBufferAnswerID,
                    context.hasLawfulInterruptResumeBufferAnswerID {
                     interruptResumeBufferAnswerIDCard(resumeBufferAnswerID)
@@ -2565,6 +2593,41 @@ struct DesktopSessionShellView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
 
             Text("No local resume authoring, no local dispatch unlock.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(nsColor: .controlBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+
+    private func interruptResumeBufferExpiresAtCard(_ resumeBufferExpiresAt: String) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Resume buffer expiry")
+                .font(.subheadline.weight(.semibold))
+
+            Text("Cloud-authored resume-buffer expiry evidence only")
+                .font(.footnote.weight(.semibold))
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            Text("Expiry posture")
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            metadataRow(
+                label: "resume_buffer_expires_at",
+                value: resumeBufferExpiresAt
+            )
+
+            Text("Exact cloud-authored expiry only")
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            Text("No local countdown, no local expiry authority, no local resume authoring, and no local dispatch unlock.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
