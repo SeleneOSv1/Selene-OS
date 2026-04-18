@@ -2326,6 +2326,20 @@ struct DesktopOnboardingContinuePromptState: Identifiable, Equatable {
     }
 }
 
+struct DesktopTermsAcceptPromptState: Identifiable, Equatable {
+    let onboardingSessionID: String
+    let nextStep: String
+    let termsVersionID: String
+
+    var id: String {
+        [
+            onboardingSessionID,
+            nextStep,
+            termsVersionID,
+        ].joined(separator: "::")
+    }
+}
+
 struct DesktopPlatformSetupReceiptDraft: Identifiable, Equatable {
     let onboardingSessionID: String
     let receiptKind: String
@@ -2364,6 +2378,7 @@ struct DesktopSessionShellView: View {
     @State private var desktopInviteOpenRuntimeOutcomeState: DesktopInviteOpenRuntimeOutcomeState?
     @State private var desktopOnboardingContinueRuntimeOutcomeState: DesktopOnboardingContinueRuntimeOutcomeState?
     @State private var desktopPlatformSetupReceiptRuntimeOutcomeState: DesktopPlatformSetupReceiptRuntimeOutcomeState?
+    @State private var desktopTermsAcceptRuntimeOutcomeState: DesktopTermsAcceptRuntimeOutcomeState?
     @State private var desktopOnboardingContinueFieldInput: String = ""
     @State private var desktopAuthoritativeReplyRenderState: DesktopAuthoritativeReplyRenderState?
     @State private var desktopAuthoritativeReplyProvenanceRenderState: DesktopAuthoritativeReplyProvenanceRenderState?
@@ -2384,6 +2399,7 @@ struct DesktopSessionShellView: View {
                 desktopOnboardingEntryCard
                 desktopOnboardingContinuePromptCard
                 desktopPlatformSetupReceiptSubmissionCard
+                desktopTermsAcceptCard
 
                 sessionCard
                 .frame(maxWidth: .infinity, minHeight: 360, alignment: .topLeading)
@@ -2423,6 +2439,7 @@ struct DesktopSessionShellView: View {
                     desktopInviteOpenRuntimeOutcomeState = nil
                     desktopOnboardingContinueRuntimeOutcomeState = nil
                     desktopPlatformSetupReceiptRuntimeOutcomeState = nil
+                    desktopTermsAcceptRuntimeOutcomeState = nil
                     desktopOnboardingContinueFieldInput = ""
                 }
                 desktopOnboardingEntryContext = context
@@ -2856,6 +2873,38 @@ struct DesktopSessionShellView: View {
         return drafts
     }
 
+    private var desktopTermsAcceptPromptState: DesktopTermsAcceptPromptState? {
+        if let desktopTermsAcceptRuntimeOutcomeState,
+           desktopTermsAcceptRuntimeOutcomeState.phase == .completed,
+           desktopTermsAcceptRuntimeOutcomeState.nextStep != "TERMS" {
+            return nil
+        }
+
+        if let desktopPlatformSetupReceiptRuntimeOutcomeState,
+           desktopPlatformSetupReceiptRuntimeOutcomeState.phase == .completed,
+           desktopPlatformSetupReceiptRuntimeOutcomeState.nextStep == "TERMS",
+           let onboardingSessionID = desktopPlatformSetupReceiptRuntimeOutcomeState.onboardingSessionID {
+            return DesktopTermsAcceptPromptState(
+                onboardingSessionID: onboardingSessionID,
+                nextStep: "TERMS",
+                termsVersionID: desktopCanonicalTermsVersionID
+            )
+        }
+
+        if let desktopOnboardingContinueRuntimeOutcomeState,
+           desktopOnboardingContinueRuntimeOutcomeState.phase == .completed,
+           desktopOnboardingContinueRuntimeOutcomeState.nextStep == "TERMS",
+           let onboardingSessionID = desktopOnboardingContinueRuntimeOutcomeState.onboardingSessionID {
+            return DesktopTermsAcceptPromptState(
+                onboardingSessionID: onboardingSessionID,
+                nextStep: "TERMS",
+                termsVersionID: desktopCanonicalTermsVersionID
+            )
+        }
+
+        return nil
+    }
+
     private var desktopUnsupportedPlatformSetupReceiptKinds: [String] {
         guard let presentationState = desktopPlatformSetupReceiptPresentationState else {
             return []
@@ -3161,6 +3210,114 @@ struct DesktopSessionShellView: View {
                 }
             } label: {
                 Text("Onboarding Platform Setup Receipts")
+                    .font(.headline)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var desktopTermsAcceptCard: some View {
+        let promptState = desktopTermsAcceptPromptState
+        let displayedOnboardingSessionID = promptState?.onboardingSessionID
+            ?? desktopTermsAcceptRuntimeOutcomeState?.onboardingSessionID
+            ?? "unavailable"
+        let displayedNextStep = desktopTermsAcceptRuntimeOutcomeState?.nextStep
+            ?? promptState?.nextStep
+            ?? "not_provided"
+        let displayedTermsVersionID = promptState?.termsVersionID
+            ?? desktopTermsAcceptRuntimeOutcomeState?.termsVersionID
+            ?? desktopCanonicalTermsVersionID
+
+        if promptState != nil || desktopTermsAcceptRuntimeOutcomeState != nil {
+            GroupBox {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Bounded desktop terms acceptance submission only. This shell derives bounded prompt state when canonical onboarding posture has advanced to exact `TERMS`, dispatches exact `TERMS_ACCEPT`, and preserves returned next-step visibility in read-only form only.")
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                    ForEach(
+                        [
+                            ("onboarding_session_id", displayedOnboardingSessionID),
+                            ("next_step", displayedNextStep),
+                            ("terms_version_id", displayedTermsVersionID),
+                        ],
+                        id: \.0
+                    ) { row in
+                        HStack(alignment: .top, spacing: 12) {
+                            Text(row.0)
+                                .font(.caption.monospaced())
+                                .foregroundStyle(.secondary)
+                                .frame(width: 170, alignment: .leading)
+
+                            Text(row.1)
+                                .font(.body.monospaced())
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                    }
+
+                    Text("This shell is dispatching canonical terms acceptance only. It does not fabricate a local terms document, a local policy summary, or local onboarding authority.")
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                    if let promptState {
+                        Button("Accept canonical terms") {
+                            Task {
+                                await acceptDesktopTerms(promptState: promptState)
+                            }
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(desktopTermsAcceptRuntimeOutcomeState?.phase == .dispatching)
+                    }
+
+                    if let desktopTermsAcceptRuntimeOutcomeState {
+                        Divider()
+
+                        Text(desktopTermsAcceptRuntimeOutcomeState.title)
+                            .font(.headline)
+
+                        ForEach(
+                            [
+                                ("dispatch_phase", desktopTermsAcceptRuntimeOutcomeState.phase.rawValue),
+                                ("request_id", desktopTermsAcceptRuntimeOutcomeState.requestID),
+                                ("endpoint", desktopTermsAcceptRuntimeOutcomeState.endpoint),
+                                ("accepted", desktopTermsAcceptRuntimeOutcomeState.accepted ? "true" : "false"),
+                                ("outcome", desktopTermsAcceptRuntimeOutcomeState.outcome ?? "not_available"),
+                                ("reason", desktopTermsAcceptRuntimeOutcomeState.reason ?? "not_available"),
+                                ("onboarding_status", desktopTermsAcceptRuntimeOutcomeState.onboardingStatus ?? "not_available"),
+                            ],
+                            id: \.0
+                        ) { row in
+                            HStack(alignment: .top, spacing: 12) {
+                                Text(row.0)
+                                    .font(.caption.monospaced())
+                                    .foregroundStyle(.secondary)
+                                    .frame(width: 170, alignment: .leading)
+
+                                Text(row.1)
+                                    .font(.body.monospaced())
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                        }
+
+                        Text(desktopTermsAcceptRuntimeOutcomeState.summary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+
+                        Text(desktopTermsAcceptRuntimeOutcomeState.detail)
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    } else {
+                        Text("Awaiting explicit user-triggered canonical terms acceptance. This surface does not render a local terms document and does not expose later onboarding controls.")
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+
+                    Text("Only exact `TERMS_ACCEPT` with exact current repo-truth `terms_v1` and exact `accepted=true` is in scope here. No decline flow, no sender-verification controls, no primary-device confirmation controls, no voice-enrollment controls, no pairing-completion controls, no wake-enrollment controls, and no proven native macOS wake-listener integration claim are introduced by this surface.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            } label: {
+                Text("Onboarding Terms Acceptance")
                     .font(.headline)
             }
         }
@@ -5232,6 +5389,7 @@ struct DesktopSessionShellView: View {
     ) async {
         let activeEntryContextID = desktopOnboardingEntryContext?.id
         desktopPlatformSetupReceiptRuntimeOutcomeState = nil
+        desktopTermsAcceptRuntimeOutcomeState = nil
 
         do {
             let ingressContext = try desktopCanonicalRuntimeBridge.desktopOnboardingContinueMissingFieldRequestBuilder(
@@ -5272,6 +5430,7 @@ struct DesktopSessionShellView: View {
         _ draft: DesktopPlatformSetupReceiptDraft
     ) async {
         let activeEntryContextID = desktopOnboardingEntryContext?.id
+        desktopTermsAcceptRuntimeOutcomeState = nil
 
         do {
             let ingressContext = try desktopCanonicalRuntimeBridge.desktopPlatformSetupReceiptRequestBuilder(
@@ -5299,6 +5458,43 @@ struct DesktopSessionShellView: View {
                 endpoint: desktopCanonicalRuntimeBridge.onboardingContinueEndpoint,
                 requestID: "unavailable",
                 summary: "The canonical onboarding-continue bridge could not stage this bounded desktop platform-setup receipt.",
+                detail: error.localizedDescription
+            )
+        }
+    }
+
+    @MainActor
+    private func acceptDesktopTerms(
+        promptState: DesktopTermsAcceptPromptState
+    ) async {
+        let activeEntryContextID = desktopOnboardingEntryContext?.id
+
+        do {
+            let ingressContext = try desktopCanonicalRuntimeBridge.desktopTermsAcceptRequestBuilder(
+                promptState
+            )
+            desktopTermsAcceptRuntimeOutcomeState = .dispatching(
+                onboardingSessionID: ingressContext.onboardingSessionID,
+                termsVersionID: ingressContext.termsVersionID,
+                endpoint: ingressContext.endpoint,
+                requestID: ingressContext.requestID
+            )
+
+            let outcomeState = await desktopCanonicalRuntimeBridge.acceptDesktopTerms(
+                ingressContext
+            )
+            guard desktopOnboardingEntryContext?.id == activeEntryContextID else {
+                return
+            }
+
+            desktopTermsAcceptRuntimeOutcomeState = outcomeState
+        } catch {
+            desktopTermsAcceptRuntimeOutcomeState = .failed(
+                onboardingSessionID: promptState.onboardingSessionID,
+                termsVersionID: promptState.termsVersionID,
+                endpoint: desktopCanonicalRuntimeBridge.onboardingContinueEndpoint,
+                requestID: "unavailable",
+                summary: "The canonical onboarding-continue bridge could not stage this bounded desktop terms acceptance request.",
                 detail: error.localizedDescription
             )
         }
