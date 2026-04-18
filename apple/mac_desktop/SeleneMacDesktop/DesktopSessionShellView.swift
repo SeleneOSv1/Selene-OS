@@ -2407,6 +2407,22 @@ struct DesktopWakeEnrollSampleCommitPromptState: Identifiable, Equatable {
     }
 }
 
+struct DesktopWakeEnrollCompleteCommitPromptState: Identifiable, Equatable {
+    let onboardingSessionID: String
+    let nextStep: String
+    let deviceID: String
+    let voiceArtifactSyncReceiptRef: String?
+
+    var id: String {
+        [
+            onboardingSessionID,
+            nextStep,
+            deviceID,
+            voiceArtifactSyncReceiptRef ?? "voice_receipt_not_provided",
+        ].joined(separator: "::")
+    }
+}
+
 struct DesktopPlatformSetupReceiptDraft: Identifiable, Equatable {
     let onboardingSessionID: String
     let receiptKind: String
@@ -2450,6 +2466,7 @@ struct DesktopSessionShellView: View {
     @State private var desktopVoiceEnrollRuntimeOutcomeState: DesktopVoiceEnrollRuntimeOutcomeState?
     @State private var desktopWakeEnrollStartDraftRuntimeOutcomeState: DesktopWakeEnrollStartDraftRuntimeOutcomeState?
     @State private var desktopWakeEnrollSampleCommitRuntimeOutcomeState: DesktopWakeEnrollSampleCommitRuntimeOutcomeState?
+    @State private var desktopWakeEnrollCompleteCommitRuntimeOutcomeState: DesktopWakeEnrollCompleteCommitRuntimeOutcomeState?
     @State private var desktopOnboardingContinueFieldInput: String = ""
     @State private var desktopAuthoritativeReplyRenderState: DesktopAuthoritativeReplyRenderState?
     @State private var desktopAuthoritativeReplyProvenanceRenderState: DesktopAuthoritativeReplyProvenanceRenderState?
@@ -2475,6 +2492,7 @@ struct DesktopSessionShellView: View {
                 desktopVoiceEnrollCard
                 desktopWakeEnrollStartDraftCard
                 desktopWakeEnrollSampleCommitCard
+                desktopWakeEnrollCompleteCommitCard
 
                 sessionCard
                 .frame(maxWidth: .infinity, minHeight: 360, alignment: .topLeading)
@@ -2519,6 +2537,7 @@ struct DesktopSessionShellView: View {
                     desktopVoiceEnrollRuntimeOutcomeState = nil
                     desktopWakeEnrollStartDraftRuntimeOutcomeState = nil
                     desktopWakeEnrollSampleCommitRuntimeOutcomeState = nil
+                    desktopWakeEnrollCompleteCommitRuntimeOutcomeState = nil
                     desktopOnboardingContinueFieldInput = ""
                 }
                 desktopOnboardingEntryContext = context
@@ -3105,6 +3124,29 @@ struct DesktopSessionShellView: View {
                 deviceID: deviceID,
                 proofOK: true,
                 voiceArtifactSyncReceiptRef: desktopWakeEnrollStartDraftRuntimeOutcomeState.voiceArtifactSyncReceiptRef
+            )
+        }
+
+        return nil
+    }
+
+    private var desktopWakeEnrollCompleteCommitPromptState: DesktopWakeEnrollCompleteCommitPromptState? {
+        if let desktopWakeEnrollCompleteCommitRuntimeOutcomeState,
+           desktopWakeEnrollCompleteCommitRuntimeOutcomeState.phase == .completed,
+           desktopWakeEnrollCompleteCommitRuntimeOutcomeState.nextStep != "WAKE_ENROLL" {
+            return nil
+        }
+
+        if let desktopWakeEnrollSampleCommitRuntimeOutcomeState,
+           desktopWakeEnrollSampleCommitRuntimeOutcomeState.phase == .completed,
+           desktopWakeEnrollSampleCommitRuntimeOutcomeState.nextStep == "WAKE_ENROLL",
+           let onboardingSessionID = desktopWakeEnrollSampleCommitRuntimeOutcomeState.onboardingSessionID,
+           let deviceID = desktopManagedPrimaryDeviceID {
+            return DesktopWakeEnrollCompleteCommitPromptState(
+                onboardingSessionID: onboardingSessionID,
+                nextStep: "WAKE_ENROLL",
+                deviceID: deviceID,
+                voiceArtifactSyncReceiptRef: desktopWakeEnrollSampleCommitRuntimeOutcomeState.voiceArtifactSyncReceiptRef
             )
         }
 
@@ -3821,7 +3863,7 @@ struct DesktopSessionShellView: View {
                         }
                     }
 
-                    Text("This exact surface is dispatching canonical wake-enroll start draft only. Any later wake-sample control is separately gated, and wake-complete controls, wake-defer controls, local wake authority, and proven native macOS wake-listener claims remain out of scope here.")
+                    Text("This exact surface is dispatching canonical wake-enroll start draft only. Any later wake-sample and wake-complete controls are separately gated from this surface, while wake-defer controls, local wake authority, and proven native macOS wake-listener claims remain out of scope here.")
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, alignment: .leading)
 
@@ -3872,12 +3914,12 @@ struct DesktopSessionShellView: View {
                             .foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity, alignment: .leading)
                     } else {
-                        Text("Awaiting explicit user-triggered canonical wake-enroll start draft. After submission, any returned exact `WAKE_ENROLL` posture and any returned exact `voice_artifact_sync_receipt_ref` remain read-only only in this shell.")
+                        Text("Awaiting explicit user-triggered canonical wake-enroll start draft. After submission, any returned exact `WAKE_ENROLL` posture and any returned exact `voice_artifact_sync_receipt_ref` remain read-only only in this shell while later wake-sample and wake-complete controls stay separately gated.")
                             .foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
 
-                    Text("Only exact `WAKE_ENROLL_START_DRAFT` with the exact managed bridge `deviceID` is in scope here. Any later wake-sample control is separately gated; no wake-complete controls, no wake-defer controls, no sender-verification controls, no employee-photo controls, no emo-persona controls, no access-provision controls, no pairing-completion controls, and no proven native macOS wake-listener integration claim are introduced by this surface.")
+                    Text("Only exact `WAKE_ENROLL_START_DRAFT` with the exact managed bridge `deviceID` is in scope here. Any later wake-sample and wake-complete control is separately gated from this surface; no wake-defer controls, no sender-verification controls, no employee-photo controls, no emo-persona controls, no access-provision controls, no pairing-completion controls, and no proven native macOS wake-listener integration claim are introduced by this surface.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -4003,13 +4045,134 @@ struct DesktopSessionShellView: View {
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
 
-                    Text("Only exact `WAKE_ENROLL_SAMPLE_COMMIT` with the exact managed bridge `deviceID` and exact `proofOK=true` is in scope here. No wake-complete controls, no wake-defer controls, no sender-verification controls, no employee-photo controls, no emo-persona controls, no access-provision controls, no pairing-completion controls, and no proven native macOS wake-listener integration claim are introduced by this surface.")
+                    Text("Only exact `WAKE_ENROLL_SAMPLE_COMMIT` with the exact managed bridge `deviceID` and exact `proofOK=true` is in scope here. Any wake-complete control remains separately gated from this surface; no wake-defer controls, no sender-verification controls, no employee-photo controls, no emo-persona controls, no access-provision controls, no pairing-completion controls, and no proven native macOS wake-listener integration claim are introduced by this surface.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
             } label: {
                 Text("Onboarding Wake Enrollment Sample Commit")
+                    .font(.headline)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var desktopWakeEnrollCompleteCommitCard: some View {
+        let promptState = desktopWakeEnrollCompleteCommitPromptState
+        let wakeSampleCompleteContext = desktopWakeEnrollSampleCommitRuntimeOutcomeState?.phase == .completed
+            ? desktopWakeEnrollSampleCommitRuntimeOutcomeState
+            : nil
+        let displayedOnboardingSessionID = promptState?.onboardingSessionID
+            ?? desktopWakeEnrollCompleteCommitRuntimeOutcomeState?.onboardingSessionID
+            ?? wakeSampleCompleteContext?.onboardingSessionID
+            ?? "unavailable"
+        let displayedNextStep = desktopWakeEnrollCompleteCommitRuntimeOutcomeState?.nextStep
+            ?? promptState?.nextStep
+            ?? wakeSampleCompleteContext?.nextStep
+            ?? "not_provided"
+        let displayedDeviceID = promptState?.deviceID
+            ?? desktopWakeEnrollCompleteCommitRuntimeOutcomeState?.deviceID
+            ?? wakeSampleCompleteContext?.deviceID
+            ?? desktopManagedPrimaryDeviceID
+            ?? "not_provided"
+        let displayedVoiceArtifactSyncReceiptRef = desktopWakeEnrollCompleteCommitRuntimeOutcomeState?.voiceArtifactSyncReceiptRef
+            ?? promptState?.voiceArtifactSyncReceiptRef
+            ?? wakeSampleCompleteContext?.voiceArtifactSyncReceiptRef
+            ?? "not_available"
+
+        if promptState != nil || wakeSampleCompleteContext != nil || desktopWakeEnrollCompleteCommitRuntimeOutcomeState != nil {
+            GroupBox {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Bounded desktop wake-enroll complete-commit submission only. This shell derives bounded prompt state from already-live wake-sample outcome only while canonical onboarding posture remains at exact `WAKE_ENROLL`, dispatches exact wake-enroll complete commit, and keeps returned `EMO_PERSONA_LOCK`, returned `voice_artifact_sync_receipt_ref`, and any returned `WAKE_ENROLL` visibility read-only only outside the exact wake-complete control itself.")
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                    ForEach(
+                        [
+                            ("onboarding_session_id", displayedOnboardingSessionID),
+                            ("next_step", displayedNextStep),
+                            ("device_id", displayedDeviceID),
+                            ("voice_artifact_sync_receipt_ref", displayedVoiceArtifactSyncReceiptRef),
+                        ],
+                        id: \.0
+                    ) { row in
+                        HStack(alignment: .top, spacing: 12) {
+                            Text(row.0)
+                                .font(.caption.monospaced())
+                                .foregroundStyle(.secondary)
+                                .frame(width: 170, alignment: .leading)
+
+                            Text(row.1)
+                                .font(.body.monospaced())
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                    }
+
+                    Text("This exact surface is dispatching canonical wake-enroll complete commit only. If canonical runtime advances to exact `EMO_PERSONA_LOCK`, that next-step visibility remains read-only only here and does not unlock emo-persona submit behavior.")
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                    if let promptState {
+                        Button("Complete bounded wake enrollment") {
+                            Task {
+                                await submitDesktopWakeEnrollCompleteCommit(promptState: promptState)
+                            }
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(desktopWakeEnrollCompleteCommitRuntimeOutcomeState?.phase == .dispatching)
+                    }
+
+                    if let desktopWakeEnrollCompleteCommitRuntimeOutcomeState {
+                        Divider()
+
+                        Text(desktopWakeEnrollCompleteCommitRuntimeOutcomeState.title)
+                            .font(.headline)
+
+                        ForEach(
+                            [
+                                ("dispatch_phase", desktopWakeEnrollCompleteCommitRuntimeOutcomeState.phase.rawValue),
+                                ("request_id", desktopWakeEnrollCompleteCommitRuntimeOutcomeState.requestID),
+                                ("endpoint", desktopWakeEnrollCompleteCommitRuntimeOutcomeState.endpoint),
+                                ("outcome", desktopWakeEnrollCompleteCommitRuntimeOutcomeState.outcome ?? "not_available"),
+                                ("reason", desktopWakeEnrollCompleteCommitRuntimeOutcomeState.reason ?? "not_available"),
+                                ("onboarding_status", desktopWakeEnrollCompleteCommitRuntimeOutcomeState.onboardingStatus ?? "not_available"),
+                            ],
+                            id: \.0
+                        ) { row in
+                            HStack(alignment: .top, spacing: 12) {
+                                Text(row.0)
+                                    .font(.caption.monospaced())
+                                    .foregroundStyle(.secondary)
+                                    .frame(width: 170, alignment: .leading)
+
+                                Text(row.1)
+                                    .font(.body.monospaced())
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                        }
+
+                        Text(desktopWakeEnrollCompleteCommitRuntimeOutcomeState.summary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+
+                        Text(desktopWakeEnrollCompleteCommitRuntimeOutcomeState.detail)
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    } else {
+                        Text(promptState != nil
+                            ? "Awaiting explicit user-triggered canonical wake-enroll complete commit. If canonical runtime remains at exact `WAKE_ENROLL`, this bounded complete-control can be retried explicitly from the same lawful prompt posture."
+                            : "Read-only wake-enrollment posture only. A bounded wake-complete commit is unavailable until lawful prompt state remains present at exact `WAKE_ENROLL`.")
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+
+                    Text("Only exact wake-enroll complete commit with the exact managed bridge `deviceID` is in scope here. No wake-defer controls, no emo-persona controls, no access-provision controls, no pairing-completion controls, no sender-verification controls, no employee-photo controls, and no proven native macOS wake-listener integration claim are introduced by this surface.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            } label: {
+                Text("Onboarding Wake Enrollment Complete Commit")
                     .font(.headline)
             }
         }
@@ -6084,6 +6247,8 @@ struct DesktopSessionShellView: View {
         desktopTermsAcceptRuntimeOutcomeState = nil
         desktopPrimaryDeviceConfirmRuntimeOutcomeState = nil
         desktopWakeEnrollStartDraftRuntimeOutcomeState = nil
+        desktopWakeEnrollSampleCommitRuntimeOutcomeState = nil
+        desktopWakeEnrollCompleteCommitRuntimeOutcomeState = nil
 
         do {
             let ingressContext = try desktopCanonicalRuntimeBridge.desktopOnboardingContinueMissingFieldRequestBuilder(
@@ -6127,6 +6292,8 @@ struct DesktopSessionShellView: View {
         desktopTermsAcceptRuntimeOutcomeState = nil
         desktopPrimaryDeviceConfirmRuntimeOutcomeState = nil
         desktopWakeEnrollStartDraftRuntimeOutcomeState = nil
+        desktopWakeEnrollSampleCommitRuntimeOutcomeState = nil
+        desktopWakeEnrollCompleteCommitRuntimeOutcomeState = nil
 
         do {
             let ingressContext = try desktopCanonicalRuntimeBridge.desktopPlatformSetupReceiptRequestBuilder(
@@ -6166,6 +6333,8 @@ struct DesktopSessionShellView: View {
         let activeEntryContextID = desktopOnboardingEntryContext?.id
         desktopPrimaryDeviceConfirmRuntimeOutcomeState = nil
         desktopWakeEnrollStartDraftRuntimeOutcomeState = nil
+        desktopWakeEnrollSampleCommitRuntimeOutcomeState = nil
+        desktopWakeEnrollCompleteCommitRuntimeOutcomeState = nil
 
         do {
             let ingressContext = try desktopCanonicalRuntimeBridge.desktopTermsAcceptRequestBuilder(
@@ -6204,6 +6373,8 @@ struct DesktopSessionShellView: View {
     ) async {
         let activeEntryContextID = desktopOnboardingEntryContext?.id
         desktopWakeEnrollStartDraftRuntimeOutcomeState = nil
+        desktopWakeEnrollSampleCommitRuntimeOutcomeState = nil
+        desktopWakeEnrollCompleteCommitRuntimeOutcomeState = nil
 
         do {
             let ingressContext = try desktopCanonicalRuntimeBridge.desktopPrimaryDeviceConfirmRequestBuilder(
@@ -6243,6 +6414,7 @@ struct DesktopSessionShellView: View {
         let activeEntryContextID = desktopOnboardingEntryContext?.id
         desktopWakeEnrollStartDraftRuntimeOutcomeState = nil
         desktopWakeEnrollSampleCommitRuntimeOutcomeState = nil
+        desktopWakeEnrollCompleteCommitRuntimeOutcomeState = nil
 
         do {
             let ingressContext = try desktopCanonicalRuntimeBridge.desktopVoiceEnrollRequestBuilder(
@@ -6283,6 +6455,7 @@ struct DesktopSessionShellView: View {
     ) async {
         let activeEntryContextID = desktopOnboardingEntryContext?.id
         desktopWakeEnrollSampleCommitRuntimeOutcomeState = nil
+        desktopWakeEnrollCompleteCommitRuntimeOutcomeState = nil
 
         do {
             let ingressContext = try desktopCanonicalRuntimeBridge.desktopWakeEnrollStartDraftRequestBuilder(
@@ -6320,6 +6493,7 @@ struct DesktopSessionShellView: View {
         promptState: DesktopWakeEnrollSampleCommitPromptState
     ) async {
         let activeEntryContextID = desktopOnboardingEntryContext?.id
+        desktopWakeEnrollCompleteCommitRuntimeOutcomeState = nil
 
         do {
             let ingressContext = try desktopCanonicalRuntimeBridge.desktopWakeEnrollSampleCommitRequestBuilder(
@@ -6347,6 +6521,43 @@ struct DesktopSessionShellView: View {
                 endpoint: desktopCanonicalRuntimeBridge.onboardingContinueEndpoint,
                 requestID: "unavailable",
                 summary: "The canonical onboarding-continue bridge could not stage this bounded desktop wake-enroll sample-commit request.",
+                detail: error.localizedDescription
+            )
+        }
+    }
+
+    @MainActor
+    private func submitDesktopWakeEnrollCompleteCommit(
+        promptState: DesktopWakeEnrollCompleteCommitPromptState
+    ) async {
+        let activeEntryContextID = desktopOnboardingEntryContext?.id
+
+        do {
+            let ingressContext = try desktopCanonicalRuntimeBridge.desktopWakeEnrollCompleteCommitRequestBuilder(
+                promptState
+            )
+            desktopWakeEnrollCompleteCommitRuntimeOutcomeState = .dispatching(
+                onboardingSessionID: ingressContext.onboardingSessionID,
+                deviceID: ingressContext.deviceID,
+                endpoint: ingressContext.endpoint,
+                requestID: ingressContext.requestID
+            )
+
+            let outcomeState = await desktopCanonicalRuntimeBridge.submitDesktopWakeEnrollCompleteCommit(
+                ingressContext
+            )
+            guard desktopOnboardingEntryContext?.id == activeEntryContextID else {
+                return
+            }
+
+            desktopWakeEnrollCompleteCommitRuntimeOutcomeState = outcomeState
+        } catch {
+            desktopWakeEnrollCompleteCommitRuntimeOutcomeState = .failed(
+                onboardingSessionID: promptState.onboardingSessionID,
+                deviceID: promptState.deviceID,
+                endpoint: desktopCanonicalRuntimeBridge.onboardingContinueEndpoint,
+                requestID: "unavailable",
+                summary: "The canonical onboarding-continue bridge could not stage this bounded desktop wake-enroll complete-commit request.",
                 detail: error.localizedDescription
             )
         }
