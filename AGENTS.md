@@ -63,6 +63,8 @@ Build selection rule:
 - every self-authored build instruction must treat `build` as `implementation`
 - every self-authored next-build instruction must declare or assume `Build Class: IMPLEMENTATION`
 - every self-authored build instruction that pins `HEAD`, `origin/main`, or a prerequisite landed-build hash must source that exact hash from same-task git output and must not reuse remembered prior assistant text
+- every self-authored build instruction that cites preserved prior landed builds must include explicit same-task git verification commands for each cited prior landed build hash; pinning current `HEAD` alone is insufficient
+- every self-authored build instruction that runs `xcodebuild` must clean the relevant repo-local build artifact tree before the first clean-tree check and again after each `xcodebuild` before final cleanliness verification
 - the selected build must name the exact behavior to change, the exact files expected to change, and the exact tests that will prove the change
 - Codex should prefer the largest safe, accurate, and provable in-scope implementation batch over a smaller batch when both are lawful and the larger batch stays within the same approval surface
 - Codex must not default to one-slice-only execution when multiple adjacent slices can be implemented and proven together safely
@@ -211,9 +213,12 @@ Start of every run:
 - `git status --short` must be empty
 - if not empty: stop and report it
 - the only narrow exception is the `Dirty-Tree Refinement` rule below, and it applies only within the same already-started task when the only changed or untracked file is the task target file
+- repo-local build artifact trees created by `xcodebuild` are part of the worktree and must be removed before this cleanliness check
+- for Apple app work, relevant cleanup targets include `apple/mac_desktop/build` and `apple/iphone/build` when the task touches those targets
 
 End of every run:
 - `git status --short` must be empty again
+- repo-local build artifact trees created by `xcodebuild` must be removed before the final cleanliness check
 
 No new task may begin on a dirty tree.
 The `Dirty-Tree Refinement` exception applies only after a task has already started.
@@ -293,6 +298,7 @@ Codex must verify that claim from current repo truth in the same task.
 Required verification:
 - current landed commit hash: `git rev-parse HEAD`
 - prior or prerequisite build hash: direct `git rev-parse`, `git log`, or exact ancestor query from the current repo in the same task
+- every cited prior landed build hash in a self-authored build instruction: exact same-task git query that maps the cited build identifier to the current repo hash, such as exact `git log --format=%H --grep='^H253:' -n 1` or an exact ancestor query
 - exact symbol or state ownership: direct `rg` or equivalent against the exact named files in the same task
 - if a symbol exists in both bridge and shell or across multiple layers, Codex must report the split ownership exactly rather than collapsing it into one carrier
 
@@ -300,6 +306,7 @@ Forbidden:
 - reusing remembered full hashes from earlier assistant messages
 - inferring exact ownership from summary memory when the repo can be queried directly
 - collapsing bridge-owned canonical fields and shell-owned derived state into one carrier when repo truth shows a split
+- relying on current `HEAD == ...` alone while citing preserved prior landed builds without verifying their exact landed hashes in the same task
 - stating an exact hash or ownership claim as definitive without same-task verification
 
 If verification cannot be completed:
