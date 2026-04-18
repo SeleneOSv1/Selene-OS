@@ -2340,6 +2340,22 @@ struct DesktopTermsAcceptPromptState: Identifiable, Equatable {
     }
 }
 
+struct DesktopPrimaryDeviceConfirmPromptState: Identifiable, Equatable {
+    let onboardingSessionID: String
+    let nextStep: String
+    let deviceID: String
+    let proofOK: Bool
+
+    var id: String {
+        [
+            onboardingSessionID,
+            nextStep,
+            deviceID,
+            proofOK ? "proof_ok_true" : "proof_ok_false",
+        ].joined(separator: "::")
+    }
+}
+
 struct DesktopPlatformSetupReceiptDraft: Identifiable, Equatable {
     let onboardingSessionID: String
     let receiptKind: String
@@ -2379,6 +2395,7 @@ struct DesktopSessionShellView: View {
     @State private var desktopOnboardingContinueRuntimeOutcomeState: DesktopOnboardingContinueRuntimeOutcomeState?
     @State private var desktopPlatformSetupReceiptRuntimeOutcomeState: DesktopPlatformSetupReceiptRuntimeOutcomeState?
     @State private var desktopTermsAcceptRuntimeOutcomeState: DesktopTermsAcceptRuntimeOutcomeState?
+    @State private var desktopPrimaryDeviceConfirmRuntimeOutcomeState: DesktopPrimaryDeviceConfirmRuntimeOutcomeState?
     @State private var desktopOnboardingContinueFieldInput: String = ""
     @State private var desktopAuthoritativeReplyRenderState: DesktopAuthoritativeReplyRenderState?
     @State private var desktopAuthoritativeReplyProvenanceRenderState: DesktopAuthoritativeReplyProvenanceRenderState?
@@ -2400,6 +2417,7 @@ struct DesktopSessionShellView: View {
                 desktopOnboardingContinuePromptCard
                 desktopPlatformSetupReceiptSubmissionCard
                 desktopTermsAcceptCard
+                desktopPrimaryDeviceConfirmCard
 
                 sessionCard
                 .frame(maxWidth: .infinity, minHeight: 360, alignment: .topLeading)
@@ -2440,6 +2458,7 @@ struct DesktopSessionShellView: View {
                     desktopOnboardingContinueRuntimeOutcomeState = nil
                     desktopPlatformSetupReceiptRuntimeOutcomeState = nil
                     desktopTermsAcceptRuntimeOutcomeState = nil
+                    desktopPrimaryDeviceConfirmRuntimeOutcomeState = nil
                     desktopOnboardingContinueFieldInput = ""
                 }
                 desktopOnboardingEntryContext = context
@@ -2905,6 +2924,39 @@ struct DesktopSessionShellView: View {
         return nil
     }
 
+    private var desktopManagedPrimaryDeviceID: String? {
+        let trimmed = desktopCanonicalRuntimeBridge.managedDeviceID
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed.count <= 128, !trimmed.contains("\n"), !trimmed.contains("\r") else {
+            return nil
+        }
+
+        return trimmed
+    }
+
+    private var desktopPrimaryDeviceConfirmPromptState: DesktopPrimaryDeviceConfirmPromptState? {
+        if let desktopPrimaryDeviceConfirmRuntimeOutcomeState,
+           desktopPrimaryDeviceConfirmRuntimeOutcomeState.phase == .completed,
+           desktopPrimaryDeviceConfirmRuntimeOutcomeState.nextStep != "PRIMARY_DEVICE_CONFIRM" {
+            return nil
+        }
+
+        if let desktopTermsAcceptRuntimeOutcomeState,
+           desktopTermsAcceptRuntimeOutcomeState.phase == .completed,
+           desktopTermsAcceptRuntimeOutcomeState.nextStep == "PRIMARY_DEVICE_CONFIRM",
+           let onboardingSessionID = desktopTermsAcceptRuntimeOutcomeState.onboardingSessionID,
+           let deviceID = desktopManagedPrimaryDeviceID {
+            return DesktopPrimaryDeviceConfirmPromptState(
+                onboardingSessionID: onboardingSessionID,
+                nextStep: "PRIMARY_DEVICE_CONFIRM",
+                deviceID: deviceID,
+                proofOK: true
+            )
+        }
+
+        return nil
+    }
+
     private var desktopUnsupportedPlatformSetupReceiptKinds: [String] {
         guard let presentationState = desktopPlatformSetupReceiptPresentationState else {
             return []
@@ -3318,6 +3370,118 @@ struct DesktopSessionShellView: View {
                 }
             } label: {
                 Text("Onboarding Terms Acceptance")
+                    .font(.headline)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var desktopPrimaryDeviceConfirmCard: some View {
+        let promptState = desktopPrimaryDeviceConfirmPromptState
+        let displayedOnboardingSessionID = promptState?.onboardingSessionID
+            ?? desktopPrimaryDeviceConfirmRuntimeOutcomeState?.onboardingSessionID
+            ?? "unavailable"
+        let displayedNextStep = desktopPrimaryDeviceConfirmRuntimeOutcomeState?.nextStep
+            ?? promptState?.nextStep
+            ?? "not_provided"
+        let displayedDeviceID = promptState?.deviceID
+            ?? desktopPrimaryDeviceConfirmRuntimeOutcomeState?.deviceID
+            ?? desktopManagedPrimaryDeviceID
+            ?? "not_provided"
+        let displayedProofOK = desktopPrimaryDeviceConfirmRuntimeOutcomeState?.proofOK
+            ?? promptState?.proofOK
+            ?? true
+
+        if promptState != nil || desktopPrimaryDeviceConfirmRuntimeOutcomeState != nil {
+            GroupBox {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Bounded desktop primary-device confirmation submission only. This shell derives bounded prompt state when canonical onboarding posture has advanced to exact `PRIMARY_DEVICE_CONFIRM`, dispatches exact `PRIMARY_DEVICE_CONFIRM`, and preserves returned next-step visibility in read-only form only.")
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                    ForEach(
+                        [
+                            ("onboarding_session_id", displayedOnboardingSessionID),
+                            ("next_step", displayedNextStep),
+                            ("device_id", displayedDeviceID),
+                            ("proof_ok", displayedProofOK ? "true" : "false"),
+                        ],
+                        id: \.0
+                    ) { row in
+                        HStack(alignment: .top, spacing: 12) {
+                            Text(row.0)
+                                .font(.caption.monospaced())
+                                .foregroundStyle(.secondary)
+                                .frame(width: 170, alignment: .leading)
+
+                            Text(row.1)
+                                .font(.body.monospaced())
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                    }
+
+                    Text("This shell is dispatching canonical primary-device confirmation only. It does not add sender-verification logic, employee-photo capture, local onboarding authority, or later onboarding controls.")
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                    if let promptState {
+                        Button("Confirm this desktop as primary device") {
+                            Task {
+                                await confirmDesktopPrimaryDevice(promptState: promptState)
+                            }
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(desktopPrimaryDeviceConfirmRuntimeOutcomeState?.phase == .dispatching)
+                    }
+
+                    if let desktopPrimaryDeviceConfirmRuntimeOutcomeState {
+                        Divider()
+
+                        Text(desktopPrimaryDeviceConfirmRuntimeOutcomeState.title)
+                            .font(.headline)
+
+                        ForEach(
+                            [
+                                ("dispatch_phase", desktopPrimaryDeviceConfirmRuntimeOutcomeState.phase.rawValue),
+                                ("request_id", desktopPrimaryDeviceConfirmRuntimeOutcomeState.requestID),
+                                ("endpoint", desktopPrimaryDeviceConfirmRuntimeOutcomeState.endpoint),
+                                ("outcome", desktopPrimaryDeviceConfirmRuntimeOutcomeState.outcome ?? "not_available"),
+                                ("reason", desktopPrimaryDeviceConfirmRuntimeOutcomeState.reason ?? "not_available"),
+                                ("onboarding_status", desktopPrimaryDeviceConfirmRuntimeOutcomeState.onboardingStatus ?? "not_available"),
+                            ],
+                            id: \.0
+                        ) { row in
+                            HStack(alignment: .top, spacing: 12) {
+                                Text(row.0)
+                                    .font(.caption.monospaced())
+                                    .foregroundStyle(.secondary)
+                                    .frame(width: 170, alignment: .leading)
+
+                                Text(row.1)
+                                    .font(.body.monospaced())
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                        }
+
+                        Text(desktopPrimaryDeviceConfirmRuntimeOutcomeState.summary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+
+                        Text(desktopPrimaryDeviceConfirmRuntimeOutcomeState.detail)
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    } else {
+                        Text("Awaiting explicit user-triggered canonical primary-device confirmation. This surface does not expose sender verification, employee-photo capture, voice-enrollment controls, pairing completion, wake controls, or autonomous unlock.")
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+
+                    Text("Only exact `PRIMARY_DEVICE_CONFIRM` with the exact managed bridge `deviceID` and exact `proofOK=true` is in scope here. No sender-verification controls, no employee-photo controls, no voice-enrollment controls, no pairing-completion controls, no wake-enrollment controls, and no proven native macOS wake-listener integration claim are introduced by this surface.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            } label: {
+                Text("Onboarding Primary Device Confirmation")
                     .font(.headline)
             }
         }
@@ -5390,6 +5554,7 @@ struct DesktopSessionShellView: View {
         let activeEntryContextID = desktopOnboardingEntryContext?.id
         desktopPlatformSetupReceiptRuntimeOutcomeState = nil
         desktopTermsAcceptRuntimeOutcomeState = nil
+        desktopPrimaryDeviceConfirmRuntimeOutcomeState = nil
 
         do {
             let ingressContext = try desktopCanonicalRuntimeBridge.desktopOnboardingContinueMissingFieldRequestBuilder(
@@ -5431,6 +5596,7 @@ struct DesktopSessionShellView: View {
     ) async {
         let activeEntryContextID = desktopOnboardingEntryContext?.id
         desktopTermsAcceptRuntimeOutcomeState = nil
+        desktopPrimaryDeviceConfirmRuntimeOutcomeState = nil
 
         do {
             let ingressContext = try desktopCanonicalRuntimeBridge.desktopPlatformSetupReceiptRequestBuilder(
@@ -5468,6 +5634,7 @@ struct DesktopSessionShellView: View {
         promptState: DesktopTermsAcceptPromptState
     ) async {
         let activeEntryContextID = desktopOnboardingEntryContext?.id
+        desktopPrimaryDeviceConfirmRuntimeOutcomeState = nil
 
         do {
             let ingressContext = try desktopCanonicalRuntimeBridge.desktopTermsAcceptRequestBuilder(
@@ -5495,6 +5662,43 @@ struct DesktopSessionShellView: View {
                 endpoint: desktopCanonicalRuntimeBridge.onboardingContinueEndpoint,
                 requestID: "unavailable",
                 summary: "The canonical onboarding-continue bridge could not stage this bounded desktop terms acceptance request.",
+                detail: error.localizedDescription
+            )
+        }
+    }
+
+    @MainActor
+    private func confirmDesktopPrimaryDevice(
+        promptState: DesktopPrimaryDeviceConfirmPromptState
+    ) async {
+        let activeEntryContextID = desktopOnboardingEntryContext?.id
+
+        do {
+            let ingressContext = try desktopCanonicalRuntimeBridge.desktopPrimaryDeviceConfirmRequestBuilder(
+                promptState
+            )
+            desktopPrimaryDeviceConfirmRuntimeOutcomeState = .dispatching(
+                onboardingSessionID: ingressContext.onboardingSessionID,
+                deviceID: ingressContext.deviceID,
+                endpoint: ingressContext.endpoint,
+                requestID: ingressContext.requestID
+            )
+
+            let outcomeState = await desktopCanonicalRuntimeBridge.confirmDesktopPrimaryDevice(
+                ingressContext
+            )
+            guard desktopOnboardingEntryContext?.id == activeEntryContextID else {
+                return
+            }
+
+            desktopPrimaryDeviceConfirmRuntimeOutcomeState = outcomeState
+        } catch {
+            desktopPrimaryDeviceConfirmRuntimeOutcomeState = .failed(
+                onboardingSessionID: promptState.onboardingSessionID,
+                deviceID: promptState.deviceID,
+                endpoint: desktopCanonicalRuntimeBridge.onboardingContinueEndpoint,
+                requestID: "unavailable",
+                summary: "The canonical onboarding-continue bridge could not stage this bounded desktop primary-device confirmation request.",
                 detail: error.localizedDescription
             )
         }
