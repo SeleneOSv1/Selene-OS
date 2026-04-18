@@ -2423,6 +2423,20 @@ struct DesktopWakeEnrollCompleteCommitPromptState: Identifiable, Equatable {
     }
 }
 
+struct DesktopEmoPersonaLockPromptState: Identifiable, Equatable {
+    let onboardingSessionID: String
+    let nextStep: String
+    let voiceArtifactSyncReceiptRef: String?
+
+    var id: String {
+        [
+            onboardingSessionID,
+            nextStep,
+            voiceArtifactSyncReceiptRef ?? "voice_receipt_not_provided",
+        ].joined(separator: "::")
+    }
+}
+
 struct DesktopPlatformSetupReceiptDraft: Identifiable, Equatable {
     let onboardingSessionID: String
     let receiptKind: String
@@ -2467,6 +2481,7 @@ struct DesktopSessionShellView: View {
     @State private var desktopWakeEnrollStartDraftRuntimeOutcomeState: DesktopWakeEnrollStartDraftRuntimeOutcomeState?
     @State private var desktopWakeEnrollSampleCommitRuntimeOutcomeState: DesktopWakeEnrollSampleCommitRuntimeOutcomeState?
     @State private var desktopWakeEnrollCompleteCommitRuntimeOutcomeState: DesktopWakeEnrollCompleteCommitRuntimeOutcomeState?
+    @State private var desktopEmoPersonaLockRuntimeOutcomeState: DesktopEmoPersonaLockRuntimeOutcomeState?
     @State private var desktopOnboardingContinueFieldInput: String = ""
     @State private var desktopAuthoritativeReplyRenderState: DesktopAuthoritativeReplyRenderState?
     @State private var desktopAuthoritativeReplyProvenanceRenderState: DesktopAuthoritativeReplyProvenanceRenderState?
@@ -2493,6 +2508,7 @@ struct DesktopSessionShellView: View {
                 desktopWakeEnrollStartDraftCard
                 desktopWakeEnrollSampleCommitCard
                 desktopWakeEnrollCompleteCommitCard
+                desktopEmoPersonaLockCard
 
                 sessionCard
                 .frame(maxWidth: .infinity, minHeight: 360, alignment: .topLeading)
@@ -2538,6 +2554,7 @@ struct DesktopSessionShellView: View {
                     desktopWakeEnrollStartDraftRuntimeOutcomeState = nil
                     desktopWakeEnrollSampleCommitRuntimeOutcomeState = nil
                     desktopWakeEnrollCompleteCommitRuntimeOutcomeState = nil
+                    desktopEmoPersonaLockRuntimeOutcomeState = nil
                     desktopOnboardingContinueFieldInput = ""
                 }
                 desktopOnboardingEntryContext = context
@@ -3147,6 +3164,26 @@ struct DesktopSessionShellView: View {
                 nextStep: "WAKE_ENROLL",
                 deviceID: deviceID,
                 voiceArtifactSyncReceiptRef: desktopWakeEnrollSampleCommitRuntimeOutcomeState.voiceArtifactSyncReceiptRef
+            )
+        }
+
+        return nil
+    }
+
+    private var desktopEmoPersonaLockPromptState: DesktopEmoPersonaLockPromptState? {
+        if let desktopEmoPersonaLockRuntimeOutcomeState,
+           desktopEmoPersonaLockRuntimeOutcomeState.phase == .completed {
+            return nil
+        }
+
+        if let desktopWakeEnrollCompleteCommitRuntimeOutcomeState,
+           desktopWakeEnrollCompleteCommitRuntimeOutcomeState.phase == .completed,
+           desktopWakeEnrollCompleteCommitRuntimeOutcomeState.nextStep == "EMO_PERSONA_LOCK",
+           let onboardingSessionID = desktopWakeEnrollCompleteCommitRuntimeOutcomeState.onboardingSessionID {
+            return DesktopEmoPersonaLockPromptState(
+                onboardingSessionID: onboardingSessionID,
+                nextStep: "EMO_PERSONA_LOCK",
+                voiceArtifactSyncReceiptRef: desktopWakeEnrollCompleteCommitRuntimeOutcomeState.voiceArtifactSyncReceiptRef
             )
         }
 
@@ -4173,6 +4210,122 @@ struct DesktopSessionShellView: View {
                 }
             } label: {
                 Text("Onboarding Wake Enrollment Complete Commit")
+                    .font(.headline)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var desktopEmoPersonaLockCard: some View {
+        let promptState = desktopEmoPersonaLockPromptState
+        let wakeCompleteEmoContext = (
+            desktopWakeEnrollCompleteCommitRuntimeOutcomeState?.phase == .completed
+            && desktopWakeEnrollCompleteCommitRuntimeOutcomeState?.nextStep == "EMO_PERSONA_LOCK"
+        ) ? desktopWakeEnrollCompleteCommitRuntimeOutcomeState : nil
+        let displayedOnboardingSessionID = promptState?.onboardingSessionID
+            ?? desktopEmoPersonaLockRuntimeOutcomeState?.onboardingSessionID
+            ?? wakeCompleteEmoContext?.onboardingSessionID
+            ?? "unavailable"
+        let displayedNextStep = desktopEmoPersonaLockRuntimeOutcomeState?.nextStep
+            ?? promptState?.nextStep
+            ?? wakeCompleteEmoContext?.nextStep
+            ?? "not_provided"
+        let displayedVoiceArtifactSyncReceiptRef = desktopEmoPersonaLockRuntimeOutcomeState?.voiceArtifactSyncReceiptRef
+            ?? promptState?.voiceArtifactSyncReceiptRef
+            ?? wakeCompleteEmoContext?.voiceArtifactSyncReceiptRef
+            ?? "not_available"
+
+        if promptState != nil || wakeCompleteEmoContext != nil || desktopEmoPersonaLockRuntimeOutcomeState != nil {
+            GroupBox {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Bounded desktop emo/persona-lock submission only. This shell derives bounded prompt state from already-live wake-complete outcome only when canonical onboarding posture remains at exact `EMO_PERSONA_LOCK`, dispatches exact emo/persona lock, and keeps returned `ACCESS_PROVISION`, returned `voice_artifact_sync_receipt_ref`, and any returned `EMO_PERSONA_LOCK` visibility read-only only outside the exact emo/persona-lock control itself.")
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                    ForEach(
+                        [
+                            ("onboarding_session_id", displayedOnboardingSessionID),
+                            ("next_step", displayedNextStep),
+                            ("voice_artifact_sync_receipt_ref", displayedVoiceArtifactSyncReceiptRef),
+                        ],
+                        id: \.0
+                    ) { row in
+                        HStack(alignment: .top, spacing: 12) {
+                            Text(row.0)
+                                .font(.caption.monospaced())
+                                .foregroundStyle(.secondary)
+                                .frame(width: 170, alignment: .leading)
+
+                            Text(row.1)
+                                .font(.body.monospaced())
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                    }
+
+                    Text("This exact surface is dispatching canonical emo/persona lock only. No additional local device, proof, transcript, photo, or sender payload is attached to exact `EMO_PERSONA_LOCK` from this shell.")
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                    if let promptState {
+                        Button("Lock bounded emo/persona profile") {
+                            Task {
+                                await submitDesktopEmoPersonaLock(promptState: promptState)
+                            }
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(desktopEmoPersonaLockRuntimeOutcomeState?.phase == .dispatching)
+                    }
+
+                    if let desktopEmoPersonaLockRuntimeOutcomeState {
+                        Divider()
+
+                        Text(desktopEmoPersonaLockRuntimeOutcomeState.title)
+                            .font(.headline)
+
+                        ForEach(
+                            [
+                                ("dispatch_phase", desktopEmoPersonaLockRuntimeOutcomeState.phase.rawValue),
+                                ("request_id", desktopEmoPersonaLockRuntimeOutcomeState.requestID),
+                                ("endpoint", desktopEmoPersonaLockRuntimeOutcomeState.endpoint),
+                                ("outcome", desktopEmoPersonaLockRuntimeOutcomeState.outcome ?? "not_available"),
+                                ("reason", desktopEmoPersonaLockRuntimeOutcomeState.reason ?? "not_available"),
+                                ("onboarding_status", desktopEmoPersonaLockRuntimeOutcomeState.onboardingStatus ?? "not_available"),
+                            ],
+                            id: \.0
+                        ) { row in
+                            HStack(alignment: .top, spacing: 12) {
+                                Text(row.0)
+                                    .font(.caption.monospaced())
+                                    .foregroundStyle(.secondary)
+                                    .frame(width: 170, alignment: .leading)
+
+                                Text(row.1)
+                                    .font(.body.monospaced())
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                        }
+
+                        Text(desktopEmoPersonaLockRuntimeOutcomeState.summary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+
+                        Text(desktopEmoPersonaLockRuntimeOutcomeState.detail)
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    } else {
+                        Text(promptState != nil
+                            ? "Awaiting explicit user-triggered canonical emo/persona lock. After submission, any returned exact `EMO_PERSONA_LOCK` or exact `ACCESS_PROVISION` posture plus any returned exact `voice_artifact_sync_receipt_ref` remain read-only only in this shell."
+                            : "Read-only emo/persona posture only. A bounded emo/persona-lock submit is unavailable until lawful prompt state is present at exact `EMO_PERSONA_LOCK`.")
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+
+                    Text("Only exact `EMO_PERSONA_LOCK` is in scope here. No local device/proof/transcript/photo/sender payload is attached, no access-provision controls, no complete controls, no sender-verification controls, no employee-photo controls, no wake-defer controls, and no proven native macOS wake-listener integration claim are introduced by this surface.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            } label: {
+                Text("Onboarding Emo Persona Lock")
                     .font(.headline)
             }
         }
@@ -6249,6 +6402,7 @@ struct DesktopSessionShellView: View {
         desktopWakeEnrollStartDraftRuntimeOutcomeState = nil
         desktopWakeEnrollSampleCommitRuntimeOutcomeState = nil
         desktopWakeEnrollCompleteCommitRuntimeOutcomeState = nil
+        desktopEmoPersonaLockRuntimeOutcomeState = nil
 
         do {
             let ingressContext = try desktopCanonicalRuntimeBridge.desktopOnboardingContinueMissingFieldRequestBuilder(
@@ -6294,6 +6448,7 @@ struct DesktopSessionShellView: View {
         desktopWakeEnrollStartDraftRuntimeOutcomeState = nil
         desktopWakeEnrollSampleCommitRuntimeOutcomeState = nil
         desktopWakeEnrollCompleteCommitRuntimeOutcomeState = nil
+        desktopEmoPersonaLockRuntimeOutcomeState = nil
 
         do {
             let ingressContext = try desktopCanonicalRuntimeBridge.desktopPlatformSetupReceiptRequestBuilder(
@@ -6335,6 +6490,7 @@ struct DesktopSessionShellView: View {
         desktopWakeEnrollStartDraftRuntimeOutcomeState = nil
         desktopWakeEnrollSampleCommitRuntimeOutcomeState = nil
         desktopWakeEnrollCompleteCommitRuntimeOutcomeState = nil
+        desktopEmoPersonaLockRuntimeOutcomeState = nil
 
         do {
             let ingressContext = try desktopCanonicalRuntimeBridge.desktopTermsAcceptRequestBuilder(
@@ -6375,6 +6531,7 @@ struct DesktopSessionShellView: View {
         desktopWakeEnrollStartDraftRuntimeOutcomeState = nil
         desktopWakeEnrollSampleCommitRuntimeOutcomeState = nil
         desktopWakeEnrollCompleteCommitRuntimeOutcomeState = nil
+        desktopEmoPersonaLockRuntimeOutcomeState = nil
 
         do {
             let ingressContext = try desktopCanonicalRuntimeBridge.desktopPrimaryDeviceConfirmRequestBuilder(
@@ -6415,6 +6572,7 @@ struct DesktopSessionShellView: View {
         desktopWakeEnrollStartDraftRuntimeOutcomeState = nil
         desktopWakeEnrollSampleCommitRuntimeOutcomeState = nil
         desktopWakeEnrollCompleteCommitRuntimeOutcomeState = nil
+        desktopEmoPersonaLockRuntimeOutcomeState = nil
 
         do {
             let ingressContext = try desktopCanonicalRuntimeBridge.desktopVoiceEnrollRequestBuilder(
@@ -6456,6 +6614,7 @@ struct DesktopSessionShellView: View {
         let activeEntryContextID = desktopOnboardingEntryContext?.id
         desktopWakeEnrollSampleCommitRuntimeOutcomeState = nil
         desktopWakeEnrollCompleteCommitRuntimeOutcomeState = nil
+        desktopEmoPersonaLockRuntimeOutcomeState = nil
 
         do {
             let ingressContext = try desktopCanonicalRuntimeBridge.desktopWakeEnrollStartDraftRequestBuilder(
@@ -6494,6 +6653,7 @@ struct DesktopSessionShellView: View {
     ) async {
         let activeEntryContextID = desktopOnboardingEntryContext?.id
         desktopWakeEnrollCompleteCommitRuntimeOutcomeState = nil
+        desktopEmoPersonaLockRuntimeOutcomeState = nil
 
         do {
             let ingressContext = try desktopCanonicalRuntimeBridge.desktopWakeEnrollSampleCommitRequestBuilder(
@@ -6531,6 +6691,7 @@ struct DesktopSessionShellView: View {
         promptState: DesktopWakeEnrollCompleteCommitPromptState
     ) async {
         let activeEntryContextID = desktopOnboardingEntryContext?.id
+        desktopEmoPersonaLockRuntimeOutcomeState = nil
 
         do {
             let ingressContext = try desktopCanonicalRuntimeBridge.desktopWakeEnrollCompleteCommitRequestBuilder(
@@ -6558,6 +6719,41 @@ struct DesktopSessionShellView: View {
                 endpoint: desktopCanonicalRuntimeBridge.onboardingContinueEndpoint,
                 requestID: "unavailable",
                 summary: "The canonical onboarding-continue bridge could not stage this bounded desktop wake-enroll complete-commit request.",
+                detail: error.localizedDescription
+            )
+        }
+    }
+
+    @MainActor
+    private func submitDesktopEmoPersonaLock(
+        promptState: DesktopEmoPersonaLockPromptState
+    ) async {
+        let activeEntryContextID = desktopOnboardingEntryContext?.id
+
+        do {
+            let ingressContext = try desktopCanonicalRuntimeBridge.desktopEmoPersonaLockRequestBuilder(
+                promptState
+            )
+            desktopEmoPersonaLockRuntimeOutcomeState = .dispatching(
+                onboardingSessionID: ingressContext.onboardingSessionID,
+                endpoint: ingressContext.endpoint,
+                requestID: ingressContext.requestID
+            )
+
+            let outcomeState = await desktopCanonicalRuntimeBridge.submitDesktopEmoPersonaLock(
+                ingressContext
+            )
+            guard desktopOnboardingEntryContext?.id == activeEntryContextID else {
+                return
+            }
+
+            desktopEmoPersonaLockRuntimeOutcomeState = outcomeState
+        } catch {
+            desktopEmoPersonaLockRuntimeOutcomeState = .failed(
+                onboardingSessionID: promptState.onboardingSessionID,
+                endpoint: desktopCanonicalRuntimeBridge.onboardingContinueEndpoint,
+                requestID: "unavailable",
+                summary: "The canonical onboarding-continue bridge could not stage this bounded desktop emo/persona-lock request.",
                 detail: error.localizedDescription
             )
         }

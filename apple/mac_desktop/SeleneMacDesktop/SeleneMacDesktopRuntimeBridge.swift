@@ -1126,6 +1126,114 @@ struct DesktopWakeEnrollCompleteCommitRuntimeOutcomeState: Identifiable, Equatab
     }
 }
 
+struct DesktopEmoPersonaLockRuntimeOutcomeState: Identifiable, Equatable {
+    enum Phase: String, Equatable {
+        case dispatching = "dispatching"
+        case completed = "completed"
+        case failed = "failed"
+    }
+
+    let id: String
+    let phase: Phase
+    let title: String
+    let summary: String
+    let detail: String
+    let endpoint: String
+    let requestID: String
+    let outcome: String?
+    let reason: String?
+    let onboardingSessionID: String?
+    let nextStep: String?
+    let remainingPlatformReceiptKinds: [String]
+    let onboardingStatus: String?
+    let voiceArtifactSyncReceiptRef: String?
+
+    static func dispatching(
+        onboardingSessionID: String,
+        endpoint: String,
+        requestID: String
+    ) -> DesktopEmoPersonaLockRuntimeOutcomeState {
+        DesktopEmoPersonaLockRuntimeOutcomeState(
+            id: requestID,
+            phase: .dispatching,
+            title: "Dispatching desktop emo/persona lock",
+            summary: "The bounded desktop emo/persona-lock request is now being handed into canonical `/v1/onboarding/continue`.",
+            detail: "Only exact emo/persona lock is in scope here. This exact surface remains explicitly non-authoritative and does not introduce sender verification, employee photo capture, wake defer, access provisioning, pairing completion, wake-listener behavior, or autonomous unlock.",
+            endpoint: endpoint,
+            requestID: requestID,
+            outcome: nil,
+            reason: nil,
+            onboardingSessionID: onboardingSessionID,
+            nextStep: "EMO_PERSONA_LOCK",
+            remainingPlatformReceiptKinds: [],
+            onboardingStatus: nil,
+            voiceArtifactSyncReceiptRef: nil
+        )
+    }
+
+    static func completed(
+        requestID: String,
+        endpoint: String,
+        response: DesktopCanonicalRuntimeBridge.OnboardingContinueAdapterResponsePayload,
+        fallbackOnboardingSessionID: String
+    ) -> DesktopEmoPersonaLockRuntimeOutcomeState {
+        let boundedNextStep = boundedOnboardingContinueField(response.nextStep)
+        let advancedBeyondEmoPersonaLock = boundedNextStep != nil && boundedNextStep != "EMO_PERSONA_LOCK"
+        let returnedVoiceArtifactSyncReceiptRef = boundedOnboardingContinueField(response.voiceArtifactSyncReceiptRef)
+
+        return DesktopEmoPersonaLockRuntimeOutcomeState(
+            id: requestID,
+            phase: .completed,
+            title: "Desktop emo/persona lock completed",
+            summary: advancedBeyondEmoPersonaLock
+                ? "Canonical `/v1/onboarding/continue` advanced beyond `EMO_PERSONA_LOCK`; later onboarding actions remain read-only and out of scope in this shell."
+                : "Canonical `/v1/onboarding/continue` accepted the bounded desktop emo/persona lock and returned updated onboarding posture.",
+            detail: boundedNextStep == "ACCESS_PROVISION"
+                ? "Read-only next-step visibility only. This exact emo/persona-lock surface preserves returned exact `ACCESS_PROVISION` plus any returned exact `voice_artifact_sync_receipt_ref`; access-provision submit remains separately gated and non-authoritative."
+                : boundedNextStep == "EMO_PERSONA_LOCK"
+                    ? "Read-only next-step visibility only. This exact emo/persona-lock surface preserves returned exact `EMO_PERSONA_LOCK` plus exact `voice_artifact_sync_receipt_ref`; repeated emo/persona lock submit does not widen here."
+                    : advancedBeyondEmoPersonaLock
+                        ? "Read-only next-step visibility only. This shell preserves the advanced step and any returned voice-artifact sync receipt without adding access provisioning, completion, sender verification, employee photo capture, wake defer, pairing completion, wake-listener behavior, or autonomous unlock."
+                        : "Canonical emo/persona lock only. This shell preserves returned onboarding posture without local emo/persona authority or later onboarding controls.",
+            endpoint: endpoint,
+            requestID: requestID,
+            outcome: boundedOnboardingContinueField(response.outcome) ?? "ONBOARDING_CONTINUED",
+            reason: boundedOnboardingContinueField(response.reason),
+            onboardingSessionID: boundedOnboardingContinueField(response.onboardingSessionID) ?? fallbackOnboardingSessionID,
+            nextStep: boundedNextStep,
+            remainingPlatformReceiptKinds: boundedOnboardingContinueList(response.remainingPlatformReceiptKinds),
+            onboardingStatus: boundedOnboardingContinueField(response.onboardingStatus),
+            voiceArtifactSyncReceiptRef: returnedVoiceArtifactSyncReceiptRef
+        )
+    }
+
+    static func failed(
+        onboardingSessionID: String,
+        endpoint: String,
+        requestID: String,
+        summary: String,
+        detail: String,
+        reason: String? = nil
+    ) -> DesktopEmoPersonaLockRuntimeOutcomeState {
+        DesktopEmoPersonaLockRuntimeOutcomeState(
+            id: requestID,
+            phase: .failed,
+            title: "Desktop emo/persona lock failed",
+            summary: summary,
+            detail: detail,
+            endpoint: endpoint,
+            requestID: requestID,
+            outcome: nil,
+            reason: reason,
+            onboardingSessionID: onboardingSessionID,
+            nextStep: nil,
+            remainingPlatformReceiptKinds: [],
+            onboardingStatus: nil,
+            voiceArtifactSyncReceiptRef: nil
+        )
+    }
+}
+
 private func boundedAuthoritativeResponseText(_ rawValue: String?) -> String? {
     guard let rawValue else {
         return nil
@@ -1242,6 +1350,7 @@ private func boundedDesktopVoiceEnrollTranscriptPreview(_ rawValue: String?) -> 
 
 let desktopCanonicalTermsVersionID = "terms_v1"
 let desktopWakeEnrollCompleteCommitAction = ["WAKE", "ENROLL", "COMPLETE", "COMMIT"].joined(separator: "_")
+let desktopEmoPersonaLockAction = ["EMO", "PERSONA", "LOCK"].joined(separator: "_")
 
 private let supportedDesktopPlatformSetupReceiptKinds: Set<String> = [
     "install_launch_handshake",
@@ -1293,6 +1402,7 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
         case invalidWakeEnrollStartDraftRequest(String)
         case invalidWakeEnrollSampleCommitRequest(String)
         case invalidWakeEnrollCompleteCommitRequest(String)
+        case invalidEmoPersonaLockRequest(String)
         case invalidAdapterBind(String)
         case adapterStartFailed(String)
         case adapterUnavailable(String)
@@ -1311,6 +1421,7 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
                  .invalidWakeEnrollStartDraftRequest(let detail),
                  .invalidWakeEnrollSampleCommitRequest(let detail),
                  .invalidWakeEnrollCompleteCommitRequest(let detail),
+                 .invalidEmoPersonaLockRequest(let detail),
                  .invalidAdapterBind(let detail),
                  .adapterStartFailed(let detail),
                  .adapterUnavailable(let detail),
@@ -1398,6 +1509,13 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
     struct DesktopWakeEnrollCompleteCommitIngressContext {
         let onboardingSessionID: String
         let deviceID: String
+        let requestID: String
+        let endpoint: String
+        let urlRequest: URLRequest
+    }
+
+    struct DesktopEmoPersonaLockIngressContext {
+        let onboardingSessionID: String
         let requestID: String
         let endpoint: String
         let urlRequest: URLRequest
@@ -1747,6 +1865,23 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
                 endpoint: onboardingContinueEndpoint,
                 requestID: "unavailable",
                 summary: "The canonical onboarding-continue bridge could not stage this bounded desktop wake-enroll complete-commit request.",
+                detail: error.localizedDescription
+            )
+        }
+    }
+
+    func submitDesktopEmoPersonaLock(
+        _ promptState: DesktopEmoPersonaLockPromptState
+    ) async -> DesktopEmoPersonaLockRuntimeOutcomeState {
+        do {
+            let ingressContext = try desktopEmoPersonaLockRequestBuilder(promptState)
+            return await submitDesktopEmoPersonaLock(ingressContext)
+        } catch {
+            return .failed(
+                onboardingSessionID: promptState.onboardingSessionID,
+                endpoint: onboardingContinueEndpoint,
+                requestID: "unavailable",
+                summary: "The canonical onboarding-continue bridge could not stage this bounded desktop emo/persona-lock request.",
                 detail: error.localizedDescription
             )
         }
@@ -2208,6 +2343,48 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
                 endpoint: ingressContext.endpoint,
                 requestID: ingressContext.requestID,
                 summary: "The canonical onboarding-continue bridge could not deliver this bounded desktop wake-enroll complete-commit request.",
+                detail: error.localizedDescription
+            )
+        }
+    }
+
+    func submitDesktopEmoPersonaLock(
+        _ ingressContext: DesktopEmoPersonaLockIngressContext
+    ) async -> DesktopEmoPersonaLockRuntimeOutcomeState {
+        do {
+            try await ensureAdapterAvailable()
+
+            let (data, response) = try await urlSession.data(for: ingressContext.urlRequest)
+            let decoder = JSONDecoder()
+            decoder.keyDecodingStrategy = .convertFromSnakeCase
+            let httpResponse = response as? HTTPURLResponse
+            let statusCode = httpResponse?.statusCode ?? 0
+            let payload = try decoder.decode(OnboardingContinueAdapterResponsePayload.self, from: data)
+
+            if statusCode == 200,
+               payload.status.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "ok" {
+                return .completed(
+                    requestID: ingressContext.requestID,
+                    endpoint: ingressContext.endpoint,
+                    response: payload,
+                    fallbackOnboardingSessionID: ingressContext.onboardingSessionID
+                )
+            }
+
+            return .failed(
+                onboardingSessionID: ingressContext.onboardingSessionID,
+                endpoint: ingressContext.endpoint,
+                requestID: ingressContext.requestID,
+                summary: "The canonical onboarding-continue bridge rejected or failed this bounded desktop emo/persona-lock request.",
+                detail: "Canonical `/v1/onboarding/continue` failed closed with outcome `\(payload.outcome)` and reason `\(boundedOnboardingContinueField(payload.reason) ?? "not_provided")`. This shell remains limited to exact emo/persona lock, preserves returned `ACCESS_PROVISION`, `voice_artifact_sync_receipt_ref`, and any returned `EMO_PERSONA_LOCK` visibility in read-only form only, and does not bypass later onboarding law.",
+                reason: boundedOnboardingContinueField(payload.reason)
+            )
+        } catch {
+            return .failed(
+                onboardingSessionID: ingressContext.onboardingSessionID,
+                endpoint: ingressContext.endpoint,
+                requestID: ingressContext.requestID,
+                summary: "The canonical onboarding-continue bridge could not deliver this bounded desktop emo/persona-lock request.",
                 detail: error.localizedDescription
             )
         }
@@ -3004,6 +3181,73 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
         return DesktopWakeEnrollCompleteCommitIngressContext(
             onboardingSessionID: onboardingSessionID,
             deviceID: managedDeviceID,
+            requestID: requestID,
+            endpoint: endpointURL.absoluteString,
+            urlRequest: urlRequest
+        )
+    }
+
+    func desktopEmoPersonaLockRequestBuilder(
+        _ promptState: DesktopEmoPersonaLockPromptState
+    ) throws -> DesktopEmoPersonaLockIngressContext {
+        guard let onboardingSessionID = boundedOnboardingContinueField(promptState.onboardingSessionID) else {
+            throw BridgeError.invalidEmoPersonaLockRequest(
+                "the bounded desktop emo/persona-lock prompt state did not preserve a lawful onboarding_session_id"
+            )
+        }
+
+        guard let nextStep = boundedOnboardingContinueField(promptState.nextStep),
+              nextStep == "EMO_PERSONA_LOCK" else {
+            throw BridgeError.invalidEmoPersonaLockRequest(
+                "bounded desktop emo/persona lock is only lawful when canonical onboarding posture remains at exact `EMO_PERSONA_LOCK`"
+            )
+        }
+
+        let requestID = "desktop_emo_persona_lock_request_\(UUID().uuidString.replacingOccurrences(of: "-", with: ""))"
+        let idempotencyKey = "desktop_emo_persona_lock_\(onboardingSessionID)"
+        let nonce = UUID().uuidString.replacingOccurrences(of: "-", with: "")
+        let timestampMS = Self.systemTimeNowMS()
+        let correlationID = Swift.max(DispatchTime.now().uptimeNanoseconds, 1)
+
+        let payload = OnboardingContinueAdapterRequestPayload(
+            correlationID: correlationID,
+            onboardingSessionID: onboardingSessionID,
+            idempotencyKey: idempotencyKey,
+            tenantID: tenantID,
+            action: desktopEmoPersonaLockAction,
+            fieldValue: nil,
+            receiptKind: nil,
+            receiptRef: nil,
+            signer: nil,
+            payloadHash: nil,
+            termsVersionID: nil,
+            accepted: nil,
+            deviceID: nil,
+            proofOK: nil,
+            sampleSeed: nil,
+            photoBlobRef: nil,
+            senderDecision: nil
+        )
+
+        let encoder = JSONEncoder()
+        encoder.keyEncodingStrategy = .convertToSnakeCase
+        let body = try encoder.encode(payload)
+        let endpointURL = adapterBaseURL.appendingPathComponent("v1/onboarding/continue")
+        var urlRequest = URLRequest(url: endpointURL)
+        urlRequest.httpMethod = "POST"
+        urlRequest.httpBody = body
+        urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        urlRequest.setValue(requestID, forHTTPHeaderField: "x-request-id")
+        urlRequest.setValue(idempotencyKey, forHTTPHeaderField: "idempotency-key")
+        urlRequest.setValue(String(timestampMS), forHTTPHeaderField: "x-selene-timestamp-ms")
+        urlRequest.setValue(nonce, forHTTPHeaderField: "x-selene-nonce")
+        urlRequest.setValue(
+            Self.bearerToken(subject: actorUserID, device: deviceID),
+            forHTTPHeaderField: "Authorization"
+        )
+
+        return DesktopEmoPersonaLockIngressContext(
+            onboardingSessionID: onboardingSessionID,
             requestID: requestID,
             endpoint: endpointURL.absoluteString,
             urlRequest: urlRequest
