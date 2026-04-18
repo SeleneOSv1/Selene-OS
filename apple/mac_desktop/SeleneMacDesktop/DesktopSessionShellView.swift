@@ -2451,6 +2451,22 @@ struct DesktopAccessProvisionCommitPromptState: Identifiable, Equatable {
     }
 }
 
+struct DesktopCompleteCommitPromptState: Identifiable, Equatable {
+    let onboardingSessionID: String
+    let nextStep: String
+    let voiceArtifactSyncReceiptRef: String?
+    let accessEngineInstanceID: String?
+
+    var id: String {
+        [
+            onboardingSessionID,
+            nextStep,
+            voiceArtifactSyncReceiptRef ?? "voice_receipt_not_provided",
+            accessEngineInstanceID ?? "access_engine_not_provided",
+        ].joined(separator: "::")
+    }
+}
+
 struct DesktopPlatformSetupReceiptDraft: Identifiable, Equatable {
     let onboardingSessionID: String
     let receiptKind: String
@@ -2497,6 +2513,7 @@ struct DesktopSessionShellView: View {
     @State private var desktopWakeEnrollCompleteCommitRuntimeOutcomeState: DesktopWakeEnrollCompleteCommitRuntimeOutcomeState?
     @State private var desktopEmoPersonaLockRuntimeOutcomeState: DesktopEmoPersonaLockRuntimeOutcomeState?
     @State private var desktopAccessProvisionCommitRuntimeOutcomeState: DesktopAccessProvisionCommitRuntimeOutcomeState?
+    @State private var desktopCompleteCommitRuntimeOutcomeState: DesktopCompleteCommitRuntimeOutcomeState?
     @State private var desktopOnboardingContinueFieldInput: String = ""
     @State private var desktopAuthoritativeReplyRenderState: DesktopAuthoritativeReplyRenderState?
     @State private var desktopAuthoritativeReplyProvenanceRenderState: DesktopAuthoritativeReplyProvenanceRenderState?
@@ -2525,6 +2542,7 @@ struct DesktopSessionShellView: View {
                 desktopWakeEnrollCompleteCommitCard
                 desktopEmoPersonaLockCard
                 desktopAccessProvisionCommitCard
+                desktopCompleteCommitCard
 
                 sessionCard
                 .frame(maxWidth: .infinity, minHeight: 360, alignment: .topLeading)
@@ -2572,6 +2590,7 @@ struct DesktopSessionShellView: View {
                     desktopWakeEnrollCompleteCommitRuntimeOutcomeState = nil
                     desktopEmoPersonaLockRuntimeOutcomeState = nil
                     desktopAccessProvisionCommitRuntimeOutcomeState = nil
+                    desktopCompleteCommitRuntimeOutcomeState = nil
                     desktopOnboardingContinueFieldInput = ""
                 }
                 desktopOnboardingEntryContext = context
@@ -3221,6 +3240,27 @@ struct DesktopSessionShellView: View {
                 onboardingSessionID: onboardingSessionID,
                 nextStep: "ACCESS_PROVISION",
                 voiceArtifactSyncReceiptRef: desktopEmoPersonaLockRuntimeOutcomeState.voiceArtifactSyncReceiptRef
+            )
+        }
+
+        return nil
+    }
+
+    private var desktopCompleteCommitPromptState: DesktopCompleteCommitPromptState? {
+        if let desktopCompleteCommitRuntimeOutcomeState,
+           desktopCompleteCommitRuntimeOutcomeState.phase == .completed {
+            return nil
+        }
+
+        if let desktopAccessProvisionCommitRuntimeOutcomeState,
+           desktopAccessProvisionCommitRuntimeOutcomeState.phase == .completed,
+           desktopAccessProvisionCommitRuntimeOutcomeState.nextStep == "COMPLETE",
+           let onboardingSessionID = desktopAccessProvisionCommitRuntimeOutcomeState.onboardingSessionID {
+            return DesktopCompleteCommitPromptState(
+                onboardingSessionID: onboardingSessionID,
+                nextStep: "COMPLETE",
+                voiceArtifactSyncReceiptRef: desktopAccessProvisionCommitRuntimeOutcomeState.voiceArtifactSyncReceiptRef,
+                accessEngineInstanceID: desktopAccessProvisionCommitRuntimeOutcomeState.accessEngineInstanceID
             )
         }
 
@@ -4482,6 +4522,128 @@ struct DesktopSessionShellView: View {
                     }
                 } label: {
                     Text("Onboarding Access Provision")
+                        .font(.headline)
+                }
+            }
+        }
+    }
+
+    private var desktopCompleteCommitCard: some View {
+        let promptState = desktopCompleteCommitPromptState
+        let accessCompleteContext = (
+            desktopAccessProvisionCommitRuntimeOutcomeState?.phase == .completed
+            && desktopAccessProvisionCommitRuntimeOutcomeState?.nextStep == "COMPLETE"
+        ) ? desktopAccessProvisionCommitRuntimeOutcomeState : nil
+        let displayedOnboardingSessionID = promptState?.onboardingSessionID
+            ?? desktopCompleteCommitRuntimeOutcomeState?.onboardingSessionID
+            ?? accessCompleteContext?.onboardingSessionID
+            ?? "unavailable"
+        let displayedNextStep = desktopCompleteCommitRuntimeOutcomeState?.nextStep
+            ?? promptState?.nextStep
+            ?? accessCompleteContext?.nextStep
+            ?? "not_provided"
+        let displayedVoiceArtifactSyncReceiptRef = desktopCompleteCommitRuntimeOutcomeState?.voiceArtifactSyncReceiptRef
+            ?? promptState?.voiceArtifactSyncReceiptRef
+            ?? accessCompleteContext?.voiceArtifactSyncReceiptRef
+            ?? "not_available"
+        let displayedAccessEngineInstanceID = desktopCompleteCommitRuntimeOutcomeState?.accessEngineInstanceID
+            ?? promptState?.accessEngineInstanceID
+            ?? accessCompleteContext?.accessEngineInstanceID
+            ?? "not_available"
+
+        return Group {
+            if promptState != nil || accessCompleteContext != nil || desktopCompleteCommitRuntimeOutcomeState != nil {
+                GroupBox {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("Bounded desktop complete submission only. This shell derives bounded prompt state from already-live access-provision outcome only when canonical onboarding posture remains at exact `COMPLETE`, dispatches exact complete commit, and keeps returned `READY`, returned `onboarding_status`, returned `voice_artifact_sync_receipt_ref`, returned `access_engine_instance_id`, and any returned `COMPLETE` visibility read-only only outside the exact complete control itself.")
+                            .frame(maxWidth: .infinity, alignment: .leading)
+
+                        ForEach(
+                            [
+                                ("onboarding_session_id", displayedOnboardingSessionID),
+                                ("next_step", displayedNextStep),
+                                ("voice_artifact_sync_receipt_ref", displayedVoiceArtifactSyncReceiptRef),
+                                ("access_engine_instance_id", displayedAccessEngineInstanceID),
+                            ],
+                            id: \.0
+                        ) { row in
+                            HStack(alignment: .top, spacing: 12) {
+                                Text(row.0)
+                                    .font(.caption.monospaced())
+                                    .foregroundStyle(.secondary)
+                                    .frame(width: 170, alignment: .leading)
+
+                                Text(row.1)
+                                    .font(.body.monospaced())
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                        }
+
+                        Text("This exact surface is dispatching canonical complete commit only. No additional local device, proof, transcript, photo, sender, or access payload is attached to exact `COMPLETE_COMMIT` from this shell.")
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+
+                        if let promptState {
+                            Button("Commit bounded onboarding completion") {
+                                Task {
+                                    await submitDesktopCompleteCommit(promptState: promptState)
+                                }
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .disabled(desktopCompleteCommitRuntimeOutcomeState?.phase == .dispatching)
+                        }
+
+                        if let desktopCompleteCommitRuntimeOutcomeState {
+                            Divider()
+
+                            Text(desktopCompleteCommitRuntimeOutcomeState.title)
+                                .font(.headline)
+
+                            ForEach(
+                                [
+                                    ("dispatch_phase", desktopCompleteCommitRuntimeOutcomeState.phase.rawValue),
+                                    ("request_id", desktopCompleteCommitRuntimeOutcomeState.requestID),
+                                    ("endpoint", desktopCompleteCommitRuntimeOutcomeState.endpoint),
+                                    ("outcome", desktopCompleteCommitRuntimeOutcomeState.outcome ?? "not_available"),
+                                    ("reason", desktopCompleteCommitRuntimeOutcomeState.reason ?? "not_available"),
+                                    ("onboarding_status", desktopCompleteCommitRuntimeOutcomeState.onboardingStatus ?? "not_available"),
+                                ],
+                                id: \.0
+                            ) { row in
+                                HStack(alignment: .top, spacing: 12) {
+                                    Text(row.0)
+                                        .font(.caption.monospaced())
+                                        .foregroundStyle(.secondary)
+                                        .frame(width: 170, alignment: .leading)
+
+                                    Text(row.1)
+                                        .font(.body.monospaced())
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                }
+                            }
+
+                            Text(desktopCompleteCommitRuntimeOutcomeState.summary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+
+                            Text(desktopCompleteCommitRuntimeOutcomeState.detail)
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        } else {
+                            Text(promptState != nil
+                                ? "Awaiting explicit user-triggered canonical complete commit. After submission, any returned exact `COMPLETE` or exact `READY` posture plus any returned exact `onboarding_status`, exact `voice_artifact_sync_receipt_ref`, and exact `access_engine_instance_id` remain read-only only in this shell."
+                                : "Read-only completion posture only. A bounded complete submit is unavailable until lawful prompt state is present at exact `COMPLETE`.")
+                                .foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+
+                        Text("Only exact `COMPLETE_COMMIT` is in scope here. No local device/proof/transcript/photo/sender/access payload is attached, no pairing-completion controls, no sender-verification controls, no employee-photo controls, no wake-defer controls, and no proven native macOS wake-listener integration claim are introduced by this surface.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                } label: {
+                    Text("Onboarding Completion")
                         .font(.headline)
                 }
             }
@@ -6561,6 +6723,7 @@ struct DesktopSessionShellView: View {
         desktopWakeEnrollCompleteCommitRuntimeOutcomeState = nil
         desktopEmoPersonaLockRuntimeOutcomeState = nil
         desktopAccessProvisionCommitRuntimeOutcomeState = nil
+        desktopCompleteCommitRuntimeOutcomeState = nil
 
         do {
             let ingressContext = try desktopCanonicalRuntimeBridge.desktopOnboardingContinueMissingFieldRequestBuilder(
@@ -6608,6 +6771,7 @@ struct DesktopSessionShellView: View {
         desktopWakeEnrollCompleteCommitRuntimeOutcomeState = nil
         desktopEmoPersonaLockRuntimeOutcomeState = nil
         desktopAccessProvisionCommitRuntimeOutcomeState = nil
+        desktopCompleteCommitRuntimeOutcomeState = nil
 
         do {
             let ingressContext = try desktopCanonicalRuntimeBridge.desktopPlatformSetupReceiptRequestBuilder(
@@ -6651,6 +6815,7 @@ struct DesktopSessionShellView: View {
         desktopWakeEnrollCompleteCommitRuntimeOutcomeState = nil
         desktopEmoPersonaLockRuntimeOutcomeState = nil
         desktopAccessProvisionCommitRuntimeOutcomeState = nil
+        desktopCompleteCommitRuntimeOutcomeState = nil
 
         do {
             let ingressContext = try desktopCanonicalRuntimeBridge.desktopTermsAcceptRequestBuilder(
@@ -6693,6 +6858,7 @@ struct DesktopSessionShellView: View {
         desktopWakeEnrollCompleteCommitRuntimeOutcomeState = nil
         desktopEmoPersonaLockRuntimeOutcomeState = nil
         desktopAccessProvisionCommitRuntimeOutcomeState = nil
+        desktopCompleteCommitRuntimeOutcomeState = nil
 
         do {
             let ingressContext = try desktopCanonicalRuntimeBridge.desktopPrimaryDeviceConfirmRequestBuilder(
@@ -6735,6 +6901,7 @@ struct DesktopSessionShellView: View {
         desktopWakeEnrollCompleteCommitRuntimeOutcomeState = nil
         desktopEmoPersonaLockRuntimeOutcomeState = nil
         desktopAccessProvisionCommitRuntimeOutcomeState = nil
+        desktopCompleteCommitRuntimeOutcomeState = nil
 
         do {
             let ingressContext = try desktopCanonicalRuntimeBridge.desktopVoiceEnrollRequestBuilder(
@@ -6778,6 +6945,7 @@ struct DesktopSessionShellView: View {
         desktopWakeEnrollCompleteCommitRuntimeOutcomeState = nil
         desktopEmoPersonaLockRuntimeOutcomeState = nil
         desktopAccessProvisionCommitRuntimeOutcomeState = nil
+        desktopCompleteCommitRuntimeOutcomeState = nil
 
         do {
             let ingressContext = try desktopCanonicalRuntimeBridge.desktopWakeEnrollStartDraftRequestBuilder(
@@ -6818,6 +6986,7 @@ struct DesktopSessionShellView: View {
         desktopWakeEnrollCompleteCommitRuntimeOutcomeState = nil
         desktopEmoPersonaLockRuntimeOutcomeState = nil
         desktopAccessProvisionCommitRuntimeOutcomeState = nil
+        desktopCompleteCommitRuntimeOutcomeState = nil
 
         do {
             let ingressContext = try desktopCanonicalRuntimeBridge.desktopWakeEnrollSampleCommitRequestBuilder(
@@ -6857,6 +7026,7 @@ struct DesktopSessionShellView: View {
         let activeEntryContextID = desktopOnboardingEntryContext?.id
         desktopEmoPersonaLockRuntimeOutcomeState = nil
         desktopAccessProvisionCommitRuntimeOutcomeState = nil
+        desktopCompleteCommitRuntimeOutcomeState = nil
 
         do {
             let ingressContext = try desktopCanonicalRuntimeBridge.desktopWakeEnrollCompleteCommitRequestBuilder(
@@ -6895,6 +7065,7 @@ struct DesktopSessionShellView: View {
     ) async {
         let activeEntryContextID = desktopOnboardingEntryContext?.id
         desktopAccessProvisionCommitRuntimeOutcomeState = nil
+        desktopCompleteCommitRuntimeOutcomeState = nil
 
         do {
             let ingressContext = try desktopCanonicalRuntimeBridge.desktopEmoPersonaLockRequestBuilder(
@@ -6930,6 +7101,7 @@ struct DesktopSessionShellView: View {
         promptState: DesktopAccessProvisionCommitPromptState
     ) async {
         let activeEntryContextID = desktopOnboardingEntryContext?.id
+        desktopCompleteCommitRuntimeOutcomeState = nil
 
         do {
             let ingressContext = try desktopCanonicalRuntimeBridge.desktopAccessProvisionCommitRequestBuilder(
@@ -6955,6 +7127,41 @@ struct DesktopSessionShellView: View {
                 endpoint: desktopCanonicalRuntimeBridge.onboardingContinueEndpoint,
                 requestID: "unavailable",
                 summary: "The canonical onboarding-continue bridge could not stage this bounded desktop access-provision request.",
+                detail: error.localizedDescription
+            )
+        }
+    }
+
+    @MainActor
+    private func submitDesktopCompleteCommit(
+        promptState: DesktopCompleteCommitPromptState
+    ) async {
+        let activeEntryContextID = desktopOnboardingEntryContext?.id
+
+        do {
+            let ingressContext = try desktopCanonicalRuntimeBridge.desktopCompleteCommitRequestBuilder(
+                promptState
+            )
+            desktopCompleteCommitRuntimeOutcomeState = .dispatching(
+                onboardingSessionID: ingressContext.onboardingSessionID,
+                endpoint: ingressContext.endpoint,
+                requestID: ingressContext.requestID
+            )
+
+            let outcomeState = await desktopCanonicalRuntimeBridge.submitDesktopCompleteCommit(
+                ingressContext
+            )
+            guard desktopOnboardingEntryContext?.id == activeEntryContextID else {
+                return
+            }
+
+            desktopCompleteCommitRuntimeOutcomeState = outcomeState
+        } catch {
+            desktopCompleteCommitRuntimeOutcomeState = .failed(
+                onboardingSessionID: promptState.onboardingSessionID,
+                endpoint: desktopCanonicalRuntimeBridge.onboardingContinueEndpoint,
+                requestID: "unavailable",
+                summary: "The canonical onboarding-continue bridge could not stage this bounded desktop complete request.",
                 detail: error.localizedDescription
             )
         }
