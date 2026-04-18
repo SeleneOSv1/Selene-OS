@@ -2473,6 +2473,29 @@ struct DesktopPlatformSetupReceiptDraft: Identifiable, Equatable {
     let deviceID: String?
     let proofMaterial: String
     let proofSummary: String
+    let wakeRuntimeEventWakeProfileID: String?
+    let wakeRuntimeEventAccepted: Bool?
+    let voiceArtifactSyncReceiptRef: String?
+
+    init(
+        onboardingSessionID: String,
+        receiptKind: String,
+        deviceID: String?,
+        proofMaterial: String,
+        proofSummary: String,
+        wakeRuntimeEventWakeProfileID: String? = nil,
+        wakeRuntimeEventAccepted: Bool? = nil,
+        voiceArtifactSyncReceiptRef: String? = nil
+    ) {
+        self.onboardingSessionID = onboardingSessionID
+        self.receiptKind = receiptKind
+        self.deviceID = deviceID
+        self.proofMaterial = proofMaterial
+        self.proofSummary = proofSummary
+        self.wakeRuntimeEventWakeProfileID = wakeRuntimeEventWakeProfileID
+        self.wakeRuntimeEventAccepted = wakeRuntimeEventAccepted
+        self.voiceArtifactSyncReceiptRef = voiceArtifactSyncReceiptRef
+    }
 
     var id: String {
         "\(onboardingSessionID)::\(receiptKind)"
@@ -2486,6 +2509,8 @@ struct DesktopPlatformSetupReceiptDraft: Identifiable, Equatable {
             return "Submit microphone permission receipt"
         case "desktop_pairing_bound":
             return "Submit desktop pairing-bound receipt"
+        case "desktop_wakeword_configured":
+            return "Submit desktop wakeword-configured receipt"
         default:
             return "Submit desktop platform receipt"
         }
@@ -3039,6 +3064,22 @@ struct DesktopSessionShellView: View {
             )
         }
 
+        if remainingKinds.contains("desktop_wakeword_configured"),
+           let wakewordProofContext = desktopWakewordConfiguredProofContext {
+            drafts.append(
+                DesktopPlatformSetupReceiptDraft(
+                    onboardingSessionID: presentationState.onboardingSessionID,
+                    receiptKind: "desktop_wakeword_configured",
+                    deviceID: wakewordProofContext.deviceID,
+                    proofMaterial: "receipt_kind=desktop_wakeword_configured|wake_profile_id=\(wakewordProofContext.wakeRuntimeEventWakeProfileID)|wake_accepted=\(wakewordProofContext.wakeRuntimeEventAccepted ? "true" : "false")|voice_receipt_ref=\(wakewordProofContext.voiceArtifactSyncReceiptRef)|app_platform=DESKTOP",
+                    proofSummary: "Locally provable from the exact managed bridge `deviceID`, exact lawful wake runtime event evidence carrier family, exact `wake_runtime_event_wake_profile_id`, and exact bounded wake-enroll sync receipt visibility only.",
+                    wakeRuntimeEventWakeProfileID: wakewordProofContext.wakeRuntimeEventWakeProfileID,
+                    wakeRuntimeEventAccepted: wakewordProofContext.wakeRuntimeEventAccepted,
+                    voiceArtifactSyncReceiptRef: wakewordProofContext.voiceArtifactSyncReceiptRef
+                )
+            )
+        }
+
         return drafts
     }
 
@@ -3082,6 +3123,48 @@ struct DesktopSessionShellView: View {
         }
 
         return trimmed
+    }
+
+    private var boundedWakeEnrollCompletionLineageVoiceArtifactSyncReceiptRef: String? {
+        [
+            desktopCompleteCommitRuntimeOutcomeState?.voiceArtifactSyncReceiptRef,
+            desktopAccessProvisionCommitRuntimeOutcomeState?.voiceArtifactSyncReceiptRef,
+            desktopEmoPersonaLockRuntimeOutcomeState?.voiceArtifactSyncReceiptRef,
+            desktopWakeEnrollCompleteCommitRuntimeOutcomeState?.voiceArtifactSyncReceiptRef,
+        ]
+        .compactMap { candidate in
+            let trimmed = candidate?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            return trimmed.isEmpty ? nil : trimmed
+        }
+        .first
+    }
+
+    private var desktopWakewordConfiguredProofContext: (
+        deviceID: String,
+        wakeRuntimeEventWakeProfileID: String,
+        wakeRuntimeEventAccepted: Bool,
+        voiceArtifactSyncReceiptRef: String
+    )? {
+        guard let presentationState = desktopPlatformSetupReceiptPresentationState,
+              presentationState.remainingPlatformReceiptKinds.contains("desktop_wakeword_configured"),
+              let deviceID = desktopManagedPrimaryDeviceID,
+              let activeVisibleContext = latestSessionActiveVisibleContext,
+              activeVisibleContext.hasLawfulWakeRuntimeEventEvidenceCarrierFamily,
+              let wakeRuntimeEventAccepted = activeVisibleContext.wakeRuntimeEventAccepted,
+              let wakeRuntimeEventWakeProfileID = activeVisibleContext.wakeRuntimeEventWakeProfileID?
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+              !wakeRuntimeEventWakeProfileID.isEmpty,
+              let voiceArtifactSyncReceiptRef = boundedWakeEnrollCompletionLineageVoiceArtifactSyncReceiptRef
+        else {
+            return nil
+        }
+
+        return (
+            deviceID: deviceID,
+            wakeRuntimeEventWakeProfileID: wakeRuntimeEventWakeProfileID,
+            wakeRuntimeEventAccepted: wakeRuntimeEventAccepted,
+            voiceArtifactSyncReceiptRef: voiceArtifactSyncReceiptRef
+        )
     }
 
     private var desktopPrimaryDeviceConfirmPromptState: DesktopPrimaryDeviceConfirmPromptState? {
@@ -3308,6 +3391,30 @@ struct DesktopSessionShellView: View {
             }
 
             return "The exact managed bridge `deviceID` is currently unavailable, so this receipt remains visible but not locally provable yet."
+        case "desktop_wakeword_configured":
+            if desktopManagedPrimaryDeviceID == nil {
+                return "The exact managed bridge `deviceID` is currently unavailable, so this receipt remains visible but not locally provable yet."
+            }
+
+            guard let activeVisibleContext = latestSessionActiveVisibleContext else {
+                return "The current active visible context is unavailable, so this receipt remains visible but not locally provable yet."
+            }
+
+            guard activeVisibleContext.hasLawfulWakeRuntimeEventEvidenceCarrierFamily else {
+                return "The current active visible context does not yet preserve the exact lawful wake runtime event evidence carrier family, so this receipt remains read-only."
+            }
+
+            guard let wakeRuntimeEventWakeProfileID = activeVisibleContext.wakeRuntimeEventWakeProfileID?
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+                !wakeRuntimeEventWakeProfileID.isEmpty else {
+                return "The current active visible context does not yet preserve exact `wake_runtime_event_wake_profile_id`, so this receipt remains read-only."
+            }
+
+            guard boundedWakeEnrollCompletionLineageVoiceArtifactSyncReceiptRef != nil else {
+                return "The bounded wake-enroll completion lineage does not currently preserve exact `voice_artifact_sync_receipt_ref`, so this receipt remains read-only."
+            }
+
+            return "The current active visible context already preserves exact `wake_runtime_event_wake_profile_id=\(wakeRuntimeEventWakeProfileID)`, but this receipt remains read-only unless it is surfaced as an actionable bounded wakeword-configured draft."
         default:
             return onboardingPlatformSetupReceiptDetail(for: receiptKind)
         }
@@ -3460,7 +3567,7 @@ struct DesktopSessionShellView: View {
                 || desktopPlatformSetupReceiptRuntimeOutcomeState != nil {
             GroupBox {
                 VStack(alignment: .leading, spacing: 12) {
-                    Text("Bounded desktop platform-setup receipt submission only. This shell derives exact locally provable drafts for `install_launch_handshake`, `mic_permission_granted`, and exact `desktop_pairing_bound` when the exact managed bridge `deviceID` is available, dispatches exact `PLATFORM_SETUP_RECEIPT`, and keeps exact `desktop_wakeword_configured` read-only.")
+                    Text("Bounded desktop platform-setup receipt submission only. This shell derives exact locally provable drafts for `install_launch_handshake`, `mic_permission_granted`, exact `desktop_pairing_bound` when the exact managed bridge `deviceID` is available, and exact `desktop_wakeword_configured` only when the exact managed bridge `deviceID`, exact lawful wake runtime event evidence carrier family, exact `wake_runtime_event_wake_profile_id`, and exact bounded wake-enroll sync receipt visibility are all present. It dispatches exact `PLATFORM_SETUP_RECEIPT` only and does not widen into local wake authority.")
                         .frame(maxWidth: .infinity, alignment: .leading)
 
                     ForEach(
@@ -3519,6 +3626,45 @@ struct DesktopSessionShellView: View {
                                                 .frame(width: 170, alignment: .leading)
 
                                             Text(deviceID)
+                                                .font(.body.monospaced())
+                                                .frame(maxWidth: .infinity, alignment: .leading)
+                                        }
+                                    }
+
+                                    if let wakeRuntimeEventWakeProfileID = draft.wakeRuntimeEventWakeProfileID {
+                                        HStack(alignment: .top, spacing: 12) {
+                                            Text("wake_runtime_event_wake_profile_id")
+                                                .font(.caption.monospaced())
+                                                .foregroundStyle(.secondary)
+                                                .frame(width: 170, alignment: .leading)
+
+                                            Text(wakeRuntimeEventWakeProfileID)
+                                                .font(.body.monospaced())
+                                                .frame(maxWidth: .infinity, alignment: .leading)
+                                        }
+                                    }
+
+                                    if let wakeRuntimeEventAccepted = draft.wakeRuntimeEventAccepted {
+                                        HStack(alignment: .top, spacing: 12) {
+                                            Text("wake_runtime_event_accepted")
+                                                .font(.caption.monospaced())
+                                                .foregroundStyle(.secondary)
+                                                .frame(width: 170, alignment: .leading)
+
+                                            Text(wakeRuntimeEventAccepted ? "true" : "false")
+                                                .font(.body.monospaced())
+                                                .frame(maxWidth: .infinity, alignment: .leading)
+                                        }
+                                    }
+
+                                    if let voiceArtifactSyncReceiptRef = draft.voiceArtifactSyncReceiptRef {
+                                        HStack(alignment: .top, spacing: 12) {
+                                            Text("voice_artifact_sync_receipt_ref")
+                                                .font(.caption.monospaced())
+                                                .foregroundStyle(.secondary)
+                                                .frame(width: 170, alignment: .leading)
+
+                                            Text(voiceArtifactSyncReceiptRef)
                                                 .font(.body.monospaced())
                                                 .frame(maxWidth: .infinity, alignment: .leading)
                                         }
@@ -3610,7 +3756,7 @@ struct DesktopSessionShellView: View {
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
 
-                    Text("Only exact `install_launch_handshake`, exact `mic_permission_granted`, and exact `desktop_pairing_bound` submission are in scope here. Exact `desktop_wakeword_configured` remains read-only required receipt visibility only, and later onboarding actions remain out of scope.")
+                    Text("Only exact `install_launch_handshake`, exact `mic_permission_granted`, exact `desktop_pairing_bound`, and exact `desktop_wakeword_configured` submission are in scope here. Exact `desktop_wakeword_configured` is derived only from already-live bounded wake evidence plus already-live bounded wake-enroll sync posture, and no local wake authority, no wake-routing handoff, no link-delivery controls, and no autonomous-unlock controls are introduced here.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, alignment: .leading)

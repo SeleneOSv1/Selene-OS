@@ -1584,6 +1584,7 @@ private let supportedDesktopPlatformSetupReceiptKinds: Set<String> = [
     "install_launch_handshake",
     "mic_permission_granted",
     "desktop_pairing_bound",
+    "desktop_wakeword_configured",
 ]
 
 private func boundedSupportedDesktopPlatformSetupReceiptKind(_ rawValue: String?) -> String? {
@@ -2968,7 +2969,7 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
 
         guard let receiptKind = boundedSupportedDesktopPlatformSetupReceiptKind(draft.receiptKind) else {
             throw BridgeError.invalidPlatformSetupReceiptRequest(
-                "only exact `install_launch_handshake`, exact `mic_permission_granted`, and exact `desktop_pairing_bound` are in scope for bounded desktop local receipt submission"
+                "only exact `install_launch_handshake`, exact `mic_permission_granted`, exact `desktop_pairing_bound`, and exact `desktop_wakeword_configured` are in scope for bounded desktop local receipt submission"
             )
         }
 
