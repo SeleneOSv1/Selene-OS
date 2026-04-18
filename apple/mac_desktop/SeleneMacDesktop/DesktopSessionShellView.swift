@@ -2326,6 +2326,28 @@ struct DesktopOnboardingContinuePromptState: Identifiable, Equatable {
     }
 }
 
+struct DesktopPlatformSetupReceiptDraft: Identifiable, Equatable {
+    let onboardingSessionID: String
+    let receiptKind: String
+    let proofMaterial: String
+    let proofSummary: String
+
+    var id: String {
+        "\(onboardingSessionID)::\(receiptKind)"
+    }
+
+    var buttonTitle: String {
+        switch receiptKind {
+        case "install_launch_handshake":
+            return "Submit install launch handshake"
+        case "mic_permission_granted":
+            return "Submit microphone permission receipt"
+        default:
+            return "Submit desktop platform receipt"
+        }
+    }
+}
+
 struct DesktopSessionShellView: View {
     @State private var latestSessionHeaderContext: DesktopSessionHeaderContext?
     @State private var latestSessionActiveVisibleContext: DesktopSessionActiveVisibleContext?
@@ -2341,6 +2363,7 @@ struct DesktopSessionShellView: View {
     @State private var desktopCanonicalRuntimeOutcomeState: DesktopCanonicalRuntimeOutcomeState?
     @State private var desktopInviteOpenRuntimeOutcomeState: DesktopInviteOpenRuntimeOutcomeState?
     @State private var desktopOnboardingContinueRuntimeOutcomeState: DesktopOnboardingContinueRuntimeOutcomeState?
+    @State private var desktopPlatformSetupReceiptRuntimeOutcomeState: DesktopPlatformSetupReceiptRuntimeOutcomeState?
     @State private var desktopOnboardingContinueFieldInput: String = ""
     @State private var desktopAuthoritativeReplyRenderState: DesktopAuthoritativeReplyRenderState?
     @State private var desktopAuthoritativeReplyProvenanceRenderState: DesktopAuthoritativeReplyProvenanceRenderState?
@@ -2360,6 +2383,7 @@ struct DesktopSessionShellView: View {
 
                 desktopOnboardingEntryCard
                 desktopOnboardingContinuePromptCard
+                desktopPlatformSetupReceiptSubmissionCard
 
                 sessionCard
                 .frame(maxWidth: .infinity, minHeight: 360, alignment: .topLeading)
@@ -2398,6 +2422,7 @@ struct DesktopSessionShellView: View {
                 if desktopOnboardingEntryContext?.id != context.id {
                     desktopInviteOpenRuntimeOutcomeState = nil
                     desktopOnboardingContinueRuntimeOutcomeState = nil
+                    desktopPlatformSetupReceiptRuntimeOutcomeState = nil
                     desktopOnboardingContinueFieldInput = ""
                 }
                 desktopOnboardingEntryContext = context
@@ -2764,6 +2789,95 @@ struct DesktopSessionShellView: View {
         boundedOnboardingContinueFieldInput(desktopOnboardingContinueFieldInput)
     }
 
+    private var desktopPlatformSetupReceiptPresentationState: (
+        onboardingSessionID: String,
+        nextStep: String,
+        onboardingStatus: String?,
+        remainingPlatformReceiptKinds: [String]
+    )? {
+        if let desktopPlatformSetupReceiptRuntimeOutcomeState {
+            return (
+                onboardingSessionID: desktopPlatformSetupReceiptRuntimeOutcomeState.onboardingSessionID
+                    ?? desktopOnboardingContinueRuntimeOutcomeState?.onboardingSessionID
+                    ?? desktopInviteOpenRuntimeOutcomeState?.onboardingSessionID
+                    ?? "unavailable",
+                nextStep: desktopPlatformSetupReceiptRuntimeOutcomeState.nextStep ?? "not_provided",
+                onboardingStatus: desktopPlatformSetupReceiptRuntimeOutcomeState.onboardingStatus,
+                remainingPlatformReceiptKinds: desktopPlatformSetupReceiptRuntimeOutcomeState.remainingPlatformReceiptKinds
+            )
+        }
+
+        if let desktopOnboardingContinueRuntimeOutcomeState,
+           desktopOnboardingContinueRuntimeOutcomeState.phase == .completed,
+           desktopOnboardingContinueRuntimeOutcomeState.nextStep != "ASK_MISSING",
+           let onboardingSessionID = desktopOnboardingContinueRuntimeOutcomeState.onboardingSessionID {
+            return (
+                onboardingSessionID: onboardingSessionID,
+                nextStep: desktopOnboardingContinueRuntimeOutcomeState.nextStep ?? "not_provided",
+                onboardingStatus: desktopOnboardingContinueRuntimeOutcomeState.onboardingStatus,
+                remainingPlatformReceiptKinds: desktopOnboardingContinueRuntimeOutcomeState.remainingPlatformReceiptKinds
+            )
+        }
+
+        return nil
+    }
+
+    private var desktopPlatformSetupReceiptDrafts: [DesktopPlatformSetupReceiptDraft] {
+        guard let presentationState = desktopPlatformSetupReceiptPresentationState else {
+            return []
+        }
+
+        var drafts: [DesktopPlatformSetupReceiptDraft] = []
+        let remainingKinds = Set(presentationState.remainingPlatformReceiptKinds)
+
+        if remainingKinds.contains("install_launch_handshake") {
+            drafts.append(
+                DesktopPlatformSetupReceiptDraft(
+                    onboardingSessionID: presentationState.onboardingSessionID,
+                    receiptKind: "install_launch_handshake",
+                    proofMaterial: "onboarding_session_id=\(presentationState.onboardingSessionID)|receipt_kind=install_launch_handshake|launch_posture=desktop_shell_live|app_platform=DESKTOP",
+                    proofSummary: "Locally provable from bounded live desktop shell posture only."
+                )
+            )
+        }
+
+        if remainingKinds.contains("mic_permission_granted"),
+           case .granted = explicitVoiceController.microphonePermission {
+            drafts.append(
+                DesktopPlatformSetupReceiptDraft(
+                    onboardingSessionID: presentationState.onboardingSessionID,
+                    receiptKind: "mic_permission_granted",
+                    proofMaterial: "onboarding_session_id=\(presentationState.onboardingSessionID)|receipt_kind=mic_permission_granted|microphone_permission=granted|app_platform=DESKTOP",
+                    proofSummary: "Locally provable from current granted microphone permission posture only."
+                )
+            )
+        }
+
+        return drafts
+    }
+
+    private var desktopUnsupportedPlatformSetupReceiptKinds: [String] {
+        guard let presentationState = desktopPlatformSetupReceiptPresentationState else {
+            return []
+        }
+
+        let supportedKinds = Set(desktopPlatformSetupReceiptDrafts.map(\.receiptKind))
+        return presentationState.remainingPlatformReceiptKinds.filter { !supportedKinds.contains($0) }
+    }
+
+    private func desktopPlatformSetupReceiptReadOnlyDetail(for receiptKind: String) -> String {
+        switch receiptKind {
+        case "mic_permission_granted":
+            if case .granted = explicitVoiceController.microphonePermission {
+                return "Current microphone permission is granted and can be submitted from this bounded shell while it remains required."
+            }
+
+            return "Current microphone permission is `\(explicitVoiceController.microphonePermission.rawValue)`, so this receipt remains visible but not locally provable yet."
+        default:
+            return onboardingPlatformSetupReceiptDetail(for: receiptKind)
+        }
+    }
+
     @ViewBuilder
     private var desktopOnboardingContinuePromptCard: some View {
         let cardState = desktopOnboardingContinuePromptState
@@ -2899,6 +3013,154 @@ struct DesktopSessionShellView: View {
                 }
             } label: {
                 Text("Onboarding Continue Missing Field")
+                    .font(.headline)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var desktopPlatformSetupReceiptSubmissionCard: some View {
+        if let presentationState = desktopPlatformSetupReceiptPresentationState,
+           desktopOnboardingContinueRuntimeOutcomeState?.phase == .completed
+                || desktopPlatformSetupReceiptRuntimeOutcomeState != nil {
+            GroupBox {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Bounded desktop platform-setup receipt submission only. This shell derives exact locally provable drafts for `install_launch_handshake` and `mic_permission_granted`, dispatches exact `PLATFORM_SETUP_RECEIPT`, and keeps unsupported remaining receipt kinds read-only.")
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                    ForEach(
+                        [
+                            ("onboarding_session_id", presentationState.onboardingSessionID),
+                            ("next_step", desktopPlatformSetupReceiptRuntimeOutcomeState?.nextStep ?? presentationState.nextStep),
+                            ("onboarding_status", desktopPlatformSetupReceiptRuntimeOutcomeState?.onboardingStatus ?? presentationState.onboardingStatus ?? "not_provided"),
+                        ],
+                        id: \.0
+                    ) { row in
+                        HStack(alignment: .top, spacing: 12) {
+                            Text(row.0)
+                                .font(.caption.monospaced())
+                                .foregroundStyle(.secondary)
+                                .frame(width: 170, alignment: .leading)
+
+                            Text(row.1)
+                                .font(.body.monospaced())
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                    }
+
+                    desktopOnboardingEntryListCard(
+                        title: "remaining_platform_receipt_kinds",
+                        items: presentationState.remainingPlatformReceiptKinds,
+                        emptyText: "No remaining_platform_receipt_kinds are currently visible in the bounded platform-setup receipt posture."
+                    )
+
+                    if desktopPlatformSetupReceiptDrafts.isEmpty {
+                        Text("No locally provable desktop platform-setup receipt drafts are currently actionable in this shell. Remaining receipts stay visible and read-only here.")
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    } else {
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text("Supported local receipt drafts")
+                                .font(.subheadline.weight(.semibold))
+
+                            ForEach(desktopPlatformSetupReceiptDrafts) { draft in
+                                VStack(alignment: .leading, spacing: 8) {
+                                    Text(draft.receiptKind)
+                                        .font(.caption.monospaced())
+
+                                    Text(draft.proofSummary)
+                                        .font(.footnote)
+                                        .foregroundStyle(.secondary)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                                    Button(draft.buttonTitle) {
+                                        Task {
+                                            await dispatchDesktopPlatformSetupReceipt(draft)
+                                        }
+                                    }
+                                    .buttonStyle(.borderedProminent)
+                                    .disabled(desktopPlatformSetupReceiptRuntimeOutcomeState?.phase == .dispatching)
+                                }
+                                .padding(12)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .background(Color(nsColor: .controlBackgroundColor))
+                                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                            }
+                        }
+                    }
+
+                    if !desktopUnsupportedPlatformSetupReceiptKinds.isEmpty {
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text("Read-only remaining receipts")
+                                .font(.subheadline.weight(.semibold))
+
+                            ForEach(Array(desktopUnsupportedPlatformSetupReceiptKinds.enumerated()), id: \.offset) { _, receiptKind in
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(receiptKind)
+                                        .font(.caption.monospaced())
+
+                                    Text(desktopPlatformSetupReceiptReadOnlyDetail(for: receiptKind))
+                                        .font(.footnote)
+                                        .foregroundStyle(.secondary)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                }
+                                .padding(12)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .background(Color(nsColor: .controlBackgroundColor))
+                                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                            }
+                        }
+                    }
+
+                    if let desktopPlatformSetupReceiptRuntimeOutcomeState {
+                        Divider()
+
+                        Text(desktopPlatformSetupReceiptRuntimeOutcomeState.title)
+                            .font(.headline)
+
+                        ForEach(
+                            [
+                                ("dispatch_phase", desktopPlatformSetupReceiptRuntimeOutcomeState.phase.rawValue),
+                                ("submitted_receipt_kind", desktopPlatformSetupReceiptRuntimeOutcomeState.receiptKind),
+                                ("request_id", desktopPlatformSetupReceiptRuntimeOutcomeState.requestID),
+                                ("endpoint", desktopPlatformSetupReceiptRuntimeOutcomeState.endpoint),
+                                ("outcome", desktopPlatformSetupReceiptRuntimeOutcomeState.outcome ?? "not_available"),
+                                ("reason", desktopPlatformSetupReceiptRuntimeOutcomeState.reason ?? "not_available"),
+                            ],
+                            id: \.0
+                        ) { row in
+                            HStack(alignment: .top, spacing: 12) {
+                                Text(row.0)
+                                    .font(.caption.monospaced())
+                                    .foregroundStyle(.secondary)
+                                    .frame(width: 170, alignment: .leading)
+
+                                Text(row.1)
+                                    .font(.body.monospaced())
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                        }
+
+                        Text(desktopPlatformSetupReceiptRuntimeOutcomeState.summary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+
+                        Text(desktopPlatformSetupReceiptRuntimeOutcomeState.detail)
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    } else {
+                        Text("Awaiting user-triggered desktop platform-setup receipt submission. Unsupported remaining receipts stay read-only here, and later onboarding actions remain out of scope.")
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+
+                    Text("Only exact `install_launch_handshake` and exact `mic_permission_granted` submission are in scope here. Exact `desktop_wakeword_configured` and exact `desktop_pairing_bound` remain read-only required receipt visibility only, and later onboarding actions remain out of scope.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            } label: {
+                Text("Onboarding Platform Setup Receipts")
                     .font(.headline)
             }
         }
@@ -4969,6 +5231,7 @@ struct DesktopSessionShellView: View {
         fieldValue: String?
     ) async {
         let activeEntryContextID = desktopOnboardingEntryContext?.id
+        desktopPlatformSetupReceiptRuntimeOutcomeState = nil
 
         do {
             let ingressContext = try desktopCanonicalRuntimeBridge.desktopOnboardingContinueMissingFieldRequestBuilder(
@@ -4999,6 +5262,43 @@ struct DesktopSessionShellView: View {
                 endpoint: desktopCanonicalRuntimeBridge.onboardingContinueEndpoint,
                 requestID: "unavailable",
                 summary: "The canonical onboarding-continue bridge could not stage this bounded missing-field request.",
+                detail: error.localizedDescription
+            )
+        }
+    }
+
+    @MainActor
+    private func dispatchDesktopPlatformSetupReceipt(
+        _ draft: DesktopPlatformSetupReceiptDraft
+    ) async {
+        let activeEntryContextID = desktopOnboardingEntryContext?.id
+
+        do {
+            let ingressContext = try desktopCanonicalRuntimeBridge.desktopPlatformSetupReceiptRequestBuilder(
+                draft
+            )
+            desktopPlatformSetupReceiptRuntimeOutcomeState = .dispatching(
+                onboardingSessionID: ingressContext.onboardingSessionID,
+                receiptKind: ingressContext.receiptKind,
+                endpoint: ingressContext.endpoint,
+                requestID: ingressContext.requestID
+            )
+
+            let outcomeState = await desktopCanonicalRuntimeBridge.submitDesktopPlatformSetupReceipt(
+                ingressContext
+            )
+            guard desktopOnboardingEntryContext?.id == activeEntryContextID else {
+                return
+            }
+
+            desktopPlatformSetupReceiptRuntimeOutcomeState = outcomeState
+        } catch {
+            desktopPlatformSetupReceiptRuntimeOutcomeState = .failed(
+                onboardingSessionID: draft.onboardingSessionID,
+                receiptKind: draft.receiptKind,
+                endpoint: desktopCanonicalRuntimeBridge.onboardingContinueEndpoint,
+                requestID: "unavailable",
+                summary: "The canonical onboarding-continue bridge could not stage this bounded desktop platform-setup receipt.",
                 detail: error.localizedDescription
             )
         }

@@ -1,4 +1,5 @@
 import Combine
+import CryptoKit
 import Foundation
 
 struct AuthoritativeResponseProvenance: Equatable {
@@ -331,6 +332,115 @@ struct DesktopOnboardingContinueRuntimeOutcomeState: Identifiable, Equatable {
     }
 }
 
+struct DesktopPlatformSetupReceiptRuntimeOutcomeState: Identifiable, Equatable {
+    enum Phase: String, Equatable {
+        case dispatching = "dispatching"
+        case completed = "completed"
+        case failed = "failed"
+    }
+
+    let id: String
+    let phase: Phase
+    let title: String
+    let summary: String
+    let detail: String
+    let endpoint: String
+    let requestID: String
+    let receiptKind: String
+    let outcome: String?
+    let reason: String?
+    let onboardingSessionID: String?
+    let nextStep: String?
+    let remainingPlatformReceiptKinds: [String]
+    let onboardingStatus: String?
+
+    static func dispatching(
+        onboardingSessionID: String,
+        receiptKind: String,
+        endpoint: String,
+        requestID: String
+    ) -> DesktopPlatformSetupReceiptRuntimeOutcomeState {
+        DesktopPlatformSetupReceiptRuntimeOutcomeState(
+            id: requestID,
+            phase: .dispatching,
+            title: "Dispatching desktop platform-setup receipt",
+            summary: "The bounded desktop platform-setup receipt is now being handed into canonical `/v1/onboarding/continue`.",
+            detail: "Only exact locally provable desktop receipt submission is in scope here. This shell remains explicitly non-authoritative and does not introduce later onboarding actions, wake controls, pairing completion, or autonomous unlock.",
+            endpoint: endpoint,
+            requestID: requestID,
+            receiptKind: receiptKind,
+            outcome: nil,
+            reason: nil,
+            onboardingSessionID: onboardingSessionID,
+            nextStep: "PLATFORM_SETUP",
+            remainingPlatformReceiptKinds: [receiptKind],
+            onboardingStatus: nil
+        )
+    }
+
+    static func completed(
+        requestID: String,
+        endpoint: String,
+        response: DesktopCanonicalRuntimeBridge.OnboardingContinueAdapterResponsePayload,
+        fallbackOnboardingSessionID: String,
+        fallbackReceiptKind: String
+    ) -> DesktopPlatformSetupReceiptRuntimeOutcomeState {
+        let boundedNextStep = boundedOnboardingContinueField(response.nextStep)
+        let boundedRemainingPlatformReceiptKinds = boundedOnboardingContinueList(response.remainingPlatformReceiptKinds)
+        let advancedBeyondPlatformSetup = boundedNextStep != nil
+            && boundedNextStep != "PLATFORM_SETUP"
+            && boundedRemainingPlatformReceiptKinds.isEmpty
+
+        return DesktopPlatformSetupReceiptRuntimeOutcomeState(
+            id: requestID,
+            phase: .completed,
+            title: "Desktop platform-setup receipt completed",
+            summary: advancedBeyondPlatformSetup
+                ? "Canonical `/v1/onboarding/continue` advanced beyond `PLATFORM_SETUP`; later onboarding actions remain read-only and out of scope in this shell."
+                : "Canonical `/v1/onboarding/continue` accepted the bounded desktop platform-setup receipt and returned updated remaining receipt posture.",
+            detail: advancedBeyondPlatformSetup
+                ? "Read-only next-step visibility only. This shell preserves the advanced step without adding controls for later onboarding mutation, pairing completion, wake behavior, or autonomous unlock."
+                : "Only exact locally provable desktop receipt submission is in scope here. Unsupported remaining receipt kinds stay read-only and unsubmitted in this shell.",
+            endpoint: endpoint,
+            requestID: requestID,
+            receiptKind: fallbackReceiptKind,
+            outcome: boundedOnboardingContinueField(response.outcome) ?? "ONBOARDING_CONTINUED",
+            reason: boundedOnboardingContinueField(response.reason),
+            onboardingSessionID: boundedOnboardingContinueField(response.onboardingSessionID) ?? fallbackOnboardingSessionID,
+            nextStep: boundedNextStep,
+            remainingPlatformReceiptKinds: boundedRemainingPlatformReceiptKinds,
+            onboardingStatus: boundedOnboardingContinueField(response.onboardingStatus)
+        )
+    }
+
+    static func failed(
+        onboardingSessionID: String,
+        receiptKind: String,
+        endpoint: String,
+        requestID: String,
+        summary: String,
+        detail: String,
+        reason: String? = nil
+    ) -> DesktopPlatformSetupReceiptRuntimeOutcomeState {
+        DesktopPlatformSetupReceiptRuntimeOutcomeState(
+            id: requestID,
+            phase: .failed,
+            title: "Desktop platform-setup receipt failed",
+            summary: summary,
+            detail: detail,
+            endpoint: endpoint,
+            requestID: requestID,
+            receiptKind: receiptKind,
+            outcome: nil,
+            reason: reason,
+            onboardingSessionID: onboardingSessionID,
+            nextStep: nil,
+            remainingPlatformReceiptKinds: [],
+            onboardingStatus: nil
+        )
+    }
+}
+
 private func boundedAuthoritativeResponseText(_ rawValue: String?) -> String? {
     guard let rawValue else {
         return nil
@@ -429,10 +539,50 @@ private func boundedOnboardingContinueFieldInput(_ rawValue: String?) -> String?
     return trimmed
 }
 
+private let supportedDesktopPlatformSetupReceiptKinds: Set<String> = [
+    "install_launch_handshake",
+    "mic_permission_granted",
+]
+
+private func boundedSupportedDesktopPlatformSetupReceiptKind(_ rawValue: String?) -> String? {
+    guard let boundedReceiptKind = boundedOnboardingContinueField(rawValue),
+          supportedDesktopPlatformSetupReceiptKinds.contains(boundedReceiptKind) else {
+        return nil
+    }
+
+    return boundedReceiptKind
+}
+
+private func boundedDesktopPlatformSetupReceiptProofMaterial(_ rawValue: String?) -> String? {
+    guard let rawValue else {
+        return nil
+    }
+
+    let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty,
+          trimmed.count <= 512,
+          trimmed.unicodeScalars.allSatisfy(\.isASCII),
+          !trimmed.contains("\n"),
+          !trimmed.contains("\r") else {
+        return nil
+    }
+
+    return trimmed
+}
+
+private func desktopPlatformSetupReceiptPayloadHash(_ seed: String) -> String {
+    SHA256.hash(data: Data(seed.utf8)).map { String(format: "%02x", $0) }.joined()
+}
+
+private func desktopPlatformSetupReceiptRef(receiptKind: String, payloadHash: String) -> String {
+    "receipt:desktop-local:\(receiptKind):\(payloadHash.prefix(16))"
+}
+
 final class DesktopCanonicalRuntimeBridge: ObservableObject {
     private enum BridgeError: LocalizedError {
         case invalidPreparedRequest(String)
         case invalidOnboardingContinueRequest(String)
+        case invalidPlatformSetupReceiptRequest(String)
         case invalidAdapterBind(String)
         case adapterStartFailed(String)
         case adapterUnavailable(String)
@@ -444,6 +594,7 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
             switch self {
             case .invalidPreparedRequest(let detail),
                  .invalidOnboardingContinueRequest(let detail),
+                 .invalidPlatformSetupReceiptRequest(let detail),
                  .invalidAdapterBind(let detail),
                  .adapterStartFailed(let detail),
                  .adapterUnavailable(let detail),
@@ -472,6 +623,14 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
     struct DesktopOnboardingContinueIngressContext {
         let onboardingSessionID: String
         let blockingField: String
+        let requestID: String
+        let endpoint: String
+        let urlRequest: URLRequest
+    }
+
+    struct DesktopPlatformSetupReceiptIngressContext {
+        let onboardingSessionID: String
+        let receiptKind: String
         let requestID: String
         let endpoint: String
         let urlRequest: URLRequest
@@ -698,6 +857,24 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
         }
     }
 
+    func submitDesktopPlatformSetupReceipt(
+        _ draft: DesktopPlatformSetupReceiptDraft
+    ) async -> DesktopPlatformSetupReceiptRuntimeOutcomeState {
+        do {
+            let ingressContext = try desktopPlatformSetupReceiptRequestBuilder(draft)
+            return await submitDesktopPlatformSetupReceipt(ingressContext)
+        } catch {
+            return .failed(
+                onboardingSessionID: draft.onboardingSessionID,
+                receiptKind: draft.receiptKind,
+                endpoint: onboardingContinueEndpoint,
+                requestID: "unavailable",
+                summary: "The canonical onboarding-continue bridge could not stage this bounded desktop platform-setup receipt.",
+                detail: error.localizedDescription
+            )
+        }
+    }
+
     func dispatchPreparedExplicitVoiceRequest(
         _ ingressContext: DesktopExplicitVoiceIngressContext
     ) async -> DesktopCanonicalRuntimeOutcomeState {
@@ -836,6 +1013,51 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
                 endpoint: ingressContext.endpoint,
                 requestID: ingressContext.requestID,
                 summary: "The canonical onboarding-continue bridge could not deliver this bounded missing-field request.",
+                detail: error.localizedDescription
+            )
+        }
+    }
+
+    func submitDesktopPlatformSetupReceipt(
+        _ ingressContext: DesktopPlatformSetupReceiptIngressContext
+    ) async -> DesktopPlatformSetupReceiptRuntimeOutcomeState {
+        do {
+            try await ensureAdapterAvailable()
+
+            let (data, response) = try await urlSession.data(for: ingressContext.urlRequest)
+            let decoder = JSONDecoder()
+            decoder.keyDecodingStrategy = .convertFromSnakeCase
+            let httpResponse = response as? HTTPURLResponse
+            let statusCode = httpResponse?.statusCode ?? 0
+            let payload = try decoder.decode(OnboardingContinueAdapterResponsePayload.self, from: data)
+
+            if statusCode == 200,
+               payload.status.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "ok" {
+                return .completed(
+                    requestID: ingressContext.requestID,
+                    endpoint: ingressContext.endpoint,
+                    response: payload,
+                    fallbackOnboardingSessionID: ingressContext.onboardingSessionID,
+                    fallbackReceiptKind: ingressContext.receiptKind
+                )
+            }
+
+            return .failed(
+                onboardingSessionID: ingressContext.onboardingSessionID,
+                receiptKind: ingressContext.receiptKind,
+                endpoint: ingressContext.endpoint,
+                requestID: ingressContext.requestID,
+                summary: "The canonical onboarding-continue bridge rejected or failed this bounded desktop platform-setup receipt.",
+                detail: "Canonical `/v1/onboarding/continue` failed closed with outcome `\(payload.outcome)` and reason `\(boundedOnboardingContinueField(payload.reason) ?? "not_provided")`. This shell remains limited to exact locally provable desktop receipt submission and does not bypass later onboarding law.",
+                reason: boundedOnboardingContinueField(payload.reason)
+            )
+        } catch {
+            return .failed(
+                onboardingSessionID: ingressContext.onboardingSessionID,
+                receiptKind: ingressContext.receiptKind,
+                endpoint: ingressContext.endpoint,
+                requestID: ingressContext.requestID,
+                summary: "The canonical onboarding-continue bridge could not deliver this bounded desktop platform-setup receipt.",
                 detail: error.localizedDescription
             )
         }
@@ -1036,6 +1258,82 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
         return DesktopOnboardingContinueIngressContext(
             onboardingSessionID: onboardingSessionID,
             blockingField: blockingField,
+            requestID: requestID,
+            endpoint: endpointURL.absoluteString,
+            urlRequest: urlRequest
+        )
+    }
+
+    func desktopPlatformSetupReceiptRequestBuilder(
+        _ draft: DesktopPlatformSetupReceiptDraft
+    ) throws -> DesktopPlatformSetupReceiptIngressContext {
+        guard let onboardingSessionID = boundedOnboardingContinueField(draft.onboardingSessionID) else {
+            throw BridgeError.invalidPlatformSetupReceiptRequest(
+                "the bounded desktop platform-setup receipt draft did not preserve a lawful onboarding_session_id"
+            )
+        }
+
+        guard let receiptKind = boundedSupportedDesktopPlatformSetupReceiptKind(draft.receiptKind) else {
+            throw BridgeError.invalidPlatformSetupReceiptRequest(
+                "only exact `install_launch_handshake` and exact `mic_permission_granted` are in scope for bounded desktop local receipt submission"
+            )
+        }
+
+        guard let proofMaterial = boundedDesktopPlatformSetupReceiptProofMaterial(draft.proofMaterial) else {
+            throw BridgeError.invalidPlatformSetupReceiptRequest(
+                "the bounded desktop platform-setup receipt draft did not preserve lawful local proof material"
+            )
+        }
+
+        let payloadHashSeed = "\(onboardingSessionID)|\(receiptKind)|\(deviceID)|\(proofMaterial)"
+        let payloadHash = desktopPlatformSetupReceiptPayloadHash(payloadHashSeed)
+        let receiptRef = desktopPlatformSetupReceiptRef(receiptKind: receiptKind, payloadHash: payloadHash)
+        let requestID = "desktop_platform_setup_receipt_request_\(UUID().uuidString.replacingOccurrences(of: "-", with: ""))"
+        let idempotencyKey = "desktop_platform_setup_receipt_\(onboardingSessionID)_\(receiptKind)_\(payloadHash.prefix(12))"
+        let nonce = UUID().uuidString.replacingOccurrences(of: "-", with: "")
+        let timestampMS = Self.systemTimeNowMS()
+        let correlationID = Swift.max(DispatchTime.now().uptimeNanoseconds, 1)
+
+        let payload = OnboardingContinueAdapterRequestPayload(
+            correlationID: correlationID,
+            onboardingSessionID: onboardingSessionID,
+            idempotencyKey: idempotencyKey,
+            tenantID: tenantID,
+            action: "PLATFORM_SETUP_RECEIPT",
+            fieldValue: nil,
+            receiptKind: receiptKind,
+            receiptRef: receiptRef,
+            signer: "selene_desktop_app",
+            payloadHash: payloadHash,
+            termsVersionID: nil,
+            accepted: nil,
+            deviceID: deviceID,
+            proofOK: nil,
+            sampleSeed: nil,
+            photoBlobRef: nil,
+            senderDecision: nil
+        )
+
+        let encoder = JSONEncoder()
+        encoder.keyEncodingStrategy = .convertToSnakeCase
+        let body = try encoder.encode(payload)
+        let endpointURL = adapterBaseURL.appendingPathComponent("v1/onboarding/continue")
+        var urlRequest = URLRequest(url: endpointURL)
+        urlRequest.httpMethod = "POST"
+        urlRequest.httpBody = body
+        urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        urlRequest.setValue(requestID, forHTTPHeaderField: "x-request-id")
+        urlRequest.setValue(idempotencyKey, forHTTPHeaderField: "idempotency-key")
+        urlRequest.setValue(String(timestampMS), forHTTPHeaderField: "x-selene-timestamp-ms")
+        urlRequest.setValue(nonce, forHTTPHeaderField: "x-selene-nonce")
+        urlRequest.setValue(
+            Self.bearerToken(subject: actorUserID, device: deviceID),
+            forHTTPHeaderField: "Authorization"
+        )
+
+        return DesktopPlatformSetupReceiptIngressContext(
+            onboardingSessionID: onboardingSessionID,
+            receiptKind: receiptKind,
             requestID: requestID,
             endpoint: endpointURL.absoluteString,
             urlRequest: urlRequest
