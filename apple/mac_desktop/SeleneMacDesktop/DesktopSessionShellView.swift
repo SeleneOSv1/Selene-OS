@@ -2467,6 +2467,22 @@ struct DesktopCompleteCommitPromptState: Identifiable, Equatable {
     }
 }
 
+struct DesktopSenderVerificationVisibilityState: Identifiable, Equatable {
+    let onboardingSessionID: String
+    let nextStep: String
+    let onboardingStatus: String?
+    let requiredVerificationGates: [String]
+
+    var id: String {
+        [
+            onboardingSessionID,
+            nextStep,
+            onboardingStatus ?? "onboarding_status_not_provided",
+            requiredVerificationGates.joined(separator: "|"),
+        ].joined(separator: "::")
+    }
+}
+
 struct DesktopPlatformSetupReceiptDraft: Identifiable, Equatable {
     let onboardingSessionID: String
     let receiptKind: String
@@ -2563,6 +2579,7 @@ struct DesktopSessionShellView: View {
                 desktopOnboardingContinuePromptCard
                 desktopPlatformSetupReceiptSubmissionCard
                 desktopTermsAcceptCard
+                desktopSenderVerificationVisibilityCard
                 desktopPrimaryDeviceConfirmCard
                 desktopVoiceEnrollCard
                 desktopWakeEnrollStartDraftCard
@@ -3123,6 +3140,23 @@ struct DesktopSessionShellView: View {
         }
 
         return trimmed
+    }
+
+    private var desktopSenderVerificationVisibilityState: DesktopSenderVerificationVisibilityState? {
+        guard let desktopTermsAcceptRuntimeOutcomeState,
+              desktopTermsAcceptRuntimeOutcomeState.phase == .completed,
+              desktopTermsAcceptRuntimeOutcomeState.nextStep == "SENDER_VERIFICATION",
+              let onboardingSessionID = desktopTermsAcceptRuntimeOutcomeState.onboardingSessionID
+        else {
+            return nil
+        }
+
+        return DesktopSenderVerificationVisibilityState(
+            onboardingSessionID: onboardingSessionID,
+            nextStep: "SENDER_VERIFICATION",
+            onboardingStatus: desktopTermsAcceptRuntimeOutcomeState.onboardingStatus,
+            requiredVerificationGates: desktopInviteOpenRuntimeOutcomeState?.requiredVerificationGates ?? []
+        )
     }
 
     private var boundedWakeEnrollCompletionLineageVoiceArtifactSyncReceiptRef: String? {
@@ -3872,6 +3906,59 @@ struct DesktopSessionShellView: View {
             } label: {
                 Text("Onboarding Terms Acceptance")
                     .font(.headline)
+            }
+        }
+    }
+
+    private var desktopSenderVerificationVisibilityCard: some View {
+        let visibilityState = desktopSenderVerificationVisibilityState
+
+        return Group {
+            if let visibilityState {
+                GroupBox {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("Bounded desktop sender-verification visibility only. This shell preserves the canonical `SENDER_VERIFICATION` posture reached after exact `TERMS_ACCEPT` and renders returned verification posture in read-only form only.")
+                            .frame(maxWidth: .infinity, alignment: .leading)
+
+                        ForEach(
+                            [
+                                ("onboarding_session_id", visibilityState.onboardingSessionID),
+                                ("next_step", visibilityState.nextStep),
+                                ("onboarding_status", visibilityState.onboardingStatus ?? "not_available"),
+                            ],
+                            id: \.0
+                        ) { row in
+                            HStack(alignment: .top, spacing: 12) {
+                                Text(row.0)
+                                    .font(.caption.monospaced())
+                                    .foregroundStyle(.secondary)
+                                    .frame(width: 170, alignment: .leading)
+
+                                Text(row.1)
+                                    .font(.body.monospaced())
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                        }
+
+                        Text("Canonical onboarding posture has advanced to exact `SENDER_VERIFICATION`. This shell is intentionally read-only at that boundary and does not add employee-photo upload, sender-decision submission, local photo capture, or local onboarding authority.")
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+
+                        desktopOnboardingEntryListCard(
+                            title: "required_verification_gates",
+                            items: visibilityState.requiredVerificationGates,
+                            emptyText: "No required_verification_gates are available in the bounded sender-verification visibility posture."
+                        )
+
+                        Text("Read-only sender-verification visibility only. No employee-photo controls, no sender confirm / reject controls, no hidden or background capture, no primary-device bypass, and no proven native macOS wake-listener integration claim are introduced by this surface.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                } label: {
+                    Text("Onboarding Sender Verification")
+                        .font(.headline)
+                }
             }
         }
     }
