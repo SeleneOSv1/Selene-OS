@@ -889,6 +889,12 @@ struct ExplicitVoiceTurnRequestState: Identifiable {
     }
 }
 
+private struct DesktopAuthoritativeReplyRenderState: Equatable {
+    let title: String
+    let summary: String
+    let authoritativeResponseText: String?
+}
+
 private enum VoicePermissionState: String {
     case notRequested = "not_requested"
     case granted = "granted"
@@ -2025,6 +2031,7 @@ struct DesktopSessionShellView: View {
     @StateObject private var explicitVoiceController = ExplicitVoiceCaptureController()
     @StateObject private var desktopCanonicalRuntimeBridge = DesktopCanonicalRuntimeBridge()
     @State private var desktopCanonicalRuntimeOutcomeState: DesktopCanonicalRuntimeOutcomeState?
+    @State private var desktopAuthoritativeReplyRenderState: DesktopAuthoritativeReplyRenderState?
 
     var body: some View {
         HStack(alignment: .top, spacing: 20) {
@@ -2293,6 +2300,7 @@ struct DesktopSessionShellView: View {
                 HStack(spacing: 12) {
                     Button("Start explicit voice turn") {
                         desktopCanonicalRuntimeOutcomeState = nil
+                        desktopAuthoritativeReplyRenderState = nil
                         explicitVoiceController.startExplicitVoiceTurn()
                     }
                     .buttonStyle(.borderedProminent)
@@ -2300,6 +2308,7 @@ struct DesktopSessionShellView: View {
 
                     Button("Stop capture and prepare voice request") {
                         desktopCanonicalRuntimeOutcomeState = nil
+                        desktopAuthoritativeReplyRenderState = nil
                         explicitVoiceController.stopCaptureAndPrepareVoiceTurn()
                     }
                     .buttonStyle(.bordered)
@@ -2322,6 +2331,10 @@ struct DesktopSessionShellView: View {
 
                 if let desktopCanonicalRuntimeOutcomeState {
                     desktopCanonicalRuntimeOutcomeCard(desktopCanonicalRuntimeOutcomeState)
+                }
+
+                if desktopAuthoritativeReplyRenderState != nil {
+                    desktopAuthoritativeReplyCard
                 }
 
                 if let failedRequest = explicitVoiceController.failedRequest {
@@ -4104,6 +4117,39 @@ struct DesktopSessionShellView: View {
         }
     }
 
+    @ViewBuilder
+    private var desktopAuthoritativeReplyCard: some View {
+        if let desktopAuthoritativeReplyRenderState {
+            GroupBox {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text(desktopAuthoritativeReplyRenderState.title)
+                        .font(.headline)
+
+                    Text(desktopAuthoritativeReplyRenderState.summary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                    if let authoritativeResponseText = desktopAuthoritativeReplyRenderState.authoritativeResponseText {
+                        Text(authoritativeResponseText)
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    } else {
+                        Text("No cloud-authored reply text is available for this completed canonical runtime outcome. This shell stays read-only and does not fabricate local answer content.")
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+
+                    Text("Read-only cloud-authored reply visibility only. This shell remains explicitly non-authoritative, keeps playback out of scope, and does not claim wake parity, native wake-listener integration, or autonomous unlock.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            } label: {
+                Text("Authoritative Reply")
+                    .font(.headline)
+            }
+        }
+    }
+
     @MainActor
     private func dispatchPreparedExplicitVoiceRequestIfNeeded() async {
         guard let pendingRequest = explicitVoiceController.pendingRequest else {
@@ -4117,6 +4163,7 @@ struct DesktopSessionShellView: View {
                 endpoint: ingressContext.endpoint,
                 requestID: ingressContext.requestID
             )
+            desktopAuthoritativeReplyRenderState = nil
 
             let outcomeState = await desktopCanonicalRuntimeBridge.dispatchPreparedExplicitVoiceRequest(ingressContext)
             guard explicitVoiceController.pendingRequest?.id == pendingRequest.id else {
@@ -4124,6 +4171,17 @@ struct DesktopSessionShellView: View {
             }
 
             desktopCanonicalRuntimeOutcomeState = outcomeState
+            if outcomeState.phase == .completed {
+                desktopAuthoritativeReplyRenderState = DesktopAuthoritativeReplyRenderState(
+                    title: "Cloud-authored authoritative reply",
+                    summary: outcomeState.authoritativeResponseText == nil
+                        ? "The canonical runtime completed without reply text for this bounded explicit voice turn."
+                        : "Read-only canonical reply text from the completed runtime dispatch is now visible here while the shell remains explicitly non-authoritative.",
+                    authoritativeResponseText: outcomeState.authoritativeResponseText
+                )
+            } else {
+                desktopAuthoritativeReplyRenderState = nil
+            }
             explicitVoiceController.clearPendingPreparedVoiceTurn()
         } catch {
             desktopCanonicalRuntimeOutcomeState = .failed(
@@ -4135,6 +4193,7 @@ struct DesktopSessionShellView: View {
                 reasonCode: "desktop_runtime_bridge_failure",
                 failureClass: "RetryableRuntime"
             )
+            desktopAuthoritativeReplyRenderState = nil
             explicitVoiceController.clearPendingPreparedVoiceTurn()
         }
     }

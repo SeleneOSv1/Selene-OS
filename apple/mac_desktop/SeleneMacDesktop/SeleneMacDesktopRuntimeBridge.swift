@@ -21,6 +21,7 @@ struct DesktopCanonicalRuntimeOutcomeState: Identifiable, Equatable {
     let sessionID: String?
     let turnID: String?
     let failureClass: String?
+    let authoritativeResponseText: String?
 
     static func dispatching(
         preparedRequestID: String,
@@ -40,7 +41,8 @@ struct DesktopCanonicalRuntimeOutcomeState: Identifiable, Equatable {
             reasonCode: nil,
             sessionID: nil,
             turnID: nil,
-            failureClass: nil
+            failureClass: nil,
+            authoritativeResponseText: nil
         )
     }
 
@@ -55,7 +57,7 @@ struct DesktopCanonicalRuntimeOutcomeState: Identifiable, Equatable {
             phase: .completed,
             title: "Canonical runtime dispatch completed",
             summary: "The bounded explicit voice request reached the canonical runtime and returned a cloud-authored outcome posture.",
-            detail: "Outcome visibility only. This bridge run does not render authoritative reply text into the shell transcript and does not perform local playback.",
+            detail: "Outcome visibility and bounded read-only reply rendering only. This bridge preserves cloud-authored reply text for shell-local display without mutating transcript preview surfaces or performing local playback.",
             endpoint: endpoint,
             requestID: requestID,
             outcome: response.outcome,
@@ -63,7 +65,8 @@ struct DesktopCanonicalRuntimeOutcomeState: Identifiable, Equatable {
             reasonCode: response.reasonCode,
             sessionID: response.sessionID,
             turnID: response.turnID.map(String.init),
-            failureClass: response.failureClass
+            failureClass: response.failureClass,
+            authoritativeResponseText: boundedAuthoritativeResponseText(response.responseText)
         )
     }
 
@@ -91,9 +94,23 @@ struct DesktopCanonicalRuntimeOutcomeState: Identifiable, Equatable {
             reasonCode: reasonCode,
             sessionID: sessionID,
             turnID: turnID,
-            failureClass: failureClass
+            failureClass: failureClass,
+            authoritativeResponseText: nil
         )
     }
+}
+
+private func boundedAuthoritativeResponseText(_ rawValue: String?) -> String? {
+    guard let rawValue else {
+        return nil
+    }
+
+    let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else {
+        return nil
+    }
+
+    return trimmed
 }
 
 final class DesktopCanonicalRuntimeBridge: ObservableObject {
