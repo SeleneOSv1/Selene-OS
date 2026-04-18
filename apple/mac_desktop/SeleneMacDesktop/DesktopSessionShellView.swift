@@ -2356,6 +2356,23 @@ struct DesktopPrimaryDeviceConfirmPromptState: Identifiable, Equatable {
     }
 }
 
+struct DesktopVoiceEnrollPromptState: Identifiable, Equatable {
+    let onboardingSessionID: String
+    let nextStep: String
+    let deviceID: String
+    let transcriptPreview: String
+
+    var id: String {
+        [
+            onboardingSessionID,
+            nextStep,
+            deviceID,
+            String(transcriptPreview.utf8.count),
+            String(transcriptPreview.prefix(48)),
+        ].joined(separator: "::")
+    }
+}
+
 struct DesktopPlatformSetupReceiptDraft: Identifiable, Equatable {
     let onboardingSessionID: String
     let receiptKind: String
@@ -2396,6 +2413,7 @@ struct DesktopSessionShellView: View {
     @State private var desktopPlatformSetupReceiptRuntimeOutcomeState: DesktopPlatformSetupReceiptRuntimeOutcomeState?
     @State private var desktopTermsAcceptRuntimeOutcomeState: DesktopTermsAcceptRuntimeOutcomeState?
     @State private var desktopPrimaryDeviceConfirmRuntimeOutcomeState: DesktopPrimaryDeviceConfirmRuntimeOutcomeState?
+    @State private var desktopVoiceEnrollRuntimeOutcomeState: DesktopVoiceEnrollRuntimeOutcomeState?
     @State private var desktopOnboardingContinueFieldInput: String = ""
     @State private var desktopAuthoritativeReplyRenderState: DesktopAuthoritativeReplyRenderState?
     @State private var desktopAuthoritativeReplyProvenanceRenderState: DesktopAuthoritativeReplyProvenanceRenderState?
@@ -2418,6 +2436,7 @@ struct DesktopSessionShellView: View {
                 desktopPlatformSetupReceiptSubmissionCard
                 desktopTermsAcceptCard
                 desktopPrimaryDeviceConfirmCard
+                desktopVoiceEnrollCard
 
                 sessionCard
                 .frame(maxWidth: .infinity, minHeight: 360, alignment: .topLeading)
@@ -2459,6 +2478,7 @@ struct DesktopSessionShellView: View {
                     desktopPlatformSetupReceiptRuntimeOutcomeState = nil
                     desktopTermsAcceptRuntimeOutcomeState = nil
                     desktopPrimaryDeviceConfirmRuntimeOutcomeState = nil
+                    desktopVoiceEnrollRuntimeOutcomeState = nil
                     desktopOnboardingContinueFieldInput = ""
                 }
                 desktopOnboardingEntryContext = context
@@ -2951,6 +2971,43 @@ struct DesktopSessionShellView: View {
                 nextStep: "PRIMARY_DEVICE_CONFIRM",
                 deviceID: deviceID,
                 proofOK: true
+            )
+        }
+
+        return nil
+    }
+
+    private var boundedDesktopVoiceEnrollTranscriptPreview: String? {
+        let trimmed = explicitVoiceController.transcriptPreview
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty,
+              trimmed.utf8.count <= 4_096,
+              !trimmed.contains("\n"),
+              !trimmed.contains("\r") else {
+            return nil
+        }
+
+        return trimmed
+    }
+
+    private var desktopVoiceEnrollPromptState: DesktopVoiceEnrollPromptState? {
+        if let desktopVoiceEnrollRuntimeOutcomeState,
+           desktopVoiceEnrollRuntimeOutcomeState.phase == .completed,
+           desktopVoiceEnrollRuntimeOutcomeState.nextStep != "VOICE_ENROLL" {
+            return nil
+        }
+
+        if let desktopPrimaryDeviceConfirmRuntimeOutcomeState,
+           desktopPrimaryDeviceConfirmRuntimeOutcomeState.phase == .completed,
+           desktopPrimaryDeviceConfirmRuntimeOutcomeState.nextStep == "VOICE_ENROLL",
+           let onboardingSessionID = desktopPrimaryDeviceConfirmRuntimeOutcomeState.onboardingSessionID,
+           let deviceID = desktopManagedPrimaryDeviceID,
+           let transcriptPreview = boundedDesktopVoiceEnrollTranscriptPreview {
+            return DesktopVoiceEnrollPromptState(
+                onboardingSessionID: onboardingSessionID,
+                nextStep: "VOICE_ENROLL",
+                deviceID: deviceID,
+                transcriptPreview: transcriptPreview
             )
         }
 
@@ -3482,6 +3539,134 @@ struct DesktopSessionShellView: View {
                 }
             } label: {
                 Text("Onboarding Primary Device Confirmation")
+                    .font(.headline)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var desktopVoiceEnrollCard: some View {
+        let promptState = desktopVoiceEnrollPromptState
+        let primaryDeviceVoiceContext = (
+            desktopPrimaryDeviceConfirmRuntimeOutcomeState?.phase == .completed
+            && desktopPrimaryDeviceConfirmRuntimeOutcomeState?.nextStep == "VOICE_ENROLL"
+        ) ? desktopPrimaryDeviceConfirmRuntimeOutcomeState : nil
+        let displayedOnboardingSessionID = promptState?.onboardingSessionID
+            ?? desktopVoiceEnrollRuntimeOutcomeState?.onboardingSessionID
+            ?? primaryDeviceVoiceContext?.onboardingSessionID
+            ?? "unavailable"
+        let displayedNextStep = desktopVoiceEnrollRuntimeOutcomeState?.nextStep
+            ?? promptState?.nextStep
+            ?? primaryDeviceVoiceContext?.nextStep
+            ?? "not_provided"
+        let displayedDeviceID = promptState?.deviceID
+            ?? desktopVoiceEnrollRuntimeOutcomeState?.deviceID
+            ?? primaryDeviceVoiceContext?.deviceID
+            ?? desktopManagedPrimaryDeviceID
+            ?? "not_provided"
+        let sampleSeedPosture = promptState != nil
+            ? "deterministic_from_explicit_voice_transcript_preview_and_onboarding_context"
+            : displayedNextStep == "VOICE_ENROLL"
+                ? "bounded_explicit_voice_transcript_preview_required_before_dispatch"
+                : "read_only_after_voice_enroll_dispatch"
+
+        if promptState != nil || primaryDeviceVoiceContext != nil || desktopVoiceEnrollRuntimeOutcomeState != nil {
+            GroupBox {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Bounded desktop voice-enroll lock submission only. This shell derives bounded prompt state when canonical onboarding posture has advanced to exact `VOICE_ENROLL`, derives one exact bounded deterministic `sample_seed` from the already-live explicit voice transcript preview plus bounded onboarding context, dispatches exact `VOICE_ENROLL_LOCK`, and keeps returned `WAKE_ENROLL` visibility read-only only.")
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                    ForEach(
+                        [
+                            ("onboarding_session_id", displayedOnboardingSessionID),
+                            ("next_step", displayedNextStep),
+                            ("device_id", displayedDeviceID),
+                            ("sample_seed_posture", sampleSeedPosture),
+                        ],
+                        id: \.0
+                    ) { row in
+                        HStack(alignment: .top, spacing: 12) {
+                            Text(row.0)
+                                .font(.caption.monospaced())
+                                .foregroundStyle(.secondary)
+                                .frame(width: 170, alignment: .leading)
+
+                            Text(row.1)
+                                .font(.body.monospaced())
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                    }
+
+                    Text(promptState != nil
+                        ? "A deterministic bounded `sample_seed` will be derived from the current explicit voice transcript preview together with `onboarding_session_id`, exact `next_step`, and the exact managed bridge `device_id`. This shell does not introduce new voice-capture authority or any wake mutation."
+                        : displayedNextStep == "VOICE_ENROLL"
+                            ? "The exact seed source for this surface is the already-live bounded explicit voice transcript preview. Produce a bounded transcript preview first, then this shell can derive the deterministic `sample_seed` and dispatch exact `VOICE_ENROLL_LOCK`."
+                            : "This shell now preserves returned voice-enroll completion posture in read-only form only. Any returned `WAKE_ENROLL` visibility remains unsubmitted here.")
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                    if let promptState {
+                        Button("Lock bounded voice enrollment") {
+                            Task {
+                                await submitDesktopVoiceEnrollLock(promptState: promptState)
+                            }
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(desktopVoiceEnrollRuntimeOutcomeState?.phase == .dispatching)
+                    }
+
+                    if let desktopVoiceEnrollRuntimeOutcomeState {
+                        Divider()
+
+                        Text(desktopVoiceEnrollRuntimeOutcomeState.title)
+                            .font(.headline)
+
+                        ForEach(
+                            [
+                                ("dispatch_phase", desktopVoiceEnrollRuntimeOutcomeState.phase.rawValue),
+                                ("request_id", desktopVoiceEnrollRuntimeOutcomeState.requestID),
+                                ("endpoint", desktopVoiceEnrollRuntimeOutcomeState.endpoint),
+                                ("outcome", desktopVoiceEnrollRuntimeOutcomeState.outcome ?? "not_available"),
+                                ("reason", desktopVoiceEnrollRuntimeOutcomeState.reason ?? "not_available"),
+                                ("onboarding_status", desktopVoiceEnrollRuntimeOutcomeState.onboardingStatus ?? "not_available"),
+                                ("voice_artifact_sync_receipt_ref", desktopVoiceEnrollRuntimeOutcomeState.voiceArtifactSyncReceiptRef ?? "not_available"),
+                            ],
+                            id: \.0
+                        ) { row in
+                            HStack(alignment: .top, spacing: 12) {
+                                Text(row.0)
+                                    .font(.caption.monospaced())
+                                    .foregroundStyle(.secondary)
+                                    .frame(width: 170, alignment: .leading)
+
+                                Text(row.1)
+                                    .font(.body.monospaced())
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                        }
+
+                        Text(desktopVoiceEnrollRuntimeOutcomeState.summary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+
+                        Text(desktopVoiceEnrollRuntimeOutcomeState.detail)
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    } else {
+                        Text(promptState != nil
+                            ? "Awaiting explicit user-triggered canonical voice-enroll lock. If canonical runtime advances to `WAKE_ENROLL` for desktop, this shell will preserve that next step in read-only form only."
+                            : "Canonical onboarding posture is at exact `VOICE_ENROLL`, but this shell is still waiting for an already-live bounded explicit voice transcript preview before it can lawfully derive `sample_seed` and dispatch exact `VOICE_ENROLL_LOCK`.")
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+
+                    Text("Only exact `VOICE_ENROLL_LOCK` with the exact managed bridge `deviceID` and one exact bounded `sample_seed` derived only from already-live bounded explicit voice transcript preview is in scope here. No sender-verification controls, no employee-photo controls, no wake-enrollment controls, no emo-persona controls, no access-provision controls, no pairing-completion controls, and no proven native macOS wake-listener integration claim are introduced by this surface.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            } label: {
+                Text("Onboarding Voice Enrollment Lock")
                     .font(.headline)
             }
         }
@@ -5699,6 +5884,45 @@ struct DesktopSessionShellView: View {
                 endpoint: desktopCanonicalRuntimeBridge.onboardingContinueEndpoint,
                 requestID: "unavailable",
                 summary: "The canonical onboarding-continue bridge could not stage this bounded desktop primary-device confirmation request.",
+                detail: error.localizedDescription
+            )
+        }
+    }
+
+    @MainActor
+    private func submitDesktopVoiceEnrollLock(
+        promptState: DesktopVoiceEnrollPromptState
+    ) async {
+        let activeEntryContextID = desktopOnboardingEntryContext?.id
+
+        do {
+            let ingressContext = try desktopCanonicalRuntimeBridge.desktopVoiceEnrollRequestBuilder(
+                promptState
+            )
+            desktopVoiceEnrollRuntimeOutcomeState = .dispatching(
+                onboardingSessionID: ingressContext.onboardingSessionID,
+                deviceID: ingressContext.deviceID,
+                sampleSeed: ingressContext.sampleSeed,
+                endpoint: ingressContext.endpoint,
+                requestID: ingressContext.requestID
+            )
+
+            let outcomeState = await desktopCanonicalRuntimeBridge.submitDesktopVoiceEnrollLock(
+                ingressContext
+            )
+            guard desktopOnboardingEntryContext?.id == activeEntryContextID else {
+                return
+            }
+
+            desktopVoiceEnrollRuntimeOutcomeState = outcomeState
+        } catch {
+            desktopVoiceEnrollRuntimeOutcomeState = .failed(
+                onboardingSessionID: promptState.onboardingSessionID,
+                deviceID: promptState.deviceID,
+                sampleSeed: nil,
+                endpoint: desktopCanonicalRuntimeBridge.onboardingContinueEndpoint,
+                requestID: "unavailable",
+                summary: "The canonical onboarding-continue bridge could not stage this bounded desktop voice-enroll lock request.",
                 detail: error.localizedDescription
             )
         }
