@@ -875,7 +875,7 @@ private struct InterruptContinuityResponseFailureState: Identifiable, Equatable 
     let detail: String
 }
 
-private struct ExplicitVoiceTurnRequestState: Identifiable {
+struct ExplicitVoiceTurnRequestState: Identifiable {
     let id: String
     let transcript: String
     let byteCount: Int
@@ -1041,6 +1041,10 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
         teardownRecognitionSession()
     }
 
+    func clearPendingPreparedVoiceTurn() {
+        pendingRequest = nil
+    }
+
     private func beginCaptureSession() {
         failedRequest = nil
         teardownRecognitionSession()
@@ -1119,7 +1123,7 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
                 id: "failed_explicit_voice_capture_start",
                 title: "Failed explicit voice request",
                 summary: "The bounded explicit voice capture session could not start from this foreground surface.",
-                detail: "Capture start failed with `\(error.localizedDescription)`. Failure visibility only; no background capture, no wake behavior, and no autonomous unlock were introduced."
+                detail: "Capture start failed with `\(error.localizedDescription)`. Failure visibility only; no background capture, no wake behavior, and no autonomous-unlock capability were introduced."
             )
         }
     }
@@ -2019,6 +2023,8 @@ struct DesktopSessionShellView: View {
     @State private var interruptResponseFailedRequest: InterruptContinuityResponseFailureState?
     @State private var interruptResponseRequestSequence: Int = 0
     @StateObject private var explicitVoiceController = ExplicitVoiceCaptureController()
+    @StateObject private var desktopCanonicalRuntimeBridge = DesktopCanonicalRuntimeBridge()
+    @State private var desktopCanonicalRuntimeOutcomeState: DesktopCanonicalRuntimeOutcomeState?
 
     var body: some View {
         HStack(alignment: .top, spacing: 20) {
@@ -2047,8 +2053,12 @@ struct DesktopSessionShellView: View {
         .padding(24)
         .frame(minWidth: 1180, minHeight: 720, alignment: .topLeading)
         .background(Color(nsColor: .windowBackgroundColor))
+        .task(id: explicitVoiceController.pendingRequest?.id) {
+            await dispatchPreparedExplicitVoiceRequestIfNeeded()
+        }
         .onDisappear {
             explicitVoiceController.haltCaptureSession()
+            desktopCanonicalRuntimeBridge.stopManagedAdapter()
         }
         .onOpenURL { url in
             if let context = DesktopSessionActiveVisibleContext(url: url) {
@@ -2184,7 +2194,7 @@ struct DesktopSessionShellView: View {
     private var explicitVoiceEntryAffordanceCard: some View {
         GroupBox {
             VStack(alignment: .leading, spacing: 12) {
-                Text("Explicit voice entry now produces a bounded desktop explicit voice-turn request only after foreground user initiation. Capture, transcript preview, pending posture, and failed posture remain explicit, bounded, and cloud-authoritative.")
+                Text("Explicit voice entry now produces and dispatches a bounded desktop explicit voice-turn request only after foreground user initiation. Capture, transcript preview, canonical runtime dispatch status, pending posture, and failed posture remain explicit, bounded, and cloud-authoritative.")
                     .frame(maxWidth: .infinity, alignment: .leading)
 
                 HStack(alignment: .center, spacing: 12) {
@@ -2196,7 +2206,7 @@ struct DesktopSessionShellView: View {
                         Text("Explicit voice entry")
                             .font(.headline)
 
-                        Text("Bounded foreground macOS capture and non-authoritative transcript preview only. This surface does not dispatch runtime work, synthesize assistant output, or claim wake-listener authority.")
+                        Text("Bounded foreground macOS capture and non-authoritative transcript preview only. This surface dispatches only bounded canonical runtime ingress and still does not synthesize assistant output, reply playback, or wake-listener authority.")
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
                     }
@@ -2282,12 +2292,14 @@ struct DesktopSessionShellView: View {
 
                 HStack(spacing: 12) {
                     Button("Start explicit voice turn") {
+                        desktopCanonicalRuntimeOutcomeState = nil
                         explicitVoiceController.startExplicitVoiceTurn()
                     }
                     .buttonStyle(.borderedProminent)
                     .disabled(explicitVoiceController.isListening || explicitVoiceController.pendingRequest != nil)
 
                     Button("Stop capture and prepare voice request") {
+                        desktopCanonicalRuntimeOutcomeState = nil
                         explicitVoiceController.stopCaptureAndPrepareVoiceTurn()
                     }
                     .buttonStyle(.bordered)
@@ -2306,6 +2318,10 @@ struct DesktopSessionShellView: View {
 
                 if let pendingRequest = explicitVoiceController.pendingRequest {
                     explicitVoicePendingRequestCard(pendingRequest)
+                }
+
+                if let desktopCanonicalRuntimeOutcomeState {
+                    desktopCanonicalRuntimeOutcomeCard(desktopCanonicalRuntimeOutcomeState)
                 }
 
                 if let failedRequest = explicitVoiceController.failedRequest {
@@ -2327,7 +2343,7 @@ struct DesktopSessionShellView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                 }
 
-                Text("No wake parity claim, no proven native macOS wake-listener integration claim, no autonomous unlock claim, and no local authority claim are introduced by this affordance.")
+                Text("No wake parity claim, no proven native macOS wake-listener integration claim, no autonomous-unlock claim, and no local authority claim are introduced by this affordance.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -2854,7 +2870,7 @@ struct DesktopSessionShellView: View {
                 metadataRow(label: row.label, value: row.value)
             }
 
-            Text("Bounded read-only wake-entry evidence only. No local wake-listener authority, no local threshold law, no local wake runtime law, no local session-open authority, no local entry unlock, no wake parity, and no autonomous unlock.")
+            Text("Bounded read-only wake-entry evidence only. No local wake-listener authority, no local threshold law, no local wake runtime law, no local session-open authority, no local entry unlock, no wake parity, and no autonomous-unlock capability.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -4029,7 +4045,7 @@ struct DesktopSessionShellView: View {
                 Text(request.boundedPreview)
                     .frame(maxWidth: .infinity, alignment: .leading)
 
-                Text("This bounded explicit voice request preview remains session-bound, `EXPLICIT_ONLY`, and non-authoritative until cloud-visible acceptance or response exists.")
+                Text("This bounded explicit voice request preview remains session-bound, `EXPLICIT_ONLY`, and non-authoritative while canonical runtime dispatch and later cloud-visible response posture resolve.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -4037,6 +4053,89 @@ struct DesktopSessionShellView: View {
         } label: {
             Text("Explicit Voice Turn Request")
                 .font(.headline)
+        }
+    }
+
+    private func desktopCanonicalRuntimeOutcomeCard(
+        _ outcomeState: DesktopCanonicalRuntimeOutcomeState
+    ) -> some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 10) {
+                Text(outcomeState.title)
+                    .font(.headline)
+
+                ForEach(
+                    [
+                        ("dispatch_phase", outcomeState.phase.rawValue),
+                        ("request_id", outcomeState.requestID),
+                        ("endpoint", outcomeState.endpoint),
+                        ("outcome", outcomeState.outcome ?? "not_available"),
+                        ("next_move", outcomeState.nextMove ?? "not_available"),
+                        ("reason_code", outcomeState.reasonCode ?? "not_available"),
+                        ("failure_class", outcomeState.failureClass ?? "not_available"),
+                        ("session_id", outcomeState.sessionID ?? "not_available"),
+                        ("turn_id", outcomeState.turnID ?? "not_available"),
+                    ],
+                    id: \.0
+                ) { row in
+                    HStack(alignment: .top, spacing: 12) {
+                        Text(row.0)
+                            .font(.caption.monospaced())
+                            .foregroundStyle(.secondary)
+                            .frame(width: 170, alignment: .leading)
+
+                        Text(row.1)
+                            .font(.body.monospaced())
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+
+                Text(outcomeState.summary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                Text(outcomeState.detail)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        } label: {
+            Text("Canonical Runtime Dispatch")
+                .font(.headline)
+        }
+    }
+
+    @MainActor
+    private func dispatchPreparedExplicitVoiceRequestIfNeeded() async {
+        guard let pendingRequest = explicitVoiceController.pendingRequest else {
+            return
+        }
+
+        do {
+            let ingressContext = try desktopCanonicalRuntimeBridge.desktopExplicitVoiceIngressRequestBuilder(pendingRequest)
+            desktopCanonicalRuntimeOutcomeState = .dispatching(
+                preparedRequestID: ingressContext.preparedRequestID,
+                endpoint: ingressContext.endpoint,
+                requestID: ingressContext.requestID
+            )
+
+            let outcomeState = await desktopCanonicalRuntimeBridge.dispatchPreparedExplicitVoiceRequest(ingressContext)
+            guard explicitVoiceController.pendingRequest?.id == pendingRequest.id else {
+                return
+            }
+
+            desktopCanonicalRuntimeOutcomeState = outcomeState
+            explicitVoiceController.clearPendingPreparedVoiceTurn()
+        } catch {
+            desktopCanonicalRuntimeOutcomeState = .failed(
+                preparedRequestID: pendingRequest.id,
+                endpoint: desktopCanonicalRuntimeBridge.voiceTurnEndpoint,
+                requestID: "unavailable",
+                summary: "The canonical runtime bridge could not stage the bounded explicit voice request for dispatch.",
+                detail: error.localizedDescription,
+                reasonCode: "desktop_runtime_bridge_failure",
+                failureClass: "RetryableRuntime"
+            )
+            explicitVoiceController.clearPendingPreparedVoiceTurn()
         }
     }
 
