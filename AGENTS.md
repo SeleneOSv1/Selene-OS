@@ -313,6 +313,33 @@ If verification cannot be completed:
 - stop and report the claim as `unverified`
 - do not pin a self-authored build instruction or final report to that claim
 
+### Verification Clause Specificity Rule
+If a self-authored verification clause is intended to prove that the current task did not add a forbidden symbol, behavior, or route, Codex must scope that clause to the current task slice rather than blindly scanning preserved whole-file history when same-task repo truth shows that one or more forbidden symbols already exist outside the current edit.
+
+Required verification discipline:
+- if a forbidden symbol check targets edited files that already contain preserved historical symbols, Codex must use a diff-scoped check such as exact `git diff --unified=0 -- <task files> | rg ...` or an equally narrow task-slice verification
+- if the task adds only bounded slices inside larger files, Codex must pair positive slice-presence checks with narrow forbidden diff checks rather than whole-file negative greps
+- if preserved symbols already exist in the target file, Codex must say so explicitly and must not present a broad whole-file grep failure as if it were caused by the current task
+
+Forbidden:
+- using a whole-file negative grep as the decisive verification clause when same-task repo truth already shows preserved conflicting symbols in that file outside the task slice
+- treating inherited symbols in unchanged lines as evidence that the current task violated scope
+- writing a self-authored verification clause that cannot distinguish pre-existing repo truth from the current diff when the distinction is discoverable
+
+### Exact Test Execution Verification Rule
+If Codex cites an exact test command as proof in a self-authored build instruction, audit, corrective follow-up, or final completion report, Codex must verify both the exact runnable test name and the fact that a nonzero test count actually executed.
+
+Required verification:
+- verify the exact runnable test name from current repo truth in the same task with a runner-native listing command such as `cargo test ... -- --list` when the exact test path could be ambiguous
+- after execution, verify that the test run executed a nonzero test count such as `running 1 test`; a result with `0 passed; 0 failed` or `N filtered out` does not count as successful exact-test verification
+- if the exact test name in task instructions conflicts with current repo truth, Codex must follow current repo truth, report the mismatch once, and update the self-authored verification command to the exact runnable name
+- if an exact test fails, Codex must distinguish between target-slice regressions and inherited prerequisite or contract mismatches before concluding that the task itself failed
+
+Forbidden:
+- treating an exact test command that ran zero tests as a successful verification
+- reusing remembered exact test names without same-task confirmation when the repo can list them directly
+- blaming the current target slice for an exact-test failure before checking whether the failure is caused by an inherited prerequisite, stale verification clause, or conflicting upstream repo truth
+
 ### Authority Conflict Stop Rule
 If current repo artifacts that should describe the same truth conflict with each other, Codex must stop and report the exact conflict with file-and-line evidence.
 

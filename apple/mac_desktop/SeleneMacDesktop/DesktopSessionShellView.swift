@@ -2185,11 +2185,123 @@ private enum DesktopRecoveryVisibleSurface {
     }
 }
 
+enum DesktopOnboardingEntryRouteKind: String, Equatable {
+    case inviteOpen = "INVITE_OPEN"
+    case appOpen = "APP_OPEN"
+
+    var title: String {
+        switch self {
+        case .inviteOpen:
+            return "Invite-open onboarding entry"
+        case .appOpen:
+            return "App-open onboarding entry"
+        }
+    }
+}
+
+struct DesktopOnboardingEntryContext: Identifiable, Equatable {
+    let id: String
+    let routeKind: DesktopOnboardingEntryRouteKind
+    let scheme: String
+    let host: String
+    let path: String
+    let tokenID: String
+    let tokenSignature: String
+    let tenantID: String?
+    let tenantHint: String?
+    let deepLinkNonce: String
+    let appInstanceID: String
+    let deviceFingerprint: String
+
+    init?(url: URL) {
+        guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
+            return nil
+        }
+
+        let scheme = (components.scheme ?? "").lowercased()
+        guard ["selene", "https", "http"].contains(scheme) else {
+            return nil
+        }
+
+        let host = (components.host ?? "no-host").lowercased()
+        let path = components.path.isEmpty ? "/" : components.path
+        let queryItems = components.queryItems ?? []
+
+        guard
+            let tokenID = Self.routeField(firstQueryValue(in: queryItems, name: "token_id")),
+            let tokenSignature = Self.routeField(firstQueryValue(in: queryItems, name: "token_signature")),
+            let deepLinkNonce = Self.routeField(firstQueryValue(in: queryItems, name: "deep_link_nonce")),
+            let appInstanceID = Self.routeField(firstQueryValue(in: queryItems, name: "app_instance_id")),
+            let deviceFingerprint = Self.routeField(firstQueryValue(in: queryItems, name: "device_fingerprint"))
+        else {
+            return nil
+        }
+
+        let tenantID = Self.routeField(firstQueryValue(in: queryItems, name: "tenant_id"))
+        let tenantHint = Self.routeField(firstQueryValue(in: queryItems, name: "tenant_hint"))
+
+        let lowerPath = path.lowercased()
+        let inviteLike = host.contains("invite") || lowerPath.contains("invite") || lowerPath.contains("onboarding")
+        let appOpenLike = host.contains("open") || host.contains("entry") || lowerPath.contains("open") || lowerPath.contains("entry") || scheme == "selene"
+        guard inviteLike || appOpenLike else {
+            return nil
+        }
+
+        self.id = url.absoluteString
+        self.routeKind = inviteLike ? .inviteOpen : .appOpen
+        self.scheme = scheme
+        self.host = host
+        self.path = path
+        self.tokenID = tokenID
+        self.tokenSignature = tokenSignature
+        self.tenantID = tenantID
+        self.tenantHint = tenantHint
+        self.deepLinkNonce = deepLinkNonce
+        self.appInstanceID = appInstanceID
+        self.deviceFingerprint = deviceFingerprint
+    }
+
+    var routeRows: [(label: String, value: String)] {
+        var rows: [(label: String, value: String)] = [
+            ("entry_kind", routeKind.rawValue),
+            ("scheme", scheme),
+            ("host", host),
+            ("path", path),
+            ("token_id", boundedHint(tokenID) ?? tokenID),
+            ("deep_link_nonce", boundedHint(deepLinkNonce) ?? deepLinkNonce),
+            ("app_instance_id", boundedHint(appInstanceID) ?? appInstanceID),
+            ("device_fingerprint", boundedHint(deviceFingerprint) ?? deviceFingerprint),
+        ]
+
+        if let tenantID {
+            rows.append(("tenant_id", boundedHint(tenantID) ?? tenantID))
+        } else if let tenantHint {
+            rows.append(("tenant_hint", boundedHint(tenantHint) ?? tenantHint))
+        }
+
+        return rows
+    }
+
+    private static func routeField(_ rawValue: String?) -> String? {
+        guard let rawValue else {
+            return nil
+        }
+
+        let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed.count <= 256, !trimmed.contains("\n"), !trimmed.contains("\r") else {
+            return nil
+        }
+
+        return trimmed
+    }
+}
+
 struct DesktopSessionShellView: View {
     @State private var latestSessionHeaderContext: DesktopSessionHeaderContext?
     @State private var latestSessionActiveVisibleContext: DesktopSessionActiveVisibleContext?
     @State private var latestSessionSoftClosedVisibleContext: DesktopSessionSoftClosedVisibleContext?
     @State private var latestSessionSuspendedVisibleContext: DesktopSessionSuspendedVisibleContext?
+    @State private var desktopOnboardingEntryContext: DesktopOnboardingEntryContext?
     @State private var interruptResponsePendingRequest: InterruptContinuityResponseRequestState?
     @State private var interruptResponseFailedRequest: InterruptContinuityResponseFailureState?
     @State private var interruptResponseRequestSequence: Int = 0
@@ -2197,6 +2309,7 @@ struct DesktopSessionShellView: View {
     @StateObject private var desktopCanonicalRuntimeBridge = DesktopCanonicalRuntimeBridge()
     @StateObject private var desktopAuthoritativeReplyPlaybackController = DesktopAuthoritativeReplyPlaybackController()
     @State private var desktopCanonicalRuntimeOutcomeState: DesktopCanonicalRuntimeOutcomeState?
+    @State private var desktopInviteOpenRuntimeOutcomeState: DesktopInviteOpenRuntimeOutcomeState?
     @State private var desktopAuthoritativeReplyRenderState: DesktopAuthoritativeReplyRenderState?
     @State private var desktopAuthoritativeReplyProvenanceRenderState: DesktopAuthoritativeReplyProvenanceRenderState?
     @State private var desktopAuthoritativeReplyPlaybackState: DesktopAuthoritativeReplyPlaybackState = .idle
@@ -2212,6 +2325,8 @@ struct DesktopSessionShellView: View {
 
             VStack(alignment: .leading, spacing: 16) {
                 explicitVoiceEntryAffordanceCard
+
+                desktopOnboardingEntryCard
 
                 sessionCard
                 .frame(maxWidth: .infinity, minHeight: 360, alignment: .topLeading)
@@ -2231,6 +2346,9 @@ struct DesktopSessionShellView: View {
         .task(id: explicitVoiceController.pendingRequest?.id) {
             await dispatchPreparedExplicitVoiceRequestIfNeeded()
         }
+        .task(id: desktopOnboardingEntryContext?.id) {
+            await openInviteLinkAndStartOnboardingIfNeeded()
+        }
         .onReceive(desktopAuthoritativeReplyPlaybackController.$playbackState) { playbackState in
             desktopAuthoritativeReplyPlaybackState = playbackState
         }
@@ -2240,6 +2358,13 @@ struct DesktopSessionShellView: View {
             desktopAuthoritativeReplyPlaybackController.reset()
         }
         .onOpenURL { url in
+            if let context = DesktopOnboardingEntryContext(url: url) {
+                if desktopOnboardingEntryContext?.id != context.id {
+                    desktopInviteOpenRuntimeOutcomeState = nil
+                }
+                desktopOnboardingEntryContext = context
+            }
+
             if let context = DesktopSessionActiveVisibleContext(url: url) {
                 clearInterruptResponseState()
                 latestSessionActiveVisibleContext = context
@@ -2672,6 +2797,100 @@ struct DesktopSessionShellView: View {
                     title: "Session",
                     detail: "One dominant session surface placeholder for the cloud-authoritative Selene runtime."
                 )
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var desktopOnboardingEntryCard: some View {
+        if let desktopOnboardingEntryContext {
+            GroupBox {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text(desktopOnboardingEntryContext.routeKind.title)
+                        .font(.headline)
+
+                    Text("Bounded app-open / invite-open onboarding entry only. This shell parses lawful route context, dispatches canonical `/v1/invite/click`, and renders returned onboarding-start posture in read-only form without widening into onboarding-continue mutation or local onboarding authority.")
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        ForEach(Array(desktopOnboardingEntryContext.routeRows.enumerated()), id: \.offset) { entry in
+                            let row = entry.element
+                            HStack(alignment: .top, spacing: 12) {
+                                Text(row.label)
+                                    .font(.caption.monospaced())
+                                    .foregroundStyle(.secondary)
+                                    .frame(width: 170, alignment: .leading)
+
+                                Text(row.value)
+                                    .font(.body.monospaced())
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                        }
+                    }
+
+                    if let desktopInviteOpenRuntimeOutcomeState {
+                        Divider()
+
+                        Text(desktopInviteOpenRuntimeOutcomeState.title)
+                            .font(.headline)
+
+                        ForEach(
+                            [
+                                ("dispatch_phase", desktopInviteOpenRuntimeOutcomeState.phase.rawValue),
+                                ("request_id", desktopInviteOpenRuntimeOutcomeState.requestID),
+                                ("endpoint", desktopInviteOpenRuntimeOutcomeState.endpoint),
+                                ("outcome", desktopInviteOpenRuntimeOutcomeState.outcome ?? "not_available"),
+                                ("reason", desktopInviteOpenRuntimeOutcomeState.reason ?? "not_available"),
+                                ("onboarding_session_id", desktopInviteOpenRuntimeOutcomeState.onboardingSessionID ?? "not_available"),
+                                ("next_step", desktopInviteOpenRuntimeOutcomeState.nextStep ?? "not_available"),
+                            ],
+                            id: \.0
+                        ) { row in
+                            HStack(alignment: .top, spacing: 12) {
+                                Text(row.0)
+                                    .font(.caption.monospaced())
+                                    .foregroundStyle(.secondary)
+                                    .frame(width: 170, alignment: .leading)
+
+                                Text(row.1)
+                                    .font(.body.monospaced())
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                        }
+
+                        Text(desktopInviteOpenRuntimeOutcomeState.summary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+
+                        Text(desktopInviteOpenRuntimeOutcomeState.detail)
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+
+                        desktopOnboardingEntryListCard(
+                            title: "required_fields",
+                            items: desktopInviteOpenRuntimeOutcomeState.requiredFields,
+                            emptyText: "No required_fields were returned in the bounded onboarding-start outcome."
+                        )
+
+                        desktopOnboardingEntryListCard(
+                            title: "required_verification_gates",
+                            items: desktopInviteOpenRuntimeOutcomeState.requiredVerificationGates,
+                            emptyText: "No required_verification_gates were returned in the bounded onboarding-start outcome."
+                        )
+                    } else {
+                        Text("Awaiting bounded invite-open dispatch. This shell stays read-only and does not locally activate invites, continue onboarding, or bypass canonical runtime routing.")
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+
+                    Text("Read-only onboarding-entry visibility only. No onboarding-continue action controls, no platform-receipt submission controls, no access-provision controls, no pairing-completion controls, no wake-enrollment controls, no proven native macOS wake-listener integration claim, and no autonomous-unlock claim are introduced by this surface.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            } label: {
+                Text("Onboarding Entry")
+                    .font(.headline)
             }
         }
     }
@@ -4462,6 +4681,41 @@ struct DesktopSessionShellView: View {
     }
 
     @MainActor
+    private func openInviteLinkAndStartOnboardingIfNeeded() async {
+        guard let desktopOnboardingEntryContext else {
+            return
+        }
+
+        do {
+            let ingressContext = try desktopCanonicalRuntimeBridge.desktopInviteClickRequestBuilder(
+                desktopOnboardingEntryContext
+            )
+            desktopInviteOpenRuntimeOutcomeState = .dispatching(
+                entryContextID: desktopOnboardingEntryContext.id,
+                endpoint: ingressContext.endpoint,
+                requestID: ingressContext.requestID
+            )
+
+            let outcomeState = await desktopCanonicalRuntimeBridge.openInviteLinkAndStartOnboarding(
+                ingressContext
+            )
+            guard self.desktopOnboardingEntryContext?.id == desktopOnboardingEntryContext.id else {
+                return
+            }
+
+            desktopInviteOpenRuntimeOutcomeState = outcomeState
+        } catch {
+            desktopInviteOpenRuntimeOutcomeState = .failed(
+                entryContextID: desktopOnboardingEntryContext.id,
+                endpoint: desktopCanonicalRuntimeBridge.inviteClickEndpoint,
+                requestID: "unavailable",
+                summary: "The canonical invite-open bridge could not stage this onboarding-entry request.",
+                detail: error.localizedDescription
+            )
+        }
+    }
+
+    @MainActor
     private func dispatchPreparedExplicitVoiceRequestIfNeeded() async {
         guard let pendingRequest = explicitVoiceController.pendingRequest else {
             return
@@ -4536,6 +4790,36 @@ struct DesktopSessionShellView: View {
     private func clearInterruptResponseState() {
         interruptResponsePendingRequest = nil
         interruptResponseFailedRequest = nil
+    }
+
+    private func desktopOnboardingEntryListCard(
+        title: String,
+        items: [String],
+        emptyText: String
+    ) -> some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 8) {
+                if items.isEmpty {
+                    Text(emptyText)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                } else {
+                    ForEach(Array(items.enumerated()), id: \.offset) { entry in
+                        let item = entry.element
+                        HStack(alignment: .top, spacing: 12) {
+                            Text("•")
+                                .foregroundStyle(.secondary)
+
+                            Text(item)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                    }
+                }
+            }
+        } label: {
+            Text(title)
+                .font(.headline.monospaced())
+        }
     }
 
     private func submitInterruptClarifyResponse(

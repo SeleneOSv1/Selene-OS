@@ -1493,6 +1493,14 @@ impl AdapterRuntime {
         })
     }
 
+    pub fn debug_last_agent_packet_voice_identity_assertion(&self) -> Option<String> {
+        self.ingress
+            .debug_last_agent_input_packet()
+            .and_then(|packet| packet.runtime_execution_envelope)
+            .and_then(|envelope| envelope.voice_identity_assertion)
+            .map(|assertion| format!("{assertion:?}"))
+    }
+
     pub fn run_device_artifact_sync_worker_pass(&self, now_ns: Option<u64>) -> Result<(), String> {
         let now_ns = now_ns.unwrap_or_else(system_time_now_ns).max(1);
         let _ = self.run_device_artifact_sync_worker_pass_internal(now_ns)?;
@@ -4152,7 +4160,6 @@ impl AdapterRuntime {
             }
             let voice_id_request = build_voice_id_request_from_ph1k_bundle(
                 now,
-                actor_user_id.clone(),
                 &ph1k_bundle,
                 session_turn_state.session_snapshot,
                 session_turn_state.wake_event.clone(),
@@ -9264,7 +9271,6 @@ pub fn validate_voice_turn_capture_bundle_for_live_path(
 
 fn build_voice_id_request_from_ph1k_bundle(
     now: MonotonicTimeNs,
-    actor_user_id: UserId,
     ph1k: &Ph1kLiveSignalBundle,
     session_snapshot: SessionSnapshot,
     wake_event: Option<WakeDecision>,
@@ -9278,7 +9284,7 @@ fn build_voice_id_request_from_ph1k_bundle(
         wake_event,
         ph1k.tts_playback.active,
         DeviceTrustLevel::Trusted,
-        Some(actor_user_id),
+        None,
     )
 }
 
@@ -14036,7 +14042,6 @@ mod tests {
             };
             let voice_id_request = build_voice_id_request_from_ph1k_bundle(
                 now,
-                actor_user_id.clone(),
                 &ph1k_bundle,
                 session_snapshot,
                 wake_evaluation.as_ref().map(|wake| wake.decision.clone()),

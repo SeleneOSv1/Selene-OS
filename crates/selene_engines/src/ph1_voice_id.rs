@@ -716,14 +716,6 @@ fn unknown(
 fn unknown_score_bp(confidence: IdentityConfidence, reason_code: ReasonCodeId) -> u16 {
     match reason_code {
         reason_codes::VID_SPOOF_RISK => 400,
-        reason_codes::VID_FAIL_NO_SPEECH => 0,
-        reason_codes::VID_FAIL_MULTI_SPEAKER_PRESENT => 2_000,
-        reason_codes::VID_FAIL_PROFILE_NOT_ENROLLED => 3_500,
-        reason_codes::VID_ENROLLMENT_REQUIRED => 3_500,
-        reason_codes::VID_FAIL_GRAY_ZONE_MARGIN => 5_200,
-        reason_codes::VID_REAUTH_REQUIRED => 6_000,
-        reason_codes::VID_DEVICE_CLAIM_REQUIRED => 6_200,
-        reason_codes::VID_FAIL_ECHO_UNSAFE => 3_000,
         _ => match confidence {
             IdentityConfidence::High => 0,
             IdentityConfidence::Medium => 4_500,
@@ -1495,6 +1487,67 @@ mod tests {
                 );
             }
             _ => panic!("expected low-margin unknown"),
+        }
+    }
+
+    #[test]
+    fn at_vid_15b_fail_closed_unknown_scores_match_canonical_runtime_contract() {
+        let cases = [
+            (
+                IdentityConfidence::Low,
+                reason_codes::VID_FAIL_LOW_CONFIDENCE,
+                2_000,
+            ),
+            (
+                IdentityConfidence::Low,
+                reason_codes::VID_FAIL_NO_SPEECH,
+                2_000,
+            ),
+            (
+                IdentityConfidence::Low,
+                reason_codes::VID_FAIL_MULTI_SPEAKER_PRESENT,
+                2_000,
+            ),
+            (
+                IdentityConfidence::Medium,
+                reason_codes::VID_FAIL_GRAY_ZONE_MARGIN,
+                4_500,
+            ),
+            (
+                IdentityConfidence::Medium,
+                reason_codes::VID_FAIL_ECHO_UNSAFE,
+                4_500,
+            ),
+            (
+                IdentityConfidence::Medium,
+                reason_codes::VID_FAIL_PROFILE_NOT_ENROLLED,
+                4_500,
+            ),
+            (
+                IdentityConfidence::Medium,
+                reason_codes::VID_ENROLLMENT_REQUIRED,
+                4_500,
+            ),
+            (
+                IdentityConfidence::Medium,
+                reason_codes::VID_REAUTH_REQUIRED,
+                4_500,
+            ),
+            (
+                IdentityConfidence::Medium,
+                reason_codes::VID_DEVICE_CLAIM_REQUIRED,
+                4_500,
+            ),
+        ];
+
+        for (confidence, reason_code, expected_score_bp) in cases {
+            let out = unknown(confidence, reason_code, vec![], None, None);
+            match out {
+                Ph1VoiceIdResponse::SpeakerAssertionUnknown(u) => {
+                    assert_eq!(u.score_bp, expected_score_bp);
+                }
+                _ => panic!("expected unknown assertion"),
+            }
         }
     }
 

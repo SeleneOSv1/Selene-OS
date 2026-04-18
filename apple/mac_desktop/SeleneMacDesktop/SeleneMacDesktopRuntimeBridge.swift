@@ -119,6 +119,103 @@ struct DesktopCanonicalRuntimeOutcomeState: Identifiable, Equatable {
     }
 }
 
+struct DesktopInviteOpenRuntimeOutcomeState: Identifiable, Equatable {
+    enum Phase: String, Equatable {
+        case dispatching = "dispatching"
+        case completed = "completed"
+        case failed = "failed"
+    }
+
+    let id: String
+    let phase: Phase
+    let title: String
+    let summary: String
+    let detail: String
+    let endpoint: String
+    let requestID: String
+    let outcome: String?
+    let reason: String?
+    let onboardingSessionID: String?
+    let nextStep: String?
+    let requiredFields: [String]
+    let requiredVerificationGates: [String]
+
+    static func dispatching(
+        entryContextID: String,
+        endpoint: String,
+        requestID: String
+    ) -> DesktopInviteOpenRuntimeOutcomeState {
+        DesktopInviteOpenRuntimeOutcomeState(
+            id: entryContextID,
+            phase: .dispatching,
+            title: "Dispatching invite-open onboarding entry",
+            summary: "The bounded invite-open context is now being handed into canonical `/v1/invite/click` onboarding-start routing.",
+            detail: "Bridge dispatch only. This shell remains non-authoritative, read-only after onboarding start, and does not widen into onboarding-continue mutation, access provisioning, pairing completion, wake behavior, or autonomous unlock.",
+            endpoint: endpoint,
+            requestID: requestID,
+            outcome: nil,
+            reason: nil,
+            onboardingSessionID: nil,
+            nextStep: nil,
+            requiredFields: [],
+            requiredVerificationGates: []
+        )
+    }
+
+    static func completed(
+        entryContextID: String,
+        endpoint: String,
+        requestID: String,
+        outcome: String,
+        reason: String?,
+        onboardingSessionID: String?,
+        nextStep: String?,
+        requiredFields: [String],
+        requiredVerificationGates: [String]
+    ) -> DesktopInviteOpenRuntimeOutcomeState {
+        DesktopInviteOpenRuntimeOutcomeState(
+            id: entryContextID,
+            phase: .completed,
+            title: "Invite-open onboarding entry completed",
+            summary: "Canonical `/v1/invite/click` routing returned a bounded onboarding-start outcome posture for this invite-open context.",
+            detail: "Read-only onboarding-start visibility only. This shell preserves returned session and next-step posture without exposing onboarding-continue mutation, receipt submission, wake controls, or local onboarding authority.",
+            endpoint: endpoint,
+            requestID: requestID,
+            outcome: outcome,
+            reason: reason,
+            onboardingSessionID: onboardingSessionID,
+            nextStep: nextStep,
+            requiredFields: requiredFields,
+            requiredVerificationGates: requiredVerificationGates
+        )
+    }
+
+    static func failed(
+        entryContextID: String,
+        endpoint: String,
+        requestID: String,
+        summary: String,
+        detail: String,
+        reason: String? = nil
+    ) -> DesktopInviteOpenRuntimeOutcomeState {
+        DesktopInviteOpenRuntimeOutcomeState(
+            id: entryContextID,
+            phase: .failed,
+            title: "Invite-open onboarding entry failed",
+            summary: summary,
+            detail: detail,
+            endpoint: endpoint,
+            requestID: requestID,
+            outcome: nil,
+            reason: reason,
+            onboardingSessionID: nil,
+            nextStep: nil,
+            requiredFields: [],
+            requiredVerificationGates: []
+        )
+    }
+}
+
 private func boundedAuthoritativeResponseText(_ rawValue: String?) -> String? {
     guard let rawValue else {
         return nil
@@ -162,6 +259,27 @@ private func boundedAuthoritativeResponseProvenance(
     )
 }
 
+private func boundedInviteOpenField(_ rawValue: String?) -> String? {
+    guard let rawValue else {
+        return nil
+    }
+
+    let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty, trimmed.count <= 128, !trimmed.contains("\n"), !trimmed.contains("\r") else {
+        return nil
+    }
+
+    return trimmed
+}
+
+private func boundedInviteOpenList(_ rawValues: [String]) -> [String] {
+    Array(
+        rawValues
+            .compactMap { boundedInviteOpenField($0) }
+            .prefix(12)
+    )
+}
+
 final class DesktopCanonicalRuntimeBridge: ObservableObject {
     private enum BridgeError: LocalizedError {
         case invalidPreparedRequest(String)
@@ -193,6 +311,13 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
         let urlRequest: URLRequest
     }
 
+    struct DesktopInviteOpenIngressContext {
+        let entryContextID: String
+        let requestID: String
+        let endpoint: String
+        let urlRequest: URLRequest
+    }
+
     struct VoiceTurnProvenanceSourcePayload: Decodable {
         let title: String
         let url: String
@@ -217,6 +342,16 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
         let responseText: String
         let reasonCode: String
         let provenance: VoiceTurnProvenancePayload?
+    }
+
+    struct InviteLinkOpenAdapterResponsePayload: Decodable {
+        let status: String
+        let outcome: String
+        let reason: String?
+        let onboardingSessionID: String?
+        let nextStep: String?
+        let requiredFields: [String]
+        let requiredVerificationGates: [String]
     }
 
     private struct VoiceTurnIngressErrorPayload: Decodable {
@@ -256,6 +391,18 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
         let seleneTextFinal: String?
         let audioCaptureRef: String?
         let visualInputRef: String?
+    }
+
+    private struct InviteLinkOpenAdapterRequestPayload: Encodable {
+        let correlationID: UInt64
+        let idempotencyKey: String
+        let tokenID: String
+        let tokenSignature: String
+        let tenantID: String?
+        let appPlatform: String
+        let deviceFingerprint: String
+        let appInstanceID: String
+        let deepLinkNonce: String
     }
 
     private struct VoiceTurnThreadPolicyFlagsPayload: Encodable {
@@ -320,6 +467,23 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
         }
     }
 
+    func openInviteLinkAndStartOnboarding(
+        _ onboardingEntryContext: DesktopOnboardingEntryContext
+    ) async -> DesktopInviteOpenRuntimeOutcomeState {
+        do {
+            let ingressContext = try desktopInviteClickRequestBuilder(onboardingEntryContext)
+            return await openInviteLinkAndStartOnboarding(ingressContext)
+        } catch {
+            return .failed(
+                entryContextID: onboardingEntryContext.id,
+                endpoint: inviteClickEndpoint,
+                requestID: "unavailable",
+                summary: "The canonical invite-open bridge could not stage this onboarding-entry request.",
+                detail: error.localizedDescription
+            )
+        }
+    }
+
     func dispatchPreparedExplicitVoiceRequest(
         _ ingressContext: DesktopExplicitVoiceIngressContext
     ) async -> DesktopCanonicalRuntimeOutcomeState {
@@ -368,6 +532,52 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
                 detail: error.localizedDescription,
                 reasonCode: "desktop_runtime_bridge_failure",
                 failureClass: "RetryableRuntime"
+            )
+        }
+    }
+
+    func openInviteLinkAndStartOnboarding(
+        _ ingressContext: DesktopInviteOpenIngressContext
+    ) async -> DesktopInviteOpenRuntimeOutcomeState {
+        do {
+            try await ensureAdapterAvailable()
+
+            let (data, response) = try await urlSession.data(for: ingressContext.urlRequest)
+            let decoder = JSONDecoder()
+            decoder.keyDecodingStrategy = .convertFromSnakeCase
+            let httpResponse = response as? HTTPURLResponse
+            let statusCode = httpResponse?.statusCode ?? 0
+            let payload = try decoder.decode(InviteLinkOpenAdapterResponsePayload.self, from: data)
+
+            if statusCode == 200, payload.status.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "ok" {
+                return .completed(
+                    entryContextID: ingressContext.entryContextID,
+                    endpoint: ingressContext.endpoint,
+                    requestID: ingressContext.requestID,
+                    outcome: boundedInviteOpenField(payload.outcome) ?? "ONBOARDING_STARTED",
+                    reason: boundedInviteOpenField(payload.reason),
+                    onboardingSessionID: boundedInviteOpenField(payload.onboardingSessionID),
+                    nextStep: boundedInviteOpenField(payload.nextStep),
+                    requiredFields: boundedInviteOpenList(payload.requiredFields),
+                    requiredVerificationGates: boundedInviteOpenList(payload.requiredVerificationGates)
+                )
+            }
+
+            return .failed(
+                entryContextID: ingressContext.entryContextID,
+                endpoint: ingressContext.endpoint,
+                requestID: ingressContext.requestID,
+                summary: "The canonical invite-open bridge rejected or failed this onboarding-entry request before onboarding-continue mutation was allowed.",
+                detail: "Canonical `/v1/invite/click` failed closed with outcome `\(payload.outcome)` and reason `\(boundedInviteOpenField(payload.reason) ?? "not_provided")`. This shell remains read-only and does not bypass onboarding law.",
+                reason: boundedInviteOpenField(payload.reason)
+            )
+        } catch {
+            return .failed(
+                entryContextID: ingressContext.entryContextID,
+                endpoint: ingressContext.endpoint,
+                requestID: ingressContext.requestID,
+                summary: "The canonical invite-open bridge could not deliver this onboarding-entry request.",
+                detail: error.localizedDescription
             )
         }
     }
@@ -445,8 +655,59 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
         )
     }
 
+    func desktopInviteClickRequestBuilder(
+        _ onboardingEntryContext: DesktopOnboardingEntryContext
+    ) throws -> DesktopInviteOpenIngressContext {
+        let monotonicNowNS = Swift.max(DispatchTime.now().uptimeNanoseconds, 1)
+        let correlationID = monotonicNowNS
+        let requestID = "desktop_invite_click_request_\(UUID().uuidString.replacingOccurrences(of: "-", with: ""))"
+        let idempotencyKey = "desktop_invite_click_\(UUID().uuidString.replacingOccurrences(of: "-", with: ""))"
+        let nonce = UUID().uuidString.replacingOccurrences(of: "-", with: "")
+        let timestampMS = Self.systemTimeNowMS()
+
+        let payload = InviteLinkOpenAdapterRequestPayload(
+            correlationID: correlationID,
+            idempotencyKey: idempotencyKey,
+            tokenID: onboardingEntryContext.tokenID,
+            tokenSignature: onboardingEntryContext.tokenSignature,
+            tenantID: onboardingEntryContext.tenantID,
+            appPlatform: "DESKTOP",
+            deviceFingerprint: onboardingEntryContext.deviceFingerprint,
+            appInstanceID: onboardingEntryContext.appInstanceID,
+            deepLinkNonce: onboardingEntryContext.deepLinkNonce
+        )
+
+        let encoder = JSONEncoder()
+        encoder.keyEncodingStrategy = .convertToSnakeCase
+        let body = try encoder.encode(payload)
+        let endpointURL = adapterBaseURL.appendingPathComponent("v1/invite/click")
+        var urlRequest = URLRequest(url: endpointURL)
+        urlRequest.httpMethod = "POST"
+        urlRequest.httpBody = body
+        urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        urlRequest.setValue(requestID, forHTTPHeaderField: "x-request-id")
+        urlRequest.setValue(idempotencyKey, forHTTPHeaderField: "idempotency-key")
+        urlRequest.setValue(String(timestampMS), forHTTPHeaderField: "x-selene-timestamp-ms")
+        urlRequest.setValue(nonce, forHTTPHeaderField: "x-selene-nonce")
+        urlRequest.setValue(
+            Self.bearerToken(subject: onboardingEntryContext.tokenID, device: onboardingEntryContext.appInstanceID),
+            forHTTPHeaderField: "Authorization"
+        )
+
+        return DesktopInviteOpenIngressContext(
+            entryContextID: onboardingEntryContext.id,
+            requestID: requestID,
+            endpoint: endpointURL.absoluteString,
+            urlRequest: urlRequest
+        )
+    }
+
     var voiceTurnEndpoint: String {
         adapterBaseURL.appendingPathComponent("v1/voice/turn").absoluteString
+    }
+
+    var inviteClickEndpoint: String {
+        adapterBaseURL.appendingPathComponent("v1/invite/click").absoluteString
     }
 
     private func ensureAdapterAvailable() async throws {
@@ -463,7 +724,7 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
 
             if let managedAdapterProcess, !managedAdapterProcess.isRunning {
                 throw BridgeError.adapterStartFailed(
-                    "the managed http_adapter process exited before the canonical runtime bridge became healthy"
+                    "the managed selene_adapter_http process exited before the canonical runtime bridge became healthy"
                 )
             }
 
@@ -484,7 +745,7 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
         let process = Process()
         process.executableURL = cargoExecutable
         process.currentDirectoryURL = repoRootURL
-        process.arguments = ["cargo", "run", "--quiet", "-p", "selene_adapter", "--bin", "http_adapter"]
+        process.arguments = ["cargo", "run", "--quiet", "-p", "selene_adapter", "--bin", "selene_adapter_http"]
 
         var environment = ProcessInfo.processInfo.environment
         let bindValue = Self.bindValue(for: adapterBaseURL)
@@ -499,7 +760,7 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
             managedAdapterProcess = process
         } catch {
             throw BridgeError.adapterStartFailed(
-                "failed to launch the managed http_adapter process from \(repoRootURL.path): \(error.localizedDescription)"
+                "failed to launch the managed selene_adapter_http process from \(repoRootURL.path): \(error.localizedDescription)"
             )
         }
     }

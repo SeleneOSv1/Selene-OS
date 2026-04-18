@@ -2250,8 +2250,27 @@ mod tests {
         );
         let voice_response =
             run_voice_turn(State(state.clone()), voice_headers, Json(voice_request)).await;
-        assert_eq!(voice_response.status(), StatusCode::OK);
+        let voice_status = voice_response.status();
         let voice_body: VoiceTurnAdapterResponse = decode_json_response(voice_response).await;
+        let voice_packet_debug = if voice_status == StatusCode::OK {
+            None
+        } else {
+            state
+                .runtime
+                .lock()
+                .ok()
+                .and_then(|runtime| runtime.debug_last_agent_packet_voice_identity_assertion())
+                .and_then(|value| if value.is_empty() { None } else { Some(value) })
+        };
+        assert_eq!(
+            voice_status,
+            StatusCode::OK,
+            "voice turn failed with reason_code={} reason={:?} failure_class={:?} voice_packet_debug={:?}",
+            voice_body.reason_code,
+            voice_body.reason,
+            voice_body.failure_class,
+            voice_packet_debug
+        );
         assert_eq!(voice_body.status, "ok");
 
         let actor_user = inviter_user_id.clone();
