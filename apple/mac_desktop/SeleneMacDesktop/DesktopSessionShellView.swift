@@ -896,6 +896,24 @@ private struct DesktopAuthoritativeReplyRenderState: Equatable {
     let authoritativeResponseText: String?
 }
 
+private struct DesktopAuthoritativeReplyProvenanceRenderState: Equatable {
+    struct Source: Identifiable, Equatable {
+        let title: String
+        let url: String
+
+        var id: String {
+            "\(title)|\(url)"
+        }
+    }
+
+    let title: String
+    let summary: String
+    let authoritativeResponseProvenance: AuthoritativeResponseProvenance?
+    let sources: [Source]
+    let retrievedAtLabel: String?
+    let cacheStatusLabel: String?
+}
+
 private struct DesktopAuthoritativeReplyPlaybackState: Equatable {
     enum Phase: String, Equatable {
         case idle = "idle"
@@ -912,7 +930,7 @@ private struct DesktopAuthoritativeReplyPlaybackState: Equatable {
         phase: .idle,
         title: "Authoritative reply playback idle",
         summary: "Playback remains available only for cloud-authored reply text that is already visible in the bounded reply surface.",
-        detail: "Bounded native macOS speech playback only. This shell remains explicitly non-authoritative, does not mutate transcript preview, and does not claim wake parity, native wake-listener integration, or autonomous unlock."
+        detail: "Bounded native macOS speech playback only. This shell remains explicitly non-authoritative, does not mutate transcript preview, and does not claim wake parity, native wake-listener integration, or autonomous-unlock capability."
     )
 
     static func speaking(authoritativeResponseText: String) -> DesktopAuthoritativeReplyPlaybackState {
@@ -921,7 +939,7 @@ private struct DesktopAuthoritativeReplyPlaybackState: Equatable {
             phase: .speaking,
             title: "Authoritative reply playback active",
             summary: boundedPreview,
-            detail: "This shell is speaking only the already-rendered cloud-authored authoritative reply text. No local reply synthesis, transcript mutation, wake behavior, or autonomous unlock is introduced here."
+            detail: "This shell is speaking only the already-rendered cloud-authored authoritative reply text. No local reply synthesis, transcript mutation, wake behavior, or autonomous-unlock capability is introduced here."
         )
     }
 
@@ -2180,6 +2198,7 @@ struct DesktopSessionShellView: View {
     @StateObject private var desktopAuthoritativeReplyPlaybackController = DesktopAuthoritativeReplyPlaybackController()
     @State private var desktopCanonicalRuntimeOutcomeState: DesktopCanonicalRuntimeOutcomeState?
     @State private var desktopAuthoritativeReplyRenderState: DesktopAuthoritativeReplyRenderState?
+    @State private var desktopAuthoritativeReplyProvenanceRenderState: DesktopAuthoritativeReplyProvenanceRenderState?
     @State private var desktopAuthoritativeReplyPlaybackState: DesktopAuthoritativeReplyPlaybackState = .idle
 
     var body: some View {
@@ -2454,6 +2473,7 @@ struct DesktopSessionShellView: View {
                     Button("Start explicit voice turn") {
                         desktopCanonicalRuntimeOutcomeState = nil
                         desktopAuthoritativeReplyRenderState = nil
+                        desktopAuthoritativeReplyProvenanceRenderState = nil
                         desktopAuthoritativeReplyPlaybackController.reset()
                         desktopAuthoritativeReplyPlaybackState = .idle
                         explicitVoiceController.startExplicitVoiceTurn()
@@ -2464,6 +2484,7 @@ struct DesktopSessionShellView: View {
                     Button("Stop capture and prepare voice request") {
                         desktopCanonicalRuntimeOutcomeState = nil
                         desktopAuthoritativeReplyRenderState = nil
+                        desktopAuthoritativeReplyProvenanceRenderState = nil
                         desktopAuthoritativeReplyPlaybackController.reset()
                         desktopAuthoritativeReplyPlaybackState = .idle
                         explicitVoiceController.stopCaptureAndPrepareVoiceTurn()
@@ -2492,6 +2513,7 @@ struct DesktopSessionShellView: View {
 
                 if desktopAuthoritativeReplyRenderState != nil {
                     desktopAuthoritativeReplyCard
+                    desktopAuthoritativeReplyProvenanceCard
                     desktopAuthoritativeReplyPlaybackCard
                 }
 
@@ -4296,13 +4318,92 @@ struct DesktopSessionShellView: View {
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
 
-                    Text("Read-only cloud-authored reply visibility only. This shell remains explicitly non-authoritative, keeps playback out of scope, and does not claim wake parity, native wake-listener integration, or autonomous unlock.")
+                    Text("Read-only cloud-authored reply visibility only. This shell remains explicitly non-authoritative, keeps playback out of scope, and does not claim wake parity, native wake-listener integration, or autonomous-unlock capability.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
             } label: {
                 Text("Authoritative Reply")
+                    .font(.headline)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var desktopAuthoritativeReplyProvenanceCard: some View {
+        if let desktopAuthoritativeReplyProvenanceRenderState {
+            GroupBox {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text(desktopAuthoritativeReplyProvenanceRenderState.title)
+                        .font(.headline)
+
+                    Text(desktopAuthoritativeReplyProvenanceRenderState.summary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                    if desktopAuthoritativeReplyProvenanceRenderState.authoritativeResponseProvenance == nil {
+                        Text("No cloud-authored provenance is available for this completed canonical runtime outcome. This shell fails closed and does not fabricate local sources, retrieval timing, or cache posture.")
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    } else {
+                        ForEach(
+                            [
+                                ("retrieved_at", desktopAuthoritativeReplyProvenanceRenderState.retrievedAtLabel ?? "not_available"),
+                                ("cache_status", desktopAuthoritativeReplyProvenanceRenderState.cacheStatusLabel ?? "not_available"),
+                            ],
+                            id: \.0
+                        ) { row in
+                            HStack(alignment: .top, spacing: 12) {
+                                Text(row.0)
+                                    .font(.caption.monospaced())
+                                    .foregroundStyle(.secondary)
+                                    .frame(width: 120, alignment: .leading)
+
+                                Text(row.1)
+                                    .font(.body.monospaced())
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                        }
+
+                        if desktopAuthoritativeReplyProvenanceRenderState.sources.isEmpty {
+                            Text("Canonical runtime returned provenance posture without source rows. This shell stays read-only and does not claim that search executed locally.")
+                                .foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        } else {
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("Cloud-authored sources")
+                                    .font(.subheadline.weight(.semibold))
+
+                                ForEach(desktopAuthoritativeReplyProvenanceRenderState.sources) { source in
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Text(source.title)
+                                            .font(.body.weight(.medium))
+                                            .frame(maxWidth: .infinity, alignment: .leading)
+
+                                        if let sourceURL = URL(string: source.url) {
+                                            Link(source.url, destination: sourceURL)
+                                                .font(.footnote)
+                                        } else {
+                                            Text(source.url)
+                                                .font(.footnote)
+                                                .foregroundStyle(.secondary)
+                                                .textSelection(.enabled)
+                                                .frame(maxWidth: .infinity, alignment: .leading)
+                                        }
+                                    }
+                                    .padding(.vertical, 2)
+                                }
+                            }
+                        }
+                    }
+
+                    Text("Read-only cloud-authored provenance visibility only. This shell remains explicitly non-authoritative, does not claim that search executed locally, and does not widen into new search controls, wake posture, or autonomous-unlock behavior.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            } label: {
+                Text("Authoritative Reply Provenance")
                     .font(.headline)
             }
         }
@@ -4339,7 +4440,7 @@ struct DesktopSessionShellView: View {
                     .disabled(desktopAuthoritativeReplyPlaybackState.phase != .speaking)
                 }
 
-                Text("User-triggered bounded reply playback only. No transcript mutation, no conversation-history mutation, no wake parity claim, no proven native macOS wake-listener integration claim, and no autonomous unlock claim are introduced by this surface.")
+                Text("User-triggered bounded reply playback only. No transcript mutation, no conversation-history mutation, no wake parity claim, no proven native macOS wake-listener integration claim, and no autonomous-unlock claim are introduced by this surface.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -4374,6 +4475,7 @@ struct DesktopSessionShellView: View {
                 requestID: ingressContext.requestID
             )
             desktopAuthoritativeReplyRenderState = nil
+            desktopAuthoritativeReplyProvenanceRenderState = nil
             desktopAuthoritativeReplyPlaybackController.reset()
             desktopAuthoritativeReplyPlaybackState = .idle
 
@@ -4391,8 +4493,26 @@ struct DesktopSessionShellView: View {
                         : "Read-only canonical reply text from the completed runtime dispatch is now visible here while the shell remains explicitly non-authoritative.",
                     authoritativeResponseText: outcomeState.authoritativeResponseText
                 )
+                desktopAuthoritativeReplyProvenanceRenderState = DesktopAuthoritativeReplyProvenanceRenderState(
+                    title: "Cloud-authored authoritative reply provenance",
+                    summary: outcomeState.authoritativeResponseProvenance == nil
+                        ? "The canonical runtime completed without provenance for this bounded explicit voice turn."
+                        : "Read-only canonical provenance from the completed runtime dispatch is now visible here while the shell remains explicitly non-authoritative.",
+                    authoritativeResponseProvenance: outcomeState.authoritativeResponseProvenance,
+                    sources: outcomeState.authoritativeResponseProvenance?.sources.map {
+                        DesktopAuthoritativeReplyProvenanceRenderState.Source(
+                            title: $0.title,
+                            url: $0.url
+                        )
+                    } ?? [],
+                    retrievedAtLabel: formatAuthoritativeReplyRetrievedAt(
+                        outcomeState.authoritativeResponseProvenance?.retrievedAt
+                    ),
+                    cacheStatusLabel: outcomeState.authoritativeResponseProvenance?.cacheStatus
+                )
             } else {
                 desktopAuthoritativeReplyRenderState = nil
+                desktopAuthoritativeReplyProvenanceRenderState = nil
             }
             explicitVoiceController.clearPendingPreparedVoiceTurn()
         } catch {
@@ -4406,6 +4526,7 @@ struct DesktopSessionShellView: View {
                 failureClass: "RetryableRuntime"
             )
             desktopAuthoritativeReplyRenderState = nil
+            desktopAuthoritativeReplyProvenanceRenderState = nil
             desktopAuthoritativeReplyPlaybackController.reset()
             desktopAuthoritativeReplyPlaybackState = .idle
             explicitVoiceController.clearPendingPreparedVoiceTurn()
@@ -4480,6 +4601,21 @@ struct DesktopSessionShellView: View {
             .background(Color.accentColor.opacity(0.12))
             .clipShape(Capsule())
     }
+
+    private func formatAuthoritativeReplyRetrievedAt(_ retrievedAt: UInt64?) -> String? {
+        guard let retrievedAt, retrievedAt > 0 else {
+            return nil
+        }
+
+        let date = Date(timeIntervalSince1970: TimeInterval(retrievedAt) / 1000)
+        return Self.authoritativeReplyRetrievedAtFormatter.string(from: date)
+    }
+
+    private static let authoritativeReplyRetrievedAtFormatter: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
 }
 
 #Preview {

@@ -1,6 +1,21 @@
 import Combine
 import Foundation
 
+struct AuthoritativeResponseProvenance: Equatable {
+    struct Source: Identifiable, Equatable {
+        let title: String
+        let url: String
+
+        var id: String {
+            "\(title)|\(url)"
+        }
+    }
+
+    let sources: [Source]
+    let retrievedAt: UInt64?
+    let cacheStatus: String?
+}
+
 struct DesktopCanonicalRuntimeOutcomeState: Identifiable, Equatable {
     enum Phase: String, Equatable {
         case dispatching = "dispatching"
@@ -22,6 +37,7 @@ struct DesktopCanonicalRuntimeOutcomeState: Identifiable, Equatable {
     let turnID: String?
     let failureClass: String?
     let authoritativeResponseText: String?
+    let authoritativeResponseProvenance: AuthoritativeResponseProvenance?
 
     static func dispatching(
         preparedRequestID: String,
@@ -42,7 +58,8 @@ struct DesktopCanonicalRuntimeOutcomeState: Identifiable, Equatable {
             sessionID: nil,
             turnID: nil,
             failureClass: nil,
-            authoritativeResponseText: nil
+            authoritativeResponseText: nil,
+            authoritativeResponseProvenance: nil
         )
     }
 
@@ -57,7 +74,7 @@ struct DesktopCanonicalRuntimeOutcomeState: Identifiable, Equatable {
             phase: .completed,
             title: "Canonical runtime dispatch completed",
             summary: "The bounded explicit voice request reached the canonical runtime and returned a cloud-authored outcome posture.",
-            detail: "Outcome visibility and bounded read-only reply rendering only. This bridge preserves cloud-authored reply text for shell-local display without mutating transcript preview surfaces or performing local playback.",
+            detail: "Outcome visibility plus bounded read-only reply and provenance rendering only. This bridge preserves cloud-authored reply text and provenance for shell-local display without mutating transcript preview surfaces or performing local playback.",
             endpoint: endpoint,
             requestID: requestID,
             outcome: response.outcome,
@@ -66,7 +83,8 @@ struct DesktopCanonicalRuntimeOutcomeState: Identifiable, Equatable {
             sessionID: response.sessionID,
             turnID: response.turnID.map(String.init),
             failureClass: response.failureClass,
-            authoritativeResponseText: boundedAuthoritativeResponseText(response.responseText)
+            authoritativeResponseText: boundedAuthoritativeResponseText(response.responseText),
+            authoritativeResponseProvenance: boundedAuthoritativeResponseProvenance(response.provenance)
         )
     }
 
@@ -95,7 +113,8 @@ struct DesktopCanonicalRuntimeOutcomeState: Identifiable, Equatable {
             sessionID: sessionID,
             turnID: turnID,
             failureClass: failureClass,
-            authoritativeResponseText: nil
+            authoritativeResponseText: nil,
+            authoritativeResponseProvenance: nil
         )
     }
 }
@@ -111,6 +130,36 @@ private func boundedAuthoritativeResponseText(_ rawValue: String?) -> String? {
     }
 
     return trimmed
+}
+
+private func boundedAuthoritativeResponseProvenance(
+    _ provenance: DesktopCanonicalRuntimeBridge.VoiceTurnProvenancePayload?
+) -> AuthoritativeResponseProvenance? {
+    guard let provenance else {
+        return nil
+    }
+
+    let boundedSources = provenance.sources.compactMap { source -> AuthoritativeResponseProvenance.Source? in
+        let title = source.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let url = source.url.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !title.isEmpty, !url.isEmpty else {
+            return nil
+        }
+
+        return AuthoritativeResponseProvenance.Source(title: title, url: url)
+    }
+
+    let trimmedCacheStatus = provenance.cacheStatus?.trimmingCharacters(in: .whitespacesAndNewlines)
+
+    guard !boundedSources.isEmpty || provenance.retrievedAt != nil || !(trimmedCacheStatus ?? "").isEmpty else {
+        return nil
+    }
+
+    return AuthoritativeResponseProvenance(
+        sources: boundedSources,
+        retrievedAt: provenance.retrievedAt,
+        cacheStatus: (trimmedCacheStatus?.isEmpty == false) ? trimmedCacheStatus : nil
+    )
 }
 
 final class DesktopCanonicalRuntimeBridge: ObservableObject {
@@ -144,6 +193,17 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
         let urlRequest: URLRequest
     }
 
+    struct VoiceTurnProvenanceSourcePayload: Decodable {
+        let title: String
+        let url: String
+    }
+
+    struct VoiceTurnProvenancePayload: Decodable {
+        let sources: [VoiceTurnProvenanceSourcePayload]
+        let retrievedAt: UInt64?
+        let cacheStatus: String?
+    }
+
     struct VoiceTurnAdapterResponsePayload: Decodable {
         let status: String
         let outcome: String
@@ -156,6 +216,7 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
         let nextMove: String
         let responseText: String
         let reasonCode: String
+        let provenance: VoiceTurnProvenancePayload?
     }
 
     private struct VoiceTurnIngressErrorPayload: Decodable {
