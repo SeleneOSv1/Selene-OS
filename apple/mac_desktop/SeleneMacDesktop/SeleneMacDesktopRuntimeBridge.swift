@@ -661,6 +661,113 @@ struct DesktopPrimaryDeviceConfirmRuntimeOutcomeState: Identifiable, Equatable {
     }
 }
 
+struct DesktopEmployeePhotoCaptureSendRuntimeOutcomeState: Identifiable, Equatable {
+    enum Phase: String, Equatable {
+        case dispatching = "dispatching"
+        case completed = "completed"
+        case failed = "failed"
+    }
+
+    let id: String
+    let phase: Phase
+    let title: String
+    let summary: String
+    let detail: String
+    let endpoint: String
+    let requestID: String
+    let photoBlobRef: String?
+    let outcome: String?
+    let reason: String?
+    let onboardingSessionID: String?
+    let nextStep: String?
+    let remainingPlatformReceiptKinds: [String]
+    let onboardingStatus: String?
+
+    static func dispatching(
+        onboardingSessionID: String,
+        photoBlobRef: String,
+        endpoint: String,
+        requestID: String
+    ) -> DesktopEmployeePhotoCaptureSendRuntimeOutcomeState {
+        DesktopEmployeePhotoCaptureSendRuntimeOutcomeState(
+            id: requestID,
+            phase: .dispatching,
+            title: "Dispatching employee photo capture send",
+            summary: "The bounded employee photo capture send request is now being handed into canonical `/v1/onboarding/continue`.",
+            detail: "Only exact `EMPLOYEE_PHOTO_CAPTURE_SEND` with an already-existing exact `photo_blob_ref` is in scope here. This shell remains explicitly non-authoritative and does not introduce local photo picker, local capture, local upload, sender-decision mutation, pairing completion, wake behavior, or autonomous unlock.",
+            endpoint: endpoint,
+            requestID: requestID,
+            photoBlobRef: photoBlobRef,
+            outcome: nil,
+            reason: nil,
+            onboardingSessionID: onboardingSessionID,
+            nextStep: "SENDER_VERIFICATION",
+            remainingPlatformReceiptKinds: [],
+            onboardingStatus: nil
+        )
+    }
+
+    static func completed(
+        requestID: String,
+        endpoint: String,
+        response: DesktopCanonicalRuntimeBridge.OnboardingContinueAdapterResponsePayload,
+        fallbackOnboardingSessionID: String,
+        fallbackPhotoBlobRef: String
+    ) -> DesktopEmployeePhotoCaptureSendRuntimeOutcomeState {
+        let boundedNextStep = boundedOnboardingContinueField(response.nextStep)
+        let advancedBeyondSenderVerification = boundedNextStep != nil
+            && boundedNextStep != "SENDER_VERIFICATION"
+
+        return DesktopEmployeePhotoCaptureSendRuntimeOutcomeState(
+            id: requestID,
+            phase: .completed,
+            title: "Employee photo capture send completed",
+            summary: advancedBeyondSenderVerification
+                ? "Canonical `/v1/onboarding/continue` advanced beyond `SENDER_VERIFICATION`; later onboarding actions remain read-only and out of scope in this shell."
+                : "Canonical `/v1/onboarding/continue` accepted the bounded employee photo capture send and returned updated sender-verification posture.",
+            detail: advancedBeyondSenderVerification
+                ? "Read-only next-step visibility only. This shell preserves the advanced step and onboarding status without adding local photo authority, sender-decision mutation, primary-device bypass, pairing completion, wake behavior, or autonomous unlock."
+                : "Canonical employee photo capture send only. This shell preserves exact `photo_blob_ref` dispatch posture without adding local picker, local capture, local upload, pasteboard blob authority, or sender-decision controls.",
+            endpoint: endpoint,
+            requestID: requestID,
+            photoBlobRef: fallbackPhotoBlobRef,
+            outcome: boundedOnboardingContinueField(response.outcome) ?? "ONBOARDING_CONTINUED",
+            reason: boundedOnboardingContinueField(response.reason),
+            onboardingSessionID: boundedOnboardingContinueField(response.onboardingSessionID) ?? fallbackOnboardingSessionID,
+            nextStep: boundedNextStep,
+            remainingPlatformReceiptKinds: boundedOnboardingContinueList(response.remainingPlatformReceiptKinds),
+            onboardingStatus: boundedOnboardingContinueField(response.onboardingStatus)
+        )
+    }
+
+    static func failed(
+        onboardingSessionID: String,
+        photoBlobRef: String?,
+        endpoint: String,
+        requestID: String,
+        summary: String,
+        detail: String,
+        reason: String? = nil
+    ) -> DesktopEmployeePhotoCaptureSendRuntimeOutcomeState {
+        DesktopEmployeePhotoCaptureSendRuntimeOutcomeState(
+            id: requestID,
+            phase: .failed,
+            title: "Employee photo capture send failed",
+            summary: summary,
+            detail: detail,
+            endpoint: endpoint,
+            requestID: requestID,
+            photoBlobRef: photoBlobRef,
+            outcome: nil,
+            reason: reason,
+            onboardingSessionID: onboardingSessionID,
+            nextStep: nil,
+            remainingPlatformReceiptKinds: [],
+            onboardingStatus: nil
+        )
+    }
+}
+
 struct DesktopVoiceEnrollRuntimeOutcomeState: Identifiable, Equatable {
     enum Phase: String, Equatable {
         case dispatching = "dispatching"
@@ -1627,6 +1734,7 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
         case invalidOnboardingContinueRequest(String)
         case invalidPlatformSetupReceiptRequest(String)
         case invalidTermsAcceptRequest(String)
+        case invalidEmployeePhotoCaptureSendRequest(String)
         case invalidPrimaryDeviceConfirmRequest(String)
         case invalidVoiceEnrollRequest(String)
         case invalidWakeEnrollStartDraftRequest(String)
@@ -1648,6 +1756,7 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
                  .invalidOnboardingContinueRequest(let detail),
                  .invalidPlatformSetupReceiptRequest(let detail),
                  .invalidTermsAcceptRequest(let detail),
+                 .invalidEmployeePhotoCaptureSendRequest(let detail),
                  .invalidPrimaryDeviceConfirmRequest(let detail),
                  .invalidVoiceEnrollRequest(let detail),
                  .invalidWakeEnrollStartDraftRequest(let detail),
@@ -1700,6 +1809,14 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
     struct DesktopTermsAcceptIngressContext {
         let onboardingSessionID: String
         let termsVersionID: String
+        let requestID: String
+        let endpoint: String
+        let urlRequest: URLRequest
+    }
+
+    struct DesktopEmployeePhotoCaptureSendIngressContext {
+        let onboardingSessionID: String
+        let photoBlobRef: String
         let requestID: String
         let endpoint: String
         let urlRequest: URLRequest
@@ -2023,6 +2140,28 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
                 endpoint: onboardingContinueEndpoint,
                 requestID: "unavailable",
                 summary: "The canonical onboarding-continue bridge could not stage this bounded desktop terms acceptance request.",
+                detail: error.localizedDescription
+            )
+        }
+    }
+
+    func submitDesktopEmployeePhotoCaptureSend(
+        promptState: DesktopEmployeePhotoCaptureSendPromptState,
+        photoBlobRef: String
+    ) async -> DesktopEmployeePhotoCaptureSendRuntimeOutcomeState {
+        do {
+            let ingressContext = try desktopEmployeePhotoCaptureSendRequestBuilder(
+                promptState: promptState,
+                photoBlobRef: photoBlobRef
+            )
+            return await submitDesktopEmployeePhotoCaptureSend(ingressContext)
+        } catch {
+            return .failed(
+                onboardingSessionID: promptState.onboardingSessionID,
+                photoBlobRef: boundedOnboardingContinueFieldInput(photoBlobRef),
+                endpoint: onboardingContinueEndpoint,
+                requestID: "unavailable",
+                summary: "The canonical onboarding-continue bridge could not stage this bounded employee photo capture send request.",
                 detail: error.localizedDescription
             )
         }
@@ -2398,6 +2537,51 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
                 endpoint: ingressContext.endpoint,
                 requestID: ingressContext.requestID,
                 summary: "The canonical onboarding-continue bridge could not deliver this bounded desktop terms acceptance request.",
+                detail: error.localizedDescription
+            )
+        }
+    }
+
+    func submitDesktopEmployeePhotoCaptureSend(
+        _ ingressContext: DesktopEmployeePhotoCaptureSendIngressContext
+    ) async -> DesktopEmployeePhotoCaptureSendRuntimeOutcomeState {
+        do {
+            try await ensureAdapterAvailable()
+
+            let (data, response) = try await urlSession.data(for: ingressContext.urlRequest)
+            let decoder = JSONDecoder()
+            decoder.keyDecodingStrategy = .convertFromSnakeCase
+            let httpResponse = response as? HTTPURLResponse
+            let statusCode = httpResponse?.statusCode ?? 0
+            let payload = try decoder.decode(OnboardingContinueAdapterResponsePayload.self, from: data)
+
+            if statusCode == 200,
+               payload.status.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "ok" {
+                return .completed(
+                    requestID: ingressContext.requestID,
+                    endpoint: ingressContext.endpoint,
+                    response: payload,
+                    fallbackOnboardingSessionID: ingressContext.onboardingSessionID,
+                    fallbackPhotoBlobRef: ingressContext.photoBlobRef
+                )
+            }
+
+            return .failed(
+                onboardingSessionID: ingressContext.onboardingSessionID,
+                photoBlobRef: ingressContext.photoBlobRef,
+                endpoint: ingressContext.endpoint,
+                requestID: ingressContext.requestID,
+                summary: "The canonical onboarding-continue bridge rejected or failed this bounded employee photo capture send request.",
+                detail: "Canonical `/v1/onboarding/continue` failed closed with outcome `\(payload.outcome)` and reason `\(boundedOnboardingContinueField(payload.reason) ?? "not_provided")`. This shell remains limited to exact `EMPLOYEE_PHOTO_CAPTURE_SEND` with an already-existing exact `photo_blob_ref` and does not bypass sender-verification law.",
+                reason: boundedOnboardingContinueField(payload.reason)
+            )
+        } catch {
+            return .failed(
+                onboardingSessionID: ingressContext.onboardingSessionID,
+                photoBlobRef: ingressContext.photoBlobRef,
+                endpoint: ingressContext.endpoint,
+                requestID: ingressContext.requestID,
+                summary: "The canonical onboarding-continue bridge could not deliver this bounded employee photo capture send request.",
                 detail: error.localizedDescription
             )
         }
@@ -3102,6 +3286,99 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
         return DesktopTermsAcceptIngressContext(
             onboardingSessionID: onboardingSessionID,
             termsVersionID: desktopCanonicalTermsVersionID,
+            requestID: requestID,
+            endpoint: endpointURL.absoluteString,
+            urlRequest: urlRequest
+        )
+    }
+
+    func desktopEmployeePhotoCaptureSendRequestBuilder(
+        promptState: DesktopEmployeePhotoCaptureSendPromptState,
+        photoBlobRef: String
+    ) throws -> DesktopEmployeePhotoCaptureSendIngressContext {
+        guard let onboardingSessionID = boundedOnboardingContinueField(promptState.onboardingSessionID) else {
+            throw BridgeError.invalidEmployeePhotoCaptureSendRequest(
+                "the bounded employee photo capture send prompt state did not preserve a lawful onboarding_session_id"
+            )
+        }
+
+        guard let nextStep = boundedOnboardingContinueField(promptState.nextStep),
+              nextStep == "SENDER_VERIFICATION" else {
+            throw BridgeError.invalidEmployeePhotoCaptureSendRequest(
+                "bounded employee photo capture send is only lawful when canonical onboarding posture remains at exact `SENDER_VERIFICATION`"
+            )
+        }
+
+        guard let boundedPhotoBlobRef = boundedOnboardingContinueFieldInput(photoBlobRef) else {
+            throw BridgeError.invalidEmployeePhotoCaptureSendRequest(
+                "bounded employee photo capture send requires one exact existing `photo_blob_ref` and does not mint local blob authority"
+            )
+        }
+
+        let requestID = "desktop_employee_photo_capture_send_request_\(UUID().uuidString.replacingOccurrences(of: "-", with: ""))"
+        let idempotencyKey = "desktop_employee_photo_capture_send_\(onboardingSessionID)_\(UUID().uuidString.replacingOccurrences(of: "-", with: ""))"
+        let nonce = UUID().uuidString.replacingOccurrences(of: "-", with: "")
+        let timestampMS = Self.systemTimeNowMS()
+        let correlationID = Swift.max(DispatchTime.now().uptimeNanoseconds, 1)
+
+        struct EmployeePhotoCaptureSendRequestPayload: Encodable {
+            let correlationID: UInt64
+            let onboardingSessionID: String
+            let idempotencyKey: String
+            let tenantID: String?
+            let action: String
+            let fieldValue: String?
+            let receiptKind: String?
+            let receiptRef: String?
+            let signer: String?
+            let payloadHash: String?
+            let termsVersionID: String?
+            let accepted: Bool?
+            let deviceID: String?
+            let proofOK: Bool?
+            let sampleSeed: String?
+            let photoBlobRef: String?
+        }
+
+        let payload = EmployeePhotoCaptureSendRequestPayload(
+            correlationID: correlationID,
+            onboardingSessionID: onboardingSessionID,
+            idempotencyKey: idempotencyKey,
+            tenantID: tenantID,
+            action: "EMPLOYEE_PHOTO_CAPTURE_SEND",
+            fieldValue: nil,
+            receiptKind: nil,
+            receiptRef: nil,
+            signer: nil,
+            payloadHash: nil,
+            termsVersionID: nil,
+            accepted: nil,
+            deviceID: nil,
+            proofOK: nil,
+            sampleSeed: nil,
+            photoBlobRef: boundedPhotoBlobRef
+        )
+
+        let encoder = JSONEncoder()
+        encoder.keyEncodingStrategy = .convertToSnakeCase
+        let body = try encoder.encode(payload)
+        let endpointURL = adapterBaseURL.appendingPathComponent("v1/onboarding/continue")
+        var urlRequest = URLRequest(url: endpointURL)
+        urlRequest.httpMethod = "POST"
+        urlRequest.httpBody = body
+        urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        urlRequest.setValue(requestID, forHTTPHeaderField: "x-request-id")
+        urlRequest.setValue(idempotencyKey, forHTTPHeaderField: "idempotency-key")
+        urlRequest.setValue(String(timestampMS), forHTTPHeaderField: "x-selene-timestamp-ms")
+        urlRequest.setValue(nonce, forHTTPHeaderField: "x-selene-nonce")
+        urlRequest.setValue(
+            Self.bearerToken(subject: actorUserID, device: deviceID),
+            forHTTPHeaderField: "Authorization"
+        )
+
+        return DesktopEmployeePhotoCaptureSendIngressContext(
+            onboardingSessionID: onboardingSessionID,
+            photoBlobRef: boundedPhotoBlobRef,
             requestID: requestID,
             endpoint: endpointURL.absoluteString,
             urlRequest: urlRequest

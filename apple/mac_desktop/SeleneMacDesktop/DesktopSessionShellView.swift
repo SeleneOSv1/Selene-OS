@@ -2483,6 +2483,22 @@ struct DesktopSenderVerificationVisibilityState: Identifiable, Equatable {
     }
 }
 
+struct DesktopEmployeePhotoCaptureSendPromptState: Identifiable, Equatable {
+    let onboardingSessionID: String
+    let nextStep: String
+    let onboardingStatus: String?
+    let requiredVerificationGates: [String]
+
+    var id: String {
+        [
+            onboardingSessionID,
+            nextStep,
+            onboardingStatus ?? "onboarding_status_not_provided",
+            requiredVerificationGates.joined(separator: "|"),
+        ].joined(separator: "::")
+    }
+}
+
 struct DesktopPlatformSetupReceiptDraft: Identifiable, Equatable {
     let onboardingSessionID: String
     let receiptKind: String
@@ -2550,6 +2566,7 @@ struct DesktopSessionShellView: View {
     @State private var desktopOnboardingContinueRuntimeOutcomeState: DesktopOnboardingContinueRuntimeOutcomeState?
     @State private var desktopPlatformSetupReceiptRuntimeOutcomeState: DesktopPlatformSetupReceiptRuntimeOutcomeState?
     @State private var desktopTermsAcceptRuntimeOutcomeState: DesktopTermsAcceptRuntimeOutcomeState?
+    @State private var desktopEmployeePhotoCaptureSendRuntimeOutcomeState: DesktopEmployeePhotoCaptureSendRuntimeOutcomeState?
     @State private var desktopPrimaryDeviceConfirmRuntimeOutcomeState: DesktopPrimaryDeviceConfirmRuntimeOutcomeState?
     @State private var desktopVoiceEnrollRuntimeOutcomeState: DesktopVoiceEnrollRuntimeOutcomeState?
     @State private var desktopWakeEnrollStartDraftRuntimeOutcomeState: DesktopWakeEnrollStartDraftRuntimeOutcomeState?
@@ -2559,6 +2576,7 @@ struct DesktopSessionShellView: View {
     @State private var desktopAccessProvisionCommitRuntimeOutcomeState: DesktopAccessProvisionCommitRuntimeOutcomeState?
     @State private var desktopCompleteCommitRuntimeOutcomeState: DesktopCompleteCommitRuntimeOutcomeState?
     @State private var desktopOnboardingContinueFieldInput: String = ""
+    @State private var desktopEmployeePhotoCaptureSendPhotoBlobRefInput: String = ""
     @State private var desktopAuthoritativeReplyRenderState: DesktopAuthoritativeReplyRenderState?
     @State private var desktopAuthoritativeReplyProvenanceRenderState: DesktopAuthoritativeReplyProvenanceRenderState?
     @State private var desktopAuthoritativeReplyPlaybackState: DesktopAuthoritativeReplyPlaybackState = .idle
@@ -2580,6 +2598,7 @@ struct DesktopSessionShellView: View {
                 desktopPlatformSetupReceiptSubmissionCard
                 desktopTermsAcceptCard
                 desktopSenderVerificationVisibilityCard
+                desktopEmployeePhotoCaptureSendCard
                 desktopPrimaryDeviceConfirmCard
                 desktopVoiceEnrollCard
                 desktopWakeEnrollStartDraftCard
@@ -2628,6 +2647,7 @@ struct DesktopSessionShellView: View {
                     desktopOnboardingContinueRuntimeOutcomeState = nil
                     desktopPlatformSetupReceiptRuntimeOutcomeState = nil
                     desktopTermsAcceptRuntimeOutcomeState = nil
+                    desktopEmployeePhotoCaptureSendRuntimeOutcomeState = nil
                     desktopPrimaryDeviceConfirmRuntimeOutcomeState = nil
                     desktopVoiceEnrollRuntimeOutcomeState = nil
                     desktopWakeEnrollStartDraftRuntimeOutcomeState = nil
@@ -2637,6 +2657,7 @@ struct DesktopSessionShellView: View {
                     desktopAccessProvisionCommitRuntimeOutcomeState = nil
                     desktopCompleteCommitRuntimeOutcomeState = nil
                     desktopOnboardingContinueFieldInput = ""
+                    desktopEmployeePhotoCaptureSendPhotoBlobRefInput = ""
                 }
                 desktopOnboardingEntryContext = context
             }
@@ -3156,6 +3177,25 @@ struct DesktopSessionShellView: View {
             nextStep: "SENDER_VERIFICATION",
             onboardingStatus: desktopTermsAcceptRuntimeOutcomeState.onboardingStatus,
             requiredVerificationGates: desktopInviteOpenRuntimeOutcomeState?.requiredVerificationGates ?? []
+        )
+    }
+
+    private var desktopEmployeePhotoCaptureSendPromptState: DesktopEmployeePhotoCaptureSendPromptState? {
+        if let desktopEmployeePhotoCaptureSendRuntimeOutcomeState,
+           desktopEmployeePhotoCaptureSendRuntimeOutcomeState.phase == .completed,
+           desktopEmployeePhotoCaptureSendRuntimeOutcomeState.nextStep != "SENDER_VERIFICATION" {
+            return nil
+        }
+
+        guard let visibilityState = desktopSenderVerificationVisibilityState else {
+            return nil
+        }
+
+        return DesktopEmployeePhotoCaptureSendPromptState(
+            onboardingSessionID: visibilityState.onboardingSessionID,
+            nextStep: visibilityState.nextStep,
+            onboardingStatus: visibilityState.onboardingStatus,
+            requiredVerificationGates: visibilityState.requiredVerificationGates
         )
     }
 
@@ -3957,6 +3997,142 @@ struct DesktopSessionShellView: View {
                     }
                 } label: {
                     Text("Onboarding Sender Verification")
+                        .font(.headline)
+                }
+            }
+        }
+    }
+
+    private var desktopEmployeePhotoCaptureSendCard: some View {
+        let promptState = desktopEmployeePhotoCaptureSendPromptState
+        let displayedOnboardingSessionID = desktopEmployeePhotoCaptureSendRuntimeOutcomeState?.onboardingSessionID
+            ?? promptState?.onboardingSessionID
+            ?? "unavailable"
+        let displayedNextStep = desktopEmployeePhotoCaptureSendRuntimeOutcomeState?.nextStep
+            ?? promptState?.nextStep
+            ?? "not_provided"
+        let displayedOnboardingStatus = desktopEmployeePhotoCaptureSendRuntimeOutcomeState?.onboardingStatus
+            ?? promptState?.onboardingStatus
+            ?? "not_available"
+        let displayedRequiredVerificationGates = promptState?.requiredVerificationGates
+            ?? desktopSenderVerificationVisibilityState?.requiredVerificationGates
+            ?? []
+
+        return Group {
+            if promptState != nil || desktopEmployeePhotoCaptureSendRuntimeOutcomeState != nil {
+                GroupBox {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("Bounded employee photo capture send only. This shell derives bounded prompt state from the already-live sender-verification visibility posture, dispatches exact `EMPLOYEE_PHOTO_CAPTURE_SEND` with an already-existing exact `photo_blob_ref` only, and keeps returned onboarding posture read-only outside the exact control itself.")
+                            .frame(maxWidth: .infinity, alignment: .leading)
+
+                        ForEach(
+                            [
+                                ("onboarding_session_id", displayedOnboardingSessionID),
+                                ("next_step", displayedNextStep),
+                                ("onboarding_status", displayedOnboardingStatus),
+                            ],
+                            id: \.0
+                        ) { row in
+                            HStack(alignment: .top, spacing: 12) {
+                                Text(row.0)
+                                    .font(.caption.monospaced())
+                                    .foregroundStyle(.secondary)
+                                    .frame(width: 170, alignment: .leading)
+
+                                Text(row.1)
+                                    .font(.body.monospaced())
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                        }
+
+                        desktopOnboardingEntryListCard(
+                            title: "required_verification_gates",
+                            items: displayedRequiredVerificationGates,
+                            emptyText: "No required_verification_gates are available in the bounded employee-photo-send posture."
+                        )
+
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("photo_blob_ref")
+                                .font(.caption.monospaced())
+                                .foregroundStyle(.secondary)
+
+                            TextField(
+                                "Enter existing photo_blob_ref",
+                                text: $desktopEmployeePhotoCaptureSendPhotoBlobRefInput
+                            )
+                            .textFieldStyle(.roundedBorder)
+                            .disabled(desktopEmployeePhotoCaptureSendRuntimeOutcomeState?.phase == .dispatching)
+                        }
+
+                        Text("This shell is dispatching canonical `EMPLOYEE_PHOTO_CAPTURE_SEND` for an already-existing exact `photo_blob_ref` only. No local photo picker, no local camera capture, no local upload, no pasteboard blob authority, and no sender-decision mutation are introduced here.")
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+
+                        if let promptState {
+                            Button("Submit employee photo capture send") {
+                                Task {
+                                    await submitDesktopEmployeePhotoCaptureSend(promptState: promptState)
+                                }
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .disabled(
+                                desktopEmployeePhotoCaptureSendRuntimeOutcomeState?.phase == .dispatching
+                                || desktopEmployeePhotoCaptureSendPhotoBlobRefInput
+                                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                                    .isEmpty
+                            )
+                        }
+
+                        if let desktopEmployeePhotoCaptureSendRuntimeOutcomeState {
+                            Divider()
+
+                            Text(desktopEmployeePhotoCaptureSendRuntimeOutcomeState.title)
+                                .font(.headline)
+
+                            ForEach(
+                                [
+                                    ("dispatch_phase", desktopEmployeePhotoCaptureSendRuntimeOutcomeState.phase.rawValue),
+                                    ("request_id", desktopEmployeePhotoCaptureSendRuntimeOutcomeState.requestID),
+                                    ("endpoint", desktopEmployeePhotoCaptureSendRuntimeOutcomeState.endpoint),
+                                    ("photo_blob_ref", desktopEmployeePhotoCaptureSendRuntimeOutcomeState.photoBlobRef ?? "not_provided"),
+                                    ("outcome", desktopEmployeePhotoCaptureSendRuntimeOutcomeState.outcome ?? "not_available"),
+                                    ("reason", desktopEmployeePhotoCaptureSendRuntimeOutcomeState.reason ?? "not_available"),
+                                    ("onboarding_status", desktopEmployeePhotoCaptureSendRuntimeOutcomeState.onboardingStatus ?? "not_available"),
+                                ],
+                                id: \.0
+                            ) { row in
+                                HStack(alignment: .top, spacing: 12) {
+                                    Text(row.0)
+                                        .font(.caption.monospaced())
+                                        .foregroundStyle(.secondary)
+                                        .frame(width: 170, alignment: .leading)
+
+                                    Text(row.1)
+                                        .font(.body.monospaced())
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                }
+                            }
+
+                            Text(desktopEmployeePhotoCaptureSendRuntimeOutcomeState.summary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+
+                            Text(desktopEmployeePhotoCaptureSendRuntimeOutcomeState.detail)
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        } else {
+                            Text("Awaiting explicit user-triggered employee photo capture send for an already-existing exact `photo_blob_ref`. Sender-verification visibility remains read-only outside this exact bounded submit surface.")
+                                .foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+
+                        Text("Only exact `EMPLOYEE_PHOTO_CAPTURE_SEND` with exact `photo_blob_ref` is in scope here. No local photo picker controls, no local camera controls, no local upload controls, no pasteboard-import controls, no sender confirm / reject controls, no hidden or background capture, and no local onboarding authority claims are introduced by this surface.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                } label: {
+                    Text("Onboarding Employee Photo Capture Send")
                         .font(.headline)
                 }
             }
@@ -6995,6 +7171,7 @@ struct DesktopSessionShellView: View {
         let activeEntryContextID = desktopOnboardingEntryContext?.id
         desktopPlatformSetupReceiptRuntimeOutcomeState = nil
         desktopTermsAcceptRuntimeOutcomeState = nil
+        desktopEmployeePhotoCaptureSendRuntimeOutcomeState = nil
         desktopPrimaryDeviceConfirmRuntimeOutcomeState = nil
         desktopWakeEnrollStartDraftRuntimeOutcomeState = nil
         desktopWakeEnrollSampleCommitRuntimeOutcomeState = nil
@@ -7043,6 +7220,7 @@ struct DesktopSessionShellView: View {
     ) async {
         let activeEntryContextID = desktopOnboardingEntryContext?.id
         desktopTermsAcceptRuntimeOutcomeState = nil
+        desktopEmployeePhotoCaptureSendRuntimeOutcomeState = nil
         desktopPrimaryDeviceConfirmRuntimeOutcomeState = nil
         desktopWakeEnrollStartDraftRuntimeOutcomeState = nil
         desktopWakeEnrollSampleCommitRuntimeOutcomeState = nil
@@ -7087,6 +7265,7 @@ struct DesktopSessionShellView: View {
         promptState: DesktopTermsAcceptPromptState
     ) async {
         let activeEntryContextID = desktopOnboardingEntryContext?.id
+        desktopEmployeePhotoCaptureSendRuntimeOutcomeState = nil
         desktopPrimaryDeviceConfirmRuntimeOutcomeState = nil
         desktopWakeEnrollStartDraftRuntimeOutcomeState = nil
         desktopWakeEnrollSampleCommitRuntimeOutcomeState = nil
@@ -7121,6 +7300,55 @@ struct DesktopSessionShellView: View {
                 endpoint: desktopCanonicalRuntimeBridge.onboardingContinueEndpoint,
                 requestID: "unavailable",
                 summary: "The canonical onboarding-continue bridge could not stage this bounded desktop terms acceptance request.",
+                detail: error.localizedDescription
+            )
+        }
+    }
+
+    @MainActor
+    private func submitDesktopEmployeePhotoCaptureSend(
+        promptState: DesktopEmployeePhotoCaptureSendPromptState
+    ) async {
+        let activeEntryContextID = desktopOnboardingEntryContext?.id
+        desktopPrimaryDeviceConfirmRuntimeOutcomeState = nil
+        desktopWakeEnrollStartDraftRuntimeOutcomeState = nil
+        desktopWakeEnrollSampleCommitRuntimeOutcomeState = nil
+        desktopWakeEnrollCompleteCommitRuntimeOutcomeState = nil
+        desktopEmoPersonaLockRuntimeOutcomeState = nil
+        desktopAccessProvisionCommitRuntimeOutcomeState = nil
+        desktopCompleteCommitRuntimeOutcomeState = nil
+
+        do {
+            let ingressContext = try desktopCanonicalRuntimeBridge.desktopEmployeePhotoCaptureSendRequestBuilder(
+                promptState: promptState,
+                photoBlobRef: desktopEmployeePhotoCaptureSendPhotoBlobRefInput
+            )
+            desktopEmployeePhotoCaptureSendRuntimeOutcomeState = .dispatching(
+                onboardingSessionID: ingressContext.onboardingSessionID,
+                photoBlobRef: ingressContext.photoBlobRef,
+                endpoint: ingressContext.endpoint,
+                requestID: ingressContext.requestID
+            )
+
+            let outcomeState = await desktopCanonicalRuntimeBridge.submitDesktopEmployeePhotoCaptureSend(
+                ingressContext
+            )
+            guard desktopOnboardingEntryContext?.id == activeEntryContextID else {
+                return
+            }
+
+            desktopEmployeePhotoCaptureSendRuntimeOutcomeState = outcomeState
+        } catch {
+            desktopEmployeePhotoCaptureSendRuntimeOutcomeState = .failed(
+                onboardingSessionID: promptState.onboardingSessionID,
+                photoBlobRef: {
+                    let trimmed = desktopEmployeePhotoCaptureSendPhotoBlobRefInput
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                    return trimmed.isEmpty ? nil : trimmed
+                }(),
+                endpoint: desktopCanonicalRuntimeBridge.onboardingContinueEndpoint,
+                requestID: "unavailable",
+                summary: "The canonical onboarding-continue bridge could not stage this bounded employee photo capture send request.",
                 detail: error.localizedDescription
             )
         }
