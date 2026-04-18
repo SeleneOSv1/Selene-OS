@@ -62,6 +62,7 @@ Build selection rule:
 - for self-authored next-build instructions, Codex must default to an implementation build
 - every self-authored build instruction must treat `build` as `implementation`
 - every self-authored next-build instruction must declare or assume `Build Class: IMPLEMENTATION`
+- every self-authored build instruction that pins `HEAD`, `origin/main`, or a prerequisite landed-build hash must source that exact hash from same-task git output and must not reuse remembered prior assistant text
 - the selected build must name the exact behavior to change, the exact files expected to change, and the exact tests that will prove the change
 - Codex should prefer the largest safe, accurate, and provable in-scope implementation batch over a smaller batch when both are lawful and the larger batch stays within the same approval surface
 - Codex must not default to one-slice-only execution when multiple adjacent slices can be implemented and proven together safely
@@ -278,6 +279,32 @@ Automatic stop is still required when:
 
 ### Repo-Truth Precedence Rule
 If task instructions conflict with current repo truth, Codex must follow current repo truth plus these task-state rules and report the mode switch once in the final output.
+
+### Build-Report Hash and Ownership Verification Rule
+Before any final completion report, self-authored build instruction, audit conclusion, or corrective follow-up that names:
+- a landed build hash
+- a pinned `HEAD == ...` value
+- a prior or prerequisite build hash
+- an exact symbol carrier
+- an exact file or layer ownership claim
+
+Codex must verify that claim from current repo truth in the same task.
+
+Required verification:
+- current landed commit hash: `git rev-parse HEAD`
+- prior or prerequisite build hash: direct `git rev-parse`, `git log`, or exact ancestor query from the current repo in the same task
+- exact symbol or state ownership: direct `rg` or equivalent against the exact named files in the same task
+- if a symbol exists in both bridge and shell or across multiple layers, Codex must report the split ownership exactly rather than collapsing it into one carrier
+
+Forbidden:
+- reusing remembered full hashes from earlier assistant messages
+- inferring exact ownership from summary memory when the repo can be queried directly
+- collapsing bridge-owned canonical fields and shell-owned derived state into one carrier when repo truth shows a split
+- stating an exact hash or ownership claim as definitive without same-task verification
+
+If verification cannot be completed:
+- stop and report the claim as `unverified`
+- do not pin a self-authored build instruction or final report to that claim
 
 ### Authority Conflict Stop Rule
 If current repo artifacts that should describe the same truth conflict with each other, Codex must stop and report the exact conflict with file-and-line evidence.
