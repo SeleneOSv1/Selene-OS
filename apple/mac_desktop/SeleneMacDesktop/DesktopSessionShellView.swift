@@ -109,6 +109,18 @@ private func boundedClarifyMissingField(_ rawValue: String?) -> String? {
     return trimmed
 }
 
+private func boundedOnboardingContinueFieldInput(_ rawValue: String) -> String? {
+    let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty,
+          trimmed.count <= 256,
+          !trimmed.contains("\n"),
+          !trimmed.contains("\r") else {
+        return nil
+    }
+
+    return trimmed
+}
+
 private func boundedBullet(_ rawValue: String?) -> String? {
     guard let rawValue else {
         return nil
@@ -2296,6 +2308,24 @@ struct DesktopOnboardingEntryContext: Identifiable, Equatable {
     }
 }
 
+struct DesktopOnboardingContinuePromptState: Identifiable, Equatable {
+    let onboardingSessionID: String
+    let nextStep: String
+    let blockingField: String
+    let blockingQuestion: String?
+    let remainingMissingFields: [String]
+
+    var id: String {
+        [
+            onboardingSessionID,
+            nextStep,
+            blockingField,
+            blockingQuestion ?? "question_not_provided",
+            remainingMissingFields.joined(separator: "|"),
+        ].joined(separator: "::")
+    }
+}
+
 struct DesktopSessionShellView: View {
     @State private var latestSessionHeaderContext: DesktopSessionHeaderContext?
     @State private var latestSessionActiveVisibleContext: DesktopSessionActiveVisibleContext?
@@ -2310,6 +2340,8 @@ struct DesktopSessionShellView: View {
     @StateObject private var desktopAuthoritativeReplyPlaybackController = DesktopAuthoritativeReplyPlaybackController()
     @State private var desktopCanonicalRuntimeOutcomeState: DesktopCanonicalRuntimeOutcomeState?
     @State private var desktopInviteOpenRuntimeOutcomeState: DesktopInviteOpenRuntimeOutcomeState?
+    @State private var desktopOnboardingContinueRuntimeOutcomeState: DesktopOnboardingContinueRuntimeOutcomeState?
+    @State private var desktopOnboardingContinueFieldInput: String = ""
     @State private var desktopAuthoritativeReplyRenderState: DesktopAuthoritativeReplyRenderState?
     @State private var desktopAuthoritativeReplyProvenanceRenderState: DesktopAuthoritativeReplyProvenanceRenderState?
     @State private var desktopAuthoritativeReplyPlaybackState: DesktopAuthoritativeReplyPlaybackState = .idle
@@ -2327,6 +2359,7 @@ struct DesktopSessionShellView: View {
                 explicitVoiceEntryAffordanceCard
 
                 desktopOnboardingEntryCard
+                desktopOnboardingContinuePromptCard
 
                 sessionCard
                 .frame(maxWidth: .infinity, minHeight: 360, alignment: .topLeading)
@@ -2349,6 +2382,9 @@ struct DesktopSessionShellView: View {
         .task(id: desktopOnboardingEntryContext?.id) {
             await openInviteLinkAndStartOnboardingIfNeeded()
         }
+        .task(id: desktopOnboardingContinuePromptSeedID) {
+            await fetchOnboardingContinuePromptIfNeeded()
+        }
         .onReceive(desktopAuthoritativeReplyPlaybackController.$playbackState) { playbackState in
             desktopAuthoritativeReplyPlaybackState = playbackState
         }
@@ -2361,6 +2397,8 @@ struct DesktopSessionShellView: View {
             if let context = DesktopOnboardingEntryContext(url: url) {
                 if desktopOnboardingEntryContext?.id != context.id {
                     desktopInviteOpenRuntimeOutcomeState = nil
+                    desktopOnboardingContinueRuntimeOutcomeState = nil
+                    desktopOnboardingContinueFieldInput = ""
                 }
                 desktopOnboardingEntryContext = context
             }
@@ -2669,6 +2707,200 @@ struct DesktopSessionShellView: View {
         } label: {
             Text("Explicit Voice Entry Affordance")
                 .font(.headline)
+        }
+    }
+
+    private var desktopOnboardingContinuePromptState: DesktopOnboardingContinuePromptState? {
+        if let desktopOnboardingContinueRuntimeOutcomeState,
+           desktopOnboardingContinueRuntimeOutcomeState.phase == .completed,
+           desktopOnboardingContinueRuntimeOutcomeState.nextStep == "ASK_MISSING",
+           let onboardingSessionID = desktopOnboardingContinueRuntimeOutcomeState.onboardingSessionID {
+            let fallbackRemainingFields = desktopInviteOpenRuntimeOutcomeState?.requiredFields ?? []
+            let remainingMissingFields = desktopOnboardingContinueRuntimeOutcomeState.remainingMissingFields.isEmpty
+                ? fallbackRemainingFields
+                : desktopOnboardingContinueRuntimeOutcomeState.remainingMissingFields
+            let blockingField = desktopOnboardingContinueRuntimeOutcomeState.blockingField
+                ?? remainingMissingFields.first
+
+            if let blockingField {
+                return DesktopOnboardingContinuePromptState(
+                    onboardingSessionID: onboardingSessionID,
+                    nextStep: "ASK_MISSING",
+                    blockingField: blockingField,
+                    blockingQuestion: desktopOnboardingContinueRuntimeOutcomeState.blockingQuestion,
+                    remainingMissingFields: remainingMissingFields.isEmpty ? [blockingField] : remainingMissingFields
+                )
+            }
+        }
+
+        if let desktopInviteOpenRuntimeOutcomeState,
+           desktopInviteOpenRuntimeOutcomeState.phase == .completed,
+           desktopInviteOpenRuntimeOutcomeState.nextStep == "ASK_MISSING",
+           let onboardingSessionID = desktopInviteOpenRuntimeOutcomeState.onboardingSessionID,
+           let blockingField = desktopInviteOpenRuntimeOutcomeState.requiredFields.first {
+            return DesktopOnboardingContinuePromptState(
+                onboardingSessionID: onboardingSessionID,
+                nextStep: "ASK_MISSING",
+                blockingField: blockingField,
+                blockingQuestion: nil,
+                remainingMissingFields: desktopInviteOpenRuntimeOutcomeState.requiredFields
+            )
+        }
+
+        return nil
+    }
+
+    private var desktopOnboardingContinuePromptSeedID: String? {
+        guard desktopOnboardingContinueRuntimeOutcomeState == nil,
+              let desktopOnboardingContinuePromptState,
+              desktopInviteOpenRuntimeOutcomeState?.phase == .completed else {
+            return nil
+        }
+
+        return desktopOnboardingContinuePromptState.id
+    }
+
+    private var boundedDesktopOnboardingContinueFieldInput: String? {
+        boundedOnboardingContinueFieldInput(desktopOnboardingContinueFieldInput)
+    }
+
+    @ViewBuilder
+    private var desktopOnboardingContinuePromptCard: some View {
+        let cardState = desktopOnboardingContinuePromptState
+            ?? desktopOnboardingContinueRuntimeOutcomeState.map {
+                DesktopOnboardingContinuePromptState(
+                    onboardingSessionID: $0.onboardingSessionID ?? "unavailable",
+                    nextStep: $0.nextStep ?? "not_provided",
+                    blockingField: $0.blockingField ?? "not_provided",
+                    blockingQuestion: $0.blockingQuestion,
+                    remainingMissingFields: $0.remainingMissingFields
+                )
+            }
+
+        if let cardState,
+           desktopInviteOpenRuntimeOutcomeState?.phase == .completed || desktopOnboardingContinueRuntimeOutcomeState != nil {
+            GroupBox {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Bounded onboarding continue missing-field prompt-and-submit only. This shell derives prompt state from the already-live onboarding-entry outcome plus returned continue outcome, dispatches exact `ASK_MISSING_SUBMIT`, and stops when canonical runtime advances beyond `ASK_MISSING`.")
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                    ForEach(
+                        [
+                            ("onboarding_session_id", cardState.onboardingSessionID),
+                            ("next_step", desktopOnboardingContinueRuntimeOutcomeState?.nextStep ?? cardState.nextStep),
+                            ("blocking_field", desktopOnboardingContinueRuntimeOutcomeState?.blockingField ?? cardState.blockingField),
+                            ("blocking_question", desktopOnboardingContinueRuntimeOutcomeState?.blockingQuestion ?? cardState.blockingQuestion ?? "not_provided"),
+                        ],
+                        id: \.0
+                    ) { row in
+                        HStack(alignment: .top, spacing: 12) {
+                            Text(row.0)
+                                .font(.caption.monospaced())
+                                .foregroundStyle(.secondary)
+                                .frame(width: 170, alignment: .leading)
+
+                            Text(row.1)
+                                .font(.body.monospaced())
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                    }
+
+                    desktopOnboardingEntryListCard(
+                        title: "remaining_missing_fields",
+                        items: cardState.remainingMissingFields,
+                        emptyText: "No remaining_missing_fields are currently visible in the bounded missing-field prompt state."
+                    )
+
+                    if cardState.nextStep == "ASK_MISSING" {
+                        VStack(alignment: .leading, spacing: 8) {
+                            TextField(
+                                cardState.blockingQuestion
+                                    ?? "Enter a bounded value for \(cardState.blockingField)",
+                                text: $desktopOnboardingContinueFieldInput
+                            )
+                            .textFieldStyle(.roundedBorder)
+                            .disabled(desktopOnboardingContinueRuntimeOutcomeState?.phase == .dispatching)
+
+                            Button("Submit missing field") {
+                                guard let boundedFieldValue = boundedDesktopOnboardingContinueFieldInput else {
+                                    return
+                                }
+
+                                Task {
+                                    await dispatchOnboardingContinueMissingField(
+                                        promptState: cardState,
+                                        fieldValue: boundedFieldValue
+                                    )
+                                }
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .disabled(
+                                desktopOnboardingContinueRuntimeOutcomeState?.phase == .dispatching
+                                    || boundedDesktopOnboardingContinueFieldInput == nil
+                            )
+                        }
+                    }
+
+                    if let desktopOnboardingContinueRuntimeOutcomeState {
+                        Divider()
+
+                        Text(desktopOnboardingContinueRuntimeOutcomeState.title)
+                            .font(.headline)
+
+                        ForEach(
+                            [
+                                ("dispatch_phase", desktopOnboardingContinueRuntimeOutcomeState.phase.rawValue),
+                                ("request_id", desktopOnboardingContinueRuntimeOutcomeState.requestID),
+                                ("endpoint", desktopOnboardingContinueRuntimeOutcomeState.endpoint),
+                                ("outcome", desktopOnboardingContinueRuntimeOutcomeState.outcome ?? "not_available"),
+                                ("reason", desktopOnboardingContinueRuntimeOutcomeState.reason ?? "not_available"),
+                                ("onboarding_status", desktopOnboardingContinueRuntimeOutcomeState.onboardingStatus ?? "not_available"),
+                            ],
+                            id: \.0
+                        ) { row in
+                            HStack(alignment: .top, spacing: 12) {
+                                Text(row.0)
+                                    .font(.caption.monospaced())
+                                    .foregroundStyle(.secondary)
+                                    .frame(width: 170, alignment: .leading)
+
+                                Text(row.1)
+                                    .font(.body.monospaced())
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                        }
+
+                        Text(desktopOnboardingContinueRuntimeOutcomeState.summary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+
+                        Text(desktopOnboardingContinueRuntimeOutcomeState.detail)
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+
+                        if desktopOnboardingContinueRuntimeOutcomeState.phase == .completed,
+                           desktopOnboardingContinueRuntimeOutcomeState.nextStep != "ASK_MISSING" {
+                            desktopOnboardingEntryListCard(
+                                title: "remaining_platform_receipt_kinds",
+                                items: desktopOnboardingContinueRuntimeOutcomeState.remainingPlatformReceiptKinds,
+                                emptyText: "No remaining_platform_receipt_kinds were returned after the bounded missing-field loop advanced."
+                            )
+                        }
+                    } else {
+                        Text("Awaiting bounded missing-field prompt visibility from canonical `/v1/onboarding/continue`. This surface will not expose platform receipts, terms acceptance, primary-device confirmation, voice enrollment, access provisioning, wake controls, or autonomous unlock.")
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+
+                    Text("Only the exact `ASK_MISSING_SUBMIT` action is in scope here. No platform-receipt submission controls, no terms acceptance controls, no primary-device confirmation controls, no voice-enrollment controls, no access-provision controls, no wake-enrollment controls, no proven native macOS wake-listener integration claim, and no autonomous-unlock claim are introduced by this surface.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            } label: {
+                Text("Onboarding Continue Missing Field")
+                    .font(.headline)
+            }
         }
     }
 
@@ -4686,6 +4918,9 @@ struct DesktopSessionShellView: View {
             return
         }
 
+        desktopOnboardingContinueRuntimeOutcomeState = nil
+        desktopOnboardingContinueFieldInput = ""
+
         do {
             let ingressContext = try desktopCanonicalRuntimeBridge.desktopInviteClickRequestBuilder(
                 desktopOnboardingEntryContext
@@ -4710,6 +4945,60 @@ struct DesktopSessionShellView: View {
                 endpoint: desktopCanonicalRuntimeBridge.inviteClickEndpoint,
                 requestID: "unavailable",
                 summary: "The canonical invite-open bridge could not stage this onboarding-entry request.",
+                detail: error.localizedDescription
+            )
+        }
+    }
+
+    @MainActor
+    private func fetchOnboardingContinuePromptIfNeeded() async {
+        guard desktopOnboardingContinueRuntimeOutcomeState == nil,
+              let desktopOnboardingContinuePromptState else {
+            return
+        }
+
+        await dispatchOnboardingContinueMissingField(
+            promptState: desktopOnboardingContinuePromptState,
+            fieldValue: nil
+        )
+    }
+
+    @MainActor
+    private func dispatchOnboardingContinueMissingField(
+        promptState: DesktopOnboardingContinuePromptState,
+        fieldValue: String?
+    ) async {
+        let activeEntryContextID = desktopOnboardingEntryContext?.id
+
+        do {
+            let ingressContext = try desktopCanonicalRuntimeBridge.desktopOnboardingContinueMissingFieldRequestBuilder(
+                promptState: promptState,
+                fieldValue: fieldValue
+            )
+            desktopOnboardingContinueRuntimeOutcomeState = .dispatching(
+                onboardingSessionID: ingressContext.onboardingSessionID,
+                blockingField: ingressContext.blockingField,
+                endpoint: ingressContext.endpoint,
+                requestID: ingressContext.requestID,
+                submittedFieldValue: fieldValue
+            )
+
+            let outcomeState = await desktopCanonicalRuntimeBridge.continueOnboardingMissingField(
+                ingressContext
+            )
+            guard desktopOnboardingEntryContext?.id == activeEntryContextID else {
+                return
+            }
+
+            desktopOnboardingContinueRuntimeOutcomeState = outcomeState
+            desktopOnboardingContinueFieldInput = ""
+        } catch {
+            desktopOnboardingContinueRuntimeOutcomeState = .failed(
+                onboardingSessionID: promptState.onboardingSessionID,
+                blockingField: promptState.blockingField,
+                endpoint: desktopCanonicalRuntimeBridge.onboardingContinueEndpoint,
+                requestID: "unavailable",
+                summary: "The canonical onboarding-continue bridge could not stage this bounded missing-field request.",
                 detail: error.localizedDescription
             )
         }
