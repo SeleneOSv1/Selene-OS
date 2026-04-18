@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import AVFoundation
 import Speech
@@ -893,6 +894,152 @@ private struct DesktopAuthoritativeReplyRenderState: Equatable {
     let title: String
     let summary: String
     let authoritativeResponseText: String?
+}
+
+private struct DesktopAuthoritativeReplyPlaybackState: Equatable {
+    enum Phase: String, Equatable {
+        case idle = "idle"
+        case speaking = "speaking"
+        case failed = "failed"
+    }
+
+    let phase: Phase
+    let title: String
+    let summary: String
+    let detail: String
+
+    static let idle = DesktopAuthoritativeReplyPlaybackState(
+        phase: .idle,
+        title: "Authoritative reply playback idle",
+        summary: "Playback remains available only for cloud-authored reply text that is already visible in the bounded reply surface.",
+        detail: "Bounded native macOS speech playback only. This shell remains explicitly non-authoritative, does not mutate transcript preview, and does not claim wake parity, native wake-listener integration, or autonomous unlock."
+    )
+
+    static func speaking(authoritativeResponseText: String) -> DesktopAuthoritativeReplyPlaybackState {
+        let boundedPreview = boundedSummary(authoritativeResponseText) ?? "Cloud-authored reply playback is active."
+        return DesktopAuthoritativeReplyPlaybackState(
+            phase: .speaking,
+            title: "Authoritative reply playback active",
+            summary: boundedPreview,
+            detail: "This shell is speaking only the already-rendered cloud-authored authoritative reply text. No local reply synthesis, transcript mutation, wake behavior, or autonomous unlock is introduced here."
+        )
+    }
+
+    static func stopped() -> DesktopAuthoritativeReplyPlaybackState {
+        DesktopAuthoritativeReplyPlaybackState(
+            phase: .idle,
+            title: "Authoritative reply playback stopped",
+            summary: "Playback has been stopped and the bounded reply surface remains read-only.",
+            detail: "Stopping playback does not alter authoritative reply text, transcript preview, or conversation history."
+        )
+    }
+
+    static func completed() -> DesktopAuthoritativeReplyPlaybackState {
+        DesktopAuthoritativeReplyPlaybackState(
+            phase: .idle,
+            title: "Authoritative reply playback finished",
+            summary: "Playback finished for the current cloud-authored authoritative reply.",
+            detail: "Completion visibility only. This shell remains non-authoritative and does not mutate transcript preview, reply-surface posture, or wake behavior."
+        )
+    }
+
+    static func failed(summary: String, detail: String) -> DesktopAuthoritativeReplyPlaybackState {
+        DesktopAuthoritativeReplyPlaybackState(
+            phase: .failed,
+            title: "Authoritative reply playback failed",
+            summary: summary,
+            detail: detail
+        )
+    }
+}
+
+@MainActor
+private final class DesktopAuthoritativeReplyPlaybackController: NSObject, ObservableObject, NSSpeechSynthesizerDelegate {
+    @Published private(set) var playbackState: DesktopAuthoritativeReplyPlaybackState = .idle
+
+    private let speechSynthesizer = NSSpeechSynthesizer()
+    private var stopWasRequested = false
+
+    override init() {
+        super.init()
+        speechSynthesizer.delegate = self
+    }
+
+    @discardableResult
+    func play(authoritativeResponseText: String?) -> DesktopAuthoritativeReplyPlaybackState {
+        guard let authoritativeResponseText else {
+            let failedState = DesktopAuthoritativeReplyPlaybackState.failed(
+                summary: "Playback is unavailable because no cloud-authored reply text is present.",
+                detail: "This shell fails closed when canonical runtime reply text is missing and does not fabricate local speech content."
+            )
+            playbackState = failedState
+            return failedState
+        }
+
+        let trimmed = authoritativeResponseText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            let failedState = DesktopAuthoritativeReplyPlaybackState.failed(
+                summary: "Playback is unavailable because the reply text is empty.",
+                detail: "This shell fails closed when canonical runtime reply text is empty and does not synthesize substitute content."
+            )
+            playbackState = failedState
+            return failedState
+        }
+
+        if speechSynthesizer.isSpeaking {
+            speechSynthesizer.stopSpeaking()
+        }
+
+        stopWasRequested = false
+
+        guard speechSynthesizer.startSpeaking(trimmed) else {
+            let failedState = DesktopAuthoritativeReplyPlaybackState.failed(
+                summary: "Native macOS reply playback could not start.",
+                detail: "The shell remains read-only and non-authoritative while bounded native speech playback initialization is unavailable."
+            )
+            playbackState = failedState
+            return failedState
+        }
+
+        let speakingState = DesktopAuthoritativeReplyPlaybackState.speaking(authoritativeResponseText: trimmed)
+        playbackState = speakingState
+        return speakingState
+    }
+
+    @discardableResult
+    func stop() -> DesktopAuthoritativeReplyPlaybackState {
+        stopWasRequested = true
+        if speechSynthesizer.isSpeaking {
+            speechSynthesizer.stopSpeaking()
+        }
+        let stoppedState = DesktopAuthoritativeReplyPlaybackState.stopped()
+        playbackState = stoppedState
+        return stoppedState
+    }
+
+    func reset() {
+        stopWasRequested = false
+        if speechSynthesizer.isSpeaking {
+            speechSynthesizer.stopSpeaking()
+        }
+        playbackState = .idle
+    }
+
+    nonisolated func speechSynthesizer(_ sender: NSSpeechSynthesizer, didFinishSpeaking finishedSpeaking: Bool) {
+        Task { @MainActor in
+            if stopWasRequested {
+                stopWasRequested = false
+                playbackState = .stopped()
+            } else if finishedSpeaking {
+                playbackState = .completed()
+            } else {
+                playbackState = .failed(
+                    summary: "Native macOS reply playback ended before completion.",
+                    detail: "The shell remains explicitly non-authoritative and does not retry or fabricate substitute playback output."
+                )
+            }
+        }
+    }
 }
 
 private enum VoicePermissionState: String {
@@ -2030,8 +2177,10 @@ struct DesktopSessionShellView: View {
     @State private var interruptResponseRequestSequence: Int = 0
     @StateObject private var explicitVoiceController = ExplicitVoiceCaptureController()
     @StateObject private var desktopCanonicalRuntimeBridge = DesktopCanonicalRuntimeBridge()
+    @StateObject private var desktopAuthoritativeReplyPlaybackController = DesktopAuthoritativeReplyPlaybackController()
     @State private var desktopCanonicalRuntimeOutcomeState: DesktopCanonicalRuntimeOutcomeState?
     @State private var desktopAuthoritativeReplyRenderState: DesktopAuthoritativeReplyRenderState?
+    @State private var desktopAuthoritativeReplyPlaybackState: DesktopAuthoritativeReplyPlaybackState = .idle
 
     var body: some View {
         HStack(alignment: .top, spacing: 20) {
@@ -2063,9 +2212,13 @@ struct DesktopSessionShellView: View {
         .task(id: explicitVoiceController.pendingRequest?.id) {
             await dispatchPreparedExplicitVoiceRequestIfNeeded()
         }
+        .onReceive(desktopAuthoritativeReplyPlaybackController.$playbackState) { playbackState in
+            desktopAuthoritativeReplyPlaybackState = playbackState
+        }
         .onDisappear {
             explicitVoiceController.haltCaptureSession()
             desktopCanonicalRuntimeBridge.stopManagedAdapter()
+            desktopAuthoritativeReplyPlaybackController.reset()
         }
         .onOpenURL { url in
             if let context = DesktopSessionActiveVisibleContext(url: url) {
@@ -2301,6 +2454,8 @@ struct DesktopSessionShellView: View {
                     Button("Start explicit voice turn") {
                         desktopCanonicalRuntimeOutcomeState = nil
                         desktopAuthoritativeReplyRenderState = nil
+                        desktopAuthoritativeReplyPlaybackController.reset()
+                        desktopAuthoritativeReplyPlaybackState = .idle
                         explicitVoiceController.startExplicitVoiceTurn()
                     }
                     .buttonStyle(.borderedProminent)
@@ -2309,6 +2464,8 @@ struct DesktopSessionShellView: View {
                     Button("Stop capture and prepare voice request") {
                         desktopCanonicalRuntimeOutcomeState = nil
                         desktopAuthoritativeReplyRenderState = nil
+                        desktopAuthoritativeReplyPlaybackController.reset()
+                        desktopAuthoritativeReplyPlaybackState = .idle
                         explicitVoiceController.stopCaptureAndPrepareVoiceTurn()
                     }
                     .buttonStyle(.bordered)
@@ -2335,6 +2492,7 @@ struct DesktopSessionShellView: View {
 
                 if desktopAuthoritativeReplyRenderState != nil {
                     desktopAuthoritativeReplyCard
+                    desktopAuthoritativeReplyPlaybackCard
                 }
 
                 if let failedRequest = explicitVoiceController.failedRequest {
@@ -4150,6 +4308,58 @@ struct DesktopSessionShellView: View {
         }
     }
 
+    private var desktopAuthoritativeReplyPlaybackCard: some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 10) {
+                Text(desktopAuthoritativeReplyPlaybackState.title)
+                    .font(.headline)
+
+                Text(desktopAuthoritativeReplyPlaybackState.summary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                Text(desktopAuthoritativeReplyPlaybackState.detail)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                HStack(spacing: 12) {
+                    Button("Play authoritative reply") {
+                        playAuthoritativeReply()
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(
+                        desktopAuthoritativeReplyRenderState?.authoritativeResponseText?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false
+                        || desktopAuthoritativeReplyPlaybackState.phase == .speaking
+                    )
+
+                    Button("Stop reply playback") {
+                        stopAuthoritativeReplyPlayback()
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(desktopAuthoritativeReplyPlaybackState.phase != .speaking)
+                }
+
+                Text("User-triggered bounded reply playback only. No transcript mutation, no conversation-history mutation, no wake parity claim, no proven native macOS wake-listener integration claim, and no autonomous unlock claim are introduced by this surface.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        } label: {
+            Text("Authoritative Reply Playback")
+                .font(.headline)
+        }
+    }
+
+    private func playAuthoritativeReply() {
+        desktopAuthoritativeReplyPlaybackState = desktopAuthoritativeReplyPlaybackController.play(
+            authoritativeResponseText: desktopAuthoritativeReplyRenderState?.authoritativeResponseText
+        )
+    }
+
+    private func stopAuthoritativeReplyPlayback() {
+        desktopAuthoritativeReplyPlaybackState = desktopAuthoritativeReplyPlaybackController.stop()
+    }
+
     @MainActor
     private func dispatchPreparedExplicitVoiceRequestIfNeeded() async {
         guard let pendingRequest = explicitVoiceController.pendingRequest else {
@@ -4164,6 +4374,8 @@ struct DesktopSessionShellView: View {
                 requestID: ingressContext.requestID
             )
             desktopAuthoritativeReplyRenderState = nil
+            desktopAuthoritativeReplyPlaybackController.reset()
+            desktopAuthoritativeReplyPlaybackState = .idle
 
             let outcomeState = await desktopCanonicalRuntimeBridge.dispatchPreparedExplicitVoiceRequest(ingressContext)
             guard explicitVoiceController.pendingRequest?.id == pendingRequest.id else {
@@ -4194,6 +4406,8 @@ struct DesktopSessionShellView: View {
                 failureClass: "RetryableRuntime"
             )
             desktopAuthoritativeReplyRenderState = nil
+            desktopAuthoritativeReplyPlaybackController.reset()
+            desktopAuthoritativeReplyPlaybackState = .idle
             explicitVoiceController.clearPendingPreparedVoiceTurn()
         }
     }
