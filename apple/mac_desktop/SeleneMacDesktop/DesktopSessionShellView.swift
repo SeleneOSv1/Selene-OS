@@ -1,4 +1,6 @@
 import Foundation
+import AVFoundation
+import Speech
 import SwiftUI
 
 private func firstQueryValue(in queryItems: [URLQueryItem], name: String) -> String? {
@@ -873,6 +875,359 @@ private struct InterruptContinuityResponseFailureState: Identifiable, Equatable 
     let detail: String
 }
 
+private struct ExplicitVoiceTurnRequestState: Identifiable {
+    let id: String
+    let transcript: String
+    let byteCount: Int
+
+    var boundedPreview: String {
+        if transcript.count <= 96 {
+            return transcript
+        }
+
+        return "\(transcript.prefix(93))..."
+    }
+}
+
+private enum VoicePermissionState: String {
+    case notRequested = "not_requested"
+    case granted = "granted"
+    case denied = "denied"
+    case restricted = "restricted"
+    case unavailable = "unavailable"
+
+    var detail: String {
+        switch self {
+        case .notRequested:
+            return "Permission has not been requested in this foreground session yet."
+        case .granted:
+            return "Permission is granted for bounded explicit voice capture only."
+        case .denied:
+            return "Permission was denied. Explicit voice capture stays blocked until the user re-enables access."
+        case .restricted:
+            return "Permission is restricted by device policy. This shell remains non-authoritative and does not bypass policy."
+        case .unavailable:
+            return "Permission or recognizer availability is unavailable on this device posture."
+        }
+    }
+}
+
+private final class ExplicitVoiceCaptureController: ObservableObject {
+    @Published private(set) var microphonePermission: VoicePermissionState = .notRequested
+    @Published private(set) var speechRecognitionPermission: VoicePermissionState = .notRequested
+    @Published private(set) var isListening = false
+    @Published private(set) var transcriptPreview = ""
+    @Published private(set) var pendingRequest: ExplicitVoiceTurnRequestState?
+    @Published private(set) var failedRequest: InterruptContinuityResponseFailureState?
+
+    private let maxVoiceTurnBytes = 16_384
+    private let audioEngine = AVAudioEngine()
+    private let speechRecognizer: SFSpeechRecognizer?
+    private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
+    private var recognitionTask: SFSpeechRecognitionTask?
+    private var hasInputTap = false
+    private var requestSequence = 0
+
+    init(locale: Locale? = nil) {
+        let resolvedLocale = locale ?? Self.preferredLocale()
+        speechRecognizer = SFSpeechRecognizer(locale: resolvedLocale) ?? SFSpeechRecognizer()
+        refreshPermissionState()
+    }
+
+    func startExplicitVoiceTurn() {
+        failedRequest = nil
+
+        guard !isListening else {
+            return
+        }
+
+        guard pendingRequest == nil else {
+            recordFailure(
+                id: "failed_explicit_voice_turn_awaiting_authoritative_response",
+                title: "Failed explicit voice request",
+                summary: "A later explicit voice-turn request could not be produced while the current bounded explicit voice request is already awaiting authoritative follow-up.",
+                detail: "This shell keeps only bounded pending / failed posture. It does not queue another local voice request, repair transport, or fabricate local assistant output."
+            )
+            return
+        }
+
+        transcriptPreview = ""
+        refreshPermissionState()
+        requestMicrophonePermissionIfNeeded { [weak self] granted in
+            guard let self else {
+                return
+            }
+
+            DispatchQueue.main.async {
+                self.refreshPermissionState()
+                guard granted else {
+                    self.recordFailure(
+                        id: "failed_explicit_voice_microphone_permission",
+                        title: "Failed explicit voice request",
+                        summary: "Microphone permission is required before a bounded explicit voice-turn request can begin.",
+                        detail: "Permission visibility only; this shell does not bypass device policy, start hidden capture, or synthesize a request without foreground user approval."
+                    )
+                    return
+                }
+
+                self.requestSpeechRecognitionPermissionIfNeeded { [weak self] speechGranted in
+                    guard let self else {
+                        return
+                    }
+
+                    DispatchQueue.main.async {
+                        self.refreshPermissionState()
+                        guard speechGranted else {
+                            self.recordFailure(
+                                id: "failed_explicit_voice_speech_permission",
+                                title: "Failed explicit voice request",
+                                summary: "Speech-recognition permission is required before a bounded explicit voice-turn request can prepare transcript preview.",
+                                detail: "Permission visibility only; this shell does not create hidden spoken-only output, local transcript authority, or silent authoritative acceptance."
+                            )
+                            return
+                        }
+
+                        self.beginCaptureSession()
+                    }
+                }
+            }
+        }
+    }
+
+    func stopCaptureAndPrepareVoiceTurn() {
+        guard isListening else {
+            recordFailure(
+                id: "failed_explicit_voice_not_listening",
+                title: "Failed explicit voice request",
+                summary: "The bounded explicit voice surface was not actively listening when request preparation was attempted.",
+                detail: "Explicit voice-turn production remains foreground-only and user-visible. Start a new explicit voice turn before preparing another bounded request."
+            )
+            return
+        }
+
+        endCaptureInput()
+
+        let trimmedTranscript = transcriptPreview.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedTranscript.isEmpty else {
+            recordFailure(
+                id: "failed_explicit_voice_empty_transcript",
+                title: "Failed explicit voice request",
+                summary: "No bounded transcript preview was available when this explicit voice turn stopped, so no voice request was produced.",
+                detail: "Failure visibility only; speak again and retry through the canonical explicit voice path. No local assistant output or authoritative transcript mutation was produced."
+            )
+            return
+        }
+
+        if trimmedTranscript.utf8.count > maxVoiceTurnBytes {
+            recordFailure(
+                id: "failed_explicit_voice_transcript_validation",
+                title: "Failed explicit voice request",
+                summary: "The bounded explicit voice transcript exceeded 16384 UTF-8 bytes before any authoritative acceptance occurred.",
+                detail: "Failure visibility only; retry a shorter utterance through the canonical explicit voice path. No authoritative transcript turn was appended locally."
+            )
+            return
+        }
+
+        requestSequence += 1
+        transcriptPreview = trimmedTranscript
+        pendingRequest = ExplicitVoiceTurnRequestState(
+            id: String(format: "desktop_voice_turn_request_%03d", requestSequence),
+            transcript: trimmedTranscript,
+            byteCount: trimmedTranscript.utf8.count
+        )
+    }
+
+    func haltCaptureSession() {
+        teardownRecognitionSession()
+    }
+
+    private func beginCaptureSession() {
+        failedRequest = nil
+        teardownRecognitionSession()
+        refreshPermissionState()
+
+        guard let speechRecognizer else {
+            speechRecognitionPermission = .unavailable
+            recordFailure(
+                id: "failed_explicit_voice_recognizer_unavailable",
+                title: "Failed explicit voice request",
+                summary: "No speech recognizer is available for bounded explicit voice-turn request preparation on this device posture.",
+                detail: "Unavailable visibility only; the shell remains `EXPLICIT_ONLY`, session-bound, and cloud-authoritative while explicit voice capture stays blocked."
+            )
+            return
+        }
+
+        guard speechRecognizer.isAvailable else {
+            speechRecognitionPermission = .unavailable
+            recordFailure(
+                id: "failed_explicit_voice_recognizer_busy",
+                title: "Failed explicit voice request",
+                summary: "The speech recognizer is not currently available for a bounded explicit voice turn.",
+                detail: "Availability visibility only; retry from the same foreground surface later. No local queue repair authority or hidden retry loop is introduced here."
+            )
+            return
+        }
+
+        do {
+            let request = SFSpeechAudioBufferRecognitionRequest()
+            request.shouldReportPartialResults = true
+            request.taskHint = .dictation
+            recognitionRequest = request
+
+            let inputNode = audioEngine.inputNode
+            let format = inputNode.outputFormat(forBus: 0)
+            inputNode.installTap(onBus: 0, bufferSize: 1_024, format: format) { [weak self] buffer, _ in
+                self?.recognitionRequest?.append(buffer)
+            }
+            hasInputTap = true
+
+            audioEngine.prepare()
+            try audioEngine.start()
+            transcriptPreview = ""
+            isListening = true
+
+            recognitionTask = speechRecognizer.recognitionTask(with: request) { [weak self] result, error in
+                guard let self else {
+                    return
+                }
+
+                if let result {
+                    DispatchQueue.main.async {
+                        self.transcriptPreview = result.bestTranscription.formattedString
+                    }
+                }
+
+                if let error {
+                    DispatchQueue.main.async {
+                        guard self.isListening else {
+                            return
+                        }
+
+                        self.teardownRecognitionSession()
+                        self.recordFailure(
+                            id: "failed_explicit_voice_capture_session",
+                            title: "Failed explicit voice request",
+                            summary: "The bounded explicit voice capture session ended before a request could be prepared.",
+                            detail: "Speech capture failed with `\(error.localizedDescription)`. Failure visibility only; no local transcript authority, no hidden retry loop, and no authoritative assistant output were produced."
+                        )
+                    }
+                }
+            }
+        } catch {
+            teardownRecognitionSession()
+            recordFailure(
+                id: "failed_explicit_voice_capture_start",
+                title: "Failed explicit voice request",
+                summary: "The bounded explicit voice capture session could not start from this foreground surface.",
+                detail: "Capture start failed with `\(error.localizedDescription)`. Failure visibility only; no background capture, no wake behavior, and no autonomous unlock were introduced."
+            )
+        }
+    }
+
+    private func endCaptureInput() {
+        if audioEngine.isRunning {
+            audioEngine.stop()
+        }
+
+        if hasInputTap {
+            audioEngine.inputNode.removeTap(onBus: 0)
+            hasInputTap = false
+        }
+
+        recognitionRequest?.endAudio()
+        isListening = false
+    }
+
+    private func teardownRecognitionSession() {
+        endCaptureInput()
+        recognitionTask?.cancel()
+        recognitionTask = nil
+        recognitionRequest = nil
+    }
+
+    private func recordFailure(id: String, title: String, summary: String, detail: String) {
+        failedRequest = InterruptContinuityResponseFailureState(
+            id: id,
+            title: title,
+            summary: summary,
+            detail: detail
+        )
+    }
+
+    private func refreshPermissionState() {
+        microphonePermission = Self.currentMicrophonePermission()
+        speechRecognitionPermission = Self.currentSpeechRecognitionPermission(speechRecognizerAvailable: speechRecognizer != nil)
+    }
+
+    private func requestMicrophonePermissionIfNeeded(completion: @escaping (Bool) -> Void) {
+        switch Self.currentMicrophonePermission() {
+        case .granted:
+            completion(true)
+        case .denied, .restricted, .unavailable:
+            completion(false)
+        case .notRequested:
+            AVCaptureDevice.requestAccess(for: .audio) { granted in
+                completion(granted)
+            }
+        }
+    }
+
+    private func requestSpeechRecognitionPermissionIfNeeded(completion: @escaping (Bool) -> Void) {
+        switch Self.currentSpeechRecognitionPermission(speechRecognizerAvailable: speechRecognizer != nil) {
+        case .granted:
+            completion(true)
+        case .denied, .restricted, .unavailable:
+            completion(false)
+        case .notRequested:
+            SFSpeechRecognizer.requestAuthorization { status in
+                completion(status == .authorized)
+            }
+        }
+    }
+
+    private static func currentMicrophonePermission() -> VoicePermissionState {
+        switch AVCaptureDevice.authorizationStatus(for: .audio) {
+        case .authorized:
+            return .granted
+        case .denied:
+            return .denied
+        case .restricted:
+            return .restricted
+        case .notDetermined:
+            return .notRequested
+        @unknown default:
+            return .unavailable
+        }
+    }
+
+    private static func currentSpeechRecognitionPermission(speechRecognizerAvailable: Bool) -> VoicePermissionState {
+        guard speechRecognizerAvailable else {
+            return .unavailable
+        }
+
+        switch SFSpeechRecognizer.authorizationStatus() {
+        case .authorized:
+            return .granted
+        case .denied:
+            return .denied
+        case .restricted:
+            return .restricted
+        case .notDetermined:
+            return .notRequested
+        @unknown default:
+            return .unavailable
+        }
+    }
+
+    private static func preferredLocale() -> Locale {
+        if let identifier = Locale.preferredLanguages.first {
+            return Locale(identifier: identifier)
+        }
+
+        return Locale(identifier: "en-US")
+    }
+}
+
 private enum DesktopRecoveryDisplayState: String, Equatable {
     case recovering = "RECOVERING"
     case degradedRecovery = "DEGRADED_RECOVERY"
@@ -1663,6 +2018,7 @@ struct DesktopSessionShellView: View {
     @State private var interruptResponsePendingRequest: InterruptContinuityResponseRequestState?
     @State private var interruptResponseFailedRequest: InterruptContinuityResponseFailureState?
     @State private var interruptResponseRequestSequence: Int = 0
+    @StateObject private var explicitVoiceController = ExplicitVoiceCaptureController()
 
     var body: some View {
         HStack(alignment: .top, spacing: 20) {
@@ -1674,6 +2030,8 @@ struct DesktopSessionShellView: View {
             .frame(width: 270, alignment: .topLeading)
 
             VStack(alignment: .leading, spacing: 16) {
+                explicitVoiceEntryAffordanceCard
+
                 sessionCard
                 .frame(maxWidth: .infinity, minHeight: 360, alignment: .topLeading)
             }
@@ -1689,6 +2047,9 @@ struct DesktopSessionShellView: View {
         .padding(24)
         .frame(minWidth: 1180, minHeight: 720, alignment: .topLeading)
         .background(Color(nsColor: .windowBackgroundColor))
+        .onDisappear {
+            explicitVoiceController.haltCaptureSession()
+        }
         .onOpenURL { url in
             if let context = DesktopSessionActiveVisibleContext(url: url) {
                 clearInterruptResponseState()
@@ -1817,6 +2178,163 @@ struct DesktopSessionShellView: View {
                     .foregroundStyle(.secondary)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private var explicitVoiceEntryAffordanceCard: some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Explicit voice entry now produces a bounded desktop explicit voice-turn request only after foreground user initiation. Capture, transcript preview, pending posture, and failed posture remain explicit, bounded, and cloud-authoritative.")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                HStack(alignment: .center, spacing: 12) {
+                    Image(systemName: "mic.circle")
+                        .font(.system(size: 28))
+                        .foregroundStyle(.secondary)
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Explicit voice entry")
+                            .font(.headline)
+
+                        Text("Bounded foreground macOS capture and non-authoritative transcript preview only. This surface does not dispatch runtime work, synthesize assistant output, or claim wake-listener authority.")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Spacer()
+
+                    Text(explicitVoiceController.isListening ? "Live now" : "Bounded only")
+                        .font(.caption.weight(.semibold))
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(
+                            explicitVoiceController.isListening
+                                ? Color.accentColor.opacity(0.16)
+                                : Color.secondary.opacity(0.12)
+                        )
+                        .clipShape(Capsule())
+                }
+
+                HStack(spacing: 8) {
+                    posturePill("EXPLICIT_ONLY")
+                    posturePill("Desktop foreground capture")
+                    posturePill("Transcript preview only")
+                }
+
+                HStack(spacing: 8) {
+                    posturePill("Cloud authoritative")
+                    posturePill("No wake parity")
+                    posturePill("No local authority")
+                }
+
+                VStack(alignment: .leading, spacing: 10) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack(alignment: .firstTextBaseline, spacing: 12) {
+                            Text("microphone_permission")
+                                .font(.caption.monospaced())
+                                .foregroundStyle(.secondary)
+
+                            Spacer()
+
+                            Text(explicitVoiceController.microphonePermission.rawValue)
+                                .font(.caption.monospaced())
+                                .foregroundStyle(.secondary)
+                        }
+
+                        Text(explicitVoiceController.microphonePermission.detail)
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .padding(12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color(nsColor: .controlBackgroundColor))
+                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack(alignment: .firstTextBaseline, spacing: 12) {
+                            Text("speech_recognition_permission")
+                                .font(.caption.monospaced())
+                                .foregroundStyle(.secondary)
+
+                            Spacer()
+
+                            Text(explicitVoiceController.speechRecognitionPermission.rawValue)
+                                .font(.caption.monospaced())
+                                .foregroundStyle(.secondary)
+                        }
+
+                        Text(explicitVoiceController.speechRecognitionPermission.detail)
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .padding(12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color(nsColor: .controlBackgroundColor))
+                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                }
+
+                Text("Explicit foreground user action is required before microphone capture or speech recognition starts. This shell does not begin capture on wake or background triggers.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                HStack(spacing: 12) {
+                    Button("Start explicit voice turn") {
+                        explicitVoiceController.startExplicitVoiceTurn()
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(explicitVoiceController.isListening || explicitVoiceController.pendingRequest != nil)
+
+                    Button("Stop capture and prepare voice request") {
+                        explicitVoiceController.stopCaptureAndPrepareVoiceTurn()
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(!explicitVoiceController.isListening)
+                }
+
+                if explicitVoiceController.isListening {
+                    Text("Listening for explicit voice capture")
+                        .font(.headline)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
+                if !explicitVoiceController.transcriptPreview.isEmpty {
+                    explicitVoiceTranscriptPreviewCard
+                }
+
+                if let pendingRequest = explicitVoiceController.pendingRequest {
+                    explicitVoicePendingRequestCard(pendingRequest)
+                }
+
+                if let failedRequest = explicitVoiceController.failedRequest {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(failedRequest.title)
+                            .font(.subheadline.weight(.semibold))
+
+                        Text(failedRequest.summary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+
+                        Text(failedRequest.detail)
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .padding(12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color(nsColor: .controlBackgroundColor))
+                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                }
+
+                Text("No wake parity claim, no proven native macOS wake-listener integration claim, no autonomous unlock claim, and no local authority claim are introduced by this affordance.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        } label: {
+            Text("Explicit Voice Entry Affordance")
+                .font(.headline)
         }
     }
 
@@ -3458,6 +3976,68 @@ struct DesktopSessionShellView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color(nsColor: .controlBackgroundColor))
         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+
+    private var explicitVoiceTranscriptPreviewCard: some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Bounded transcript preview")
+                    .font(.headline)
+
+                Text(explicitVoiceController.transcriptPreview)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                Text("Transcript preview remains bounded, session-bound, and non-authoritative until cloud-visible acceptance or response exists.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        } label: {
+            Text("Transcript Preview")
+                .font(.headline)
+        }
+    }
+
+    private func explicitVoicePendingRequestCard(_ request: ExplicitVoiceTurnRequestState) -> some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Awaiting authoritative response")
+                    .font(.headline)
+
+                ForEach(
+                    [
+                        ("request_id", request.id),
+                        ("surface", "bounded_desktop_explicit_voice"),
+                        ("capture_mode", "foreground_only"),
+                        ("transcript_posture", "non_authoritative_preview"),
+                        ("transcript_bytes", "\(request.byteCount)"),
+                    ],
+                    id: \.0
+                ) { row in
+                    HStack(alignment: .top, spacing: 12) {
+                        Text(row.0)
+                            .font(.caption.monospaced())
+                            .foregroundStyle(.secondary)
+                            .frame(width: 170, alignment: .leading)
+
+                        Text(row.1)
+                            .font(.body.monospaced())
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+
+                Text(request.boundedPreview)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                Text("This bounded explicit voice request preview remains session-bound, `EXPLICIT_ONLY`, and non-authoritative until cloud-visible acceptance or response exists.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        } label: {
+            Text("Explicit Voice Turn Request")
+                .font(.headline)
+        }
     }
 
     private func clearInterruptResponseState() {
