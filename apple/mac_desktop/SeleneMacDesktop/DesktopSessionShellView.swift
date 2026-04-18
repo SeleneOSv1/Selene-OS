@@ -2470,6 +2470,7 @@ struct DesktopCompleteCommitPromptState: Identifiable, Equatable {
 struct DesktopPlatformSetupReceiptDraft: Identifiable, Equatable {
     let onboardingSessionID: String
     let receiptKind: String
+    let deviceID: String?
     let proofMaterial: String
     let proofSummary: String
 
@@ -2483,6 +2484,8 @@ struct DesktopPlatformSetupReceiptDraft: Identifiable, Equatable {
             return "Submit install launch handshake"
         case "mic_permission_granted":
             return "Submit microphone permission receipt"
+        case "desktop_pairing_bound":
+            return "Submit desktop pairing-bound receipt"
         default:
             return "Submit desktop platform receipt"
         }
@@ -3003,6 +3006,7 @@ struct DesktopSessionShellView: View {
                 DesktopPlatformSetupReceiptDraft(
                     onboardingSessionID: presentationState.onboardingSessionID,
                     receiptKind: "install_launch_handshake",
+                    deviceID: nil,
                     proofMaterial: "onboarding_session_id=\(presentationState.onboardingSessionID)|receipt_kind=install_launch_handshake|launch_posture=desktop_shell_live|app_platform=DESKTOP",
                     proofSummary: "Locally provable from bounded live desktop shell posture only."
                 )
@@ -3015,8 +3019,22 @@ struct DesktopSessionShellView: View {
                 DesktopPlatformSetupReceiptDraft(
                     onboardingSessionID: presentationState.onboardingSessionID,
                     receiptKind: "mic_permission_granted",
+                    deviceID: nil,
                     proofMaterial: "onboarding_session_id=\(presentationState.onboardingSessionID)|receipt_kind=mic_permission_granted|microphone_permission=granted|app_platform=DESKTOP",
                     proofSummary: "Locally provable from current granted microphone permission posture only."
+                )
+            )
+        }
+
+        if remainingKinds.contains("desktop_pairing_bound"),
+           let deviceID = desktopManagedPrimaryDeviceID {
+            drafts.append(
+                DesktopPlatformSetupReceiptDraft(
+                    onboardingSessionID: presentationState.onboardingSessionID,
+                    receiptKind: "desktop_pairing_bound",
+                    deviceID: deviceID,
+                    proofMaterial: "onboarding_session_id=\(presentationState.onboardingSessionID)|receipt_kind=desktop_pairing_bound|device_id=\(deviceID)|pairing_binding=managed_bridge_device_id|app_platform=DESKTOP",
+                    proofSummary: "Locally provable from the exact managed bridge `deviceID` plus the current bounded platform-setup posture only."
                 )
             )
         }
@@ -3284,6 +3302,12 @@ struct DesktopSessionShellView: View {
             }
 
             return "Current microphone permission is `\(explicitVoiceController.microphonePermission.rawValue)`, so this receipt remains visible but not locally provable yet."
+        case "desktop_pairing_bound":
+            if let deviceID = desktopManagedPrimaryDeviceID {
+                return "The exact managed bridge `deviceID` is currently `\(deviceID)`, but this receipt remains read-only unless it is surfaced as an actionable bounded pairing-bound draft."
+            }
+
+            return "The exact managed bridge `deviceID` is currently unavailable, so this receipt remains visible but not locally provable yet."
         default:
             return onboardingPlatformSetupReceiptDetail(for: receiptKind)
         }
@@ -3436,7 +3460,7 @@ struct DesktopSessionShellView: View {
                 || desktopPlatformSetupReceiptRuntimeOutcomeState != nil {
             GroupBox {
                 VStack(alignment: .leading, spacing: 12) {
-                    Text("Bounded desktop platform-setup receipt submission only. This shell derives exact locally provable drafts for `install_launch_handshake` and `mic_permission_granted`, dispatches exact `PLATFORM_SETUP_RECEIPT`, and keeps unsupported remaining receipt kinds read-only.")
+                    Text("Bounded desktop platform-setup receipt submission only. This shell derives exact locally provable drafts for `install_launch_handshake`, `mic_permission_granted`, and exact `desktop_pairing_bound` when the exact managed bridge `deviceID` is available, dispatches exact `PLATFORM_SETUP_RECEIPT`, and keeps exact `desktop_wakeword_configured` read-only.")
                         .frame(maxWidth: .infinity, alignment: .leading)
 
                     ForEach(
@@ -3476,8 +3500,29 @@ struct DesktopSessionShellView: View {
 
                             ForEach(desktopPlatformSetupReceiptDrafts) { draft in
                                 VStack(alignment: .leading, spacing: 8) {
-                                    Text(draft.receiptKind)
-                                        .font(.caption.monospaced())
+                                    HStack(alignment: .top, spacing: 12) {
+                                        Text("receipt_kind")
+                                            .font(.caption.monospaced())
+                                            .foregroundStyle(.secondary)
+                                            .frame(width: 170, alignment: .leading)
+
+                                        Text(draft.receiptKind)
+                                            .font(.body.monospaced())
+                                            .frame(maxWidth: .infinity, alignment: .leading)
+                                    }
+
+                                    if let deviceID = draft.deviceID {
+                                        HStack(alignment: .top, spacing: 12) {
+                                            Text("device_id")
+                                                .font(.caption.monospaced())
+                                                .foregroundStyle(.secondary)
+                                                .frame(width: 170, alignment: .leading)
+
+                                            Text(deviceID)
+                                                .font(.body.monospaced())
+                                                .frame(maxWidth: .infinity, alignment: .leading)
+                                        }
+                                    }
 
                                     Text(draft.proofSummary)
                                         .font(.footnote)
@@ -3565,7 +3610,7 @@ struct DesktopSessionShellView: View {
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
 
-                    Text("Only exact `install_launch_handshake` and exact `mic_permission_granted` submission are in scope here. Exact `desktop_wakeword_configured` and exact `desktop_pairing_bound` remain read-only required receipt visibility only, and later onboarding actions remain out of scope.")
+                    Text("Only exact `install_launch_handshake`, exact `mic_permission_granted`, and exact `desktop_pairing_bound` submission are in scope here. Exact `desktop_wakeword_configured` remains read-only required receipt visibility only, and later onboarding actions remain out of scope.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, alignment: .leading)
