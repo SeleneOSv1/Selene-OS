@@ -7,15 +7,17 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		B10000000000000000000001 /* SeleneMacDesktopApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000002 /* SeleneMacDesktopApp.swift */; };
-		B10000000000000000000003 /* DesktopSessionShellView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000004 /* DesktopSessionShellView.swift */; };
+			B10000000000000000000001 /* SeleneMacDesktopApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000002 /* SeleneMacDesktopApp.swift */; };
+			B10000000000000000000003 /* DesktopSessionShellView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000004 /* DesktopSessionShellView.swift */; };
+			B10000000000000000000015 /* AppIcon.icns in Resources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000016 /* AppIcon.icns */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
 		B10000000000000000000002 /* SeleneMacDesktopApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SeleneMacDesktopApp.swift; sourceTree = "<group>"; };
-		B10000000000000000000004 /* DesktopSessionShellView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DesktopSessionShellView.swift; sourceTree = "<group>"; };
-		B10000000000000000000005 /* SeleneMacDesktop.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = SeleneMacDesktop.app; sourceTree = BUILT_PRODUCTS_DIR; };
-		B10000000000000000000006 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+			B10000000000000000000004 /* DesktopSessionShellView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DesktopSessionShellView.swift; sourceTree = "<group>"; };
+			B10000000000000000000005 /* SeleneMacDesktop.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = SeleneMacDesktop.app; sourceTree = BUILT_PRODUCTS_DIR; };
+			B10000000000000000000006 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+			B10000000000000000000016 /* AppIcon.icns */ = {isa = PBXFileReference; lastKnownFileType = image.icns; path = Resources/AppIcon.icns; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -37,16 +39,17 @@
 			);
 			sourceTree = "<group>";
 		};
-		B10000000000000000000009 /* SeleneMacDesktop */ = {
-			isa = PBXGroup;
-			children = (
-				B10000000000000000000002 /* SeleneMacDesktopApp.swift */,
-				B10000000000000000000004 /* DesktopSessionShellView.swift */,
-				B10000000000000000000006 /* Info.plist */,
-			);
-			path = SeleneMacDesktop;
-			sourceTree = "<group>";
-		};
+			B10000000000000000000009 /* SeleneMacDesktop */ = {
+				isa = PBXGroup;
+				children = (
+					B10000000000000000000002 /* SeleneMacDesktopApp.swift */,
+					B10000000000000000000004 /* DesktopSessionShellView.swift */,
+					B10000000000000000000006 /* Info.plist */,
+					B10000000000000000000016 /* AppIcon.icns */,
+				);
+				path = SeleneMacDesktop;
+				sourceTree = "<group>";
+			};
 		B1000000000000000000000A /* Products */ = {
 			isa = PBXGroup;
 			children = (
@@ -109,13 +112,14 @@
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
-		B1000000000000000000000D /* Resources */ = {
-			isa = PBXResourcesBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
+			B1000000000000000000000D /* Resources */ = {
+				isa = PBXResourcesBuildPhase;
+				buildActionMask = 2147483647;
+				files = (
+					B10000000000000000000015 /* AppIcon.icns in Resources */,
+				);
+				runOnlyForDeploymentPostprocessing = 0;
+			};
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
