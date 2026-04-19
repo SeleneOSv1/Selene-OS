@@ -2467,6 +2467,26 @@ struct DesktopCompleteCommitPromptState: Identifiable, Equatable {
     }
 }
 
+struct DesktopReadyVisibilityState: Identifiable, Equatable {
+    let onboardingSessionID: String
+    let nextStep: String
+    let onboardingStatus: String?
+    let voiceArtifactSyncReceiptRef: String?
+    let accessEngineInstanceID: String?
+    let deviceID: String?
+
+    var id: String {
+        [
+            onboardingSessionID,
+            nextStep,
+            onboardingStatus ?? "onboarding_status_not_provided",
+            voiceArtifactSyncReceiptRef ?? "voice_receipt_not_provided",
+            accessEngineInstanceID ?? "access_engine_not_provided",
+            deviceID ?? "device_id_not_provided",
+        ].joined(separator: "::")
+    }
+}
+
 struct DesktopSenderVerificationVisibilityState: Identifiable, Equatable {
     let onboardingSessionID: String
     let nextStep: String
@@ -2628,6 +2648,7 @@ struct DesktopSessionShellView: View {
                 desktopEmoPersonaLockCard
                 desktopAccessProvisionCommitCard
                 desktopCompleteCommitCard
+                desktopReadyVisibilityCard
 
                 sessionCard
                 .frame(maxWidth: .infinity, minHeight: 360, alignment: .topLeading)
@@ -3495,6 +3516,25 @@ struct DesktopSessionShellView: View {
         }
 
         return nil
+    }
+
+    private var desktopReadyVisibilityState: DesktopReadyVisibilityState? {
+        guard let desktopCompleteCommitRuntimeOutcomeState,
+              desktopCompleteCommitRuntimeOutcomeState.phase == .completed,
+              desktopCompleteCommitRuntimeOutcomeState.nextStep == "READY",
+              let onboardingSessionID = desktopCompleteCommitRuntimeOutcomeState.onboardingSessionID
+        else {
+            return nil
+        }
+
+        return DesktopReadyVisibilityState(
+            onboardingSessionID: onboardingSessionID,
+            nextStep: "READY",
+            onboardingStatus: desktopCompleteCommitRuntimeOutcomeState.onboardingStatus,
+            voiceArtifactSyncReceiptRef: desktopCompleteCommitRuntimeOutcomeState.voiceArtifactSyncReceiptRef,
+            accessEngineInstanceID: desktopCompleteCommitRuntimeOutcomeState.accessEngineInstanceID,
+            deviceID: desktopManagedPrimaryDeviceID
+        )
     }
 
     private var desktopUnsupportedPlatformSetupReceiptKinds: [String] {
@@ -5291,6 +5331,71 @@ struct DesktopSessionShellView: View {
                     }
                 } label: {
                     Text("Onboarding Completion")
+                        .font(.headline)
+                }
+            }
+        }
+    }
+
+    private var desktopReadyVisibilityCard: some View {
+        let readyVisibilityState = desktopReadyVisibilityState
+
+        return Group {
+            if let readyVisibilityState {
+                GroupBox {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("Bounded desktop ready visibility only. This shell derives bounded read-only posture from the already-live complete-commit outcome only when canonical onboarding posture has advanced to exact `READY`, enriches it with the exact managed bridge `deviceID` when available, and keeps pairing completion plus any onboarding-derived ready-time behavior out of scope.")
+                            .frame(maxWidth: .infinity, alignment: .leading)
+
+                        let displayedRows: [(String, String)] = {
+                            var rows: [(String, String)] = [
+                                ("onboarding_session_id", readyVisibilityState.onboardingSessionID),
+                                ("next_step", readyVisibilityState.nextStep),
+                            ]
+
+                            if let onboardingStatus = readyVisibilityState.onboardingStatus {
+                                rows.append(("onboarding_status", onboardingStatus))
+                            }
+
+                            if let voiceArtifactSyncReceiptRef = readyVisibilityState.voiceArtifactSyncReceiptRef {
+                                rows.append(("voice_artifact_sync_receipt_ref", voiceArtifactSyncReceiptRef))
+                            }
+
+                            if let accessEngineInstanceID = readyVisibilityState.accessEngineInstanceID {
+                                rows.append(("access_engine_instance_id", accessEngineInstanceID))
+                            }
+
+                            if let deviceID = readyVisibilityState.deviceID {
+                                rows.append(("device_id", deviceID))
+                            }
+
+                            return rows
+                        }()
+
+                        ForEach(displayedRows, id: \.0) { row in
+                            HStack(alignment: .top, spacing: 12) {
+                                Text(row.0)
+                                    .font(.caption.monospaced())
+                                    .foregroundStyle(.secondary)
+                                    .frame(width: 170, alignment: .leading)
+
+                                Text(row.1)
+                                    .font(.body.monospaced())
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                        }
+
+                        Text("Canonical onboarding posture has advanced to exact `READY`. This card is read-only only and preserves returned exact `onboarding_status`, exact `voice_artifact_sync_receipt_ref`, exact `access_engine_instance_id`, and the exact managed bridge `deviceID` when available.")
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+
+                        Text("Pairing completion mutation, onboarding-derived ready-time local attach behavior, wake-listener integration, wake-to-turn behavior, and autonomous unlock remain out of scope here. This shell stays explicitly non-authoritative.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                } label: {
+                    Text("Onboarding Ready Visibility")
                         .font(.headline)
                 }
             }
