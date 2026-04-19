@@ -117,8 +117,9 @@ use selene_kernel_contracts::{
 };
 use selene_os::app_ingress::{
     AppInviteLinkOpenRequest, AppOnboardingContinueAction, AppOnboardingContinueNextStep,
-    AppOnboardingContinueRequest, AppServerIngressRuntime, AppVoiceIngressRequest,
-    AppVoicePh1xBuildInput, AppVoiceTurnExecutionOutcome, AppVoiceTurnNextMove,
+    AppOnboardingContinueRequest, AppServerIngressRuntime, AppSessionResumeRequest,
+    AppVoiceIngressRequest, AppVoicePh1xBuildInput, AppVoiceTurnExecutionOutcome,
+    AppVoiceTurnNextMove,
 };
 use selene_os::device_artifact_sync::DeviceArtifactSyncWorkerPassMetrics;
 use selene_os::ph1_voice_id::{
@@ -615,6 +616,24 @@ pub struct OnboardingContinueAdapterResponse {
     pub voice_artifact_sync_receipt_ref: Option<String>,
     pub access_engine_instance_id: Option<String>,
     pub onboarding_status: Option<String>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct SessionResumeAdapterRequest {
+    pub correlation_id: u64,
+    pub idempotency_key: String,
+    pub session_id: String,
+    pub device_id: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct SessionResumeAdapterResponse {
+    pub status: String,
+    pub outcome: String,
+    pub reason: Option<String>,
+    pub session_id: Option<String>,
+    pub session_state: Option<String>,
+    pub session_attach_outcome: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, Default)]
@@ -1490,6 +1509,48 @@ impl AdapterRuntime {
             onboarding_status: outcome
                 .onboarding_status
                 .map(|status| format!("{status:?}").to_ascii_uppercase()),
+        })
+    }
+
+    pub fn run_session_resume(
+        &self,
+        request: SessionResumeAdapterRequest,
+    ) -> Result<SessionResumeAdapterResponse, String> {
+        let correlation_id = CorrelationId(u128::from(request.correlation_id));
+        let session_id = request
+            .session_id
+            .parse::<u128>()
+            .map(SessionId)
+            .map_err(|err| format!("invalid session_id: {err}"))?;
+        let device_id = DeviceId::new(request.device_id.clone())
+            .map_err(|err| format!("invalid device_id: {err:?}"))?;
+        let ingress_request = AppSessionResumeRequest::v1(
+            correlation_id,
+            request.idempotency_key,
+            session_id,
+            device_id,
+        )
+        .map_err(|err| format!("invalid session_resume request: {err:?}"))?;
+
+        let mut store = self
+            .store
+            .lock()
+            .map_err(|_| "adapter store lock poisoned".to_string())?;
+        let now = MonotonicTimeNs(system_time_now_ns().max(1));
+        let outcome = self
+            .ingress
+            .run_session_resume(&mut store, ingress_request, now)
+            .map_err(storage_error_to_string)?;
+
+        Ok(SessionResumeAdapterResponse {
+            status: "ok".to_string(),
+            outcome: "SESSION_RESUMED".to_string(),
+            reason: None,
+            session_id: Some(outcome.session_id),
+            session_state: Some(session_state_to_api_value(outcome.session_state)),
+            session_attach_outcome: Some(session_attach_outcome_to_api_value(
+                outcome.session_attach_outcome,
+            )),
         })
     }
 
@@ -6818,6 +6879,10 @@ fn session_state_to_api_value(session_state: SessionState) -> String {
         SessionState::Suspended => "SUSPENDED",
     }
     .to_string()
+}
+
+fn session_attach_outcome_to_api_value(session_attach_outcome: SessionAttachOutcome) -> String {
+    session_attach_outcome.as_str().to_string()
 }
 
 fn canonical_reason_code_token(reason: &str, failure_class: FailureClass) -> String {
@@ -15736,8 +15801,7 @@ mod tests {
                 && entry.event_kind == AdapterOperationJournalEventKind::RetryAttempted
                 && entry.session_id.as_deref() == Some("1")
                 && entry.turn_id == Some(request.turn_id)
-                && entry.reconciliation_decision
-                    == Some(ReconciliationDecision::RetrySameOperation)
+                && entry.reconciliation_decision == Some(ReconciliationDecision::RetrySameOperation)
         }));
 
         drop(runtime_one);
@@ -15770,9 +15834,7 @@ mod tests {
             recovered_record.last_conflict_severity,
             Some(PersistenceConflictSeverity::Info)
         );
-        assert!(recovered_record
-            .cleared_from_active_outbox_at_ns
-            .is_some());
+        assert!(recovered_record.cleared_from_active_outbox_at_ns.is_some());
         assert!(after_restart.operation_journal.iter().any(|entry| {
             entry.operation_id == operation_id
                 && entry.event_kind == AdapterOperationJournalEventKind::FreshSessionStateRequested

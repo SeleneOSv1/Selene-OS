@@ -1463,6 +1463,149 @@ struct DesktopWakeEnrollDeferCommitRuntimeOutcomeState: Identifiable, Equatable 
     }
 }
 
+struct DesktopSessionSoftClosedResumeRuntimeOutcomeState: Identifiable, Equatable {
+    enum Phase: String, Equatable {
+        case dispatching = "dispatching"
+        case completed = "completed"
+        case failed = "failed"
+    }
+
+    let id: String
+    let phase: Phase
+    let title: String
+    let summary: String
+    let detail: String
+    let endpoint: String
+    let requestID: String
+    let sourceSurfaceIdentity: String
+    let sessionState: String
+    let sessionID: String
+    let selectedThreadID: String?
+    let selectedThreadTitle: String?
+    let pendingWorkOrderID: String?
+    let resumeTier: String?
+    let resumeSummaryBullets: [String]
+    let deviceID: String
+    let outcome: String?
+    let reason: String?
+    let sessionAttachOutcome: String?
+
+    static func dispatching(
+        sourceSurfaceIdentity: String,
+        sessionState: String,
+        sessionID: String,
+        selectedThreadID: String?,
+        selectedThreadTitle: String?,
+        pendingWorkOrderID: String?,
+        resumeTier: String?,
+        resumeSummaryBullets: [String],
+        deviceID: String,
+        endpoint: String,
+        requestID: String
+    ) -> DesktopSessionSoftClosedResumeRuntimeOutcomeState {
+        DesktopSessionSoftClosedResumeRuntimeOutcomeState(
+            id: requestID,
+            phase: .dispatching,
+            title: "Dispatching desktop soft-closed explicit resume",
+            summary: "The bounded desktop soft-closed explicit resume request is now being handed into canonical `/v1/session/resume`.",
+            detail: "Only exact soft-closed explicit resume is in scope here. This shell remains explicitly non-authoritative and does not introduce local thread reselection, local PH1.M synthesis, pairing completion mutation, ready-time handoff, wake-listener behavior, or autonomous unlock.",
+            endpoint: endpoint,
+            requestID: requestID,
+            sourceSurfaceIdentity: sourceSurfaceIdentity,
+            sessionState: sessionState,
+            sessionID: sessionID,
+            selectedThreadID: selectedThreadID,
+            selectedThreadTitle: selectedThreadTitle,
+            pendingWorkOrderID: pendingWorkOrderID,
+            resumeTier: resumeTier,
+            resumeSummaryBullets: resumeSummaryBullets,
+            deviceID: deviceID,
+            outcome: nil,
+            reason: nil,
+            sessionAttachOutcome: nil
+        )
+    }
+
+    static func completed(
+        requestID: String,
+        endpoint: String,
+        response: DesktopCanonicalRuntimeBridge.SessionResumeAdapterResponsePayload,
+        fallbackSourceSurfaceIdentity: String,
+        fallbackSessionState: String,
+        fallbackSessionID: String,
+        fallbackSelectedThreadID: String?,
+        fallbackSelectedThreadTitle: String?,
+        fallbackPendingWorkOrderID: String?,
+        fallbackResumeTier: String?,
+        fallbackResumeSummaryBullets: [String],
+        fallbackDeviceID: String
+    ) -> DesktopSessionSoftClosedResumeRuntimeOutcomeState {
+        let boundedSessionState = boundedOnboardingContinueField(response.sessionState)
+        let boundedAttachOutcome = boundedOnboardingContinueField(response.sessionAttachOutcome)
+
+        return DesktopSessionSoftClosedResumeRuntimeOutcomeState(
+            id: requestID,
+            phase: .completed,
+            title: "Desktop soft-closed explicit resume completed",
+            summary: "Canonical `/v1/session/resume` accepted the bounded desktop soft-closed explicit resume request and returned updated session posture.",
+            detail: "Read-only returned posture only. This shell preserves exact returned `session_state` and exact `session_attach_outcome` without introducing broader attach/reopen mutation, local thread reselection, local PH1.M synthesis, pairing completion mutation, ready-time handoff, wake-listener behavior, or autonomous unlock.",
+            endpoint: endpoint,
+            requestID: requestID,
+            sourceSurfaceIdentity: fallbackSourceSurfaceIdentity,
+            sessionState: boundedSessionState ?? fallbackSessionState,
+            sessionID: boundedOnboardingContinueField(response.sessionID) ?? fallbackSessionID,
+            selectedThreadID: fallbackSelectedThreadID,
+            selectedThreadTitle: fallbackSelectedThreadTitle,
+            pendingWorkOrderID: fallbackPendingWorkOrderID,
+            resumeTier: fallbackResumeTier,
+            resumeSummaryBullets: fallbackResumeSummaryBullets,
+            deviceID: fallbackDeviceID,
+            outcome: boundedOnboardingContinueField(response.outcome) ?? "SESSION_RESUMED",
+            reason: boundedOnboardingContinueField(response.reason),
+            sessionAttachOutcome: boundedAttachOutcome
+        )
+    }
+
+    static func failed(
+        sourceSurfaceIdentity: String,
+        sessionState: String,
+        sessionID: String,
+        selectedThreadID: String?,
+        selectedThreadTitle: String?,
+        pendingWorkOrderID: String?,
+        resumeTier: String?,
+        resumeSummaryBullets: [String],
+        deviceID: String,
+        endpoint: String,
+        requestID: String,
+        summary: String,
+        detail: String,
+        reason: String? = nil
+    ) -> DesktopSessionSoftClosedResumeRuntimeOutcomeState {
+        DesktopSessionSoftClosedResumeRuntimeOutcomeState(
+            id: requestID,
+            phase: .failed,
+            title: "Desktop soft-closed explicit resume failed",
+            summary: summary,
+            detail: detail,
+            endpoint: endpoint,
+            requestID: requestID,
+            sourceSurfaceIdentity: sourceSurfaceIdentity,
+            sessionState: sessionState,
+            sessionID: sessionID,
+            selectedThreadID: selectedThreadID,
+            selectedThreadTitle: selectedThreadTitle,
+            pendingWorkOrderID: pendingWorkOrderID,
+            resumeTier: resumeTier,
+            resumeSummaryBullets: resumeSummaryBullets,
+            deviceID: deviceID,
+            outcome: nil,
+            reason: reason,
+            sessionAttachOutcome: nil
+        )
+    }
+}
+
 struct DesktopEmoPersonaLockRuntimeOutcomeState: Identifiable, Equatable {
     enum Phase: String, Equatable {
         case dispatching = "dispatching"
@@ -1973,6 +2116,7 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
         case invalidWakeEnrollSampleCommitRequest(String)
         case invalidWakeEnrollCompleteCommitRequest(String)
         case invalidWakeEnrollDeferCommitRequest(String)
+        case invalidSessionSoftClosedResumeRequest(String)
         case invalidEmoPersonaLockRequest(String)
         case invalidAccessProvisionCommitRequest(String)
         case invalidCompleteCommitRequest(String)
@@ -1997,6 +2141,7 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
                  .invalidWakeEnrollSampleCommitRequest(let detail),
                  .invalidWakeEnrollCompleteCommitRequest(let detail),
                  .invalidWakeEnrollDeferCommitRequest(let detail),
+                 .invalidSessionSoftClosedResumeRequest(let detail),
                  .invalidEmoPersonaLockRequest(let detail),
                  .invalidAccessProvisionCommitRequest(let detail),
                  .invalidCompleteCommitRequest(let detail),
@@ -2116,6 +2261,21 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
         let urlRequest: URLRequest
     }
 
+    struct DesktopSessionSoftClosedResumeIngressContext {
+        let sourceSurfaceIdentity: String
+        let sessionState: String
+        let sessionID: String
+        let selectedThreadID: String?
+        let selectedThreadTitle: String?
+        let pendingWorkOrderID: String?
+        let resumeTier: String?
+        let resumeSummaryBullets: [String]
+        let deviceID: String
+        let requestID: String
+        let endpoint: String
+        let urlRequest: URLRequest
+    }
+
     struct DesktopEmoPersonaLockIngressContext {
         let onboardingSessionID: String
         let requestID: String
@@ -2188,6 +2348,15 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
         let onboardingStatus: String?
     }
 
+    struct SessionResumeAdapterResponsePayload: Decodable {
+        let status: String
+        let outcome: String
+        let reason: String?
+        let sessionID: String?
+        let sessionState: String?
+        let sessionAttachOutcome: String?
+    }
+
     private struct VoiceTurnIngressErrorPayload: Decodable {
         let failureClass: String
         let reasonCode: String
@@ -2257,6 +2426,13 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
         let sampleSeed: String?
         let photoBlobRef: String?
         let senderDecision: String?
+    }
+
+    private struct SessionResumeAdapterRequestPayload: Encodable {
+        let correlationID: UInt64
+        let idempotencyKey: String
+        let sessionID: String
+        let deviceID: String
     }
 
     private struct VoiceTurnThreadPolicyFlagsPayload: Encodable {
@@ -2544,6 +2720,31 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
                 endpoint: onboardingContinueEndpoint,
                 requestID: "unavailable",
                 summary: "The canonical onboarding-continue bridge could not stage this bounded desktop wake-enroll defer-commit request.",
+                detail: error.localizedDescription
+            )
+        }
+    }
+
+    func submitDesktopSessionSoftClosedResume(
+        _ promptState: DesktopSessionSoftClosedResumePromptState
+    ) async -> DesktopSessionSoftClosedResumeRuntimeOutcomeState {
+        do {
+            let ingressContext = try desktopSessionSoftClosedResumeRequestBuilder(promptState)
+            return await submitDesktopSessionSoftClosedResume(ingressContext)
+        } catch {
+            return .failed(
+                sourceSurfaceIdentity: promptState.sourceSurfaceIdentity,
+                sessionState: promptState.sessionState,
+                sessionID: promptState.sessionID,
+                selectedThreadID: promptState.selectedThreadID,
+                selectedThreadTitle: promptState.selectedThreadTitle,
+                pendingWorkOrderID: promptState.pendingWorkOrderID,
+                resumeTier: promptState.resumeTier,
+                resumeSummaryBullets: promptState.resumeSummaryBullets,
+                deviceID: promptState.deviceID,
+                endpoint: sessionResumeEndpoint,
+                requestID: "unavailable",
+                summary: "The canonical session-resume bridge could not stage this bounded desktop soft-closed explicit resume request.",
                 detail: error.localizedDescription
             )
         }
@@ -3191,6 +3392,72 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
                 endpoint: ingressContext.endpoint,
                 requestID: ingressContext.requestID,
                 summary: "The canonical onboarding-continue bridge could not deliver this bounded desktop wake-enroll defer-commit request.",
+                detail: error.localizedDescription
+            )
+        }
+    }
+
+    func submitDesktopSessionSoftClosedResume(
+        _ ingressContext: DesktopSessionSoftClosedResumeIngressContext
+    ) async -> DesktopSessionSoftClosedResumeRuntimeOutcomeState {
+        do {
+            try await ensureAdapterAvailable()
+
+            let (data, response) = try await urlSession.data(for: ingressContext.urlRequest)
+            let decoder = JSONDecoder()
+            decoder.keyDecodingStrategy = .convertFromSnakeCase
+            let httpResponse = response as? HTTPURLResponse
+            let statusCode = httpResponse?.statusCode ?? 0
+            let payload = try decoder.decode(SessionResumeAdapterResponsePayload.self, from: data)
+
+            if statusCode == 200,
+               payload.status.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "ok" {
+                return .completed(
+                    requestID: ingressContext.requestID,
+                    endpoint: ingressContext.endpoint,
+                    response: payload,
+                    fallbackSourceSurfaceIdentity: ingressContext.sourceSurfaceIdentity,
+                    fallbackSessionState: ingressContext.sessionState,
+                    fallbackSessionID: ingressContext.sessionID,
+                    fallbackSelectedThreadID: ingressContext.selectedThreadID,
+                    fallbackSelectedThreadTitle: ingressContext.selectedThreadTitle,
+                    fallbackPendingWorkOrderID: ingressContext.pendingWorkOrderID,
+                    fallbackResumeTier: ingressContext.resumeTier,
+                    fallbackResumeSummaryBullets: ingressContext.resumeSummaryBullets,
+                    fallbackDeviceID: ingressContext.deviceID
+                )
+            }
+
+            return .failed(
+                sourceSurfaceIdentity: ingressContext.sourceSurfaceIdentity,
+                sessionState: ingressContext.sessionState,
+                sessionID: ingressContext.sessionID,
+                selectedThreadID: ingressContext.selectedThreadID,
+                selectedThreadTitle: ingressContext.selectedThreadTitle,
+                pendingWorkOrderID: ingressContext.pendingWorkOrderID,
+                resumeTier: ingressContext.resumeTier,
+                resumeSummaryBullets: ingressContext.resumeSummaryBullets,
+                deviceID: ingressContext.deviceID,
+                endpoint: ingressContext.endpoint,
+                requestID: ingressContext.requestID,
+                summary: "The canonical session-resume bridge rejected or failed this bounded desktop soft-closed explicit resume request.",
+                detail: "Canonical `/v1/session/resume` failed closed with outcome `\(payload.outcome)` and reason `\(boundedOnboardingContinueField(payload.reason) ?? "not_provided")`. This shell remains limited to exact soft-closed explicit resume and does not widen into broader attach/reopen mutation, local thread reselection, local PH1.M synthesis, pairing completion mutation, wake-listener behavior, or autonomous unlock.",
+                reason: boundedOnboardingContinueField(payload.reason)
+            )
+        } catch {
+            return .failed(
+                sourceSurfaceIdentity: ingressContext.sourceSurfaceIdentity,
+                sessionState: ingressContext.sessionState,
+                sessionID: ingressContext.sessionID,
+                selectedThreadID: ingressContext.selectedThreadID,
+                selectedThreadTitle: ingressContext.selectedThreadTitle,
+                pendingWorkOrderID: ingressContext.pendingWorkOrderID,
+                resumeTier: ingressContext.resumeTier,
+                resumeSummaryBullets: ingressContext.resumeSummaryBullets,
+                deviceID: ingressContext.deviceID,
+                endpoint: ingressContext.endpoint,
+                requestID: ingressContext.requestID,
+                summary: "The canonical session-resume bridge could not deliver this bounded desktop soft-closed explicit resume request.",
                 detail: error.localizedDescription
             )
         }
@@ -4373,6 +4640,83 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
         )
     }
 
+    func desktopSessionSoftClosedResumeRequestBuilder(
+        _ promptState: DesktopSessionSoftClosedResumePromptState
+    ) throws -> DesktopSessionSoftClosedResumeIngressContext {
+        guard let sourceSurfaceIdentity = boundedOnboardingContinueField(promptState.sourceSurfaceIdentity),
+              sourceSurfaceIdentity == "SESSION_SOFT_CLOSED_VISIBLE" else {
+            throw BridgeError.invalidSessionSoftClosedResumeRequest(
+                "bounded desktop soft-closed explicit resume must preserve exact `SESSION_SOFT_CLOSED_VISIBLE` source surface identity"
+            )
+        }
+
+        guard let sessionState = boundedOnboardingContinueField(promptState.sessionState),
+              sessionState == "SOFT_CLOSED" else {
+            throw BridgeError.invalidSessionSoftClosedResumeRequest(
+                "bounded desktop soft-closed explicit resume is only lawful when canonical session posture remains exact `SOFT_CLOSED`"
+            )
+        }
+
+        guard let sessionID = boundedOnboardingContinueField(promptState.sessionID) else {
+            throw BridgeError.invalidSessionSoftClosedResumeRequest(
+                "the bounded desktop soft-closed explicit resume prompt state did not preserve a lawful session_id"
+            )
+        }
+
+        guard let managedDeviceID = boundedOnboardingContinueField(deviceID),
+              let promptDeviceID = boundedOnboardingContinueField(promptState.deviceID),
+              promptDeviceID == managedDeviceID else {
+            throw BridgeError.invalidSessionSoftClosedResumeRequest(
+                "bounded desktop soft-closed explicit resume must preserve the exact managed bridge `deviceID` only"
+            )
+        }
+
+        let requestID = "desktop_session_soft_closed_resume_request_\(UUID().uuidString.replacingOccurrences(of: "-", with: ""))"
+        let idempotencyKey = "desktop_session_soft_closed_resume_\(sessionID)_\(managedDeviceID)"
+        let nonce = UUID().uuidString.replacingOccurrences(of: "-", with: "")
+        let timestampMS = Self.systemTimeNowMS()
+        let correlationID = Swift.max(DispatchTime.now().uptimeNanoseconds, 1)
+
+        let payload = SessionResumeAdapterRequestPayload(
+            correlationID: correlationID,
+            idempotencyKey: idempotencyKey,
+            sessionID: sessionID,
+            deviceID: managedDeviceID
+        )
+
+        let encoder = JSONEncoder()
+        encoder.keyEncodingStrategy = .convertToSnakeCase
+        let body = try encoder.encode(payload)
+        let endpointURL = adapterBaseURL.appendingPathComponent("v1/session/resume")
+        var urlRequest = URLRequest(url: endpointURL)
+        urlRequest.httpMethod = "POST"
+        urlRequest.httpBody = body
+        urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        urlRequest.setValue(requestID, forHTTPHeaderField: "x-request-id")
+        urlRequest.setValue(idempotencyKey, forHTTPHeaderField: "idempotency-key")
+        urlRequest.setValue(String(timestampMS), forHTTPHeaderField: "x-selene-timestamp-ms")
+        urlRequest.setValue(nonce, forHTTPHeaderField: "x-selene-nonce")
+        urlRequest.setValue(
+            Self.bearerToken(subject: sessionID, device: managedDeviceID),
+            forHTTPHeaderField: "Authorization"
+        )
+
+        return DesktopSessionSoftClosedResumeIngressContext(
+            sourceSurfaceIdentity: sourceSurfaceIdentity,
+            sessionState: sessionState,
+            sessionID: sessionID,
+            selectedThreadID: boundedOnboardingContinueField(promptState.selectedThreadID),
+            selectedThreadTitle: boundedOnboardingContinueField(promptState.selectedThreadTitle),
+            pendingWorkOrderID: boundedOnboardingContinueField(promptState.pendingWorkOrderID),
+            resumeTier: boundedOnboardingContinueField(promptState.resumeTier),
+            resumeSummaryBullets: boundedOnboardingContinueList(promptState.resumeSummaryBullets),
+            deviceID: managedDeviceID,
+            requestID: requestID,
+            endpoint: endpointURL.absoluteString,
+            urlRequest: urlRequest
+        )
+    }
+
     func desktopEmoPersonaLockRequestBuilder(
         _ promptState: DesktopEmoPersonaLockPromptState
     ) throws -> DesktopEmoPersonaLockIngressContext {
@@ -4584,6 +4928,10 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
 
     var onboardingContinueEndpoint: String {
         adapterBaseURL.appendingPathComponent("v1/onboarding/continue").absoluteString
+    }
+
+    var sessionResumeEndpoint: String {
+        adapterBaseURL.appendingPathComponent("v1/session/resume").absoluteString
     }
 
     var managedDeviceID: String {

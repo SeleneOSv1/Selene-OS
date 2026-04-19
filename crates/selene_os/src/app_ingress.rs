@@ -1,7 +1,7 @@
 #![forbid(unsafe_code)]
 
 use std::cell::RefCell;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use selene_engines::ph1_voice_id::{
     reason_codes as voice_id_reason_codes, simulation_profile_embedding_from_seed,
@@ -46,6 +46,7 @@ use selene_kernel_contracts::ph1j::{
     ProofProtectedActionClass, ProofRetentionClass, TurnId,
 };
 use selene_kernel_contracts::ph1k::InterruptCandidate;
+use selene_kernel_contracts::ph1l::SessionId;
 use selene_kernel_contracts::ph1link::{
     AppPlatform, InviteeType, LinkStatus, Ph1LinkRequest, Ph1LinkResponse, TokenId,
     LINK_INVITE_DRAFT_UPDATE_COMMIT, LINK_INVITE_OPEN_ACTIVATE_COMMIT,
@@ -90,7 +91,7 @@ use selene_kernel_contracts::runtime_execution::{
     IdentityRecoveryState, IdentityTrustTier, IdentityVerificationConsistencyLevel,
     MemoryConsistencyLevel, MemoryEligibilityDecision, MemoryExecutionState, MemoryTrustLevel,
     OnboardingReadinessState, PlatformRuntimeContext, ProofExecutionState, RuntimeEntryTrigger,
-    RuntimeExecutionEnvelope, SimulationCertificationState,
+    RuntimeExecutionEnvelope, SessionAttachOutcome, SimulationCertificationState,
 };
 use selene_kernel_contracts::runtime_governance::{
     GovernanceClusterConsistency, GovernanceDecisionLogEntry, GovernanceDriftSignal,
@@ -105,7 +106,7 @@ use selene_kernel_contracts::{
 };
 use selene_storage::ph1f::{
     AgentExecutionLedgerRowInput, BcastPolicyLedgerRow, BcastPolicySettingKey, DeviceRecord,
-    IdentityRecord, IdentityStatus, Ph1fStore, StorageError,
+    IdentityRecord, IdentityStatus, Ph1fStore, SessionRecord as StoredSessionRecord, StorageError,
 };
 
 use crate::device_artifact_sync::DeviceArtifactSyncWorkerPassMetrics;
@@ -120,6 +121,10 @@ use crate::ph1w::Ph1wRuntime;
 use crate::ph1x::{Ph1xConfig, Ph1xRuntime};
 use crate::runtime_governance::{RuntimeGovernanceDecision, RuntimeGovernanceRuntime};
 use crate::runtime_law::{RuntimeLawDecision, RuntimeLawRuntime};
+use crate::runtime_session_foundation::{
+    PersistedSoftClosedSessionImport, RuntimeSessionFoundation, SessionCoordinationView,
+    SessionFoundationError, SessionFoundationSnapshot,
+};
 use crate::simulation_executor::{
     simulation_id_for_intent_draft_v1, SimulationDispatchOutcome, SimulationExecutor,
 };
@@ -546,6 +551,153 @@ pub struct AppOnboardingContinueOutcome {
     pub voice_artifact_sync_receipt_ref: Option<String>,
     pub access_engine_instance_id: Option<String>,
     pub onboarding_status: Option<OnboardingStatus>,
+}
+
+#[derive(Debug, Clone)]
+pub struct AppSessionResumeRequest {
+    pub correlation_id: CorrelationId,
+    pub idempotency_key: String,
+    pub session_id: SessionId,
+    pub device_id: DeviceId,
+}
+
+impl AppSessionResumeRequest {
+    pub fn v1(
+        correlation_id: CorrelationId,
+        idempotency_key: String,
+        session_id: SessionId,
+        device_id: DeviceId,
+    ) -> Result<Self, ContractViolation> {
+        correlation_id.validate()?;
+        validate_ascii_token(
+            "app_session_resume_request.idempotency_key",
+            &idempotency_key,
+            128,
+        )?;
+        device_id.validate()?;
+        Ok(Self {
+            correlation_id,
+            idempotency_key,
+            session_id,
+            device_id,
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AppSessionResumeOutcome {
+    pub session_id: String,
+    pub session_state: SessionState,
+    pub session_attach_outcome: SessionAttachOutcome,
+}
+
+fn session_resume_storage_error(
+    field: &'static str,
+    error: SessionFoundationError,
+) -> StorageError {
+    StorageError::ContractViolation(ContractViolation::InvalidValue {
+        field,
+        reason: error.reason_code,
+    })
+}
+
+fn session_resume_import_from_record(
+    record: &StoredSessionRecord,
+) -> Result<PersistedSoftClosedSessionImport, StorageError> {
+    let attached_devices = record
+        .attached_devices
+        .iter()
+        .map(|device_id| device_id.as_str().to_string())
+        .collect::<Vec<_>>();
+    let device_turn_sequences = record
+        .device_turn_sequences
+        .iter()
+        .map(|(device_id, sequence)| (device_id.as_str().to_string(), *sequence))
+        .collect::<BTreeMap<_, _>>();
+
+    Ok(PersistedSoftClosedSessionImport {
+        session_id: record.session_id,
+        persisted_session_state: record.session_state,
+        attached_devices,
+        last_attached_device_id: record.last_attached_device_id.as_str().to_string(),
+        last_turn_id: record.last_turn_id,
+        device_turn_sequences,
+    })
+}
+
+fn monotonic_time_ns_from_runtime_ms(
+    field: &'static str,
+    runtime_ms: i64,
+) -> Result<MonotonicTimeNs, StorageError> {
+    let runtime_ms = u64::try_from(runtime_ms).map_err(|_| {
+        StorageError::ContractViolation(ContractViolation::InvalidValue {
+            field,
+            reason: "must be >= 0",
+        })
+    })?;
+    Ok(MonotonicTimeNs(runtime_ms.saturating_mul(1_000_000)))
+}
+
+fn persist_resumed_session_record(
+    store: &mut Ph1fStore,
+    persisted_record: &StoredSessionRecord,
+    resumed_device_id: &DeviceId,
+    snapshot: &SessionFoundationSnapshot,
+    coordination_view: &SessionCoordinationView,
+    now: MonotonicTimeNs,
+    idempotency_key: &str,
+) -> Result<(), StorageError> {
+    let attached_devices = snapshot
+        .attached_devices
+        .iter()
+        .map(|device_id| {
+            DeviceId::new(device_id.clone()).map_err(|_| {
+                StorageError::ContractViolation(ContractViolation::InvalidValue {
+                    field: "app_session_resume_outcome.attached_devices",
+                    reason: "must preserve valid device identifiers",
+                })
+            })
+        })
+        .collect::<Result<BTreeSet<_>, _>>()?;
+    let device_turn_sequences = snapshot
+        .device_timelines
+        .iter()
+        .map(|timeline| {
+            DeviceId::new(timeline.device_id.clone())
+                .map(|device_id| (device_id, timeline.highest_seen_sequence))
+                .map_err(|_| {
+                    StorageError::ContractViolation(ContractViolation::InvalidValue {
+                        field: "app_session_resume_outcome.device_turn_sequences",
+                        reason: "must preserve valid device identifiers",
+                    })
+                })
+        })
+        .collect::<Result<BTreeMap<_, _>, _>>()?;
+    let last_turn_id = snapshot
+        .device_timelines
+        .iter()
+        .map(|timeline| timeline.last_turn_id)
+        .max_by_key(|turn_id| turn_id.0)
+        .or(persisted_record.last_turn_id);
+
+    let mut resumed_record = persisted_record.clone();
+    resumed_record.session_state = snapshot.session_state;
+    resumed_record.attached_devices = attached_devices;
+    resumed_record.last_attached_device_id = resumed_device_id.clone();
+    resumed_record.last_activity_at = now;
+    resumed_record.closed_at = None;
+    resumed_record.last_turn_id = last_turn_id;
+    resumed_record.active_turn_id = None;
+    resumed_record.lease_owner_id = Some(coordination_view.owner_runtime_id.clone());
+    resumed_record.lease_acquired_at = Some(now);
+    resumed_record.lease_expires_at = Some(monotonic_time_ns_from_runtime_ms(
+        "app_session_resume_outcome.lease_expires_at_ms",
+        coordination_view.lease_expires_at_ms,
+    )?);
+    resumed_record.device_turn_sequences = device_turn_sequences;
+
+    store.upsert_session_lifecycle(resumed_record, Some(idempotency_key.to_string()))?;
+    Ok(())
 }
 
 #[derive(Debug, Clone)]
@@ -3828,6 +3980,83 @@ impl AppServerIngressRuntime {
             dispatch_now,
         )?;
         Ok(out)
+    }
+
+    pub fn run_session_resume(
+        &self,
+        store: &mut Ph1fStore,
+        request: AppSessionResumeRequest,
+        now: MonotonicTimeNs,
+    ) -> Result<AppSessionResumeOutcome, StorageError> {
+        if now.0 == 0 {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "app_session_resume_request.now",
+                    reason: "must be > 0",
+                },
+            ));
+        }
+
+        let AppSessionResumeRequest {
+            correlation_id: _,
+            idempotency_key,
+            session_id,
+            device_id,
+        } = request;
+
+        let persisted_record =
+            store
+                .get_session(&session_id)
+                .cloned()
+                .ok_or(StorageError::ForeignKeyViolation {
+                    table: "sessions.session_id",
+                    key: session_id.0.to_string(),
+                })?;
+
+        let now_ms = i64::try_from(now.0 / 1_000_000).unwrap_or(i64::MAX);
+        let mut session_runtime = RuntimeSessionFoundation::default();
+        session_runtime.advance_logical_time_ms(now_ms);
+
+        let import = session_resume_import_from_record(&persisted_record)?;
+        session_runtime
+            .import_persisted_soft_closed_session(import)
+            .map_err(|error| {
+                session_resume_storage_error("app_session_resume_request.session_id", error)
+            })?;
+
+        let resumed = session_runtime
+            .resume_session(session_id, device_id.clone())
+            .map_err(|error| {
+                session_resume_storage_error("app_session_resume_request.session_id", error)
+            })?;
+        let snapshot = session_runtime
+            .session_snapshot(session_id)
+            .map_err(|error| {
+                session_resume_storage_error("app_session_resume_request.session_id", error)
+            })?;
+        let coordination_view = session_runtime
+            .coordination_view(session_id)
+            .map_err(|error| {
+                session_resume_storage_error("app_session_resume_request.session_id", error)
+            })?;
+        persist_resumed_session_record(
+            store,
+            &persisted_record,
+            &device_id,
+            &snapshot,
+            &coordination_view,
+            now,
+            &idempotency_key,
+        )?;
+
+        Ok(AppSessionResumeOutcome {
+            session_id: session_id.0.to_string(),
+            session_state: resumed.projection.session_state,
+            session_attach_outcome: resumed
+                .projection
+                .attach_outcome
+                .unwrap_or(SessionAttachOutcome::ExistingSessionReused),
+        })
     }
 
     pub fn run_device_artifact_sync_worker_pass(
@@ -7743,7 +7972,8 @@ mod tests {
     };
     use selene_kernel_contracts::runtime_execution::{
         AuthorityPolicyDecision, IdentityRecoveryState, IdentityTrustTier,
-        MemoryEligibilityDecision, OnboardingReadinessState, SimulationCertificationState,
+        MemoryEligibilityDecision, OnboardingReadinessState, SessionAttachOutcome,
+        SimulationCertificationState,
     };
     use selene_kernel_contracts::{
         ContractViolation, MonotonicTimeNs, ReasonCodeId, SchemaVersion, SessionState,
@@ -7751,6 +7981,7 @@ mod tests {
     use selene_storage::ph1f::{
         AccessDeviceTrustLevel, AccessLifecycleState, AccessMode, AccessVerificationLevel,
         BcastPolicyUpdateValue, DeviceRecord, IdentityRecord, IdentityStatus,
+        SessionRecord as StoredSessionRecord,
     };
 
     fn sample_voice_id_request(now: MonotonicTimeNs, owner_user_id: UserId) -> Ph1VoiceIdRequest {
@@ -7819,6 +8050,163 @@ mod tests {
                 .unwrap(),
             )
             .unwrap();
+    }
+
+    fn seed_soft_closed_session(
+        store: &mut Ph1fStore,
+        session_id: SessionId,
+        user_id: &UserId,
+        origin_device_id: &DeviceId,
+        attached_devices: &[DeviceId],
+        last_attached_device_id: &DeviceId,
+        last_turn_id: TurnId,
+    ) {
+        for device_id in attached_devices {
+            if store.get_device(device_id).is_none() {
+                store
+                    .insert_device(
+                        DeviceRecord::v1(
+                            device_id.clone(),
+                            user_id.clone(),
+                            "desktop".to_string(),
+                            MonotonicTimeNs(2),
+                            None,
+                        )
+                        .unwrap(),
+                    )
+                    .unwrap();
+            }
+        }
+
+        let mut record = StoredSessionRecord::v1(
+            session_id,
+            user_id.clone(),
+            origin_device_id.clone(),
+            SessionState::SoftClosed,
+            MonotonicTimeNs(10),
+            MonotonicTimeNs(20),
+            None,
+        )
+        .unwrap();
+        record.attached_devices = attached_devices.iter().cloned().collect();
+        record.last_attached_device_id = last_attached_device_id.clone();
+        record.last_turn_id = Some(last_turn_id);
+        record.device_turn_sequences = attached_devices
+            .iter()
+            .cloned()
+            .map(|device_id| (device_id, last_turn_id.0))
+            .collect();
+        store
+            .upsert_session_lifecycle(
+                record,
+                Some(format!("seed_soft_closed_session_{}", session_id.0)),
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn run_session_resume_from_soft_closed_session_returns_attached_outcome() {
+        let runtime = runtime_with_search_tool_fixtures();
+        let actor_user_id = UserId::new("tenant_1:session_resume_success_actor").unwrap();
+        let resumed_device_id = DeviceId::new("session_resume_success_device").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &actor_user_id, &resumed_device_id);
+
+        let session_id = SessionId(4_201);
+        seed_soft_closed_session(
+            &mut store,
+            session_id,
+            &actor_user_id,
+            &resumed_device_id,
+            std::slice::from_ref(&resumed_device_id),
+            &resumed_device_id,
+            TurnId(77),
+        );
+
+        let outcome = runtime
+            .run_session_resume(
+                &mut store,
+                AppSessionResumeRequest::v1(
+                    CorrelationId(91_001),
+                    "session_resume_success".to_string(),
+                    session_id,
+                    resumed_device_id.clone(),
+                )
+                .expect("resume request must validate"),
+                MonotonicTimeNs(50_000_000),
+            )
+            .expect("soft-closed resume must succeed");
+
+        assert_eq!(outcome.session_id, session_id.0.to_string());
+        assert_eq!(outcome.session_state, SessionState::Active);
+        assert!(matches!(
+            outcome.session_attach_outcome,
+            SessionAttachOutcome::ExistingSessionReused
+                | SessionAttachOutcome::ExistingSessionAttached
+        ));
+
+        let persisted = store
+            .get_session(&session_id)
+            .expect("resumed session must remain persisted");
+        assert_eq!(persisted.session_state, SessionState::Active);
+        assert_eq!(persisted.last_attached_device_id, resumed_device_id);
+        assert_eq!(persisted.closed_at, None);
+    }
+
+    #[test]
+    fn run_session_resume_conflicting_device_fails_closed() {
+        let runtime = runtime_with_search_tool_fixtures();
+        let actor_user_id = UserId::new("tenant_1:session_resume_conflict_actor").unwrap();
+        let resume_device_id = DeviceId::new("session_resume_conflict_resume_device").unwrap();
+        let last_attached_device_id =
+            DeviceId::new("session_resume_conflict_last_attached_device").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &actor_user_id, &resume_device_id);
+        store
+            .insert_device(
+                DeviceRecord::v1(
+                    last_attached_device_id.clone(),
+                    actor_user_id.clone(),
+                    "desktop".to_string(),
+                    MonotonicTimeNs(2),
+                    None,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+
+        let session_id = SessionId(4_202);
+        seed_soft_closed_session(
+            &mut store,
+            session_id,
+            &actor_user_id,
+            &last_attached_device_id,
+            &[resume_device_id.clone(), last_attached_device_id.clone()],
+            &last_attached_device_id,
+            TurnId(78),
+        );
+
+        let err = runtime
+            .run_session_resume(
+                &mut store,
+                AppSessionResumeRequest::v1(
+                    CorrelationId(91_002),
+                    "session_resume_conflict".to_string(),
+                    session_id,
+                    resume_device_id,
+                )
+                .expect("resume request must validate"),
+                MonotonicTimeNs(51_000_000),
+            )
+            .expect_err("resume from a conflicting device must fail closed");
+
+        match err {
+            StorageError::ContractViolation(ContractViolation::InvalidValue { field, reason }) => {
+                assert_eq!(field, "app_session_resume_request.session_id");
+                assert_eq!(reason, "runtime_session_conflicting_resume");
+            }
+            other => panic!("expected conflicting resume contract violation, got {other:?}"),
+        }
     }
 
     fn no_observation() -> EngineVoiceIdObservation {

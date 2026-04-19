@@ -684,6 +684,16 @@ pub struct SessionFoundationSnapshot {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PersistedSoftClosedSessionImport {
+    pub session_id: SessionId,
+    pub persisted_session_state: SessionState,
+    pub attached_devices: Vec<String>,
+    pub last_attached_device_id: String,
+    pub last_turn_id: Option<TurnId>,
+    pub device_turn_sequences: BTreeMap<String, u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct SessionOwnershipRecord {
     owner_runtime_id: String,
     lease_generation: u64,
@@ -960,6 +970,142 @@ impl RuntimeSessionFoundation {
             session_id,
             self.logical_now_ms,
         ))
+    }
+
+    pub fn import_persisted_soft_closed_session(
+        &mut self,
+        import: PersistedSoftClosedSessionImport,
+    ) -> Result<SessionFoundationSnapshot, SessionFoundationError> {
+        let PersistedSoftClosedSessionImport {
+            session_id,
+            persisted_session_state,
+            attached_devices,
+            last_attached_device_id,
+            last_turn_id,
+            device_turn_sequences,
+        } = import;
+
+        if persisted_session_state != SessionState::SoftClosed {
+            return Err(SessionFoundationError::resume_not_recoverable(
+                session_id,
+                persisted_session_state,
+            ));
+        }
+        if self.sessions.contains_key(&session_id) {
+            return Err(SessionFoundationError::integrity_violation(
+                session_id,
+                "persisted soft-closed session import cannot overwrite an existing runtime record",
+            ));
+        }
+        if attached_devices.is_empty() {
+            return Err(SessionFoundationError::integrity_violation(
+                session_id,
+                "persisted soft-closed session import requires at least one attached device",
+            ));
+        }
+        if let Some(last_turn_id) = last_turn_id {
+            last_turn_id.validate().map_err(|_| {
+                SessionFoundationError::integrity_violation(
+                    session_id,
+                    "persisted soft-closed session import carried an invalid last_turn_id",
+                )
+            })?;
+        }
+        if !device_turn_sequences.is_empty() && last_turn_id.is_none() {
+            return Err(SessionFoundationError::integrity_violation(
+                session_id,
+                "persisted soft-closed session import requires last_turn_id when device sequence history is present",
+            ));
+        }
+
+        let mut record = SessionRecord::new(
+            session_id,
+            self.local_runtime_id(),
+            self.logical_now_ms,
+            self.config.lease_duration_ms,
+        );
+        record.state = SessionState::SoftClosed;
+
+        for raw_device_id in attached_devices {
+            let device_id = DeviceId::new(raw_device_id.clone()).map_err(|_| {
+                SessionFoundationError::integrity_violation(
+                    session_id,
+                    "persisted soft-closed session import carried an invalid attached device identifier",
+                )
+            })?;
+            attach_device_to_record(
+                session_id,
+                &mut record,
+                device_id.as_str(),
+                self.config.max_attached_devices,
+            )?;
+        }
+
+        let last_attached_device_id =
+            DeviceId::new(last_attached_device_id.clone()).map_err(|_| {
+                SessionFoundationError::integrity_violation(
+                session_id,
+                "persisted soft-closed session import carried an invalid last_attached_device_id",
+            )
+            })?;
+        if !record
+            .attached_devices
+            .contains(last_attached_device_id.as_str())
+        {
+            return Err(SessionFoundationError::integrity_violation(
+                session_id,
+                "persisted soft-closed session import last_attached_device_id must remain attached",
+            ));
+        }
+
+        let attached_device_keys: Vec<String> = record.attached_devices.iter().cloned().collect();
+        for device_id in attached_device_keys {
+            let access_class = if device_id == last_attached_device_id.as_str() {
+                SessionAccessClass::PrimaryInteractor
+            } else {
+                SessionAccessClass::LimitedAttach
+            };
+            assign_access_class_to_record(
+                session_id,
+                &mut record,
+                &device_id,
+                access_class,
+                SessionCoordinationState::PrimaryOwned,
+                false,
+            )?;
+        }
+
+        if let Some(last_turn_id) = last_turn_id {
+            record.next_turn_id = record.next_turn_id.max(last_turn_id.0.saturating_add(1));
+
+            for (raw_device_id, highest_seen_sequence) in device_turn_sequences {
+                let device_id = DeviceId::new(raw_device_id.clone()).map_err(|_| {
+                    SessionFoundationError::integrity_violation(
+                        session_id,
+                        "persisted soft-closed session import carried an invalid device timeline identifier",
+                    )
+                })?;
+                if !record.attached_devices.contains(device_id.as_str()) {
+                    return Err(SessionFoundationError::integrity_violation(
+                        session_id,
+                        "persisted soft-closed session import device timeline must belong to an attached device",
+                    ));
+                }
+                validate_device_turn_sequence(device_id.as_str(), highest_seen_sequence)?;
+                record.device_timeline_map.insert(
+                    device_id.as_str().to_string(),
+                    DeviceTimelineRecord {
+                        highest_seen_sequence,
+                        last_turn_id,
+                    },
+                );
+            }
+        }
+
+        self.next_session_id = self.next_session_id.max(session_id.0.saturating_add(1));
+        let snapshot = snapshot_with_effective_posture(&record, session_id, self.logical_now_ms);
+        self.sessions.insert(session_id, record);
+        Ok(snapshot)
     }
 
     pub fn create_session(
@@ -3023,6 +3169,72 @@ mod tests {
             .expect("detach");
         assert_eq!(detached.projection.session_state, SessionState::Open);
         assert_eq!(detached.remaining_devices, vec!["device-a".to_string()]);
+    }
+
+    #[test]
+    fn import_persisted_soft_closed_session_round_trips_into_resume() {
+        let mut runtime = session_runtime();
+        let imported = runtime
+            .import_persisted_soft_closed_session(PersistedSoftClosedSessionImport {
+                session_id: SessionId(41),
+                persisted_session_state: SessionState::SoftClosed,
+                attached_devices: vec!["device-a".to_string()],
+                last_attached_device_id: "device-a".to_string(),
+                last_turn_id: Some(TurnId(7)),
+                device_turn_sequences: BTreeMap::from([("device-a".to_string(), 3)]),
+            })
+            .expect("import");
+
+        assert_eq!(imported.session_state, SessionState::SoftClosed);
+        assert_eq!(imported.next_turn_id, 8);
+        assert_eq!(imported.attached_devices, vec!["device-a".to_string()]);
+        assert_eq!(imported.access_classes.len(), 1);
+        assert_eq!(
+            imported.access_classes[0],
+            SessionAccessSnapshot {
+                device_id: "device-a".to_string(),
+                access_class: SessionAccessClass::PrimaryInteractor,
+            }
+        );
+
+        let resumed = runtime
+            .resume_session(SessionId(41), device("device-a"))
+            .expect("resume");
+        assert_eq!(resumed.projection.session_state, SessionState::Active);
+        assert_eq!(
+            resumed.projection.attach_outcome,
+            Some(SessionAttachOutcome::ExistingSessionReused)
+        );
+        assert_eq!(resumed.attached_devices, vec!["device-a".to_string()]);
+
+        let snapshot = runtime.session_snapshot(SessionId(41)).expect("snapshot");
+        assert_eq!(snapshot.session_state, SessionState::Active);
+        assert_eq!(snapshot.next_turn_id, 8);
+        assert_eq!(
+            snapshot
+                .device_timelines
+                .iter()
+                .find(|timeline| timeline.device_id == "device-a")
+                .map(|timeline| timeline.highest_seen_sequence),
+            Some(3)
+        );
+    }
+
+    #[test]
+    fn import_persisted_soft_closed_session_rejects_non_soft_closed() {
+        let mut runtime = session_runtime();
+        let err = runtime
+            .import_persisted_soft_closed_session(PersistedSoftClosedSessionImport {
+                session_id: SessionId(42),
+                persisted_session_state: SessionState::Open,
+                attached_devices: vec!["device-a".to_string()],
+                last_attached_device_id: "device-a".to_string(),
+                last_turn_id: Some(TurnId(2)),
+                device_turn_sequences: BTreeMap::from([("device-a".to_string(), 1)]),
+            })
+            .expect_err("non-soft-closed import must fail");
+
+        assert_eq!(err.kind, SessionFoundationErrorKind::ResumeNotRecoverable);
     }
 
     #[test]

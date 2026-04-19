@@ -18,7 +18,8 @@ use axum::{
 use selene_adapter::{
     app_ui_assets, build_runtime_execution_envelope_for_voice_turn_request, AdapterHealthResponse,
     AdapterRuntime, AdapterSyncHealth, InviteLinkOpenAdapterRequest, InviteLinkOpenAdapterResponse,
-    OnboardingContinueAdapterRequest, OnboardingContinueAdapterResponse, UiChatTranscriptResponse,
+    OnboardingContinueAdapterRequest, OnboardingContinueAdapterResponse,
+    SessionResumeAdapterRequest, SessionResumeAdapterResponse, UiChatTranscriptResponse,
     UiHealthChecksResponse, UiHealthDetailFilter, UiHealthDetailResponse,
     UiHealthReportQueryRequest, UiHealthReportQueryResponse, UiHealthSummary,
     UiHealthTimelinePaging, VoiceTurnAdapterRequest, VoiceTurnAdapterResponse,
@@ -219,6 +220,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/v1/voice/turn", post(run_voice_turn))
         .route("/v1/invite/click", post(run_invite_click))
         .route("/v1/onboarding/continue", post(run_onboarding_continue))
+        .route("/v1/session/resume", post(run_session_resume))
         .with_state(state);
 
     println!(
@@ -712,6 +714,61 @@ async fn run_onboarding_continue(
     }
 }
 
+async fn run_session_resume(
+    State(state): State<HttpAdapterState>,
+    headers: HeaderMap,
+    Json(request): Json<SessionResumeAdapterRequest>,
+) -> Response {
+    let request_id = match required_header_token(&headers, "x-request-id", "missing_request_id") {
+        Ok(v) => v,
+        Err(reject) => return session_resume_security_reject_response(reject),
+    };
+    let timestamp_ms = match required_header_u64(
+        &headers,
+        "x-selene-timestamp-ms",
+        "missing_timestamp_ms",
+        "invalid_timestamp_ms",
+    ) {
+        Ok(v) => v,
+        Err(reject) => return session_resume_security_reject_response(reject),
+    };
+    let nonce = match required_header_token(&headers, "x-selene-nonce", "missing_nonce") {
+        Ok(v) => v,
+        Err(reject) => return session_resume_security_reject_response(reject),
+    };
+    let security_input = EndpointSecurityInput {
+        endpoint: "/v1/session/resume",
+        expected_subject: request.session_id.clone(),
+        expected_device: request.device_id.clone(),
+        request_id,
+        idempotency_key: request.idempotency_key.clone(),
+        timestamp_ms,
+        nonce,
+    };
+    if let Err(reject) = enforce_ingress_security(
+        &headers,
+        &state.ingress_security,
+        state.ingress_security_config,
+        security_input,
+    ) {
+        return session_resume_security_reject_response(reject);
+    }
+
+    let runtime = match state.runtime.lock() {
+        Ok(runtime) => runtime,
+        Err(_) => {
+            return session_resume_error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "adapter runtime lock poisoned".to_string(),
+            )
+        }
+    };
+    match runtime.run_session_resume(request) {
+        Ok(response) => (StatusCode::OK, Json(response)).into_response(),
+        Err(reason) => session_resume_error_response(StatusCode::BAD_REQUEST, reason),
+    }
+}
+
 fn required_header_token(
     headers: &HeaderMap,
     key: &str,
@@ -1089,6 +1146,19 @@ fn onboarding_continue_security_reject_response(reject: SecurityReject) -> Respo
     json_response_with_optional_retry_after(status, response, reject.retry_after_secs)
 }
 
+fn session_resume_security_reject_response(reject: SecurityReject) -> Response {
+    let status = status_for_security_reject(reject.kind);
+    let response = SessionResumeAdapterResponse {
+        status: "error".to_string(),
+        outcome: "REJECTED".to_string(),
+        reason: Some(reject.reason),
+        session_id: None,
+        session_state: None,
+        session_attach_outcome: None,
+    };
+    json_response_with_optional_retry_after(status, response, reject.retry_after_secs)
+}
+
 fn voice_turn_ingress_error_response(status: StatusCode, error: VoiceTurnIngressError) -> Response {
     (
         status,
@@ -1147,6 +1217,21 @@ fn onboarding_continue_error_response(status: StatusCode, reason: String) -> Res
         .into_response()
 }
 
+fn session_resume_error_response(status: StatusCode, reason: String) -> Response {
+    (
+        status,
+        Json(SessionResumeAdapterResponse {
+            status: "error".to_string(),
+            outcome: "REJECTED".to_string(),
+            reason: Some(reason),
+            session_id: None,
+            session_state: None,
+            session_attach_outcome: None,
+        }),
+    )
+        .into_response()
+}
+
 fn json_response_with_optional_retry_after<T>(
     status: StatusCode,
     body: T,
@@ -1183,7 +1268,8 @@ mod tests {
         VOICE_ID_ENROLL_START_DRAFT,
     };
     use selene_kernel_contracts::ph1emocore::EMO_SIM_001;
-    use selene_kernel_contracts::ph1j::DeviceId;
+    use selene_kernel_contracts::ph1j::{DeviceId, TurnId};
+    use selene_kernel_contracts::ph1l::SessionId;
     use selene_kernel_contracts::ph1link::{
         InviteeType, LINK_INVITE_DRAFT_UPDATE_COMMIT, LINK_INVITE_OPEN_ACTIVATE_COMMIT,
     };
@@ -1373,6 +1459,15 @@ mod tests {
         }
     }
 
+    fn base_session_resume_request() -> SessionResumeAdapterRequest {
+        SessionResumeAdapterRequest {
+            correlation_id: 4001,
+            idempotency_key: "session-resume-idem-1".to_string(),
+            session_id: "4201".to_string(),
+            device_id: "resume_device_1".to_string(),
+        }
+    }
+
     fn ios_voice_request(actor_user_id: String, device_id: String) -> VoiceTurnAdapterRequest {
         VoiceTurnAdapterRequest {
             correlation_id: 88_001,
@@ -1464,6 +1559,41 @@ mod tests {
                     None,
                 )
                 .unwrap(),
+            )
+            .unwrap();
+    }
+
+    fn seed_soft_closed_session_record(
+        store: &mut Ph1fStore,
+        session_id: SessionId,
+        user_id: &UserId,
+        origin_device_id: &DeviceId,
+        attached_devices: &[DeviceId],
+        last_attached_device_id: &DeviceId,
+        last_turn_id: TurnId,
+    ) {
+        let mut record = selene_storage::ph1f::SessionRecord::v1(
+            session_id,
+            user_id.clone(),
+            origin_device_id.clone(),
+            SessionState::SoftClosed,
+            MonotonicTimeNs(10),
+            MonotonicTimeNs(20),
+            None,
+        )
+        .unwrap();
+        record.attached_devices = attached_devices.iter().cloned().collect();
+        record.last_attached_device_id = last_attached_device_id.clone();
+        record.last_turn_id = Some(last_turn_id);
+        record.device_turn_sequences = attached_devices
+            .iter()
+            .cloned()
+            .map(|device_id| (device_id, last_turn_id.0))
+            .collect();
+        store
+            .upsert_session_lifecycle(
+                record,
+                Some(format!("seed_http_soft_closed_session_{}", session_id.0)),
             )
             .unwrap();
     }
@@ -1828,6 +1958,59 @@ mod tests {
         let headers = security_headers(None, "req-8", "idem-8", now_ms, "nonce-8");
         let response = run_onboarding_continue(State(state), headers, Json(request)).await;
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn at_adapter_11_http_session_resume_route_reuses_soft_closed_session() {
+        let (state, store) = test_state_with_config_and_store(IngressSecurityConfig::from_env());
+        let actor_user_id = UserId::new("tenant_1:http_session_resume_actor").unwrap();
+        let resumed_device_id = DeviceId::new("http_session_resume_device").unwrap();
+        let session_id = SessionId(4_201);
+
+        {
+            let mut guard = store.lock().expect("store lock must succeed");
+            seed_identity_and_device(&mut guard, &actor_user_id, &resumed_device_id);
+            seed_soft_closed_session_record(
+                &mut guard,
+                session_id,
+                &actor_user_id,
+                &resumed_device_id,
+                std::slice::from_ref(&resumed_device_id),
+                &resumed_device_id,
+                TurnId(77),
+            );
+        }
+
+        let mut request = base_session_resume_request();
+        request.session_id = session_id.0.to_string();
+        request.device_id = resumed_device_id.as_str().to_string();
+        let now_ms = system_time_now_ms();
+        let headers = security_headers(
+            Some(bearer_for(&request.session_id, &request.device_id)),
+            "req-session-resume-1",
+            "idem-session-resume-1",
+            now_ms,
+            "nonce-session-resume-1",
+        );
+        let response = run_session_resume(State(state), headers, Json(request)).await;
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body: SessionResumeAdapterResponse = decode_json_response(response).await;
+        assert_eq!(body.status, "ok");
+        assert_eq!(body.outcome, "SESSION_RESUMED");
+        assert_eq!(body.session_id.as_deref(), Some("4201"));
+        assert_eq!(body.session_state.as_deref(), Some("ACTIVE"));
+        assert_eq!(
+            body.session_attach_outcome.as_deref(),
+            Some("EXISTING_SESSION_REUSED")
+        );
+
+        let guard = store.lock().expect("store lock must succeed");
+        let persisted = guard
+            .get_session(&session_id)
+            .expect("resumed session must remain persisted");
+        assert_eq!(persisted.session_state, SessionState::Active);
+        assert_eq!(persisted.last_attached_device_id, resumed_device_id);
     }
 
     #[tokio::test]
