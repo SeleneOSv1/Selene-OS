@@ -3518,6 +3518,65 @@ struct WakeTriggeredVoiceTurnRequestState: Identifiable {
     }
 }
 
+struct DesktopOperationalConversationShellState: Identifiable, Equatable {
+    let primaryPaneState: DesktopConversationPrimaryPaneState
+    let supportRailState: DesktopConversationSupportRailState
+
+    var id: String {
+        [primaryPaneState.id, supportRailState.id].joined(separator: "::")
+    }
+}
+
+struct DesktopConversationPrimaryPaneState: Identifiable, Equatable {
+    let dominantPosture: String
+    let headerTitle: String
+    let headerDetail: String
+    let voiceState: String
+    let timelineEntries: [DesktopConversationTimelineEntryState]
+
+    var id: String {
+        [
+            dominantPosture,
+            headerTitle,
+            headerDetail,
+            voiceState,
+            timelineEntries.map(\.id).joined(separator: "|"),
+        ].joined(separator: "::")
+    }
+}
+
+struct DesktopConversationTimelineEntryState: Identifiable, Equatable {
+    let speaker: String
+    let posture: String
+    let body: String
+    let detail: String
+    let sourceSurface: String
+
+    var id: String {
+        [
+            speaker,
+            posture,
+            body,
+            detail,
+            sourceSurface,
+        ].joined(separator: "::")
+    }
+
+    var isUserAuthored: Bool {
+        speaker == "You"
+    }
+}
+
+struct DesktopConversationSupportRailState: Identifiable, Equatable {
+    let title: String
+    let detail: String
+    let supportSurfaceLabels: [String]
+
+    var id: String {
+        ([title, detail] + supportSurfaceLabels).joined(separator: "::")
+    }
+}
+
 struct DesktopSessionSoftClosedVisibilityState: Identifiable, Equatable {
     let sourceSurfaceIdentity: String
     let sessionState: String
@@ -3923,63 +3982,12 @@ struct DesktopSessionShellView: View {
     @State private var lastStagedWakeTriggeredVoiceTurnRequestState: WakeTriggeredVoiceTurnRequestState?
 
     var body: some View {
-        HStack(alignment: .top, spacing: 20) {
-            VStack(alignment: .leading, spacing: 16) {
-                posturePanel
-
-                historyCard
+        Group {
+            if let operationalConversationShellState = desktopOperationalConversationShellState {
+                desktopOperationalConversationShell(operationalConversationShellState)
+            } else {
+                desktopEvidenceFirstOperationalShell
             }
-            .frame(width: 270, alignment: .topLeading)
-
-            VStack(alignment: .leading, spacing: 16) {
-                explicitVoiceEntryAffordanceCard
-                desktopWakeProfileAvailabilityCard
-                desktopWakeListenerControlCard
-
-                if desktopReadyTimeHandoffIsActive {
-                    desktopPairingCompletionMutationCard
-                } else {
-                    desktopOnboardingEntryCard
-                    desktopOnboardingContinuePromptCard
-                    desktopPlatformSetupReceiptSubmissionCard
-                    desktopTermsAcceptCard
-                    desktopSenderVerificationVisibilityCard
-                    desktopEmployeePhotoCaptureSendCard
-                    desktopEmployeeSenderVerifyCommitCard
-                    desktopPrimaryDeviceConfirmCard
-                    desktopVoiceEnrollCard
-                    desktopWakeEnrollStartDraftCard
-                    desktopWakeEnrollSampleCommitCard
-                    desktopWakeEnrollCompleteCommitCard
-                    desktopWakeEnrollDeferCommitCard
-                    desktopEmoPersonaLockCard
-                    desktopAccessProvisionCommitCard
-                    desktopCompleteCommitCard
-                    desktopReadyVisibilityCard
-                    desktopPairingCompletionVisibilityCard
-                    desktopPairingCompletionMutationCard
-                }
-                desktopSessionSoftClosedVisibilityCard
-                desktopSessionSoftClosedResumeCard
-                desktopSessionSuspendedVisibilityCard
-                desktopRecoveryVisibilityCard
-                desktopInterruptVisibilityCard
-                desktopInterruptResponseProductionCard
-                desktopInterruptSubjectReferencesVisibilityCard
-                desktopInterruptSubjectRelationConfidenceVisibilityCard
-                desktopInterruptReturnCheckExpiryVisibilityCard
-
-                sessionCard
-                .frame(maxWidth: .infinity, minHeight: 360, alignment: .topLeading)
-            }
-            .frame(maxWidth: .infinity, alignment: .topLeading)
-
-            VStack(alignment: .leading, spacing: 16) {
-                systemActivityCard
-
-                needsAttentionCard
-            }
-            .frame(width: 300, alignment: .topLeading)
         }
         .padding(24)
         .frame(minWidth: 1180, minHeight: 720, alignment: .topLeading)
@@ -4101,6 +4109,67 @@ struct DesktopSessionShellView: View {
                 latestSessionSoftClosedVisibleContext = nil
                 latestSessionSuspendedVisibleContext = nil
             }
+        }
+    }
+
+    private var desktopEvidenceFirstOperationalShell: some View {
+        HStack(alignment: .top, spacing: 20) {
+            VStack(alignment: .leading, spacing: 16) {
+                posturePanel
+
+                historyCard
+            }
+            .frame(width: 270, alignment: .topLeading)
+
+            VStack(alignment: .leading, spacing: 16) {
+                explicitVoiceEntryAffordanceCard
+                desktopWakeProfileAvailabilityCard
+                desktopWakeListenerControlCard
+
+                if desktopReadyTimeHandoffIsActive {
+                    desktopPairingCompletionMutationCard
+                } else {
+                    desktopOnboardingEntryCard
+                    desktopOnboardingContinuePromptCard
+                    desktopPlatformSetupReceiptSubmissionCard
+                    desktopTermsAcceptCard
+                    desktopSenderVerificationVisibilityCard
+                    desktopEmployeePhotoCaptureSendCard
+                    desktopEmployeeSenderVerifyCommitCard
+                    desktopPrimaryDeviceConfirmCard
+                    desktopVoiceEnrollCard
+                    desktopWakeEnrollStartDraftCard
+                    desktopWakeEnrollSampleCommitCard
+                    desktopWakeEnrollCompleteCommitCard
+                    desktopWakeEnrollDeferCommitCard
+                    desktopEmoPersonaLockCard
+                    desktopAccessProvisionCommitCard
+                    desktopCompleteCommitCard
+                    desktopReadyVisibilityCard
+                    desktopPairingCompletionVisibilityCard
+                    desktopPairingCompletionMutationCard
+                }
+                desktopSessionSoftClosedVisibilityCard
+                desktopSessionSoftClosedResumeCard
+                desktopSessionSuspendedVisibilityCard
+                desktopRecoveryVisibilityCard
+                desktopInterruptVisibilityCard
+                desktopInterruptResponseProductionCard
+                desktopInterruptSubjectReferencesVisibilityCard
+                desktopInterruptSubjectRelationConfidenceVisibilityCard
+                desktopInterruptReturnCheckExpiryVisibilityCard
+
+                sessionCard
+                    .frame(maxWidth: .infinity, minHeight: 360, alignment: .topLeading)
+            }
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+
+            VStack(alignment: .leading, spacing: 16) {
+                systemActivityCard
+
+                needsAttentionCard
+            }
+            .frame(width: 300, alignment: .topLeading)
         }
     }
 
@@ -4320,14 +4389,16 @@ struct DesktopSessionShellView: View {
                     explicitVoicePendingRequestCard(pendingRequest)
                 }
 
-                if let desktopCanonicalRuntimeOutcomeState {
-                    desktopCanonicalRuntimeOutcomeCard(desktopCanonicalRuntimeOutcomeState)
-                }
+                if desktopOperationalConversationShellState == nil {
+                    if let desktopCanonicalRuntimeOutcomeState {
+                        desktopCanonicalRuntimeOutcomeCard(desktopCanonicalRuntimeOutcomeState)
+                    }
 
-                if desktopAuthoritativeReplyRenderState != nil {
-                    desktopAuthoritativeReplyCard
-                    desktopAuthoritativeReplyProvenanceCard
-                    desktopAuthoritativeReplyPlaybackCard
+                    if desktopAuthoritativeReplyRenderState != nil {
+                        desktopAuthoritativeReplyCard
+                        desktopAuthoritativeReplyProvenanceCard
+                        desktopAuthoritativeReplyPlaybackCard
+                    }
                 }
 
                 if let failedRequest = explicitVoiceController.failedRequest {
@@ -4687,6 +4758,211 @@ struct DesktopSessionShellView: View {
             voiceArtifactSyncReceiptRef: wakewordProofContext.voiceArtifactSyncReceiptRef,
             wakeTriggerPhrase: "Selene"
         )
+    }
+
+    private var desktopOperationalConversationShellState: DesktopOperationalConversationShellState? {
+        guard let primaryPaneState = desktopConversationPrimaryPaneState,
+              let supportRailState = desktopConversationSupportRailState else {
+            return nil
+        }
+
+        return DesktopOperationalConversationShellState(
+            primaryPaneState: primaryPaneState,
+            supportRailState: supportRailState
+        )
+    }
+
+    private var desktopConversationPrimaryPaneState: DesktopConversationPrimaryPaneState? {
+        guard desktopReadyTimeHandoffIsActive else {
+            return nil
+        }
+
+        let dominantPosture: String
+        let headerTitle: String
+        let headerDetail: String
+
+        if latestSessionSuspendedVisibleContext != nil {
+            dominantPosture = "SESSION_SUSPENDED_VISIBLE"
+            headerTitle = "Conversation unavailable while the session is suspended"
+            headerDetail = "This transcript-primary pane fails closed to explanation-only content while the authoritative runtime keeps the desktop session in a hard full takeover posture."
+        } else if activeRecoveryDisplayState == .quarantinedLocalState {
+            dominantPosture = "QUARANTINED_LOCAL_STATE"
+            headerTitle = "Conversation unavailable while local state is quarantined"
+            headerDetail = "This transcript-primary pane fails closed to explanation-only content until authoritative reread clears the quarantine posture cloud-side."
+        } else if let latestSessionActiveVisibleContext {
+            dominantPosture = latestSessionActiveVisibleContext.sessionState
+            headerTitle = "Active conversation"
+            headerDetail = "Cloud-authored active-session transcript, bounded runtime dispatch posture, and authoritative reply surfaces remain visible here without introducing local session authority."
+        } else if let latestSessionSoftClosedVisibleContext {
+            dominantPosture = latestSessionSoftClosedVisibleContext.sessionState
+            headerTitle = "Archived recent slice"
+            headerDetail = "Soft-closed archive truth remains distinct from PH1.M resume context while explicit resume stays bounded and non-authoritative."
+        } else if let activeRecoveryDisplayState {
+            dominantPosture = activeRecoveryDisplayState.rawValue
+            headerTitle = "\(activeRecoveryDisplayState.rawValue) conversation posture"
+            headerDetail = "The lawful main session surface remains visible while recovery restriction posture stays cloud-authored, bounded, and non-authoritative."
+        } else if desktopCanonicalRuntimeOutcomeState != nil || desktopAuthoritativeReplyRenderState != nil {
+            dominantPosture = "CANONICAL_RUNTIME_VISIBLE"
+            headerTitle = "Operational conversation"
+            headerDetail = "Canonical runtime outcome and cloud-authored reply posture remain visible in transcript-first form only."
+        } else {
+            dominantPosture = "READY_FOR_OPERATION"
+            headerTitle = "Conversation ready"
+            headerDetail = "Use explicit voice or the bounded foreground wake listener to start the next lawful cloud-authored turn from this transcript-primary shell."
+        }
+
+        var timelineEntries: [DesktopConversationTimelineEntryState] = []
+
+        if let latestSessionActiveVisibleContext {
+            timelineEntries.append(
+                DesktopConversationTimelineEntryState(
+                    speaker: "You",
+                    posture: "current_user_turn_text",
+                    body: latestSessionActiveVisibleContext.currentUserTurnText,
+                    detail: "Current user turn remains text-visible, session-bound, and cloud-authoritative for the active desktop session.",
+                    sourceSurface: "SESSION_ACTIVE_VISIBLE"
+                )
+            )
+            timelineEntries.append(
+                DesktopConversationTimelineEntryState(
+                    speaker: "Selene",
+                    posture: "current_selene_turn_text",
+                    body: latestSessionActiveVisibleContext.currentSeleneTurnText,
+                    detail: "Current Selene turn remains text-visible and tied to the same active cloud session without a local-only transcript fork.",
+                    sourceSurface: "SESSION_ACTIVE_VISIBLE"
+                )
+            )
+        } else if let latestSessionSoftClosedVisibleContext {
+            timelineEntries.append(
+                DesktopConversationTimelineEntryState(
+                    speaker: "You",
+                    posture: "archived_user_turn_text",
+                    body: latestSessionSoftClosedVisibleContext.archivedUserTurnText,
+                    detail: "Archived recent slice remains durable archived conversation truth and stays distinct from bounded PH1.M resume-context output.",
+                    sourceSurface: "SESSION_SOFT_CLOSED_VISIBLE"
+                )
+            )
+            timelineEntries.append(
+                DesktopConversationTimelineEntryState(
+                    speaker: "Selene",
+                    posture: "archived_selene_turn_text",
+                    body: latestSessionSoftClosedVisibleContext.archivedSeleneTurnText,
+                    detail: "Archived recent slice remains text-visible after visual reset without local auto-reopen, hidden spoken-only output, or local transcript authority.",
+                    sourceSurface: "SESSION_SOFT_CLOSED_VISIBLE"
+                )
+            )
+        }
+
+        if let pendingRequest = explicitVoiceController.pendingRequest {
+            timelineEntries.append(
+                DesktopConversationTimelineEntryState(
+                    speaker: "You",
+                    posture: "explicit_voice_pending_preview",
+                    body: pendingRequest.boundedPreview,
+                    detail: "Bounded explicit voice pending preview only. Canonical runtime and later cloud-visible acceptance remain authoritative.",
+                    sourceSurface: "EXPLICIT_VOICE_PENDING"
+                )
+            )
+        }
+
+        if let pendingWakeRequest = desktopWakeListenerController.pendingRequest
+            ?? lastStagedWakeTriggeredVoiceTurnRequestState {
+            timelineEntries.append(
+                DesktopConversationTimelineEntryState(
+                    speaker: "You",
+                    posture: "wake_voice_pending_preview",
+                    body: pendingWakeRequest.boundedPreview,
+                    detail: "Bounded post-wake transcript remainder only. This foreground wake-trigger preview remains non-authoritative until canonical runtime returns.",
+                    sourceSurface: "WAKE_TRIGGERED_VOICE_PENDING"
+                )
+            )
+        }
+
+        if let authoritativeResponseText = desktopAuthoritativeReplyRenderState?.authoritativeResponseText?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+           !authoritativeResponseText.isEmpty,
+           !timelineEntries.contains(where: { entry in
+               entry.body.trimmingCharacters(in: .whitespacesAndNewlines) == authoritativeResponseText
+           }) {
+            timelineEntries.append(
+                DesktopConversationTimelineEntryState(
+                    speaker: "Selene",
+                    posture: "authoritative_reply_text",
+                    body: authoritativeResponseText,
+                    detail: "Cloud-authored authoritative reply text only. This shell does not fabricate local answer content.",
+                    sourceSurface: "CANONICAL_RUNTIME_COMPLETED"
+                )
+            )
+        }
+
+        return DesktopConversationPrimaryPaneState(
+            dominantPosture: dominantPosture,
+            headerTitle: headerTitle,
+            headerDetail: headerDetail,
+            voiceState: desktopOperationalVoiceStateLabel,
+            timelineEntries: timelineEntries
+        )
+    }
+
+    private var desktopConversationSupportRailState: DesktopConversationSupportRailState? {
+        guard desktopReadyTimeHandoffIsActive else {
+            return nil
+        }
+
+        return DesktopConversationSupportRailState(
+            title: "Operational controls and status",
+            detail: "Support surfaces remain bounded, session-bound, and non-authoritative while the primary pane stays transcript-first.",
+            supportSurfaceLabels: [
+                "posture_panel",
+                "history",
+                "explicit_voice_entry_affordance",
+                "wake_profile_local_availability",
+                "wake_listener_control",
+                "session_soft_closed_visibility",
+                "session_soft_closed_resume",
+                "session_suspended_visibility",
+                "recovery_visibility",
+                "interrupt_visibility",
+                "interrupt_response_production",
+                "interrupt_subject_references_visibility",
+                "interrupt_subject_relation_confidence_visibility",
+                "interrupt_return_check_expiry_visibility",
+                "session",
+                "system_activity",
+                "needs_attention",
+            ]
+        )
+    }
+
+    private var desktopOperationalVoiceStateLabel: String {
+        if desktopAuthoritativeReplyPlaybackState.phase == .speaking {
+            return "SPEAKING"
+        }
+
+        if desktopWakeListenerController.listenerState == .dispatching
+            || desktopCanonicalRuntimeOutcomeState?.phase == .dispatching {
+            return "DISPATCHING"
+        }
+
+        if desktopWakeListenerController.pendingRequest != nil
+            || lastStagedWakeTriggeredVoiceTurnRequestState != nil
+            || desktopWakeListenerController.listenerState == .wakeRequestStaged {
+            return "WAKE_PENDING"
+        }
+
+        if desktopWakeListenerController.listenerState == .listening {
+            return "WAKE_LISTENING"
+        }
+
+        if explicitVoiceController.pendingRequest != nil {
+            return "EXPLICIT_PENDING"
+        }
+
+        if explicitVoiceController.isListening {
+            return "EXPLICIT_LISTENING"
+        }
+
+        return "IDLE"
     }
 
     private var desktopPrimaryDeviceConfirmPromptState: DesktopPrimaryDeviceConfirmPromptState? {
@@ -7693,6 +7969,290 @@ struct DesktopSessionShellView: View {
                     Text("Wake Listener Control")
                         .font(.headline)
                 }
+            }
+        }
+    }
+
+    private func desktopOperationalConversationShell(
+        _ state: DesktopOperationalConversationShellState
+    ) -> some View {
+        HStack(alignment: .top, spacing: 20) {
+            ScrollView {
+                desktopConversationPrimaryPane(state.primaryPaneState)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+
+            ScrollView {
+                desktopConversationSupportRail(state.supportRailState)
+            }
+            .frame(width: 340)
+            .frame(maxHeight: .infinity, alignment: .topLeading)
+        }
+    }
+
+    private func desktopConversationPrimaryPane(
+        _ state: DesktopConversationPrimaryPaneState
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 18) {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(alignment: .top, spacing: 16) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(state.headerTitle)
+                            .font(.largeTitle.weight(.semibold))
+
+                        Text(state.headerDetail)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+
+                    Spacer(minLength: 16)
+
+                    desktopConversationVoiceStateBadge(state.voiceState)
+                }
+            }
+            .padding(20)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color(nsColor: .controlBackgroundColor))
+            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+
+            if state.dominantPosture == "SESSION_SUSPENDED_VISIBLE" {
+                sectionCard(
+                    title: "Conversation Status",
+                    detail: "Suspended posture remains explanation-only on macOS in this run. No transcript authority, no archive fabrication, no hidden continuation, and no local unsuspend path are introduced while the authoritative runtime keeps the session suspended."
+                )
+            } else if state.dominantPosture == "QUARANTINED_LOCAL_STATE" {
+                sectionCard(
+                    title: "Conversation Status",
+                    detail: "QUARANTINED_LOCAL_STATE withholds live dual transcript and archived recent-slice visibility from this transcript-primary pane until authoritative reread clears the recovery posture cloud-side."
+                )
+            } else {
+                if let desktopCanonicalRuntimeOutcomeState {
+                    desktopCanonicalRuntimeOutcomeCard(desktopCanonicalRuntimeOutcomeState)
+                }
+
+                if state.timelineEntries.isEmpty {
+                    sectionCard(
+                        title: "Conversation Timeline",
+                        detail: "Awaiting the next lawful cloud-authored turn. Use explicit voice or the bounded foreground wake listener to start runtime dispatch from this transcript-primary shell without introducing local keyboard entry, session selection, or hidden/background wake behavior."
+                    )
+                } else {
+                    VStack(alignment: .leading, spacing: 14) {
+                        ForEach(state.timelineEntries) { entry in
+                            desktopConversationTimelineEntryCard(entry)
+                        }
+                    }
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+    }
+
+    private func desktopConversationSupportRail(
+        _ state: DesktopConversationSupportRailState
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 16) {
+            GroupBox {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text(state.detail)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                    ForEach(state.supportSurfaceLabels, id: \.self) { surfaceLabel in
+                        Text(surfaceLabel)
+                            .font(.caption.monospaced())
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+
+                    Text("Controls and evidence-adjacent support remain bounded, session-bound, and non-authoritative here. No local session selection, no attach or reopen authority, no keyboard composer, and no hidden/background wake behavior are introduced by this rail.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            } label: {
+                Text(state.title)
+                    .font(.headline)
+            }
+
+            explicitVoiceEntryAffordanceCard
+            desktopWakeProfileAvailabilityCard
+            desktopWakeListenerControlCard
+            posturePanel
+            historyCard
+            desktopSessionSoftClosedVisibilityCard
+            desktopSessionSoftClosedResumeCard
+            desktopSessionSuspendedVisibilityCard
+            desktopRecoveryVisibilityCard
+            desktopInterruptVisibilityCard
+            desktopInterruptResponseProductionCard
+            desktopInterruptSubjectReferencesVisibilityCard
+            desktopInterruptSubjectRelationConfidenceVisibilityCard
+            desktopInterruptReturnCheckExpiryVisibilityCard
+            sessionCard
+            systemActivityCard
+            needsAttentionCard
+        }
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+    }
+
+    private func desktopConversationTimelineEntryCard(
+        _ entry: DesktopConversationTimelineEntryState
+    ) -> some View {
+        let bubbleColor = entry.isUserAuthored
+            ? Color.accentColor.opacity(0.12)
+            : Color(nsColor: .controlBackgroundColor)
+
+        return HStack(alignment: .top, spacing: 0) {
+            if entry.isUserAuthored {
+                Spacer(minLength: 72)
+            }
+
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(alignment: .firstTextBaseline, spacing: 10) {
+                    Text(entry.speaker)
+                        .font(.subheadline.weight(.semibold))
+
+                    Text(entry.sourceSurface)
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
+                }
+
+                Text(entry.body)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                Text("\(entry.posture): \(entry.detail)")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                if desktopConversationShouldAttachAuthoritativeReplyArtifacts(to: entry) {
+                    desktopConversationAuthoritativeReplyAttachment
+                }
+            }
+            .padding(16)
+            .frame(maxWidth: 720, alignment: .leading)
+            .background(bubbleColor)
+            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+
+            if !entry.isUserAuthored {
+                Spacer(minLength: 72)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func desktopConversationVoiceStateBadge(_ voiceState: String) -> some View {
+        Text(voiceState)
+            .font(.caption.weight(.semibold))
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(Color.accentColor.opacity(0.14))
+            .clipShape(Capsule())
+    }
+
+    private func desktopConversationShouldAttachAuthoritativeReplyArtifacts(
+        to entry: DesktopConversationTimelineEntryState
+    ) -> Bool {
+        guard let authoritativeResponseText = desktopAuthoritativeReplyRenderState?.authoritativeResponseText?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+            !authoritativeResponseText.isEmpty else {
+            return false
+        }
+
+        let normalizedEntryBody = entry.body.trimmingCharacters(in: .whitespacesAndNewlines)
+        return entry.posture == "authoritative_reply_text"
+            || (entry.posture == "current_selene_turn_text"
+                && normalizedEntryBody == authoritativeResponseText)
+    }
+
+    private var desktopConversationAuthoritativeReplyAttachment: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            if let desktopAuthoritativeReplyProvenanceRenderState {
+                Divider()
+
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Attached provenance")
+                        .font(.subheadline.weight(.semibold))
+
+                    Text(desktopAuthoritativeReplyProvenanceRenderState.summary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                    if let retrievedAtLabel = desktopAuthoritativeReplyProvenanceRenderState.retrievedAtLabel {
+                        metadataRow(label: "retrieved_at", value: retrievedAtLabel)
+                    }
+
+                    if let cacheStatusLabel = desktopAuthoritativeReplyProvenanceRenderState.cacheStatusLabel {
+                        metadataRow(label: "cache_status", value: cacheStatusLabel)
+                    }
+
+                    if desktopAuthoritativeReplyProvenanceRenderState.sources.isEmpty {
+                        Text("No cloud-authored source rows were returned for this authoritative reply posture.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    } else {
+                        ForEach(desktopAuthoritativeReplyProvenanceRenderState.sources) { source in
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(source.title)
+                                    .font(.subheadline.weight(.medium))
+
+                                if let sourceURL = URL(string: source.url) {
+                                    Link(source.url, destination: sourceURL)
+                                        .font(.footnote)
+                                } else {
+                                    Text(source.url)
+                                        .font(.footnote)
+                                        .foregroundStyle(.secondary)
+                                        .textSelection(.enabled)
+                                }
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                    }
+
+                    Text("Read-only cloud-authored provenance only. This shell does not claim that search executed locally and does not widen into new search controls, wake posture, or autonomous-unlock behavior.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+
+            Divider()
+
+            VStack(alignment: .leading, spacing: 10) {
+                Text(desktopAuthoritativeReplyPlaybackState.title)
+                    .font(.subheadline.weight(.semibold))
+
+                Text(desktopAuthoritativeReplyPlaybackState.summary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                Text(desktopAuthoritativeReplyPlaybackState.detail)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                HStack(spacing: 12) {
+                    Button("Play authoritative reply") {
+                        playAuthoritativeReply()
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(
+                        desktopAuthoritativeReplyRenderState?.authoritativeResponseText?
+                            .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false
+                            || desktopAuthoritativeReplyPlaybackState.phase == .speaking
+                    )
+
+                    Button("Stop reply playback") {
+                        stopAuthoritativeReplyPlayback()
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(desktopAuthoritativeReplyPlaybackState.phase != .speaking)
+                }
+
+                Text("User-triggered bounded reply playback only. No transcript mutation, no conversation-history mutation, no wake parity claim, and no autonomous-unlock claim are introduced by this surface.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
     }
