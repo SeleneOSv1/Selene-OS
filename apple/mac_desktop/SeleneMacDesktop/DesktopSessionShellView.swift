@@ -2543,6 +2543,30 @@ struct DesktopSessionSoftClosedVisibilityState: Identifiable, Equatable {
     }
 }
 
+struct DesktopSessionSuspendedVisibilityState: Identifiable, Equatable {
+    let sourceSurfaceIdentity: String
+    let sessionState: String
+    let sessionID: String
+    let nextAllowedActionsMaySpeak: Bool
+    let nextAllowedActionsMustWait: Bool
+    let nextAllowedActionsMustRewake: Bool
+    let recoveryMode: String?
+    let reconciliationDecision: String?
+
+    var id: String {
+        [
+            sourceSurfaceIdentity,
+            sessionState,
+            sessionID,
+            booleanValue(nextAllowedActionsMaySpeak),
+            booleanValue(nextAllowedActionsMustWait),
+            booleanValue(nextAllowedActionsMustRewake),
+            recoveryMode ?? "recovery_mode_not_provided",
+            reconciliationDecision ?? "reconciliation_decision_not_provided",
+        ].joined(separator: "::")
+    }
+}
+
 struct DesktopSenderVerificationVisibilityState: Identifiable, Equatable {
     let onboardingSessionID: String
     let nextStep: String
@@ -2707,6 +2731,7 @@ struct DesktopSessionShellView: View {
                 desktopReadyVisibilityCard
                 desktopPairingCompletionVisibilityCard
                 desktopSessionSoftClosedVisibilityCard
+                desktopSessionSuspendedVisibilityCard
 
                 sessionCard
                 .frame(maxWidth: .infinity, minHeight: 360, alignment: .topLeading)
@@ -3657,6 +3682,23 @@ struct DesktopSessionShellView: View {
             resumeSummaryBullets: latestSessionSoftClosedVisibleContext.resumeSummaryBullets,
             archivedUserTurnText: latestSessionSoftClosedVisibleContext.archivedUserTurnText,
             archivedSeleneTurnText: latestSessionSoftClosedVisibleContext.archivedSeleneTurnText
+        )
+    }
+
+    private var desktopSessionSuspendedVisibilityState: DesktopSessionSuspendedVisibilityState? {
+        guard let latestSessionSuspendedVisibleContext else {
+            return nil
+        }
+
+        return DesktopSessionSuspendedVisibilityState(
+            sourceSurfaceIdentity: "SESSION_SUSPENDED_VISIBLE",
+            sessionState: latestSessionSuspendedVisibleContext.sessionState,
+            sessionID: latestSessionSuspendedVisibleContext.sessionID,
+            nextAllowedActionsMaySpeak: latestSessionSuspendedVisibleContext.nextAllowedActionsMaySpeak,
+            nextAllowedActionsMustWait: latestSessionSuspendedVisibleContext.nextAllowedActionsMustWait,
+            nextAllowedActionsMustRewake: latestSessionSuspendedVisibleContext.nextAllowedActionsMustRewake,
+            recoveryMode: latestSessionSuspendedVisibleContext.recoveryMode?.rawValue,
+            reconciliationDecision: latestSessionSuspendedVisibleContext.reconciliationDecision?.rawValue
         )
     }
 
@@ -5684,6 +5726,66 @@ struct DesktopSessionShellView: View {
                     }
                 } label: {
                     Text("Session Soft-Closed Visibility")
+                        .font(.headline)
+                }
+            }
+        }
+    }
+
+    private var desktopSessionSuspendedVisibilityCard: some View {
+        let sessionSuspendedVisibilityState = desktopSessionSuspendedVisibilityState
+
+        return Group {
+            if let sessionSuspendedVisibilityState {
+                GroupBox {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("Bounded desktop suspended visibility only. This shell derives one dedicated read-only exact `SESSION_SUSPENDED_VISIBLE` surface from the already-live suspended route context only, preserves hard full takeover explanation, and preserves allowed-next-step-only posture without introducing any local suspended-session release, fresh-read, repeated-attempt, wake-renewal, attach, or reopen authority.")
+                            .frame(maxWidth: .infinity, alignment: .leading)
+
+                        ForEach(
+                            [
+                                ("source_surface", sessionSuspendedVisibilityState.sourceSurfaceIdentity),
+                                ("session_state", sessionSuspendedVisibilityState.sessionState),
+                                ("session_id", sessionSuspendedVisibilityState.sessionID),
+                                (
+                                    "next_allowed_actions_may_speak",
+                                    booleanValue(sessionSuspendedVisibilityState.nextAllowedActionsMaySpeak)
+                                ),
+                                (
+                                    "next_allowed_actions_must_wait",
+                                    booleanValue(sessionSuspendedVisibilityState.nextAllowedActionsMustWait)
+                                ),
+                                (
+                                    "next_allowed_actions_must_" +
+                                        "re" +
+                                        "wake",
+                                    booleanValue(sessionSuspendedVisibilityState.nextAllowedActionsMustRewake)
+                                ),
+                            ],
+                            id: \.0
+                        ) { row in
+                            metadataRow(label: row.0, value: row.1)
+                        }
+
+                        if let recoveryMode = sessionSuspendedVisibilityState.recoveryMode {
+                            metadataRow(label: "recovery_mode", value: recoveryMode)
+                        }
+
+                        if let reconciliationDecision = sessionSuspendedVisibilityState.reconciliationDecision {
+                            metadataRow(label: "reconciliation_decision", value: reconciliationDecision)
+                        }
+
+                        Text("This suspended posture remains a hard full takeover, and the shell preserves only allowed-next-step visibility here in bounded read-only form.")
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+
+                        Text("No local suspended-session release, no local fresh-read, no local repeated-attempt, no local wake-renewal, no local session attach, and no local reopen production authority exist here. This shell stays explicitly non-authoritative.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                } label: {
+                    Text("Session Suspended Visibility")
                         .font(.headline)
                 }
             }
