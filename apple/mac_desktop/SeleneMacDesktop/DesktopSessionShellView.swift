@@ -2555,6 +2555,136 @@ struct DesktopPairingCompletionVisibilityState: Identifiable, Equatable {
     }
 }
 
+struct DesktopPairingCompletionPromptState: Identifiable, Equatable {
+    let sourceSurfaceIdentity: String
+    let onboardingSessionID: String
+    let nextStep: String
+    let onboardingStatus: String?
+    let voiceArtifactSyncReceiptRef: String?
+    let accessEngineInstanceID: String?
+    let deviceID: String?
+    let sessionState: String
+    let sessionID: String
+    let sessionAttachOutcome: String
+    let turnID: String?
+
+    var id: String {
+        [
+            sourceSurfaceIdentity,
+            onboardingSessionID,
+            nextStep,
+            onboardingStatus ?? "onboarding_status_not_provided",
+            voiceArtifactSyncReceiptRef ?? "voice_receipt_not_provided",
+            accessEngineInstanceID ?? "access_engine_not_provided",
+            deviceID ?? "device_id_not_provided",
+            sessionState,
+            sessionID,
+            sessionAttachOutcome,
+            turnID ?? "turn_id_not_provided",
+        ].joined(separator: "::")
+    }
+}
+
+private struct DesktopPairingCompletionLocalOutcomeState: Identifiable, Equatable {
+    enum Phase: String, Equatable {
+        case completed = "completed"
+    }
+
+    let phase: Phase
+    let sourceSurfaceIdentity: String
+    let handoffState: String
+    let onboardingSessionID: String
+    let pairedSessionID: String
+    let pairedSessionAttachOutcome: String
+    let pairedTurnID: String?
+
+    var id: String {
+        [
+            phase.rawValue,
+            sourceSurfaceIdentity,
+            handoffState,
+            onboardingSessionID,
+            pairedSessionID,
+            pairedSessionAttachOutcome,
+            pairedTurnID ?? "paired_turn_not_provided",
+        ].joined(separator: "::")
+    }
+
+    var title: String {
+        "Desktop pairing completion local handoff"
+    }
+
+    var summary: String {
+        "A bounded local pairing-completion handoff is now foregrounding the already-live session, history, system-activity, needs-attention, and explicit-voice desktop surfaces while pairing/session continuity remains cloud-authored."
+    }
+
+    var detail: String {
+        "Local shell-only handoff state only. No backend mutation, no local session attach or reopen authority, no explicit voice request contract mutation, no wake-listener integration, no wake-to-turn handoff, and no autonomous unlock are introduced by this surface."
+    }
+}
+
+private struct DesktopReadyTimeHandoffState: Identifiable, Equatable {
+    let sourceSurfaceIdentity: String
+    let onboardingSessionID: String
+    let nextStep: String
+    let onboardingStatus: String?
+    let voiceArtifactSyncReceiptRef: String?
+    let accessEngineInstanceID: String?
+    let deviceID: String?
+    let sessionState: String
+    let sessionID: String
+    let sessionAttachOutcome: String
+    let turnID: String?
+    let handoffState: String
+
+    init(promptState: DesktopPairingCompletionPromptState) {
+        sourceSurfaceIdentity = promptState.sourceSurfaceIdentity
+        onboardingSessionID = promptState.onboardingSessionID
+        nextStep = promptState.nextStep
+        onboardingStatus = promptState.onboardingStatus
+        voiceArtifactSyncReceiptRef = promptState.voiceArtifactSyncReceiptRef
+        accessEngineInstanceID = promptState.accessEngineInstanceID
+        deviceID = promptState.deviceID
+        sessionState = promptState.sessionState
+        sessionID = promptState.sessionID
+        sessionAttachOutcome = promptState.sessionAttachOutcome
+        turnID = promptState.turnID
+        handoffState = "LOCAL_READY_TIME_HANDOFF_ACTIVE"
+    }
+
+    var id: String {
+        [
+            sourceSurfaceIdentity,
+            onboardingSessionID,
+            nextStep,
+            onboardingStatus ?? "onboarding_status_not_provided",
+            voiceArtifactSyncReceiptRef ?? "voice_receipt_not_provided",
+            accessEngineInstanceID ?? "access_engine_not_provided",
+            deviceID ?? "device_id_not_provided",
+            sessionState,
+            sessionID,
+            sessionAttachOutcome,
+            turnID ?? "turn_id_not_provided",
+            handoffState,
+        ].joined(separator: "::")
+    }
+
+    func matches(_ promptState: DesktopPairingCompletionPromptState) -> Bool {
+        sourceSurfaceIdentity == promptState.sourceSurfaceIdentity
+            && onboardingSessionID == promptState.onboardingSessionID
+            && nextStep == promptState.nextStep
+            && onboardingStatus == promptState.onboardingStatus
+            && voiceArtifactSyncReceiptRef == promptState.voiceArtifactSyncReceiptRef
+            && accessEngineInstanceID == promptState.accessEngineInstanceID
+            && deviceID == promptState.deviceID
+            && sessionState == promptState.sessionState
+            && sessionID == promptState.sessionID
+            && sessionAttachOutcome == promptState.sessionAttachOutcome
+            && turnID == promptState.turnID
+            && handoffState == "LOCAL_READY_TIME_HANDOFF_ACTIVE"
+    }
+}
+
 struct DesktopSessionSoftClosedVisibilityState: Identifiable, Equatable {
     let sourceSurfaceIdentity: String
     let sessionState: String
@@ -2944,6 +3074,8 @@ struct DesktopSessionShellView: View {
     @State private var desktopWakeEnrollCompleteCommitRuntimeOutcomeState: DesktopWakeEnrollCompleteCommitRuntimeOutcomeState?
     @State private var desktopWakeEnrollDeferCommitRuntimeOutcomeState: DesktopWakeEnrollDeferCommitRuntimeOutcomeState?
     @State private var desktopSessionSoftClosedResumeRuntimeOutcomeState: DesktopSessionSoftClosedResumeRuntimeOutcomeState?
+    @State private var desktopPairingCompletionLocalOutcomeState: DesktopPairingCompletionLocalOutcomeState?
+    @State private var desktopReadyTimeHandoffState: DesktopReadyTimeHandoffState?
     @State private var desktopEmoPersonaLockRuntimeOutcomeState: DesktopEmoPersonaLockRuntimeOutcomeState?
     @State private var desktopAccessProvisionCommitRuntimeOutcomeState: DesktopAccessProvisionCommitRuntimeOutcomeState?
     @State private var desktopCompleteCommitRuntimeOutcomeState: DesktopCompleteCommitRuntimeOutcomeState?
@@ -2966,24 +3098,29 @@ struct DesktopSessionShellView: View {
             VStack(alignment: .leading, spacing: 16) {
                 explicitVoiceEntryAffordanceCard
 
-                desktopOnboardingEntryCard
-                desktopOnboardingContinuePromptCard
-                desktopPlatformSetupReceiptSubmissionCard
-                desktopTermsAcceptCard
-                desktopSenderVerificationVisibilityCard
-                desktopEmployeePhotoCaptureSendCard
-                desktopEmployeeSenderVerifyCommitCard
-                desktopPrimaryDeviceConfirmCard
-                desktopVoiceEnrollCard
-                desktopWakeEnrollStartDraftCard
-                desktopWakeEnrollSampleCommitCard
-                desktopWakeEnrollCompleteCommitCard
-                desktopWakeEnrollDeferCommitCard
-                desktopEmoPersonaLockCard
-                desktopAccessProvisionCommitCard
-                desktopCompleteCommitCard
-                desktopReadyVisibilityCard
-                desktopPairingCompletionVisibilityCard
+                if desktopReadyTimeHandoffIsActive {
+                    desktopPairingCompletionMutationCard
+                } else {
+                    desktopOnboardingEntryCard
+                    desktopOnboardingContinuePromptCard
+                    desktopPlatformSetupReceiptSubmissionCard
+                    desktopTermsAcceptCard
+                    desktopSenderVerificationVisibilityCard
+                    desktopEmployeePhotoCaptureSendCard
+                    desktopEmployeeSenderVerifyCommitCard
+                    desktopPrimaryDeviceConfirmCard
+                    desktopVoiceEnrollCard
+                    desktopWakeEnrollStartDraftCard
+                    desktopWakeEnrollSampleCommitCard
+                    desktopWakeEnrollCompleteCommitCard
+                    desktopWakeEnrollDeferCommitCard
+                    desktopEmoPersonaLockCard
+                    desktopAccessProvisionCommitCard
+                    desktopCompleteCommitCard
+                    desktopReadyVisibilityCard
+                    desktopPairingCompletionVisibilityCard
+                    desktopPairingCompletionMutationCard
+                }
                 desktopSessionSoftClosedVisibilityCard
                 desktopSessionSoftClosedResumeCard
                 desktopSessionSuspendedVisibilityCard
@@ -3018,6 +3155,9 @@ struct DesktopSessionShellView: View {
         .task(id: desktopOnboardingContinuePromptSeedID) {
             await fetchOnboardingContinuePromptIfNeeded()
         }
+        .task(id: desktopPairingCompletionPromptState?.id) {
+            synchronizeDesktopPairingCompletionReadyTimeHandoffState()
+        }
         .onReceive(desktopAuthoritativeReplyPlaybackController.$playbackState) { playbackState in
             desktopAuthoritativeReplyPlaybackState = playbackState
         }
@@ -3043,6 +3183,8 @@ struct DesktopSessionShellView: View {
                     desktopEmoPersonaLockRuntimeOutcomeState = nil
                     desktopAccessProvisionCommitRuntimeOutcomeState = nil
                     desktopCompleteCommitRuntimeOutcomeState = nil
+                    desktopPairingCompletionLocalOutcomeState = nil
+                    desktopReadyTimeHandoffState = nil
                     desktopOnboardingContinueFieldInput = ""
                     desktopEmployeePhotoCaptureSendPhotoBlobRefInput = ""
                     desktopEmployeeSenderVerifyCommitSelectedDecision = "CONFIRM"
@@ -3977,6 +4119,35 @@ struct DesktopSessionShellView: View {
             sessionAttachOutcome: latestSessionHeaderContext.sessionAttachOutcome,
             turnID: nil
         )
+    }
+
+    private var desktopPairingCompletionPromptState: DesktopPairingCompletionPromptState? {
+        guard let pairingCompletionVisibilityState = desktopPairingCompletionVisibilityState else {
+            return nil
+        }
+
+        return DesktopPairingCompletionPromptState(
+            sourceSurfaceIdentity: "PAIRING_COMPLETION_VISIBLE",
+            onboardingSessionID: pairingCompletionVisibilityState.onboardingSessionID,
+            nextStep: pairingCompletionVisibilityState.nextStep,
+            onboardingStatus: pairingCompletionVisibilityState.onboardingStatus,
+            voiceArtifactSyncReceiptRef: pairingCompletionVisibilityState.voiceArtifactSyncReceiptRef,
+            accessEngineInstanceID: pairingCompletionVisibilityState.accessEngineInstanceID,
+            deviceID: pairingCompletionVisibilityState.deviceID,
+            sessionState: pairingCompletionVisibilityState.sessionState,
+            sessionID: pairingCompletionVisibilityState.sessionID,
+            sessionAttachOutcome: pairingCompletionVisibilityState.sessionAttachOutcome,
+            turnID: pairingCompletionVisibilityState.turnID
+        )
+    }
+
+    private var desktopReadyTimeHandoffIsActive: Bool {
+        guard let desktopReadyTimeHandoffState,
+              let promptState = desktopPairingCompletionPromptState else {
+            return false
+        }
+
+        return desktopReadyTimeHandoffState.matches(promptState)
     }
 
     private var desktopSessionSoftClosedVisibilityState: DesktopSessionSoftClosedVisibilityState? {
@@ -6261,6 +6432,149 @@ struct DesktopSessionShellView: View {
                     }
                 } label: {
                     Text("Onboarding Pairing Completion Visibility")
+                        .font(.headline)
+                }
+            }
+        }
+    }
+
+    private var desktopPairingCompletionMutationCard: some View {
+        let promptState = desktopPairingCompletionPromptState
+        let displayedSourceSurface = desktopPairingCompletionLocalOutcomeState?.sourceSurfaceIdentity
+            ?? promptState?.sourceSurfaceIdentity
+            ?? "PAIRING_COMPLETION_VISIBLE"
+        let displayedOnboardingSessionID = promptState?.onboardingSessionID
+            ?? desktopReadyTimeHandoffState?.onboardingSessionID
+            ?? "not_provided"
+        let displayedNextStep = promptState?.nextStep
+            ?? desktopReadyTimeHandoffState?.nextStep
+            ?? "not_provided"
+        let displayedOnboardingStatus = promptState?.onboardingStatus
+            ?? desktopReadyTimeHandoffState?.onboardingStatus
+        let displayedVoiceArtifactSyncReceiptRef = promptState?.voiceArtifactSyncReceiptRef
+            ?? desktopReadyTimeHandoffState?.voiceArtifactSyncReceiptRef
+        let displayedAccessEngineInstanceID = promptState?.accessEngineInstanceID
+            ?? desktopReadyTimeHandoffState?.accessEngineInstanceID
+        let displayedDeviceID = promptState?.deviceID
+            ?? desktopReadyTimeHandoffState?.deviceID
+        let displayedSessionState = promptState?.sessionState
+            ?? desktopReadyTimeHandoffState?.sessionState
+            ?? "not_provided"
+        let displayedSessionID = promptState?.sessionID
+            ?? desktopReadyTimeHandoffState?.sessionID
+            ?? "not_provided"
+        let displayedSessionAttachOutcome = promptState?.sessionAttachOutcome
+            ?? desktopReadyTimeHandoffState?.sessionAttachOutcome
+            ?? "not_provided"
+        let displayedTurnID = promptState?.turnID
+            ?? desktopReadyTimeHandoffState?.turnID
+
+        return Group {
+            if promptState != nil || desktopPairingCompletionLocalOutcomeState != nil {
+                GroupBox {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("Bounded desktop pairing-completion mutation plus onboarding-derived ready-time local handoff only. This shell derives one bounded prompt state from the already-live exact pairing-completion visibility surface only, records one explicit local handoff only when canonical onboarding posture remains exact `READY`, and foregrounds the already-live operational desktop surfaces without widening into backend mutation or local session authority.")
+                            .frame(maxWidth: .infinity, alignment: .leading)
+
+                        metadataRow(label: "source_surface", value: displayedSourceSurface)
+                        metadataRow(label: "onboarding_session_id", value: displayedOnboardingSessionID)
+                        metadataRow(label: "next_step", value: displayedNextStep)
+
+                        if let displayedOnboardingStatus {
+                            metadataRow(label: "onboarding_status", value: displayedOnboardingStatus)
+                        }
+
+                        if let displayedVoiceArtifactSyncReceiptRef {
+                            metadataRow(
+                                label: "voice_artifact_sync_receipt_ref",
+                                value: displayedVoiceArtifactSyncReceiptRef
+                            )
+                        }
+
+                        if let displayedAccessEngineInstanceID {
+                            metadataRow(label: "access_engine_instance_id", value: displayedAccessEngineInstanceID)
+                        }
+
+                        if let displayedDeviceID {
+                            metadataRow(label: "device_id", value: displayedDeviceID)
+                        }
+
+                        metadataRow(label: "session_state", value: displayedSessionState)
+                        metadataRow(label: "session_id", value: displayedSessionID)
+                        metadataRow(label: "session_attach_outcome", value: displayedSessionAttachOutcome)
+
+                        if let displayedTurnID {
+                            metadataRow(label: "turn_id", value: displayedTurnID)
+                        }
+
+                        Text("Pairing/session continuity remains cloud-authored and non-authoritative here. This exact local handoff only foregrounds already-live desktop operational surfaces while keeping ready and pairing continuity details bounded and read-only outside the explicit control itself.")
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+
+                        Text("This path does not add backend mutation, local session attach or reopen authority, explicit voice request contract mutation, wake-listener integration, wake-to-turn handoff, or autonomous unlock.")
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+
+                        if let promptState, !desktopReadyTimeHandoffIsActive {
+                            Button("Complete desktop pairing completion handoff") {
+                                completeDesktopPairingCompletionAndReadyTimeHandoff(promptState: promptState)
+                            }
+                            .buttonStyle(.borderedProminent)
+                        }
+
+                        if let desktopPairingCompletionLocalOutcomeState {
+                            Divider()
+
+                            Text(desktopPairingCompletionLocalOutcomeState.title)
+                                .font(.headline)
+
+                            metadataRow(
+                                label: "mutation_phase",
+                                value: desktopPairingCompletionLocalOutcomeState.phase.rawValue
+                            )
+                            metadataRow(
+                                label: "source_surface",
+                                value: desktopPairingCompletionLocalOutcomeState.sourceSurfaceIdentity
+                            )
+                            metadataRow(
+                                label: "handoff_state",
+                                value: desktopPairingCompletionLocalOutcomeState.handoffState
+                            )
+                            metadataRow(
+                                label: "paired_session_id",
+                                value: desktopPairingCompletionLocalOutcomeState.pairedSessionID
+                            )
+                            metadataRow(
+                                label: "paired_session_attach_outcome",
+                                value: desktopPairingCompletionLocalOutcomeState.pairedSessionAttachOutcome
+                            )
+
+                            if let pairedTurnID = desktopPairingCompletionLocalOutcomeState.pairedTurnID {
+                                metadataRow(label: "paired_turn_id", value: pairedTurnID)
+                            }
+
+                            Text(desktopPairingCompletionLocalOutcomeState.summary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+
+                            Text(desktopPairingCompletionLocalOutcomeState.detail)
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        } else {
+                            Text(promptState != nil
+                                ? "Awaiting one explicit user-triggered local pairing-completion handoff. After submission, the shell will foreground the already-live session, history, system-activity, needs-attention, and explicit-voice desktop surfaces while keeping this path bounded and non-authoritative."
+                                : "Read-only pairing posture only. A bounded local pairing-completion handoff is unavailable until lawful prompt state is present with exact `READY` posture plus exact `NEW_SESSION_CREATED` or exact `EXISTING_SESSION_ATTACHED` continuity.")
+                                .foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+
+                        Text("Cloud-authored and non-authoritative only. No text field, no hidden/background behavior, no wake parity claim, and no proven native macOS wake-listener integration claim are introduced by this surface.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                } label: {
+                    Text("Onboarding Pairing Completion Handoff")
                         .font(.headline)
                 }
             }
@@ -9522,6 +9836,40 @@ struct DesktopSessionShellView: View {
                 summary: "The canonical onboarding-continue bridge could not stage this bounded desktop wake-enroll defer-commit request.",
                 detail: error.localizedDescription
             )
+        }
+    }
+
+    @MainActor
+    private func completeDesktopPairingCompletionAndReadyTimeHandoff(
+        promptState: DesktopPairingCompletionPromptState
+    ) {
+        let handoffState = DesktopReadyTimeHandoffState(promptState: promptState)
+        desktopReadyTimeHandoffState = handoffState
+        desktopPairingCompletionLocalOutcomeState = DesktopPairingCompletionLocalOutcomeState(
+            phase: .completed,
+            sourceSurfaceIdentity: promptState.sourceSurfaceIdentity,
+            handoffState: handoffState.handoffState,
+            onboardingSessionID: promptState.onboardingSessionID,
+            pairedSessionID: promptState.sessionID,
+            pairedSessionAttachOutcome: promptState.sessionAttachOutcome,
+            pairedTurnID: promptState.turnID
+        )
+    }
+
+    @MainActor
+    private func synchronizeDesktopPairingCompletionReadyTimeHandoffState() {
+        guard let desktopReadyTimeHandoffState else {
+            if desktopPairingCompletionPromptState == nil {
+                desktopPairingCompletionLocalOutcomeState = nil
+            }
+            return
+        }
+
+        guard let promptState = desktopPairingCompletionPromptState,
+              desktopReadyTimeHandoffState.matches(promptState) else {
+            self.desktopReadyTimeHandoffState = nil
+            desktopPairingCompletionLocalOutcomeState = nil
+            return
         }
     }
 
