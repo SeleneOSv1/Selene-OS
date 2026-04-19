@@ -2682,6 +2682,30 @@ private struct DesktopInterruptResponseProductionState: Identifiable, Equatable 
     }
 }
 
+private struct DesktopInterruptSubjectReferencesVisibilityState: Identifiable, Equatable {
+    let sourceSurfaceIdentity: String
+    let sessionState: String
+    let sessionID: String
+    let turnID: String
+    let interruptSubjectRelation: String?
+    let activeSubjectRef: String?
+    let interruptedSubjectRef: String?
+    let hasLawfulInterruptSubjectReferences: Bool
+
+    var id: String {
+        [
+            sourceSurfaceIdentity,
+            sessionState,
+            sessionID,
+            turnID,
+            interruptSubjectRelation ?? "interrupt_subject_relation_not_provided",
+            activeSubjectRef ?? "active_subject_ref_not_provided",
+            interruptedSubjectRef ?? "interrupted_subject_ref_not_provided",
+            booleanValue(hasLawfulInterruptSubjectReferences),
+        ].joined(separator: "::")
+    }
+}
+
 struct DesktopSenderVerificationVisibilityState: Identifiable, Equatable {
     let onboardingSessionID: String
     let nextStep: String
@@ -2850,6 +2874,7 @@ struct DesktopSessionShellView: View {
                 desktopRecoveryVisibilityCard
                 desktopInterruptVisibilityCard
                 desktopInterruptResponseProductionCard
+                desktopInterruptSubjectReferencesVisibilityCard
 
                 sessionCard
                 .frame(maxWidth: .infinity, minHeight: 360, alignment: .topLeading)
@@ -3887,6 +3912,31 @@ struct DesktopSessionShellView: View {
             interruptAcceptedAnswerFormats: latestSessionActiveVisibleContext
                 .interruptAcceptedAnswerFormats,
             activeContext: latestSessionActiveVisibleContext
+        )
+    }
+
+    private var desktopInterruptSubjectReferencesVisibilityState:
+        DesktopInterruptSubjectReferencesVisibilityState?
+    {
+        guard
+            activeInterruptDisplayState == .interruptVisible,
+            let latestSessionActiveVisibleContext,
+            latestSessionActiveVisibleContext.hasLawfulInterruptSubjectReferences
+        else {
+            return nil
+        }
+
+        return DesktopInterruptSubjectReferencesVisibilityState(
+            sourceSurfaceIdentity: "INTERRUPT_VISIBLE",
+            sessionState: latestSessionActiveVisibleContext.sessionState,
+            sessionID: latestSessionActiveVisibleContext.sessionID,
+            turnID: latestSessionActiveVisibleContext.turnID,
+            interruptSubjectRelation: latestSessionActiveVisibleContext.interruptSubjectRelation?
+                .rawValue,
+            activeSubjectRef: latestSessionActiveVisibleContext.activeSubjectRef,
+            interruptedSubjectRef: latestSessionActiveVisibleContext.interruptedSubjectRef,
+            hasLawfulInterruptSubjectReferences: latestSessionActiveVisibleContext
+                .hasLawfulInterruptSubjectReferences
         )
     }
 
@@ -6175,6 +6225,66 @@ struct DesktopSessionShellView: View {
                     }
                 } label: {
                     Text("Interrupt Response Production")
+                        .font(.headline)
+                }
+            }
+        }
+    }
+
+    private var desktopInterruptSubjectReferencesVisibilityCard: some View {
+        let interruptSubjectReferencesVisibilityState = desktopInterruptSubjectReferencesVisibilityState
+
+        return Group {
+            if let interruptSubjectReferencesVisibilityState {
+                GroupBox {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("Bounded desktop interrupt subject-references visibility only. This shell derives one dedicated exact `INTERRUPT_VISIBLE` subject-reference surface from the already-live active-session interrupt context only, preserves cloud-authored continuity subject evidence in read-only form, and keeps broader interrupt detail and response-production branches outside this selected implementation seam.")
+                            .frame(maxWidth: .infinity, alignment: .leading)
+
+                        ForEach(
+                            [
+                                (
+                                    "source_surface",
+                                    interruptSubjectReferencesVisibilityState.sourceSurfaceIdentity
+                                ),
+                                ("session_state", interruptSubjectReferencesVisibilityState.sessionState),
+                                ("session_id", interruptSubjectReferencesVisibilityState.sessionID),
+                                ("turn_id", interruptSubjectReferencesVisibilityState.turnID),
+                            ],
+                            id: \.0
+                        ) { row in
+                            metadataRow(label: row.0, value: row.1)
+                        }
+
+                        if let interruptSubjectRelation = interruptSubjectReferencesVisibilityState
+                            .interruptSubjectRelation
+                        {
+                            metadataRow(
+                                label: "interrupt_subject_relation",
+                                value: interruptSubjectRelation
+                            )
+                        }
+
+                        Text("Subject-reference posture remains cloud-authored and active-session-bound here, so this dedicated surface renders continuity subject evidence without widening into local subject execution authority.")
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+
+                        if interruptSubjectReferencesVisibilityState.hasLawfulInterruptSubjectReferences {
+                            interruptSubjectReferencesCard(
+                                activeSubjectRef: interruptSubjectReferencesVisibilityState
+                                    .activeSubjectRef,
+                                interruptedSubjectRef: interruptSubjectReferencesVisibilityState
+                                    .interruptedSubjectRef
+                            )
+                        }
+
+                        Text("Subject-reference evidence remains evidence-only here and does not grant local subject binding, local subject reconciliation, local identity resolution, or local dispatch unlock authority. This shell stays explicitly non-authoritative.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                } label: {
+                    Text("Interrupt Subject References")
                         .font(.headline)
                 }
             }
