@@ -1606,6 +1606,133 @@ struct DesktopSessionSoftClosedResumeRuntimeOutcomeState: Identifiable, Equatabl
     }
 }
 
+struct DesktopWakeProfileAvailabilityRuntimeOutcomeState: Identifiable, Equatable {
+    enum Phase: String, Equatable {
+        case dispatching = "dispatching"
+        case completed = "completed"
+        case failed = "failed"
+    }
+
+    let id: String
+    let phase: Phase
+    let title: String
+    let summary: String
+    let detail: String
+    let endpoint: String
+    let requestID: String
+    let receiptKind: String
+    let deviceID: String
+    let wakeProfileID: String
+    let voiceArtifactSyncReceiptRef: String
+    let outcome: String?
+    let reason: String?
+    let activeWakeArtifactVersion: String?
+    let activatedCount: UInt64
+    let noopCount: UInt64
+    let pullErrorCount: UInt64
+
+    static func dispatching(
+        receiptKind: String,
+        deviceID: String,
+        wakeProfileID: String,
+        voiceArtifactSyncReceiptRef: String,
+        endpoint: String,
+        requestID: String
+    ) -> DesktopWakeProfileAvailabilityRuntimeOutcomeState {
+        DesktopWakeProfileAvailabilityRuntimeOutcomeState(
+            id: requestID,
+            phase: .dispatching,
+            title: "Dispatching desktop wake-profile availability refresh",
+            summary: "The bounded desktop wake-profile local-availability refresh is now being handed into canonical `/v1/wake-profile/availability`.",
+            detail: "Only exact wake-profile local-availability refresh is in scope here. This shell remains explicitly non-authoritative and does not introduce native wake-listener start or stop, wake detection, wake-to-turn dispatch, hidden/background auto-start, or autonomous unlock.",
+            endpoint: endpoint,
+            requestID: requestID,
+            receiptKind: receiptKind,
+            deviceID: deviceID,
+            wakeProfileID: wakeProfileID,
+            voiceArtifactSyncReceiptRef: voiceArtifactSyncReceiptRef,
+            outcome: nil,
+            reason: nil,
+            activeWakeArtifactVersion: nil,
+            activatedCount: 0,
+            noopCount: 0,
+            pullErrorCount: 0
+        )
+    }
+
+    static func completed(
+        requestID: String,
+        endpoint: String,
+        response: DesktopCanonicalRuntimeBridge.WakeProfileAvailabilityRefreshAdapterResponsePayload,
+        fallbackReceiptKind: String,
+        fallbackDeviceID: String,
+        fallbackWakeProfileID: String,
+        fallbackVoiceArtifactSyncReceiptRef: String
+    ) -> DesktopWakeProfileAvailabilityRuntimeOutcomeState {
+        let boundedOutcome = boundedOnboardingContinueField(response.outcome)
+        let boundedReason = boundedOnboardingContinueField(response.reason)
+        let boundedWakeProfileID = boundedOnboardingContinueField(response.wakeProfileID)
+            ?? fallbackWakeProfileID
+        let boundedActiveWakeArtifactVersion = boundedOnboardingContinueField(
+            response.activeWakeArtifactVersion
+        )
+
+        return DesktopWakeProfileAvailabilityRuntimeOutcomeState(
+            id: requestID,
+            phase: .completed,
+            title: "Desktop wake-profile availability refresh completed",
+            summary: boundedActiveWakeArtifactVersion != nil
+                ? "Canonical `/v1/wake-profile/availability` returned a bounded local active wake-artifact version for the current desktop wake profile."
+                : "Canonical `/v1/wake-profile/availability` completed without a visible local active wake-artifact version for the current desktop wake profile.",
+            detail: "Read-only returned wake-profile local-availability posture only. This shell preserves exact `wake_profile_id`, exact `active_wake_artifact_version`, and bounded worker-pass counters without introducing native wake-listener start or stop, wake detection, wake-to-turn dispatch, hidden/background auto-start, or autonomous unlock.",
+            endpoint: endpoint,
+            requestID: requestID,
+            receiptKind: fallbackReceiptKind,
+            deviceID: boundedOnboardingContinueField(response.deviceID) ?? fallbackDeviceID,
+            wakeProfileID: boundedWakeProfileID,
+            voiceArtifactSyncReceiptRef: fallbackVoiceArtifactSyncReceiptRef,
+            outcome: boundedOutcome ?? "ACTIVE_VERSION_VISIBLE",
+            reason: boundedReason,
+            activeWakeArtifactVersion: boundedActiveWakeArtifactVersion,
+            activatedCount: response.activatedCount,
+            noopCount: response.noopCount,
+            pullErrorCount: response.pullErrorCount
+        )
+    }
+
+    static func failed(
+        receiptKind: String,
+        deviceID: String,
+        wakeProfileID: String,
+        voiceArtifactSyncReceiptRef: String,
+        endpoint: String,
+        requestID: String,
+        summary: String,
+        detail: String,
+        reason: String? = nil
+    ) -> DesktopWakeProfileAvailabilityRuntimeOutcomeState {
+        DesktopWakeProfileAvailabilityRuntimeOutcomeState(
+            id: requestID,
+            phase: .failed,
+            title: "Desktop wake-profile availability refresh failed",
+            summary: summary,
+            detail: detail,
+            endpoint: endpoint,
+            requestID: requestID,
+            receiptKind: receiptKind,
+            deviceID: deviceID,
+            wakeProfileID: wakeProfileID,
+            voiceArtifactSyncReceiptRef: voiceArtifactSyncReceiptRef,
+            outcome: nil,
+            reason: reason,
+            activeWakeArtifactVersion: nil,
+            activatedCount: 0,
+            noopCount: 0,
+            pullErrorCount: 0
+        )
+    }
+}
+
 struct DesktopEmoPersonaLockRuntimeOutcomeState: Identifiable, Equatable {
     enum Phase: String, Equatable {
         case dispatching = "dispatching"
@@ -2117,6 +2244,7 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
         case invalidWakeEnrollCompleteCommitRequest(String)
         case invalidWakeEnrollDeferCommitRequest(String)
         case invalidSessionSoftClosedResumeRequest(String)
+        case invalidWakeProfileAvailabilityRequest(String)
         case invalidEmoPersonaLockRequest(String)
         case invalidAccessProvisionCommitRequest(String)
         case invalidCompleteCommitRequest(String)
@@ -2142,6 +2270,7 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
                  .invalidWakeEnrollCompleteCommitRequest(let detail),
                  .invalidWakeEnrollDeferCommitRequest(let detail),
                  .invalidSessionSoftClosedResumeRequest(let detail),
+                 .invalidWakeProfileAvailabilityRequest(let detail),
                  .invalidEmoPersonaLockRequest(let detail),
                  .invalidAccessProvisionCommitRequest(let detail),
                  .invalidCompleteCommitRequest(let detail),
@@ -2276,6 +2405,16 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
         let urlRequest: URLRequest
     }
 
+    struct DesktopWakeProfileAvailabilityIngressContext {
+        let receiptKind: String
+        let deviceID: String
+        let wakeProfileID: String
+        let voiceArtifactSyncReceiptRef: String
+        let requestID: String
+        let endpoint: String
+        let urlRequest: URLRequest
+    }
+
     struct DesktopEmoPersonaLockIngressContext {
         let onboardingSessionID: String
         let requestID: String
@@ -2355,6 +2494,18 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
         let sessionID: String?
         let sessionState: String?
         let sessionAttachOutcome: String?
+    }
+
+    struct WakeProfileAvailabilityRefreshAdapterResponsePayload: Decodable {
+        let status: String
+        let outcome: String
+        let reason: String?
+        let deviceID: String?
+        let wakeProfileID: String?
+        let activeWakeArtifactVersion: String?
+        let activatedCount: UInt64
+        let noopCount: UInt64
+        let pullErrorCount: UInt64
     }
 
     private struct VoiceTurnIngressErrorPayload: Decodable {
@@ -2515,6 +2666,14 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
         let idempotencyKey: String
         let sessionID: String
         let deviceID: String
+    }
+
+    private struct WakeProfileAvailabilityRefreshAdapterRequestPayload: Encodable {
+        let correlationID: UInt64
+        let idempotencyKey: String
+        let deviceID: String
+        let expectedWakeProfileID: String
+        let voiceArtifactSyncReceiptRef: String
     }
 
     private struct VoiceTurnThreadPolicyFlagsPayload: Encodable {
@@ -2827,6 +2986,26 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
                 endpoint: sessionResumeEndpoint,
                 requestID: "unavailable",
                 summary: "The canonical session-resume bridge could not stage this bounded desktop soft-closed explicit resume request.",
+                detail: error.localizedDescription
+            )
+        }
+    }
+
+    func submitDesktopWakeProfileAvailabilityRefresh(
+        _ promptState: DesktopWakeProfileAvailabilityPromptState
+    ) async -> DesktopWakeProfileAvailabilityRuntimeOutcomeState {
+        do {
+            let ingressContext = try desktopWakeProfileAvailabilityRequestBuilder(promptState)
+            return await submitDesktopWakeProfileAvailabilityRefresh(ingressContext)
+        } catch {
+            return .failed(
+                receiptKind: promptState.receiptKind,
+                deviceID: promptState.deviceID,
+                wakeProfileID: promptState.wakeProfileID,
+                voiceArtifactSyncReceiptRef: promptState.voiceArtifactSyncReceiptRef,
+                endpoint: wakeProfileAvailabilityEndpoint,
+                requestID: "unavailable",
+                summary: "The canonical wake-profile availability bridge could not stage this bounded desktop wake-profile local-availability refresh request.",
                 detail: error.localizedDescription
             )
         }
@@ -3540,6 +3719,60 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
                 endpoint: ingressContext.endpoint,
                 requestID: ingressContext.requestID,
                 summary: "The canonical session-resume bridge could not deliver this bounded desktop soft-closed explicit resume request.",
+                detail: error.localizedDescription
+            )
+        }
+    }
+
+    func submitDesktopWakeProfileAvailabilityRefresh(
+        _ ingressContext: DesktopWakeProfileAvailabilityIngressContext
+    ) async -> DesktopWakeProfileAvailabilityRuntimeOutcomeState {
+        do {
+            try await ensureAdapterAvailable()
+
+            let (data, response) = try await urlSession.data(for: ingressContext.urlRequest)
+            let decoder = JSONDecoder()
+            decoder.keyDecodingStrategy = .convertFromSnakeCase
+            let httpResponse = response as? HTTPURLResponse
+            let statusCode = httpResponse?.statusCode ?? 0
+            let payload = try decoder.decode(
+                WakeProfileAvailabilityRefreshAdapterResponsePayload.self,
+                from: data
+            )
+
+            if statusCode == 200,
+               payload.status.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "ok" {
+                return .completed(
+                    requestID: ingressContext.requestID,
+                    endpoint: ingressContext.endpoint,
+                    response: payload,
+                    fallbackReceiptKind: ingressContext.receiptKind,
+                    fallbackDeviceID: ingressContext.deviceID,
+                    fallbackWakeProfileID: ingressContext.wakeProfileID,
+                    fallbackVoiceArtifactSyncReceiptRef: ingressContext.voiceArtifactSyncReceiptRef
+                )
+            }
+
+            return .failed(
+                receiptKind: ingressContext.receiptKind,
+                deviceID: ingressContext.deviceID,
+                wakeProfileID: ingressContext.wakeProfileID,
+                voiceArtifactSyncReceiptRef: ingressContext.voiceArtifactSyncReceiptRef,
+                endpoint: ingressContext.endpoint,
+                requestID: ingressContext.requestID,
+                summary: "The canonical wake-profile availability bridge rejected or failed this bounded desktop wake-profile local-availability refresh request.",
+                detail: "Canonical `/v1/wake-profile/availability` failed closed with outcome `\(payload.outcome)` and reason `\(boundedOnboardingContinueField(payload.reason) ?? "not_provided")`. This shell remains limited to exact wake-profile local-availability refresh and does not add native wake-listener start or stop, wake detection, wake-to-turn dispatch, hidden/background auto-start, or autonomous unlock.",
+                reason: boundedOnboardingContinueField(payload.reason)
+            )
+        } catch {
+            return .failed(
+                receiptKind: ingressContext.receiptKind,
+                deviceID: ingressContext.deviceID,
+                wakeProfileID: ingressContext.wakeProfileID,
+                voiceArtifactSyncReceiptRef: ingressContext.voiceArtifactSyncReceiptRef,
+                endpoint: ingressContext.endpoint,
+                requestID: ingressContext.requestID,
+                summary: "The canonical wake-profile availability bridge could not deliver this bounded desktop wake-profile local-availability refresh request.",
                 detail: error.localizedDescription
             )
         }
@@ -4881,6 +5114,80 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
         )
     }
 
+    func desktopWakeProfileAvailabilityRequestBuilder(
+        _ promptState: DesktopWakeProfileAvailabilityPromptState
+    ) throws -> DesktopWakeProfileAvailabilityIngressContext {
+        guard let receiptKind = boundedOnboardingContinueField(promptState.receiptKind),
+              receiptKind == "desktop_wakeword_configured" else {
+            throw BridgeError.invalidWakeProfileAvailabilityRequest(
+                "bounded desktop wake-profile local-availability refresh must preserve exact `desktop_wakeword_configured` receipt posture"
+            )
+        }
+
+        guard let managedDeviceID = boundedOnboardingContinueField(deviceID),
+              let promptDeviceID = boundedOnboardingContinueField(promptState.deviceID),
+              promptDeviceID == managedDeviceID else {
+            throw BridgeError.invalidWakeProfileAvailabilityRequest(
+                "bounded desktop wake-profile local-availability refresh must preserve the exact managed bridge `deviceID` only"
+            )
+        }
+
+        guard let wakeProfileID = boundedOnboardingContinueField(promptState.wakeProfileID) else {
+            throw BridgeError.invalidWakeProfileAvailabilityRequest(
+                "the bounded desktop wake-profile local-availability refresh prompt state did not preserve a lawful wake_profile_id"
+            )
+        }
+
+        guard let voiceArtifactSyncReceiptRef = boundedOnboardingContinueField(
+            promptState.voiceArtifactSyncReceiptRef
+        ) else {
+            throw BridgeError.invalidWakeProfileAvailabilityRequest(
+                "the bounded desktop wake-profile local-availability refresh prompt state did not preserve a lawful voice_artifact_sync_receipt_ref"
+            )
+        }
+
+        let requestID = "desktop_wake_profile_availability_request_\(UUID().uuidString.replacingOccurrences(of: "-", with: ""))"
+        let idempotencyKey = "desktop_wake_profile_availability_\(UUID().uuidString.replacingOccurrences(of: "-", with: ""))"
+        let nonce = UUID().uuidString.replacingOccurrences(of: "-", with: "")
+        let timestampMS = Self.systemTimeNowMS()
+        let correlationID = Swift.max(DispatchTime.now().uptimeNanoseconds, 1)
+
+        let payload = WakeProfileAvailabilityRefreshAdapterRequestPayload(
+            correlationID: correlationID,
+            idempotencyKey: idempotencyKey,
+            deviceID: managedDeviceID,
+            expectedWakeProfileID: wakeProfileID,
+            voiceArtifactSyncReceiptRef: voiceArtifactSyncReceiptRef
+        )
+
+        let encoder = JSONEncoder()
+        encoder.keyEncodingStrategy = .convertToSnakeCase
+        let body = try encoder.encode(payload)
+        let endpointURL = adapterBaseURL.appendingPathComponent("v1/wake-profile/availability")
+        var urlRequest = URLRequest(url: endpointURL)
+        urlRequest.httpMethod = "POST"
+        urlRequest.httpBody = body
+        urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        urlRequest.setValue(requestID, forHTTPHeaderField: "x-request-id")
+        urlRequest.setValue(idempotencyKey, forHTTPHeaderField: "idempotency-key")
+        urlRequest.setValue(String(timestampMS), forHTTPHeaderField: "x-selene-timestamp-ms")
+        urlRequest.setValue(nonce, forHTTPHeaderField: "x-selene-nonce")
+        urlRequest.setValue(
+            Self.bearerToken(subject: wakeProfileID, device: managedDeviceID),
+            forHTTPHeaderField: "Authorization"
+        )
+
+        return DesktopWakeProfileAvailabilityIngressContext(
+            receiptKind: receiptKind,
+            deviceID: managedDeviceID,
+            wakeProfileID: wakeProfileID,
+            voiceArtifactSyncReceiptRef: voiceArtifactSyncReceiptRef,
+            requestID: requestID,
+            endpoint: endpointURL.absoluteString,
+            urlRequest: urlRequest
+        )
+    }
+
     func desktopEmoPersonaLockRequestBuilder(
         _ promptState: DesktopEmoPersonaLockPromptState
     ) throws -> DesktopEmoPersonaLockIngressContext {
@@ -5096,6 +5403,10 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
 
     var sessionResumeEndpoint: String {
         adapterBaseURL.appendingPathComponent("v1/session/resume").absoluteString
+    }
+
+    var wakeProfileAvailabilityEndpoint: String {
+        adapterBaseURL.appendingPathComponent("v1/wake-profile/availability").absoluteString
     }
 
     var managedDeviceID: String {

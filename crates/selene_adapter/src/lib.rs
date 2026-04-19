@@ -117,9 +117,9 @@ use selene_kernel_contracts::{
 };
 use selene_os::app_ingress::{
     AppInviteLinkOpenRequest, AppOnboardingContinueAction, AppOnboardingContinueNextStep,
-    AppOnboardingContinueRequest, AppServerIngressRuntime, AppSessionResumeRequest,
-    AppVoiceIngressRequest, AppVoicePh1xBuildInput, AppVoiceTurnExecutionOutcome,
-    AppVoiceTurnNextMove,
+    AppOnboardingContinueRequest, AppServerIngressRuntime,
+    AppWakeProfileAvailabilityRefreshRequest, AppSessionResumeRequest, AppVoiceIngressRequest,
+    AppVoicePh1xBuildInput, AppVoiceTurnExecutionOutcome, AppVoiceTurnNextMove,
 };
 use selene_os::device_artifact_sync::DeviceArtifactSyncWorkerPassMetrics;
 use selene_os::ph1_voice_id::{
@@ -634,6 +634,28 @@ pub struct SessionResumeAdapterResponse {
     pub session_id: Option<String>,
     pub session_state: Option<String>,
     pub session_attach_outcome: Option<String>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct WakeProfileAvailabilityRefreshAdapterRequest {
+    pub correlation_id: u64,
+    pub idempotency_key: String,
+    pub device_id: String,
+    pub expected_wake_profile_id: String,
+    pub voice_artifact_sync_receipt_ref: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct WakeProfileAvailabilityRefreshAdapterResponse {
+    pub status: String,
+    pub outcome: String,
+    pub reason: Option<String>,
+    pub device_id: Option<String>,
+    pub wake_profile_id: Option<String>,
+    pub active_wake_artifact_version: Option<String>,
+    pub activated_count: u64,
+    pub noop_count: u64,
+    pub pull_error_count: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, Default)]
@@ -1551,6 +1573,45 @@ impl AdapterRuntime {
             session_attach_outcome: Some(session_attach_outcome_to_api_value(
                 outcome.session_attach_outcome,
             )),
+        })
+    }
+
+    pub fn run_wake_profile_availability_refresh(
+        &self,
+        request: WakeProfileAvailabilityRefreshAdapterRequest,
+    ) -> Result<WakeProfileAvailabilityRefreshAdapterResponse, String> {
+        let correlation_id = CorrelationId(u128::from(request.correlation_id));
+        let device_id = DeviceId::new(request.device_id.clone())
+            .map_err(|err| format!("invalid device_id: {err:?}"))?;
+        let ingress_request = AppWakeProfileAvailabilityRefreshRequest::v1(
+            correlation_id,
+            request.idempotency_key,
+            device_id,
+            request.expected_wake_profile_id,
+            request.voice_artifact_sync_receipt_ref,
+        )
+        .map_err(|err| format!("invalid wake_profile_availability request: {err:?}"))?;
+
+        let mut store = self
+            .store
+            .lock()
+            .map_err(|_| "adapter store lock poisoned".to_string())?;
+        let now = MonotonicTimeNs(system_time_now_ns().max(1));
+        let outcome = self
+            .ingress
+            .run_wake_profile_availability_refresh(&mut store, ingress_request, now)
+            .map_err(storage_error_to_string)?;
+
+        Ok(WakeProfileAvailabilityRefreshAdapterResponse {
+            status: "ok".to_string(),
+            outcome: outcome.outcome,
+            reason: outcome.reason,
+            device_id: Some(outcome.device_id),
+            wake_profile_id: Some(outcome.wake_profile_id),
+            active_wake_artifact_version: outcome.active_wake_artifact_version,
+            activated_count: outcome.activated_count,
+            noop_count: outcome.noop_count,
+            pull_error_count: outcome.pull_error_count,
         })
     }
 

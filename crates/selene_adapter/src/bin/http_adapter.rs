@@ -23,7 +23,8 @@ use selene_adapter::{
     UiHealthChecksResponse, UiHealthDetailFilter, UiHealthDetailResponse,
     UiHealthReportQueryRequest, UiHealthReportQueryResponse, UiHealthSummary,
     UiHealthTimelinePaging, VoiceTurnAdapterRequest, VoiceTurnAdapterResponse,
-    VoiceTurnIngressError,
+    VoiceTurnIngressError, WakeProfileAvailabilityRefreshAdapterRequest,
+    WakeProfileAvailabilityRefreshAdapterResponse,
 };
 use selene_engines::ph1e::startup_outbound_self_check_logs;
 use selene_kernel_contracts::runtime_execution::{FailureClass, RuntimeExecutionEnvelope};
@@ -221,6 +222,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/v1/invite/click", post(run_invite_click))
         .route("/v1/onboarding/continue", post(run_onboarding_continue))
         .route("/v1/session/resume", post(run_session_resume))
+        .route(
+            "/v1/wake-profile/availability",
+            post(run_wake_profile_availability_refresh),
+        )
         .with_state(state);
 
     println!(
@@ -769,6 +774,92 @@ async fn run_session_resume(
     }
 }
 
+async fn run_wake_profile_availability_refresh(
+    State(state): State<HttpAdapterState>,
+    headers: HeaderMap,
+    Json(request): Json<WakeProfileAvailabilityRefreshAdapterRequest>,
+) -> Response {
+    let request_id = match required_header_token(&headers, "x-request-id", "missing_request_id") {
+        Ok(v) => v,
+        Err(reject) => {
+            return wake_profile_availability_security_reject_response(
+                reject,
+                Some(request.device_id.clone()),
+                Some(request.expected_wake_profile_id.clone()),
+            )
+        }
+    };
+    let timestamp_ms = match required_header_u64(
+        &headers,
+        "x-selene-timestamp-ms",
+        "missing_timestamp_ms",
+        "invalid_timestamp_ms",
+    ) {
+        Ok(v) => v,
+        Err(reject) => {
+            return wake_profile_availability_security_reject_response(
+                reject,
+                Some(request.device_id.clone()),
+                Some(request.expected_wake_profile_id.clone()),
+            )
+        }
+    };
+    let nonce = match required_header_token(&headers, "x-selene-nonce", "missing_nonce") {
+        Ok(v) => v,
+        Err(reject) => {
+            return wake_profile_availability_security_reject_response(
+                reject,
+                Some(request.device_id.clone()),
+                Some(request.expected_wake_profile_id.clone()),
+            )
+        }
+    };
+    let security_input = EndpointSecurityInput {
+        endpoint: "/v1/wake-profile/availability",
+        expected_subject: request.expected_wake_profile_id.clone(),
+        expected_device: request.device_id.clone(),
+        request_id,
+        idempotency_key: request.idempotency_key.clone(),
+        timestamp_ms,
+        nonce,
+    };
+    if let Err(reject) = enforce_ingress_security(
+        &headers,
+        &state.ingress_security,
+        state.ingress_security_config,
+        security_input,
+    ) {
+        return wake_profile_availability_security_reject_response(
+            reject,
+            Some(request.device_id.clone()),
+            Some(request.expected_wake_profile_id.clone()),
+        );
+    }
+
+    let runtime = match state.runtime.lock() {
+        Ok(runtime) => runtime,
+        Err(_) => {
+            return wake_profile_availability_error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Some(request.device_id.clone()),
+                Some(request.expected_wake_profile_id.clone()),
+                "adapter runtime lock poisoned".to_string(),
+            )
+        }
+    };
+    let request_device_id = request.device_id.clone();
+    let request_wake_profile_id = request.expected_wake_profile_id.clone();
+    match runtime.run_wake_profile_availability_refresh(request) {
+        Ok(response) => (StatusCode::OK, Json(response)).into_response(),
+        Err(reason) => wake_profile_availability_error_response(
+            StatusCode::BAD_REQUEST,
+            Some(request_device_id),
+            Some(request_wake_profile_id),
+            reason,
+        ),
+    }
+}
+
 fn required_header_token(
     headers: &HeaderMap,
     key: &str,
@@ -1159,6 +1250,26 @@ fn session_resume_security_reject_response(reject: SecurityReject) -> Response {
     json_response_with_optional_retry_after(status, response, reject.retry_after_secs)
 }
 
+fn wake_profile_availability_security_reject_response(
+    reject: SecurityReject,
+    device_id: Option<String>,
+    wake_profile_id: Option<String>,
+) -> Response {
+    let status = status_for_security_reject(reject.kind);
+    let response = WakeProfileAvailabilityRefreshAdapterResponse {
+        status: "error".to_string(),
+        outcome: "FAILED_CLOSED".to_string(),
+        reason: Some(reject.reason),
+        device_id,
+        wake_profile_id,
+        active_wake_artifact_version: None,
+        activated_count: 0,
+        noop_count: 0,
+        pull_error_count: 0,
+    };
+    json_response_with_optional_retry_after(status, response, reject.retry_after_secs)
+}
+
 fn voice_turn_ingress_error_response(status: StatusCode, error: VoiceTurnIngressError) -> Response {
     (
         status,
@@ -1232,6 +1343,29 @@ fn session_resume_error_response(status: StatusCode, reason: String) -> Response
         .into_response()
 }
 
+fn wake_profile_availability_error_response(
+    status: StatusCode,
+    device_id: Option<String>,
+    wake_profile_id: Option<String>,
+    reason: String,
+) -> Response {
+    (
+        status,
+        Json(WakeProfileAvailabilityRefreshAdapterResponse {
+            status: "error".to_string(),
+            outcome: "FAILED_CLOSED".to_string(),
+            reason: Some(reason),
+            device_id,
+            wake_profile_id,
+            active_wake_artifact_version: None,
+            activated_count: 0,
+            noop_count: 0,
+            pull_error_count: 0,
+        }),
+    )
+        .into_response()
+}
+
 fn json_response_with_optional_retry_after<T>(
     status: StatusCode,
     body: T,
@@ -1263,9 +1397,10 @@ mod tests {
     use axum::http::header::AUTHORIZATION;
     use selene_adapter::VoiceTurnAudioCaptureRef;
     use selene_kernel_contracts::common::SessionState;
+    use selene_kernel_contracts::ph1art::ArtifactVersion;
     use selene_kernel_contracts::ph1_voice_id::{
-        UserId, VOICE_ID_ENROLL_COMPLETE_COMMIT, VOICE_ID_ENROLL_SAMPLE_COMMIT,
-        VOICE_ID_ENROLL_START_DRAFT,
+        UserId, VoiceEmbeddingCaptureRef, VOICE_ID_ENROLL_COMPLETE_COMMIT,
+        VOICE_ID_ENROLL_SAMPLE_COMMIT, VOICE_ID_ENROLL_START_DRAFT,
     };
     use selene_kernel_contracts::ph1emocore::EMO_SIM_001;
     use selene_kernel_contracts::ph1j::{DeviceId, TurnId};
@@ -1283,10 +1418,11 @@ mod tests {
         SimulationVersion,
     };
     use selene_kernel_contracts::{MonotonicTimeNs, ReasonCodeId};
+    use selene_kernel_contracts::ph1link::AppPlatform;
     use selene_os::app_ingress::AppServerIngressRuntime;
     use selene_storage::ph1f::{
         DeviceRecord, IdentityRecord, IdentityStatus, Ph1fStore, TenantCompanyLifecycleState,
-        TenantCompanyRecord,
+        TenantCompanyRecord, WakeSampleResult,
     };
 
     fn test_runtime() -> AdapterRuntime {
@@ -1561,6 +1697,196 @@ mod tests {
                 .unwrap(),
             )
             .unwrap();
+    }
+
+    fn seed_wake_profile_availability_refresh_route_state(
+        store: &mut Ph1fStore,
+        label: &str,
+    ) -> WakeProfileAvailabilityRefreshAdapterRequest {
+        let user_id = UserId::new(format!("tenant_1:{label}_wake_route")).unwrap();
+        let device_id = DeviceId::new(format!("{label}_wake_route_device")).unwrap();
+        seed_identity_and_device(store, &user_id, &device_id);
+
+        let (link, _) = store
+            .ph1link_invite_generate_draft(
+                MonotonicTimeNs(1),
+                user_id.clone(),
+                InviteeType::Employee,
+                Some("tenant_1".to_string()),
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+        store
+            .ph1link_invite_open_activate_commit_with_idempotency(
+                MonotonicTimeNs(2),
+                link.token_id.clone(),
+                link.token_signature.clone(),
+                format!("{label}_desktop_fp"),
+                AppPlatform::Desktop,
+                format!("desktop_instance_{label}"),
+                format!("desktop_nonce_{label}"),
+                MonotonicTimeNs(2),
+                format!("{label}_link_open"),
+            )
+            .unwrap();
+        let onb = store
+            .ph1onb_session_start_draft(
+                MonotonicTimeNs(3),
+                link.token_id,
+                None,
+                Some("tenant_1".to_string()),
+                format!("{label}_desktop_fp"),
+                AppPlatform::Desktop,
+                format!("desktop_instance_{label}"),
+                format!("desktop_nonce_{label}"),
+                MonotonicTimeNs(2),
+            )
+            .unwrap();
+
+        let voice_started = store
+            .ph1vid_enroll_start_draft(
+                MonotonicTimeNs(4),
+                onb.onboarding_session_id.clone(),
+                device_id.clone(),
+                true,
+                8,
+                120_000,
+                3,
+            )
+            .unwrap();
+        store
+            .ph1vid_enroll_sample_commit(
+                MonotonicTimeNs(5),
+                voice_started.voice_enrollment_session_id.clone(),
+                format!("sample_ref_{label}_1"),
+                1,
+                1_350,
+                0.91,
+                17.0,
+                0.4,
+                0.0,
+                Some(
+                    VoiceEmbeddingCaptureRef::v1(
+                        format!("embed://desktop/voice/{label}/1"),
+                        "desktop.voiceid.v1".to_string(),
+                        256,
+                    )
+                    .unwrap(),
+                ),
+                format!("{label}_voice_sample_1"),
+            )
+            .unwrap();
+        store
+            .ph1vid_enroll_sample_commit(
+                MonotonicTimeNs(6),
+                voice_started.voice_enrollment_session_id.clone(),
+                format!("sample_ref_{label}_2"),
+                2,
+                1_340,
+                0.92,
+                17.2,
+                0.4,
+                0.0,
+                None,
+                format!("{label}_voice_sample_2"),
+            )
+            .unwrap();
+        store
+            .ph1vid_enroll_sample_commit(
+                MonotonicTimeNs(7),
+                voice_started.voice_enrollment_session_id.clone(),
+                format!("sample_ref_{label}_3"),
+                3,
+                1_360,
+                0.93,
+                17.5,
+                0.3,
+                0.0,
+                None,
+                format!("{label}_voice_sample_3"),
+            )
+            .unwrap();
+        let voice_completed = store
+            .ph1vid_enroll_complete_commit(
+                MonotonicTimeNs(8),
+                voice_started.voice_enrollment_session_id.clone(),
+                format!("{label}_voice_complete"),
+            )
+            .unwrap();
+        let voice_artifact_sync_receipt_ref = voice_completed
+            .voice_artifact_sync_receipt_ref
+            .clone()
+            .unwrap();
+
+        let wake_started = store
+            .ph1w_enroll_start_draft(
+                MonotonicTimeNs(9),
+                user_id,
+                device_id.clone(),
+                Some(onb.onboarding_session_id),
+                3,
+                12,
+                300_000,
+                format!("{label}_wake_start"),
+            )
+            .unwrap();
+        for sample_idx in 0..3_u64 {
+            store
+                .ph1w_enroll_sample_commit(
+                    MonotonicTimeNs(10 + sample_idx),
+                    wake_started.wake_enrollment_session_id.clone(),
+                    900,
+                    0.70,
+                    14.0,
+                    1.0,
+                    -24.0,
+                    -46.0,
+                    -10.0,
+                    0.04,
+                    WakeSampleResult::Pass,
+                    None,
+                    format!("{label}_wake_sample_{sample_idx}"),
+                )
+                .unwrap();
+        }
+        let wake_profile_id = format!("wake_profile_{label}_route");
+        store
+            .ph1w_enroll_complete_commit(
+                MonotonicTimeNs(20),
+                wake_started.wake_enrollment_session_id,
+                wake_profile_id.clone(),
+                format!("{label}_wake_complete"),
+            )
+            .unwrap();
+        store
+            .wake_artifact_stage_commit(
+                MonotonicTimeNs(21),
+                device_id.clone(),
+                ArtifactVersion(7),
+                format!("{:064x}", 7),
+                format!("cache://wake/{label}/7"),
+                Some(format!("local://wake/{label}/7")),
+                format!("{label}_wake_stage"),
+            )
+            .unwrap();
+        store
+            .wake_artifact_activate_commit(
+                MonotonicTimeNs(22),
+                device_id.clone(),
+                ArtifactVersion(7),
+                format!("{label}_wake_activate"),
+            )
+            .unwrap();
+
+        WakeProfileAvailabilityRefreshAdapterRequest {
+            correlation_id: 5001,
+            idempotency_key: format!("{label}_wake_profile_availability"),
+            device_id: device_id.as_str().to_string(),
+            expected_wake_profile_id: wake_profile_id,
+            voice_artifact_sync_receipt_ref,
+        }
     }
 
     fn seed_soft_closed_session_record(
@@ -2011,6 +2337,42 @@ mod tests {
             .expect("resumed session must remain persisted");
         assert_eq!(persisted.session_state, SessionState::Active);
         assert_eq!(persisted.last_attached_device_id, resumed_device_id);
+    }
+
+    #[tokio::test]
+    async fn at_adapter_12_http_wake_profile_availability_route_reports_active_version() {
+        let (state, store) = test_state_with_config_and_store(IngressSecurityConfig::from_env());
+        let request = {
+            let mut guard = store.lock().expect("store lock must succeed");
+            seed_wake_profile_availability_refresh_route_state(&mut guard, "http_route")
+        };
+
+        let now_ms = system_time_now_ms();
+        let headers = security_headers(
+            Some(bearer_for(
+                &request.expected_wake_profile_id,
+                &request.device_id,
+            )),
+            "req-wake-profile-availability-1",
+            &request.idempotency_key,
+            now_ms,
+            "nonce-wake-profile-availability-1",
+        );
+        let response =
+            run_wake_profile_availability_refresh(State(state), headers, Json(request.clone()))
+                .await;
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body: WakeProfileAvailabilityRefreshAdapterResponse =
+            decode_json_response(response).await;
+        assert_eq!(body.status, "ok");
+        assert_eq!(body.device_id.as_deref(), Some(request.device_id.as_str()));
+        assert_eq!(
+            body.wake_profile_id.as_deref(),
+            Some(request.expected_wake_profile_id.as_str())
+        );
+        assert_eq!(body.active_wake_artifact_version.as_deref(), Some("7"));
+        assert_eq!(body.pull_error_count, 0);
     }
 
     #[tokio::test]

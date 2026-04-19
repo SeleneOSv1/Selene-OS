@@ -2908,6 +2908,22 @@ private struct DesktopReadyTimeHandoffState: Identifiable, Equatable {
     }
 }
 
+struct DesktopWakeProfileAvailabilityPromptState: Identifiable, Equatable {
+    let receiptKind: String
+    let deviceID: String
+    let wakeProfileID: String
+    let voiceArtifactSyncReceiptRef: String
+
+    var id: String {
+        [
+            receiptKind,
+            deviceID,
+            wakeProfileID,
+            voiceArtifactSyncReceiptRef,
+        ].joined(separator: "::")
+    }
+}
+
 struct DesktopSessionSoftClosedVisibilityState: Identifiable, Equatable {
     let sourceSurfaceIdentity: String
     let sessionState: String
@@ -3299,6 +3315,7 @@ struct DesktopSessionShellView: View {
     @State private var desktopSessionSoftClosedResumeRuntimeOutcomeState: DesktopSessionSoftClosedResumeRuntimeOutcomeState?
     @State private var desktopPairingCompletionLocalOutcomeState: DesktopPairingCompletionLocalOutcomeState?
     @State private var desktopReadyTimeHandoffState: DesktopReadyTimeHandoffState?
+    @State private var desktopWakeProfileAvailabilityRuntimeOutcomeState: DesktopWakeProfileAvailabilityRuntimeOutcomeState?
     @State private var desktopEmoPersonaLockRuntimeOutcomeState: DesktopEmoPersonaLockRuntimeOutcomeState?
     @State private var desktopAccessProvisionCommitRuntimeOutcomeState: DesktopAccessProvisionCommitRuntimeOutcomeState?
     @State private var desktopCompleteCommitRuntimeOutcomeState: DesktopCompleteCommitRuntimeOutcomeState?
@@ -3320,6 +3337,7 @@ struct DesktopSessionShellView: View {
 
             VStack(alignment: .leading, spacing: 16) {
                 explicitVoiceEntryAffordanceCard
+                desktopWakeProfileAvailabilityCard
 
                 if desktopReadyTimeHandoffIsActive {
                     desktopPairingCompletionMutationCard
@@ -3381,6 +3399,9 @@ struct DesktopSessionShellView: View {
         .task(id: desktopPairingCompletionPromptState?.id) {
             synchronizeDesktopPairingCompletionReadyTimeHandoffState()
         }
+        .task(id: desktopWakeProfileAvailabilityPromptState?.id) {
+            synchronizeDesktopWakeProfileAvailabilityRuntimeOutcomeState()
+        }
         .onReceive(desktopAuthoritativeReplyPlaybackController.$playbackState) { playbackState in
             desktopAuthoritativeReplyPlaybackState = playbackState
         }
@@ -3408,6 +3429,7 @@ struct DesktopSessionShellView: View {
                     desktopCompleteCommitRuntimeOutcomeState = nil
                     desktopPairingCompletionLocalOutcomeState = nil
                     desktopReadyTimeHandoffState = nil
+                    desktopWakeProfileAvailabilityRuntimeOutcomeState = nil
                     desktopOnboardingContinueFieldInput = ""
                     desktopEmployeePhotoCaptureSendPhotoBlobRefInput = ""
                     desktopEmployeeSenderVerifyCommitSelectedDecision = "CONFIRM"
@@ -3991,9 +4013,7 @@ struct DesktopSessionShellView: View {
         wakeRuntimeEventAccepted: Bool,
         voiceArtifactSyncReceiptRef: String
     )? {
-        guard let presentationState = desktopPlatformSetupReceiptPresentationState,
-              presentationState.remainingPlatformReceiptKinds.contains("desktop_wakeword_configured"),
-              let deviceID = desktopManagedPrimaryDeviceID,
+        guard let deviceID = desktopManagedPrimaryDeviceID,
               let activeVisibleContext = latestSessionActiveVisibleContext,
               activeVisibleContext.hasLawfulWakeRuntimeEventEvidenceCarrierFamily,
               let wakeRuntimeEventAccepted = activeVisibleContext.wakeRuntimeEventAccepted,
@@ -4010,6 +4030,20 @@ struct DesktopSessionShellView: View {
             wakeRuntimeEventWakeProfileID: wakeRuntimeEventWakeProfileID,
             wakeRuntimeEventAccepted: wakeRuntimeEventAccepted,
             voiceArtifactSyncReceiptRef: voiceArtifactSyncReceiptRef
+        )
+    }
+
+    private var desktopWakeProfileAvailabilityPromptState: DesktopWakeProfileAvailabilityPromptState? {
+        guard desktopReadyTimeHandoffIsActive,
+              let wakewordProofContext = desktopWakewordConfiguredProofContext else {
+            return nil
+        }
+
+        return DesktopWakeProfileAvailabilityPromptState(
+            receiptKind: "desktop_wakeword_configured",
+            deviceID: wakewordProofContext.deviceID,
+            wakeProfileID: wakewordProofContext.wakeRuntimeEventWakeProfileID,
+            voiceArtifactSyncReceiptRef: wakewordProofContext.voiceArtifactSyncReceiptRef
         )
     }
 
@@ -6798,6 +6832,108 @@ struct DesktopSessionShellView: View {
                     }
                 } label: {
                     Text("Onboarding Pairing Completion Handoff")
+                        .font(.headline)
+                }
+            }
+        }
+    }
+
+    private var desktopWakeProfileAvailabilityCard: some View {
+        let promptState = desktopWakeProfileAvailabilityPromptState
+        let displayedReceiptKind = promptState?.receiptKind
+            ?? desktopWakeProfileAvailabilityRuntimeOutcomeState?.receiptKind
+            ?? "desktop_wakeword_configured"
+        let displayedDeviceID = promptState?.deviceID
+            ?? desktopWakeProfileAvailabilityRuntimeOutcomeState?.deviceID
+            ?? "not_provided"
+        let displayedWakeProfileID = promptState?.wakeProfileID
+            ?? desktopWakeProfileAvailabilityRuntimeOutcomeState?.wakeProfileID
+            ?? "not_provided"
+        let displayedVoiceArtifactSyncReceiptRef = promptState?.voiceArtifactSyncReceiptRef
+            ?? desktopWakeProfileAvailabilityRuntimeOutcomeState?.voiceArtifactSyncReceiptRef
+            ?? "not_provided"
+
+        return Group {
+            if promptState != nil || desktopWakeProfileAvailabilityRuntimeOutcomeState != nil {
+                GroupBox {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("Bounded desktop wake-profile local-availability refresh only. This shell derives one prompt from the already-live exact `desktop_wakeword_configured` proof carrier family only while exact local ready-time handoff remains active, dispatches one explicit refresh into canonical `/v1/wake-profile/availability`, and keeps returned local wake-artifact availability read-only and non-authoritative.")
+                            .frame(maxWidth: .infinity, alignment: .leading)
+
+                        metadataRow(label: "receipt_kind", value: displayedReceiptKind)
+                        metadataRow(label: "device_id", value: displayedDeviceID)
+                        metadataRow(label: "wake_profile_id", value: displayedWakeProfileID)
+                        metadataRow(
+                            label: "voice_artifact_sync_receipt_ref",
+                            value: displayedVoiceArtifactSyncReceiptRef
+                        )
+
+                        Text("Wake configuration proof, wake runtime evidence, and any later wake entry remain cloud-authored and non-authoritative here.")
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+
+                        Text("This path refreshes local wake-artifact availability only and does not add native wake-listener start or stop, wake detection, wake-to-turn dispatch, hidden/background auto-start, or autonomous unlock.")
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+
+                        if let promptState {
+                            Button("Refresh local wake-profile availability") {
+                                Task {
+                                    await submitDesktopWakeProfileAvailabilityRefresh(
+                                        promptState: promptState
+                                    )
+                                }
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .disabled(
+                                desktopWakeProfileAvailabilityRuntimeOutcomeState?.phase
+                                    == .dispatching
+                            )
+                        }
+
+                        if let desktopWakeProfileAvailabilityRuntimeOutcomeState {
+                            Divider()
+
+                            Text(desktopWakeProfileAvailabilityRuntimeOutcomeState.title)
+                                .font(.headline)
+
+                            ForEach(
+                                [
+                                    ("outcome", desktopWakeProfileAvailabilityRuntimeOutcomeState.outcome ?? "not_available"),
+                                    ("reason", desktopWakeProfileAvailabilityRuntimeOutcomeState.reason ?? "not_available"),
+                                    ("wake_profile_id", desktopWakeProfileAvailabilityRuntimeOutcomeState.wakeProfileID),
+                                    ("active_wake_artifact_version", desktopWakeProfileAvailabilityRuntimeOutcomeState.activeWakeArtifactVersion ?? "not_available"),
+                                    ("activated_count", "\(desktopWakeProfileAvailabilityRuntimeOutcomeState.activatedCount)"),
+                                    ("noop_count", "\(desktopWakeProfileAvailabilityRuntimeOutcomeState.noopCount)"),
+                                    ("pull_error_count", "\(desktopWakeProfileAvailabilityRuntimeOutcomeState.pullErrorCount)"),
+                                ],
+                                id: \.0
+                            ) { row in
+                                metadataRow(label: row.0, value: row.1)
+                            }
+
+                            Text(desktopWakeProfileAvailabilityRuntimeOutcomeState.summary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+
+                            Text(desktopWakeProfileAvailabilityRuntimeOutcomeState.detail)
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        } else {
+                            Text(promptState != nil
+                                ? "Awaiting explicit user-triggered local wake-profile availability refresh. After submission, any returned exact `wake_profile_id`, exact `active_wake_artifact_version`, and bounded worker-pass refresh outcome remain read-only only in this shell."
+                                : "Read-only wakeword-configured proof posture only. A bounded local wake-profile availability refresh is unavailable until exact ready-time handoff is active and the exact proof carrier family remains lawful.")
+                                .foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+
+                        Text("No text field, no hidden/background behavior, no wake parity claim, and no autonomous unlock claim are introduced by this surface.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                } label: {
+                    Text("Wake Profile Availability Refresh")
                         .font(.headline)
                 }
             }
@@ -10106,6 +10242,62 @@ struct DesktopSessionShellView: View {
             self.desktopReadyTimeHandoffState = nil
             desktopPairingCompletionLocalOutcomeState = nil
             return
+        }
+    }
+
+    @MainActor
+    private func synchronizeDesktopWakeProfileAvailabilityRuntimeOutcomeState() {
+        guard let promptState = desktopWakeProfileAvailabilityPromptState else {
+            if desktopWakeProfileAvailabilityRuntimeOutcomeState?.phase != .dispatching {
+                desktopWakeProfileAvailabilityRuntimeOutcomeState = nil
+            }
+            return
+        }
+
+        guard let desktopWakeProfileAvailabilityRuntimeOutcomeState,
+              desktopWakeProfileAvailabilityRuntimeOutcomeState.phase != .dispatching else {
+            return
+        }
+
+        guard desktopWakeProfileAvailabilityRuntimeOutcomeState.receiptKind == promptState.receiptKind,
+              desktopWakeProfileAvailabilityRuntimeOutcomeState.deviceID == promptState.deviceID,
+              desktopWakeProfileAvailabilityRuntimeOutcomeState.wakeProfileID == promptState.wakeProfileID,
+              desktopWakeProfileAvailabilityRuntimeOutcomeState.voiceArtifactSyncReceiptRef == promptState.voiceArtifactSyncReceiptRef else {
+            self.desktopWakeProfileAvailabilityRuntimeOutcomeState = nil
+            return
+        }
+    }
+
+    @MainActor
+    private func submitDesktopWakeProfileAvailabilityRefresh(
+        promptState: DesktopWakeProfileAvailabilityPromptState
+    ) async {
+        do {
+            let ingressContext = try desktopCanonicalRuntimeBridge
+                .desktopWakeProfileAvailabilityRequestBuilder(promptState)
+            desktopWakeProfileAvailabilityRuntimeOutcomeState = .dispatching(
+                receiptKind: ingressContext.receiptKind,
+                deviceID: ingressContext.deviceID,
+                wakeProfileID: ingressContext.wakeProfileID,
+                voiceArtifactSyncReceiptRef: ingressContext.voiceArtifactSyncReceiptRef,
+                endpoint: ingressContext.endpoint,
+                requestID: ingressContext.requestID
+            )
+
+            let outcomeState = await desktopCanonicalRuntimeBridge
+                .submitDesktopWakeProfileAvailabilityRefresh(ingressContext)
+            desktopWakeProfileAvailabilityRuntimeOutcomeState = outcomeState
+        } catch {
+            desktopWakeProfileAvailabilityRuntimeOutcomeState = .failed(
+                receiptKind: promptState.receiptKind,
+                deviceID: promptState.deviceID,
+                wakeProfileID: promptState.wakeProfileID,
+                voiceArtifactSyncReceiptRef: promptState.voiceArtifactSyncReceiptRef,
+                endpoint: desktopCanonicalRuntimeBridge.wakeProfileAvailabilityEndpoint,
+                requestID: "unavailable",
+                summary: "The canonical wake-profile availability bridge could not stage this bounded desktop wake-profile local-availability refresh request.",
+                detail: error.localizedDescription
+            )
         }
     }
 

@@ -591,6 +591,62 @@ pub struct AppSessionResumeOutcome {
     pub session_attach_outcome: SessionAttachOutcome,
 }
 
+#[derive(Debug, Clone)]
+pub struct AppWakeProfileAvailabilityRefreshRequest {
+    pub correlation_id: CorrelationId,
+    pub idempotency_key: String,
+    pub device_id: DeviceId,
+    pub expected_wake_profile_id: String,
+    pub voice_artifact_sync_receipt_ref: String,
+}
+
+impl AppWakeProfileAvailabilityRefreshRequest {
+    pub fn v1(
+        correlation_id: CorrelationId,
+        idempotency_key: String,
+        device_id: DeviceId,
+        expected_wake_profile_id: String,
+        voice_artifact_sync_receipt_ref: String,
+    ) -> Result<Self, ContractViolation> {
+        correlation_id.validate()?;
+        validate_ascii_token(
+            "app_wake_profile_availability_refresh_request.idempotency_key",
+            &idempotency_key,
+            128,
+        )?;
+        device_id.validate()?;
+        validate_ascii_token(
+            "app_wake_profile_availability_refresh_request.expected_wake_profile_id",
+            &expected_wake_profile_id,
+            128,
+        )?;
+        validate_ascii_token(
+            "app_wake_profile_availability_refresh_request.voice_artifact_sync_receipt_ref",
+            &voice_artifact_sync_receipt_ref,
+            192,
+        )?;
+        Ok(Self {
+            correlation_id,
+            idempotency_key,
+            device_id,
+            expected_wake_profile_id,
+            voice_artifact_sync_receipt_ref,
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AppWakeProfileAvailabilityRefreshOutcome {
+    pub outcome: String,
+    pub reason: Option<String>,
+    pub device_id: String,
+    pub wake_profile_id: String,
+    pub active_wake_artifact_version: Option<String>,
+    pub activated_count: u64,
+    pub noop_count: u64,
+    pub pull_error_count: u64,
+}
+
 fn session_resume_storage_error(
     field: &'static str,
     error: SessionFoundationError,
@@ -4089,6 +4145,117 @@ impl AppServerIngressRuntime {
                 correlation_id,
                 turn_id,
             )
+    }
+
+    pub fn run_wake_profile_availability_refresh(
+        &self,
+        store: &mut Ph1fStore,
+        request: AppWakeProfileAvailabilityRefreshRequest,
+        now: MonotonicTimeNs,
+    ) -> Result<AppWakeProfileAvailabilityRefreshOutcome, StorageError> {
+        if now.0 == 0 {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "app_wake_profile_availability_refresh_request.now",
+                    reason: "must be > 0",
+                },
+            ));
+        }
+
+        let AppWakeProfileAvailabilityRefreshRequest {
+            correlation_id,
+            idempotency_key,
+            device_id,
+            expected_wake_profile_id,
+            voice_artifact_sync_receipt_ref,
+        } = request;
+
+        let queue_row = store
+            .mobile_artifact_sync_queue_row_for_receipt(&voice_artifact_sync_receipt_ref)
+            .cloned()
+            .ok_or(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "app_wake_profile_availability_refresh_request.voice_artifact_sync_receipt_ref",
+                    reason: "must resolve to an existing mobile artifact sync queue row",
+                },
+            ))?;
+        if queue_row.device_id != device_id {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "app_wake_profile_availability_refresh_request.voice_artifact_sync_receipt_ref",
+                    reason: "must resolve to the same device_id",
+                },
+            ));
+        }
+
+        let actor_user_id =
+            store
+                .get_device(&device_id)
+                .map(|record| record.user_id.clone())
+                .ok_or(StorageError::ForeignKeyViolation {
+                    table: "devices.device_id",
+                    key: device_id.as_str().to_string(),
+                })?;
+
+        let turn_id = TurnId(now.0);
+        let metrics = self.run_device_artifact_sync_worker_pass_with_metrics(
+            store,
+            now,
+            correlation_id,
+            turn_id,
+        )?;
+        let wake_profile_id = store
+            .ph1w_get_active_wake_profile(&actor_user_id, &device_id)
+            .map(str::to_string)
+            .ok_or(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "app_wake_profile_availability_refresh_request.device_id",
+                    reason: "no active wake profile exists for the requested device",
+                },
+            ))?;
+        if wake_profile_id != expected_wake_profile_id {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "app_wake_profile_availability_refresh_request.expected_wake_profile_id",
+                    reason: "must match the reread active wake profile",
+                },
+            ));
+        }
+
+        let active_wake_artifact_version = store
+            .wake_artifact_apply_current_row(&device_id)
+            .and_then(|row| row.active_artifact_version)
+            .map(|version| version.0.to_string());
+        let (outcome, reason) = if metrics.apply_activated_count > 0 {
+            ("ACTIVATED".to_string(), None)
+        } else if metrics.apply_noop_count > 0 {
+            ("NOOP_REUSED".to_string(), None)
+        } else if metrics.pull_error_count > 0 && active_wake_artifact_version.is_none() {
+            (
+                "FAILED_CLOSED".to_string(),
+                Some("worker_pass_pull_error".to_string()),
+            )
+        } else if active_wake_artifact_version.is_some() {
+            ("ACTIVE_VERSION_VISIBLE".to_string(), None)
+        } else {
+            (
+                "NO_LOCAL_ACTIVE_ARTIFACT".to_string(),
+                Some("wake_artifact_not_active".to_string()),
+            )
+        };
+
+        let _ = idempotency_key;
+
+        Ok(AppWakeProfileAvailabilityRefreshOutcome {
+            outcome,
+            reason,
+            device_id: device_id.as_str().to_string(),
+            wake_profile_id,
+            active_wake_artifact_version,
+            activated_count: u64::from(metrics.apply_activated_count),
+            noop_count: u64::from(metrics.apply_noop_count),
+            pull_error_count: u64::from(metrics.pull_error_count),
+        })
     }
 
     fn build_ph1x_request_for_forwarded_voice(
@@ -7939,7 +8106,8 @@ mod tests {
     use selene_engines::ph1e::{Ph1eProviderConfig, Ph1eProxyConfig, Ph1eProxyMode};
     use selene_kernel_contracts::ph1_voice_id::{
         DeviceTrustLevel, DiarizationSegment, IdentityConfidence, Ph1VoiceIdResponse,
-        SpeakerAssertionOk, SpeakerAssertionUnknown, SpeakerLabel, DEFAULT_CONF_MID_BP,
+        SpeakerAssertionOk, SpeakerAssertionUnknown, SpeakerLabel, VoiceEmbeddingCaptureRef,
+        DEFAULT_CONF_MID_BP,
     };
     use selene_kernel_contracts::ph1bcast::{BCAST_CREATE_DRAFT, BCAST_DELIVER_COMMIT};
     use selene_kernel_contracts::ph1d::{PolicyContextRef, SafetyTier};
@@ -7980,7 +8148,7 @@ mod tests {
     };
     use selene_storage::ph1f::{
         AccessDeviceTrustLevel, AccessLifecycleState, AccessMode, AccessVerificationLevel,
-        BcastPolicyUpdateValue, DeviceRecord, IdentityRecord, IdentityStatus,
+        BcastPolicyUpdateValue, DeviceRecord, IdentityRecord, IdentityStatus, WakeSampleResult,
         SessionRecord as StoredSessionRecord,
     };
 
@@ -8206,6 +8374,80 @@ mod tests {
                 assert_eq!(reason, "runtime_session_conflicting_resume");
             }
             other => panic!("expected conflicting resume contract violation, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn run_wake_profile_availability_refresh_reports_active_artifact_version() {
+        let runtime = AppServerIngressRuntime::default();
+        let mut store = Ph1fStore::new_in_memory();
+        let (device_id, wake_profile_id, voice_artifact_sync_receipt_ref) =
+            seed_wake_profile_availability_refresh_ready_state(
+                &runtime,
+                &mut store,
+                "h289_active_version",
+            );
+
+        let outcome = runtime
+            .run_wake_profile_availability_refresh(
+                &mut store,
+                AppWakeProfileAvailabilityRefreshRequest::v1(
+                    CorrelationId(91_101),
+                    "wake_profile_availability_refresh_success".to_string(),
+                    device_id.clone(),
+                    wake_profile_id.clone(),
+                    voice_artifact_sync_receipt_ref,
+                )
+                .expect("wake-profile availability refresh request must validate"),
+                MonotonicTimeNs(63),
+            )
+            .expect("wake-profile availability refresh must succeed");
+
+        assert_eq!(outcome.device_id, device_id.as_str());
+        assert_eq!(outcome.wake_profile_id, wake_profile_id);
+        assert_eq!(outcome.active_wake_artifact_version.as_deref(), Some("7"));
+        assert_eq!(outcome.reason, None);
+        assert!(matches!(
+            outcome.outcome.as_str(),
+            "ACTIVATED" | "NOOP_REUSED" | "ACTIVE_VERSION_VISIBLE"
+        ));
+    }
+
+    #[test]
+    fn run_wake_profile_availability_refresh_fails_closed_on_wake_profile_mismatch() {
+        let runtime = AppServerIngressRuntime::default();
+        let mut store = Ph1fStore::new_in_memory();
+        let (device_id, _wake_profile_id, voice_artifact_sync_receipt_ref) =
+            seed_wake_profile_availability_refresh_ready_state(
+                &runtime,
+                &mut store,
+                "h289_profile_mismatch",
+            );
+
+        let err = runtime
+            .run_wake_profile_availability_refresh(
+                &mut store,
+                AppWakeProfileAvailabilityRefreshRequest::v1(
+                    CorrelationId(91_102),
+                    "wake_profile_availability_refresh_mismatch".to_string(),
+                    device_id,
+                    "wake_profile_wrong_expected_value".to_string(),
+                    voice_artifact_sync_receipt_ref,
+                )
+                .expect("wake-profile availability refresh request must validate"),
+                MonotonicTimeNs(63),
+            )
+            .expect_err("wake-profile mismatch must fail closed");
+
+        match err {
+            StorageError::ContractViolation(ContractViolation::InvalidValue { field, reason }) => {
+                assert_eq!(
+                    field,
+                    "app_wake_profile_availability_refresh_request.expected_wake_profile_id"
+                );
+                assert_eq!(reason, "must match the reread active wake profile");
+            }
+            other => panic!("unexpected error: {other:?}"),
         }
     }
 
@@ -11269,6 +11511,191 @@ mod tests {
             )
             .expect("link draft generation should succeed");
         (link.token_id, link.token_signature)
+    }
+
+    fn seed_wake_profile_availability_refresh_ready_state(
+        runtime: &AppServerIngressRuntime,
+        store: &mut Ph1fStore,
+        label: &str,
+    ) -> (DeviceId, String, String) {
+        let actor_user_id =
+            UserId::new(format!("tenant_1:{label}_wake_profile_refresh")).unwrap();
+        let device_id = DeviceId::new(format!("{label}_wake_profile_refresh_device")).unwrap();
+        seed_actor(store, &actor_user_id, &device_id);
+
+        for (simulation_id, simulation_type) in [
+            (LINK_INVITE_OPEN_ACTIVATE_COMMIT, SimulationType::Commit),
+            (ONB_SESSION_START_DRAFT, SimulationType::Draft),
+        ] {
+            seed_simulation_catalog_status(
+                store,
+                "tenant_1",
+                simulation_id,
+                simulation_type,
+                SimulationStatus::Active,
+            );
+        }
+
+        let (token_id, token_signature) =
+            seed_invite_link_for_click(store, &actor_user_id, "tenant_1", MonotonicTimeNs(40));
+        let start = runtime
+            .run_invite_link_open_and_start_onboarding(
+                store,
+                AppInviteLinkOpenRequest::v1(
+                    CorrelationId(77_001),
+                    format!("{label}_invite_open"),
+                    token_id,
+                    token_signature,
+                    Some("tenant_1".to_string()),
+                    AppPlatform::Desktop,
+                    format!("{label}_desktop_fingerprint"),
+                    format!("desktop_instance_{label}"),
+                    format!("nonce_{label}"),
+                )
+                .unwrap(),
+                MonotonicTimeNs(41),
+            )
+            .unwrap();
+        let onboarding_session_id = OnboardingSessionId::new(start.onboarding_session_id).unwrap();
+
+        let voice_started = store
+            .ph1vid_enroll_start_draft(
+                MonotonicTimeNs(42),
+                onboarding_session_id.clone(),
+                device_id.clone(),
+                true,
+                8,
+                120_000,
+                3,
+            )
+            .unwrap();
+        let voice_session_id = voice_started.voice_enrollment_session_id.clone();
+        store
+            .ph1vid_enroll_sample_commit(
+                MonotonicTimeNs(43),
+                voice_session_id.clone(),
+                format!("sample_ref_{label}_1"),
+                1,
+                1_350,
+                0.91,
+                17.0,
+                0.4,
+                0.0,
+                Some(
+                    VoiceEmbeddingCaptureRef::v1(
+                        format!("embed://desktop/voice/{label}/1"),
+                        "desktop.voiceid.v1".to_string(),
+                        256,
+                    )
+                    .unwrap(),
+                ),
+                format!("{label}_voice_sample_1"),
+            )
+            .unwrap();
+        store
+            .ph1vid_enroll_sample_commit(
+                MonotonicTimeNs(44),
+                voice_session_id.clone(),
+                format!("sample_ref_{label}_2"),
+                2,
+                1_340,
+                0.92,
+                17.2,
+                0.4,
+                0.0,
+                None,
+                format!("{label}_voice_sample_2"),
+            )
+            .unwrap();
+        let voice_locked = store
+            .ph1vid_enroll_sample_commit(
+                MonotonicTimeNs(45),
+                voice_session_id.clone(),
+                format!("sample_ref_{label}_3"),
+                3,
+                1_360,
+                0.93,
+                17.5,
+                0.3,
+                0.0,
+                None,
+                format!("{label}_voice_sample_3"),
+            )
+            .unwrap();
+        assert_eq!(format!("{:?}", voice_locked.voice_enroll_status), "Locked");
+        let voice_completed = store
+            .ph1vid_enroll_complete_commit(
+                MonotonicTimeNs(46),
+                voice_session_id,
+                format!("{label}_voice_complete"),
+            )
+            .unwrap();
+        let voice_artifact_sync_receipt_ref = voice_completed
+            .voice_artifact_sync_receipt_ref
+            .clone()
+            .unwrap();
+
+        let wake_started = store
+            .ph1w_enroll_start_draft(
+                MonotonicTimeNs(47),
+                actor_user_id,
+                device_id.clone(),
+                Some(onboarding_session_id),
+                3,
+                12,
+                300_000,
+                format!("{label}_wake_start"),
+            )
+            .unwrap();
+        for sample_seq in 0..3_u64 {
+            store
+                .ph1w_enroll_sample_commit(
+                    MonotonicTimeNs(48 + sample_seq),
+                    wake_started.wake_enrollment_session_id.clone(),
+                    900,
+                    0.70,
+                    14.0,
+                    1.0,
+                    -24.0,
+                    -46.0,
+                    -10.0,
+                    0.04,
+                    WakeSampleResult::Pass,
+                    None,
+                    format!("{label}_wake_sample_{sample_seq}"),
+                )
+                .unwrap();
+        }
+        let wake_profile_id = format!("wake_profile_{label}_desktop");
+        store
+            .ph1w_enroll_complete_commit(
+                MonotonicTimeNs(60),
+                wake_started.wake_enrollment_session_id,
+                wake_profile_id.clone(),
+                format!("{label}_wake_complete"),
+            )
+            .unwrap();
+        store
+            .wake_artifact_stage_commit(
+                MonotonicTimeNs(61),
+                device_id.clone(),
+                selene_kernel_contracts::ph1art::ArtifactVersion(7),
+                format!("{:064x}", 7),
+                format!("cache://wake/{label}/7"),
+                Some(format!("local://wake/{label}/7")),
+                format!("{label}_wake_artifact_stage"),
+            )
+            .unwrap();
+        store
+            .wake_artifact_activate_commit(
+                MonotonicTimeNs(62),
+                device_id.clone(),
+                selene_kernel_contracts::ph1art::ArtifactVersion(7),
+                format!("{label}_wake_artifact_activate"),
+            )
+            .unwrap();
+
+        (device_id, wake_profile_id, voice_artifact_sync_receipt_ref)
     }
 
     fn seed_invite_link_for_click_with_employee_prefilled_context(
