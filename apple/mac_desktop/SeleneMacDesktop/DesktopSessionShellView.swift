@@ -2515,6 +2515,34 @@ struct DesktopPairingCompletionVisibilityState: Identifiable, Equatable {
     }
 }
 
+struct DesktopSessionSoftClosedVisibilityState: Identifiable, Equatable {
+    let sourceSurfaceIdentity: String
+    let sessionState: String
+    let sessionID: String
+    let selectedThreadID: String?
+    let selectedThreadTitle: String?
+    let pendingWorkOrderID: String?
+    let resumeTier: String?
+    let resumeSummaryBullets: [String]
+    let archivedUserTurnText: String
+    let archivedSeleneTurnText: String
+
+    var id: String {
+        [
+            sourceSurfaceIdentity,
+            sessionState,
+            sessionID,
+            selectedThreadID ?? "selected_thread_not_provided",
+            selectedThreadTitle ?? "selected_thread_title_not_provided",
+            pendingWorkOrderID ?? "pending_work_order_not_provided",
+            resumeTier ?? "resume_tier_not_provided",
+            resumeSummaryBullets.joined(separator: "|"),
+            archivedUserTurnText,
+            archivedSeleneTurnText,
+        ].joined(separator: "::")
+    }
+}
+
 struct DesktopSenderVerificationVisibilityState: Identifiable, Equatable {
     let onboardingSessionID: String
     let nextStep: String
@@ -2678,6 +2706,7 @@ struct DesktopSessionShellView: View {
                 desktopCompleteCommitCard
                 desktopReadyVisibilityCard
                 desktopPairingCompletionVisibilityCard
+                desktopSessionSoftClosedVisibilityCard
 
                 sessionCard
                 .frame(maxWidth: .infinity, minHeight: 360, alignment: .topLeading)
@@ -3609,6 +3638,25 @@ struct DesktopSessionShellView: View {
             sessionID: latestSessionHeaderContext.sessionID,
             sessionAttachOutcome: latestSessionHeaderContext.sessionAttachOutcome,
             turnID: nil
+        )
+    }
+
+    private var desktopSessionSoftClosedVisibilityState: DesktopSessionSoftClosedVisibilityState? {
+        guard let latestSessionSoftClosedVisibleContext else {
+            return nil
+        }
+
+        return DesktopSessionSoftClosedVisibilityState(
+            sourceSurfaceIdentity: "SESSION_SOFT_CLOSED_VISIBLE",
+            sessionState: latestSessionSoftClosedVisibleContext.sessionState,
+            sessionID: latestSessionSoftClosedVisibleContext.sessionID,
+            selectedThreadID: latestSessionSoftClosedVisibleContext.selectedThreadID,
+            selectedThreadTitle: latestSessionSoftClosedVisibleContext.selectedThreadTitle,
+            pendingWorkOrderID: latestSessionSoftClosedVisibleContext.pendingWorkOrderID,
+            resumeTier: latestSessionSoftClosedVisibleContext.resumeTier,
+            resumeSummaryBullets: latestSessionSoftClosedVisibleContext.resumeSummaryBullets,
+            archivedUserTurnText: latestSessionSoftClosedVisibleContext.archivedUserTurnText,
+            archivedSeleneTurnText: latestSessionSoftClosedVisibleContext.archivedSeleneTurnText
         )
     }
 
@@ -5548,6 +5596,94 @@ struct DesktopSessionShellView: View {
                     }
                 } label: {
                     Text("Onboarding Pairing Completion Visibility")
+                        .font(.headline)
+                }
+            }
+        }
+    }
+
+    private var desktopSessionSoftClosedVisibilityCard: some View {
+        let sessionSoftClosedVisibilityState = desktopSessionSoftClosedVisibilityState
+
+        return Group {
+            if let sessionSoftClosedVisibilityState {
+                GroupBox {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("Bounded desktop soft-closed visibility only. This shell derives one dedicated read-only exact `SESSION_SOFT_CLOSED_VISIBLE` surface from the already-live soft-closed route context only, preserves the exact disabled non-producing explicit resume affordance, preserves the exact archived recent slice, and preserves bounded PH1.M `resume context` without introducing any local resume, attach, reopen, or thread-selection authority.")
+                            .frame(maxWidth: .infinity, alignment: .leading)
+
+                        ForEach(
+                            [
+                                ("source_surface", sessionSoftClosedVisibilityState.sourceSurfaceIdentity),
+                                ("session_state", sessionSoftClosedVisibilityState.sessionState),
+                                ("session_id", sessionSoftClosedVisibilityState.sessionID),
+                            ],
+                            id: \.0
+                        ) { row in
+                            metadataRow(label: row.0, value: row.1)
+                        }
+
+                        Button("Resume the selected thread explicitly") {}
+                            .buttonStyle(.borderedProminent)
+                            .disabled(true)
+
+                        transcriptEntry(
+                            speaker: "You",
+                            posture: "archived_user_turn_text",
+                            body: sessionSoftClosedVisibilityState.archivedUserTurnText,
+                            detail: "Archived recent slice remains durable archived conversation truth and stays distinct from bounded PH1.M resume-context output."
+                        )
+
+                        transcriptEntry(
+                            speaker: "Selene",
+                            posture: "archived_selene_turn_text",
+                            body: sessionSoftClosedVisibilityState.archivedSeleneTurnText,
+                            detail: "Archived recent slice remains text-visible after visual reset without local auto-reopen, hidden spoken-only output, or local transcript authority."
+                        )
+
+                        ForEach(
+                            [
+                                ("selected_thread_id", sessionSoftClosedVisibilityState.selectedThreadID ?? "not_provided"),
+                                ("selected_thread_title", sessionSoftClosedVisibilityState.selectedThreadTitle ?? "not_provided"),
+                                ("pending_work_order_id", sessionSoftClosedVisibilityState.pendingWorkOrderID ?? "not_provided"),
+                                ("resume_tier", sessionSoftClosedVisibilityState.resumeTier ?? "not_provided"),
+                            ],
+                            id: \.0
+                        ) { row in
+                            metadataRow(label: row.0, value: row.1)
+                        }
+
+                        if sessionSoftClosedVisibilityState.resumeSummaryBullets.isEmpty {
+                            Text("No bounded `resume_summary_bullets` were provided for this soft-closed preview.")
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                        } else {
+                            ForEach(
+                                Array(sessionSoftClosedVisibilityState.resumeSummaryBullets.prefix(3).enumerated()),
+                                id: \.offset
+                            ) { index, bullet in
+                                HStack(alignment: .firstTextBaseline, spacing: 10) {
+                                    Text("\(index + 1).")
+                                        .font(.caption.weight(.semibold))
+                                        .foregroundStyle(.secondary)
+
+                                    Text(bullet)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                }
+                            }
+                        }
+
+                        Text("Visual reset may clear the screen while archive truth remains durable. Archived recent slice remains distinct from bounded PH1.M `resume context`, and the explicit resume affordance remains non-producing here.")
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+
+                        Text("No local session resume controls, no local session attach controls, no local reopen controls, no local thread-selection controls, no local PH1.M synthesis, and no local onboarding authority claims are introduced by this bounded surface. This shell stays explicitly non-authoritative.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                } label: {
+                    Text("Session Soft-Closed Visibility")
                         .font(.headline)
                 }
             }
