@@ -64,6 +64,30 @@ struct DesktopCanonicalRuntimeOutcomeState: Identifiable, Equatable {
         )
     }
 
+    static func dispatchingWake(
+        preparedRequestID: String,
+        endpoint: String,
+        requestID: String
+    ) -> DesktopCanonicalRuntimeOutcomeState {
+        DesktopCanonicalRuntimeOutcomeState(
+            id: preparedRequestID,
+            phase: .dispatching,
+            title: "Dispatching prepared wake-triggered voice request",
+            summary: "The bounded wake-triggered voice request is now being handed into the canonical runtime bridge.",
+            detail: "Bridge dispatch only. This shell remains non-authoritative and does not fabricate local assistant output, reply text, playback, or hidden/background wake behavior while canonical runtime execution is in flight.",
+            endpoint: endpoint,
+            requestID: requestID,
+            outcome: nil,
+            nextMove: nil,
+            reasonCode: nil,
+            sessionID: nil,
+            turnID: nil,
+            failureClass: nil,
+            authoritativeResponseText: nil,
+            authoritativeResponseProvenance: nil
+        )
+    }
+
     static func completed(
         preparedRequestID: String,
         endpoint: String,
@@ -76,6 +100,31 @@ struct DesktopCanonicalRuntimeOutcomeState: Identifiable, Equatable {
             title: "Canonical runtime dispatch completed",
             summary: "The bounded explicit voice request reached the canonical runtime and returned a cloud-authored outcome posture.",
             detail: "Outcome visibility plus bounded read-only reply and provenance rendering only. This bridge preserves cloud-authored reply text and provenance for shell-local display without mutating transcript preview surfaces or performing local playback.",
+            endpoint: endpoint,
+            requestID: requestID,
+            outcome: response.outcome,
+            nextMove: response.nextMove,
+            reasonCode: response.reasonCode,
+            sessionID: response.sessionID,
+            turnID: response.turnID.map(String.init),
+            failureClass: response.failureClass,
+            authoritativeResponseText: boundedAuthoritativeResponseText(response.responseText),
+            authoritativeResponseProvenance: boundedAuthoritativeResponseProvenance(response.provenance)
+        )
+    }
+
+    static func completedWake(
+        preparedRequestID: String,
+        endpoint: String,
+        requestID: String,
+        response: DesktopCanonicalRuntimeBridge.VoiceTurnAdapterResponsePayload
+    ) -> DesktopCanonicalRuntimeOutcomeState {
+        DesktopCanonicalRuntimeOutcomeState(
+            id: preparedRequestID,
+            phase: .completed,
+            title: "Canonical wake-triggered runtime dispatch completed",
+            summary: "The bounded wake-triggered voice request reached the canonical runtime and returned a cloud-authored outcome posture.",
+            detail: "Outcome visibility plus bounded read-only reply and provenance rendering only. This bridge preserves cloud-authored reply text and provenance for shell-local display without mutating wake transcript preview surfaces or performing local playback.",
             endpoint: endpoint,
             requestID: requestID,
             outcome: response.outcome,
@@ -104,6 +153,36 @@ struct DesktopCanonicalRuntimeOutcomeState: Identifiable, Equatable {
             id: preparedRequestID,
             phase: .failed,
             title: "Canonical runtime dispatch failed",
+            summary: summary,
+            detail: detail,
+            endpoint: endpoint,
+            requestID: requestID,
+            outcome: nil,
+            nextMove: nil,
+            reasonCode: reasonCode,
+            sessionID: sessionID,
+            turnID: turnID,
+            failureClass: failureClass,
+            authoritativeResponseText: nil,
+            authoritativeResponseProvenance: nil
+        )
+    }
+
+    static func failedWake(
+        preparedRequestID: String,
+        endpoint: String,
+        requestID: String,
+        summary: String,
+        detail: String,
+        reasonCode: String? = nil,
+        failureClass: String? = nil,
+        sessionID: String? = nil,
+        turnID: String? = nil
+    ) -> DesktopCanonicalRuntimeOutcomeState {
+        DesktopCanonicalRuntimeOutcomeState(
+            id: preparedRequestID,
+            phase: .failed,
+            title: "Canonical wake-triggered runtime dispatch failed",
             summary: summary,
             detail: detail,
             endpoint: endpoint,
@@ -2292,6 +2371,13 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
         let urlRequest: URLRequest
     }
 
+    struct DesktopWakeTriggeredVoiceIngressContext {
+        let preparedRequestID: String
+        let requestID: String
+        let endpoint: String
+        let urlRequest: URLRequest
+    }
+
     struct DesktopInviteOpenIngressContext {
         let entryContextID: String
         let requestID: String
@@ -2738,6 +2824,25 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
         }
     }
 
+    func dispatchPreparedWakeTriggeredVoiceRequest(
+        _ preparedRequest: WakeTriggeredVoiceTurnRequestState
+    ) async -> DesktopCanonicalRuntimeOutcomeState {
+        do {
+            let ingressContext = try desktopWakeTriggeredVoiceIngressRequestBuilder(preparedRequest)
+            return await dispatchPreparedWakeTriggeredVoiceRequest(ingressContext)
+        } catch {
+            return .failedWake(
+                preparedRequestID: preparedRequest.id,
+                endpoint: voiceTurnEndpoint,
+                requestID: "unavailable",
+                summary: "The canonical runtime bridge could not deliver the bounded wake-triggered voice request.",
+                detail: error.localizedDescription,
+                reasonCode: "desktop_runtime_bridge_failure",
+                failureClass: "RetryableRuntime"
+            )
+        }
+    }
+
     func openInviteLinkAndStartOnboarding(
         _ onboardingEntryContext: DesktopOnboardingEntryContext
     ) async -> DesktopInviteOpenRuntimeOutcomeState {
@@ -3107,6 +3212,58 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
                 endpoint: ingressContext.endpoint,
                 requestID: ingressContext.requestID,
                 summary: "The canonical runtime bridge could not deliver the bounded explicit voice request.",
+                detail: error.localizedDescription,
+                reasonCode: "desktop_runtime_bridge_failure",
+                failureClass: "RetryableRuntime"
+            )
+        }
+    }
+
+    func dispatchPreparedWakeTriggeredVoiceRequest(
+        _ ingressContext: DesktopWakeTriggeredVoiceIngressContext
+    ) async -> DesktopCanonicalRuntimeOutcomeState {
+        do {
+            try await ensureAdapterAvailable()
+
+            let (data, response) = try await urlSession.data(for: ingressContext.urlRequest)
+            let decoder = JSONDecoder()
+            decoder.keyDecodingStrategy = .convertFromSnakeCase
+            let httpResponse = response as? HTTPURLResponse
+            let statusCode = httpResponse?.statusCode ?? 0
+
+            if statusCode == 200 {
+                let payload = try decoder.decode(VoiceTurnAdapterResponsePayload.self, from: data)
+                return .completedWake(
+                    preparedRequestID: ingressContext.preparedRequestID,
+                    endpoint: ingressContext.endpoint,
+                    requestID: ingressContext.requestID,
+                    response: payload
+                )
+            }
+
+            if let payload = try? decoder.decode(VoiceTurnIngressErrorPayload.self, from: data) {
+                return .failedWake(
+                    preparedRequestID: ingressContext.preparedRequestID,
+                    endpoint: ingressContext.endpoint,
+                    requestID: ingressContext.requestID,
+                    summary: "The canonical runtime rejected or failed the bounded wake-triggered voice request before reply rendering was allowed.",
+                    detail: "Canonical wake-triggered dispatch failed closed with reason code `\(payload.reasonCode)` and failure class `\(payload.failureClass)`. This shell does not fabricate local assistant output or bypass runtime law.",
+                    reasonCode: payload.reasonCode,
+                    failureClass: payload.failureClass,
+                    sessionID: payload.sessionID,
+                    turnID: payload.turnID.map(String.init)
+                )
+            }
+
+            throw BridgeError.responseDecodingFailed(
+                "canonical runtime bridge returned status \(statusCode) with an unreadable response payload"
+            )
+        } catch {
+            return .failedWake(
+                preparedRequestID: ingressContext.preparedRequestID,
+                endpoint: ingressContext.endpoint,
+                requestID: ingressContext.requestID,
+                summary: "The canonical runtime bridge could not deliver the bounded wake-triggered voice request.",
                 detail: error.localizedDescription,
                 reasonCode: "desktop_runtime_bridge_failure",
                 failureClass: "RetryableRuntime"
@@ -3971,6 +4128,93 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
         )
 
         return DesktopExplicitVoiceIngressContext(
+            preparedRequestID: preparedRequest.id,
+            requestID: requestID,
+            endpoint: endpointURL.absoluteString,
+            urlRequest: urlRequest
+        )
+    }
+
+    func desktopWakeTriggeredVoiceIngressRequestBuilder(
+        _ preparedRequest: WakeTriggeredVoiceTurnRequestState
+    ) throws -> DesktopWakeTriggeredVoiceIngressContext {
+        let transcript = preparedRequest.transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !transcript.isEmpty else {
+            throw BridgeError.invalidPreparedRequest(
+                "the prepared wake-triggered voice request contained no post-wake transcript after bounded shell validation"
+            )
+        }
+
+        let detectionText = Self.nonEmpty(preparedRequest.audioCaptureRefState.detectionText)
+        guard detectionText == "Selene" else {
+            throw BridgeError.invalidPreparedRequest(
+                "the prepared wake-triggered voice request did not preserve the exact local wake detection text carrier"
+            )
+        }
+
+        guard preparedRequest.audioCaptureRefState.detectionConfidenceBP != nil else {
+            throw BridgeError.invalidPreparedRequest(
+                "the prepared wake-triggered voice request did not preserve a bounded local wake detection confidence carrier"
+            )
+        }
+
+        let timestampMS = Self.systemTimeNowMS()
+        let monotonicNowNS = Swift.max(DispatchTime.now().uptimeNanoseconds, 1)
+        let correlationID = monotonicNowNS
+        let turnID = monotonicNowNS &+ 1
+        let requestID = "desktop_runtime_request_\(preparedRequest.id)_\(UUID().uuidString.replacingOccurrences(of: "-", with: ""))"
+        let idempotencyKey = "desktop_runtime_idempotency_\(preparedRequest.id)"
+        let nonce = UUID().uuidString.replacingOccurrences(of: "-", with: "")
+        let audioCaptureRef = try desktopVoiceTurnAudioCaptureRefBuilder(preparedRequest.audioCaptureRefState)
+
+        let payload = VoiceTurnAdapterRequestPayload(
+            correlationID: correlationID,
+            turnID: turnID,
+            deviceTurnSequence: nil,
+            appPlatform: "DESKTOP",
+            platformVersion: nil,
+            deviceClass: nil,
+            runtimeClientVersion: nil,
+            hardwareCapabilityProfile: nil,
+            networkProfile: nil,
+            claimedCapabilities: nil,
+            integrityStatus: nil,
+            attestationRef: nil,
+            trigger: "WAKE_WORD",
+            actorUserID: actorUserID,
+            tenantID: tenantID,
+            deviceID: deviceID,
+            nowNS: monotonicNowNS,
+            threadKey: nil,
+            projectID: nil,
+            pinnedContextRefs: nil,
+            threadPolicyFlags: nil,
+            userTextPartial: nil,
+            userTextFinal: transcript,
+            seleneTextPartial: nil,
+            seleneTextFinal: nil,
+            audioCaptureRef: audioCaptureRef,
+            visualInputRef: nil
+        )
+
+        let encoder = JSONEncoder()
+        encoder.keyEncodingStrategy = .convertToSnakeCase
+        let body = try encoder.encode(payload)
+        let endpointURL = adapterBaseURL.appendingPathComponent("v1/voice/turn")
+        var urlRequest = URLRequest(url: endpointURL)
+        urlRequest.httpMethod = "POST"
+        urlRequest.httpBody = body
+        urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        urlRequest.setValue(requestID, forHTTPHeaderField: "x-request-id")
+        urlRequest.setValue(idempotencyKey, forHTTPHeaderField: "idempotency-key")
+        urlRequest.setValue(String(timestampMS), forHTTPHeaderField: "x-selene-timestamp-ms")
+        urlRequest.setValue(nonce, forHTTPHeaderField: "x-selene-nonce")
+        urlRequest.setValue(
+            Self.bearerToken(subject: actorUserID, device: deviceID),
+            forHTTPHeaderField: "Authorization"
+        )
+
+        return DesktopWakeTriggeredVoiceIngressContext(
             preparedRequestID: preparedRequest.id,
             requestID: requestID,
             endpoint: endpointURL.absoluteString,

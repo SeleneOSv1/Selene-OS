@@ -133,6 +133,67 @@ private func resolvedDesktopAudioDeviceRouteLabel(
     return "BUILT_IN"
 }
 
+private struct WakePrefixMatch {
+    let detectionText: String
+    let transcriptRemainder: String
+}
+
+private func boundedWakePrefixMatch(
+    in rawTranscript: String,
+    wakeTriggerPhrase: String = "Selene"
+) -> WakePrefixMatch? {
+    let trimmedTranscript = rawTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmedTranscript.isEmpty else {
+        return nil
+    }
+
+    let normalizedWakeTriggerPhrase = wakeTriggerPhrase.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !normalizedWakeTriggerPhrase.isEmpty,
+          trimmedTranscript.count >= normalizedWakeTriggerPhrase.count else {
+        return nil
+    }
+
+    let prefixEndIndex = trimmedTranscript.index(
+        trimmedTranscript.startIndex,
+        offsetBy: normalizedWakeTriggerPhrase.count
+    )
+    let candidatePrefix = String(trimmedTranscript[..<prefixEndIndex])
+    guard candidatePrefix.compare(
+        normalizedWakeTriggerPhrase,
+        options: [.caseInsensitive, .diacriticInsensitive]
+    ) == .orderedSame else {
+        return nil
+    }
+
+    let suffix = String(trimmedTranscript[prefixEndIndex...])
+    guard !suffix.isEmpty, let firstScalar = suffix.unicodeScalars.first else {
+        return nil
+    }
+
+    let separatorCharacterSet = CharacterSet.whitespacesAndNewlines
+        .union(.punctuationCharacters)
+        .union(.symbols)
+    let alphanumericCharacterSet = CharacterSet.alphanumerics
+
+    guard !alphanumericCharacterSet.contains(firstScalar) else {
+        return nil
+    }
+
+    let remainderStartIndex = suffix.unicodeScalars.firstIndex(where: { scalar in
+        !separatorCharacterSet.contains(scalar)
+    }) ?? suffix.endIndex
+    let transcriptRemainder = suffix[remainderStartIndex...]
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !transcriptRemainder.isEmpty else {
+        return nil
+    }
+
+    return WakePrefixMatch(
+        detectionText: normalizedWakeTriggerPhrase,
+        transcriptRemainder: transcriptRemainder
+    )
+}
+
 private func boundedClarifyQuestion(_ rawValue: String?) -> String? {
     guard let rawValue else {
         return nil
@@ -1638,6 +1699,491 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
     }
 }
 
+private final class DesktopWakeListenerController: ObservableObject {
+    private struct CaptureSessionTransportContext {
+        let streamID: UInt64
+        let preRollBufferID: UInt64
+        let tStartNS: UInt64
+        let localeTag: String
+        let deviceRoute: String
+        let selectedMic: String
+        let selectedSpeaker: String
+    }
+
+    @Published private(set) var microphonePermission: VoicePermissionState = .notRequested
+    @Published private(set) var speechRecognitionPermission: VoicePermissionState = .notRequested
+    @Published private(set) var listenerState: DesktopWakeListenerState = .idle
+    @Published private(set) var transcriptPreview = ""
+    @Published private(set) var pendingRequest: WakeTriggeredVoiceTurnRequestState?
+    @Published private(set) var failedRequest: InterruptContinuityResponseFailureState?
+    @Published private(set) var activePromptStateID: String?
+
+    private let wakeTriggerPhrase = "Selene"
+    private let maxVoiceTurnBytes = 16_384
+    private let audioEngine = AVAudioEngine()
+    private let speechRecognizer: SFSpeechRecognizer?
+    private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
+    private var recognitionTask: SFSpeechRecognitionTask?
+    private var hasInputTap = false
+    private var requestSequence = 0
+    private var activeCaptureContext: CaptureSessionTransportContext?
+
+    init(locale: Locale? = nil) {
+        let resolvedLocale = locale ?? Self.preferredLocale()
+        speechRecognizer = SFSpeechRecognizer(locale: resolvedLocale) ?? SFSpeechRecognizer()
+        refreshPermissionState()
+    }
+
+    func startListening(promptState: DesktopWakeListenerPromptState) {
+        failedRequest = nil
+
+        guard !listenerState.isActiveForMicrophone else {
+            return
+        }
+
+        guard pendingRequest == nil else {
+            listenerState = .failed
+            recordFailure(
+                id: "failed_wake_listener_pending_request",
+                title: "Failed wake listener start",
+                summary: "A later bounded wake-listener session could not begin while the current wake-triggered voice request is already awaiting canonical handoff.",
+                detail: "Foreground wake listening remains bounded and single-request only. This shell does not queue another local wake request, invent local session continuity, or fabricate assistant output."
+            )
+            return
+        }
+
+        transcriptPreview = ""
+        activePromptStateID = promptState.id
+        refreshPermissionState()
+        requestMicrophonePermissionIfNeeded { [weak self] granted in
+            guard let self else {
+                return
+            }
+
+            DispatchQueue.main.async {
+                self.refreshPermissionState()
+                guard granted else {
+                    self.listenerState = .failed
+                    self.activePromptStateID = nil
+                    self.recordFailure(
+                        id: "failed_wake_listener_microphone_permission",
+                        title: "Failed wake listener start",
+                        summary: "Microphone permission is required before this bounded foreground wake listener can start.",
+                        detail: "Permission visibility only; this shell does not bypass device policy, start hidden capture, or claim wake parity."
+                    )
+                    return
+                }
+
+                self.requestSpeechRecognitionPermissionIfNeeded { [weak self] speechGranted in
+                    guard let self else {
+                        return
+                    }
+
+                    DispatchQueue.main.async {
+                        self.refreshPermissionState()
+                        guard speechGranted else {
+                            self.listenerState = .failed
+                            self.activePromptStateID = nil
+                            self.recordFailure(
+                                id: "failed_wake_listener_speech_permission",
+                                title: "Failed wake listener start",
+                                summary: "Speech-recognition permission is required before this bounded foreground wake listener can prepare a wake-triggered handoff.",
+                                detail: "Permission visibility only; this shell does not create hidden spoken-only wake entry, local transcript authority, or silent authoritative acceptance."
+                            )
+                            return
+                        }
+
+                        self.beginCaptureSession()
+                    }
+                }
+            }
+        }
+    }
+
+    func stopListening() {
+        haltCaptureSession()
+        failedRequest = nil
+    }
+
+    func haltCaptureSession() {
+        teardownRecognitionSession()
+        transcriptPreview = ""
+        listenerState = .idle
+        activePromptStateID = nil
+    }
+
+    func clearPendingPreparedWakeTurn() {
+        pendingRequest = nil
+        transcriptPreview = ""
+        if listenerState != .failed {
+            listenerState = .idle
+        }
+        activePromptStateID = nil
+    }
+
+    func markDispatching() {
+        listenerState = .dispatching
+    }
+
+    private func beginCaptureSession() {
+        failedRequest = nil
+        teardownRecognitionSession()
+        refreshPermissionState()
+
+        guard let speechRecognizer else {
+            speechRecognitionPermission = .unavailable
+            listenerState = .failed
+            activePromptStateID = nil
+            recordFailure(
+                id: "failed_wake_listener_recognizer_unavailable",
+                title: "Failed wake listener start",
+                summary: "No speech recognizer is available for bounded foreground wake-listener preparation on this device posture.",
+                detail: "Unavailable visibility only; this shell remains explicitly non-authoritative and does not widen into hidden/background wake behavior."
+            )
+            return
+        }
+
+        guard speechRecognizer.isAvailable else {
+            speechRecognitionPermission = .unavailable
+            listenerState = .failed
+            activePromptStateID = nil
+            recordFailure(
+                id: "failed_wake_listener_recognizer_busy",
+                title: "Failed wake listener start",
+                summary: "The speech recognizer is not currently available for this bounded foreground wake listener.",
+                detail: "Availability visibility only; retry from the same foreground surface later. No hidden retry loop or wake-authority claim is introduced here."
+            )
+            return
+        }
+
+        do {
+            let captureContext = Self.makeCaptureSessionTransportContext(speechRecognizer: speechRecognizer)
+            let request = SFSpeechAudioBufferRecognitionRequest()
+            request.shouldReportPartialResults = true
+            request.taskHint = .dictation
+            recognitionRequest = request
+
+            let inputNode = audioEngine.inputNode
+            let format = inputNode.outputFormat(forBus: 0)
+            inputNode.installTap(onBus: 0, bufferSize: 1_024, format: format) { [weak self] buffer, _ in
+                self?.recognitionRequest?.append(buffer)
+            }
+            hasInputTap = true
+
+            audioEngine.prepare()
+            try audioEngine.start()
+            activeCaptureContext = captureContext
+            transcriptPreview = ""
+            listenerState = .listening
+
+            recognitionTask = speechRecognizer.recognitionTask(with: request) { [weak self] result, error in
+                guard let self else {
+                    return
+                }
+
+                if let result {
+                    DispatchQueue.main.async {
+                        guard self.listenerState == .listening else {
+                            return
+                        }
+
+                        let transcript = result.bestTranscription.formattedString
+                        self.transcriptPreview = transcript
+                        self.prepareWakeTriggeredVoiceTurnIfDetected(transcript)
+                    }
+                }
+
+                if let error {
+                    DispatchQueue.main.async {
+                        guard self.listenerState == .listening else {
+                            return
+                        }
+
+                        self.teardownRecognitionSession()
+                        self.listenerState = .failed
+                        self.activePromptStateID = nil
+                        self.recordFailure(
+                            id: "failed_wake_listener_capture_session",
+                            title: "Failed wake listener session",
+                            summary: "The bounded foreground wake-listener session ended before a lawful wake-triggered request could be prepared.",
+                            detail: "Speech capture failed with `\(error.localizedDescription)`. Failure visibility only; no hidden retry loop, no fabricated wake dispatch, and no authoritative assistant output were produced."
+                        )
+                    }
+                }
+            }
+        } catch {
+            teardownRecognitionSession()
+            listenerState = .failed
+            activePromptStateID = nil
+            recordFailure(
+                id: "failed_wake_listener_capture_start",
+                title: "Failed wake listener start",
+                summary: "The bounded foreground wake-listener session could not start from this visible desktop surface.",
+                detail: "Capture start failed with `\(error.localizedDescription)`. Failure visibility only; no hidden/background wake behavior or autonomous-unlock capability were introduced."
+            )
+        }
+    }
+
+    private func prepareWakeTriggeredVoiceTurnIfDetected(_ transcript: String) {
+        guard listenerState == .listening,
+              pendingRequest == nil,
+              let prefixMatch = boundedWakePrefixMatch(in: transcript, wakeTriggerPhrase: wakeTriggerPhrase) else {
+            return
+        }
+
+        let boundedTranscript = prefixMatch.transcriptRemainder.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !boundedTranscript.isEmpty else {
+            return
+        }
+
+        guard boundedTranscript.utf8.count <= maxVoiceTurnBytes else {
+            teardownRecognitionSession()
+            listenerState = .failed
+            activePromptStateID = nil
+            recordFailure(
+                id: "failed_wake_listener_transcript_validation",
+                title: "Failed wake-triggered voice request",
+                summary: "The bounded post-wake transcript exceeded 16384 UTF-8 bytes before any canonical runtime dispatch occurred.",
+                detail: "Failure visibility only; retry a shorter foreground wake utterance through the same bounded wake-listener surface. No authoritative transcript turn was appended locally."
+            )
+            return
+        }
+
+        let captureStopNS = Swift.max(DispatchTime.now().uptimeNanoseconds, 1)
+        endCaptureInput()
+
+        guard let audioCaptureRefState = preparedAudioCaptureRefState(
+            captureStopNS: captureStopNS,
+            detectionText: prefixMatch.detectionText,
+            detectionConfidenceBP: 10_000
+        ) else {
+            completeStoppedCaptureSession()
+            listenerState = .failed
+            activePromptStateID = nil
+            recordFailure(
+                id: "failed_wake_listener_audio_capture_ref_unavailable",
+                title: "Failed wake-triggered voice request",
+                summary: "The bounded wake-listener session could not preserve a lawful desktop audio-capture-ref transport bundle for canonical wake-triggered ingress.",
+                detail: "Failure visibility only; this shell fails closed when foreground wake capture state is structurally insufficient to populate the already-live adapter capture bundle requirements."
+            )
+            return
+        }
+
+        requestSequence += 1
+        transcriptPreview = boundedTranscript
+        pendingRequest = WakeTriggeredVoiceTurnRequestState(
+            id: String(format: "desktop_wake_turn_request_%03d", requestSequence),
+            transcript: boundedTranscript,
+            byteCount: boundedTranscript.utf8.count,
+            wakeTriggerPhrase: wakeTriggerPhrase,
+            audioCaptureRefState: audioCaptureRefState
+        )
+        listenerState = .wakeRequestStaged
+        completeStoppedCaptureSession()
+    }
+
+    private func endCaptureInput() {
+        if audioEngine.isRunning {
+            audioEngine.stop()
+        }
+
+        if hasInputTap {
+            audioEngine.inputNode.removeTap(onBus: 0)
+            hasInputTap = false
+        }
+
+        recognitionRequest?.endAudio()
+    }
+
+    private func teardownRecognitionSession() {
+        endCaptureInput()
+        recognitionTask?.cancel()
+        recognitionTask = nil
+        recognitionRequest = nil
+        activeCaptureContext = nil
+    }
+
+    private func completeStoppedCaptureSession() {
+        recognitionTask?.cancel()
+        recognitionTask = nil
+        recognitionRequest = nil
+        activeCaptureContext = nil
+    }
+
+    private func recordFailure(id: String, title: String, summary: String, detail: String) {
+        failedRequest = InterruptContinuityResponseFailureState(
+            id: id,
+            title: title,
+            summary: summary,
+            detail: detail
+        )
+    }
+
+    private func refreshPermissionState() {
+        microphonePermission = Self.currentMicrophonePermission()
+        speechRecognitionPermission = Self.currentSpeechRecognitionPermission(
+            speechRecognizerAvailable: speechRecognizer != nil
+        )
+    }
+
+    private func requestMicrophonePermissionIfNeeded(completion: @escaping (Bool) -> Void) {
+        switch Self.currentMicrophonePermission() {
+        case .granted:
+            completion(true)
+        case .denied, .restricted, .unavailable:
+            completion(false)
+        case .notRequested:
+            AVCaptureDevice.requestAccess(for: .audio) { granted in
+                completion(granted)
+            }
+        }
+    }
+
+    private func requestSpeechRecognitionPermissionIfNeeded(completion: @escaping (Bool) -> Void) {
+        switch Self.currentSpeechRecognitionPermission(speechRecognizerAvailable: speechRecognizer != nil) {
+        case .granted:
+            completion(true)
+        case .denied, .restricted, .unavailable:
+            completion(false)
+        case .notRequested:
+            SFSpeechRecognizer.requestAuthorization { status in
+                completion(status == .authorized)
+            }
+        }
+    }
+
+    private static func currentMicrophonePermission() -> VoicePermissionState {
+        switch AVCaptureDevice.authorizationStatus(for: .audio) {
+        case .authorized:
+            return .granted
+        case .denied:
+            return .denied
+        case .restricted:
+            return .restricted
+        case .notDetermined:
+            return .notRequested
+        @unknown default:
+            return .unavailable
+        }
+    }
+
+    private static func currentSpeechRecognitionPermission(speechRecognizerAvailable: Bool) -> VoicePermissionState {
+        guard speechRecognizerAvailable else {
+            return .unavailable
+        }
+
+        switch SFSpeechRecognizer.authorizationStatus() {
+        case .authorized:
+            return .granted
+        case .denied:
+            return .denied
+        case .restricted:
+            return .restricted
+        case .notDetermined:
+            return .notRequested
+        @unknown default:
+            return .unavailable
+        }
+    }
+
+    private static func preferredLocale() -> Locale {
+        if let identifier = Locale.preferredLanguages.first {
+            return Locale(identifier: identifier)
+        }
+
+        return Locale(identifier: "en-US")
+    }
+
+    private static func makeCaptureSessionTransportContext(
+        speechRecognizer: SFSpeechRecognizer?
+    ) -> CaptureSessionTransportContext {
+        let tStartNS = Swift.max(DispatchTime.now().uptimeNanoseconds, 1)
+        let selectedMic = boundedAudioCaptureToken(
+            AVCaptureDevice.default(for: .audio)?.localizedName,
+            fallback: "desktop_mic_default"
+        )
+        let selectedSpeaker = boundedAudioCaptureToken(
+            nil,
+            fallback: "desktop_speaker_default"
+        )
+        let localeTag = boundedAudioCaptureLocaleTag(
+            speechRecognizer?.locale.identifier ?? Locale.preferredLanguages.first
+        )
+
+        return CaptureSessionTransportContext(
+            streamID: tStartNS,
+            preRollBufferID: Swift.max(tStartNS / 1_000_000, 1),
+            tStartNS: tStartNS,
+            localeTag: localeTag,
+            deviceRoute: resolvedDesktopAudioDeviceRouteLabel(
+                selectedMic: selectedMic,
+                selectedSpeaker: selectedSpeaker
+            ),
+            selectedMic: selectedMic,
+            selectedSpeaker: selectedSpeaker
+        )
+    }
+
+    private func preparedAudioCaptureRefState(
+        captureStopNS: UInt64,
+        detectionText: String,
+        detectionConfidenceBP: UInt16
+    ) -> DesktopVoiceTurnAudioCaptureRefState? {
+        guard let activeCaptureContext else {
+            return nil
+        }
+
+        let tStartNS = Swift.max(activeCaptureContext.tStartNS, 1)
+        let tEndNS = Swift.max(captureStopNS, tStartNS &+ 1)
+        let tCandidateStartNS = Swift.max(tStartNS, tEndNS &- min(320_000_000, tEndNS &- tStartNS))
+
+        guard tEndNS > tStartNS, tCandidateStartNS >= tStartNS else {
+            return nil
+        }
+
+        return DesktopVoiceTurnAudioCaptureRefState(
+            streamID: activeCaptureContext.streamID,
+            preRollBufferID: activeCaptureContext.preRollBufferID,
+            tStartNS: tStartNS,
+            tEndNS: tEndNS,
+            tCandidateStartNS: tCandidateStartNS,
+            tConfirmedNS: tEndNS,
+            localeTag: activeCaptureContext.localeTag,
+            deviceRoute: activeCaptureContext.deviceRoute,
+            selectedMic: activeCaptureContext.selectedMic,
+            selectedSpeaker: activeCaptureContext.selectedSpeaker,
+            ttsPlaybackActive: false,
+            detectionText: detectionText,
+            detectionConfidenceBP: detectionConfidenceBP,
+            vadConfidenceBP: 8_800,
+            acousticConfidenceBP: 8_500,
+            prosodyConfidenceBP: 8_100,
+            speechLikenessBP: 8_700,
+            echoSafeConfidenceBP: 9_200,
+            nearfieldConfidenceBP: 8_300,
+            captureDegraded: false,
+            streamGapDetected: false,
+            aecUnstable: false,
+            deviceChanged: false,
+            snrDBMilli: 21_000,
+            clippingRatioBP: 80,
+            echoDelayMSMilli: 25_000,
+            packetLossBP: 0,
+            doubleTalkBP: 350,
+            erleDBMilli: 18_000,
+            deviceFailures24H: 0,
+            deviceRecoveries24H: 0,
+            deviceMeanRecoveryMS: 100,
+            deviceReliabilityBP: 9_900,
+            timingJitterMSMilli: 4_000,
+            timingDriftPPMMilli: 2_000,
+            timingBufferDepthMSMilli: 1_250_000,
+            timingUnderruns: 0,
+            timingOverruns: 0
+        )
+    }
+}
+
 private enum DesktopRecoveryDisplayState: String, Equatable {
     case recovering = "RECOVERING"
     case degradedRecovery = "DEGRADED_RECOVERY"
@@ -2924,6 +3470,54 @@ struct DesktopWakeProfileAvailabilityPromptState: Identifiable, Equatable {
     }
 }
 
+struct DesktopWakeListenerPromptState: Identifiable, Equatable {
+    let receiptKind: String
+    let deviceID: String
+    let wakeProfileID: String
+    let activeWakeArtifactVersion: String
+    let voiceArtifactSyncReceiptRef: String
+    let wakeTriggerPhrase: String
+
+    var id: String {
+        [
+            receiptKind,
+            deviceID,
+            wakeProfileID,
+            activeWakeArtifactVersion,
+            voiceArtifactSyncReceiptRef,
+            wakeTriggerPhrase,
+        ].joined(separator: "::")
+    }
+}
+
+enum DesktopWakeListenerState: String, Equatable {
+    case idle = "IDLE"
+    case listening = "LISTENING"
+    case wakeRequestStaged = "WAKE_REQUEST_STAGED"
+    case dispatching = "DISPATCHING"
+    case failed = "FAILED"
+
+    var isActiveForMicrophone: Bool {
+        self == .listening
+    }
+}
+
+struct WakeTriggeredVoiceTurnRequestState: Identifiable {
+    let id: String
+    let transcript: String
+    let byteCount: Int
+    let wakeTriggerPhrase: String
+    let audioCaptureRefState: DesktopVoiceTurnAudioCaptureRefState
+
+    var boundedPreview: String {
+        if transcript.count <= 96 {
+            return transcript
+        }
+
+        return "\(transcript.prefix(93))..."
+    }
+}
+
 struct DesktopSessionSoftClosedVisibilityState: Identifiable, Equatable {
     let sourceSurfaceIdentity: String
     let sessionState: String
@@ -3297,6 +3891,7 @@ struct DesktopSessionShellView: View {
     @State private var interruptResponseFailedRequest: InterruptContinuityResponseFailureState?
     @State private var interruptResponseRequestSequence: Int = 0
     @StateObject private var explicitVoiceController = ExplicitVoiceCaptureController()
+    @StateObject private var desktopWakeListenerController = DesktopWakeListenerController()
     @StateObject private var desktopCanonicalRuntimeBridge = DesktopCanonicalRuntimeBridge()
     @StateObject private var desktopAuthoritativeReplyPlaybackController = DesktopAuthoritativeReplyPlaybackController()
     @State private var desktopCanonicalRuntimeOutcomeState: DesktopCanonicalRuntimeOutcomeState?
@@ -3325,6 +3920,7 @@ struct DesktopSessionShellView: View {
     @State private var desktopAuthoritativeReplyRenderState: DesktopAuthoritativeReplyRenderState?
     @State private var desktopAuthoritativeReplyProvenanceRenderState: DesktopAuthoritativeReplyProvenanceRenderState?
     @State private var desktopAuthoritativeReplyPlaybackState: DesktopAuthoritativeReplyPlaybackState = .idle
+    @State private var lastStagedWakeTriggeredVoiceTurnRequestState: WakeTriggeredVoiceTurnRequestState?
 
     var body: some View {
         HStack(alignment: .top, spacing: 20) {
@@ -3338,6 +3934,7 @@ struct DesktopSessionShellView: View {
             VStack(alignment: .leading, spacing: 16) {
                 explicitVoiceEntryAffordanceCard
                 desktopWakeProfileAvailabilityCard
+                desktopWakeListenerControlCard
 
                 if desktopReadyTimeHandoffIsActive {
                     desktopPairingCompletionMutationCard
@@ -3390,6 +3987,9 @@ struct DesktopSessionShellView: View {
         .task(id: explicitVoiceController.pendingRequest?.id) {
             await dispatchPreparedExplicitVoiceRequestIfNeeded()
         }
+        .task(id: desktopWakeListenerController.pendingRequest?.id) {
+            await dispatchPreparedWakeTriggeredVoiceRequestIfNeeded()
+        }
         .task(id: desktopOnboardingEntryContext?.id) {
             await openInviteLinkAndStartOnboardingIfNeeded()
         }
@@ -3402,11 +4002,21 @@ struct DesktopSessionShellView: View {
         .task(id: desktopWakeProfileAvailabilityPromptState?.id) {
             synchronizeDesktopWakeProfileAvailabilityRuntimeOutcomeState()
         }
+        .task(id: desktopWakeListenerPromptState?.id) {
+            synchronizeDesktopWakeListenerControllerState()
+        }
+        .task(id: explicitVoiceController.isListening) {
+            synchronizeDesktopWakeListenerControllerState()
+        }
+        .task(id: explicitVoiceController.pendingRequest?.id) {
+            synchronizeDesktopWakeListenerControllerState()
+        }
         .onReceive(desktopAuthoritativeReplyPlaybackController.$playbackState) { playbackState in
             desktopAuthoritativeReplyPlaybackState = playbackState
         }
         .onDisappear {
             explicitVoiceController.haltCaptureSession()
+            desktopWakeListenerController.haltCaptureSession()
             desktopCanonicalRuntimeBridge.stopManagedAdapter()
             desktopAuthoritativeReplyPlaybackController.reset()
         }
@@ -3668,6 +4278,12 @@ struct DesktopSessionShellView: View {
 
                 HStack(spacing: 12) {
                     Button("Start explicit voice turn") {
+                        let wakeDispatchInFlight = desktopWakeListenerController.listenerState == .dispatching
+                        desktopWakeListenerController.haltCaptureSession()
+                        if !wakeDispatchInFlight {
+                            desktopWakeListenerController.clearPendingPreparedWakeTurn()
+                            lastStagedWakeTriggeredVoiceTurnRequestState = nil
+                        }
                         desktopCanonicalRuntimeOutcomeState = nil
                         desktopAuthoritativeReplyRenderState = nil
                         desktopAuthoritativeReplyProvenanceRenderState = nil
@@ -4044,6 +4660,32 @@ struct DesktopSessionShellView: View {
             deviceID: wakewordProofContext.deviceID,
             wakeProfileID: wakewordProofContext.wakeRuntimeEventWakeProfileID,
             voiceArtifactSyncReceiptRef: wakewordProofContext.voiceArtifactSyncReceiptRef
+        )
+    }
+
+    private var desktopWakeListenerPromptState: DesktopWakeListenerPromptState? {
+        guard desktopReadyTimeHandoffIsActive,
+              let wakewordProofContext = desktopWakewordConfiguredProofContext,
+              let desktopWakeProfileAvailabilityRuntimeOutcomeState,
+              desktopWakeProfileAvailabilityRuntimeOutcomeState.phase == .completed,
+              desktopWakeProfileAvailabilityRuntimeOutcomeState.receiptKind == "desktop_wakeword_configured",
+              desktopWakeProfileAvailabilityRuntimeOutcomeState.deviceID == wakewordProofContext.deviceID,
+              desktopWakeProfileAvailabilityRuntimeOutcomeState.wakeProfileID
+                == wakewordProofContext.wakeRuntimeEventWakeProfileID,
+              desktopWakeProfileAvailabilityRuntimeOutcomeState.voiceArtifactSyncReceiptRef
+                == wakewordProofContext.voiceArtifactSyncReceiptRef,
+              let activeWakeArtifactVersion = desktopWakeProfileAvailabilityRuntimeOutcomeState
+                .activeWakeArtifactVersion else {
+            return nil
+        }
+
+        return DesktopWakeListenerPromptState(
+            receiptKind: "desktop_wakeword_configured",
+            deviceID: wakewordProofContext.deviceID,
+            wakeProfileID: wakewordProofContext.wakeRuntimeEventWakeProfileID,
+            activeWakeArtifactVersion: activeWakeArtifactVersion,
+            voiceArtifactSyncReceiptRef: wakewordProofContext.voiceArtifactSyncReceiptRef,
+            wakeTriggerPhrase: "Selene"
         )
     }
 
@@ -6934,6 +7576,121 @@ struct DesktopSessionShellView: View {
                     }
                 } label: {
                     Text("Wake Profile Availability Refresh")
+                        .font(.headline)
+                }
+            }
+        }
+    }
+
+    private var desktopWakeListenerControlCard: some View {
+        let promptState = desktopWakeListenerPromptState
+        let displayedRequestState = desktopWakeListenerController.pendingRequest
+            ?? lastStagedWakeTriggeredVoiceTurnRequestState
+
+        return Group {
+            if promptState != nil
+                || desktopWakeListenerController.listenerState != .idle
+                || displayedRequestState != nil
+                || desktopWakeListenerController.failedRequest != nil {
+                GroupBox {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("Bounded native macOS foreground wake-listener integration only. This shell derives one lawful prompt from already-live local wake-profile availability and exact wakeword-configured proof, starts one explicit foreground wake listener only after direct user action, stages one bounded post-wake transcript remainder only after exact `Selene` prefix detection, and hands that request into canonical `/v1/voice/turn` as exact `WAKE_WORD` while remaining non-authoritative.")
+                            .frame(maxWidth: .infinity, alignment: .leading)
+
+                        metadataRow(
+                            label: "source_surface",
+                            value: "WAKE_PROFILE_LOCAL_AVAILABILITY_VISIBLE"
+                        )
+                        metadataRow(
+                            label: "receipt_kind",
+                            value: promptState?.receiptKind ?? "desktop_wakeword_configured"
+                        )
+                        metadataRow(
+                            label: "device_id",
+                            value: promptState?.deviceID ?? "not_provided"
+                        )
+                        metadataRow(
+                            label: "wake_profile_id",
+                            value: promptState?.wakeProfileID ?? "not_provided"
+                        )
+                        metadataRow(
+                            label: "active_wake_artifact_version",
+                            value: promptState?.activeWakeArtifactVersion ?? "not_provided"
+                        )
+                        metadataRow(
+                            label: "voice_artifact_sync_receipt_ref",
+                            value: promptState?.voiceArtifactSyncReceiptRef ?? "not_provided"
+                        )
+                        metadataRow(
+                            label: "wake_trigger_phrase",
+                            value: promptState?.wakeTriggerPhrase ?? "Selene"
+                        )
+                        metadataRow(
+                            label: "listener_state",
+                            value: desktopWakeListenerController.listenerState.rawValue
+                        )
+                        metadataRow(
+                            label: "wake_request_id",
+                            value: displayedRequestState?.id ?? "not_available"
+                        )
+                        metadataRow(
+                            label: "wake_transcript_preview",
+                            value: displayedRequestState?.boundedPreview ?? "not_available"
+                        )
+
+                        Text("Canonical runtime response posture, session continuity, wake runtime evidence, and local wake-artifact availability remain cloud-authored or bridge-bounded and non-authoritative here.")
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+
+                        Text("This path reuses existing exact `/v1/voice/turn` and exact H288 structured `audioCaptureRef`, and does not add backend mutation, thread authoring, pinned-context authoring, device-turn-sequence authoring, hidden/background auto-start, or autonomous unlock.")
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+
+                        HStack(spacing: 12) {
+                            if let promptState {
+                                Button("Start foreground wake listener") {
+                                    desktopCanonicalRuntimeOutcomeState = nil
+                                    desktopAuthoritativeReplyRenderState = nil
+                                    desktopAuthoritativeReplyProvenanceRenderState = nil
+                                    desktopAuthoritativeReplyPlaybackController.reset()
+                                    desktopAuthoritativeReplyPlaybackState = .idle
+                                    lastStagedWakeTriggeredVoiceTurnRequestState = nil
+                                    desktopWakeListenerController.startListening(promptState: promptState)
+                                }
+                                .buttonStyle(.borderedProminent)
+                                .disabled(
+                                    desktopWakeListenerController.listenerState.isActiveForMicrophone
+                                        || desktopWakeListenerController.pendingRequest != nil
+                                        || explicitVoiceController.isListening
+                                        || explicitVoiceController.pendingRequest != nil
+                                )
+                            }
+
+                            if desktopWakeListenerController.listenerState.isActiveForMicrophone {
+                                Button("Stop wake listener") {
+                                    desktopWakeListenerController.stopListening()
+                                }
+                                .buttonStyle(.bordered)
+                            }
+                        }
+
+                        if let failedRequest = desktopWakeListenerController.failedRequest {
+                            interruptResponseFailedRequestCard(failedRequest)
+                        } else if promptState != nil
+                            && desktopWakeListenerController.listenerState == .idle
+                            && displayedRequestState == nil {
+                            Text("Awaiting one explicit user-triggered bounded foreground wake-listener start. After exact local wake-prefix detection and one non-empty post-wake transcript remainder, this shell stages one canonical wake-triggered handoff only and remains non-authoritative.")
+                                .foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+
+                        Text("No text field, no threshold editor, no hidden/background behavior, no wake parity claim, and no autonomous unlock claim are introduced by this surface.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                } label: {
+                    Text("Wake Listener Control")
                         .font(.headline)
                 }
             }
@@ -10269,6 +11026,51 @@ struct DesktopSessionShellView: View {
     }
 
     @MainActor
+    private func synchronizeDesktopWakeListenerControllerState() {
+        let explicitVoiceOwnsMicrophone = explicitVoiceController.isListening
+            || explicitVoiceController.pendingRequest != nil
+        let wakeDispatchInFlight = desktopWakeListenerController.listenerState == .dispatching
+
+        if explicitVoiceOwnsMicrophone {
+            if desktopWakeListenerController.listenerState.isActiveForMicrophone
+                || (desktopWakeListenerController.pendingRequest != nil && !wakeDispatchInFlight) {
+                desktopWakeListenerController.haltCaptureSession()
+                if !wakeDispatchInFlight {
+                    desktopWakeListenerController.clearPendingPreparedWakeTurn()
+                    lastStagedWakeTriggeredVoiceTurnRequestState = nil
+                }
+            }
+            return
+        }
+
+        guard let promptState = desktopWakeListenerPromptState else {
+            if desktopWakeListenerController.listenerState.isActiveForMicrophone
+                || (desktopWakeListenerController.pendingRequest != nil && !wakeDispatchInFlight)
+                || (lastStagedWakeTriggeredVoiceTurnRequestState != nil && !wakeDispatchInFlight) {
+                desktopWakeListenerController.haltCaptureSession()
+                if !wakeDispatchInFlight {
+                    desktopWakeListenerController.clearPendingPreparedWakeTurn()
+                    lastStagedWakeTriggeredVoiceTurnRequestState = nil
+                }
+            }
+            return
+        }
+
+        guard let activePromptStateID = desktopWakeListenerController.activePromptStateID else {
+            return
+        }
+
+        guard activePromptStateID == promptState.id else {
+            if !wakeDispatchInFlight {
+                desktopWakeListenerController.haltCaptureSession()
+                desktopWakeListenerController.clearPendingPreparedWakeTurn()
+                lastStagedWakeTriggeredVoiceTurnRequestState = nil
+            }
+            return
+        }
+    }
+
+    @MainActor
     private func submitDesktopWakeProfileAvailabilityRefresh(
         promptState: DesktopWakeProfileAvailabilityPromptState
     ) async {
@@ -10523,6 +11325,82 @@ struct DesktopSessionShellView: View {
             desktopAuthoritativeReplyPlaybackController.reset()
             desktopAuthoritativeReplyPlaybackState = .idle
             explicitVoiceController.clearPendingPreparedVoiceTurn()
+        }
+    }
+
+    @MainActor
+    private func dispatchPreparedWakeTriggeredVoiceRequestIfNeeded() async {
+        guard let pendingRequest = desktopWakeListenerController.pendingRequest else {
+            return
+        }
+
+        do {
+            let ingressContext = try desktopCanonicalRuntimeBridge
+                .desktopWakeTriggeredVoiceIngressRequestBuilder(pendingRequest)
+            lastStagedWakeTriggeredVoiceTurnRequestState = pendingRequest
+            desktopWakeListenerController.markDispatching()
+            desktopCanonicalRuntimeOutcomeState = .dispatchingWake(
+                preparedRequestID: ingressContext.preparedRequestID,
+                endpoint: ingressContext.endpoint,
+                requestID: ingressContext.requestID
+            )
+            desktopAuthoritativeReplyRenderState = nil
+            desktopAuthoritativeReplyProvenanceRenderState = nil
+            desktopAuthoritativeReplyPlaybackController.reset()
+            desktopAuthoritativeReplyPlaybackState = .idle
+
+            let outcomeState = await desktopCanonicalRuntimeBridge
+                .dispatchPreparedWakeTriggeredVoiceRequest(ingressContext)
+            guard desktopWakeListenerController.pendingRequest?.id == pendingRequest.id else {
+                return
+            }
+
+            desktopCanonicalRuntimeOutcomeState = outcomeState
+            if outcomeState.phase == .completed {
+                desktopAuthoritativeReplyRenderState = DesktopAuthoritativeReplyRenderState(
+                    title: "Cloud-authored authoritative reply",
+                    summary: outcomeState.authoritativeResponseText == nil
+                        ? "The canonical runtime completed without reply text for this bounded wake-triggered voice turn."
+                        : "Read-only canonical reply text from the completed wake-triggered runtime dispatch is now visible here while the shell remains explicitly non-authoritative.",
+                    authoritativeResponseText: outcomeState.authoritativeResponseText
+                )
+                desktopAuthoritativeReplyProvenanceRenderState = DesktopAuthoritativeReplyProvenanceRenderState(
+                    title: "Cloud-authored authoritative reply provenance",
+                    summary: outcomeState.authoritativeResponseProvenance == nil
+                        ? "The canonical runtime completed without provenance for this bounded wake-triggered voice turn."
+                        : "Read-only canonical provenance from the completed wake-triggered runtime dispatch is now visible here while the shell remains explicitly non-authoritative.",
+                    authoritativeResponseProvenance: outcomeState.authoritativeResponseProvenance,
+                    sources: outcomeState.authoritativeResponseProvenance?.sources.map {
+                        DesktopAuthoritativeReplyProvenanceRenderState.Source(
+                            title: $0.title,
+                            url: $0.url
+                        )
+                    } ?? [],
+                    retrievedAtLabel: formatAuthoritativeReplyRetrievedAt(
+                        outcomeState.authoritativeResponseProvenance?.retrievedAt
+                    ),
+                    cacheStatusLabel: outcomeState.authoritativeResponseProvenance?.cacheStatus
+                )
+            } else {
+                desktopAuthoritativeReplyRenderState = nil
+                desktopAuthoritativeReplyProvenanceRenderState = nil
+            }
+            desktopWakeListenerController.clearPendingPreparedWakeTurn()
+        } catch {
+            desktopCanonicalRuntimeOutcomeState = .failedWake(
+                preparedRequestID: pendingRequest.id,
+                endpoint: desktopCanonicalRuntimeBridge.voiceTurnEndpoint,
+                requestID: "unavailable",
+                summary: "The canonical runtime bridge could not stage the bounded wake-triggered voice request for dispatch.",
+                detail: error.localizedDescription,
+                reasonCode: "desktop_runtime_bridge_failure",
+                failureClass: "RetryableRuntime"
+            )
+            desktopAuthoritativeReplyRenderState = nil
+            desktopAuthoritativeReplyProvenanceRenderState = nil
+            desktopAuthoritativeReplyPlaybackController.reset()
+            desktopAuthoritativeReplyPlaybackState = .idle
+            desktopWakeListenerController.clearPendingPreparedWakeTurn()
         }
     }
 
