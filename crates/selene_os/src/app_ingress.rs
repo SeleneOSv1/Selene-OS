@@ -30,7 +30,7 @@ use selene_kernel_contracts::ph1agent::AgentInputPacket;
 use selene_kernel_contracts::ph1d::{PolicyContextRef, SafetyTier};
 use selene_kernel_contracts::ph1e::{
     CacheStatus, SourceMetadata, SourceRef, ToolName, ToolRequest, ToolResponse, ToolResult,
-    ToolStructuredField, ToolTextSnippet,
+    ToolStatus, ToolStructuredField, ToolTextSnippet,
 };
 use selene_kernel_contracts::ph1emocore::{
     EmoClassifyProfileCommitRequest, EmoCoreOutcome, EmoCoreRequest, EmoCoreSimulationType,
@@ -3573,9 +3573,15 @@ impl AppServerIngressRuntime {
             }
             Ph1xDirective::Dispatch(dispatch) => match &dispatch.dispatch_request {
                 DispatchRequest::Tool(tool_request) => {
-                    let tool_response = maybe_build_message_policy_tool_response(
+                    let tool_response = maybe_build_local_connector_query_tool_response(
                         store,
                         actor_user_id,
+                        out.ph1x_request.as_ref().ok_or(StorageError::ContractViolation(
+                            ContractViolation::InvalidValue {
+                                field: "app_voice_turn_execution_outcome.ph1x_request",
+                                reason: "must be present before local connector tool dispatch",
+                            },
+                        ))?,
                         tool_request,
                     )?
                     .unwrap_or_else(|| self.ph1e_runtime.run(tool_request));
@@ -5774,6 +5780,13 @@ fn canonical_posture_fail_closed_identity_state(
     ) {
         return Ok(None);
     }
+    if out
+        .tool_response
+        .as_ref()
+        .is_some_and(|tool_response| tool_response.tool_status == ToolStatus::Ok)
+    {
+        return Ok(None);
+    }
     let identity_state_reason_code = out
         .runtime_execution_envelope
         .identity_state
@@ -7297,6 +7310,239 @@ fn short_hash_hex(parts: &[&str]) -> String {
     format!("{h:016x}")
 }
 
+fn maybe_build_local_connector_query_tool_response(
+    store: &Ph1fStore,
+    actor_user_id: &UserId,
+    ph1x_request: &Ph1xRequest,
+    tool_request: &ToolRequest,
+) -> Result<Option<ToolResponse>, StorageError> {
+    if let Some(response) =
+        maybe_build_list_reminders_tool_response(store, actor_user_id, ph1x_request, tool_request)?
+    {
+        return Ok(Some(response));
+    }
+    maybe_build_message_policy_tool_response(store, actor_user_id, tool_request)
+}
+
+fn maybe_build_list_reminders_tool_response(
+    store: &Ph1fStore,
+    actor_user_id: &UserId,
+    ph1x_request: &Ph1xRequest,
+    tool_request: &ToolRequest,
+) -> Result<Option<ToolResponse>, StorageError> {
+    if !matches!(tool_request.tool_name, ToolName::ConnectorQuery) {
+        return Ok(None);
+    }
+    let is_list_reminders_intent = matches!(
+        ph1x_request.nlp_output.as_ref(),
+        Some(Ph1nResponse::IntentDraft(intent_draft))
+            if intent_draft.intent_type == IntentType::ListReminders
+    );
+    if !is_list_reminders_intent && !is_list_reminders_query(tool_request.query.as_str()) {
+        return Ok(None);
+    }
+
+    let mut reminders: Vec<_> = store
+        .reminders()
+        .values()
+        .filter(|row| &row.user_id == actor_user_id)
+        .collect();
+    reminders.sort_by(|left, right| {
+        left.resolved_due_at
+            .0
+            .cmp(&right.resolved_due_at.0)
+            .then(left.created_at.0.cmp(&right.created_at.0))
+            .then(left.reminder_id.as_str().cmp(right.reminder_id.as_str()))
+    });
+
+    let active_count = reminders
+        .iter()
+        .filter(|row| {
+            !matches!(
+                row.state,
+                selene_kernel_contracts::ph1rem::ReminderState::Canceled
+                    | selene_kernel_contracts::ph1rem::ReminderState::Completed
+                    | selene_kernel_contracts::ph1rem::ReminderState::Failed
+            )
+        })
+        .count();
+    let next_active_due_at = reminders
+        .iter()
+        .find(|row| {
+            !matches!(
+                row.state,
+                selene_kernel_contracts::ph1rem::ReminderState::Canceled
+                    | selene_kernel_contracts::ph1rem::ReminderState::Completed
+                    | selene_kernel_contracts::ph1rem::ReminderState::Failed
+            )
+        })
+        .map(|row| row.resolved_due_at.0.to_string())
+        .unwrap_or_else(|| "none".to_string());
+
+    let mut extracted_fields = vec![
+        ToolStructuredField {
+            key: "actor_user_id".to_string(),
+            value: actor_user_id.as_str().to_string(),
+        },
+        ToolStructuredField {
+            key: "reminder_count".to_string(),
+            value: reminders.len().to_string(),
+        },
+        ToolStructuredField {
+            key: "active_reminder_count".to_string(),
+            value: active_count.to_string(),
+        },
+        ToolStructuredField {
+            key: "inactive_reminder_count".to_string(),
+            value: reminders.len().saturating_sub(active_count).to_string(),
+        },
+        ToolStructuredField {
+            key: "next_active_due_at_ns".to_string(),
+            value: next_active_due_at,
+        },
+    ];
+    for (index, row) in reminders.iter().take(5).enumerate() {
+        let reminder_text = if row.reminder_request_text.chars().count() > 160 {
+            format!(
+                "{}...",
+                row.reminder_request_text.chars().take(157).collect::<String>()
+            )
+        } else {
+            row.reminder_request_text.clone()
+        };
+        let channel_summary = if row.channel_preferences.is_empty() {
+            "NONE".to_string()
+        } else {
+            row.channel_preferences
+                .iter()
+                .map(|channel| format!("{channel:?}").to_ascii_uppercase())
+                .collect::<Vec<_>>()
+                .join(",")
+        };
+        extracted_fields.push(ToolStructuredField {
+            key: format!("reminder_{}", index + 1),
+            value: format!(
+                "id={} state={} type={} due_at_ns={} channels={} request={}",
+                row.reminder_id.as_str(),
+                format!("{:?}", row.state).to_ascii_uppercase(),
+                format!("{:?}", row.reminder_type).to_ascii_uppercase(),
+                row.resolved_due_at.0,
+                channel_summary,
+                reminder_text,
+            ),
+        });
+    }
+
+    let citations = if reminders.is_empty() {
+        vec![ToolTextSnippet {
+            title: "Reminder ledger is empty".to_string(),
+            snippet: format!(
+                "No reminder rows are currently recorded for user {}.",
+                actor_user_id.as_str()
+            ),
+            url: format!(
+                "https://selene.local/ph1f/reminders/user/{}",
+                actor_user_id.as_str()
+            ),
+        }]
+    } else {
+        reminders
+            .iter()
+            .take(5)
+            .map(|row| {
+                let snippet_request = if row.reminder_request_text.chars().count() > 160 {
+                    format!(
+                        "{}...",
+                        row.reminder_request_text.chars().take(157).collect::<String>()
+                    )
+                } else {
+                    row.reminder_request_text.clone()
+                };
+                let recurrence = row
+                    .recurrence_rule
+                    .clone()
+                    .unwrap_or_else(|| "none".to_string());
+                ToolTextSnippet {
+                    title: format!("Reminder {}", row.reminder_id.as_str()),
+                    snippet: format!(
+                        "request={} | state={} | type={} | due_at_ns={} | desired_time={} | recurrence={}",
+                        snippet_request,
+                        format!("{:?}", row.state).to_ascii_uppercase(),
+                        format!("{:?}", row.reminder_type).to_ascii_uppercase(),
+                        row.resolved_due_at.0,
+                        row.desired_time_text,
+                        recurrence,
+                    ),
+                    url: format!(
+                        "https://selene.local/ph1f/reminders/{}/{}",
+                        row.tenant_id.as_str(),
+                        row.reminder_id.as_str()
+                    ),
+                }
+            })
+            .collect()
+    };
+
+    let mut sources = reminders
+        .iter()
+        .take(5)
+        .map(|row| SourceRef {
+            title: format!("PH1.F reminder {}", row.reminder_id.as_str()),
+            url: format!(
+                "https://selene.local/ph1f/reminders/{}/{}",
+                row.tenant_id.as_str(),
+                row.reminder_id.as_str()
+            ),
+        })
+        .collect::<Vec<_>>();
+    if sources.is_empty() {
+        sources.push(SourceRef {
+            title: "PH1.F reminder ledger".to_string(),
+            url: format!(
+                "https://selene.local/ph1f/reminders/user/{}",
+                actor_user_id.as_str()
+            ),
+        });
+    }
+
+    let summary = if reminders.is_empty() {
+        format!(
+            "No reminders are currently recorded for user {}.",
+            actor_user_id.as_str()
+        )
+    } else {
+        format!(
+            "{} reminder rows found for user {}; {} remain active.",
+            reminders.len(),
+            actor_user_id.as_str(),
+            active_count
+        )
+    };
+
+    let source_metadata = SourceMetadata {
+        schema_version: selene_kernel_contracts::ph1e::PH1E_CONTRACT_VERSION,
+        provider_hint: Some("ph1f_reminder_registry".to_string()),
+        retrieved_at_unix_ms: 1_700_000_000_000,
+        sources,
+    };
+    let tool_result = ToolResult::ConnectorQuery {
+        summary,
+        extracted_fields,
+        citations,
+    };
+    let response = ToolResponse::ok_v1(
+        tool_request.request_id,
+        tool_request.query_hash,
+        tool_result,
+        source_metadata,
+        None,
+        ReasonCodeId(0x4500_0002),
+        CacheStatus::Bypassed,
+    )
+    .map_err(StorageError::ContractViolation)?;
+    Ok(Some(response))
+}
+
 fn maybe_build_message_policy_tool_response(
     store: &Ph1fStore,
     actor_user_id: &UserId,
@@ -7508,6 +7754,16 @@ fn is_message_policy_query(query: &str) -> bool {
         || lower.contains("list my policies")
         || lower.contains("policy change")
         || lower.contains("policy audit")
+}
+
+fn is_list_reminders_query(query: &str) -> bool {
+    let lower = query.to_ascii_lowercase();
+    lower.contains("reminder")
+        && (lower.contains("list")
+            || lower.contains("show")
+            || lower.contains("what")
+            || lower.contains("which")
+            || lower.contains("upcoming"))
 }
 
 fn resolve_actor_single_tenant(

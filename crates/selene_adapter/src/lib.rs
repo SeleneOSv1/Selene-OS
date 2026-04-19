@@ -9032,6 +9032,13 @@ fn build_ph1d_live_adapter_from_env() -> Option<EnvPh1dLiveAdapter> {
     if !parse_bool_env("SELENE_PH1D_LIVE_ADAPTER_ENABLED", true) {
         return None;
     }
+    if env::var("SELENE_PH1D_LIVE_PROVIDER_ID")
+        .ok()
+        .map(|value| value.trim().is_empty())
+        .unwrap_or(true)
+    {
+        return None;
+    }
     match EnvPh1dLiveAdapter::from_env() {
         Ok(adapter) => Some(adapter),
         Err(err) => {

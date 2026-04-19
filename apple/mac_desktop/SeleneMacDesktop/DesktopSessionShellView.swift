@@ -3533,6 +3533,7 @@ struct DesktopConversationPrimaryPaneState: Identifiable, Equatable {
     let headerDetail: String
     let voiceState: String
     let timelineEntries: [DesktopConversationTimelineEntryState]
+    let readOnlyToolLaneState: DesktopConversationReadOnlyToolLaneState?
 
     var id: String {
         [
@@ -3541,6 +3542,42 @@ struct DesktopConversationPrimaryPaneState: Identifiable, Equatable {
             headerDetail,
             voiceState,
             timelineEntries.map(\.id).joined(separator: "|"),
+            readOnlyToolLaneState?.id ?? "read_only_tool_lane_not_attached",
+        ].joined(separator: "::")
+    }
+}
+
+struct DesktopConversationReadOnlyToolLaneState: Identifiable, Equatable {
+    struct Source: Identifiable, Equatable {
+        let title: String
+        let url: String
+
+        var id: String {
+            "\(title)|\(url)"
+        }
+    }
+
+    let laneKind: String
+    let responseSurface: String
+    let outcome: String
+    let nextMove: String
+    let reasonCode: String
+    let sourceCount: Int
+    let retrievedAtLabel: String?
+    let cacheStatusLabel: String?
+    let sources: [Source]
+
+    var id: String {
+        [
+            laneKind,
+            responseSurface,
+            outcome,
+            nextMove,
+            reasonCode,
+            String(sourceCount),
+            retrievedAtLabel ?? "retrieved_at_not_available",
+            cacheStatusLabel ?? "cache_status_not_available",
+            sources.map(\.id).joined(separator: "|"),
         ].joined(separator: "::")
     }
 }
@@ -4895,12 +4932,43 @@ struct DesktopSessionShellView: View {
             )
         }
 
+        let readOnlyToolLaneState: DesktopConversationReadOnlyToolLaneState?
+        if latestSessionSuspendedVisibleContext != nil || activeRecoveryDisplayState == .quarantinedLocalState {
+            readOnlyToolLaneState = nil
+        } else if let outcomeState = desktopCanonicalRuntimeOutcomeState,
+                  outcomeState.phase == .completed,
+                  let authoritativeResponseText = desktopAuthoritativeReplyRenderState?.authoritativeResponseText?
+                    .trimmingCharacters(in: .whitespacesAndNewlines),
+                  !authoritativeResponseText.isEmpty,
+                  outcomeState.outcome == "FINAL_TOOL" || outcomeState.nextMove == "dispatch_tool" {
+            let provenanceSources = desktopAuthoritativeReplyProvenanceRenderState?.sources.map {
+                DesktopConversationReadOnlyToolLaneState.Source(
+                    title: $0.title,
+                    url: $0.url
+                )
+            } ?? []
+            readOnlyToolLaneState = DesktopConversationReadOnlyToolLaneState(
+                laneKind: "READ_ONLY_TOOL",
+                responseSurface: "CONVERSATION_PRIMARY_PANE_TOOL_ATTACHMENT",
+                outcome: outcomeState.outcome ?? "not_available",
+                nextMove: outcomeState.nextMove ?? "not_available",
+                reasonCode: outcomeState.reasonCode ?? "not_available",
+                sourceCount: provenanceSources.count,
+                retrievedAtLabel: desktopAuthoritativeReplyProvenanceRenderState?.retrievedAtLabel,
+                cacheStatusLabel: desktopAuthoritativeReplyProvenanceRenderState?.cacheStatusLabel,
+                sources: provenanceSources
+            )
+        } else {
+            readOnlyToolLaneState = nil
+        }
+
         return DesktopConversationPrimaryPaneState(
             dominantPosture: dominantPosture,
             headerTitle: headerTitle,
             headerDetail: headerDetail,
             voiceState: desktopOperationalVoiceStateLabel,
-            timelineEntries: timelineEntries
+            timelineEntries: timelineEntries,
+            readOnlyToolLaneState: readOnlyToolLaneState
         )
     }
 
@@ -8038,7 +8106,10 @@ struct DesktopSessionShellView: View {
                 } else {
                     VStack(alignment: .leading, spacing: 14) {
                         ForEach(state.timelineEntries) { entry in
-                            desktopConversationTimelineEntryCard(entry)
+                            desktopConversationTimelineEntryCard(
+                                entry,
+                                readOnlyToolLaneState: state.readOnlyToolLaneState
+                            )
                         }
                     }
                 }
@@ -8095,7 +8166,8 @@ struct DesktopSessionShellView: View {
     }
 
     private func desktopConversationTimelineEntryCard(
-        _ entry: DesktopConversationTimelineEntryState
+        _ entry: DesktopConversationTimelineEntryState,
+        readOnlyToolLaneState: DesktopConversationReadOnlyToolLaneState?
     ) -> some View {
         let bubbleColor = entry.isUserAuthored
             ? Color.accentColor.opacity(0.12)
@@ -8126,7 +8198,9 @@ struct DesktopSessionShellView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
 
                 if desktopConversationShouldAttachAuthoritativeReplyArtifacts(to: entry) {
-                    desktopConversationAuthoritativeReplyAttachment
+                    desktopConversationAuthoritativeReplyAttachment(
+                        readOnlyToolLaneState: readOnlyToolLaneState
+                    )
                 }
             }
             .padding(16)
@@ -8165,7 +8239,15 @@ struct DesktopSessionShellView: View {
                 && normalizedEntryBody == authoritativeResponseText)
     }
 
-    private var desktopConversationAuthoritativeReplyAttachment: some View {
+    private func desktopConversationShouldAttachReadOnlyToolLaneCluster(
+        _ readOnlyToolLaneState: DesktopConversationReadOnlyToolLaneState?
+    ) -> Bool {
+        readOnlyToolLaneState != nil
+    }
+
+    private func desktopConversationAuthoritativeReplyAttachment(
+        readOnlyToolLaneState: DesktopConversationReadOnlyToolLaneState?
+    ) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             if let desktopAuthoritativeReplyProvenanceRenderState {
                 Divider()
@@ -8217,6 +8299,12 @@ struct DesktopSessionShellView: View {
                 }
             }
 
+            if desktopConversationShouldAttachReadOnlyToolLaneCluster(readOnlyToolLaneState),
+               let readOnlyToolLaneState {
+                Divider()
+                desktopConversationReadOnlyToolLaneCluster(readOnlyToolLaneState)
+            }
+
             Divider()
 
             VStack(alignment: .leading, spacing: 10) {
@@ -8254,6 +8342,60 @@ struct DesktopSessionShellView: View {
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
+        }
+    }
+
+    private func desktopConversationReadOnlyToolLaneCluster(
+        _ state: DesktopConversationReadOnlyToolLaneState
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Read-only tool lane attachment")
+                .font(.subheadline.weight(.semibold))
+
+            metadataRow(label: "lane_kind", value: state.laneKind)
+            metadataRow(label: "response_surface", value: state.responseSurface)
+            metadataRow(label: "outcome", value: state.outcome)
+            metadataRow(label: "next_move", value: state.nextMove)
+            metadataRow(label: "reason_code", value: state.reasonCode)
+            metadataRow(label: "source_count", value: String(state.sourceCount))
+
+            if let retrievedAtLabel = state.retrievedAtLabel {
+                metadataRow(label: "retrieved_at", value: retrievedAtLabel)
+            }
+
+            if let cacheStatusLabel = state.cacheStatusLabel {
+                metadataRow(label: "cache_status", value: cacheStatusLabel)
+            }
+
+            if state.sources.isEmpty {
+                Text("Canonical runtime returned a read-only tool-lane posture without cloud-authored source rows, retrieval timing, or cache posture. This shell fails closed to explanation-only metadata here and does not fabricate local sources, provider identity, query identity, or tool-name authority.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                ForEach(state.sources) { source in
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(source.title)
+                            .font(.subheadline.weight(.medium))
+
+                        if let sourceURL = URL(string: source.url) {
+                            Link(source.url, destination: sourceURL)
+                                .font(.footnote)
+                        } else {
+                            Text(source.url)
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                                .textSelection(.enabled)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+
+            Text("Search and tool execution remain cloud-authored and read-only here. This path does not add local search execution, local tool invocation controls, local provider selection, local session attach or reopen authority, hidden/background wake behavior, or autonomous unlock.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
