@@ -2730,6 +2730,54 @@ private struct DesktopInterruptSubjectRelationConfidenceVisibilityState: Identif
     }
 }
 
+private struct DesktopInterruptReturnCheckExpiryVisibilityState: Identifiable,
+    Equatable
+{
+    let sourceSurfaceIdentity: String
+    let sessionState: String
+    let sessionID: String
+    let turnID: String
+    let interruptSubjectRelation: String?
+    let interruptContinuityOutcome: String?
+    let interruptResumePolicy: String?
+    let returnCheckPending: Bool?
+    let returnCheckExpiresAt: String?
+    let hasLawfulInterruptReturnCheckExpiry: Bool
+
+    var interruptContinuityRows: [(label: String, value: String)] {
+        var rows: [(label: String, value: String)] = []
+
+        if let interruptSubjectRelation {
+            rows.append(("interrupt_subject_relation", interruptSubjectRelation))
+        }
+
+        if let interruptContinuityOutcome {
+            rows.append(("interrupt_continuity_outcome", interruptContinuityOutcome))
+        }
+
+        if let interruptResumePolicy {
+            rows.append(("interrupt_resume_policy", interruptResumePolicy))
+        }
+
+        return rows
+    }
+
+    var id: String {
+        [
+            sourceSurfaceIdentity,
+            sessionState,
+            sessionID,
+            turnID,
+            interruptSubjectRelation ?? "interrupt_subject_relation_not_provided",
+            interruptContinuityOutcome ?? "interrupt_continuity_outcome_not_provided",
+            interruptResumePolicy ?? "interrupt_resume_policy_not_provided",
+            returnCheckPending.map(booleanValue) ?? "return_check_pending_not_provided",
+            returnCheckExpiresAt ?? "return_check_expires_at_not_provided",
+            booleanValue(hasLawfulInterruptReturnCheckExpiry),
+        ].joined(separator: "::")
+    }
+}
+
 struct DesktopSenderVerificationVisibilityState: Identifiable, Equatable {
     let onboardingSessionID: String
     let nextStep: String
@@ -2900,6 +2948,7 @@ struct DesktopSessionShellView: View {
                 desktopInterruptResponseProductionCard
                 desktopInterruptSubjectReferencesVisibilityCard
                 desktopInterruptSubjectRelationConfidenceVisibilityCard
+                desktopInterruptReturnCheckExpiryVisibilityCard
 
                 sessionCard
                 .frame(maxWidth: .infinity, minHeight: 360, alignment: .topLeading)
@@ -3987,6 +4036,35 @@ struct DesktopSessionShellView: View {
                 .interruptSubjectRelationConfidence,
             hasLawfulInterruptSubjectRelationConfidence: latestSessionActiveVisibleContext
                 .hasLawfulInterruptSubjectRelationConfidence
+        )
+    }
+
+    private var desktopInterruptReturnCheckExpiryVisibilityState:
+        DesktopInterruptReturnCheckExpiryVisibilityState?
+    {
+        guard
+            activeInterruptDisplayState == .interruptVisible,
+            let latestSessionActiveVisibleContext,
+            latestSessionActiveVisibleContext.hasLawfulInterruptReturnCheckExpiry
+        else {
+            return nil
+        }
+
+        return DesktopInterruptReturnCheckExpiryVisibilityState(
+            sourceSurfaceIdentity: "INTERRUPT_VISIBLE",
+            sessionState: latestSessionActiveVisibleContext.sessionState,
+            sessionID: latestSessionActiveVisibleContext.sessionID,
+            turnID: latestSessionActiveVisibleContext.turnID,
+            interruptSubjectRelation: latestSessionActiveVisibleContext.interruptSubjectRelation?
+                .rawValue,
+            interruptContinuityOutcome: latestSessionActiveVisibleContext
+                .interruptContinuityOutcome?.rawValue,
+            interruptResumePolicy: latestSessionActiveVisibleContext.interruptResumePolicy?
+                .rawValue,
+            returnCheckPending: latestSessionActiveVisibleContext.returnCheckPending,
+            returnCheckExpiresAt: latestSessionActiveVisibleContext.returnCheckExpiresAt,
+            hasLawfulInterruptReturnCheckExpiry: latestSessionActiveVisibleContext
+                .hasLawfulInterruptReturnCheckExpiry
         )
     }
 
@@ -6410,6 +6488,81 @@ struct DesktopSessionShellView: View {
                     }
                 } label: {
                     Text("Interrupt Subject Relation Confidence")
+                        .font(.headline)
+                }
+            }
+        }
+    }
+
+    private var desktopInterruptReturnCheckExpiryVisibilityCard: some View {
+        let interruptReturnCheckExpiryVisibilityState =
+            desktopInterruptReturnCheckExpiryVisibilityState
+
+        return Group {
+            if let interruptReturnCheckExpiryVisibilityState {
+                GroupBox {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("Bounded desktop interrupt return-check-expiry visibility only. This shell derives one dedicated exact `INTERRUPT_VISIBLE` expiry surface from the already-live active-session interrupt context only, preserves cloud-authored return-check expiry evidence in read-only form, and keeps broader interrupt detail, response-production, subject-reference, subject-relation-confidence, resume-buffer, and TTS-resume-snapshot branches outside this selected implementation seam.")
+                            .frame(maxWidth: .infinity, alignment: .leading)
+
+                        ForEach(
+                            [
+                                (
+                                    "source_surface",
+                                    interruptReturnCheckExpiryVisibilityState
+                                        .sourceSurfaceIdentity
+                                ),
+                                (
+                                    "session_state",
+                                    interruptReturnCheckExpiryVisibilityState.sessionState
+                                ),
+                                (
+                                    "session_id",
+                                    interruptReturnCheckExpiryVisibilityState.sessionID
+                                ),
+                                (
+                                    "turn_id",
+                                    interruptReturnCheckExpiryVisibilityState.turnID
+                                ),
+                            ],
+                            id: \.0
+                        ) { row in
+                            metadataRow(label: row.0, value: row.1)
+                        }
+
+                        ForEach(
+                            interruptReturnCheckExpiryVisibilityState.interruptContinuityRows,
+                            id: \.label
+                        ) { row in
+                            metadataRow(label: row.label, value: row.value)
+                        }
+
+                        metadataRow(
+                            label: "return_check_pending",
+                            value: interruptReturnCheckExpiryVisibilityState.returnCheckPending
+                                .map(booleanValue) ?? "not_provided"
+                        )
+
+                        Text("Return-check-expiry posture remains cloud-authored and active-session-bound here, so this dedicated surface renders expiry evidence without widening into local timer law, local dispatch, or local subject authority.")
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+
+                        if
+                            interruptReturnCheckExpiryVisibilityState
+                            .hasLawfulInterruptReturnCheckExpiry,
+                            let returnCheckExpiresAt =
+                                interruptReturnCheckExpiryVisibilityState.returnCheckExpiresAt
+                        {
+                            interruptReturnCheckExpiryCard(returnCheckExpiresAt)
+                        }
+
+                        Text("Expiry evidence remains evidence-only here and does not grant local timer law, local dispatch unlock, local subject binding, or local identity-resolution authority. This shell stays explicitly non-authoritative.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                } label: {
+                    Text("Interrupt Return Check Expiry")
                         .font(.headline)
                 }
             }
