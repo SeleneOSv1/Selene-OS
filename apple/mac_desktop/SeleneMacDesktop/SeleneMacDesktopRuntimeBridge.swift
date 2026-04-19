@@ -1039,7 +1039,7 @@ struct DesktopWakeEnrollStartDraftRuntimeOutcomeState: Identifiable, Equatable {
             phase: .dispatching,
             title: "Dispatching desktop wake-enroll start draft",
             summary: "The bounded desktop wake-enroll start-draft request is now being handed into canonical `/v1/onboarding/continue`.",
-            detail: "Only exact `WAKE_ENROLL_START_DRAFT` is in scope here. This exact wake-start path remains explicitly non-authoritative; any later wake-sample and wake-complete controls are separately gated, while wake-defer, sender verification, employee photo capture, emo-persona lock, access provisioning, pairing completion, wake-listener behavior, and autonomous unlock remain out of scope here.",
+            detail: "Only exact `WAKE_ENROLL_START_DRAFT` is in scope here. This exact wake-start path remains explicitly non-authoritative; any later wake-sample, wake-complete, and wake-defer controls are separately gated, while sender verification, employee photo capture, emo-persona lock, access provisioning, pairing completion, wake-listener behavior, and autonomous unlock remain out of scope here.",
             endpoint: endpoint,
             requestID: requestID,
             deviceID: deviceID,
@@ -1072,7 +1072,7 @@ struct DesktopWakeEnrollStartDraftRuntimeOutcomeState: Identifiable, Equatable {
                 ? "Canonical `/v1/onboarding/continue` advanced beyond `WAKE_ENROLL`; later onboarding actions remain read-only and out of scope in this shell."
                 : "Canonical `/v1/onboarding/continue` accepted the bounded desktop wake-enroll start draft and returned updated onboarding posture.",
             detail: boundedNextStep == "WAKE_ENROLL"
-                ? "Read-only next-step visibility only. This exact wake-start surface preserves returned exact `WAKE_ENROLL` posture plus exact `voice_artifact_sync_receipt_ref`; any later wake-sample and wake-complete submit remain separately gated, while wake-defer stays out of scope here."
+                ? "Read-only next-step visibility only. This exact wake-start surface preserves returned exact `WAKE_ENROLL` posture plus exact `voice_artifact_sync_receipt_ref`; any later wake-sample, wake-complete, and wake-defer submit remain separately gated."
                 : advancedBeyondWakeEnroll
                     ? "Read-only next-step visibility only. This shell preserves the advanced step and any returned voice-artifact sync receipt without adding later wake mutation, sender verification, emo-persona lock, access provisioning, pairing completion, or autonomous unlock."
                     : "Canonical wake-enroll start draft only. This shell preserves returned wake posture without adding local wake authority, wake-listener behavior, or later onboarding controls.",
@@ -1153,7 +1153,7 @@ struct DesktopWakeEnrollSampleCommitRuntimeOutcomeState: Identifiable, Equatable
             phase: .dispatching,
             title: "Dispatching desktop wake-enroll sample commit",
             summary: "The bounded desktop wake-enroll sample-commit request is now being handed into canonical `/v1/onboarding/continue`.",
-            detail: "Only exact `WAKE_ENROLL_SAMPLE_COMMIT` is in scope here. This exact sample-commit path remains explicitly non-authoritative; any later wake-complete submit remains separately gated, while wake-defer, sender verification, employee photo capture, emo-persona lock, access provisioning, pairing completion, wake-listener behavior, and autonomous unlock remain out of scope here.",
+            detail: "Only exact `WAKE_ENROLL_SAMPLE_COMMIT` is in scope here. This exact sample-commit path remains explicitly non-authoritative; any later wake-complete and wake-defer submit remain separately gated, while sender verification, employee photo capture, emo-persona lock, access provisioning, pairing completion, wake-listener behavior, and autonomous unlock remain out of scope here.",
             endpoint: endpoint,
             requestID: requestID,
             deviceID: deviceID,
@@ -1189,7 +1189,7 @@ struct DesktopWakeEnrollSampleCommitRuntimeOutcomeState: Identifiable, Equatable
             detail: boundedNextStep == "WAKE_ENROLL"
                 ? "Read-only next-step visibility only. This exact sample-commit surface preserves returned exact `WAKE_ENROLL` posture plus exact `voice_artifact_sync_receipt_ref` while keeping another explicit sample-commit submit available only when lawful bounded prompt state remains present; any wake-complete submit remains separately gated."
                 : advancedBeyondWakeEnroll
-                    ? "Read-only next-step visibility only. This shell preserves the advanced step and any returned voice-artifact sync receipt without auto-dispatching wake-complete, wake-defer, sender verification, emo-persona lock submit behavior, access provisioning, pairing completion, or autonomous unlock."
+                    ? "Read-only next-step visibility only. This shell preserves the advanced step and any returned voice-artifact sync receipt without auto-dispatching wake-complete or wake-defer, and without adding sender verification, emo-persona lock submit behavior, access provisioning, pairing completion, or autonomous unlock."
                     : "Canonical wake-enroll sample commit only. This shell preserves returned wake posture without batching, auto-looping, local wake authority, or later onboarding controls.",
             endpoint: endpoint,
             requestID: requestID,
@@ -1269,7 +1269,7 @@ struct DesktopWakeEnrollCompleteCommitRuntimeOutcomeState: Identifiable, Equatab
             phase: .dispatching,
             title: "Dispatching desktop wake-enroll complete commit",
             summary: "The bounded desktop wake-enroll complete-commit request is now being handed into canonical `/v1/onboarding/continue`.",
-            detail: "Only exact wake-enroll complete commit is in scope here. This exact wake-complete path remains explicitly non-authoritative and does not introduce wake-defer, emo-persona lock submit behavior, access provisioning, pairing completion, wake-listener behavior, or autonomous unlock.",
+            detail: "Only exact wake-enroll complete commit is in scope here. This exact wake-complete path remains explicitly non-authoritative, keeps any wake-defer submit separately gated, and does not introduce emo-persona lock submit behavior, access provisioning, pairing completion, wake-listener behavior, or autonomous unlock.",
             endpoint: endpoint,
             requestID: requestID,
             deviceID: deviceID,
@@ -1304,9 +1304,9 @@ struct DesktopWakeEnrollCompleteCommitRuntimeOutcomeState: Identifiable, Equatab
             detail: boundedNextStep == "EMO_PERSONA_LOCK"
                 ? "Read-only next-step visibility only. This exact wake-complete surface preserves returned exact `EMO_PERSONA_LOCK` plus any returned exact `voice_artifact_sync_receipt_ref`; emo-persona submit remains separately gated and non-authoritative."
                 : boundedNextStep == "WAKE_ENROLL"
-                    ? "Read-only next-step visibility only. This exact wake-complete surface preserves returned exact `WAKE_ENROLL` posture plus exact `voice_artifact_sync_receipt_ref`; wake-defer remains out of scope here."
+                    ? "Read-only next-step visibility only. This exact wake-complete surface preserves returned exact `WAKE_ENROLL` posture plus exact `voice_artifact_sync_receipt_ref`; any wake-defer submit remains separately gated."
                     : advancedBeyondWakeEnroll
-                        ? "Read-only next-step visibility only. This shell preserves the advanced step and any returned voice-artifact sync receipt without adding wake-defer, emo-persona submit behavior, access provisioning, pairing completion, wake-listener behavior, or autonomous unlock."
+                        ? "Read-only next-step visibility only. This shell preserves the advanced step and any returned voice-artifact sync receipt without adding emo-persona submit behavior, access provisioning, pairing completion, wake-listener behavior, or autonomous unlock."
                         : "Canonical wake-enroll complete commit only. This shell preserves returned wake posture without local wake authority, emo-persona submit behavior, or later onboarding controls.",
             endpoint: endpoint,
             requestID: requestID,
@@ -1334,6 +1334,119 @@ struct DesktopWakeEnrollCompleteCommitRuntimeOutcomeState: Identifiable, Equatab
             id: requestID,
             phase: .failed,
             title: "Desktop wake-enroll complete commit failed",
+            summary: summary,
+            detail: detail,
+            endpoint: endpoint,
+            requestID: requestID,
+            deviceID: deviceID,
+            outcome: nil,
+            reason: reason,
+            onboardingSessionID: onboardingSessionID,
+            nextStep: nil,
+            remainingPlatformReceiptKinds: [],
+            onboardingStatus: nil,
+            voiceArtifactSyncReceiptRef: nil
+        )
+    }
+}
+
+struct DesktopWakeEnrollDeferCommitRuntimeOutcomeState: Identifiable, Equatable {
+    enum Phase: String, Equatable {
+        case dispatching = "dispatching"
+        case completed = "completed"
+        case failed = "failed"
+    }
+
+    let id: String
+    let phase: Phase
+    let title: String
+    let summary: String
+    let detail: String
+    let endpoint: String
+    let requestID: String
+    let deviceID: String
+    let outcome: String?
+    let reason: String?
+    let onboardingSessionID: String?
+    let nextStep: String?
+    let remainingPlatformReceiptKinds: [String]
+    let onboardingStatus: String?
+    let voiceArtifactSyncReceiptRef: String?
+
+    static func dispatching(
+        onboardingSessionID: String,
+        deviceID: String,
+        endpoint: String,
+        requestID: String
+    ) -> DesktopWakeEnrollDeferCommitRuntimeOutcomeState {
+        DesktopWakeEnrollDeferCommitRuntimeOutcomeState(
+            id: requestID,
+            phase: .dispatching,
+            title: "Dispatching desktop wake-enroll defer commit",
+            summary: "The bounded desktop wake-enroll defer-commit request is now being handed into canonical `/v1/onboarding/continue`.",
+            detail: "Only exact `WAKE_ENROLL_DEFER_COMMIT` is in scope here. This exact wake-defer path remains explicitly non-authoritative and does not introduce local `deferred_until` authoring, wake-listener behavior, pairing completion mutation, session resume / attach / reopen mutation, or autonomous unlock.",
+            endpoint: endpoint,
+            requestID: requestID,
+            deviceID: deviceID,
+            outcome: nil,
+            reason: nil,
+            onboardingSessionID: onboardingSessionID,
+            nextStep: "WAKE_ENROLL",
+            remainingPlatformReceiptKinds: [],
+            onboardingStatus: nil,
+            voiceArtifactSyncReceiptRef: nil
+        )
+    }
+
+    static func completed(
+        requestID: String,
+        endpoint: String,
+        response: DesktopCanonicalRuntimeBridge.OnboardingContinueAdapterResponsePayload,
+        fallbackOnboardingSessionID: String,
+        fallbackDeviceID: String
+    ) -> DesktopWakeEnrollDeferCommitRuntimeOutcomeState {
+        let boundedNextStep = boundedOnboardingContinueField(response.nextStep)
+        let advancedBeyondWakeEnroll = boundedNextStep != nil && boundedNextStep != "WAKE_ENROLL"
+        let returnedVoiceArtifactSyncReceiptRef = boundedOnboardingContinueField(response.voiceArtifactSyncReceiptRef)
+
+        return DesktopWakeEnrollDeferCommitRuntimeOutcomeState(
+            id: requestID,
+            phase: .completed,
+            title: "Desktop wake-enroll defer commit completed",
+            summary: advancedBeyondWakeEnroll
+                ? "Canonical `/v1/onboarding/continue` advanced beyond `WAKE_ENROLL`; later onboarding actions remain read-only and out of scope in this shell."
+                : "Canonical `/v1/onboarding/continue` accepted the bounded desktop wake-enroll defer commit and returned updated onboarding posture.",
+            detail: boundedNextStep == "WAKE_ENROLL"
+                ? "Read-only next-step visibility only. This exact wake-defer surface preserves returned exact `WAKE_ENROLL` posture plus exact `voice_artifact_sync_receipt_ref` without adding local `deferred_until` authoring, wake-listener integration, pairing completion mutation, or autonomous unlock."
+                : advancedBeyondWakeEnroll
+                    ? "Read-only next-step visibility only. This shell preserves the advanced step and any returned voice-artifact sync receipt without adding ready-time handoff, session resume / attach / reopen mutation, wake-listener behavior, or autonomous unlock."
+                    : "Canonical wake-enroll defer commit only. This shell preserves returned wake posture without local wake authority, local scheduling authority, or later onboarding mutation.",
+            endpoint: endpoint,
+            requestID: requestID,
+            deviceID: fallbackDeviceID,
+            outcome: boundedOnboardingContinueField(response.outcome) ?? "ONBOARDING_CONTINUED",
+            reason: boundedOnboardingContinueField(response.reason),
+            onboardingSessionID: boundedOnboardingContinueField(response.onboardingSessionID) ?? fallbackOnboardingSessionID,
+            nextStep: boundedNextStep,
+            remainingPlatformReceiptKinds: boundedOnboardingContinueList(response.remainingPlatformReceiptKinds),
+            onboardingStatus: boundedOnboardingContinueField(response.onboardingStatus),
+            voiceArtifactSyncReceiptRef: returnedVoiceArtifactSyncReceiptRef
+        )
+    }
+
+    static func failed(
+        onboardingSessionID: String,
+        deviceID: String,
+        endpoint: String,
+        requestID: String,
+        summary: String,
+        detail: String,
+        reason: String? = nil
+    ) -> DesktopWakeEnrollDeferCommitRuntimeOutcomeState {
+        DesktopWakeEnrollDeferCommitRuntimeOutcomeState(
+            id: requestID,
+            phase: .failed,
+            title: "Desktop wake-enroll defer commit failed",
             summary: summary,
             detail: detail,
             endpoint: endpoint,
@@ -1799,6 +1912,7 @@ private func boundedDesktopVoiceEnrollTranscriptPreview(_ rawValue: String?) -> 
 }
 
 let desktopCanonicalTermsVersionID = "terms_v1"
+let desktopWakeEnrollDeferCommitAction = ["WAKE", "ENROLL", "DEFER", "COMMIT"].joined(separator: "_")
 let desktopWakeEnrollCompleteCommitAction = ["WAKE", "ENROLL", "COMPLETE", "COMMIT"].joined(separator: "_")
 let desktopEmoPersonaLockAction = ["EMO", "PERSONA", "LOCK"].joined(separator: "_")
 let desktopAccessProvisionCommitAction = ["ACCESS", "PROVISION", "COMMIT"].joined(separator: "_")
@@ -1858,6 +1972,7 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
         case invalidWakeEnrollStartDraftRequest(String)
         case invalidWakeEnrollSampleCommitRequest(String)
         case invalidWakeEnrollCompleteCommitRequest(String)
+        case invalidWakeEnrollDeferCommitRequest(String)
         case invalidEmoPersonaLockRequest(String)
         case invalidAccessProvisionCommitRequest(String)
         case invalidCompleteCommitRequest(String)
@@ -1881,6 +1996,7 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
                  .invalidWakeEnrollStartDraftRequest(let detail),
                  .invalidWakeEnrollSampleCommitRequest(let detail),
                  .invalidWakeEnrollCompleteCommitRequest(let detail),
+                 .invalidWakeEnrollDeferCommitRequest(let detail),
                  .invalidEmoPersonaLockRequest(let detail),
                  .invalidAccessProvisionCommitRequest(let detail),
                  .invalidCompleteCommitRequest(let detail),
@@ -1985,6 +2101,14 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
     }
 
     struct DesktopWakeEnrollCompleteCommitIngressContext {
+        let onboardingSessionID: String
+        let deviceID: String
+        let requestID: String
+        let endpoint: String
+        let urlRequest: URLRequest
+    }
+
+    struct DesktopWakeEnrollDeferCommitIngressContext {
         let onboardingSessionID: String
         let deviceID: String
         let requestID: String
@@ -2402,6 +2526,24 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
                 endpoint: onboardingContinueEndpoint,
                 requestID: "unavailable",
                 summary: "The canonical onboarding-continue bridge could not stage this bounded desktop wake-enroll complete-commit request.",
+                detail: error.localizedDescription
+            )
+        }
+    }
+
+    func submitDesktopWakeEnrollDeferCommit(
+        _ promptState: DesktopWakeEnrollDeferCommitPromptState
+    ) async -> DesktopWakeEnrollDeferCommitRuntimeOutcomeState {
+        do {
+            let ingressContext = try desktopWakeEnrollDeferCommitRequestBuilder(promptState)
+            return await submitDesktopWakeEnrollDeferCommit(ingressContext)
+        } catch {
+            return .failed(
+                onboardingSessionID: promptState.onboardingSessionID,
+                deviceID: promptState.deviceID,
+                endpoint: onboardingContinueEndpoint,
+                requestID: "unavailable",
+                summary: "The canonical onboarding-continue bridge could not stage this bounded desktop wake-enroll defer-commit request.",
                 detail: error.localizedDescription
             )
         }
@@ -2949,7 +3091,7 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
                 endpoint: ingressContext.endpoint,
                 requestID: ingressContext.requestID,
                 summary: "The canonical onboarding-continue bridge rejected or failed this bounded desktop wake-enroll sample-commit request.",
-                detail: "Canonical `/v1/onboarding/continue` failed closed with outcome `\(payload.outcome)` and reason `\(boundedOnboardingContinueField(payload.reason) ?? "not_provided")`. This shell remains limited to exact `WAKE_ENROLL_SAMPLE_COMMIT`, keeps wake-complete submit separately gated, keeps wake-defer mutation out of scope, and does not bypass later onboarding law.",
+                detail: "Canonical `/v1/onboarding/continue` failed closed with outcome `\(payload.outcome)` and reason `\(boundedOnboardingContinueField(payload.reason) ?? "not_provided")`. This shell remains limited to exact `WAKE_ENROLL_SAMPLE_COMMIT`, keeps wake-complete and wake-defer submit separately gated, and does not bypass later onboarding law.",
                 reason: boundedOnboardingContinueField(payload.reason)
             )
         } catch {
@@ -3004,6 +3146,51 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
                 endpoint: ingressContext.endpoint,
                 requestID: ingressContext.requestID,
                 summary: "The canonical onboarding-continue bridge could not deliver this bounded desktop wake-enroll complete-commit request.",
+                detail: error.localizedDescription
+            )
+        }
+    }
+
+    func submitDesktopWakeEnrollDeferCommit(
+        _ ingressContext: DesktopWakeEnrollDeferCommitIngressContext
+    ) async -> DesktopWakeEnrollDeferCommitRuntimeOutcomeState {
+        do {
+            try await ensureAdapterAvailable()
+
+            let (data, response) = try await urlSession.data(for: ingressContext.urlRequest)
+            let decoder = JSONDecoder()
+            decoder.keyDecodingStrategy = .convertFromSnakeCase
+            let httpResponse = response as? HTTPURLResponse
+            let statusCode = httpResponse?.statusCode ?? 0
+            let payload = try decoder.decode(OnboardingContinueAdapterResponsePayload.self, from: data)
+
+            if statusCode == 200,
+               payload.status.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "ok" {
+                return .completed(
+                    requestID: ingressContext.requestID,
+                    endpoint: ingressContext.endpoint,
+                    response: payload,
+                    fallbackOnboardingSessionID: ingressContext.onboardingSessionID,
+                    fallbackDeviceID: ingressContext.deviceID
+                )
+            }
+
+            return .failed(
+                onboardingSessionID: ingressContext.onboardingSessionID,
+                deviceID: ingressContext.deviceID,
+                endpoint: ingressContext.endpoint,
+                requestID: ingressContext.requestID,
+                summary: "The canonical onboarding-continue bridge rejected or failed this bounded desktop wake-enroll defer-commit request.",
+                detail: "Canonical `/v1/onboarding/continue` failed closed with outcome `\(payload.outcome)` and reason `\(boundedOnboardingContinueField(payload.reason) ?? "not_provided")`. This shell remains limited to exact `WAKE_ENROLL_DEFER_COMMIT`, preserves returned `WAKE_ENROLL` and `voice_artifact_sync_receipt_ref` visibility in read-only form only, and does not add local `deferred_until` authoring, wake-listener behavior, pairing completion mutation, or autonomous unlock.",
+                reason: boundedOnboardingContinueField(payload.reason)
+            )
+        } catch {
+            return .failed(
+                onboardingSessionID: ingressContext.onboardingSessionID,
+                deviceID: ingressContext.deviceID,
+                endpoint: ingressContext.endpoint,
+                requestID: ingressContext.requestID,
+                summary: "The canonical onboarding-continue bridge could not deliver this bounded desktop wake-enroll defer-commit request.",
                 detail: error.localizedDescription
             )
         }
@@ -4102,6 +4289,82 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
         )
 
         return DesktopWakeEnrollCompleteCommitIngressContext(
+            onboardingSessionID: onboardingSessionID,
+            deviceID: managedDeviceID,
+            requestID: requestID,
+            endpoint: endpointURL.absoluteString,
+            urlRequest: urlRequest
+        )
+    }
+
+    func desktopWakeEnrollDeferCommitRequestBuilder(
+        _ promptState: DesktopWakeEnrollDeferCommitPromptState
+    ) throws -> DesktopWakeEnrollDeferCommitIngressContext {
+        guard let onboardingSessionID = boundedOnboardingContinueField(promptState.onboardingSessionID) else {
+            throw BridgeError.invalidWakeEnrollDeferCommitRequest(
+                "the bounded desktop wake-enroll defer-commit prompt state did not preserve a lawful onboarding_session_id"
+            )
+        }
+
+        guard let nextStep = boundedOnboardingContinueField(promptState.nextStep),
+              nextStep == "WAKE_ENROLL" else {
+            throw BridgeError.invalidWakeEnrollDeferCommitRequest(
+                "bounded desktop wake-enroll defer commit is only lawful when canonical onboarding posture remains at exact `WAKE_ENROLL`"
+            )
+        }
+
+        guard let managedDeviceID = boundedOnboardingContinueField(deviceID),
+              let promptDeviceID = boundedOnboardingContinueField(promptState.deviceID),
+              promptDeviceID == managedDeviceID else {
+            throw BridgeError.invalidWakeEnrollDeferCommitRequest(
+                "bounded desktop wake-enroll defer commit must preserve the exact managed bridge `deviceID` only"
+            )
+        }
+
+        let requestID = "desktop_wake_enroll_defer_commit_request_\(UUID().uuidString.replacingOccurrences(of: "-", with: ""))"
+        let idempotencyKey = "desktop_wake_enroll_defer_commit_\(onboardingSessionID)_\(managedDeviceID)"
+        let nonce = UUID().uuidString.replacingOccurrences(of: "-", with: "")
+        let timestampMS = Self.systemTimeNowMS()
+        let correlationID = Swift.max(DispatchTime.now().uptimeNanoseconds, 1)
+
+        let payload = OnboardingContinueAdapterRequestPayload(
+            correlationID: correlationID,
+            onboardingSessionID: onboardingSessionID,
+            idempotencyKey: idempotencyKey,
+            tenantID: tenantID,
+            action: desktopWakeEnrollDeferCommitAction,
+            fieldValue: nil,
+            receiptKind: nil,
+            receiptRef: nil,
+            signer: nil,
+            payloadHash: nil,
+            termsVersionID: nil,
+            accepted: nil,
+            deviceID: managedDeviceID,
+            proofOK: nil,
+            sampleSeed: nil,
+            photoBlobRef: nil,
+            senderDecision: nil
+        )
+
+        let encoder = JSONEncoder()
+        encoder.keyEncodingStrategy = .convertToSnakeCase
+        let body = try encoder.encode(payload)
+        let endpointURL = adapterBaseURL.appendingPathComponent("v1/onboarding/continue")
+        var urlRequest = URLRequest(url: endpointURL)
+        urlRequest.httpMethod = "POST"
+        urlRequest.httpBody = body
+        urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        urlRequest.setValue(requestID, forHTTPHeaderField: "x-request-id")
+        urlRequest.setValue(idempotencyKey, forHTTPHeaderField: "idempotency-key")
+        urlRequest.setValue(String(timestampMS), forHTTPHeaderField: "x-selene-timestamp-ms")
+        urlRequest.setValue(nonce, forHTTPHeaderField: "x-selene-nonce")
+        urlRequest.setValue(
+            Self.bearerToken(subject: actorUserID, device: managedDeviceID),
+            forHTTPHeaderField: "Authorization"
+        )
+
+        return DesktopWakeEnrollDeferCommitIngressContext(
             onboardingSessionID: onboardingSessionID,
             deviceID: managedDeviceID,
             requestID: requestID,
