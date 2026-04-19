@@ -5,9 +5,11 @@ use std::{cmp::min, collections::BTreeSet};
 use selene_engines::ph1_voice_id::{
     EnrolledSpeaker as EngineEnrolledSpeaker, VoiceIdObservation as EngineVoiceIdObservation,
 };
+use selene_engines::ph1_voice_id::reason_codes as voice_id_reason_codes;
 use selene_engines::ph1d::{Ph1dProviderAdapter, Ph1dProviderAdapterError};
 use selene_kernel_contracts::ph1_voice_id::{
-    IdentityTierV2, Ph1VoiceIdRequest, Ph1VoiceIdResponse, UserId,
+    IdentityConfidence, IdentityTierV2, Ph1VoiceIdRequest, Ph1VoiceIdResponse,
+    SpoofLivenessStatus, UserId,
 };
 use selene_kernel_contracts::ph1c::TranscriptOk;
 use selene_kernel_contracts::ph1d::{
@@ -93,6 +95,65 @@ pub mod reason_codes {
     pub const PH1_OS_OCR_ROUTE_NLP_REFUSED: ReasonCodeId = ReasonCodeId(0x4F53_0306);
     pub const PH1_OS_OCR_ROUTE_NLP_INPUT_INVALID: ReasonCodeId = ReasonCodeId(0x4F53_0307);
     pub const PH1_OS_OCR_ROUTE_CLARIFY_POLICY_BLOCK: ReasonCodeId = ReasonCodeId(0x4F53_0308);
+}
+
+fn posture_fail_closed_reason_code(reason_code: selene_kernel_contracts::ReasonCodeId) -> bool {
+    reason_code == voice_id_reason_codes::VID_FAIL_LOW_CONFIDENCE
+        || reason_code == voice_id_reason_codes::VID_FAIL_GRAY_ZONE_MARGIN
+        || reason_code == voice_id_reason_codes::VID_FAIL_ECHO_UNSAFE
+        || reason_code == voice_id_reason_codes::VID_FAIL_NO_SPEECH
+        || reason_code == voice_id_reason_codes::VID_FAIL_MULTI_SPEAKER_PRESENT
+}
+
+fn recanonicalize_posture_fail_closed_voice_identity_assertion(
+    actor_user_id: &UserId,
+    assertion: &Ph1VoiceIdResponse,
+) -> Ph1VoiceIdResponse {
+    match assertion {
+        Ph1VoiceIdResponse::SpeakerAssertionUnknown(unknown)
+            if posture_fail_closed_reason_code(unknown.reason_code) =>
+        {
+            let mut normalized = unknown.clone();
+            normalized.identity_v2.identity_tier_v2 = IdentityTierV2::Unknown;
+            normalized.identity_v2 = normalized.identity_v2.with_may_prompt_identity(true);
+            normalized.confidence = match unknown.reason_code {
+                code if code == voice_id_reason_codes::VID_FAIL_LOW_CONFIDENCE => {
+                    IdentityConfidence::Low
+                }
+                code
+                    if code == voice_id_reason_codes::VID_FAIL_GRAY_ZONE_MARGIN
+                        || code == voice_id_reason_codes::VID_FAIL_ECHO_UNSAFE =>
+                {
+                    IdentityConfidence::Medium
+                }
+                _ => IdentityConfidence::Low,
+            };
+            normalized.score_bp = match unknown.reason_code {
+                code
+                    if code == voice_id_reason_codes::VID_FAIL_GRAY_ZONE_MARGIN
+                        || code == voice_id_reason_codes::VID_FAIL_ECHO_UNSAFE =>
+                {
+                    4_500
+                }
+                _ => 2_000,
+            };
+            normalized.margin_to_next_bp = None;
+            normalized.spoof_liveness_status = SpoofLivenessStatus::Unknown;
+            normalized.candidate_set = Vec::new();
+            normalized.device_owner_user_id = None;
+            normalized.candidate_user_id = match unknown.reason_code {
+                code
+                    if code == voice_id_reason_codes::VID_FAIL_LOW_CONFIDENCE
+                        || code == voice_id_reason_codes::VID_FAIL_GRAY_ZONE_MARGIN =>
+                {
+                    Some(actor_user_id.clone())
+                }
+                _ => None,
+            };
+            Ph1VoiceIdResponse::SpeakerAssertionUnknown(normalized)
+        }
+        _ => assertion.clone(),
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1579,6 +1640,7 @@ where
             input.device_id.as_ref(),
             voice_context,
         ));
+        let actor_user_id = input.actor_user_id.clone();
         let signal_scope = VoiceIdentitySignalScope::v1(
             input.voice_id_request.now,
             input.top_level_turn_input.correlation_id,
@@ -1600,6 +1662,10 @@ where
                 input.observation,
                 signal_scope,
             )?;
+        let voice_identity_assertion = recanonicalize_posture_fail_closed_voice_identity_assertion(
+            &actor_user_id,
+            &voice_identity_assertion,
+        );
         let runtime_execution_envelope = input
             .runtime_execution_envelope
             .with_voice_identity_assertion(Some(voice_identity_assertion.clone()))
@@ -4526,6 +4592,7 @@ mod tests {
             Some(&device_id),
             voice_context_ios_explicit().expect("voice context must exist for voice path"),
         );
+        let expected_actor_user_id = actor_user_id.clone();
         let top_level_turn_input = OsTopLevelTurnInput::v1(
             CorrelationId(7801),
             TurnId(8801),
@@ -4594,6 +4661,21 @@ mod tests {
             forwarded.voice_identity_assertion,
             Ph1VoiceIdResponse::SpeakerAssertionUnknown(_)
         ));
+        let Ph1VoiceIdResponse::SpeakerAssertionUnknown(unknown_voice_identity_assertion) =
+            &forwarded.voice_identity_assertion
+        else {
+            panic!("forwarded live voice outcome must keep the Unknown carrier family");
+        };
+        assert_eq!(
+            unknown_voice_identity_assertion.reason_code,
+            voice_id_reason_codes::VID_FAIL_LOW_CONFIDENCE
+        );
+        assert_eq!(
+            unknown_voice_identity_assertion.candidate_user_id.as_ref(),
+            Some(&expected_actor_user_id)
+        );
+        assert!(unknown_voice_identity_assertion.candidate_set.is_empty());
+        assert!(unknown_voice_identity_assertion.device_owner_user_id.is_none());
         assert_eq!(
             forwarded.runtime_execution_envelope.voice_identity_assertion,
             Some(forwarded.voice_identity_assertion.clone())
