@@ -118,8 +118,9 @@ use selene_kernel_contracts::{
 use selene_os::app_ingress::{
     AppInviteLinkOpenRequest, AppOnboardingContinueAction, AppOnboardingContinueNextStep,
     AppOnboardingContinueRequest, AppServerIngressRuntime,
-    AppWakeProfileAvailabilityRefreshRequest, AppSessionResumeRequest, AppVoiceIngressRequest,
+    AppSessionRecoverRequest, AppSessionResumeRequest, AppVoiceIngressRequest,
     AppVoicePh1xBuildInput, AppVoiceTurnExecutionOutcome, AppVoiceTurnNextMove,
+    AppWakeProfileAvailabilityRefreshRequest,
 };
 use selene_os::device_artifact_sync::DeviceArtifactSyncWorkerPassMetrics;
 use selene_os::ph1_voice_id::{
@@ -628,6 +629,24 @@ pub struct SessionResumeAdapterRequest {
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct SessionResumeAdapterResponse {
+    pub status: String,
+    pub outcome: String,
+    pub reason: Option<String>,
+    pub session_id: Option<String>,
+    pub session_state: Option<String>,
+    pub session_attach_outcome: Option<String>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct SessionRecoverAdapterRequest {
+    pub correlation_id: u64,
+    pub idempotency_key: String,
+    pub session_id: String,
+    pub device_id: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct SessionRecoverAdapterResponse {
     pub status: String,
     pub outcome: String,
     pub reason: Option<String>,
@@ -1567,6 +1586,48 @@ impl AdapterRuntime {
         Ok(SessionResumeAdapterResponse {
             status: "ok".to_string(),
             outcome: "SESSION_RESUMED".to_string(),
+            reason: None,
+            session_id: Some(outcome.session_id),
+            session_state: Some(session_state_to_api_value(outcome.session_state)),
+            session_attach_outcome: Some(session_attach_outcome_to_api_value(
+                outcome.session_attach_outcome,
+            )),
+        })
+    }
+
+    pub fn run_session_recover(
+        &self,
+        request: SessionRecoverAdapterRequest,
+    ) -> Result<SessionRecoverAdapterResponse, String> {
+        let correlation_id = CorrelationId(u128::from(request.correlation_id));
+        let session_id = request
+            .session_id
+            .parse::<u128>()
+            .map(SessionId)
+            .map_err(|err| format!("invalid session_id: {err}"))?;
+        let device_id = DeviceId::new(request.device_id.clone())
+            .map_err(|err| format!("invalid device_id: {err:?}"))?;
+        let ingress_request = AppSessionRecoverRequest::v1(
+            correlation_id,
+            request.idempotency_key,
+            session_id,
+            device_id,
+        )
+        .map_err(|err| format!("invalid session_recover request: {err:?}"))?;
+
+        let mut store = self
+            .store
+            .lock()
+            .map_err(|_| "adapter store lock poisoned".to_string())?;
+        let now = MonotonicTimeNs(system_time_now_ns().max(1));
+        let outcome = self
+            .ingress
+            .run_session_recover(&mut store, ingress_request, now)
+            .map_err(storage_error_to_string)?;
+
+        Ok(SessionRecoverAdapterResponse {
+            status: "ok".to_string(),
+            outcome: "SESSION_RECOVERED".to_string(),
             reason: None,
             session_id: Some(outcome.session_id),
             session_state: Some(session_state_to_api_value(outcome.session_state)),

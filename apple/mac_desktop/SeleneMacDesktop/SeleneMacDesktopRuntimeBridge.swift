@@ -1685,6 +1685,121 @@ struct DesktopSessionSoftClosedResumeRuntimeOutcomeState: Identifiable, Equatabl
     }
 }
 
+struct DesktopSessionRecoverRuntimeOutcomeState: Identifiable, Equatable {
+    enum Phase: String, Equatable {
+        case dispatching = "dispatching"
+        case completed = "completed"
+        case failed = "failed"
+    }
+
+    let id: String
+    let phase: Phase
+    let title: String
+    let summary: String
+    let detail: String
+    let endpoint: String
+    let requestID: String
+    let sourceSurfaceIdentity: String
+    let sessionState: String
+    let sessionID: String
+    let recoveryMode: String?
+    let deviceID: String
+    let outcome: String?
+    let reason: String?
+    let sessionAttachOutcome: String?
+
+    static func dispatching(
+        sourceSurfaceIdentity: String,
+        sessionState: String,
+        sessionID: String,
+        recoveryMode: String?,
+        deviceID: String,
+        endpoint: String,
+        requestID: String
+    ) -> DesktopSessionRecoverRuntimeOutcomeState {
+        DesktopSessionRecoverRuntimeOutcomeState(
+            id: requestID,
+            phase: .dispatching,
+            title: "Dispatching desktop suspended-session recover submission",
+            summary: "The bounded desktop suspended-session authoritative-reread recovery request is now being handed into canonical `/v1/session/recover`.",
+            detail: "Only exact suspended-session recover submission is in scope here. This shell remains explicitly non-authoritative and does not introduce local unsuspend authority, local attach/reopen authority, search or tool controls, hidden/background wake behavior, or autonomous unlock.",
+            endpoint: endpoint,
+            requestID: requestID,
+            sourceSurfaceIdentity: sourceSurfaceIdentity,
+            sessionState: sessionState,
+            sessionID: sessionID,
+            recoveryMode: recoveryMode,
+            deviceID: deviceID,
+            outcome: nil,
+            reason: nil,
+            sessionAttachOutcome: nil
+        )
+    }
+
+    static func completed(
+        requestID: String,
+        endpoint: String,
+        response: DesktopCanonicalRuntimeBridge.SessionRecoverAdapterResponsePayload,
+        fallbackSourceSurfaceIdentity: String,
+        fallbackSessionState: String,
+        fallbackSessionID: String,
+        fallbackRecoveryMode: String?,
+        fallbackDeviceID: String
+    ) -> DesktopSessionRecoverRuntimeOutcomeState {
+        let boundedSessionState = boundedOnboardingContinueField(response.sessionState)
+        let boundedAttachOutcome = boundedOnboardingContinueField(response.sessionAttachOutcome)
+
+        return DesktopSessionRecoverRuntimeOutcomeState(
+            id: requestID,
+            phase: .completed,
+            title: "Desktop suspended-session recover submission completed",
+            summary: "Canonical `/v1/session/recover` accepted the bounded desktop suspended-session recover request and returned updated session posture.",
+            detail: "Read-only returned posture only. This shell preserves exact returned `session_state` and exact `session_attach_outcome` without introducing local unsuspend authority, broader attach/reopen mutation, search or tool controls, hidden/background wake behavior, or autonomous unlock.",
+            endpoint: endpoint,
+            requestID: requestID,
+            sourceSurfaceIdentity: fallbackSourceSurfaceIdentity,
+            sessionState: boundedSessionState ?? fallbackSessionState,
+            sessionID: boundedOnboardingContinueField(response.sessionID) ?? fallbackSessionID,
+            recoveryMode: fallbackRecoveryMode,
+            deviceID: fallbackDeviceID,
+            outcome: boundedOnboardingContinueField(response.outcome) ?? "SESSION_RECOVERED",
+            reason: boundedOnboardingContinueField(response.reason),
+            sessionAttachOutcome: boundedAttachOutcome
+        )
+    }
+
+    static func failed(
+        sourceSurfaceIdentity: String,
+        sessionState: String,
+        sessionID: String,
+        recoveryMode: String?,
+        deviceID: String,
+        endpoint: String,
+        requestID: String,
+        summary: String,
+        detail: String,
+        reason: String? = nil
+    ) -> DesktopSessionRecoverRuntimeOutcomeState {
+        DesktopSessionRecoverRuntimeOutcomeState(
+            id: requestID,
+            phase: .failed,
+            title: "Desktop suspended-session recover submission failed",
+            summary: summary,
+            detail: detail,
+            endpoint: endpoint,
+            requestID: requestID,
+            sourceSurfaceIdentity: sourceSurfaceIdentity,
+            sessionState: sessionState,
+            sessionID: sessionID,
+            recoveryMode: recoveryMode,
+            deviceID: deviceID,
+            outcome: nil,
+            reason: reason,
+            sessionAttachOutcome: nil
+        )
+    }
+}
+
 struct DesktopWakeProfileAvailabilityRuntimeOutcomeState: Identifiable, Equatable {
     enum Phase: String, Equatable {
         case dispatching = "dispatching"
@@ -2323,6 +2438,7 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
         case invalidWakeEnrollCompleteCommitRequest(String)
         case invalidWakeEnrollDeferCommitRequest(String)
         case invalidSessionSoftClosedResumeRequest(String)
+        case invalidSessionRecoverRequest(String)
         case invalidWakeProfileAvailabilityRequest(String)
         case invalidEmoPersonaLockRequest(String)
         case invalidAccessProvisionCommitRequest(String)
@@ -2349,6 +2465,7 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
                  .invalidWakeEnrollCompleteCommitRequest(let detail),
                  .invalidWakeEnrollDeferCommitRequest(let detail),
                  .invalidSessionSoftClosedResumeRequest(let detail),
+                 .invalidSessionRecoverRequest(let detail),
                  .invalidWakeProfileAvailabilityRequest(let detail),
                  .invalidEmoPersonaLockRequest(let detail),
                  .invalidAccessProvisionCommitRequest(let detail),
@@ -2491,6 +2608,17 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
         let urlRequest: URLRequest
     }
 
+    struct DesktopSessionRecoverIngressContext {
+        let sourceSurfaceIdentity: String
+        let sessionState: String
+        let sessionID: String
+        let recoveryMode: String?
+        let deviceID: String
+        let requestID: String
+        let endpoint: String
+        let urlRequest: URLRequest
+    }
+
     struct DesktopWakeProfileAvailabilityIngressContext {
         let receiptKind: String
         let deviceID: String
@@ -2574,6 +2702,15 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
     }
 
     struct SessionResumeAdapterResponsePayload: Decodable {
+        let status: String
+        let outcome: String
+        let reason: String?
+        let sessionID: String?
+        let sessionState: String?
+        let sessionAttachOutcome: String?
+    }
+
+    struct SessionRecoverAdapterResponsePayload: Decodable {
         let status: String
         let outcome: String
         let reason: String?
@@ -2748,6 +2885,13 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
     }
 
     private struct SessionResumeAdapterRequestPayload: Encodable {
+        let correlationID: UInt64
+        let idempotencyKey: String
+        let sessionID: String
+        let deviceID: String
+    }
+
+    private struct SessionRecoverAdapterRequestPayload: Encodable {
         let correlationID: UInt64
         let idempotencyKey: String
         let sessionID: String
@@ -3091,6 +3235,27 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
                 endpoint: sessionResumeEndpoint,
                 requestID: "unavailable",
                 summary: "The canonical session-resume bridge could not stage this bounded desktop soft-closed explicit resume request.",
+                detail: error.localizedDescription
+            )
+        }
+    }
+
+    func submitDesktopSessionRecover(
+        _ promptState: DesktopSessionRecoverPromptState
+    ) async -> DesktopSessionRecoverRuntimeOutcomeState {
+        do {
+            let ingressContext = try desktopSessionRecoverRequestBuilder(promptState)
+            return await submitDesktopSessionRecover(ingressContext)
+        } catch {
+            return .failed(
+                sourceSurfaceIdentity: promptState.sourceSurfaceIdentity,
+                sessionState: promptState.sessionState,
+                sessionID: promptState.sessionID,
+                recoveryMode: promptState.recoveryMode,
+                deviceID: promptState.deviceID,
+                endpoint: sessionRecoverEndpoint,
+                requestID: "unavailable",
+                summary: "The canonical session-recover bridge could not stage this bounded desktop suspended-session recover request.",
                 detail: error.localizedDescription
             )
         }
@@ -3876,6 +4041,60 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
                 endpoint: ingressContext.endpoint,
                 requestID: ingressContext.requestID,
                 summary: "The canonical session-resume bridge could not deliver this bounded desktop soft-closed explicit resume request.",
+                detail: error.localizedDescription
+            )
+        }
+    }
+
+    func submitDesktopSessionRecover(
+        _ ingressContext: DesktopSessionRecoverIngressContext
+    ) async -> DesktopSessionRecoverRuntimeOutcomeState {
+        do {
+            try await ensureAdapterAvailable()
+
+            let (data, response) = try await urlSession.data(for: ingressContext.urlRequest)
+            let decoder = JSONDecoder()
+            decoder.keyDecodingStrategy = .convertFromSnakeCase
+            let httpResponse = response as? HTTPURLResponse
+            let statusCode = httpResponse?.statusCode ?? 0
+            let payload = try decoder.decode(SessionRecoverAdapterResponsePayload.self, from: data)
+
+            if statusCode == 200,
+               payload.status.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "ok" {
+                return .completed(
+                    requestID: ingressContext.requestID,
+                    endpoint: ingressContext.endpoint,
+                    response: payload,
+                    fallbackSourceSurfaceIdentity: ingressContext.sourceSurfaceIdentity,
+                    fallbackSessionState: ingressContext.sessionState,
+                    fallbackSessionID: ingressContext.sessionID,
+                    fallbackRecoveryMode: ingressContext.recoveryMode,
+                    fallbackDeviceID: ingressContext.deviceID
+                )
+            }
+
+            return .failed(
+                sourceSurfaceIdentity: ingressContext.sourceSurfaceIdentity,
+                sessionState: ingressContext.sessionState,
+                sessionID: ingressContext.sessionID,
+                recoveryMode: ingressContext.recoveryMode,
+                deviceID: ingressContext.deviceID,
+                endpoint: ingressContext.endpoint,
+                requestID: ingressContext.requestID,
+                summary: "The canonical session-recover bridge rejected or failed this bounded desktop suspended-session recover request.",
+                detail: "Canonical `/v1/session/recover` failed closed with outcome `\(payload.outcome)` and reason `\(boundedOnboardingContinueField(payload.reason) ?? "not_provided")`. This shell remains limited to exact suspended-session authoritative-reread recovery submission and does not widen into local unsuspend authority, broader attach/reopen mutation, search or tool controls, hidden/background wake behavior, or autonomous unlock.",
+                reason: boundedOnboardingContinueField(payload.reason)
+            )
+        } catch {
+            return .failed(
+                sourceSurfaceIdentity: ingressContext.sourceSurfaceIdentity,
+                sessionState: ingressContext.sessionState,
+                sessionID: ingressContext.sessionID,
+                recoveryMode: ingressContext.recoveryMode,
+                deviceID: ingressContext.deviceID,
+                endpoint: ingressContext.endpoint,
+                requestID: ingressContext.requestID,
+                summary: "The canonical session-recover bridge could not deliver this bounded desktop suspended-session recover request.",
                 detail: error.localizedDescription
             )
         }
@@ -5358,6 +5577,79 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
         )
     }
 
+    func desktopSessionRecoverRequestBuilder(
+        _ promptState: DesktopSessionRecoverPromptState
+    ) throws -> DesktopSessionRecoverIngressContext {
+        guard let sourceSurfaceIdentity = boundedOnboardingContinueField(promptState.sourceSurfaceIdentity),
+              sourceSurfaceIdentity == "SESSION_SUSPENDED_VISIBLE" else {
+            throw BridgeError.invalidSessionRecoverRequest(
+                "bounded desktop suspended-session recover submission must preserve exact `SESSION_SUSPENDED_VISIBLE` source surface identity"
+            )
+        }
+
+        guard let sessionState = boundedOnboardingContinueField(promptState.sessionState),
+              sessionState == "SUSPENDED" else {
+            throw BridgeError.invalidSessionRecoverRequest(
+                "bounded desktop suspended-session recover submission is only lawful when canonical session posture remains exact `SUSPENDED`"
+            )
+        }
+
+        guard let sessionID = boundedOnboardingContinueField(promptState.sessionID) else {
+            throw BridgeError.invalidSessionRecoverRequest(
+                "the bounded desktop suspended-session recover prompt state did not preserve a lawful session_id"
+            )
+        }
+
+        guard let managedDeviceID = boundedOnboardingContinueField(deviceID),
+              let promptDeviceID = boundedOnboardingContinueField(promptState.deviceID),
+              promptDeviceID == managedDeviceID else {
+            throw BridgeError.invalidSessionRecoverRequest(
+                "bounded desktop suspended-session recover submission must preserve the exact managed bridge `deviceID` only"
+            )
+        }
+
+        let requestID = "desktop_session_recover_request_\(UUID().uuidString.replacingOccurrences(of: "-", with: ""))"
+        let idempotencyKey = "desktop_session_recover_\(sessionID)_\(managedDeviceID)"
+        let nonce = UUID().uuidString.replacingOccurrences(of: "-", with: "")
+        let timestampMS = Self.systemTimeNowMS()
+        let correlationID = Swift.max(DispatchTime.now().uptimeNanoseconds, 1)
+
+        let payload = SessionRecoverAdapterRequestPayload(
+            correlationID: correlationID,
+            idempotencyKey: idempotencyKey,
+            sessionID: sessionID,
+            deviceID: managedDeviceID
+        )
+
+        let encoder = JSONEncoder()
+        encoder.keyEncodingStrategy = .convertToSnakeCase
+        let body = try encoder.encode(payload)
+        let endpointURL = adapterBaseURL.appendingPathComponent("v1/session/recover")
+        var urlRequest = URLRequest(url: endpointURL)
+        urlRequest.httpMethod = "POST"
+        urlRequest.httpBody = body
+        urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        urlRequest.setValue(requestID, forHTTPHeaderField: "x-request-id")
+        urlRequest.setValue(idempotencyKey, forHTTPHeaderField: "idempotency-key")
+        urlRequest.setValue(String(timestampMS), forHTTPHeaderField: "x-selene-timestamp-ms")
+        urlRequest.setValue(nonce, forHTTPHeaderField: "x-selene-nonce")
+        urlRequest.setValue(
+            Self.bearerToken(subject: actorUserID, device: managedDeviceID),
+            forHTTPHeaderField: "Authorization"
+        )
+
+        return DesktopSessionRecoverIngressContext(
+            sourceSurfaceIdentity: sourceSurfaceIdentity,
+            sessionState: sessionState,
+            sessionID: sessionID,
+            recoveryMode: boundedOnboardingContinueField(promptState.recoveryMode),
+            deviceID: managedDeviceID,
+            requestID: requestID,
+            endpoint: endpointURL.absoluteString,
+            urlRequest: urlRequest
+        )
+    }
+
     func desktopWakeProfileAvailabilityRequestBuilder(
         _ promptState: DesktopWakeProfileAvailabilityPromptState
     ) throws -> DesktopWakeProfileAvailabilityIngressContext {
@@ -5647,6 +5939,10 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
 
     var sessionResumeEndpoint: String {
         adapterBaseURL.appendingPathComponent("v1/session/resume").absoluteString
+    }
+
+    var sessionRecoverEndpoint: String {
+        adapterBaseURL.appendingPathComponent("v1/session/recover").absoluteString
     }
 
     var wakeProfileAvailabilityEndpoint: String {

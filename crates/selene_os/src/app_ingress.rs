@@ -122,8 +122,9 @@ use crate::ph1x::{Ph1xConfig, Ph1xRuntime};
 use crate::runtime_governance::{RuntimeGovernanceDecision, RuntimeGovernanceRuntime};
 use crate::runtime_law::{RuntimeLawDecision, RuntimeLawRuntime};
 use crate::runtime_session_foundation::{
-    PersistedSoftClosedSessionImport, RuntimeSessionFoundation, SessionCoordinationView,
-    SessionFoundationError, SessionFoundationSnapshot,
+    PersistedSoftClosedSessionImport, PersistedSuspendedSessionImport,
+    RuntimeSessionFoundation, SessionCoordinationView, SessionFoundationError,
+    SessionFoundationSnapshot,
 };
 use crate::simulation_executor::{
     simulation_id_for_intent_draft_v1, SimulationDispatchOutcome, SimulationExecutor,
@@ -592,6 +593,44 @@ pub struct AppSessionResumeOutcome {
 }
 
 #[derive(Debug, Clone)]
+pub struct AppSessionRecoverRequest {
+    pub correlation_id: CorrelationId,
+    pub idempotency_key: String,
+    pub session_id: SessionId,
+    pub device_id: DeviceId,
+}
+
+impl AppSessionRecoverRequest {
+    pub fn v1(
+        correlation_id: CorrelationId,
+        idempotency_key: String,
+        session_id: SessionId,
+        device_id: DeviceId,
+    ) -> Result<Self, ContractViolation> {
+        correlation_id.validate()?;
+        validate_ascii_token(
+            "app_session_recover_request.idempotency_key",
+            &idempotency_key,
+            128,
+        )?;
+        device_id.validate()?;
+        Ok(Self {
+            correlation_id,
+            idempotency_key,
+            session_id,
+            device_id,
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AppSessionRecoverOutcome {
+    pub session_id: String,
+    pub session_state: SessionState,
+    pub session_attach_outcome: SessionAttachOutcome,
+}
+
+#[derive(Debug, Clone)]
 pub struct AppWakeProfileAvailabilityRefreshRequest {
     pub correlation_id: CorrelationId,
     pub idempotency_key: String,
@@ -657,6 +696,16 @@ fn session_resume_storage_error(
     })
 }
 
+fn session_recover_storage_error(
+    field: &'static str,
+    error: SessionFoundationError,
+) -> StorageError {
+    StorageError::ContractViolation(ContractViolation::InvalidValue {
+        field,
+        reason: error.reason_code,
+    })
+}
+
 fn session_resume_import_from_record(
     record: &StoredSessionRecord,
 ) -> Result<PersistedSoftClosedSessionImport, StorageError> {
@@ -672,6 +721,30 @@ fn session_resume_import_from_record(
         .collect::<BTreeMap<_, _>>();
 
     Ok(PersistedSoftClosedSessionImport {
+        session_id: record.session_id,
+        persisted_session_state: record.session_state,
+        attached_devices,
+        last_attached_device_id: record.last_attached_device_id.as_str().to_string(),
+        last_turn_id: record.last_turn_id,
+        device_turn_sequences,
+    })
+}
+
+fn session_recover_import_from_record(
+    record: &StoredSessionRecord,
+) -> Result<PersistedSuspendedSessionImport, StorageError> {
+    let attached_devices = record
+        .attached_devices
+        .iter()
+        .map(|device_id| device_id.as_str().to_string())
+        .collect::<Vec<_>>();
+    let device_turn_sequences = record
+        .device_turn_sequences
+        .iter()
+        .map(|(device_id, sequence)| (device_id.as_str().to_string(), *sequence))
+        .collect::<BTreeMap<_, _>>();
+
+    Ok(PersistedSuspendedSessionImport {
         session_id: record.session_id,
         persisted_session_state: record.session_state,
         attached_devices,
@@ -753,6 +826,69 @@ fn persist_resumed_session_record(
     resumed_record.device_turn_sequences = device_turn_sequences;
 
     store.upsert_session_lifecycle(resumed_record, Some(idempotency_key.to_string()))?;
+    Ok(())
+}
+
+fn persist_recovered_session_record(
+    store: &mut Ph1fStore,
+    persisted_record: &StoredSessionRecord,
+    recovered_device_id: &DeviceId,
+    snapshot: &SessionFoundationSnapshot,
+    coordination_view: &SessionCoordinationView,
+    now: MonotonicTimeNs,
+    idempotency_key: &str,
+) -> Result<(), StorageError> {
+    let recovered_session_state = SessionState::Active;
+    let attached_devices = snapshot
+        .attached_devices
+        .iter()
+        .map(|device_id| {
+            DeviceId::new(device_id.clone()).map_err(|_| {
+                StorageError::ContractViolation(ContractViolation::InvalidValue {
+                    field: "app_session_recover_outcome.attached_devices",
+                    reason: "must preserve valid device identifiers",
+                })
+            })
+        })
+        .collect::<Result<BTreeSet<_>, _>>()?;
+    let device_turn_sequences = snapshot
+        .device_timelines
+        .iter()
+        .map(|timeline| {
+            DeviceId::new(timeline.device_id.clone())
+                .map(|device_id| (device_id, timeline.highest_seen_sequence))
+                .map_err(|_| {
+                    StorageError::ContractViolation(ContractViolation::InvalidValue {
+                        field: "app_session_recover_outcome.device_turn_sequences",
+                        reason: "must preserve valid device identifiers",
+                    })
+                })
+        })
+        .collect::<Result<BTreeMap<_, _>, _>>()?;
+    let last_turn_id = snapshot
+        .device_timelines
+        .iter()
+        .map(|timeline| timeline.last_turn_id)
+        .max_by_key(|turn_id| turn_id.0)
+        .or(persisted_record.last_turn_id);
+
+    let mut recovered_record = persisted_record.clone();
+    recovered_record.session_state = recovered_session_state;
+    recovered_record.attached_devices = attached_devices;
+    recovered_record.last_attached_device_id = recovered_device_id.clone();
+    recovered_record.last_activity_at = now;
+    recovered_record.closed_at = None;
+    recovered_record.last_turn_id = last_turn_id;
+    recovered_record.active_turn_id = None;
+    recovered_record.lease_owner_id = Some(coordination_view.owner_runtime_id.clone());
+    recovered_record.lease_acquired_at = Some(now);
+    recovered_record.lease_expires_at = Some(monotonic_time_ns_from_runtime_ms(
+        "app_session_recover_outcome.lease_expires_at_ms",
+        coordination_view.lease_expires_at_ms,
+    )?);
+    recovered_record.device_turn_sequences = device_turn_sequences;
+
+    store.upsert_session_lifecycle(recovered_record, Some(idempotency_key.to_string()))?;
     Ok(())
 }
 
@@ -4115,6 +4251,83 @@ impl AppServerIngressRuntime {
             session_id: session_id.0.to_string(),
             session_state: resumed.projection.session_state,
             session_attach_outcome: resumed
+                .projection
+                .attach_outcome
+                .unwrap_or(SessionAttachOutcome::ExistingSessionReused),
+        })
+    }
+
+    pub fn run_session_recover(
+        &self,
+        store: &mut Ph1fStore,
+        request: AppSessionRecoverRequest,
+        now: MonotonicTimeNs,
+    ) -> Result<AppSessionRecoverOutcome, StorageError> {
+        if now.0 == 0 {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "app_session_recover_request.now",
+                    reason: "must be > 0",
+                },
+            ));
+        }
+
+        let AppSessionRecoverRequest {
+            correlation_id: _,
+            idempotency_key,
+            session_id,
+            device_id,
+        } = request;
+
+        let persisted_record =
+            store
+                .get_session(&session_id)
+                .cloned()
+                .ok_or(StorageError::ForeignKeyViolation {
+                    table: "sessions.session_id",
+                    key: session_id.0.to_string(),
+                })?;
+
+        let now_ms = i64::try_from(now.0 / 1_000_000).unwrap_or(i64::MAX);
+        let mut session_runtime = RuntimeSessionFoundation::default();
+        session_runtime.advance_logical_time_ms(now_ms);
+
+        let import = session_recover_import_from_record(&persisted_record)?;
+        session_runtime
+            .import_persisted_suspended_session(import)
+            .map_err(|error| {
+                session_recover_storage_error("app_session_recover_request.session_id", error)
+            })?;
+
+        let recovered = session_runtime
+            .recover_session(session_id, device_id.clone())
+            .map_err(|error| {
+                session_recover_storage_error("app_session_recover_request.session_id", error)
+            })?;
+        let snapshot = session_runtime
+            .session_snapshot(session_id)
+            .map_err(|error| {
+                session_recover_storage_error("app_session_recover_request.session_id", error)
+            })?;
+        let coordination_view = session_runtime
+            .coordination_view(session_id)
+            .map_err(|error| {
+                session_recover_storage_error("app_session_recover_request.session_id", error)
+            })?;
+        persist_recovered_session_record(
+            store,
+            &persisted_record,
+            &device_id,
+            &snapshot,
+            &coordination_view,
+            now,
+            &idempotency_key,
+        )?;
+
+        Ok(AppSessionRecoverOutcome {
+            session_id: session_id.0.to_string(),
+            session_state: SessionState::Active,
+            session_attach_outcome: recovered
                 .projection
                 .attach_outcome
                 .unwrap_or(SessionAttachOutcome::ExistingSessionReused),
@@ -8528,6 +8741,58 @@ mod tests {
             .unwrap();
     }
 
+    fn seed_suspended_session(
+        store: &mut Ph1fStore,
+        session_id: SessionId,
+        user_id: &UserId,
+        origin_device_id: &DeviceId,
+        attached_devices: &[DeviceId],
+        last_attached_device_id: &DeviceId,
+        last_turn_id: TurnId,
+    ) {
+        for device_id in attached_devices {
+            if store.get_device(device_id).is_none() {
+                store
+                    .insert_device(
+                        DeviceRecord::v1(
+                            device_id.clone(),
+                            user_id.clone(),
+                            "desktop".to_string(),
+                            MonotonicTimeNs(2),
+                            None,
+                        )
+                        .unwrap(),
+                    )
+                    .unwrap();
+            }
+        }
+
+        let mut record = StoredSessionRecord::v1(
+            session_id,
+            user_id.clone(),
+            origin_device_id.clone(),
+            SessionState::Suspended,
+            MonotonicTimeNs(10),
+            MonotonicTimeNs(20),
+            None,
+        )
+        .unwrap();
+        record.attached_devices = attached_devices.iter().cloned().collect();
+        record.last_attached_device_id = last_attached_device_id.clone();
+        record.last_turn_id = Some(last_turn_id);
+        record.device_turn_sequences = attached_devices
+            .iter()
+            .cloned()
+            .map(|device_id| (device_id, last_turn_id.0))
+            .collect();
+        store
+            .upsert_session_lifecycle(
+                record,
+                Some(format!("seed_suspended_session_{}", session_id.0)),
+            )
+            .unwrap();
+    }
+
     #[test]
     fn run_session_resume_from_soft_closed_session_returns_attached_outcome() {
         let runtime = runtime_with_search_tool_fixtures();
@@ -8631,6 +8896,55 @@ mod tests {
             }
             other => panic!("expected conflicting resume contract violation, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn run_session_recover_from_suspended_session_returns_attached_outcome() {
+        let runtime = runtime_with_search_tool_fixtures();
+        let actor_user_id = UserId::new("tenant_1:session_recover_success_actor").unwrap();
+        let recovered_device_id = DeviceId::new("session_recover_success_device").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &actor_user_id, &recovered_device_id);
+
+        let session_id = SessionId(4_203);
+        seed_suspended_session(
+            &mut store,
+            session_id,
+            &actor_user_id,
+            &recovered_device_id,
+            std::slice::from_ref(&recovered_device_id),
+            &recovered_device_id,
+            TurnId(79),
+        );
+
+        let outcome = runtime
+            .run_session_recover(
+                &mut store,
+                AppSessionRecoverRequest::v1(
+                    CorrelationId(91_003),
+                    "session_recover_success".to_string(),
+                    session_id,
+                    recovered_device_id.clone(),
+                )
+                .expect("recover request must validate"),
+                MonotonicTimeNs(52_000_000),
+            )
+            .expect("suspended recover must succeed");
+
+        assert_eq!(outcome.session_id, session_id.0.to_string());
+        assert_eq!(outcome.session_state, SessionState::Active);
+        assert!(matches!(
+            outcome.session_attach_outcome,
+            SessionAttachOutcome::ExistingSessionReused
+                | SessionAttachOutcome::ExistingSessionAttached
+        ));
+
+        let persisted = store
+            .get_session(&session_id)
+            .expect("recovered session must remain persisted");
+        assert_eq!(persisted.session_state, SessionState::Active);
+        assert_eq!(persisted.last_attached_device_id, recovered_device_id);
+        assert_eq!(persisted.closed_at, None);
     }
 
     #[test]

@@ -19,6 +19,7 @@ use selene_adapter::{
     app_ui_assets, build_runtime_execution_envelope_for_voice_turn_request, AdapterHealthResponse,
     AdapterRuntime, AdapterSyncHealth, InviteLinkOpenAdapterRequest, InviteLinkOpenAdapterResponse,
     OnboardingContinueAdapterRequest, OnboardingContinueAdapterResponse,
+    SessionRecoverAdapterRequest, SessionRecoverAdapterResponse,
     SessionResumeAdapterRequest, SessionResumeAdapterResponse, UiChatTranscriptResponse,
     UiHealthChecksResponse, UiHealthDetailFilter, UiHealthDetailResponse,
     UiHealthReportQueryRequest, UiHealthReportQueryResponse, UiHealthSummary,
@@ -222,6 +223,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/v1/invite/click", post(run_invite_click))
         .route("/v1/onboarding/continue", post(run_onboarding_continue))
         .route("/v1/session/resume", post(run_session_resume))
+        .route("/v1/session/recover", post(run_session_recover))
         .route(
             "/v1/wake-profile/availability",
             post(run_wake_profile_availability_refresh),
@@ -774,6 +776,61 @@ async fn run_session_resume(
     }
 }
 
+async fn run_session_recover(
+    State(state): State<HttpAdapterState>,
+    headers: HeaderMap,
+    Json(request): Json<SessionRecoverAdapterRequest>,
+) -> Response {
+    let request_id = match required_header_token(&headers, "x-request-id", "missing_request_id") {
+        Ok(v) => v,
+        Err(reject) => return session_recover_security_reject_response(reject),
+    };
+    let timestamp_ms = match required_header_u64(
+        &headers,
+        "x-selene-timestamp-ms",
+        "missing_timestamp_ms",
+        "invalid_timestamp_ms",
+    ) {
+        Ok(v) => v,
+        Err(reject) => return session_recover_security_reject_response(reject),
+    };
+    let nonce = match required_header_token(&headers, "x-selene-nonce", "missing_nonce") {
+        Ok(v) => v,
+        Err(reject) => return session_recover_security_reject_response(reject),
+    };
+    let security_input = EndpointSecurityInput {
+        endpoint: "/v1/session/recover",
+        expected_subject: request.session_id.clone(),
+        expected_device: request.device_id.clone(),
+        request_id,
+        idempotency_key: request.idempotency_key.clone(),
+        timestamp_ms,
+        nonce,
+    };
+    if let Err(reject) = enforce_ingress_security(
+        &headers,
+        &state.ingress_security,
+        state.ingress_security_config,
+        security_input,
+    ) {
+        return session_recover_security_reject_response(reject);
+    }
+
+    let runtime = match state.runtime.lock() {
+        Ok(runtime) => runtime,
+        Err(_) => {
+            return session_recover_error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "adapter runtime lock poisoned".to_string(),
+            )
+        }
+    };
+    match runtime.run_session_recover(request) {
+        Ok(response) => (StatusCode::OK, Json(response)).into_response(),
+        Err(reason) => session_recover_error_response(StatusCode::BAD_REQUEST, reason),
+    }
+}
+
 async fn run_wake_profile_availability_refresh(
     State(state): State<HttpAdapterState>,
     headers: HeaderMap,
@@ -1250,6 +1307,19 @@ fn session_resume_security_reject_response(reject: SecurityReject) -> Response {
     json_response_with_optional_retry_after(status, response, reject.retry_after_secs)
 }
 
+fn session_recover_security_reject_response(reject: SecurityReject) -> Response {
+    let status = status_for_security_reject(reject.kind);
+    let response = SessionRecoverAdapterResponse {
+        status: "error".to_string(),
+        outcome: "REJECTED".to_string(),
+        reason: Some(reject.reason),
+        session_id: None,
+        session_state: None,
+        session_attach_outcome: None,
+    };
+    json_response_with_optional_retry_after(status, response, reject.retry_after_secs)
+}
+
 fn wake_profile_availability_security_reject_response(
     reject: SecurityReject,
     device_id: Option<String>,
@@ -1332,6 +1402,21 @@ fn session_resume_error_response(status: StatusCode, reason: String) -> Response
     (
         status,
         Json(SessionResumeAdapterResponse {
+            status: "error".to_string(),
+            outcome: "REJECTED".to_string(),
+            reason: Some(reason),
+            session_id: None,
+            session_state: None,
+            session_attach_outcome: None,
+        }),
+    )
+        .into_response()
+}
+
+fn session_recover_error_response(status: StatusCode, reason: String) -> Response {
+    (
+        status,
+        Json(SessionRecoverAdapterResponse {
             status: "error".to_string(),
             outcome: "REJECTED".to_string(),
             reason: Some(reason),
@@ -1601,6 +1686,15 @@ mod tests {
             idempotency_key: "session-resume-idem-1".to_string(),
             session_id: "4201".to_string(),
             device_id: "resume_device_1".to_string(),
+        }
+    }
+
+    fn base_session_recover_request() -> SessionRecoverAdapterRequest {
+        SessionRecoverAdapterRequest {
+            correlation_id: 4002,
+            idempotency_key: "session-recover-idem-1".to_string(),
+            session_id: "4301".to_string(),
+            device_id: "recover_device_1".to_string(),
         }
     }
 
@@ -1920,6 +2014,41 @@ mod tests {
             .upsert_session_lifecycle(
                 record,
                 Some(format!("seed_http_soft_closed_session_{}", session_id.0)),
+            )
+            .unwrap();
+    }
+
+    fn seed_suspended_session_record(
+        store: &mut Ph1fStore,
+        session_id: SessionId,
+        user_id: &UserId,
+        origin_device_id: &DeviceId,
+        attached_devices: &[DeviceId],
+        last_attached_device_id: &DeviceId,
+        last_turn_id: TurnId,
+    ) {
+        let mut record = selene_storage::ph1f::SessionRecord::v1(
+            session_id,
+            user_id.clone(),
+            origin_device_id.clone(),
+            SessionState::Suspended,
+            MonotonicTimeNs(10),
+            MonotonicTimeNs(20),
+            None,
+        )
+        .unwrap();
+        record.attached_devices = attached_devices.iter().cloned().collect();
+        record.last_attached_device_id = last_attached_device_id.clone();
+        record.last_turn_id = Some(last_turn_id);
+        record.device_turn_sequences = attached_devices
+            .iter()
+            .cloned()
+            .map(|device_id| (device_id, last_turn_id.0))
+            .collect();
+        store
+            .upsert_session_lifecycle(
+                record,
+                Some(format!("seed_http_suspended_session_{}", session_id.0)),
             )
             .unwrap();
     }
@@ -2373,6 +2502,59 @@ mod tests {
         );
         assert_eq!(body.active_wake_artifact_version.as_deref(), Some("7"));
         assert_eq!(body.pull_error_count, 0);
+    }
+
+    #[tokio::test]
+    async fn at_adapter_13_http_session_recover_route_recovers_suspended_session() {
+        let (state, store) = test_state_with_config_and_store(IngressSecurityConfig::from_env());
+        let actor_user_id = UserId::new("tenant_1:http_session_recover_actor").unwrap();
+        let recovered_device_id = DeviceId::new("http_session_recover_device").unwrap();
+        let session_id = SessionId(4_301);
+
+        {
+            let mut guard = store.lock().expect("store lock must succeed");
+            seed_identity_and_device(&mut guard, &actor_user_id, &recovered_device_id);
+            seed_suspended_session_record(
+                &mut guard,
+                session_id,
+                &actor_user_id,
+                &recovered_device_id,
+                std::slice::from_ref(&recovered_device_id),
+                &recovered_device_id,
+                TurnId(81),
+            );
+        }
+
+        let mut request = base_session_recover_request();
+        request.session_id = session_id.0.to_string();
+        request.device_id = recovered_device_id.as_str().to_string();
+        let now_ms = system_time_now_ms();
+        let headers = security_headers(
+            Some(bearer_for(&request.session_id, &request.device_id)),
+            "req-session-recover-1",
+            "idem-session-recover-1",
+            now_ms,
+            "nonce-session-recover-1",
+        );
+        let response = run_session_recover(State(state), headers, Json(request)).await;
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body: SessionRecoverAdapterResponse = decode_json_response(response).await;
+        assert_eq!(body.status, "ok");
+        assert_eq!(body.outcome, "SESSION_RECOVERED");
+        assert_eq!(body.session_id.as_deref(), Some("4301"));
+        assert_eq!(body.session_state.as_deref(), Some("ACTIVE"));
+        assert_eq!(
+            body.session_attach_outcome.as_deref(),
+            Some("EXISTING_SESSION_REUSED")
+        );
+
+        let guard = store.lock().expect("store lock must succeed");
+        let persisted = guard
+            .get_session(&session_id)
+            .expect("recovered session must remain persisted");
+        assert_eq!(persisted.session_state, SessionState::Active);
+        assert_eq!(persisted.last_attached_device_id, recovered_device_id);
     }
 
     #[tokio::test]
