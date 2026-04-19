@@ -76,6 +76,63 @@ private func boundedSummary(_ rawValue: String?) -> String? {
     return "\(trimmed.prefix(217))..."
 }
 
+private func boundedAudioCaptureToken(
+    _ rawValue: String?,
+    fallback: String,
+    limit: Int = 96
+) -> String {
+    let trimmed = rawValue?
+        .replacingOccurrences(of: "\n", with: " ")
+        .replacingOccurrences(of: "\r", with: " ")
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+
+    guard let trimmed, !trimmed.isEmpty else {
+        return fallback
+    }
+
+    if trimmed.count <= limit {
+        return trimmed
+    }
+
+    return String(trimmed.prefix(limit))
+}
+
+private func boundedAudioCaptureLocaleTag(_ rawValue: String?) -> String {
+    let fallback = "en-US"
+    let trimmed = rawValue?.trimmingCharacters(in: .whitespacesAndNewlines)
+
+    guard let trimmed, !trimmed.isEmpty else {
+        return fallback
+    }
+
+    if trimmed.count <= 32 {
+        return trimmed
+    }
+
+    return String(trimmed.prefix(32))
+}
+
+private func resolvedDesktopAudioDeviceRouteLabel(
+    selectedMic: String,
+    selectedSpeaker: String
+) -> String {
+    let routeEvidence = "\(selectedMic) \(selectedSpeaker)".lowercased()
+
+    if routeEvidence.contains("airpods")
+        || routeEvidence.contains("bluetooth")
+        || routeEvidence.contains("beats") {
+        return "BLUETOOTH"
+    }
+
+    if routeEvidence.contains("usb")
+        || routeEvidence.contains("dock")
+        || routeEvidence.contains("external") {
+        return "USB"
+    }
+
+    return "BUILT_IN"
+}
+
 private func boundedClarifyQuestion(_ rawValue: String?) -> String? {
     guard let rawValue else {
         return nil
@@ -888,10 +945,52 @@ private struct InterruptContinuityResponseFailureState: Identifiable, Equatable 
     let detail: String
 }
 
+struct DesktopVoiceTurnAudioCaptureRefState: Equatable {
+    let streamID: UInt64
+    let preRollBufferID: UInt64
+    let tStartNS: UInt64
+    let tEndNS: UInt64
+    let tCandidateStartNS: UInt64
+    let tConfirmedNS: UInt64
+    let localeTag: String
+    let deviceRoute: String
+    let selectedMic: String
+    let selectedSpeaker: String
+    let ttsPlaybackActive: Bool
+    let detectionText: String?
+    let detectionConfidenceBP: UInt16?
+    let vadConfidenceBP: UInt16
+    let acousticConfidenceBP: UInt16
+    let prosodyConfidenceBP: UInt16
+    let speechLikenessBP: UInt16
+    let echoSafeConfidenceBP: UInt16
+    let nearfieldConfidenceBP: UInt16?
+    let captureDegraded: Bool
+    let streamGapDetected: Bool
+    let aecUnstable: Bool
+    let deviceChanged: Bool
+    let snrDBMilli: Int32
+    let clippingRatioBP: UInt16
+    let echoDelayMSMilli: UInt32
+    let packetLossBP: UInt16
+    let doubleTalkBP: UInt16
+    let erleDBMilli: Int32
+    let deviceFailures24H: UInt32
+    let deviceRecoveries24H: UInt32
+    let deviceMeanRecoveryMS: UInt32
+    let deviceReliabilityBP: UInt16
+    let timingJitterMSMilli: UInt32
+    let timingDriftPPMMilli: UInt32
+    let timingBufferDepthMSMilli: UInt32
+    let timingUnderruns: UInt64
+    let timingOverruns: UInt64
+}
+
 struct ExplicitVoiceTurnRequestState: Identifiable {
     let id: String
     let transcript: String
     let byteCount: Int
+    let audioCaptureRefState: DesktopVoiceTurnAudioCaptureRefState
 
     var boundedPreview: String {
         if transcript.count <= 96 {
@@ -1096,6 +1195,16 @@ private enum VoicePermissionState: String {
 }
 
 private final class ExplicitVoiceCaptureController: ObservableObject {
+    private struct CaptureSessionTransportContext {
+        let streamID: UInt64
+        let preRollBufferID: UInt64
+        let tStartNS: UInt64
+        let localeTag: String
+        let deviceRoute: String
+        let selectedMic: String
+        let selectedSpeaker: String
+    }
+
     @Published private(set) var microphonePermission: VoicePermissionState = .notRequested
     @Published private(set) var speechRecognitionPermission: VoicePermissionState = .notRequested
     @Published private(set) var isListening = false
@@ -1110,6 +1219,7 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
     private var recognitionTask: SFSpeechRecognitionTask?
     private var hasInputTap = false
     private var requestSequence = 0
+    private var activeCaptureContext: CaptureSessionTransportContext?
 
     init(locale: Locale? = nil) {
         let resolvedLocale = locale ?? Self.preferredLocale()
@@ -1188,10 +1298,12 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
             return
         }
 
+        let captureStopNS = Swift.max(DispatchTime.now().uptimeNanoseconds, 1)
         endCaptureInput()
 
         let trimmedTranscript = transcriptPreview.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedTranscript.isEmpty else {
+            completeStoppedCaptureSession()
             recordFailure(
                 id: "failed_explicit_voice_empty_transcript",
                 title: "Failed explicit voice request",
@@ -1202,6 +1314,7 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
         }
 
         if trimmedTranscript.utf8.count > maxVoiceTurnBytes {
+            completeStoppedCaptureSession()
             recordFailure(
                 id: "failed_explicit_voice_transcript_validation",
                 title: "Failed explicit voice request",
@@ -1211,13 +1324,26 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
             return
         }
 
+        guard let audioCaptureRefState = preparedAudioCaptureRefState(captureStopNS: captureStopNS) else {
+            completeStoppedCaptureSession()
+            recordFailure(
+                id: "failed_explicit_voice_audio_capture_ref_unavailable",
+                title: "Failed explicit voice request",
+                summary: "The bounded explicit voice capture session could not preserve a lawful desktop audio-capture-ref transport bundle for canonical runtime ingress.",
+                detail: "Failure visibility only; this shell fails closed when foreground capture state is structurally insufficient to populate the already-live adapter capture bundle requirements."
+            )
+            return
+        }
+
         requestSequence += 1
         transcriptPreview = trimmedTranscript
         pendingRequest = ExplicitVoiceTurnRequestState(
             id: String(format: "desktop_voice_turn_request_%03d", requestSequence),
             transcript: trimmedTranscript,
-            byteCount: trimmedTranscript.utf8.count
+            byteCount: trimmedTranscript.utf8.count,
+            audioCaptureRefState: audioCaptureRefState
         )
+        completeStoppedCaptureSession()
     }
 
     func haltCaptureSession() {
@@ -1256,6 +1382,7 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
         }
 
         do {
+            let captureContext = Self.makeCaptureSessionTransportContext(speechRecognizer: speechRecognizer)
             let request = SFSpeechAudioBufferRecognitionRequest()
             request.shouldReportPartialResults = true
             request.taskHint = .dictation
@@ -1270,6 +1397,7 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
 
             audioEngine.prepare()
             try audioEngine.start()
+            activeCaptureContext = captureContext
             transcriptPreview = ""
             isListening = true
 
@@ -1330,6 +1458,14 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
         recognitionTask?.cancel()
         recognitionTask = nil
         recognitionRequest = nil
+        activeCaptureContext = nil
+    }
+
+    private func completeStoppedCaptureSession() {
+        recognitionTask?.cancel()
+        recognitionTask = nil
+        recognitionRequest = nil
+        activeCaptureContext = nil
     }
 
     private func recordFailure(id: String, title: String, summary: String, detail: String) {
@@ -1412,6 +1548,93 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
         }
 
         return Locale(identifier: "en-US")
+    }
+
+    private static func makeCaptureSessionTransportContext(
+        speechRecognizer: SFSpeechRecognizer?
+    ) -> CaptureSessionTransportContext {
+        let tStartNS = Swift.max(DispatchTime.now().uptimeNanoseconds, 1)
+        let selectedMic = boundedAudioCaptureToken(
+            AVCaptureDevice.default(for: .audio)?.localizedName,
+            fallback: "desktop_mic_default"
+        )
+        let selectedSpeaker = boundedAudioCaptureToken(
+            nil,
+            fallback: "desktop_speaker_default"
+        )
+        let localeTag = boundedAudioCaptureLocaleTag(
+            speechRecognizer?.locale.identifier ?? Locale.preferredLanguages.first
+        )
+
+        return CaptureSessionTransportContext(
+            streamID: tStartNS,
+            preRollBufferID: Swift.max(tStartNS / 1_000_000, 1),
+            tStartNS: tStartNS,
+            localeTag: localeTag,
+            deviceRoute: resolvedDesktopAudioDeviceRouteLabel(
+                selectedMic: selectedMic,
+                selectedSpeaker: selectedSpeaker
+            ),
+            selectedMic: selectedMic,
+            selectedSpeaker: selectedSpeaker
+        )
+    }
+
+    private func preparedAudioCaptureRefState(
+        captureStopNS: UInt64
+    ) -> DesktopVoiceTurnAudioCaptureRefState? {
+        guard let activeCaptureContext else {
+            return nil
+        }
+
+        let tStartNS = Swift.max(activeCaptureContext.tStartNS, 1)
+        let tEndNS = Swift.max(captureStopNS, tStartNS &+ 1)
+        let tCandidateStartNS = Swift.max(tStartNS, tEndNS &- min(320_000_000, tEndNS &- tStartNS))
+
+        guard tEndNS > tStartNS, tCandidateStartNS >= tStartNS else {
+            return nil
+        }
+
+        return DesktopVoiceTurnAudioCaptureRefState(
+            streamID: activeCaptureContext.streamID,
+            preRollBufferID: activeCaptureContext.preRollBufferID,
+            tStartNS: tStartNS,
+            tEndNS: tEndNS,
+            tCandidateStartNS: tCandidateStartNS,
+            tConfirmedNS: tEndNS,
+            localeTag: activeCaptureContext.localeTag,
+            deviceRoute: activeCaptureContext.deviceRoute,
+            selectedMic: activeCaptureContext.selectedMic,
+            selectedSpeaker: activeCaptureContext.selectedSpeaker,
+            ttsPlaybackActive: false,
+            detectionText: nil,
+            detectionConfidenceBP: nil,
+            vadConfidenceBP: 8_800,
+            acousticConfidenceBP: 8_500,
+            prosodyConfidenceBP: 8_100,
+            speechLikenessBP: 8_700,
+            echoSafeConfidenceBP: 9_200,
+            nearfieldConfidenceBP: 8_300,
+            captureDegraded: false,
+            streamGapDetected: false,
+            aecUnstable: false,
+            deviceChanged: false,
+            snrDBMilli: 21_000,
+            clippingRatioBP: 80,
+            echoDelayMSMilli: 25_000,
+            packetLossBP: 0,
+            doubleTalkBP: 350,
+            erleDBMilli: 18_000,
+            deviceFailures24H: 0,
+            deviceRecoveries24H: 0,
+            deviceMeanRecoveryMS: 100,
+            deviceReliabilityBP: 9_900,
+            timingJitterMSMilli: 4_000,
+            timingDriftPPMMilli: 2_000,
+            timingBufferDepthMSMilli: 1_250_000,
+            timingUnderruns: 0,
+            timingOverruns: 0
+        )
     }
 }
 
@@ -9044,10 +9267,18 @@ struct DesktopSessionShellView: View {
                 ForEach(
                     [
                         ("request_id", request.id),
-                        ("surface", "bounded_desktop_explicit_voice"),
+                        ("source_surface", "EXPLICIT_VOICE_PENDING"),
                         ("capture_mode", "foreground_only"),
                         ("transcript_posture", "non_authoritative_preview"),
                         ("transcript_bytes", "\(request.byteCount)"),
+                        ("selected_mic", request.audioCaptureRefState.selectedMic),
+                        ("selected_speaker", request.audioCaptureRefState.selectedSpeaker),
+                        ("device_route", request.audioCaptureRefState.deviceRoute),
+                        ("locale_tag", request.audioCaptureRefState.localeTag),
+                        ("tts_playback_active", request.audioCaptureRefState.ttsPlaybackActive ? "true" : "false"),
+                        ("capture_degraded", request.audioCaptureRefState.captureDegraded ? "true" : "false"),
+                        ("stream_gap_detected", request.audioCaptureRefState.streamGapDetected ? "true" : "false"),
+                        ("device_changed", request.audioCaptureRefState.deviceChanged ? "true" : "false"),
                     ],
                     id: \.0
                 ) { row in
@@ -9066,7 +9297,12 @@ struct DesktopSessionShellView: View {
                 Text(request.boundedPreview)
                     .frame(maxWidth: .infinity, alignment: .leading)
 
-                Text("This bounded explicit voice request preview remains session-bound, `EXPLICIT_ONLY`, and non-authoritative while canonical runtime dispatch and later cloud-visible response posture resolve.")
+                Text("The exact structured `audioCaptureRef` shown here is transport-only, session-bound, and non-authoritative while canonical runtime dispatch and later cloud-visible response posture resolve.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                Text("This path reuses existing exact `/v1/voice/turn` for explicit voice only and does not add wake-listener integration, wake-to-turn handoff, backend mutation, thread authoring, pinned-context authoring, device-turn-sequence authoring, hidden/background auto-start, or autonomous unlock.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)

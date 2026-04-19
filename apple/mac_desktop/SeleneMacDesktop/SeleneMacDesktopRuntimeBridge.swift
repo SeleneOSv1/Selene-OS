@@ -2392,8 +2392,90 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
         let userTextFinal: String?
         let seleneTextPartial: String?
         let seleneTextFinal: String?
-        let audioCaptureRef: String?
+        let audioCaptureRef: DesktopVoiceTurnAudioCaptureRefPayload?
         let visualInputRef: String?
+    }
+
+    struct DesktopVoiceTurnAudioCaptureRefPayload: Encodable {
+        let streamID: UInt64
+        let preRollBufferID: UInt64
+        let tStartNS: UInt64
+        let tEndNS: UInt64
+        let tCandidateStartNS: UInt64
+        let tConfirmedNS: UInt64
+        let localeTag: String
+        let deviceRoute: String
+        let selectedMic: String
+        let selectedSpeaker: String
+        let ttsPlaybackActive: Bool
+        let detectionText: String?
+        let detectionConfidenceBP: UInt16?
+        let vadConfidenceBP: UInt16
+        let acousticConfidenceBP: UInt16
+        let prosodyConfidenceBP: UInt16
+        let speechLikenessBP: UInt16
+        let echoSafeConfidenceBP: UInt16
+        let nearfieldConfidenceBP: UInt16?
+        let captureDegraded: Bool
+        let streamGapDetected: Bool
+        let aecUnstable: Bool
+        let deviceChanged: Bool
+        let snrDBMilli: Int32
+        let clippingRatioBP: UInt16
+        let echoDelayMSMilli: UInt32
+        let packetLossBP: UInt16
+        let doubleTalkBP: UInt16
+        let erleDBMilli: Int32
+        let deviceFailures24H: UInt32
+        let deviceRecoveries24H: UInt32
+        let deviceMeanRecoveryMS: UInt32
+        let deviceReliabilityBP: UInt16
+        let timingJitterMSMilli: UInt32
+        let timingDriftPPMMilli: UInt32
+        let timingBufferDepthMSMilli: UInt32
+        let timingUnderruns: UInt64
+        let timingOverruns: UInt64
+
+        enum CodingKeys: String, CodingKey {
+            case streamID = "stream_id"
+            case preRollBufferID = "pre_roll_buffer_id"
+            case tStartNS = "t_start_ns"
+            case tEndNS = "t_end_ns"
+            case tCandidateStartNS = "t_candidate_start_ns"
+            case tConfirmedNS = "t_confirmed_ns"
+            case localeTag = "locale_tag"
+            case deviceRoute = "device_route"
+            case selectedMic = "selected_mic"
+            case selectedSpeaker = "selected_speaker"
+            case ttsPlaybackActive = "tts_playback_active"
+            case detectionText = "detection_text"
+            case detectionConfidenceBP = "detection_confidence_bp"
+            case vadConfidenceBP = "vad_confidence_bp"
+            case acousticConfidenceBP = "acoustic_confidence_bp"
+            case prosodyConfidenceBP = "prosody_confidence_bp"
+            case speechLikenessBP = "speech_likeness_bp"
+            case echoSafeConfidenceBP = "echo_safe_confidence_bp"
+            case nearfieldConfidenceBP = "nearfield_confidence_bp"
+            case captureDegraded = "capture_degraded"
+            case streamGapDetected = "stream_gap_detected"
+            case aecUnstable = "aec_unstable"
+            case deviceChanged = "device_changed"
+            case snrDBMilli = "snr_db_milli"
+            case clippingRatioBP = "clipping_ratio_bp"
+            case echoDelayMSMilli = "echo_delay_ms_milli"
+            case packetLossBP = "packet_loss_bp"
+            case doubleTalkBP = "double_talk_bp"
+            case erleDBMilli = "erle_db_milli"
+            case deviceFailures24H = "device_failures_24h"
+            case deviceRecoveries24H = "device_recoveries_24h"
+            case deviceMeanRecoveryMS = "device_mean_recovery_ms"
+            case deviceReliabilityBP = "device_reliability_bp"
+            case timingJitterMSMilli = "timing_jitter_ms_milli"
+            case timingDriftPPMMilli = "timing_drift_ppm_milli"
+            case timingBufferDepthMSMilli = "timing_buffer_depth_ms_milli"
+            case timingUnderruns = "timing_underruns"
+            case timingOverruns = "timing_overruns"
+        }
     }
 
     private struct InviteLinkOpenAdapterRequestPayload: Encodable {
@@ -3606,6 +3688,7 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
         let requestID = "desktop_runtime_request_\(preparedRequest.id)_\(UUID().uuidString.replacingOccurrences(of: "-", with: ""))"
         let idempotencyKey = "desktop_runtime_idempotency_\(preparedRequest.id)"
         let nonce = UUID().uuidString.replacingOccurrences(of: "-", with: "")
+        let audioCaptureRef = try desktopVoiceTurnAudioCaptureRefBuilder(preparedRequest.audioCaptureRefState)
 
         let payload = VoiceTurnAdapterRequestPayload(
             correlationID: correlationID,
@@ -3633,7 +3716,7 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
             userTextFinal: transcript,
             seleneTextPartial: nil,
             seleneTextFinal: nil,
-            audioCaptureRef: nil,
+            audioCaptureRef: audioCaptureRef,
             visualInputRef: nil
         )
 
@@ -3659,6 +3742,87 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
             requestID: requestID,
             endpoint: endpointURL.absoluteString,
             urlRequest: urlRequest
+        )
+    }
+
+    func desktopVoiceTurnAudioCaptureRefBuilder(
+        _ captureState: DesktopVoiceTurnAudioCaptureRefState
+    ) throws -> DesktopVoiceTurnAudioCaptureRefPayload {
+        guard let localeTag = Self.nonEmpty(captureState.localeTag) else {
+            throw BridgeError.invalidPreparedRequest(
+                "the prepared explicit voice request contained no locale_tag for audio_capture_ref transport"
+            )
+        }
+
+        guard let deviceRoute = Self.nonEmpty(captureState.deviceRoute) else {
+            throw BridgeError.invalidPreparedRequest(
+                "the prepared explicit voice request contained no device_route for audio_capture_ref transport"
+            )
+        }
+
+        guard ["BUILT_IN", "BLUETOOTH", "USB"].contains(deviceRoute) else {
+            throw BridgeError.invalidPreparedRequest(
+                "the prepared explicit voice request contained an unsupported device_route `\(deviceRoute)` for audio_capture_ref transport"
+            )
+        }
+
+        guard let selectedMic = Self.nonEmpty(captureState.selectedMic) else {
+            throw BridgeError.invalidPreparedRequest(
+                "the prepared explicit voice request contained no selected_mic for audio_capture_ref transport"
+            )
+        }
+
+        guard let selectedSpeaker = Self.nonEmpty(captureState.selectedSpeaker) else {
+            throw BridgeError.invalidPreparedRequest(
+                "the prepared explicit voice request contained no selected_speaker for audio_capture_ref transport"
+            )
+        }
+
+        let tStartNS = Swift.max(captureState.tStartNS, 1)
+        let tEndNS = Swift.max(captureState.tEndNS, tStartNS &+ 1)
+        let tCandidateStartNS = Swift.max(captureState.tCandidateStartNS, tStartNS)
+        let tConfirmedNS = Swift.max(captureState.tConfirmedNS, tCandidateStartNS)
+        let detectionText = Self.nonEmpty(captureState.detectionText)
+
+        return DesktopVoiceTurnAudioCaptureRefPayload(
+            streamID: Swift.max(captureState.streamID, 1),
+            preRollBufferID: Swift.max(captureState.preRollBufferID, 1),
+            tStartNS: tStartNS,
+            tEndNS: tEndNS,
+            tCandidateStartNS: tCandidateStartNS,
+            tConfirmedNS: tConfirmedNS,
+            localeTag: localeTag,
+            deviceRoute: deviceRoute,
+            selectedMic: selectedMic,
+            selectedSpeaker: selectedSpeaker,
+            ttsPlaybackActive: captureState.ttsPlaybackActive,
+            detectionText: detectionText,
+            detectionConfidenceBP: detectionText == nil ? nil : captureState.detectionConfidenceBP,
+            vadConfidenceBP: captureState.vadConfidenceBP,
+            acousticConfidenceBP: captureState.acousticConfidenceBP,
+            prosodyConfidenceBP: captureState.prosodyConfidenceBP,
+            speechLikenessBP: captureState.speechLikenessBP,
+            echoSafeConfidenceBP: captureState.echoSafeConfidenceBP,
+            nearfieldConfidenceBP: captureState.nearfieldConfidenceBP,
+            captureDegraded: captureState.captureDegraded,
+            streamGapDetected: captureState.streamGapDetected,
+            aecUnstable: captureState.aecUnstable,
+            deviceChanged: captureState.deviceChanged,
+            snrDBMilli: captureState.snrDBMilli,
+            clippingRatioBP: captureState.clippingRatioBP,
+            echoDelayMSMilli: captureState.echoDelayMSMilli,
+            packetLossBP: captureState.packetLossBP,
+            doubleTalkBP: captureState.doubleTalkBP,
+            erleDBMilli: captureState.erleDBMilli,
+            deviceFailures24H: captureState.deviceFailures24H,
+            deviceRecoveries24H: captureState.deviceRecoveries24H,
+            deviceMeanRecoveryMS: captureState.deviceMeanRecoveryMS,
+            deviceReliabilityBP: captureState.deviceReliabilityBP,
+            timingJitterMSMilli: captureState.timingJitterMSMilli,
+            timingDriftPPMMilli: captureState.timingDriftPPMMilli,
+            timingBufferDepthMSMilli: captureState.timingBufferDepthMSMilli,
+            timingUnderruns: captureState.timingUnderruns,
+            timingOverruns: captureState.timingOverruns
         )
     }
 
