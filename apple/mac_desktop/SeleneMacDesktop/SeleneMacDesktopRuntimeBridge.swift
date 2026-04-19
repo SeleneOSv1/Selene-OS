@@ -768,6 +768,123 @@ struct DesktopEmployeePhotoCaptureSendRuntimeOutcomeState: Identifiable, Equatab
     }
 }
 
+struct DesktopEmployeeSenderVerifyCommitRuntimeOutcomeState: Identifiable, Equatable {
+    enum Phase: String, Equatable {
+        case dispatching = "dispatching"
+        case completed = "completed"
+        case failed = "failed"
+    }
+
+    let id: String
+    let phase: Phase
+    let title: String
+    let summary: String
+    let detail: String
+    let endpoint: String
+    let requestID: String
+    let senderDecision: String?
+    let outcome: String?
+    let reason: String?
+    let onboardingSessionID: String?
+    let nextStep: String?
+    let remainingPlatformReceiptKinds: [String]
+    let onboardingStatus: String?
+
+    static func dispatching(
+        onboardingSessionID: String,
+        senderDecision: String,
+        endpoint: String,
+        requestID: String
+    ) -> DesktopEmployeeSenderVerifyCommitRuntimeOutcomeState {
+        DesktopEmployeeSenderVerifyCommitRuntimeOutcomeState(
+            id: requestID,
+            phase: .dispatching,
+            title: "Dispatching sender verification commit",
+            summary: "The bounded sender verification commit request is now being handed into canonical `/v1/onboarding/continue`.",
+            detail: "Only exact `EMPLOYEE_SENDER_VERIFY_COMMIT` with exact `sender_decision` is in scope here. This shell remains explicitly non-authoritative and does not introduce local photo picker, local capture, local upload, broader sender workflow recovery, pairing completion, wake behavior, or autonomous unlock.",
+            endpoint: endpoint,
+            requestID: requestID,
+            senderDecision: senderDecision,
+            outcome: nil,
+            reason: nil,
+            onboardingSessionID: onboardingSessionID,
+            nextStep: "SENDER_VERIFICATION",
+            remainingPlatformReceiptKinds: [],
+            onboardingStatus: nil
+        )
+    }
+
+    static func completed(
+        requestID: String,
+        endpoint: String,
+        response: DesktopCanonicalRuntimeBridge.OnboardingContinueAdapterResponsePayload,
+        fallbackOnboardingSessionID: String,
+        fallbackSenderDecision: String
+    ) -> DesktopEmployeeSenderVerifyCommitRuntimeOutcomeState {
+        let boundedNextStep = boundedOnboardingContinueField(response.nextStep)
+        let advancedBeyondSenderVerification = boundedNextStep != nil
+            && boundedNextStep != "SENDER_VERIFICATION"
+
+        return DesktopEmployeeSenderVerifyCommitRuntimeOutcomeState(
+            id: requestID,
+            phase: .completed,
+            title: "Sender verification commit completed",
+            summary: boundedNextStep == "PRIMARY_DEVICE_CONFIRM"
+                ? "Canonical `/v1/onboarding/continue` advanced to exact `PRIMARY_DEVICE_CONFIRM`; the already-landed primary-device confirmation submit remains separately gated in this shell."
+                : boundedNextStep == "BLOCKED"
+                    ? "Canonical `/v1/onboarding/continue` fail-closed to exact `BLOCKED`; this shell preserves that returned posture in read-only form only."
+                    : advancedBeyondSenderVerification
+                        ? "Canonical `/v1/onboarding/continue` advanced beyond `SENDER_VERIFICATION`; later onboarding actions remain read-only and out of scope in this shell."
+                        : "Canonical `/v1/onboarding/continue` accepted the bounded sender verification commit and returned updated onboarding posture.",
+            detail: boundedNextStep == "PRIMARY_DEVICE_CONFIRM"
+                ? "Read-only next-step visibility only. This exact sender verification commit surface preserves returned exact `PRIMARY_DEVICE_CONFIRM` and onboarding status while the already-landed primary-device-confirm submit remains separately gated and non-authoritative."
+                : boundedNextStep == "BLOCKED"
+                    ? "Read-only blocked visibility only. This exact sender verification commit surface preserves returned exact `BLOCKED` and onboarding status without adding broader sender-verification recovery, local authority, pairing completion, wake behavior, or autonomous unlock."
+                    : boundedNextStep == "SENDER_VERIFICATION"
+                        ? "Read-only next-step visibility only. This exact sender verification commit surface preserves returned exact `SENDER_VERIFICATION` and onboarding status; broader sender-verification recovery does not widen here."
+                        : advancedBeyondSenderVerification
+                            ? "Read-only next-step visibility only. This shell preserves the advanced step and onboarding status without adding local photo authority, broader sender workflow mutation, pairing completion, wake behavior, or autonomous unlock."
+                            : "Canonical sender verification commit only. This shell preserves returned onboarding posture without local onboarding authority or later onboarding controls.",
+            endpoint: endpoint,
+            requestID: requestID,
+            senderDecision: fallbackSenderDecision,
+            outcome: boundedOnboardingContinueField(response.outcome) ?? "ONBOARDING_CONTINUED",
+            reason: boundedOnboardingContinueField(response.reason),
+            onboardingSessionID: boundedOnboardingContinueField(response.onboardingSessionID) ?? fallbackOnboardingSessionID,
+            nextStep: boundedNextStep,
+            remainingPlatformReceiptKinds: boundedOnboardingContinueList(response.remainingPlatformReceiptKinds),
+            onboardingStatus: boundedOnboardingContinueField(response.onboardingStatus)
+        )
+    }
+
+    static func failed(
+        onboardingSessionID: String,
+        senderDecision: String?,
+        endpoint: String,
+        requestID: String,
+        summary: String,
+        detail: String,
+        reason: String? = nil
+    ) -> DesktopEmployeeSenderVerifyCommitRuntimeOutcomeState {
+        DesktopEmployeeSenderVerifyCommitRuntimeOutcomeState(
+            id: requestID,
+            phase: .failed,
+            title: "Sender verification commit failed",
+            summary: summary,
+            detail: detail,
+            endpoint: endpoint,
+            requestID: requestID,
+            senderDecision: senderDecision,
+            outcome: nil,
+            reason: reason,
+            onboardingSessionID: onboardingSessionID,
+            nextStep: nil,
+            remainingPlatformReceiptKinds: [],
+            onboardingStatus: nil
+        )
+    }
+}
+
 struct DesktopVoiceEnrollRuntimeOutcomeState: Identifiable, Equatable {
     enum Phase: String, Equatable {
         case dispatching = "dispatching"
@@ -1735,6 +1852,7 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
         case invalidPlatformSetupReceiptRequest(String)
         case invalidTermsAcceptRequest(String)
         case invalidEmployeePhotoCaptureSendRequest(String)
+        case invalidEmployeeSenderVerifyCommitRequest(String)
         case invalidPrimaryDeviceConfirmRequest(String)
         case invalidVoiceEnrollRequest(String)
         case invalidWakeEnrollStartDraftRequest(String)
@@ -1757,6 +1875,7 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
                  .invalidPlatformSetupReceiptRequest(let detail),
                  .invalidTermsAcceptRequest(let detail),
                  .invalidEmployeePhotoCaptureSendRequest(let detail),
+                 .invalidEmployeeSenderVerifyCommitRequest(let detail),
                  .invalidPrimaryDeviceConfirmRequest(let detail),
                  .invalidVoiceEnrollRequest(let detail),
                  .invalidWakeEnrollStartDraftRequest(let detail),
@@ -1817,6 +1936,14 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
     struct DesktopEmployeePhotoCaptureSendIngressContext {
         let onboardingSessionID: String
         let photoBlobRef: String
+        let requestID: String
+        let endpoint: String
+        let urlRequest: URLRequest
+    }
+
+    struct DesktopEmployeeSenderVerifyCommitIngressContext {
+        let onboardingSessionID: String
+        let senderDecision: String
         let requestID: String
         let endpoint: String
         let urlRequest: URLRequest
@@ -2162,6 +2289,28 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
                 endpoint: onboardingContinueEndpoint,
                 requestID: "unavailable",
                 summary: "The canonical onboarding-continue bridge could not stage this bounded employee photo capture send request.",
+                detail: error.localizedDescription
+            )
+        }
+    }
+
+    func submitDesktopEmployeeSenderVerifyCommit(
+        promptState: DesktopEmployeeSenderVerifyCommitPromptState,
+        senderDecision: String
+    ) async -> DesktopEmployeeSenderVerifyCommitRuntimeOutcomeState {
+        do {
+            let ingressContext = try desktopEmployeeSenderVerifyCommitRequestBuilder(
+                promptState: promptState,
+                senderDecision: senderDecision
+            )
+            return await submitDesktopEmployeeSenderVerifyCommit(ingressContext)
+        } catch {
+            return .failed(
+                onboardingSessionID: promptState.onboardingSessionID,
+                senderDecision: boundedOnboardingContinueFieldInput(senderDecision),
+                endpoint: onboardingContinueEndpoint,
+                requestID: "unavailable",
+                summary: "The canonical onboarding-continue bridge could not stage this bounded sender verification commit request.",
                 detail: error.localizedDescription
             )
         }
@@ -2582,6 +2731,51 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
                 endpoint: ingressContext.endpoint,
                 requestID: ingressContext.requestID,
                 summary: "The canonical onboarding-continue bridge could not deliver this bounded employee photo capture send request.",
+                detail: error.localizedDescription
+            )
+        }
+    }
+
+    func submitDesktopEmployeeSenderVerifyCommit(
+        _ ingressContext: DesktopEmployeeSenderVerifyCommitIngressContext
+    ) async -> DesktopEmployeeSenderVerifyCommitRuntimeOutcomeState {
+        do {
+            try await ensureAdapterAvailable()
+
+            let (data, response) = try await urlSession.data(for: ingressContext.urlRequest)
+            let decoder = JSONDecoder()
+            decoder.keyDecodingStrategy = .convertFromSnakeCase
+            let httpResponse = response as? HTTPURLResponse
+            let statusCode = httpResponse?.statusCode ?? 0
+            let payload = try decoder.decode(OnboardingContinueAdapterResponsePayload.self, from: data)
+
+            if statusCode == 200,
+               payload.status.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "ok" {
+                return .completed(
+                    requestID: ingressContext.requestID,
+                    endpoint: ingressContext.endpoint,
+                    response: payload,
+                    fallbackOnboardingSessionID: ingressContext.onboardingSessionID,
+                    fallbackSenderDecision: ingressContext.senderDecision
+                )
+            }
+
+            return .failed(
+                onboardingSessionID: ingressContext.onboardingSessionID,
+                senderDecision: ingressContext.senderDecision,
+                endpoint: ingressContext.endpoint,
+                requestID: ingressContext.requestID,
+                summary: "The canonical onboarding-continue bridge rejected or failed this bounded sender verification commit request.",
+                detail: "Canonical `/v1/onboarding/continue` failed closed with outcome `\(payload.outcome)` and reason `\(boundedOnboardingContinueField(payload.reason) ?? "not_provided")`. This shell remains limited to exact `EMPLOYEE_SENDER_VERIFY_COMMIT` with exact `sender_decision` only and does not widen sender workflow authority.",
+                reason: boundedOnboardingContinueField(payload.reason)
+            )
+        } catch {
+            return .failed(
+                onboardingSessionID: ingressContext.onboardingSessionID,
+                senderDecision: ingressContext.senderDecision,
+                endpoint: ingressContext.endpoint,
+                requestID: ingressContext.requestID,
+                summary: "The canonical onboarding-continue bridge could not deliver this bounded sender verification commit request.",
                 detail: error.localizedDescription
             )
         }
@@ -3379,6 +3573,91 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
         return DesktopEmployeePhotoCaptureSendIngressContext(
             onboardingSessionID: onboardingSessionID,
             photoBlobRef: boundedPhotoBlobRef,
+            requestID: requestID,
+            endpoint: endpointURL.absoluteString,
+            urlRequest: urlRequest
+        )
+    }
+
+    func desktopEmployeeSenderVerifyCommitRequestBuilder(
+        promptState: DesktopEmployeeSenderVerifyCommitPromptState,
+        senderDecision: String
+    ) throws -> DesktopEmployeeSenderVerifyCommitIngressContext {
+        guard let onboardingSessionID = boundedOnboardingContinueField(promptState.onboardingSessionID) else {
+            throw BridgeError.invalidEmployeeSenderVerifyCommitRequest(
+                "the bounded sender verification commit prompt state did not preserve a lawful onboarding_session_id"
+            )
+        }
+
+        guard let nextStep = boundedOnboardingContinueField(promptState.nextStep),
+              nextStep == "SENDER_VERIFICATION" else {
+            throw BridgeError.invalidEmployeeSenderVerifyCommitRequest(
+                "bounded sender verification commit is only lawful when canonical onboarding posture remains at exact `SENDER_VERIFICATION`"
+            )
+        }
+
+        guard let boundedPhotoBlobRef = boundedOnboardingContinueField(promptState.photoBlobRef) else {
+            throw BridgeError.invalidEmployeeSenderVerifyCommitRequest(
+                "bounded sender verification commit must derive from already-live H273 completed posture preserving exact `photo_blob_ref`"
+            )
+        }
+
+        let allowedSenderDecisions = Set(["CONFIRM", "REJECT"])
+        guard let boundedSenderDecision = boundedOnboardingContinueFieldInput(senderDecision),
+              allowedSenderDecisions.contains(boundedSenderDecision) else {
+            throw BridgeError.invalidEmployeeSenderVerifyCommitRequest(
+                "bounded sender verification commit requires exact `sender_decision` of `CONFIRM` or `REJECT` only"
+            )
+        }
+
+        let requestID = "desktop_employee_sender_verify_commit_request_\(UUID().uuidString.replacingOccurrences(of: "-", with: ""))"
+        let idempotencyKey = "desktop_employee_sender_verify_commit_\(onboardingSessionID)_\(boundedSenderDecision)_\(UUID().uuidString.replacingOccurrences(of: "-", with: ""))"
+        let nonce = UUID().uuidString.replacingOccurrences(of: "-", with: "")
+        let timestampMS = Self.systemTimeNowMS()
+        let correlationID = Swift.max(DispatchTime.now().uptimeNanoseconds, 1)
+
+        let payload = OnboardingContinueAdapterRequestPayload(
+            correlationID: correlationID,
+            onboardingSessionID: onboardingSessionID,
+            idempotencyKey: idempotencyKey,
+            tenantID: tenantID,
+            action: "EMPLOYEE_SENDER_VERIFY_COMMIT",
+            fieldValue: nil,
+            receiptKind: nil,
+            receiptRef: nil,
+            signer: nil,
+            payloadHash: nil,
+            termsVersionID: nil,
+            accepted: nil,
+            deviceID: nil,
+            proofOK: nil,
+            sampleSeed: nil,
+            photoBlobRef: nil,
+            senderDecision: boundedSenderDecision
+        )
+
+        let encoder = JSONEncoder()
+        encoder.keyEncodingStrategy = .convertToSnakeCase
+        let body = try encoder.encode(payload)
+        let endpointURL = adapterBaseURL.appendingPathComponent("v1/onboarding/continue")
+        var urlRequest = URLRequest(url: endpointURL)
+        urlRequest.httpMethod = "POST"
+        urlRequest.httpBody = body
+        urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        urlRequest.setValue(requestID, forHTTPHeaderField: "x-request-id")
+        urlRequest.setValue(idempotencyKey, forHTTPHeaderField: "idempotency-key")
+        urlRequest.setValue(String(timestampMS), forHTTPHeaderField: "x-selene-timestamp-ms")
+        urlRequest.setValue(nonce, forHTTPHeaderField: "x-selene-nonce")
+        urlRequest.setValue(
+            Self.bearerToken(subject: actorUserID, device: deviceID),
+            forHTTPHeaderField: "Authorization"
+        )
+
+        _ = boundedPhotoBlobRef
+
+        return DesktopEmployeeSenderVerifyCommitIngressContext(
+            onboardingSessionID: onboardingSessionID,
+            senderDecision: boundedSenderDecision,
             requestID: requestID,
             endpoint: endpointURL.absoluteString,
             urlRequest: urlRequest

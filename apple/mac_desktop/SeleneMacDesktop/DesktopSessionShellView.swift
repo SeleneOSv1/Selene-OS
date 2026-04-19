@@ -2499,6 +2499,24 @@ struct DesktopEmployeePhotoCaptureSendPromptState: Identifiable, Equatable {
     }
 }
 
+struct DesktopEmployeeSenderVerifyCommitPromptState: Identifiable, Equatable {
+    let onboardingSessionID: String
+    let nextStep: String
+    let onboardingStatus: String?
+    let requiredVerificationGates: [String]
+    let photoBlobRef: String
+
+    var id: String {
+        [
+            onboardingSessionID,
+            nextStep,
+            onboardingStatus ?? "onboarding_status_not_provided",
+            requiredVerificationGates.joined(separator: "|"),
+            photoBlobRef,
+        ].joined(separator: "::")
+    }
+}
+
 struct DesktopPlatformSetupReceiptDraft: Identifiable, Equatable {
     let onboardingSessionID: String
     let receiptKind: String
@@ -2567,6 +2585,7 @@ struct DesktopSessionShellView: View {
     @State private var desktopPlatformSetupReceiptRuntimeOutcomeState: DesktopPlatformSetupReceiptRuntimeOutcomeState?
     @State private var desktopTermsAcceptRuntimeOutcomeState: DesktopTermsAcceptRuntimeOutcomeState?
     @State private var desktopEmployeePhotoCaptureSendRuntimeOutcomeState: DesktopEmployeePhotoCaptureSendRuntimeOutcomeState?
+    @State private var desktopEmployeeSenderVerifyCommitRuntimeOutcomeState: DesktopEmployeeSenderVerifyCommitRuntimeOutcomeState?
     @State private var desktopPrimaryDeviceConfirmRuntimeOutcomeState: DesktopPrimaryDeviceConfirmRuntimeOutcomeState?
     @State private var desktopVoiceEnrollRuntimeOutcomeState: DesktopVoiceEnrollRuntimeOutcomeState?
     @State private var desktopWakeEnrollStartDraftRuntimeOutcomeState: DesktopWakeEnrollStartDraftRuntimeOutcomeState?
@@ -2577,6 +2596,7 @@ struct DesktopSessionShellView: View {
     @State private var desktopCompleteCommitRuntimeOutcomeState: DesktopCompleteCommitRuntimeOutcomeState?
     @State private var desktopOnboardingContinueFieldInput: String = ""
     @State private var desktopEmployeePhotoCaptureSendPhotoBlobRefInput: String = ""
+    @State private var desktopEmployeeSenderVerifyCommitSelectedDecision: String = "CONFIRM"
     @State private var desktopAuthoritativeReplyRenderState: DesktopAuthoritativeReplyRenderState?
     @State private var desktopAuthoritativeReplyProvenanceRenderState: DesktopAuthoritativeReplyProvenanceRenderState?
     @State private var desktopAuthoritativeReplyPlaybackState: DesktopAuthoritativeReplyPlaybackState = .idle
@@ -2599,6 +2619,7 @@ struct DesktopSessionShellView: View {
                 desktopTermsAcceptCard
                 desktopSenderVerificationVisibilityCard
                 desktopEmployeePhotoCaptureSendCard
+                desktopEmployeeSenderVerifyCommitCard
                 desktopPrimaryDeviceConfirmCard
                 desktopVoiceEnrollCard
                 desktopWakeEnrollStartDraftCard
@@ -2648,6 +2669,7 @@ struct DesktopSessionShellView: View {
                     desktopPlatformSetupReceiptRuntimeOutcomeState = nil
                     desktopTermsAcceptRuntimeOutcomeState = nil
                     desktopEmployeePhotoCaptureSendRuntimeOutcomeState = nil
+                    desktopEmployeeSenderVerifyCommitRuntimeOutcomeState = nil
                     desktopPrimaryDeviceConfirmRuntimeOutcomeState = nil
                     desktopVoiceEnrollRuntimeOutcomeState = nil
                     desktopWakeEnrollStartDraftRuntimeOutcomeState = nil
@@ -2658,6 +2680,7 @@ struct DesktopSessionShellView: View {
                     desktopCompleteCommitRuntimeOutcomeState = nil
                     desktopOnboardingContinueFieldInput = ""
                     desktopEmployeePhotoCaptureSendPhotoBlobRefInput = ""
+                    desktopEmployeeSenderVerifyCommitSelectedDecision = "CONFIRM"
                 }
                 desktopOnboardingEntryContext = context
             }
@@ -3199,6 +3222,25 @@ struct DesktopSessionShellView: View {
         )
     }
 
+    private var desktopEmployeeSenderVerifyCommitPromptState: DesktopEmployeeSenderVerifyCommitPromptState? {
+        guard let desktopEmployeePhotoCaptureSendRuntimeOutcomeState,
+              desktopEmployeePhotoCaptureSendRuntimeOutcomeState.phase == .completed,
+              desktopEmployeePhotoCaptureSendRuntimeOutcomeState.nextStep == "SENDER_VERIFICATION",
+              let onboardingSessionID = desktopEmployeePhotoCaptureSendRuntimeOutcomeState.onboardingSessionID,
+              let photoBlobRef = desktopEmployeePhotoCaptureSendRuntimeOutcomeState.photoBlobRef
+        else {
+            return nil
+        }
+
+        return DesktopEmployeeSenderVerifyCommitPromptState(
+            onboardingSessionID: onboardingSessionID,
+            nextStep: "SENDER_VERIFICATION",
+            onboardingStatus: desktopEmployeePhotoCaptureSendRuntimeOutcomeState.onboardingStatus,
+            requiredVerificationGates: desktopSenderVerificationVisibilityState?.requiredVerificationGates ?? [],
+            photoBlobRef: photoBlobRef
+        )
+    }
+
     private var boundedWakeEnrollCompletionLineageVoiceArtifactSyncReceiptRef: String? {
         [
             desktopCompleteCommitRuntimeOutcomeState?.voiceArtifactSyncReceiptRef,
@@ -3246,6 +3288,19 @@ struct DesktopSessionShellView: View {
            desktopPrimaryDeviceConfirmRuntimeOutcomeState.phase == .completed,
            desktopPrimaryDeviceConfirmRuntimeOutcomeState.nextStep != "PRIMARY_DEVICE_CONFIRM" {
             return nil
+        }
+
+        if let desktopEmployeeSenderVerifyCommitRuntimeOutcomeState,
+           desktopEmployeeSenderVerifyCommitRuntimeOutcomeState.phase == .completed,
+           desktopEmployeeSenderVerifyCommitRuntimeOutcomeState.nextStep == "PRIMARY_DEVICE_CONFIRM",
+           let onboardingSessionID = desktopEmployeeSenderVerifyCommitRuntimeOutcomeState.onboardingSessionID,
+           let deviceID = desktopManagedPrimaryDeviceID {
+            return DesktopPrimaryDeviceConfirmPromptState(
+                onboardingSessionID: onboardingSessionID,
+                nextStep: "PRIMARY_DEVICE_CONFIRM",
+                deviceID: deviceID,
+                proofOK: true
+            )
         }
 
         if let desktopTermsAcceptRuntimeOutcomeState,
@@ -4133,6 +4188,144 @@ struct DesktopSessionShellView: View {
                     }
                 } label: {
                     Text("Onboarding Employee Photo Capture Send")
+                        .font(.headline)
+                }
+            }
+        }
+    }
+
+    private var desktopEmployeeSenderVerifyCommitCard: some View {
+        let promptState = desktopEmployeeSenderVerifyCommitPromptState
+        let displayedOnboardingSessionID = desktopEmployeeSenderVerifyCommitRuntimeOutcomeState?.onboardingSessionID
+            ?? promptState?.onboardingSessionID
+            ?? "unavailable"
+        let displayedNextStep = desktopEmployeeSenderVerifyCommitRuntimeOutcomeState?.nextStep
+            ?? promptState?.nextStep
+            ?? "not_provided"
+        let displayedOnboardingStatus = desktopEmployeeSenderVerifyCommitRuntimeOutcomeState?.onboardingStatus
+            ?? promptState?.onboardingStatus
+            ?? "not_available"
+        let displayedRequiredVerificationGates = promptState?.requiredVerificationGates
+            ?? desktopSenderVerificationVisibilityState?.requiredVerificationGates
+            ?? []
+        let displayedPhotoBlobRef = promptState?.photoBlobRef
+            ?? desktopEmployeePhotoCaptureSendRuntimeOutcomeState?.photoBlobRef
+            ?? "not_provided"
+
+        return Group {
+            if promptState != nil || desktopEmployeeSenderVerifyCommitRuntimeOutcomeState != nil {
+                GroupBox {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("Bounded sender verification commit only. This shell derives bounded prompt state from already-live H273 employee-photo-send completion posture, dispatches exact `EMPLOYEE_SENDER_VERIFY_COMMIT` with exact `sender_decision` only, and keeps returned onboarding posture read-only outside the exact control itself.")
+                            .frame(maxWidth: .infinity, alignment: .leading)
+
+                        ForEach(
+                            [
+                                ("onboarding_session_id", displayedOnboardingSessionID),
+                                ("next_step", displayedNextStep),
+                                ("onboarding_status", displayedOnboardingStatus),
+                                ("photo_blob_ref", displayedPhotoBlobRef),
+                            ],
+                            id: \.0
+                        ) { row in
+                            HStack(alignment: .top, spacing: 12) {
+                                Text(row.0)
+                                    .font(.caption.monospaced())
+                                    .foregroundStyle(.secondary)
+                                    .frame(width: 170, alignment: .leading)
+
+                                Text(row.1)
+                                    .font(.body.monospaced())
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                        }
+
+                        desktopOnboardingEntryListCard(
+                            title: "required_verification_gates",
+                            items: displayedRequiredVerificationGates,
+                            emptyText: "No required_verification_gates are available in the bounded sender-verification commit posture."
+                        )
+
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("sender_decision")
+                                .font(.caption.monospaced())
+                                .foregroundStyle(.secondary)
+
+                            Picker("sender_decision", selection: $desktopEmployeeSenderVerifyCommitSelectedDecision) {
+                                Text("CONFIRM").tag("CONFIRM")
+                                Text("REJECT").tag("REJECT")
+                            }
+                            .pickerStyle(.segmented)
+                            .disabled(desktopEmployeeSenderVerifyCommitRuntimeOutcomeState?.phase == .dispatching)
+                        }
+
+                        Text("This shell is dispatching canonical `EMPLOYEE_SENDER_VERIFY_COMMIT` with exact `sender_decision` only, derived from already-live bounded sender-verification visibility plus H273 photo-send completion posture. Returned `PRIMARY_DEVICE_CONFIRM`, `BLOCKED`, or later next-step posture stays bounded and read-only here except where the already-landed primary-device-confirm card becomes actionable.")
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+
+                        if let promptState {
+                            Button("Submit sender verification commit") {
+                                Task {
+                                    await submitDesktopEmployeeSenderVerifyCommit(promptState: promptState)
+                                }
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .disabled(
+                                desktopEmployeeSenderVerifyCommitRuntimeOutcomeState?.phase == .dispatching
+                                || !["CONFIRM", "REJECT"].contains(desktopEmployeeSenderVerifyCommitSelectedDecision)
+                            )
+                        }
+
+                        if let desktopEmployeeSenderVerifyCommitRuntimeOutcomeState {
+                            Divider()
+
+                            Text(desktopEmployeeSenderVerifyCommitRuntimeOutcomeState.title)
+                                .font(.headline)
+
+                            ForEach(
+                                [
+                                    ("dispatch_phase", desktopEmployeeSenderVerifyCommitRuntimeOutcomeState.phase.rawValue),
+                                    ("request_id", desktopEmployeeSenderVerifyCommitRuntimeOutcomeState.requestID),
+                                    ("endpoint", desktopEmployeeSenderVerifyCommitRuntimeOutcomeState.endpoint),
+                                    ("sender_decision", desktopEmployeeSenderVerifyCommitRuntimeOutcomeState.senderDecision ?? "not_provided"),
+                                    ("outcome", desktopEmployeeSenderVerifyCommitRuntimeOutcomeState.outcome ?? "not_available"),
+                                    ("reason", desktopEmployeeSenderVerifyCommitRuntimeOutcomeState.reason ?? "not_available"),
+                                    ("onboarding_status", desktopEmployeeSenderVerifyCommitRuntimeOutcomeState.onboardingStatus ?? "not_available"),
+                                ],
+                                id: \.0
+                            ) { row in
+                                HStack(alignment: .top, spacing: 12) {
+                                    Text(row.0)
+                                        .font(.caption.monospaced())
+                                        .foregroundStyle(.secondary)
+                                        .frame(width: 170, alignment: .leading)
+
+                                    Text(row.1)
+                                        .font(.body.monospaced())
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                }
+                            }
+
+                            Text(desktopEmployeeSenderVerifyCommitRuntimeOutcomeState.summary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+
+                            Text(desktopEmployeeSenderVerifyCommitRuntimeOutcomeState.detail)
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        } else {
+                            Text("Awaiting explicit user-triggered sender verification commit with exact `sender_decision`, derived from already-live H273 photo-send completion posture. Sender-verification visibility remains bounded and read-only outside this exact submit surface.")
+                                .foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+
+                        Text("Only exact `EMPLOYEE_SENDER_VERIFY_COMMIT` with exact `sender_decision` is in scope here. No local photo picker controls, no local camera controls, no local upload controls, no pasteboard-import controls, no primary-device bypass controls, no hidden or background capture, and no local onboarding authority claims are introduced by this surface.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                } label: {
+                    Text("Onboarding Sender Verification Commit")
                         .font(.headline)
                 }
             }
@@ -7172,6 +7365,7 @@ struct DesktopSessionShellView: View {
         desktopPlatformSetupReceiptRuntimeOutcomeState = nil
         desktopTermsAcceptRuntimeOutcomeState = nil
         desktopEmployeePhotoCaptureSendRuntimeOutcomeState = nil
+        desktopEmployeeSenderVerifyCommitRuntimeOutcomeState = nil
         desktopPrimaryDeviceConfirmRuntimeOutcomeState = nil
         desktopWakeEnrollStartDraftRuntimeOutcomeState = nil
         desktopWakeEnrollSampleCommitRuntimeOutcomeState = nil
@@ -7179,6 +7373,7 @@ struct DesktopSessionShellView: View {
         desktopEmoPersonaLockRuntimeOutcomeState = nil
         desktopAccessProvisionCommitRuntimeOutcomeState = nil
         desktopCompleteCommitRuntimeOutcomeState = nil
+        desktopEmployeeSenderVerifyCommitSelectedDecision = "CONFIRM"
 
         do {
             let ingressContext = try desktopCanonicalRuntimeBridge.desktopOnboardingContinueMissingFieldRequestBuilder(
@@ -7221,6 +7416,7 @@ struct DesktopSessionShellView: View {
         let activeEntryContextID = desktopOnboardingEntryContext?.id
         desktopTermsAcceptRuntimeOutcomeState = nil
         desktopEmployeePhotoCaptureSendRuntimeOutcomeState = nil
+        desktopEmployeeSenderVerifyCommitRuntimeOutcomeState = nil
         desktopPrimaryDeviceConfirmRuntimeOutcomeState = nil
         desktopWakeEnrollStartDraftRuntimeOutcomeState = nil
         desktopWakeEnrollSampleCommitRuntimeOutcomeState = nil
@@ -7228,6 +7424,7 @@ struct DesktopSessionShellView: View {
         desktopEmoPersonaLockRuntimeOutcomeState = nil
         desktopAccessProvisionCommitRuntimeOutcomeState = nil
         desktopCompleteCommitRuntimeOutcomeState = nil
+        desktopEmployeeSenderVerifyCommitSelectedDecision = "CONFIRM"
 
         do {
             let ingressContext = try desktopCanonicalRuntimeBridge.desktopPlatformSetupReceiptRequestBuilder(
@@ -7266,6 +7463,7 @@ struct DesktopSessionShellView: View {
     ) async {
         let activeEntryContextID = desktopOnboardingEntryContext?.id
         desktopEmployeePhotoCaptureSendRuntimeOutcomeState = nil
+        desktopEmployeeSenderVerifyCommitRuntimeOutcomeState = nil
         desktopPrimaryDeviceConfirmRuntimeOutcomeState = nil
         desktopWakeEnrollStartDraftRuntimeOutcomeState = nil
         desktopWakeEnrollSampleCommitRuntimeOutcomeState = nil
@@ -7273,6 +7471,7 @@ struct DesktopSessionShellView: View {
         desktopEmoPersonaLockRuntimeOutcomeState = nil
         desktopAccessProvisionCommitRuntimeOutcomeState = nil
         desktopCompleteCommitRuntimeOutcomeState = nil
+        desktopEmployeeSenderVerifyCommitSelectedDecision = "CONFIRM"
 
         do {
             let ingressContext = try desktopCanonicalRuntimeBridge.desktopTermsAcceptRequestBuilder(
@@ -7310,6 +7509,7 @@ struct DesktopSessionShellView: View {
         promptState: DesktopEmployeePhotoCaptureSendPromptState
     ) async {
         let activeEntryContextID = desktopOnboardingEntryContext?.id
+        desktopEmployeeSenderVerifyCommitRuntimeOutcomeState = nil
         desktopPrimaryDeviceConfirmRuntimeOutcomeState = nil
         desktopWakeEnrollStartDraftRuntimeOutcomeState = nil
         desktopWakeEnrollSampleCommitRuntimeOutcomeState = nil
@@ -7317,6 +7517,7 @@ struct DesktopSessionShellView: View {
         desktopEmoPersonaLockRuntimeOutcomeState = nil
         desktopAccessProvisionCommitRuntimeOutcomeState = nil
         desktopCompleteCommitRuntimeOutcomeState = nil
+        desktopEmployeeSenderVerifyCommitSelectedDecision = "CONFIRM"
 
         do {
             let ingressContext = try desktopCanonicalRuntimeBridge.desktopEmployeePhotoCaptureSendRequestBuilder(
@@ -7338,6 +7539,7 @@ struct DesktopSessionShellView: View {
             }
 
             desktopEmployeePhotoCaptureSendRuntimeOutcomeState = outcomeState
+            desktopEmployeeSenderVerifyCommitSelectedDecision = "CONFIRM"
         } catch {
             desktopEmployeePhotoCaptureSendRuntimeOutcomeState = .failed(
                 onboardingSessionID: promptState.onboardingSessionID,
@@ -7349,6 +7551,51 @@ struct DesktopSessionShellView: View {
                 endpoint: desktopCanonicalRuntimeBridge.onboardingContinueEndpoint,
                 requestID: "unavailable",
                 summary: "The canonical onboarding-continue bridge could not stage this bounded employee photo capture send request.",
+                detail: error.localizedDescription
+            )
+        }
+    }
+
+    @MainActor
+    private func submitDesktopEmployeeSenderVerifyCommit(
+        promptState: DesktopEmployeeSenderVerifyCommitPromptState
+    ) async {
+        let activeEntryContextID = desktopOnboardingEntryContext?.id
+        desktopPrimaryDeviceConfirmRuntimeOutcomeState = nil
+        desktopWakeEnrollStartDraftRuntimeOutcomeState = nil
+        desktopWakeEnrollSampleCommitRuntimeOutcomeState = nil
+        desktopWakeEnrollCompleteCommitRuntimeOutcomeState = nil
+        desktopEmoPersonaLockRuntimeOutcomeState = nil
+        desktopAccessProvisionCommitRuntimeOutcomeState = nil
+        desktopCompleteCommitRuntimeOutcomeState = nil
+
+        do {
+            let ingressContext = try desktopCanonicalRuntimeBridge.desktopEmployeeSenderVerifyCommitRequestBuilder(
+                promptState: promptState,
+                senderDecision: desktopEmployeeSenderVerifyCommitSelectedDecision
+            )
+            desktopEmployeeSenderVerifyCommitRuntimeOutcomeState = .dispatching(
+                onboardingSessionID: ingressContext.onboardingSessionID,
+                senderDecision: ingressContext.senderDecision,
+                endpoint: ingressContext.endpoint,
+                requestID: ingressContext.requestID
+            )
+
+            let outcomeState = await desktopCanonicalRuntimeBridge.submitDesktopEmployeeSenderVerifyCommit(
+                ingressContext
+            )
+            guard desktopOnboardingEntryContext?.id == activeEntryContextID else {
+                return
+            }
+
+            desktopEmployeeSenderVerifyCommitRuntimeOutcomeState = outcomeState
+        } catch {
+            desktopEmployeeSenderVerifyCommitRuntimeOutcomeState = .failed(
+                onboardingSessionID: promptState.onboardingSessionID,
+                senderDecision: boundedOnboardingContinueFieldInput(desktopEmployeeSenderVerifyCommitSelectedDecision),
+                endpoint: desktopCanonicalRuntimeBridge.onboardingContinueEndpoint,
+                requestID: "unavailable",
+                summary: "The canonical onboarding-continue bridge could not stage this bounded sender verification commit request.",
                 detail: error.localizedDescription
             )
         }
