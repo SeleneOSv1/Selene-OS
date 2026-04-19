@@ -2567,6 +2567,26 @@ struct DesktopSessionSuspendedVisibilityState: Identifiable, Equatable {
     }
 }
 
+private struct DesktopRecoveryVisibilityState: Identifiable, Equatable {
+    let displayState: DesktopRecoveryDisplayState
+    let sourceSurfaceIdentity: String
+    let sessionState: String
+    let sessionID: String
+    let recoveryMode: String?
+    let reconciliationDecision: String?
+
+    var id: String {
+        [
+            displayState.rawValue,
+            sourceSurfaceIdentity,
+            sessionState,
+            sessionID,
+            recoveryMode ?? "recovery_mode_not_provided",
+            reconciliationDecision ?? "reconciliation_decision_not_provided",
+        ].joined(separator: "::")
+    }
+}
+
 struct DesktopSenderVerificationVisibilityState: Identifiable, Equatable {
     let onboardingSessionID: String
     let nextStep: String
@@ -2732,6 +2752,7 @@ struct DesktopSessionShellView: View {
                 desktopPairingCompletionVisibilityCard
                 desktopSessionSoftClosedVisibilityCard
                 desktopSessionSuspendedVisibilityCard
+                desktopRecoveryVisibilityCard
 
                 sessionCard
                 .frame(maxWidth: .infinity, minHeight: 360, alignment: .topLeading)
@@ -3699,6 +3720,21 @@ struct DesktopSessionShellView: View {
             nextAllowedActionsMustRewake: latestSessionSuspendedVisibleContext.nextAllowedActionsMustRewake,
             recoveryMode: latestSessionSuspendedVisibleContext.recoveryMode?.rawValue,
             reconciliationDecision: latestSessionSuspendedVisibleContext.reconciliationDecision?.rawValue
+        )
+    }
+
+    private var desktopRecoveryVisibilityState: DesktopRecoveryVisibilityState? {
+        guard let activeRecoveryVisibleSurface, let activeRecoveryDisplayState else {
+            return nil
+        }
+
+        return DesktopRecoveryVisibilityState(
+            displayState: activeRecoveryDisplayState,
+            sourceSurfaceIdentity: activeRecoveryVisibleSurface.sourceSurfaceTitle,
+            sessionState: activeRecoveryVisibleSurface.sessionState,
+            sessionID: activeRecoveryVisibleSurface.sessionID,
+            recoveryMode: activeRecoveryVisibleSurface.recoveryMode?.rawValue,
+            reconciliationDecision: activeRecoveryVisibleSurface.reconciliationDecision?.rawValue
         )
     }
 
@@ -5786,6 +5822,61 @@ struct DesktopSessionShellView: View {
                     }
                 } label: {
                     Text("Session Suspended Visibility")
+                        .font(.headline)
+                }
+            }
+        }
+    }
+
+    private var desktopRecoveryVisibilityCard: some View {
+        let recoveryVisibilityState = desktopRecoveryVisibilityState
+
+        return Group {
+            if let recoveryVisibilityState {
+                GroupBox {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("Bounded desktop recovery visibility only. This shell derives one dedicated read-only recovery surface from the already-live recovery-visible carriers only, preserves exact `RECOVERING`, exact `DEGRADED_RECOVERY`, and exact `QUARANTINED_LOCAL_STATE`, and preserves reread-authoritative-state explanation without introducing any local reread, retry, queue-repair, attach, reopen, transcript, or archive authority.")
+                            .frame(maxWidth: .infinity, alignment: .leading)
+
+                        ForEach(
+                            [
+                                ("recovery_posture", recoveryVisibilityState.displayState.rawValue),
+                                ("source_surface", recoveryVisibilityState.sourceSurfaceIdentity),
+                                ("session_state", recoveryVisibilityState.sessionState),
+                                ("session_id", recoveryVisibilityState.sessionID),
+                            ],
+                            id: \.0
+                        ) { row in
+                            metadataRow(label: row.0, value: row.1)
+                        }
+
+                        if let recoveryMode = recoveryVisibilityState.recoveryMode {
+                            metadataRow(label: "recovery_mode", value: recoveryMode)
+                        }
+
+                        if let reconciliationDecision = recoveryVisibilityState.reconciliationDecision {
+                            metadataRow(label: "reconciliation_decision", value: reconciliationDecision)
+                        }
+
+                        Text(
+                            recoveryVisibilityState.displayState == .quarantinedLocalState
+                                ? "QUARANTINED_LOCAL_STATE remains a hard full takeover and authoritative reread remains required before any normal interaction can be reconsidered."
+                                : "\(recoveryVisibilityState.displayState.rawValue) remains inline restriction while the lawful main session surface remains visible in bounded read-only form."
+                        )
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                        Text(recoveryRestrictionSummary(for: recoveryVisibilityState.displayState))
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+
+                        Text("No local reread, no local retry, no local queue repair, no local transcript or archive fabrication, no local session attach, and no local reopen production authority exist here. This shell stays explicitly non-authoritative.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                } label: {
+                    Text("Recovery Visibility")
                         .font(.headline)
                 }
             }
