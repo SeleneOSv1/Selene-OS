@@ -382,24 +382,43 @@ If a task begins as authoring but repo truth shows the target already exists, Co
 ### No Progress-Spam in Compacted Sessions
 If context compaction happens, Codex must resume from current repo truth, not from the original fresh-authoring assumption.
 
-### Deadlock Prevention and Next-Move Override
-If the same Section/item receives two consecutive read-only deadlock, `NOT_EXPLICIT`, or no-new-truth audits without any repo-truth change:
-- further audits of that same frontier are forbidden until repo truth changes
-- Codex must switch from repeat-audit mode to next-move selection mode
+### Single-Review Selection and Implementation Override
+For any unchanged same-frontier, same-subsystem, or same-carrier-family next-move question:
+- Codex may perform at most one read-only winner-selection review.
+- If that first review exposes one lawful executable implementation winner, further review of that same frontier is forbidden until repo truth changes or JD explicitly requests another review.
+- After that first lawful winner-selection review, Codex must switch to implementation mode instead of continuing review churn.
 
-Next-target precedence:
-- highest priority: `PARTIAL` item with an explicit live code carrier and a direct unimplemented, ignored, or dormant seam in current source
-- next priority: `PARTIAL` item with a broader live seam
-- lowest priority: `NOT_EXPLICIT` item
+Implementation-mode consequence:
+- if JD asked for the next build, Codex must author or execute the implementation run for the selected winner
+- if JD asked for review only, Codex must report the single selected winner and stop
+- Codex must not convert a completed winner-selection review into another review of the same frontier
 
-A `NOT_EXPLICIT` item cannot outrank a live `PARTIAL` item with a direct source seam.
+Priority override after the first review:
+- highest priority: non-visibility executable winner with a direct live source seam
+- next priority: non-visibility executable winner with a broader but still lawful live seam
+- next priority: visibility winner that is required to unlock a blocked executable seam
+- lowest priority: additional same-family visibility refinement
 
-If one target clearly outranks the others:
-- Codex must author the next build plan for that target instead of running another deadlock audit
+Same-family anti-loop rule:
+- Codex must not keep slicing one already-live interrupt or visibility family into further read-only micro-surfaces when a lawful non-visibility executable winner is already exposed by current repo truth
+- once bounded dedicated visibility exists for that family, a non-visibility executable winner outranks any further same-family visibility refinement unless JD explicitly requests the visibility refinement
+- Codex must treat repeated visibility-only refinement of an already-auditable family as review-loop behavior, not as the default next move
 
-If a genuine tie remains after applying the precedence rule:
-- Codex must produce one short decision memo for JD approval
-- Codex must not continue looping audits
+Second-review exception rule:
+- a second review is lawful only if:
+- repo truth changed after the first review
+- JD explicitly requested another review
+- the first review proved `no lawful implementation build exposed by current repo truth`
+- the first review found a real contradiction, approval-boundary conflict, or unresolved tie that prevents safe implementation selection
+
+Tie handling after one review:
+- if one target clearly outranks the others, Codex must select it and move to implementation
+- if multiple adjacent implementation winners remain lawful, Codex should batch them when safe under existing implementation-first law
+- if a genuine tie still remains after applying the priority rules, Codex must produce one short decision memo for JD approval
+- Codex must not continue looping reviews
+
+Hard stop:
+- repeated review is never a substitute for implementation once a lawful executable winner has already been identified
 
 ## Shell-Only Inspection Rule
 Allowed inspection commands:
