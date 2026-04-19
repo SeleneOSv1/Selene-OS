@@ -2706,6 +2706,30 @@ private struct DesktopInterruptSubjectReferencesVisibilityState: Identifiable, E
     }
 }
 
+private struct DesktopInterruptSubjectRelationConfidenceVisibilityState: Identifiable,
+    Equatable
+{
+    let sourceSurfaceIdentity: String
+    let sessionState: String
+    let sessionID: String
+    let turnID: String
+    let interruptSubjectRelation: String?
+    let interruptSubjectRelationConfidence: String?
+    let hasLawfulInterruptSubjectRelationConfidence: Bool
+
+    var id: String {
+        [
+            sourceSurfaceIdentity,
+            sessionState,
+            sessionID,
+            turnID,
+            interruptSubjectRelation ?? "interrupt_subject_relation_not_provided",
+            interruptSubjectRelationConfidence ?? "interrupt_subject_relation_confidence_not_provided",
+            booleanValue(hasLawfulInterruptSubjectRelationConfidence),
+        ].joined(separator: "::")
+    }
+}
+
 struct DesktopSenderVerificationVisibilityState: Identifiable, Equatable {
     let onboardingSessionID: String
     let nextStep: String
@@ -2875,6 +2899,7 @@ struct DesktopSessionShellView: View {
                 desktopInterruptVisibilityCard
                 desktopInterruptResponseProductionCard
                 desktopInterruptSubjectReferencesVisibilityCard
+                desktopInterruptSubjectRelationConfidenceVisibilityCard
 
                 sessionCard
                 .frame(maxWidth: .infinity, minHeight: 360, alignment: .topLeading)
@@ -3937,6 +3962,31 @@ struct DesktopSessionShellView: View {
             interruptedSubjectRef: latestSessionActiveVisibleContext.interruptedSubjectRef,
             hasLawfulInterruptSubjectReferences: latestSessionActiveVisibleContext
                 .hasLawfulInterruptSubjectReferences
+        )
+    }
+
+    private var desktopInterruptSubjectRelationConfidenceVisibilityState:
+        DesktopInterruptSubjectRelationConfidenceVisibilityState?
+    {
+        guard
+            activeInterruptDisplayState == .interruptVisible,
+            let latestSessionActiveVisibleContext,
+            latestSessionActiveVisibleContext.hasLawfulInterruptSubjectRelationConfidence
+        else {
+            return nil
+        }
+
+        return DesktopInterruptSubjectRelationConfidenceVisibilityState(
+            sourceSurfaceIdentity: "INTERRUPT_VISIBLE",
+            sessionState: latestSessionActiveVisibleContext.sessionState,
+            sessionID: latestSessionActiveVisibleContext.sessionID,
+            turnID: latestSessionActiveVisibleContext.turnID,
+            interruptSubjectRelation: latestSessionActiveVisibleContext.interruptSubjectRelation?
+                .rawValue,
+            interruptSubjectRelationConfidence: latestSessionActiveVisibleContext
+                .interruptSubjectRelationConfidence,
+            hasLawfulInterruptSubjectRelationConfidence: latestSessionActiveVisibleContext
+                .hasLawfulInterruptSubjectRelationConfidence
         )
     }
 
@@ -6285,6 +6335,81 @@ struct DesktopSessionShellView: View {
                     }
                 } label: {
                     Text("Interrupt Subject References")
+                        .font(.headline)
+                }
+            }
+        }
+    }
+
+    private var desktopInterruptSubjectRelationConfidenceVisibilityCard: some View {
+        let interruptSubjectRelationConfidenceVisibilityState =
+            desktopInterruptSubjectRelationConfidenceVisibilityState
+
+        return Group {
+            if let interruptSubjectRelationConfidenceVisibilityState {
+                GroupBox {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("Bounded desktop interrupt subject-relation-confidence visibility only. This shell derives one dedicated exact `INTERRUPT_VISIBLE` confidence surface from the already-live active-session interrupt context only, preserves cloud-authored continuity confidence evidence in read-only form, and keeps broader interrupt detail, response-production, and subject-reference branches outside this selected implementation seam.")
+                            .frame(maxWidth: .infinity, alignment: .leading)
+
+                        ForEach(
+                            [
+                                (
+                                    "source_surface",
+                                    interruptSubjectRelationConfidenceVisibilityState
+                                        .sourceSurfaceIdentity
+                                ),
+                                (
+                                    "session_state",
+                                    interruptSubjectRelationConfidenceVisibilityState.sessionState
+                                ),
+                                (
+                                    "session_id",
+                                    interruptSubjectRelationConfidenceVisibilityState.sessionID
+                                ),
+                                (
+                                    "turn_id",
+                                    interruptSubjectRelationConfidenceVisibilityState.turnID
+                                ),
+                            ],
+                            id: \.0
+                        ) { row in
+                            metadataRow(label: row.0, value: row.1)
+                        }
+
+                        if let interruptSubjectRelation =
+                            interruptSubjectRelationConfidenceVisibilityState
+                            .interruptSubjectRelation
+                        {
+                            metadataRow(
+                                label: "interrupt_subject_relation",
+                                value: interruptSubjectRelation
+                            )
+                        }
+
+                        Text("Subject-relation-confidence posture remains cloud-authored and active-session-bound here, so this dedicated surface renders continuity confidence evidence without widening into local dispatch or threshold authority.")
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+
+                        if
+                            interruptSubjectRelationConfidenceVisibilityState
+                            .hasLawfulInterruptSubjectRelationConfidence,
+                            let interruptSubjectRelationConfidence =
+                                interruptSubjectRelationConfidenceVisibilityState
+                                .interruptSubjectRelationConfidence
+                        {
+                            interruptSubjectRelationConfidenceCard(
+                                interruptSubjectRelationConfidence
+                            )
+                        }
+
+                        Text("Confidence evidence remains evidence-only here and does not grant local threshold law, local dispatch unlock, local subject binding, or local identity-resolution authority. This shell stays explicitly non-authoritative.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                } label: {
+                    Text("Interrupt Subject Relation Confidence")
                         .font(.headline)
                 }
             }
