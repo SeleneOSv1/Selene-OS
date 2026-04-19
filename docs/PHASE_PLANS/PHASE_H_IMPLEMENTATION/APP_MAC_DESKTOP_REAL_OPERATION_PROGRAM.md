@@ -58,16 +58,50 @@ Desktop Selene is considered real when all of the following are true:
   at [ph1f.rs#L11571](/Users/selene/Documents/Selene-OS/crates/selene_storage/src/ph1f.rs#L11571)
 - Wake enrollment is already required for desktop:
   - [app_ingress.rs#L6457](/Users/selene/Documents/Selene-OS/crates/selene_os/src/app_ingress.rs#L6457)
+- The current Mac app already preserves:
+  - microphone and speech-recognition permission keys in [Info.plist](/Users/selene/Documents/Selene-OS/apple/mac_desktop/SeleneMacDesktop/Info.plist)
+  - bounded foreground audio capture and speech recognition substrate in [DesktopSessionShellView.swift#L1107](/Users/selene/Documents/Selene-OS/apple/mac_desktop/SeleneMacDesktop/DesktopSessionShellView.swift#L1107)
+  - bounded canonical desktop runtime bridge plus authoritative reply rendering / provenance / playback in [SeleneMacDesktopRuntimeBridge.swift#L1](/Users/selene/Documents/Selene-OS/apple/mac_desktop/SeleneMacDesktop/SeleneMacDesktopRuntimeBridge.swift#L1) and [DesktopSessionShellView.swift#L8662](/Users/selene/Documents/Selene-OS/apple/mac_desktop/SeleneMacDesktop/DesktopSessionShellView.swift#L8662)
+  - bounded onboarding mutation flow through wake-enroll defer and bounded completion truth as recorded in [MASTER_BUILD_COMPLETION_PLAN.md#L96](/Users/selene/Documents/Selene-OS/docs/MASTER_BUILD_COMPLETION_PLAN.md#L96)
 - The current Mac app still lacks:
-  - microphone / speech permission keys in [Info.plist](/Users/selene/Documents/Selene-OS/apple/mac_desktop/SeleneMacDesktop/Info.plist)
-  - local mic capture implementation
-  - speech recognition implementation
-  - TTS playback implementation
-  - native canonical runtime bridge from the app shell
-  - native onboarding mutation flow
-  - native wake listener integration
+  - a lawful desktop soft-closed explicit resume submit seam
+  - broader desktop session attach / reopen mutation
+  - broader desktop pairing completion mutation and onboarding-derived ready-time local handoff
+  - proven native wake-listener integration
   - wake-to-turn handoff
-  - conversation-first ChatGPT-style app layout
+  - a conversation-first ChatGPT-style app layout
+
+## Current Desktop Completion Matrix
+
+### Already Built
+- permission posture is live on macOS through the native app plist and shell-local permission handling
+- explicit foreground voice capture and speech-recognition substrate are live
+- canonical runtime bridge is live for bounded desktop explicit voice turns
+- authoritative reply rendering, provenance rendering, and native reply playback are live
+- bounded onboarding mutation flow is live across invite entry, platform receipts, terms, primary-device confirm, voice enroll lock, wake enroll start / sample / complete / defer, emo/persona lock, access provision, and complete commit
+- backend proof already exists for desktop web search with provenance and desktop send-link dispatch
+
+### Blocked By Missing Lawful Seam
+- soft-closed explicit resume is not a lawful app-only build from current repo truth
+- the shell already preserves the exact soft-closed visibility carrier family and disabled explicit resume affordance, but the desktop adapter / public ingress surface still lacks the bounded compatibility seam needed to reach the already-live exact session-resume runtime primitive without widening into unauthorized local resume law
+
+### Still To Build
+- lawful cross-layer desktop session resume closure
+- pairing completion mutation
+- onboarding-derived ready-time handoff
+- native wake-listener integration
+- wake-to-turn handoff
+- conversation-first desktop shell
+
+### Selection Rule
+- Do not do another read-only slice on an already-visible desktop carrier family when a lawful executable winner is exposed.
+- Once bounded visibility exists for a desktop carrier family, the next selected winner should be executable unless repo truth proves no lawful executable seam exists yet.
+
+### Post-H285 Finish Order
+1. Rewrite H286 as a cross-layer executable build that includes the missing lawful desktop session-resume seam instead of keeping it app-only.
+2. After H286, land pairing-completion mutation plus onboarding-derived ready-time handoff.
+3. After that, land real native wake-listener integration plus wake-to-turn handoff.
+4. After those core operations are real, refactor the shell into a conversation-first desktop UI.
 
 ## End-to-End Desktop Runtime Chain
 1. A user and device enter through the existing link and onboarding path.
@@ -428,43 +462,48 @@ This program does not authorize a UI-only redesign that ignores the runtime. The
 - render authoritative outcomes
 - support respond / clarify / refuse / dispatch
 
-### Phase 3. Conversation-First Desktop Shell
-- redesign the desktop shell around the transcript and conversation experience
-- keep evidence/status surfaces as secondary support panes
-
-### Phase 4. Search and Tool Completion
-- wire web search and tool responses into the new desktop shell
-- preserve provenance and retrieval metadata
-
-### Phase 5. Onboarding, Employee, Pairing, and Access
+### Phase 3. Onboarding, Employee, and Bounded Access Mutation Chain
 - real invite handling
 - onboarding mutation flow
 - position / employee readiness flow
 - per-user access creation
-- pairing completion
+- wake-enroll defer completion path
 
-### Phase 6. Voice Identity and Wake Enrollment
-- voice enrollment
-- wake enrollment
-- wake profile readiness
-- wake configuration completion
+### Phase 4. Cross-Layer Session Resume Closure
+- rewrite H286 as a cross-layer executable build instead of an app-only build
+- add the bounded lawful desktop session-resume seam needed to reach the already-live canonical session-resume runtime primitive
+- keep broader attach / reopen work out of scope
 
-### Phase 7. Native Wake Listener
-- local wake listener integration
+### Phase 5. Pairing Completion and Ready-Time Handoff
+- pairing completion mutation
+- onboarding-derived ready-time handoff
+- lawful session continuity after readiness
+
+### Phase 6. Native Wake Listener and Wake Handoff
+- local wake-listener integration
 - suppression handling
 - wake-to-turn handoff into the canonical runtime
 
-### Phase 8. Memory, Persona, and Adaptive Quality
+### Phase 7. Conversation-First Desktop Shell
+- redesign the desktop shell around the transcript and conversation experience
+- keep evidence/status surfaces as secondary support panes
+- move the product surface from evidence-first to conversation-first only after core operations are real
+
+### Phase 8. Search and Tool Completion
+- wire web search and tool responses into the conversation-first desktop shell
+- preserve provenance and retrieval metadata
+
+### Phase 9. Memory, Persona, and Adaptive Quality
 - memory continuity
 - context and knowledge assist
 - bounded persona/tone integration
 - feedback and learning capture
 
-### Phase 9. Cross-Device Desktop-First Handoff
+### Phase 10. Cross-Device Desktop-First Handoff
 - desktop sends iPhone invite link
 - iPhone receives and continues onboarding
 
-### Phase 10. Hardening, Proof, Governance, and Law
+### Phase 11. Hardening, Proof, Governance, and Law
 - final audit, quota, health, and law verification across the desktop path
 
 ## Verification Journeys
@@ -531,6 +570,8 @@ This program is complete when:
 - Do not attempt to implement the entire program in one giant build.
 - Do not treat this program doc as current-landed truth.
 - Use this program as the destination map.
+- Do not select another read-only slice on an already-visible desktop carrier family when a lawful executable winner is available.
+- The next remaining desktop work should be executable and mutation-bearing, not another visibility refinement.
 - Use later strict H-build instructions for:
   - selection
   - bounded implementation
@@ -539,10 +580,7 @@ This program is complete when:
 
 ## Recommended Next Step
 - Use this document as the umbrella program.
-- Next, mint the first strict APP_MAC_DESKTOP real-operation selection slice under it.
-- The first selection target should be the smallest coherent desktop foundation cluster that lawfully unlocks:
-  - permission posture
-  - voice capture and speech recognition substrate
-  - canonical desktop runtime bridge
-  - authoritative reply rendering
-  - authoritative reply playback
+- Next, rewrite H286 as a cross-layer executable build that includes the missing lawful desktop session-resume seam instead of keeping it app-only.
+- After H286, land pairing-completion mutation plus onboarding-derived ready-time handoff.
+- After that, land real native wake-listener integration plus wake-to-turn handoff.
+- After those core operations are real, refactor the shell into a conversation-first desktop UI.
