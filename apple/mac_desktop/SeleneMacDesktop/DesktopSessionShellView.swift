@@ -2631,6 +2631,57 @@ private struct DesktopInterruptVisibilityState: Identifiable, Equatable {
     }
 }
 
+private struct DesktopInterruptResponseProductionState: Identifiable, Equatable {
+    let sourceSurfaceIdentity: String
+    let sessionState: String
+    let sessionID: String
+    let turnID: String
+    let interruptSubjectRelation: String?
+    let interruptContinuityOutcome: String?
+    let interruptResumePolicy: String?
+    let returnCheckPending: Bool?
+    let hasInterruptResponseConflict: Bool
+    let hasLawfulInterruptClarifyDirective: Bool
+    let interruptClarifyQuestion: String?
+    let interruptAcceptedAnswerFormats: [String]
+    let activeContext: DesktopSessionActiveVisibleContext
+
+    var interruptContinuityRows: [(label: String, value: String)] {
+        var rows: [(label: String, value: String)] = []
+
+        if let interruptSubjectRelation {
+            rows.append(("interrupt_subject_relation", interruptSubjectRelation))
+        }
+
+        if let interruptContinuityOutcome {
+            rows.append(("interrupt_continuity_outcome", interruptContinuityOutcome))
+        }
+
+        if let interruptResumePolicy {
+            rows.append(("interrupt_resume_policy", interruptResumePolicy))
+        }
+
+        return rows
+    }
+
+    var id: String {
+        [
+            sourceSurfaceIdentity,
+            sessionState,
+            sessionID,
+            turnID,
+            interruptSubjectRelation ?? "interrupt_subject_relation_not_provided",
+            interruptContinuityOutcome ?? "interrupt_continuity_outcome_not_provided",
+            interruptResumePolicy ?? "interrupt_resume_policy_not_provided",
+            returnCheckPending.map(booleanValue) ?? "return_check_pending_not_provided",
+            booleanValue(hasInterruptResponseConflict),
+            booleanValue(hasLawfulInterruptClarifyDirective),
+            interruptClarifyQuestion ?? "interrupt_clarify_question_not_provided",
+            interruptAcceptedAnswerFormats.joined(separator: "|"),
+        ].joined(separator: "::")
+    }
+}
+
 struct DesktopSenderVerificationVisibilityState: Identifiable, Equatable {
     let onboardingSessionID: String
     let nextStep: String
@@ -2798,6 +2849,7 @@ struct DesktopSessionShellView: View {
                 desktopSessionSuspendedVisibilityCard
                 desktopRecoveryVisibilityCard
                 desktopInterruptVisibilityCard
+                desktopInterruptResponseProductionCard
 
                 sessionCard
                 .frame(maxWidth: .infinity, minHeight: 360, alignment: .topLeading)
@@ -3804,6 +3856,37 @@ struct DesktopSessionShellView: View {
             returnCheckPending: latestSessionActiveVisibleContext.returnCheckPending,
             acceptedInterruptPostureSummary: latestSessionActiveVisibleContext
                 .acceptedInterruptPostureSummary
+        )
+    }
+
+    private var desktopInterruptResponseProductionState: DesktopInterruptResponseProductionState? {
+        guard
+            activeInterruptDisplayState == .interruptVisible,
+            let latestSessionActiveVisibleContext,
+            latestSessionActiveVisibleContext.hasInterruptResponseProductionSurface
+        else {
+            return nil
+        }
+
+        return DesktopInterruptResponseProductionState(
+            sourceSurfaceIdentity: "INTERRUPT_VISIBLE",
+            sessionState: latestSessionActiveVisibleContext.sessionState,
+            sessionID: latestSessionActiveVisibleContext.sessionID,
+            turnID: latestSessionActiveVisibleContext.turnID,
+            interruptSubjectRelation: latestSessionActiveVisibleContext.interruptSubjectRelation?
+                .rawValue,
+            interruptContinuityOutcome: latestSessionActiveVisibleContext
+                .interruptContinuityOutcome?.rawValue,
+            interruptResumePolicy: latestSessionActiveVisibleContext.interruptResumePolicy?.rawValue,
+            returnCheckPending: latestSessionActiveVisibleContext.returnCheckPending,
+            hasInterruptResponseConflict: latestSessionActiveVisibleContext
+                .hasInterruptResponseConflict,
+            hasLawfulInterruptClarifyDirective: latestSessionActiveVisibleContext
+                .hasLawfulInterruptClarifyDirective,
+            interruptClarifyQuestion: latestSessionActiveVisibleContext.interruptClarifyQuestion,
+            interruptAcceptedAnswerFormats: latestSessionActiveVisibleContext
+                .interruptAcceptedAnswerFormats,
+            activeContext: latestSessionActiveVisibleContext
         )
     }
 
@@ -6018,6 +6101,80 @@ struct DesktopSessionShellView: View {
                     }
                 } label: {
                     Text("Interrupt Visibility")
+                        .font(.headline)
+                }
+            }
+        }
+    }
+
+    private var desktopInterruptResponseProductionCard: some View {
+        let interruptResponseProductionState = desktopInterruptResponseProductionState
+
+        return Group {
+            if let interruptResponseProductionState {
+                GroupBox {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("Bounded desktop interrupt response production only. This shell derives one dedicated exact `INTERRUPT_VISIBLE` response-production surface from the already-live active-session interrupt context only, preserves the cloud-authored clarify-directive and return-check submission path already live in source, and keeps broader interrupt detail branches outside this selected implementation seam.")
+                            .frame(maxWidth: .infinity, alignment: .leading)
+
+                        ForEach(
+                            [
+                                (
+                                    "source_surface",
+                                    interruptResponseProductionState.sourceSurfaceIdentity
+                                ),
+                                ("session_state", interruptResponseProductionState.sessionState),
+                                ("session_id", interruptResponseProductionState.sessionID),
+                                ("turn_id", interruptResponseProductionState.turnID),
+                            ],
+                            id: \.0
+                        ) { row in
+                            metadataRow(label: row.0, value: row.1)
+                        }
+
+                        ForEach(
+                            interruptResponseProductionState.interruptContinuityRows,
+                            id: \.label
+                        ) { row in
+                            metadataRow(label: row.label, value: row.value)
+                        }
+
+                        if let returnCheckPending = interruptResponseProductionState.returnCheckPending {
+                            metadataRow(
+                                label: "return_check_pending",
+                                value: booleanValue(returnCheckPending)
+                            )
+                        }
+
+                        Text("Continuity-response posture remains cloud-authored and active-session-bound here, so this dedicated surface reuses only the already-live lawful clarify-directive and return-check production path without widening into local interrupt execution authority.")
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+
+                        if interruptResponseProductionState.hasInterruptResponseConflict {
+                            Text("Authoritative interruption truth exposed both clarify-directive detail and a return check, so this dedicated response-production surface fails closed until the cloud narrows to one lawful path.")
+                                .foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        } else if interruptResponseProductionState.hasLawfulInterruptClarifyDirective {
+                            Text("Cloud-authored clarify directive currently defines the bounded response-production posture here.")
+                                .foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        } else if interruptResponseProductionState.returnCheckPending == true {
+                            Text("Cloud-authored return check currently defines the bounded response-production posture here.")
+                                .foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+
+                        interruptResponseProductionSection(
+                            interruptResponseProductionState.activeContext
+                        )
+
+                        Text("No local interrupt law, no local ambiguity inference, no local field inference, no local routing guidance, no local confirmation law, no local sensitivity policy, no local threshold law, and no local identity-resolution authority are introduced here. This shell stays explicitly non-authoritative.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                } label: {
+                    Text("Interrupt Response Production")
                         .font(.headline)
                 }
             }
