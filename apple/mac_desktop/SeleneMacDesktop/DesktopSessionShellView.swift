@@ -2587,6 +2587,50 @@ private struct DesktopRecoveryVisibilityState: Identifiable, Equatable {
     }
 }
 
+private struct DesktopInterruptVisibilityState: Identifiable, Equatable {
+    let sourceSurfaceIdentity: String
+    let sessionState: String
+    let sessionID: String
+    let turnID: String
+    let interruptSubjectRelation: String?
+    let interruptContinuityOutcome: String?
+    let interruptResumePolicy: String?
+    let returnCheckPending: Bool?
+    let acceptedInterruptPostureSummary: String
+
+    var interruptContinuityRows: [(label: String, value: String)] {
+        var rows: [(label: String, value: String)] = []
+
+        if let interruptSubjectRelation {
+            rows.append(("interrupt_subject_relation", interruptSubjectRelation))
+        }
+
+        if let interruptContinuityOutcome {
+            rows.append(("interrupt_continuity_outcome", interruptContinuityOutcome))
+        }
+
+        if let interruptResumePolicy {
+            rows.append(("interrupt_resume_policy", interruptResumePolicy))
+        }
+
+        return rows
+    }
+
+    var id: String {
+        [
+            sourceSurfaceIdentity,
+            sessionState,
+            sessionID,
+            turnID,
+            interruptSubjectRelation ?? "interrupt_subject_relation_not_provided",
+            interruptContinuityOutcome ?? "interrupt_continuity_outcome_not_provided",
+            interruptResumePolicy ?? "interrupt_resume_policy_not_provided",
+            returnCheckPending.map(booleanValue) ?? "return_check_pending_not_provided",
+            acceptedInterruptPostureSummary,
+        ].joined(separator: "::")
+    }
+}
+
 struct DesktopSenderVerificationVisibilityState: Identifiable, Equatable {
     let onboardingSessionID: String
     let nextStep: String
@@ -2753,6 +2797,7 @@ struct DesktopSessionShellView: View {
                 desktopSessionSoftClosedVisibilityCard
                 desktopSessionSuspendedVisibilityCard
                 desktopRecoveryVisibilityCard
+                desktopInterruptVisibilityCard
 
                 sessionCard
                 .frame(maxWidth: .infinity, minHeight: 360, alignment: .topLeading)
@@ -3735,6 +3780,30 @@ struct DesktopSessionShellView: View {
             sessionID: activeRecoveryVisibleSurface.sessionID,
             recoveryMode: activeRecoveryVisibleSurface.recoveryMode?.rawValue,
             reconciliationDecision: activeRecoveryVisibleSurface.reconciliationDecision?.rawValue
+        )
+    }
+
+    private var desktopInterruptVisibilityState: DesktopInterruptVisibilityState? {
+        guard
+            activeInterruptDisplayState == .interruptVisible,
+            let latestSessionActiveVisibleContext
+        else {
+            return nil
+        }
+
+        return DesktopInterruptVisibilityState(
+            sourceSurfaceIdentity: "INTERRUPT_VISIBLE",
+            sessionState: latestSessionActiveVisibleContext.sessionState,
+            sessionID: latestSessionActiveVisibleContext.sessionID,
+            turnID: latestSessionActiveVisibleContext.turnID,
+            interruptSubjectRelation: latestSessionActiveVisibleContext.interruptSubjectRelation?
+                .rawValue,
+            interruptContinuityOutcome: latestSessionActiveVisibleContext
+                .interruptContinuityOutcome?.rawValue,
+            interruptResumePolicy: latestSessionActiveVisibleContext.interruptResumePolicy?.rawValue,
+            returnCheckPending: latestSessionActiveVisibleContext.returnCheckPending,
+            acceptedInterruptPostureSummary: latestSessionActiveVisibleContext
+                .acceptedInterruptPostureSummary
         )
     }
 
@@ -5877,6 +5946,78 @@ struct DesktopSessionShellView: View {
                     }
                 } label: {
                     Text("Recovery Visibility")
+                        .font(.headline)
+                }
+            }
+        }
+    }
+
+    private var desktopInterruptVisibilityCard: some View {
+        let interruptVisibilityState = desktopInterruptVisibilityState
+
+        return Group {
+            if let interruptVisibilityState {
+                GroupBox {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("Bounded desktop interrupt visibility only. This shell derives one dedicated read-only exact `INTERRUPT_VISIBLE` surface from the already-live active-session interrupt context only, preserves accepted interrupt posture explanation, and preserves one exact disabled non-producing clarify / continue previous topic / switch topic / resume later affordance set without introducing new interrupt response production, local interrupt law, or local routing / threshold authority.")
+                            .frame(maxWidth: .infinity, alignment: .leading)
+
+                        ForEach(
+                            [
+                                ("source_surface", interruptVisibilityState.sourceSurfaceIdentity),
+                                ("session_state", interruptVisibilityState.sessionState),
+                                ("session_id", interruptVisibilityState.sessionID),
+                                ("turn_id", interruptVisibilityState.turnID),
+                            ],
+                            id: \.0
+                        ) { row in
+                            metadataRow(label: row.0, value: row.1)
+                        }
+
+                        ForEach(interruptVisibilityState.interruptContinuityRows, id: \.label) { row in
+                            metadataRow(label: row.label, value: row.value)
+                        }
+
+                        if let returnCheckPending = interruptVisibilityState.returnCheckPending {
+                            metadataRow(
+                                label: "return_check_pending",
+                                value: booleanValue(returnCheckPending)
+                            )
+                        }
+
+                        Text("Accepted interrupt posture remains cloud-authored and active-session-bound here, so this shell renders continuity truth without introducing local interrupt execution authority.")
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+
+                        Text(interruptVisibilityState.acceptedInterruptPostureSummary)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+
+                        VStack(alignment: .leading, spacing: 8) {
+                            Button("Clarify before continuing") {}
+                                .buttonStyle(.borderedProminent)
+                                .disabled(true)
+
+                            Button("Continue previous topic") {}
+                                .buttonStyle(.bordered)
+                                .disabled(true)
+
+                            Button("Switch topic") {}
+                                .buttonStyle(.bordered)
+                                .disabled(true)
+
+                            Button("Resume later") {}
+                                .buttonStyle(.bordered)
+                                .disabled(true)
+                        }
+
+                        Text("No new interrupt response production, no local interrupt law, no local routing guidance, no local threshold law, no local clarify / continue / switch-topic / resume-later authority, and no local dispatch unlock authority are introduced here. This shell stays explicitly non-authoritative.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                } label: {
+                    Text("Interrupt Visibility")
                         .font(.headline)
                 }
             }
