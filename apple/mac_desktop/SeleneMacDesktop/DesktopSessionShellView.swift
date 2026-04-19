@@ -2487,6 +2487,34 @@ struct DesktopReadyVisibilityState: Identifiable, Equatable {
     }
 }
 
+struct DesktopPairingCompletionVisibilityState: Identifiable, Equatable {
+    let onboardingSessionID: String
+    let nextStep: String
+    let onboardingStatus: String?
+    let voiceArtifactSyncReceiptRef: String?
+    let accessEngineInstanceID: String?
+    let deviceID: String?
+    let sessionState: String
+    let sessionID: String
+    let sessionAttachOutcome: String
+    let turnID: String?
+
+    var id: String {
+        [
+            onboardingSessionID,
+            nextStep,
+            onboardingStatus ?? "onboarding_status_not_provided",
+            voiceArtifactSyncReceiptRef ?? "voice_receipt_not_provided",
+            accessEngineInstanceID ?? "access_engine_not_provided",
+            deviceID ?? "device_id_not_provided",
+            sessionState,
+            sessionID,
+            sessionAttachOutcome,
+            turnID ?? "turn_id_not_provided",
+        ].joined(separator: "::")
+    }
+}
+
 struct DesktopSenderVerificationVisibilityState: Identifiable, Equatable {
     let onboardingSessionID: String
     let nextStep: String
@@ -2649,6 +2677,7 @@ struct DesktopSessionShellView: View {
                 desktopAccessProvisionCommitCard
                 desktopCompleteCommitCard
                 desktopReadyVisibilityCard
+                desktopPairingCompletionVisibilityCard
 
                 sessionCard
                 .frame(maxWidth: .infinity, minHeight: 360, alignment: .topLeading)
@@ -3534,6 +3563,52 @@ struct DesktopSessionShellView: View {
             voiceArtifactSyncReceiptRef: desktopCompleteCommitRuntimeOutcomeState.voiceArtifactSyncReceiptRef,
             accessEngineInstanceID: desktopCompleteCommitRuntimeOutcomeState.accessEngineInstanceID,
             deviceID: desktopManagedPrimaryDeviceID
+        )
+    }
+
+    private var desktopPairingCompletionVisibilityState: DesktopPairingCompletionVisibilityState? {
+        guard let readyVisibilityState = desktopReadyVisibilityState else {
+            return nil
+        }
+
+        if let latestSessionActiveVisibleContext {
+            guard let sessionAttachOutcome = latestSessionActiveVisibleContext.sessionAttachOutcome,
+                  ["NEW_SESSION_CREATED", "EXISTING_SESSION_ATTACHED"].contains(sessionAttachOutcome) else {
+                return nil
+            }
+
+            return DesktopPairingCompletionVisibilityState(
+                onboardingSessionID: readyVisibilityState.onboardingSessionID,
+                nextStep: readyVisibilityState.nextStep,
+                onboardingStatus: readyVisibilityState.onboardingStatus,
+                voiceArtifactSyncReceiptRef: readyVisibilityState.voiceArtifactSyncReceiptRef,
+                accessEngineInstanceID: readyVisibilityState.accessEngineInstanceID,
+                deviceID: readyVisibilityState.deviceID,
+                sessionState: latestSessionActiveVisibleContext.sessionState,
+                sessionID: latestSessionActiveVisibleContext.sessionID,
+                sessionAttachOutcome: sessionAttachOutcome,
+                turnID: latestSessionActiveVisibleContext.turnID
+            )
+        }
+
+        guard ["NEW_SESSION_CREATED", "EXISTING_SESSION_ATTACHED"].contains(
+            latestSessionHeaderContext?.sessionAttachOutcome ?? ""
+        ),
+        let latestSessionHeaderContext else {
+            return nil
+        }
+
+        return DesktopPairingCompletionVisibilityState(
+            onboardingSessionID: readyVisibilityState.onboardingSessionID,
+            nextStep: readyVisibilityState.nextStep,
+            onboardingStatus: readyVisibilityState.onboardingStatus,
+            voiceArtifactSyncReceiptRef: readyVisibilityState.voiceArtifactSyncReceiptRef,
+            accessEngineInstanceID: readyVisibilityState.accessEngineInstanceID,
+            deviceID: readyVisibilityState.deviceID,
+            sessionState: latestSessionHeaderContext.sessionState,
+            sessionID: latestSessionHeaderContext.sessionID,
+            sessionAttachOutcome: latestSessionHeaderContext.sessionAttachOutcome,
+            turnID: nil
         )
     }
 
@@ -5344,7 +5419,7 @@ struct DesktopSessionShellView: View {
             if let readyVisibilityState {
                 GroupBox {
                     VStack(alignment: .leading, spacing: 12) {
-                        Text("Bounded desktop ready visibility only. This shell derives bounded read-only posture from the already-live complete-commit outcome only when canonical onboarding posture has advanced to exact `READY`, enriches it with the exact managed bridge `deviceID` when available, and keeps pairing completion plus any onboarding-derived ready-time behavior out of scope.")
+                        Text("Bounded desktop ready visibility only. This shell derives bounded read-only posture from the already-live complete-commit outcome only when canonical onboarding posture has advanced to exact `READY`, enriches it with the exact managed bridge `deviceID` when available, and keeps pairing completion mutation plus any onboarding-derived ready-time behavior out of scope.")
                             .frame(maxWidth: .infinity, alignment: .leading)
 
                         let displayedRows: [(String, String)] = {
@@ -5396,6 +5471,83 @@ struct DesktopSessionShellView: View {
                     }
                 } label: {
                     Text("Onboarding Ready Visibility")
+                        .font(.headline)
+                }
+            }
+        }
+    }
+
+    private var desktopPairingCompletionVisibilityCard: some View {
+        let pairingCompletionVisibilityState = desktopPairingCompletionVisibilityState
+
+        return Group {
+            if let pairingCompletionVisibilityState {
+                GroupBox {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("Bounded desktop pairing-completion visibility only. This shell derives bounded read-only pairing/session continuity posture from the already-live exact `READY` visibility plus one already-live cloud-authored session surface only when exact `session_attach_outcome` remains exact `NEW_SESSION_CREATED` or exact `EXISTING_SESSION_ATTACHED`.")
+                            .frame(maxWidth: .infinity, alignment: .leading)
+
+                        let displayedRows: [(String, String)] = {
+                            var rows: [(String, String)] = [
+                                ("onboarding_session_id", pairingCompletionVisibilityState.onboardingSessionID),
+                                ("next_step", pairingCompletionVisibilityState.nextStep),
+                            ]
+
+                            if let onboardingStatus = pairingCompletionVisibilityState.onboardingStatus {
+                                rows.append(("onboarding_status", onboardingStatus))
+                            }
+
+                            if let voiceArtifactSyncReceiptRef = pairingCompletionVisibilityState.voiceArtifactSyncReceiptRef {
+                                rows.append(("voice_artifact_sync_receipt_ref", voiceArtifactSyncReceiptRef))
+                            }
+
+                            if let accessEngineInstanceID = pairingCompletionVisibilityState.accessEngineInstanceID {
+                                rows.append(("access_engine_instance_id", accessEngineInstanceID))
+                            }
+
+                            if let deviceID = pairingCompletionVisibilityState.deviceID {
+                                rows.append(("device_id", deviceID))
+                            }
+
+                            rows.append(("session_state", pairingCompletionVisibilityState.sessionState))
+                            rows.append(("session_id", pairingCompletionVisibilityState.sessionID))
+                            rows.append(("session_attach_outcome", pairingCompletionVisibilityState.sessionAttachOutcome))
+
+                            if let turnID = pairingCompletionVisibilityState.turnID {
+                                rows.append(("turn_id", turnID))
+                            }
+
+                            return rows
+                        }()
+
+                        ForEach(displayedRows, id: \.0) { row in
+                            HStack(alignment: .top, spacing: 12) {
+                                Text(row.0)
+                                    .font(.caption.monospaced())
+                                    .foregroundStyle(.secondary)
+                                    .frame(width: 170, alignment: .leading)
+
+                                Text(row.1)
+                                    .font(.body.monospaced())
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                        }
+
+                        Text(continuityLabel(for: pairingCompletionVisibilityState.sessionAttachOutcome))
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+
+                        Text("Canonical onboarding posture has advanced to exact `READY`, and cloud-authoritative pairing/session continuity is now visible in bounded read-only form only through this surface. Exact `RETRY_REUSED_RESULT` remains in the broader generic session continuity surface only and is not reclassified here.")
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+
+                        Text("Pairing completion mutation, local session attach or reopen authority, onboarding-derived ready-time local handoff behavior, wake-listener integration, wake-to-turn behavior, and autonomous unlock remain out of scope here. This shell stays explicitly non-authoritative.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                } label: {
+                    Text("Onboarding Pairing Completion Visibility")
                         .font(.headline)
                 }
             }
