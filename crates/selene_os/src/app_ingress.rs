@@ -11495,6 +11495,265 @@ mod tests {
         )
     }
 
+    fn recanonicalize_execution_outcome_with_confirmed_voice_assertion_for_tests(
+        out: &mut AppVoiceTurnExecutionOutcome,
+    ) {
+        let confirmed_assertion =
+            confirmed_voice_assertion(out.runtime_execution_envelope.actor_identity.clone());
+        let runtime_execution_envelope = out
+            .runtime_execution_envelope
+            .with_voice_identity_assertion(Some(confirmed_assertion.clone()))
+            .expect("test execution outcome should allow confirmed voice assertion reset");
+        let canonical_runtime_execution_envelope = attach_identity_state_for_governed_voice_turn(
+            &runtime_execution_envelope
+                .with_identity_state(None)
+                .expect("test execution outcome should allow identity-state reset"),
+            &confirmed_assertion,
+        )
+        .expect("test execution outcome should allow confirmed identity-state recanonicalization");
+        out.runtime_execution_envelope = canonical_runtime_execution_envelope.clone();
+        if let OsVoiceLiveTurnOutcome::Forwarded(forwarded) = &mut out.voice_outcome {
+            forwarded.voice_identity_assertion = confirmed_assertion;
+            forwarded.runtime_execution_envelope = canonical_runtime_execution_envelope.clone();
+            forwarded.top_level_bundle.runtime_execution_envelope =
+                Some(canonical_runtime_execution_envelope);
+        }
+    }
+
+    fn run_desktop_voice_turn_end_to_end_with_confirmed_voice_assertion(
+        runtime: &AppServerIngressRuntime,
+        store: &mut Ph1fStore,
+        request: AppVoiceIngressRequest,
+        x_build: AppVoicePh1xBuildInput,
+    ) -> Result<AppVoiceTurnExecutionOutcome, StorageError> {
+        if request.app_platform != AppPlatform::Desktop {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "app_voice_ingress_request.app_platform",
+                    reason: "run_desktop_voice_turn_end_to_end requires AppPlatform::Desktop",
+                },
+            ));
+        }
+
+        let correlation_id = request.correlation_id;
+        let turn_id = request.turn_id;
+        let received_at = request.voice_id_request.now;
+        let request_session_id = request.voice_id_request.session_state_ref.session_id;
+        let request_session_state = request.voice_id_request.session_state_ref.session_state;
+        let actor_user_id = request.actor_user_id.clone();
+        let actor_device_id = request.device_id.clone();
+        let actor_tenant_id = request.tenant_id.clone();
+        let dispatch_now = x_build.now;
+        let (voice_outcome, runtime_execution_envelope, ph1x_request) = runtime
+            .run_voice_turn_and_build_ph1x_request_internal(store, request, x_build)?;
+        let Some(ph1x_request) = ph1x_request else {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "app_voice_turn_execution_outcome.ph1x_request",
+                    reason:
+                        "run_desktop_voice_turn_end_to_end_with_confirmed_voice_assertion requires ph1x request",
+                },
+            ));
+        };
+
+        let last_agent_input_packet = runtime.last_agent_input_packet.borrow().clone();
+        let finder_terminal = runtime.run_finder_terminal_packet_for_turn(
+            store,
+            &actor_user_id,
+            actor_tenant_id.as_deref(),
+            last_agent_input_packet.as_ref(),
+        )?;
+        *runtime.last_finder_terminal_packet.borrow_mut() = finder_terminal.clone();
+        let mut dev_intake_audit_event_id: Option<AuditEventId> = None;
+
+        let mut out = if let Some(terminal) = finder_terminal.clone() {
+            match terminal {
+                FinderTerminalPacket::SimulationMatch(packet) => {
+                    let nlp_output =
+                        ph1x_request
+                            .nlp_output
+                            .as_ref()
+                            .ok_or(StorageError::ContractViolation(
+                                ContractViolation::InvalidValue {
+                                    field: "ph1x_request.nlp_output",
+                                    reason: "FINDER_MATCH_REQUIRES_INTENT_DRAFT",
+                                },
+                            ))?;
+                    let Ph1nResponse::IntentDraft(intent_draft) = nlp_output else {
+                        return Err(StorageError::ContractViolation(
+                            ContractViolation::InvalidValue {
+                                field: "ph1x_request.nlp_output",
+                                reason: "FINDER_MATCH_REQUIRES_INTENT_DRAFT",
+                            },
+                        ));
+                    };
+                    let intent_simulation_id =
+                        simulation_id_for_intent_draft_v1(intent_draft)?.to_string();
+                    if intent_simulation_id != packet.simulation_id {
+                        return Err(StorageError::ContractViolation(
+                            ContractViolation::InvalidValue {
+                                field: "ph1x_request.nlp_output.intent_draft.intent_type",
+                                reason: "FINDER_MATCH_EXECUTION_MISMATCH",
+                            },
+                        ));
+                    }
+                    runtime.run_ph1x_and_dispatch_with_access_fail_closed(
+                        store,
+                        runtime_execution_envelope.clone(),
+                        voice_outcome,
+                        request_session_state,
+                        ph1x_request,
+                        &actor_user_id,
+                        actor_device_id.as_ref(),
+                        actor_tenant_id.as_deref(),
+                        request_session_id,
+                        dispatch_now,
+                    )?
+                }
+                FinderTerminalPacket::Clarify(packet) => AppVoiceTurnExecutionOutcome {
+                    runtime_execution_envelope: runtime_execution_envelope.clone(),
+                    voice_outcome,
+                    session_state: request_session_state,
+                    next_move: AppVoiceTurnNextMove::Clarify,
+                    ph1x_request: Some(ph1x_request),
+                    ph1x_response: None,
+                    dispatch_outcome: None,
+                    tool_response: None,
+                    response_text: Some(packet.question),
+                    reason_code: Some(packet.reason_code),
+                },
+                FinderTerminalPacket::Refuse(packet) => AppVoiceTurnExecutionOutcome {
+                    runtime_execution_envelope: runtime_execution_envelope.clone(),
+                    voice_outcome,
+                    session_state: request_session_state,
+                    next_move: AppVoiceTurnNextMove::Refused,
+                    ph1x_request: Some(ph1x_request),
+                    ph1x_response: None,
+                    dispatch_outcome: None,
+                    tool_response: None,
+                    response_text: Some(packet.message),
+                    reason_code: Some(packet.reason_code),
+                },
+                FinderTerminalPacket::MissingSimulation(packet) => {
+                    let runtime_execution_envelope =
+                        missing_simulation_runtime_execution_envelope(
+                            &runtime.ph1comp_runtime,
+                            &runtime_execution_envelope,
+                            &packet,
+                            dispatch_now.0 as i64,
+                        )?;
+                    let tenant_id = normalized_tenant_scope_for_dev_intake(
+                        store,
+                        &actor_user_id,
+                        actor_tenant_id.as_deref(),
+                    )?;
+                    let idempotency_key = format!(
+                        "{}:{}:{}",
+                        packet.idempotency_key, packet.tenant_id, packet.user_id
+                    );
+                    let dev_intake_event_id = store.ph1simfinder_dev_intake_commit(
+                        dispatch_now,
+                        tenant_id,
+                        correlation_id,
+                        turn_id,
+                        request_session_id,
+                        actor_user_id.clone(),
+                        actor_device_id.clone(),
+                        packet.requested_capability_name_normalized.clone(),
+                        packet.proposed_simulation_family.clone(),
+                        packet.no_match_proof_ref.clone(),
+                        packet.dedupe_fingerprint.clone(),
+                        packet.worthiness_score_bp,
+                        packet.reason_code,
+                        idempotency_key,
+                    )?;
+                    dev_intake_audit_event_id = Some(dev_intake_event_id);
+                    if let Some(actor_device_id) = actor_device_id.as_ref() {
+                        let _ = store.ph1x_respond_commit_with_payload_metadata(
+                            dispatch_now,
+                            packet.tenant_id.clone(),
+                            correlation_id,
+                            turn_id,
+                            None,
+                            actor_user_id.clone(),
+                            actor_device_id.clone(),
+                            "MISSING_SIMULATION_NOTIFY_SUBMITTED".to_string(),
+                            packet.reason_code,
+                            format!("ph1x_missing_sim_notify:{}:{}", correlation_id.0, turn_id.0),
+                            runtime.ph1x_fail_closed_respond_payload_metadata(
+                                &runtime_execution_envelope,
+                            ),
+                        )?;
+                    }
+                    AppVoiceTurnExecutionOutcome {
+                        runtime_execution_envelope,
+                        voice_outcome,
+                        session_state: request_session_state,
+                        next_move: AppVoiceTurnNextMove::Refused,
+                        ph1x_request: Some(ph1x_request),
+                        ph1x_response: None,
+                        dispatch_outcome: None,
+                        tool_response: None,
+                        response_text: Some(
+                            "I can't do that yet; I've submitted it for review.".to_string(),
+                        ),
+                        reason_code: Some(packet.reason_code),
+                    }
+                }
+            }
+        } else {
+            runtime.run_ph1x_and_dispatch_with_access_fail_closed(
+                store,
+                runtime_execution_envelope.clone(),
+                voice_outcome,
+                request_session_state,
+                ph1x_request,
+                &actor_user_id,
+                actor_device_id.as_ref(),
+                actor_tenant_id.as_deref(),
+                request_session_id,
+                dispatch_now,
+            )?
+        };
+
+        recanonicalize_execution_outcome_with_confirmed_voice_assertion_for_tests(&mut out);
+        let persona_style_hint =
+            latest_persona_style_hint_for_actor(store, &actor_user_id, actor_tenant_id.as_deref());
+        out.response_text = out.response_text.take().map(|response_text| {
+            apply_persona_style_hint_to_response_text(response_text, persona_style_hint.as_deref())
+        });
+        out = runtime.finalize_voice_turn_outcome(
+            store,
+            out,
+            finder_terminal.as_ref(),
+            &actor_user_id,
+            actor_device_id.as_ref(),
+            actor_tenant_id.as_deref(),
+            request_session_id,
+            correlation_id,
+            turn_id,
+            received_at,
+            dispatch_now,
+        )?;
+        if let Some(terminal) = finder_terminal.as_ref() {
+            runtime.record_agent_execution_terminal_packet(
+                store,
+                &actor_user_id,
+                actor_tenant_id.as_deref(),
+                request_session_id,
+                correlation_id,
+                turn_id,
+                dispatch_now,
+                last_agent_input_packet.as_ref(),
+                terminal,
+                &out,
+                dev_intake_audit_event_id,
+            )?;
+        }
+
+        Ok(out)
+    }
+
     fn assert_posture_finalization_requires_canonical_identity_state(
         runtime: &AppServerIngressRuntime,
         store: &mut Ph1fStore,
@@ -19368,9 +19627,13 @@ mod tests {
             no_observation(),
         )
         .unwrap();
-        let out_plain = runtime
-            .run_desktop_voice_turn_end_to_end(&mut store, request_plain, x_build.clone())
-            .unwrap();
+        let out_plain = run_desktop_voice_turn_end_to_end_with_confirmed_voice_assertion(
+            &runtime,
+            &mut store,
+            request_plain,
+            x_build.clone(),
+        )
+        .unwrap();
 
         seed_persona_profile_for_actor(
             &mut store,
@@ -19394,9 +19657,13 @@ mod tests {
             no_observation(),
         )
         .unwrap();
-        let out_persona = runtime
-            .run_desktop_voice_turn_end_to_end(&mut store, request_persona, x_build)
-            .unwrap();
+        let out_persona = run_desktop_voice_turn_end_to_end_with_confirmed_voice_assertion(
+            &runtime,
+            &mut store,
+            request_persona,
+            x_build,
+        )
+        .unwrap();
 
         let dispatch_plain = match out_plain
             .ph1x_response
@@ -19733,9 +20000,13 @@ mod tests {
             locale: Some("en-US".to_string()),
             last_failure_reason_code: None,
         };
-        let out_2 = runtime
-            .run_desktop_voice_turn_end_to_end(&mut store, request_2, x_build_2)
-            .unwrap();
+        let out_2 = run_desktop_voice_turn_end_to_end_with_confirmed_voice_assertion(
+            &runtime,
+            &mut store,
+            request_2,
+            x_build_2,
+        )
+        .unwrap();
         assert_eq!(out_2.next_move, AppVoiceTurnNextMove::Dispatch);
         assert!(matches!(
             out_2.dispatch_outcome,
@@ -19830,9 +20101,13 @@ mod tests {
             locale: Some("en-US".to_string()),
             last_failure_reason_code: None,
         };
-        let out = runtime
-            .run_desktop_voice_turn_end_to_end(&mut store, request, x_build)
-            .unwrap();
+        let out = run_desktop_voice_turn_end_to_end_with_confirmed_voice_assertion(
+            &runtime,
+            &mut store,
+            request,
+            x_build,
+        )
+        .unwrap();
         assert_eq!(out.next_move, AppVoiceTurnNextMove::Clarify);
         assert!(out.ph1x_response.is_none());
         assert!(out
@@ -20302,9 +20577,13 @@ mod tests {
             locale: Some("en-US".to_string()),
             last_failure_reason_code: None,
         };
-        let out_2 = runtime
-            .run_desktop_voice_turn_end_to_end(&mut store, request_2, x_build_2)
-            .unwrap();
+        let out_2 = run_desktop_voice_turn_end_to_end_with_confirmed_voice_assertion(
+            &runtime,
+            &mut store,
+            request_2,
+            x_build_2,
+        )
+        .unwrap();
         let authority_state = out_2
             .runtime_execution_envelope
             .authority_state
@@ -20724,9 +21003,13 @@ mod tests {
             last_failure_reason_code: None,
         };
 
-        let out = runtime
-            .run_desktop_voice_turn_end_to_end(&mut store, request, x_build)
-            .unwrap();
+        let out = run_desktop_voice_turn_end_to_end_with_confirmed_voice_assertion(
+            &runtime,
+            &mut store,
+            request,
+            x_build,
+        )
+        .unwrap();
         assert_eq!(out.next_move, AppVoiceTurnNextMove::Clarify);
         assert!(out.dispatch_outcome.is_none());
         assert!(out
@@ -20805,9 +21088,13 @@ mod tests {
             last_failure_reason_code: None,
         };
 
-        let out = runtime
-            .run_desktop_voice_turn_end_to_end(&mut store, request, x_build)
-            .unwrap();
+        let out = run_desktop_voice_turn_end_to_end_with_confirmed_voice_assertion(
+            &runtime,
+            &mut store,
+            request,
+            x_build,
+        )
+        .unwrap();
         assert_eq!(out.next_move, AppVoiceTurnNextMove::Dispatch);
         assert_eq!(out.response_text.as_deref(), Some("I sent the link."));
         match out
