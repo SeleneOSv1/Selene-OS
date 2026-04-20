@@ -9356,6 +9356,19 @@ struct DesktopSessionShellView: View {
         }
     }
 
+    private func desktopConversationShouldSuppressSupportRailArchivedRecentSliceTranscript() -> Bool {
+        guard desktopReadyTimeHandoffIsActive,
+              latestSessionSuspendedVisibleContext == nil,
+              activeRecoveryDisplayState != .quarantinedLocalState,
+              latestSessionSoftClosedVisibleContext != nil,
+              let timelineEntries = desktopOperationalConversationShellState?.primaryPaneState.timelineEntries else {
+            return false
+        }
+
+        return timelineEntries.contains(where: { $0.posture == "archived_user_turn_text" })
+            && timelineEntries.contains(where: { $0.posture == "archived_selene_turn_text" })
+    }
+
     private func desktopConversationShouldAttachAuthoritativeReplyArtifacts(
         to entry: DesktopConversationTimelineEntryState
     ) -> Bool {
@@ -10075,6 +10088,8 @@ struct DesktopSessionShellView: View {
 
     private var desktopSessionSoftClosedVisibilityCard: some View {
         let sessionSoftClosedVisibilityState = desktopSessionSoftClosedVisibilityState
+        let shouldSuppressSupportRailArchivedRecentSliceTranscript =
+            desktopConversationShouldSuppressSupportRailArchivedRecentSliceTranscript()
 
         return Group {
             if let sessionSoftClosedVisibilityState {
@@ -10098,19 +10113,21 @@ struct DesktopSessionShellView: View {
                             .buttonStyle(.borderedProminent)
                             .disabled(true)
 
-                        transcriptEntry(
-                            speaker: "You",
-                            posture: "archived_user_turn_text",
-                            body: sessionSoftClosedVisibilityState.archivedUserTurnText,
-                            detail: "Archived recent slice remains durable archived conversation truth and stays distinct from bounded PH1.M resume-context output."
-                        )
+                        if !shouldSuppressSupportRailArchivedRecentSliceTranscript {
+                            transcriptEntry(
+                                speaker: "You",
+                                posture: "archived_user_turn_text",
+                                body: sessionSoftClosedVisibilityState.archivedUserTurnText,
+                                detail: "Archived recent slice remains durable archived conversation truth and stays distinct from bounded PH1.M resume-context output."
+                            )
 
-                        transcriptEntry(
-                            speaker: "Selene",
-                            posture: "archived_selene_turn_text",
-                            body: sessionSoftClosedVisibilityState.archivedSeleneTurnText,
-                            detail: "Archived recent slice remains text-visible after visual reset without local auto-reopen, hidden spoken-only output, or local transcript authority."
-                        )
+                            transcriptEntry(
+                                speaker: "Selene",
+                                posture: "archived_selene_turn_text",
+                                body: sessionSoftClosedVisibilityState.archivedSeleneTurnText,
+                                detail: "Archived recent slice remains text-visible after visual reset without local auto-reopen, hidden spoken-only output, or local transcript authority."
+                            )
+                        }
 
                         ForEach(
                             [
@@ -11367,7 +11384,10 @@ struct DesktopSessionShellView: View {
     }
 
     private var historyCard: some View {
-        Group {
+        let shouldSuppressSupportRailArchivedRecentSliceTranscript =
+            desktopConversationShouldSuppressSupportRailArchivedRecentSliceTranscript()
+
+        return Group {
             if latestSessionSuspendedVisibleContext != nil {
                 GroupBox {
                     VStack(alignment: .leading, spacing: 12) {
@@ -11423,19 +11443,21 @@ struct DesktopSessionShellView: View {
                         Text("Cloud-authored archived recent-slice evidence only.")
                             .font(.subheadline.weight(.semibold))
 
-                        transcriptEntry(
-                            speaker: "You",
-                            posture: "archived_user_turn_text",
-                            body: latestSessionSoftClosedVisibleContext.archivedUserTurnText,
-                            detail: "Archived recent slice remains durable archived conversation truth and stays distinct from bounded PH1.M resume-context output."
-                        )
+                        if !shouldSuppressSupportRailArchivedRecentSliceTranscript {
+                            transcriptEntry(
+                                speaker: "You",
+                                posture: "archived_user_turn_text",
+                                body: latestSessionSoftClosedVisibleContext.archivedUserTurnText,
+                                detail: "Archived recent slice remains durable archived conversation truth and stays distinct from bounded PH1.M resume-context output."
+                            )
 
-                        transcriptEntry(
-                            speaker: "Selene",
-                            posture: "archived_selene_turn_text",
-                            body: latestSessionSoftClosedVisibleContext.archivedSeleneTurnText,
-                            detail: "Archived recent slice remains text-visible after visual reset without local auto-reopen, hidden spoken-only output, or local transcript authority."
-                        )
+                            transcriptEntry(
+                                speaker: "Selene",
+                                posture: "archived_selene_turn_text",
+                                body: latestSessionSoftClosedVisibleContext.archivedSeleneTurnText,
+                                detail: "Archived recent slice remains text-visible after visual reset without local auto-reopen, hidden spoken-only output, or local transcript authority."
+                            )
+                        }
 
                         Text("Archived recent slice remains distinct from PH1.M memory and stays bounded to durable archive truth only.")
                             .font(.footnote)
