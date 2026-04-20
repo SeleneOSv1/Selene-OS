@@ -15423,6 +15423,88 @@ mod tests {
     }
 
     #[test]
+    fn at_adapter_03j_desktop_voice_turn_thread_key_reuses_persisted_thread_policy_flags_when_request_flags_are_nil(
+    ) {
+        let runtime = AdapterRuntime::default();
+        let actor_user_id = UserId::new("tenant_a:user_adapter_test").unwrap();
+        let thread_key = resolve_adapter_thread_key(Some("policy_desktop_continuity"));
+
+        {
+            let mut store = runtime.store.lock().expect("store lock should succeed");
+            ensure_actor_identity_and_device(
+                &mut store,
+                &actor_user_id,
+                None,
+                AppPlatform::Desktop,
+                MonotonicTimeNs(40),
+                true,
+            )
+            .expect("identity + device seed should succeed");
+            let seeded_state = KernelThreadState::empty_v1()
+                .with_thread_policy_flags(Some(ThreadPolicyFlags::v1(true, false, true).unwrap()))
+                .unwrap();
+            store
+                .ph1x_thread_state_upsert_commit(
+                    MonotonicTimeNs(41),
+                    actor_user_id.clone(),
+                    thread_key.clone(),
+                    seeded_state,
+                    ReasonCodeId(0x5800_7005),
+                    "adapter_thread_key_policy_continuity_seed".to_string(),
+                )
+                .expect("thread state seed should commit");
+        }
+
+        let mut req = base_request();
+        req.app_platform = "DESKTOP".to_string();
+        req.trigger = "EXPLICIT".to_string();
+        req.device_id = Some("adapter_desktop_policy_continuity_1".to_string());
+        req.device_turn_sequence = Some(316);
+        req.thread_key = Some(thread_key.clone());
+        req.thread_policy_flags = None;
+        req.project_id = None;
+        req.pinned_context_refs = None;
+        req.user_text_final = Some("Selene search the web for H100 pricing".to_string());
+        req.correlation_id = 10_110;
+        req.turn_id = 20_110;
+        req.now_ns = Some(42);
+
+        assert_eq!(req.trigger, "EXPLICIT");
+        assert_eq!(req.app_platform, "DESKTOP");
+        assert!(req.thread_policy_flags.is_none());
+
+        runtime
+            .run_voice_turn(req)
+            .expect("desktop voice turn with seeded policy flags should succeed");
+
+        let packet = runtime
+            .ingress
+            .debug_last_agent_input_packet()
+            .expect("agent packet should be captured");
+        let flags = packet
+            .thread_state
+            .thread_policy_flags
+            .expect("thread policy flags should load from persisted thread state");
+        assert!(flags.force_privacy_mode);
+        assert!(!flags.force_do_not_disturb);
+        assert!(flags.force_strict_safety);
+        assert!(packet.thread_state.project_id.is_none());
+        assert!(packet.thread_state.pinned_context_refs.is_empty());
+
+        let store = runtime.store.lock().expect("store lock should succeed");
+        let current = store
+            .ph1x_thread_state_current_row(&actor_user_id, &thread_key)
+            .expect("thread state should persist for policy continuity");
+        let current_flags = current
+            .thread_state
+            .thread_policy_flags
+            .expect("thread policy flags should remain persisted");
+        assert!(current_flags.force_privacy_mode);
+        assert!(!current_flags.force_do_not_disturb);
+        assert!(current_flags.force_strict_safety);
+    }
+
+    #[test]
     fn at_adapter_03g_read_only_tool_fail_emits_feedback_learn_and_builder_signal() {
         let runtime = AdapterRuntime::default();
         let mut req = base_request();
