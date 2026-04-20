@@ -182,6 +182,13 @@ It may only be updated from current repo truth, exact command results, and exact
   H300-H256 truth remains preserved exactly as already recorded, with no regression;
   current native macOS target now preserves bounded conversation-first search/tool completion rendering through exact `DesktopConversationSearchToolCompletionState`, exact `DesktopConversationPrimaryPaneState.searchToolCompletionState`, exact `desktopConversationSearchToolCompletionState`, exact `desktopConversationShouldAttachSearchToolCompletion`, and exact `desktopConversationSearchToolCompletionAttachment`;
   current native macOS target now preserves bounded conversation-first authoritative-reply completion rendering through exact `DesktopConversationAuthoritativeReplyCompletionState`, exact `DesktopConversationPrimaryPaneState.authoritativeReplyCompletionState`, exact `desktopConversationAuthoritativeReplyCompletionState`, exact `desktopConversationShouldAttachAuthoritativeReplyCompletion`, and exact `desktopConversationAuthoritativeReplyCompletionAttachment`;
+  H312 is now implemented as the first canonical post-H311 selected bounded native macOS `desktop_backend_pairing_completion_commit_and_canonical_ready_time_handoff` implementation build;
+  H311-H256 truth remains preserved exactly as already recorded, with no regression;
+  the H309-H311 micro-polish lane ended after H311 and H312 returned to a new executable seam;
+  current native macOS shell now dispatches one bounded exact `PAIRING_COMPLETION_COMMIT` through the already-live exact `/v1/onboarding/continue` family;
+  current native macOS shell now foregrounds exact ready-time operational desktop surfaces only after returned canonical pairing-completion commit succeeds and still aligns with the visible exact pairing-completion prompt;
+  current native macOS shell now preserves exact `COMPLETE_COMMIT` plus exact `READY` visibility unchanged;
+  current native macOS shell now preserves exact H311 active-session history duplicate-transcript suppression, exact H310 archived recent-slice support-rail duplicate-transcript suppression, exact H309 authoritative-reply duplicate-suppression alignment, exact H308 archived Selene authoritative attachment rendering, exact H307 runtime completed-without-inline-reply timeline-entry rendering, exact H306 runtime dispatch/failure timeline-entry rendering, exact H305-H297 conversation-first rendering seams, and the broader operational shell truth already live in source;
   H311 is now implemented as the first canonical post-H310 selected bounded native macOS `desktop_conversation_first_active_session_history_duplicate_transcript_suppression` implementation build;
   H310-H256 truth remains preserved exactly as already recorded, with no regression;
   current native macOS shell now performs bounded conversation-first runtime dispatch/failure timeline-entry rendering through exact `runtime_dispatch_failure_preview`, exact `CANONICAL_RUNTIME_DISPATCH_FAILURE`, and exact `desktopConversationShouldAttachRuntimeDispatchFailureInline` while continuing to preserve already-live exact `DesktopConversationRuntimeDispatchFailureAttachmentState`;
@@ -230,9 +237,8 @@ It may only be updated from current repo truth, exact command results, and exact
   current native macOS shell now preserves exact H310 archived recent-slice support-rail duplicate-transcript suppression, exact H309 authoritative-reply duplicate-suppression alignment, exact H308 archived Selene authoritative attachment rendering, exact H307 runtime completed-without-inline-reply timeline-entry rendering, exact H306 runtime dispatch/failure timeline-entry rendering, exact H305 wake failed-request attachment for exact wake local failure posture, exact H304 explicit voice failed-request attachment for exact explicit local failure posture, exact H303 wake live-preview attachment for exact wake foreground listening posture, exact H302 explicit voice live-preview attachment for exact explicit foreground listening posture, exact H301 wake-triggered pending attachment for exact prepared wake-triggered posture, exact H300 explicit voice pending attachment for exact prepared explicit voice posture, exact H299 runtime dispatch/failure attachment for exact `dispatching` / exact `failed` runtime posture, exact H298 authoritative-reply completion attachment for direct authoritative-reply completion posture, and exact H297 search/tool completion attachment for exact `FINAL_TOOL` / exact `dispatch_tool` posture;
   current native macOS shell continues to preserve the pre-ready onboarding-first shell when exact operational shell state is not lawful;
   broader desktop generic session attach / reopen mutation beyond the already-landed visible/resumable session-entry seam remains unimplemented;
-  broader desktop backend pairing mutation remains unimplemented;
-  broader desktop onboarding-derived ready-time local handoff beyond this bounded shell-local foregrounding seam remains unimplemented;
   broader desktop explicit voice request contract mutation beyond the already-landed H288 bounded audio-capture-ref transport remains unimplemented;
+  broader desktop generic session attach / reopen mutation beyond the already-landed visible/resumable session-entry seam remains unimplemented;
   broader desktop conversation-list / session-list selection remains unimplemented;
   broader hidden/background wake auto-start remains unimplemented;
   broader desktop search input remains unimplemented;
@@ -240,7 +246,7 @@ It may only be updated from current repo truth, exact command results, and exact
   APP_MAC_DESKTOP remains first-class but non-authority, wake-word or explicit-entry as designed, and cloud-authoritative;
   APP_MAC_DESKTOP remains `PARTIAL`;
   no wake parity claim and no autonomous unlock claim are introduced by this run;
-  no post-H311 next exact winner is published in this run.
+  no post-H312 next exact winner is published in this run.
 
 ## Canonical Separation Truth
 

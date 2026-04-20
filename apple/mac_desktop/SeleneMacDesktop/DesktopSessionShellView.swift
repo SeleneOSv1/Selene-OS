@@ -3452,44 +3452,6 @@ struct DesktopPairingCompletionPromptState: Identifiable, Equatable {
     }
 }
 
-private struct DesktopPairingCompletionLocalOutcomeState: Identifiable, Equatable {
-    enum Phase: String, Equatable {
-        case completed = "completed"
-    }
-
-    let phase: Phase
-    let sourceSurfaceIdentity: String
-    let handoffState: String
-    let onboardingSessionID: String
-    let pairedSessionID: String
-    let pairedSessionAttachOutcome: String
-    let pairedTurnID: String?
-
-    var id: String {
-        [
-            phase.rawValue,
-            sourceSurfaceIdentity,
-            handoffState,
-            onboardingSessionID,
-            pairedSessionID,
-            pairedSessionAttachOutcome,
-            pairedTurnID ?? "paired_turn_not_provided",
-        ].joined(separator: "::")
-    }
-
-    var title: String {
-        "Desktop pairing completion local handoff"
-    }
-
-    var summary: String {
-        "A bounded local pairing-completion handoff is now foregrounding the already-live session, history, system-activity, needs-attention, and explicit-voice desktop surfaces while pairing/session continuity remains cloud-authored."
-    }
-
-    var detail: String {
-        "Local shell-only handoff state only. No backend mutation, no local session attach or reopen authority, no explicit voice request contract mutation, no wake-listener integration, no wake-to-turn handoff, and no autonomous unlock are introduced by this surface."
-    }
-}
-
 private struct DesktopReadyTimeHandoffState: Identifiable, Equatable {
     let sourceSurfaceIdentity: String
     let onboardingSessionID: String
@@ -4396,7 +4358,7 @@ struct DesktopSessionShellView: View {
     @State private var desktopSessionAttachRuntimeOutcomeState: DesktopSessionAttachRuntimeOutcomeState?
     @State private var desktopSessionMultiPostureResumeRuntimeOutcomeState: DesktopSessionMultiPostureResumeRuntimeOutcomeState?
     @State private var desktopSessionMultiPostureEntryRuntimeOutcomeState: DesktopSessionMultiPostureEntryRuntimeOutcomeState?
-    @State private var desktopPairingCompletionLocalOutcomeState: DesktopPairingCompletionLocalOutcomeState?
+    @State private var desktopPairingCompletionCommitRuntimeOutcomeState: DesktopPairingCompletionCommitRuntimeOutcomeState?
     @State private var desktopReadyTimeHandoffState: DesktopReadyTimeHandoffState?
     @State private var desktopWakeProfileAvailabilityRuntimeOutcomeState: DesktopWakeProfileAvailabilityRuntimeOutcomeState?
     @State private var desktopEmoPersonaLockRuntimeOutcomeState: DesktopEmoPersonaLockRuntimeOutcomeState?
@@ -4474,7 +4436,7 @@ struct DesktopSessionShellView: View {
                     desktopEmoPersonaLockRuntimeOutcomeState = nil
                     desktopAccessProvisionCommitRuntimeOutcomeState = nil
                     desktopCompleteCommitRuntimeOutcomeState = nil
-                    desktopPairingCompletionLocalOutcomeState = nil
+                    desktopPairingCompletionCommitRuntimeOutcomeState = nil
                     desktopReadyTimeHandoffState = nil
                     desktopWakeProfileAvailabilityRuntimeOutcomeState = nil
                     desktopOnboardingContinueFieldInput = ""
@@ -8632,40 +8594,52 @@ struct DesktopSessionShellView: View {
 
     private var desktopPairingCompletionMutationCard: some View {
         let promptState = desktopPairingCompletionPromptState
-        let displayedSourceSurface = desktopPairingCompletionLocalOutcomeState?.sourceSurfaceIdentity
-            ?? promptState?.sourceSurfaceIdentity
+        let runtimeOutcomeState = desktopPairingCompletionCommitRuntimeOutcomeState
+        let displayedSourceSurface = promptState?.sourceSurfaceIdentity
+            ?? runtimeOutcomeState?.sourceSurfaceIdentity
+            ?? desktopReadyTimeHandoffState?.sourceSurfaceIdentity
             ?? "PAIRING_COMPLETION_VISIBLE"
         let displayedOnboardingSessionID = promptState?.onboardingSessionID
+            ?? runtimeOutcomeState?.onboardingSessionID
             ?? desktopReadyTimeHandoffState?.onboardingSessionID
             ?? "not_provided"
         let displayedNextStep = promptState?.nextStep
+            ?? runtimeOutcomeState?.nextStep
             ?? desktopReadyTimeHandoffState?.nextStep
             ?? "not_provided"
         let displayedOnboardingStatus = promptState?.onboardingStatus
+            ?? runtimeOutcomeState?.onboardingStatus
             ?? desktopReadyTimeHandoffState?.onboardingStatus
         let displayedVoiceArtifactSyncReceiptRef = promptState?.voiceArtifactSyncReceiptRef
+            ?? runtimeOutcomeState?.voiceArtifactSyncReceiptRef
             ?? desktopReadyTimeHandoffState?.voiceArtifactSyncReceiptRef
         let displayedAccessEngineInstanceID = promptState?.accessEngineInstanceID
+            ?? runtimeOutcomeState?.accessEngineInstanceID
             ?? desktopReadyTimeHandoffState?.accessEngineInstanceID
         let displayedDeviceID = promptState?.deviceID
+            ?? runtimeOutcomeState?.deviceID
             ?? desktopReadyTimeHandoffState?.deviceID
         let displayedSessionState = promptState?.sessionState
+            ?? runtimeOutcomeState?.sessionState
             ?? desktopReadyTimeHandoffState?.sessionState
             ?? "not_provided"
         let displayedSessionID = promptState?.sessionID
+            ?? runtimeOutcomeState?.sessionID
             ?? desktopReadyTimeHandoffState?.sessionID
             ?? "not_provided"
         let displayedSessionAttachOutcome = promptState?.sessionAttachOutcome
+            ?? runtimeOutcomeState?.sessionAttachOutcome
             ?? desktopReadyTimeHandoffState?.sessionAttachOutcome
             ?? "not_provided"
         let displayedTurnID = promptState?.turnID
+            ?? runtimeOutcomeState?.turnID
             ?? desktopReadyTimeHandoffState?.turnID
 
         return Group {
-            if promptState != nil || desktopPairingCompletionLocalOutcomeState != nil {
+            if promptState != nil || runtimeOutcomeState != nil {
                 GroupBox {
                     VStack(alignment: .leading, spacing: 12) {
-                        Text("Bounded desktop pairing-completion mutation plus onboarding-derived ready-time local handoff only. This shell derives one bounded prompt state from the already-live exact pairing-completion visibility surface only, records one explicit local handoff only when canonical onboarding posture remains exact `READY`, and foregrounds the already-live operational desktop surfaces without widening into backend mutation or local session authority.")
+                        Text("Bounded desktop pairing-completion commit plus onboarding-derived ready-time handoff only. This shell derives one bounded prompt state from the already-live exact pairing-completion visibility surface only, dispatches only exact `/v1/onboarding/continue` with exact `PAIRING_COMPLETION_COMMIT`, and foregrounds the already-live operational desktop surfaces only after canonical success still matches the visible lawful pairing prompt.")
                             .frame(maxWidth: .infinity, alignment: .leading)
 
                         metadataRow(label: "source_surface", value: displayedSourceSurface)
@@ -8699,63 +8673,66 @@ struct DesktopSessionShellView: View {
                             metadataRow(label: "turn_id", value: displayedTurnID)
                         }
 
-                        Text("Pairing/session continuity remains cloud-authored and non-authoritative here. This exact local handoff only foregrounds already-live desktop operational surfaces while keeping ready and pairing continuity details bounded and read-only outside the explicit control itself.")
+                        Text("Pairing/session continuity remains cloud-authored and non-authoritative here. This exact canonical commit only foregrounds already-live desktop operational surfaces while keeping ready and pairing continuity details bounded and read-only outside the explicit control itself.")
                             .foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity, alignment: .leading)
 
-                        Text("This path does not add backend mutation, local session attach or reopen authority, explicit voice request contract mutation, wake-listener integration, wake-to-turn handoff, or autonomous unlock.")
+                        Text("This path does not add generic reopen authority, conversation selection authority, search input, tool controls, hidden/background wake auto-start, wake parity, or autonomous unlock.")
                             .foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity, alignment: .leading)
 
                         if let promptState, !desktopReadyTimeHandoffIsActive {
-                            Button("Complete desktop pairing completion handoff") {
-                                completeDesktopPairingCompletionAndReadyTimeHandoff(promptState: promptState)
+                            Button("Submit canonical pairing completion commit") {
+                                Task {
+                                    await submitDesktopPairingCompletionCommit(promptState: promptState)
+                                }
                             }
                             .buttonStyle(.borderedProminent)
+                            .disabled(runtimeOutcomeState?.phase == .dispatching)
                         }
 
-                        if let desktopPairingCompletionLocalOutcomeState {
+                        if let runtimeOutcomeState {
                             Divider()
 
-                            Text(desktopPairingCompletionLocalOutcomeState.title)
+                            Text(runtimeOutcomeState.title)
                                 .font(.headline)
 
                             metadataRow(
                                 label: "mutation_phase",
-                                value: desktopPairingCompletionLocalOutcomeState.phase.rawValue
+                                value: runtimeOutcomeState.phase.rawValue
                             )
                             metadataRow(
-                                label: "source_surface",
-                                value: desktopPairingCompletionLocalOutcomeState.sourceSurfaceIdentity
+                                label: "request_id",
+                                value: runtimeOutcomeState.requestID
                             )
                             metadataRow(
-                                label: "handoff_state",
-                                value: desktopPairingCompletionLocalOutcomeState.handoffState
+                                label: "endpoint",
+                                value: runtimeOutcomeState.endpoint
                             )
                             metadataRow(
-                                label: "paired_session_id",
-                                value: desktopPairingCompletionLocalOutcomeState.pairedSessionID
+                                label: "outcome",
+                                value: runtimeOutcomeState.outcome ?? "not_available"
                             )
                             metadataRow(
-                                label: "paired_session_attach_outcome",
-                                value: desktopPairingCompletionLocalOutcomeState.pairedSessionAttachOutcome
+                                label: "reason",
+                                value: runtimeOutcomeState.reason ?? "not_available"
                             )
 
-                            if let pairedTurnID = desktopPairingCompletionLocalOutcomeState.pairedTurnID {
-                                metadataRow(label: "paired_turn_id", value: pairedTurnID)
+                            if let returnedOnboardingStatus = runtimeOutcomeState.onboardingStatus {
+                                metadataRow(label: "returned_onboarding_status", value: returnedOnboardingStatus)
                             }
 
-                            Text(desktopPairingCompletionLocalOutcomeState.summary)
+                            Text(runtimeOutcomeState.summary)
                                 .frame(maxWidth: .infinity, alignment: .leading)
 
-                            Text(desktopPairingCompletionLocalOutcomeState.detail)
+                            Text(runtimeOutcomeState.detail)
                                 .font(.footnote)
                                 .foregroundStyle(.secondary)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                         } else {
                             Text(promptState != nil
-                                ? "Awaiting one explicit user-triggered local pairing-completion handoff. After submission, the shell will foreground the already-live session, history, system-activity, needs-attention, and explicit-voice desktop surfaces while keeping this path bounded and non-authoritative."
-                                : "Read-only pairing posture only. A bounded local pairing-completion handoff is unavailable until lawful prompt state is present with exact `READY` posture plus exact `NEW_SESSION_CREATED` or exact `EXISTING_SESSION_ATTACHED` continuity.")
+                                ? "Awaiting one explicit user-triggered canonical pairing-completion commit. After canonical success still matches the visible lawful pairing prompt, the shell will foreground the already-live session, history, system-activity, needs-attention, and explicit-voice desktop surfaces while keeping this path bounded and non-authoritative."
+                                : "Read-only pairing posture only. A bounded canonical pairing-completion commit is unavailable until lawful prompt state is present with exact `READY` posture plus exact `NEW_SESSION_CREATED` or exact `EXISTING_SESSION_ATTACHED` continuity.")
                                 .foregroundStyle(.secondary)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                         }
@@ -8766,7 +8743,7 @@ struct DesktopSessionShellView: View {
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
                 } label: {
-                    Text("Onboarding Pairing Completion Handoff")
+                    Text("Onboarding Pairing Completion Commit")
                         .font(.headline)
                 }
             }
@@ -13271,6 +13248,7 @@ struct DesktopSessionShellView: View {
         desktopEmoPersonaLockRuntimeOutcomeState = nil
         desktopAccessProvisionCommitRuntimeOutcomeState = nil
         desktopCompleteCommitRuntimeOutcomeState = nil
+        desktopPairingCompletionCommitRuntimeOutcomeState = nil
         desktopEmployeeSenderVerifyCommitSelectedDecision = "CONFIRM"
 
         do {
@@ -13322,6 +13300,7 @@ struct DesktopSessionShellView: View {
         desktopEmoPersonaLockRuntimeOutcomeState = nil
         desktopAccessProvisionCommitRuntimeOutcomeState = nil
         desktopCompleteCommitRuntimeOutcomeState = nil
+        desktopPairingCompletionCommitRuntimeOutcomeState = nil
         desktopEmployeeSenderVerifyCommitSelectedDecision = "CONFIRM"
 
         do {
@@ -13369,6 +13348,7 @@ struct DesktopSessionShellView: View {
         desktopEmoPersonaLockRuntimeOutcomeState = nil
         desktopAccessProvisionCommitRuntimeOutcomeState = nil
         desktopCompleteCommitRuntimeOutcomeState = nil
+        desktopPairingCompletionCommitRuntimeOutcomeState = nil
         desktopEmployeeSenderVerifyCommitSelectedDecision = "CONFIRM"
 
         do {
@@ -13415,6 +13395,7 @@ struct DesktopSessionShellView: View {
         desktopEmoPersonaLockRuntimeOutcomeState = nil
         desktopAccessProvisionCommitRuntimeOutcomeState = nil
         desktopCompleteCommitRuntimeOutcomeState = nil
+        desktopPairingCompletionCommitRuntimeOutcomeState = nil
         desktopEmployeeSenderVerifyCommitSelectedDecision = "CONFIRM"
 
         do {
@@ -13466,6 +13447,7 @@ struct DesktopSessionShellView: View {
         desktopEmoPersonaLockRuntimeOutcomeState = nil
         desktopAccessProvisionCommitRuntimeOutcomeState = nil
         desktopCompleteCommitRuntimeOutcomeState = nil
+        desktopPairingCompletionCommitRuntimeOutcomeState = nil
 
         do {
             let ingressContext = try desktopCanonicalRuntimeBridge.desktopEmployeeSenderVerifyCommitRequestBuilder(
@@ -13510,6 +13492,7 @@ struct DesktopSessionShellView: View {
         desktopEmoPersonaLockRuntimeOutcomeState = nil
         desktopAccessProvisionCommitRuntimeOutcomeState = nil
         desktopCompleteCommitRuntimeOutcomeState = nil
+        desktopPairingCompletionCommitRuntimeOutcomeState = nil
 
         do {
             let ingressContext = try desktopCanonicalRuntimeBridge.desktopPrimaryDeviceConfirmRequestBuilder(
@@ -13553,6 +13536,7 @@ struct DesktopSessionShellView: View {
         desktopEmoPersonaLockRuntimeOutcomeState = nil
         desktopAccessProvisionCommitRuntimeOutcomeState = nil
         desktopCompleteCommitRuntimeOutcomeState = nil
+        desktopPairingCompletionCommitRuntimeOutcomeState = nil
 
         do {
             let ingressContext = try desktopCanonicalRuntimeBridge.desktopVoiceEnrollRequestBuilder(
@@ -13598,6 +13582,7 @@ struct DesktopSessionShellView: View {
         desktopEmoPersonaLockRuntimeOutcomeState = nil
         desktopAccessProvisionCommitRuntimeOutcomeState = nil
         desktopCompleteCommitRuntimeOutcomeState = nil
+        desktopPairingCompletionCommitRuntimeOutcomeState = nil
 
         do {
             let ingressContext = try desktopCanonicalRuntimeBridge.desktopWakeEnrollStartDraftRequestBuilder(
@@ -13640,6 +13625,7 @@ struct DesktopSessionShellView: View {
         desktopEmoPersonaLockRuntimeOutcomeState = nil
         desktopAccessProvisionCommitRuntimeOutcomeState = nil
         desktopCompleteCommitRuntimeOutcomeState = nil
+        desktopPairingCompletionCommitRuntimeOutcomeState = nil
 
         do {
             let ingressContext = try desktopCanonicalRuntimeBridge.desktopWakeEnrollSampleCommitRequestBuilder(
@@ -13681,6 +13667,7 @@ struct DesktopSessionShellView: View {
         desktopEmoPersonaLockRuntimeOutcomeState = nil
         desktopAccessProvisionCommitRuntimeOutcomeState = nil
         desktopCompleteCommitRuntimeOutcomeState = nil
+        desktopPairingCompletionCommitRuntimeOutcomeState = nil
 
         do {
             let ingressContext = try desktopCanonicalRuntimeBridge.desktopWakeEnrollCompleteCommitRequestBuilder(
@@ -13721,6 +13708,7 @@ struct DesktopSessionShellView: View {
         desktopEmoPersonaLockRuntimeOutcomeState = nil
         desktopAccessProvisionCommitRuntimeOutcomeState = nil
         desktopCompleteCommitRuntimeOutcomeState = nil
+        desktopPairingCompletionCommitRuntimeOutcomeState = nil
 
         do {
             let ingressContext = try desktopCanonicalRuntimeBridge.desktopWakeEnrollDeferCommitRequestBuilder(
@@ -13754,35 +13742,83 @@ struct DesktopSessionShellView: View {
     }
 
     @MainActor
-    private func completeDesktopPairingCompletionAndReadyTimeHandoff(
+    private func submitDesktopPairingCompletionCommit(
         promptState: DesktopPairingCompletionPromptState
-    ) {
-        let handoffState = DesktopReadyTimeHandoffState(promptState: promptState)
-        desktopReadyTimeHandoffState = handoffState
-        desktopPairingCompletionLocalOutcomeState = DesktopPairingCompletionLocalOutcomeState(
-            phase: .completed,
-            sourceSurfaceIdentity: promptState.sourceSurfaceIdentity,
-            handoffState: handoffState.handoffState,
-            onboardingSessionID: promptState.onboardingSessionID,
-            pairedSessionID: promptState.sessionID,
-            pairedSessionAttachOutcome: promptState.sessionAttachOutcome,
-            pairedTurnID: promptState.turnID
-        )
+    ) async {
+        desktopReadyTimeHandoffState = nil
+
+        do {
+            let ingressContext = try desktopCanonicalRuntimeBridge.desktopPairingCompletionCommitRequestBuilder(
+                promptState
+            )
+            guard desktopPairingCompletionPromptState?.id == promptState.id else {
+                desktopPairingCompletionCommitRuntimeOutcomeState = .failed(
+                    ingressContext: ingressContext,
+                    summary: "The pairing-completion prompt disappeared before dispatch.",
+                    detail: "This shell fails closed when the exact lawful pairing-completion prompt no longer remains available before canonical dispatch can begin."
+                )
+                return
+            }
+
+            desktopPairingCompletionCommitRuntimeOutcomeState = .dispatching(
+                ingressContext: ingressContext
+            )
+
+            let outcomeState = await desktopCanonicalRuntimeBridge.submitDesktopPairingCompletionCommit(
+                ingressContext
+            )
+            guard let currentPromptState = desktopPairingCompletionPromptState,
+                  currentPromptState.id == promptState.id else {
+                desktopPairingCompletionCommitRuntimeOutcomeState = .failed(
+                    ingressContext: ingressContext,
+                    summary: "The pairing-completion prompt disappeared before completion.",
+                    detail: "This shell fails closed when the exact lawful pairing-completion prompt no longer remains visible by the time canonical pairing-completion commit returns."
+                )
+                return
+            }
+
+            desktopPairingCompletionCommitRuntimeOutcomeState = outcomeState
+            guard outcomeState.phase == .completed,
+                  outcomeState.nextStep == "READY" else {
+                return
+            }
+
+            desktopReadyTimeHandoffState = DesktopReadyTimeHandoffState(promptState: currentPromptState)
+        } catch {
+            desktopPairingCompletionCommitRuntimeOutcomeState = DesktopPairingCompletionCommitRuntimeOutcomeState(
+                id: "desktop_pairing_completion_commit_request_unavailable",
+                phase: .failed,
+                title: "Desktop pairing completion commit failed",
+                summary: "The canonical onboarding-continue bridge could not stage this bounded desktop pairing-completion request.",
+                detail: error.localizedDescription,
+                endpoint: desktopCanonicalRuntimeBridge.onboardingContinueEndpoint,
+                requestID: "unavailable",
+                outcome: nil,
+                reason: nil,
+                sourceSurfaceIdentity: promptState.sourceSurfaceIdentity,
+                onboardingSessionID: promptState.onboardingSessionID,
+                nextStep: promptState.nextStep,
+                onboardingStatus: promptState.onboardingStatus,
+                voiceArtifactSyncReceiptRef: promptState.voiceArtifactSyncReceiptRef,
+                accessEngineInstanceID: promptState.accessEngineInstanceID,
+                deviceID: promptState.deviceID ?? "not_provided",
+                sessionState: promptState.sessionState,
+                sessionID: promptState.sessionID,
+                sessionAttachOutcome: promptState.sessionAttachOutcome,
+                turnID: promptState.turnID
+            )
+        }
     }
 
     @MainActor
     private func synchronizeDesktopPairingCompletionReadyTimeHandoffState() {
         guard let desktopReadyTimeHandoffState else {
-            if desktopPairingCompletionPromptState == nil {
-                desktopPairingCompletionLocalOutcomeState = nil
-            }
             return
         }
 
         guard let promptState = desktopPairingCompletionPromptState,
               desktopReadyTimeHandoffState.matches(promptState) else {
             self.desktopReadyTimeHandoffState = nil
-            desktopPairingCompletionLocalOutcomeState = nil
             return
         }
     }
@@ -14087,6 +14123,7 @@ struct DesktopSessionShellView: View {
         let activeEntryContextID = desktopOnboardingEntryContext?.id
         desktopAccessProvisionCommitRuntimeOutcomeState = nil
         desktopCompleteCommitRuntimeOutcomeState = nil
+        desktopPairingCompletionCommitRuntimeOutcomeState = nil
 
         do {
             let ingressContext = try desktopCanonicalRuntimeBridge.desktopEmoPersonaLockRequestBuilder(
@@ -14123,6 +14160,7 @@ struct DesktopSessionShellView: View {
     ) async {
         let activeEntryContextID = desktopOnboardingEntryContext?.id
         desktopCompleteCommitRuntimeOutcomeState = nil
+        desktopPairingCompletionCommitRuntimeOutcomeState = nil
 
         do {
             let ingressContext = try desktopCanonicalRuntimeBridge.desktopAccessProvisionCommitRequestBuilder(

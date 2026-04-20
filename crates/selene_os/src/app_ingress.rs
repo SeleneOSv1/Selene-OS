@@ -408,6 +408,11 @@ pub enum AppOnboardingContinueAction {
     EmoPersonaLock,
     AccessProvisionCommit,
     CompleteCommit,
+    PairingCompletionCommit {
+        device_id: DeviceId,
+        session_id: SessionId,
+        session_attach_outcome: SessionAttachOutcome,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -514,6 +519,29 @@ impl AppOnboardingContinueRequest {
             AppOnboardingContinueAction::EmoPersonaLock => {}
             AppOnboardingContinueAction::AccessProvisionCommit => {}
             AppOnboardingContinueAction::CompleteCommit => {}
+            AppOnboardingContinueAction::PairingCompletionCommit {
+                device_id,
+                session_id,
+                session_attach_outcome,
+            } => {
+                device_id.validate()?;
+                if session_id.0 == 0 {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "app_onboarding_continue_request.pairing_completion_commit.session_id",
+                        reason: "must be > 0",
+                    });
+                }
+                if !matches!(
+                    session_attach_outcome,
+                    SessionAttachOutcome::NewSessionCreated
+                        | SessionAttachOutcome::ExistingSessionAttached
+                ) {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "app_onboarding_continue_request.pairing_completion_commit.session_attach_outcome",
+                        reason: "must be NEW_SESSION_CREATED or EXISTING_SESSION_ATTACHED",
+                    });
+                }
+            }
         }
         Ok(Self {
             correlation_id,
@@ -2525,6 +2553,18 @@ impl AppServerIngressRuntime {
                 idempotency_key,
                 now,
             ),
+            AppOnboardingContinueAction::PairingCompletionCommit {
+                device_id,
+                session_id,
+                session_attach_outcome,
+            } => self.run_onboarding_pairing_completion_commit(
+                store,
+                onboarding_session_id,
+                effective_tenant,
+                device_id,
+                session_id,
+                session_attach_outcome,
+            ),
         }
     }
 
@@ -3360,6 +3400,105 @@ impl AppServerIngressRuntime {
             voice_artifact_sync_receipt_ref: Some(voice_artifact_sync_receipt_ref),
             access_engine_instance_id,
             onboarding_status: Some(onboarding_status),
+        })
+    }
+
+    fn run_onboarding_pairing_completion_commit(
+        &self,
+        store: &mut Ph1fStore,
+        onboarding_session_id: OnboardingSessionId,
+        effective_tenant: TenantId,
+        device_id: DeviceId,
+        session_id: SessionId,
+        session_attach_outcome: SessionAttachOutcome,
+    ) -> Result<AppOnboardingContinueOutcome, StorageError> {
+        self.executor.ensure_simulation_active_for_tenant(
+            store,
+            &effective_tenant,
+            ONB_COMPLETE_COMMIT,
+            "app_onboarding_continue_request.simulation_id",
+            "SIM_DISPATCH_GUARD_SIMULATION_NOT_REGISTERED",
+            "SIM_DISPATCH_GUARD_SIMULATION_NOT_ACTIVE",
+        )?;
+        if !matches!(
+            session_attach_outcome,
+            SessionAttachOutcome::NewSessionCreated | SessionAttachOutcome::ExistingSessionAttached
+        ) {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "app_onboarding_continue_request.session_attach_outcome",
+                    reason:
+                        "ONB_PAIRING_COMPLETION_REQUIRES_NEW_OR_EXISTING_ATTACHED_SESSION_OUTCOME",
+                },
+            ));
+        }
+        let sender_user_id = onboarding_sender_user_id_for_session(store, &onboarding_session_id)?;
+        let session = store
+            .ph1onb_session_row(&onboarding_session_id)
+            .cloned()
+            .ok_or(StorageError::ForeignKeyViolation {
+                table: "onboarding_sessions.onboarding_session_id",
+                key: onboarding_session_id.as_str().to_string(),
+            })?;
+        if session.status != OnboardingStatus::Complete {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "app_onboarding_continue_request.action",
+                    reason: "ONB_READY_REQUIRED_BEFORE_PAIRING_COMPLETION_COMMIT",
+                },
+            ));
+        }
+        if session.primary_device_device_id.as_ref() != Some(&device_id) {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "app_onboarding_continue_request.device_id",
+                    reason: "ONB_PAIRING_COMPLETION_DEVICE_ID_MISMATCH",
+                },
+            ));
+        }
+        let paired_session = store
+            .get_session(&session_id)
+            .cloned()
+            .ok_or(StorageError::ForeignKeyViolation {
+                table: "sessions.session_id",
+                key: session_id.0.to_string(),
+            })?;
+        if paired_session.user_id != sender_user_id {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "app_onboarding_continue_request.session_id",
+                    reason: "ONB_PAIRING_COMPLETION_SESSION_USER_MISMATCH",
+                },
+            ));
+        }
+        if !paired_session.attached_devices.contains(&device_id) {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "app_onboarding_continue_request.session_id",
+                    reason: "ONB_PAIRING_COMPLETION_SESSION_NOT_ATTACHED_TO_DEVICE",
+                },
+            ));
+        }
+        let voice_artifact_sync_receipt_ref = store
+            .ph1onb_latest_locked_voice_receipt_ref(&onboarding_session_id)
+            .ok_or({
+                StorageError::ContractViolation(ContractViolation::InvalidValue {
+                    field: "app_onboarding_continue_request.action",
+                    reason: "ONB_VOICE_ENROLL_REQUIRED_BEFORE_PAIRING_COMPLETION_COMMIT",
+                })
+            })?;
+        let access_engine_instance_id = session.access_engine_instance_id.clone();
+        Ok(AppOnboardingContinueOutcome {
+            onboarding_session_id: onboarding_session_id.as_str().to_string(),
+            next_step: AppOnboardingContinueNextStep::Ready,
+            blocking_field: None,
+            blocking_question: None,
+            remaining_missing_fields: session.missing_fields,
+            remaining_platform_receipt_kinds: store
+                .ph1onb_remaining_platform_receipt_kinds(&onboarding_session_id)?,
+            voice_artifact_sync_receipt_ref: Some(voice_artifact_sync_receipt_ref),
+            access_engine_instance_id,
+            onboarding_status: Some(session.status),
         })
     }
 

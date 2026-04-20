@@ -295,6 +295,7 @@ impl RuntimeCanonicalIngressRequest {
                             | AppOnboardingContinueAction::EmoPersonaLock
                             | AppOnboardingContinueAction::AccessProvisionCommit
                             | AppOnboardingContinueAction::CompleteCommit
+                            | AppOnboardingContinueAction::PairingCompletionCommit { .. }
                     )
             ),
         }
@@ -358,6 +359,10 @@ impl RuntimeCanonicalIngressRequest {
                     }
                     AppOnboardingContinueAction::CompleteCommit => {
                         "complete compatibility is executable in Slice 2O and should not reach the compatibility-only boundary"
+                            .to_string()
+                    }
+                    AppOnboardingContinueAction::PairingCompletionCommit { .. } => {
+                        "pairing-completion compatibility is executable in Slice 2O and should not reach the compatibility-only boundary"
                             .to_string()
                     }
                 }
@@ -592,6 +597,14 @@ pub enum CanonicalTurnPayloadCarrier {
         onboarding_session_id: OnboardingSessionId,
         tenant_id: Option<String>,
     },
+    OnboardingPairingCompletionCommit {
+        correlation_id: CorrelationId,
+        onboarding_session_id: OnboardingSessionId,
+        tenant_id: Option<String>,
+        device_id: DeviceId,
+        session_id: SessionId,
+        session_attach_outcome: SessionAttachOutcome,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -631,6 +644,7 @@ pub enum TurnStartClassification {
     OnboardingEmoPersonaLockCompatibilityPrepared,
     OnboardingAccessProvisionCommitCompatibilityPrepared,
     OnboardingCompleteCommitCompatibilityPrepared,
+    OnboardingPairingCompletionCommitCompatibilityPrepared,
     RetryReused,
     Deferred,
 }
@@ -1591,11 +1605,26 @@ fn normalize_onboarding_continue_request(
                 tenant_id: onboarding_request.tenant_id.clone(),
             },
         ),
+        AppOnboardingContinueAction::PairingCompletionCommit {
+            device_id,
+            session_id,
+            session_attach_outcome,
+        } => (
+            canonical_onboarding_pairing_completion_commit_hash(onboarding_request),
+            CanonicalTurnPayloadCarrier::OnboardingPairingCompletionCommit {
+                correlation_id: onboarding_request.correlation_id,
+                onboarding_session_id: onboarding_request.onboarding_session_id.clone(),
+                tenant_id: onboarding_request.tenant_id.clone(),
+                device_id: device_id.clone(),
+                session_id: *session_id,
+                session_attach_outcome: *session_attach_outcome,
+            },
+        ),
         _ => {
             return Err(RuntimeIngressTurnError::new(
                 reason_codes::INGRESS_COMPATIBILITY_ONLY,
                 FailureClass::PolicyViolation,
-                "only onboarding ask-missing, platform-setup, terms-accept, primary-device-confirm, employee-photo-capture-send, employee-sender-verify, voice-enroll-lock, wake-enroll-start, wake-enroll-sample, wake-enroll-complete, emo-persona-lock, access-provision, and complete compatibility are executable in Slice 2O",
+                "only onboarding ask-missing, platform-setup, terms-accept, primary-device-confirm, employee-photo-capture-send, employee-sender-verify, voice-enroll-lock, wake-enroll-start, wake-enroll-sample, wake-enroll-complete, emo-persona-lock, access-provision, complete, and pairing-completion compatibility are executable in Slice 2O",
             ))
         }
     };
@@ -1765,6 +1794,10 @@ fn normalized_event_detail(normalized: &CanonicalTurnRequestCarrier) -> String {
         }
         CanonicalTurnPayloadCarrier::OnboardingCompleteCommit { .. } => {
             "normalized onboarding complete compatibility into the bounded /v1/onboarding/continue carrier"
+                .to_string()
+        }
+        CanonicalTurnPayloadCarrier::OnboardingPairingCompletionCommit { .. } => {
+            "normalized onboarding pairing-completion compatibility into the bounded /v1/onboarding/continue carrier"
                 .to_string()
         }
     }
@@ -2106,6 +2139,34 @@ fn canonical_onboarding_complete_commit_hash(
     )
 }
 
+fn canonical_onboarding_pairing_completion_commit_hash(
+    onboarding_request: &AppOnboardingContinueRequest,
+) -> String {
+    let AppOnboardingContinueAction::PairingCompletionCommit {
+        device_id,
+        session_id,
+        session_attach_outcome,
+    } = &onboarding_request.action
+    else {
+        unreachable!("selected onboarding normalization requires pairing-completion action");
+    };
+    let shape = format!(
+        "action=pairing_completion_commit|correlation_id={}|onboarding_session_id={}|tenant_id={}|device_id={}|session_id={}|session_attach_outcome={}|idempotency_key={}",
+        onboarding_request.correlation_id.0,
+        onboarding_request.onboarding_session_id.as_str(),
+        onboarding_request.tenant_id.as_deref().unwrap_or(""),
+        device_id.as_str(),
+        session_id.0,
+        session_attach_outcome.as_str(),
+        onboarding_request.idempotency_key,
+    );
+    canonical_content_hash(
+        CanonicalTurnModality::Compatibility.as_str(),
+        ONBOARDING_CONTINUE_ENDPOINT_PATH.as_bytes(),
+        shape.as_bytes(),
+    )
+}
+
 fn compatibility_device_turn_sequence(
     device_id: &str,
     invite_request: &InviteOpenActivateCommitRequest,
@@ -2146,10 +2207,14 @@ fn onboarding_compatibility_device_turn_sequence(
 ) -> u64 {
     let correlation_id = onboarding_request.correlation_id.0.to_string();
     let mut hash = 0xcbf29ce484222325u64;
-    let action_components: Vec<&[u8]> = match &onboarding_request.action {
+    let action_components: Vec<Vec<u8>> = match &onboarding_request.action {
         AppOnboardingContinueAction::AskMissingSubmit { field_value } => vec![
-            b"ASK_MISSING_SUBMIT".as_slice(),
-            field_value.as_deref().unwrap_or("").as_bytes(),
+            b"ASK_MISSING_SUBMIT".to_vec(),
+            field_value
+                .as_deref()
+                .unwrap_or("")
+                .as_bytes()
+                .to_vec(),
         ],
         AppOnboardingContinueAction::PlatformSetupReceipt {
             receipt_kind,
@@ -2157,97 +2222,112 @@ fn onboarding_compatibility_device_turn_sequence(
             signer,
             payload_hash,
         } => vec![
-            b"PLATFORM_SETUP_RECEIPT".as_slice(),
-            receipt_kind.as_bytes(),
-            receipt_ref.as_bytes(),
-            signer.as_bytes(),
-            payload_hash.as_bytes(),
+            b"PLATFORM_SETUP_RECEIPT".to_vec(),
+            receipt_kind.as_bytes().to_vec(),
+            receipt_ref.as_bytes().to_vec(),
+            signer.as_bytes().to_vec(),
+            payload_hash.as_bytes().to_vec(),
         ],
         AppOnboardingContinueAction::TermsAccept {
             terms_version_id,
             accepted,
         } => vec![
-            b"TERMS_ACCEPT".as_slice(),
-            terms_version_id.as_bytes(),
+            b"TERMS_ACCEPT".to_vec(),
+            terms_version_id.as_bytes().to_vec(),
             if *accepted {
-                b"true".as_slice()
+                b"true".to_vec()
             } else {
-                b"false".as_slice()
+                b"false".to_vec()
             },
         ],
         AppOnboardingContinueAction::PrimaryDeviceConfirm {
             device_id,
             proof_ok,
         } => vec![
-            b"PRIMARY_DEVICE_CONFIRM".as_slice(),
-            device_id.as_str().as_bytes(),
+            b"PRIMARY_DEVICE_CONFIRM".to_vec(),
+            device_id.as_str().as_bytes().to_vec(),
             if *proof_ok {
-                b"true".as_slice()
+                b"true".to_vec()
             } else {
-                b"false".as_slice()
+                b"false".to_vec()
             },
         ],
         AppOnboardingContinueAction::EmployeePhotoCaptureSend { photo_blob_ref } => vec![
-            b"EMPLOYEE_PHOTO_CAPTURE_SEND".as_slice(),
-            photo_blob_ref.as_bytes(),
+            b"EMPLOYEE_PHOTO_CAPTURE_SEND".to_vec(),
+            photo_blob_ref.as_bytes().to_vec(),
         ],
         AppOnboardingContinueAction::EmployeeSenderVerifyCommit { decision } => vec![
-            b"EMPLOYEE_SENDER_VERIFY_COMMIT".as_slice(),
-            sender_verify_decision_token(*decision).as_bytes(),
+            b"EMPLOYEE_SENDER_VERIFY_COMMIT".to_vec(),
+            sender_verify_decision_token(*decision).as_bytes().to_vec(),
         ],
         AppOnboardingContinueAction::VoiceEnrollLock {
             device_id,
             sample_seed,
         } => vec![
-            b"VOICE_ENROLL_LOCK".as_slice(),
-            device_id.as_str().as_bytes(),
-            sample_seed.as_bytes(),
+            b"VOICE_ENROLL_LOCK".to_vec(),
+            device_id.as_str().as_bytes().to_vec(),
+            sample_seed.as_bytes().to_vec(),
         ],
         AppOnboardingContinueAction::WakeEnrollStartDraft { device_id } => vec![
-            b"WAKE_ENROLL_START_DRAFT".as_slice(),
-            device_id.as_str().as_bytes(),
+            b"WAKE_ENROLL_START_DRAFT".to_vec(),
+            device_id.as_str().as_bytes().to_vec(),
         ],
         AppOnboardingContinueAction::WakeEnrollSampleCommit {
             device_id,
             sample_pass,
         } => vec![
-            b"WAKE_ENROLL_SAMPLE_COMMIT".as_slice(),
-            device_id.as_str().as_bytes(),
+            b"WAKE_ENROLL_SAMPLE_COMMIT".to_vec(),
+            device_id.as_str().as_bytes().to_vec(),
             if *sample_pass {
-                b"true".as_slice()
+                b"true".to_vec()
             } else {
-                b"false".as_slice()
+                b"false".to_vec()
             },
         ],
         AppOnboardingContinueAction::WakeEnrollCompleteCommit { device_id } => vec![
-            b"WAKE_ENROLL_COMPLETE_COMMIT".as_slice(),
-            device_id.as_str().as_bytes(),
+            b"WAKE_ENROLL_COMPLETE_COMMIT".to_vec(),
+            device_id.as_str().as_bytes().to_vec(),
         ],
-        AppOnboardingContinueAction::EmoPersonaLock => vec![b"EMO_PERSONA_LOCK".as_slice()],
+        AppOnboardingContinueAction::EmoPersonaLock => vec![b"EMO_PERSONA_LOCK".to_vec()],
         AppOnboardingContinueAction::AccessProvisionCommit => {
-            vec![b"ACCESS_PROVISION_COMMIT".as_slice()]
+            vec![b"ACCESS_PROVISION_COMMIT".to_vec()]
         }
-        AppOnboardingContinueAction::CompleteCommit => vec![b"COMPLETE_COMMIT".as_slice()],
+        AppOnboardingContinueAction::CompleteCommit => vec![b"COMPLETE_COMMIT".to_vec()],
+        AppOnboardingContinueAction::PairingCompletionCommit {
+            device_id,
+            session_id,
+            session_attach_outcome,
+        } => vec![
+            b"PAIRING_COMPLETION_COMMIT".to_vec(),
+            device_id.as_str().as_bytes().to_vec(),
+            session_id.0.to_string().as_bytes().to_vec(),
+            session_attach_outcome.as_str().as_bytes().to_vec(),
+        ],
         _ => unreachable!(
             "selected onboarding device-turn sequence requires an executable Slice 2O action"
         ),
     };
     let mut components = vec![
-        ONBOARDING_CONTINUE_ENDPOINT_PATH.as_bytes(),
-        device_id.as_bytes(),
-        correlation_id.as_bytes(),
-        onboarding_request.onboarding_session_id.as_str().as_bytes(),
-        onboarding_request.idempotency_key.as_bytes(),
+        ONBOARDING_CONTINUE_ENDPOINT_PATH.as_bytes().to_vec(),
+        device_id.as_bytes().to_vec(),
+        correlation_id.as_bytes().to_vec(),
+        onboarding_request
+            .onboarding_session_id
+            .as_str()
+            .as_bytes()
+            .to_vec(),
+        onboarding_request.idempotency_key.as_bytes().to_vec(),
         onboarding_request
             .tenant_id
             .as_deref()
             .unwrap_or("")
-            .as_bytes(),
+            .as_bytes()
+            .to_vec(),
     ];
     components.extend(action_components);
     for component in components {
         for byte in component {
-            hash ^= u64::from(*byte);
+            hash ^= u64::from(byte);
             hash = hash.wrapping_mul(0x100000001b3);
         }
         hash ^= u64::from(b'|');
@@ -2446,6 +2526,9 @@ fn compatibility_prepared_classification(
         CanonicalTurnPayloadCarrier::OnboardingCompleteCommit { .. } => {
             Some(TurnStartClassification::OnboardingCompleteCommitCompatibilityPrepared)
         }
+        CanonicalTurnPayloadCarrier::OnboardingPairingCompletionCommit { .. } => Some(
+            TurnStartClassification::OnboardingPairingCompletionCommitCompatibilityPrepared,
+        ),
         CanonicalTurnPayloadCarrier::Text { .. } | CanonicalTurnPayloadCarrier::Binary { .. } => {
             None
         }
@@ -2507,6 +2590,10 @@ fn pre_authority_ready_detail(normalized: &CanonicalTurnRequestCarrier) -> Strin
         }
         CanonicalTurnPayloadCarrier::OnboardingCompleteCommit { .. } => {
             "onboarding complete compatibility reached the bounded pre-authority handoff"
+                .to_string()
+        }
+        CanonicalTurnPayloadCarrier::OnboardingPairingCompletionCommit { .. } => {
+            "onboarding pairing-completion compatibility reached the bounded pre-authority handoff"
                 .to_string()
         }
         CanonicalTurnPayloadCarrier::Text { .. } | CanonicalTurnPayloadCarrier::Binary { .. } => {
@@ -3305,6 +3392,23 @@ mod tests {
             trace_id,
             trigger,
             AppOnboardingContinueAction::CompleteCommit,
+        )
+    }
+
+    fn onboarding_pairing_completion_commit_request(
+        request_id: &str,
+        trace_id: &str,
+        trigger: RuntimeEntryTrigger,
+    ) -> RuntimeCanonicalIngressRequest {
+        onboarding_continue_request(
+            request_id,
+            trace_id,
+            trigger,
+            AppOnboardingContinueAction::PairingCompletionCommit {
+                device_id: device("device-a"),
+                session_id: SessionId(9_001),
+                session_attach_outcome: SessionAttachOutcome::NewSessionCreated,
+            },
         )
     }
 
@@ -4520,6 +4624,47 @@ mod tests {
     }
 
     #[test]
+    fn pairing_completion_commit_is_executable_in_the_existing_onboarding_continue_family() {
+        let runtime = ready_runtime();
+        let mut foundation = foundation();
+        let mut sessions = RuntimeSessionFoundation::default();
+        let request = onboarding_pairing_completion_commit_request(
+            "onb-pairing-complete-1",
+            "trace-onb-pairing-complete-1",
+            RuntimeEntryTrigger::Explicit,
+        );
+
+        let result = foundation
+            .process_turn_start(&runtime, &mut sessions, request)
+            .expect("pairing completion commit should execute in the existing onboarding family");
+        let ready = match result {
+            RuntimePreAuthorityTurnResult::Ready(ready) => ready,
+            other => panic!("expected ready handoff, got {other:?}"),
+        };
+
+        assert_eq!(
+            ready.response.classification,
+            TurnStartClassification::OnboardingPairingCompletionCommitCompatibilityPrepared
+        );
+        assert_eq!(
+            ready.normalized_request.family,
+            CanonicalIngressFamily::OnboardingContinueCompatibility
+        );
+        assert_eq!(
+            ready.normalized_request.canonical_route,
+            ONBOARDING_CONTINUE_ENDPOINT_PATH
+        );
+        assert_eq!(
+            ready.normalized_request.modality,
+            CanonicalTurnModality::Compatibility
+        );
+        assert_eq!(
+            ready.response.outcome,
+            PreAuthorityOutcome::ReadyForSection04Boundary
+        );
+    }
+
+    #[test]
     fn slice_2o_previously_accepted_onboarding_actions_remain_executable() {
         let runtime = ready_runtime();
         let cases = vec![
@@ -5185,6 +5330,48 @@ mod tests {
                 assert_eq!(tenant_id, Some("tenant-a".to_string()));
             }
             other => panic!("expected onboarding complete payload, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn pairing_completion_commit_normalization_reuses_the_existing_canonical_carrier() {
+        let request = onboarding_pairing_completion_commit_request(
+            "onb-pairing-shape-1",
+            "trace-onb-pairing-shape-1",
+            RuntimeEntryTrigger::Explicit,
+        );
+        let first = normalize_turn_request(&request)
+            .expect("onboarding pairing completion commit normalized");
+        let second = normalize_turn_request(&request)
+            .expect("onboarding pairing completion commit normalized again");
+        assert_eq!(first, second);
+        assert_eq!(first.canonical_route, ONBOARDING_CONTINUE_ENDPOINT_PATH);
+        assert_eq!(
+            first.family,
+            CanonicalIngressFamily::OnboardingContinueCompatibility
+        );
+        assert_eq!(first.modality, CanonicalTurnModality::Compatibility);
+        assert!(first.device_turn_sequence > 0);
+        match first.payload {
+            CanonicalTurnPayloadCarrier::OnboardingPairingCompletionCommit {
+                correlation_id,
+                onboarding_session_id,
+                tenant_id,
+                device_id,
+                session_id,
+                session_attach_outcome,
+            } => {
+                assert_eq!(correlation_id, CorrelationId(101));
+                assert_eq!(onboarding_session_id.as_str(), "onb-session-1");
+                assert_eq!(tenant_id, Some("tenant-a".to_string()));
+                assert_eq!(device_id.as_str(), "device-a");
+                assert_eq!(session_id, SessionId(9_001));
+                assert_eq!(
+                    session_attach_outcome,
+                    SessionAttachOutcome::NewSessionCreated
+                );
+            }
+            other => panic!("expected onboarding pairing completion payload, got {other:?}"),
         }
     }
 

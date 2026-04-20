@@ -7432,10 +7432,47 @@ fn parse_onboarding_continue_action(
         "EMO_PERSONA_LOCK" => Ok(AppOnboardingContinueAction::EmoPersonaLock),
         "ACCESS_PROVISION_COMMIT" => Ok(AppOnboardingContinueAction::AccessProvisionCommit),
         "COMPLETE_COMMIT" => Ok(AppOnboardingContinueAction::CompleteCommit),
+        "PAIRING_COMPLETION_COMMIT" => {
+            let device_id = device_id.ok_or_else(|| {
+                "device_id is required for PAIRING_COMPLETION_COMMIT".to_string()
+            })?;
+            let device_id = DeviceId::new(device_id)
+                .map_err(|err| format!("invalid device_id for PAIRING_COMPLETION_COMMIT: {err:?}"))?;
+            let session_id = field_value.ok_or_else(|| {
+                "session_id is required for PAIRING_COMPLETION_COMMIT".to_string()
+            })?;
+            let session_id = session_id
+                .parse::<u128>()
+                .map(SessionId)
+                .map_err(|err| format!("invalid session_id for PAIRING_COMPLETION_COMMIT: {err}"))?;
+            let session_attach_outcome = receipt_kind.ok_or_else(|| {
+                "session_attach_outcome is required for PAIRING_COMPLETION_COMMIT".to_string()
+            })?;
+            let session_attach_outcome =
+                parse_pairing_completion_session_attach_outcome(&session_attach_outcome)?;
+            Ok(AppOnboardingContinueAction::PairingCompletionCommit {
+                device_id,
+                session_id,
+                session_attach_outcome,
+            })
+        }
         _ => Err(format!(
-            "invalid action '{}'; expected ASK_MISSING_SUBMIT|PLATFORM_SETUP_RECEIPT|TERMS_ACCEPT|PRIMARY_DEVICE_CONFIRM|VOICE_ENROLL_LOCK|WAKE_ENROLL_START_DRAFT|WAKE_ENROLL_SAMPLE_COMMIT|WAKE_ENROLL_COMPLETE_COMMIT|WAKE_ENROLL_DEFER_COMMIT|EMPLOYEE_PHOTO_CAPTURE_SEND|EMPLOYEE_SENDER_VERIFY_COMMIT|EMO_PERSONA_LOCK|ACCESS_PROVISION_COMMIT|COMPLETE_COMMIT",
+            "invalid action '{}'; expected ASK_MISSING_SUBMIT|PLATFORM_SETUP_RECEIPT|TERMS_ACCEPT|PRIMARY_DEVICE_CONFIRM|VOICE_ENROLL_LOCK|WAKE_ENROLL_START_DRAFT|WAKE_ENROLL_SAMPLE_COMMIT|WAKE_ENROLL_COMPLETE_COMMIT|WAKE_ENROLL_DEFER_COMMIT|EMPLOYEE_PHOTO_CAPTURE_SEND|EMPLOYEE_SENDER_VERIFY_COMMIT|EMO_PERSONA_LOCK|ACCESS_PROVISION_COMMIT|COMPLETE_COMMIT|PAIRING_COMPLETION_COMMIT",
             action
         )),
+    }
+}
+
+fn parse_pairing_completion_session_attach_outcome(
+    value: &str,
+) -> Result<SessionAttachOutcome, String> {
+    match value.trim().to_ascii_uppercase().as_str() {
+        "NEW_SESSION_CREATED" => Ok(SessionAttachOutcome::NewSessionCreated),
+        "EXISTING_SESSION_ATTACHED" => Ok(SessionAttachOutcome::ExistingSessionAttached),
+        _ => Err(
+            "session_attach_outcome must be NEW_SESSION_CREATED or EXISTING_SESSION_ATTACHED for PAIRING_COMPLETION_COMMIT"
+                .to_string(),
+        ),
     }
 }
 
@@ -12258,6 +12295,331 @@ mod tests {
         assert_eq!(complete.onboarding_status.as_deref(), Some("COMPLETE"));
         assert!(complete.access_engine_instance_id.is_some());
         assert!(complete.voice_artifact_sync_receipt_ref.is_some());
+    }
+
+    #[test]
+    fn pairing_completion_commit_adapter_returns_ready_for_bounded_session_continuity() {
+        let runtime = AdapterRuntime::default();
+        let inviter_user_id = UserId::new("tenant_1:runc_pairing_adapter_inviter").unwrap();
+        let inviter_device_id = DeviceId::new("runc_pairing_adapter_inviter_device").unwrap();
+
+        let (token_id, token_signature) = {
+            let mut store = runtime.store.lock().expect("adapter store lock");
+            seed_identity_and_device(&mut store, &inviter_user_id, &inviter_device_id);
+            seed_employee_company_and_position(&mut store);
+            for (simulation_id, simulation_type) in [
+                (LINK_INVITE_OPEN_ACTIVATE_COMMIT, SimulationType::Commit),
+                (ONB_SESSION_START_DRAFT, SimulationType::Draft),
+                (LINK_INVITE_DRAFT_UPDATE_COMMIT, SimulationType::Commit),
+                (ONB_TERMS_ACCEPT_COMMIT, SimulationType::Commit),
+                (ONB_PRIMARY_DEVICE_CONFIRM_COMMIT, SimulationType::Commit),
+                (VOICE_ID_ENROLL_START_DRAFT, SimulationType::Draft),
+                (VOICE_ID_ENROLL_SAMPLE_COMMIT, SimulationType::Commit),
+                (VOICE_ID_ENROLL_COMPLETE_COMMIT, SimulationType::Commit),
+                (EMO_SIM_001, SimulationType::Commit),
+                (ONB_ACCESS_INSTANCE_CREATE_COMMIT, SimulationType::Commit),
+                (ONB_COMPLETE_COMMIT, SimulationType::Commit),
+            ] {
+                seed_simulation_catalog_status(
+                    &mut store,
+                    "tenant_1",
+                    simulation_id,
+                    simulation_type,
+                    SimulationStatus::Active,
+                );
+            }
+            seed_invite_link_for_click(&mut store, &inviter_user_id)
+        };
+
+        let start = runtime
+            .run_invite_link_open_and_start_onboarding(InviteLinkOpenAdapterRequest {
+                correlation_id: 74_001,
+                idempotency_key: "runc-pairing-adapter-start".to_string(),
+                token_id,
+                token_signature,
+                tenant_id: Some("tenant_1".to_string()),
+                app_platform: "IOS".to_string(),
+                device_fingerprint: "runc_pairing_adapter_fp".to_string(),
+                app_instance_id: "ios_instance_runc_pairing_adapter".to_string(),
+                deep_link_nonce: "nonce_runc_pairing_adapter".to_string(),
+            })
+            .expect("invite click should start onboarding");
+        let onboarding_session_id = start
+            .onboarding_session_id
+            .expect("onboarding session id must be present");
+
+        let mut ask_out = runtime
+            .run_onboarding_continue(OnboardingContinueAdapterRequest {
+                correlation_id: 74_001,
+                onboarding_session_id: onboarding_session_id.clone(),
+                idempotency_key: "runc-pairing-adapter-ask-prompt-1".to_string(),
+                tenant_id: Some("tenant_1".to_string()),
+                action: "ASK_MISSING_SUBMIT".to_string(),
+                field_value: None,
+                receipt_kind: None,
+                receipt_ref: None,
+                signer: None,
+                payload_hash: None,
+                terms_version_id: None,
+                accepted: None,
+                device_id: None,
+                proof_ok: None,
+                sample_seed: None,
+                photo_blob_ref: None,
+                sender_decision: None,
+            })
+            .expect("first ask-missing turn should prompt");
+        while ask_out.next_step.as_deref() == Some("ASK_MISSING") {
+            let field_key = ask_out
+                .blocking_field
+                .clone()
+                .expect("blocking field must be returned");
+            let field_value = match field_key.as_str() {
+                "tenant_id" => "tenant_1",
+                "company_id" => "company_1",
+                "position_id" => "position_1",
+                "location_id" => "loc_1",
+                "start_date" => "2026-03-01",
+                "working_hours" => "09:00-17:00",
+                "compensation_tier_ref" => "band_l2",
+                "jurisdiction_tags" => "US,CA",
+                _ => "value_1",
+            };
+            ask_out = runtime
+                .run_onboarding_continue(OnboardingContinueAdapterRequest {
+                    correlation_id: 74_001,
+                    onboarding_session_id: onboarding_session_id.clone(),
+                    idempotency_key: format!("runc-pairing-adapter-ask-value-{field_key}"),
+                    tenant_id: Some("tenant_1".to_string()),
+                    action: "ASK_MISSING_SUBMIT".to_string(),
+                    field_value: Some(field_value.to_string()),
+                    receipt_kind: None,
+                    receipt_ref: None,
+                    signer: None,
+                    payload_hash: None,
+                    terms_version_id: None,
+                    accepted: None,
+                    device_id: None,
+                    proof_ok: None,
+                    sample_seed: None,
+                    photo_blob_ref: None,
+                    sender_decision: None,
+                })
+                .expect("ask-missing value submit should succeed");
+        }
+
+        let required_receipts = ask_out.remaining_platform_receipt_kinds.clone();
+        let mut _platform_out = ask_out;
+        for (idx, receipt_kind) in required_receipts.iter().enumerate() {
+            _platform_out = runtime
+                .run_onboarding_continue(OnboardingContinueAdapterRequest {
+                    correlation_id: 74_001,
+                    onboarding_session_id: onboarding_session_id.clone(),
+                    idempotency_key: format!("runc-pairing-adapter-platform-{idx}"),
+                    tenant_id: Some("tenant_1".to_string()),
+                    action: "PLATFORM_SETUP_RECEIPT".to_string(),
+                    field_value: None,
+                    receipt_kind: Some(receipt_kind.clone()),
+                    receipt_ref: Some(format!("receipt:runc-pairing-adapter:{receipt_kind}")),
+                    signer: Some("selene_mobile_app".to_string()),
+                    payload_hash: Some(format!("{:064x}", idx + 11)),
+                    terms_version_id: None,
+                    accepted: None,
+                    device_id: None,
+                    proof_ok: None,
+                    sample_seed: None,
+                    photo_blob_ref: None,
+                    sender_decision: None,
+                })
+                .expect("platform setup receipt should succeed");
+        }
+
+        let terms = runtime
+            .run_onboarding_continue(OnboardingContinueAdapterRequest {
+                correlation_id: 74_001,
+                onboarding_session_id: onboarding_session_id.clone(),
+                idempotency_key: "runc-pairing-adapter-terms".to_string(),
+                tenant_id: Some("tenant_1".to_string()),
+                action: "TERMS_ACCEPT".to_string(),
+                field_value: None,
+                receipt_kind: None,
+                receipt_ref: None,
+                signer: None,
+                payload_hash: None,
+                terms_version_id: Some("terms_v1".to_string()),
+                accepted: Some(true),
+                device_id: None,
+                proof_ok: None,
+                sample_seed: None,
+                photo_blob_ref: None,
+                sender_decision: None,
+            })
+            .expect("terms should succeed");
+        assert_eq!(terms.next_step.as_deref(), Some("PRIMARY_DEVICE_CONFIRM"));
+
+        let device = runtime
+            .run_onboarding_continue(OnboardingContinueAdapterRequest {
+                correlation_id: 74_001,
+                onboarding_session_id: onboarding_session_id.clone(),
+                idempotency_key: "runc-pairing-adapter-device".to_string(),
+                tenant_id: Some("tenant_1".to_string()),
+                action: "PRIMARY_DEVICE_CONFIRM".to_string(),
+                field_value: None,
+                receipt_kind: None,
+                receipt_ref: None,
+                signer: None,
+                payload_hash: None,
+                terms_version_id: None,
+                accepted: None,
+                device_id: Some("runc_pairing_adapter_inviter_device".to_string()),
+                proof_ok: Some(true),
+                sample_seed: None,
+                photo_blob_ref: None,
+                sender_decision: None,
+            })
+            .expect("device confirm should succeed");
+        assert_eq!(device.next_step.as_deref(), Some("VOICE_ENROLL"));
+
+        let voice = runtime
+            .run_onboarding_continue(OnboardingContinueAdapterRequest {
+                correlation_id: 74_001,
+                onboarding_session_id: onboarding_session_id.clone(),
+                idempotency_key: "runc-pairing-adapter-voice".to_string(),
+                tenant_id: Some("tenant_1".to_string()),
+                action: "VOICE_ENROLL_LOCK".to_string(),
+                field_value: None,
+                receipt_kind: None,
+                receipt_ref: None,
+                signer: None,
+                payload_hash: None,
+                terms_version_id: None,
+                accepted: None,
+                device_id: Some("runc_pairing_adapter_inviter_device".to_string()),
+                proof_ok: None,
+                sample_seed: Some("runc_pairing_adapter_seed".to_string()),
+                photo_blob_ref: None,
+                sender_decision: None,
+            })
+            .expect("voice enroll should succeed");
+        assert_eq!(voice.next_step.as_deref(), Some("EMO_PERSONA_LOCK"));
+
+        let emo = runtime
+            .run_onboarding_continue(OnboardingContinueAdapterRequest {
+                correlation_id: 74_001,
+                onboarding_session_id: onboarding_session_id.clone(),
+                idempotency_key: "runc-pairing-adapter-emo".to_string(),
+                tenant_id: Some("tenant_1".to_string()),
+                action: "EMO_PERSONA_LOCK".to_string(),
+                field_value: None,
+                receipt_kind: None,
+                receipt_ref: None,
+                signer: None,
+                payload_hash: None,
+                terms_version_id: None,
+                accepted: None,
+                device_id: None,
+                proof_ok: None,
+                sample_seed: None,
+                photo_blob_ref: None,
+                sender_decision: None,
+            })
+            .expect("emo/persona lock should succeed");
+        assert_eq!(emo.next_step.as_deref(), Some("ACCESS_PROVISION"));
+
+        let access = runtime
+            .run_onboarding_continue(OnboardingContinueAdapterRequest {
+                correlation_id: 74_001,
+                onboarding_session_id: onboarding_session_id.clone(),
+                idempotency_key: "runc-pairing-adapter-access".to_string(),
+                tenant_id: Some("tenant_1".to_string()),
+                action: "ACCESS_PROVISION_COMMIT".to_string(),
+                field_value: None,
+                receipt_kind: None,
+                receipt_ref: None,
+                signer: None,
+                payload_hash: None,
+                terms_version_id: None,
+                accepted: None,
+                device_id: None,
+                proof_ok: None,
+                sample_seed: None,
+                photo_blob_ref: None,
+                sender_decision: None,
+            })
+            .expect("access provision should succeed");
+        assert_eq!(access.next_step.as_deref(), Some("COMPLETE"));
+
+        let complete = runtime
+            .run_onboarding_continue(OnboardingContinueAdapterRequest {
+                correlation_id: 74_001,
+                onboarding_session_id: onboarding_session_id.clone(),
+                idempotency_key: "runc-pairing-adapter-complete".to_string(),
+                tenant_id: Some("tenant_1".to_string()),
+                action: "COMPLETE_COMMIT".to_string(),
+                field_value: None,
+                receipt_kind: None,
+                receipt_ref: None,
+                signer: None,
+                payload_hash: None,
+                terms_version_id: None,
+                accepted: None,
+                device_id: None,
+                proof_ok: None,
+                sample_seed: None,
+                photo_blob_ref: None,
+                sender_decision: None,
+            })
+            .expect("onboarding complete should succeed");
+        assert_eq!(complete.next_step.as_deref(), Some("READY"));
+
+        let paired_session_id = SessionId(9_401);
+        {
+            let mut store = runtime.store.lock().expect("adapter store lock");
+            let mut session = SessionRecord::v1(
+                paired_session_id,
+                inviter_user_id.clone(),
+                inviter_device_id.clone(),
+                SessionState::Active,
+                MonotonicTimeNs(210),
+                MonotonicTimeNs(211),
+                None,
+            )
+            .expect("paired session must validate");
+            session.attached_devices = [inviter_device_id.clone()].into_iter().collect();
+            session.last_attached_device_id = inviter_device_id.clone();
+            store
+                .upsert_session_lifecycle(
+                    session,
+                    Some("runc_pairing_completion_adapter_session".to_string()),
+                )
+                .expect("paired session upsert must succeed");
+        }
+
+        let pairing = runtime
+            .run_onboarding_continue(OnboardingContinueAdapterRequest {
+                correlation_id: 74_001,
+                onboarding_session_id,
+                idempotency_key: "runc-pairing-adapter-pairing".to_string(),
+                tenant_id: Some("tenant_1".to_string()),
+                action: "PAIRING_COMPLETION_COMMIT".to_string(),
+                field_value: Some(paired_session_id.0.to_string()),
+                receipt_kind: Some("NEW_SESSION_CREATED".to_string()),
+                receipt_ref: None,
+                signer: None,
+                payload_hash: None,
+                terms_version_id: None,
+                accepted: None,
+                device_id: Some("runc_pairing_adapter_inviter_device".to_string()),
+                proof_ok: None,
+                sample_seed: None,
+                photo_blob_ref: None,
+                sender_decision: None,
+            })
+            .expect("pairing completion commit should succeed");
+        assert_eq!(pairing.next_step.as_deref(), Some("READY"));
+        assert_eq!(pairing.onboarding_status.as_deref(), Some("COMPLETE"));
+        assert!(pairing.access_engine_instance_id.is_some());
+        assert!(pairing.voice_artifact_sync_receipt_ref.is_some());
     }
 
     #[test]

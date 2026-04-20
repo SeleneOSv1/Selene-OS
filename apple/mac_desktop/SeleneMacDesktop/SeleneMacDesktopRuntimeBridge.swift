@@ -2820,6 +2820,148 @@ struct DesktopCompleteCommitRuntimeOutcomeState: Identifiable, Equatable {
     }
 }
 
+struct DesktopPairingCompletionCommitRuntimeOutcomeState: Identifiable, Equatable {
+    enum Phase: String, Equatable {
+        case dispatching = "dispatching"
+        case completed = "completed"
+        case failed = "failed"
+    }
+
+    let id: String
+    let phase: Phase
+    let title: String
+    let summary: String
+    let detail: String
+    let endpoint: String
+    let requestID: String
+    let outcome: String?
+    let reason: String?
+    let sourceSurfaceIdentity: String
+    let onboardingSessionID: String
+    let nextStep: String?
+    let onboardingStatus: String?
+    let voiceArtifactSyncReceiptRef: String?
+    let accessEngineInstanceID: String?
+    let deviceID: String
+    let sessionState: String
+    let sessionID: String
+    let sessionAttachOutcome: String
+    let turnID: String?
+
+    var promptStateID: String {
+        [
+            sourceSurfaceIdentity,
+            onboardingSessionID,
+            nextStep ?? "next_step_not_provided",
+            onboardingStatus ?? "onboarding_status_not_provided",
+            voiceArtifactSyncReceiptRef ?? "voice_receipt_not_provided",
+            accessEngineInstanceID ?? "access_engine_not_provided",
+            deviceID,
+            sessionState,
+            sessionID,
+            sessionAttachOutcome,
+            turnID ?? "turn_id_not_provided",
+        ].joined(separator: "::")
+    }
+
+    static func dispatching(
+        ingressContext: DesktopCanonicalRuntimeBridge.DesktopPairingCompletionCommitIngressContext
+    ) -> DesktopPairingCompletionCommitRuntimeOutcomeState {
+        DesktopPairingCompletionCommitRuntimeOutcomeState(
+            id: ingressContext.requestID,
+            phase: .dispatching,
+            title: "Dispatching desktop pairing completion commit",
+            summary: "The bounded desktop pairing-completion commit is now being handed into canonical `/v1/onboarding/continue`.",
+            detail: "Only exact pairing completion commit is in scope here. This exact surface remains explicitly non-authoritative, keeps returned onboarding posture read-only only, and does not introduce local reopen authority, conversation selection, search input, tool controls, wake parity, or autonomous unlock.",
+            endpoint: ingressContext.endpoint,
+            requestID: ingressContext.requestID,
+            outcome: nil,
+            reason: nil,
+            sourceSurfaceIdentity: ingressContext.sourceSurfaceIdentity,
+            onboardingSessionID: ingressContext.onboardingSessionID,
+            nextStep: ingressContext.nextStep,
+            onboardingStatus: ingressContext.onboardingStatus,
+            voiceArtifactSyncReceiptRef: ingressContext.voiceArtifactSyncReceiptRef,
+            accessEngineInstanceID: ingressContext.accessEngineInstanceID,
+            deviceID: ingressContext.deviceID,
+            sessionState: ingressContext.sessionState,
+            sessionID: ingressContext.sessionID,
+            sessionAttachOutcome: ingressContext.sessionAttachOutcome,
+            turnID: ingressContext.turnID
+        )
+    }
+
+    static func completed(
+        ingressContext: DesktopCanonicalRuntimeBridge.DesktopPairingCompletionCommitIngressContext,
+        response: DesktopCanonicalRuntimeBridge.OnboardingContinueAdapterResponsePayload
+    ) -> DesktopPairingCompletionCommitRuntimeOutcomeState {
+        let boundedNextStep = boundedOnboardingContinueField(response.nextStep)
+        let returnedOnboardingStatus = boundedOnboardingContinueField(response.onboardingStatus)
+        let returnedVoiceArtifactSyncReceiptRef = boundedOnboardingContinueField(response.voiceArtifactSyncReceiptRef)
+        let returnedAccessEngineInstanceID = boundedOnboardingContinueField(response.accessEngineInstanceID)
+
+        return DesktopPairingCompletionCommitRuntimeOutcomeState(
+            id: ingressContext.requestID,
+            phase: .completed,
+            title: "Desktop pairing completion commit completed",
+            summary: boundedNextStep == "READY"
+                ? "Canonical `/v1/onboarding/continue` accepted the bounded desktop pairing-completion commit while exact ready posture remained active."
+                : "Canonical `/v1/onboarding/continue` accepted the bounded desktop pairing-completion commit and returned updated onboarding posture.",
+            detail: boundedNextStep == "READY"
+                ? "Read-only canonical pairing-completion outcome only. This exact surface preserves returned exact `READY`, exact `onboarding_status`, exact `voice_artifact_sync_receipt_ref`, and exact `access_engine_instance_id`; ready-time foregrounding remains separately gated by the still-visible lawful pairing prompt."
+                : "Read-only canonical pairing-completion outcome only. This shell preserves returned onboarding posture without inventing local ready authority, generic reopen authority, conversation selection, search input, tool controls, hidden/background wake auto-start, or autonomous unlock.",
+            endpoint: ingressContext.endpoint,
+            requestID: ingressContext.requestID,
+            outcome: boundedOnboardingContinueField(response.outcome) ?? "ONBOARDING_CONTINUED",
+            reason: boundedOnboardingContinueField(response.reason),
+            sourceSurfaceIdentity: ingressContext.sourceSurfaceIdentity,
+            onboardingSessionID: boundedOnboardingContinueField(response.onboardingSessionID)
+                ?? ingressContext.onboardingSessionID,
+            nextStep: boundedNextStep ?? ingressContext.nextStep,
+            onboardingStatus: returnedOnboardingStatus ?? ingressContext.onboardingStatus,
+            voiceArtifactSyncReceiptRef: returnedVoiceArtifactSyncReceiptRef
+                ?? ingressContext.voiceArtifactSyncReceiptRef,
+            accessEngineInstanceID: returnedAccessEngineInstanceID
+                ?? ingressContext.accessEngineInstanceID,
+            deviceID: ingressContext.deviceID,
+            sessionState: ingressContext.sessionState,
+            sessionID: ingressContext.sessionID,
+            sessionAttachOutcome: ingressContext.sessionAttachOutcome,
+            turnID: ingressContext.turnID
+        )
+    }
+
+    static func failed(
+        ingressContext: DesktopCanonicalRuntimeBridge.DesktopPairingCompletionCommitIngressContext,
+        summary: String,
+        detail: String,
+        reason: String? = nil
+    ) -> DesktopPairingCompletionCommitRuntimeOutcomeState {
+        DesktopPairingCompletionCommitRuntimeOutcomeState(
+            id: ingressContext.requestID,
+            phase: .failed,
+            title: "Desktop pairing completion commit failed",
+            summary: summary,
+            detail: detail,
+            endpoint: ingressContext.endpoint,
+            requestID: ingressContext.requestID,
+            outcome: nil,
+            reason: reason,
+            sourceSurfaceIdentity: ingressContext.sourceSurfaceIdentity,
+            onboardingSessionID: ingressContext.onboardingSessionID,
+            nextStep: ingressContext.nextStep,
+            onboardingStatus: ingressContext.onboardingStatus,
+            voiceArtifactSyncReceiptRef: ingressContext.voiceArtifactSyncReceiptRef,
+            accessEngineInstanceID: ingressContext.accessEngineInstanceID,
+            deviceID: ingressContext.deviceID,
+            sessionState: ingressContext.sessionState,
+            sessionID: ingressContext.sessionID,
+            sessionAttachOutcome: ingressContext.sessionAttachOutcome,
+            turnID: ingressContext.turnID
+        )
+    }
+}
+
 private func boundedAuthoritativeResponseText(_ rawValue: String?) -> String? {
     guard let rawValue else {
         return nil
@@ -2940,6 +3082,7 @@ let desktopWakeEnrollCompleteCommitAction = ["WAKE", "ENROLL", "COMPLETE", "COMM
 let desktopEmoPersonaLockAction = ["EMO", "PERSONA", "LOCK"].joined(separator: "_")
 let desktopAccessProvisionCommitAction = ["ACCESS", "PROVISION", "COMMIT"].joined(separator: "_")
 let desktopCompleteCommitAction = ["COMPLETE", "COMMIT"].joined(separator: "_")
+let desktopPairingCompletionCommitAction = ["PAIRING", "COMPLETION", "COMMIT"].joined(separator: "_")
 
 private let supportedDesktopPlatformSetupReceiptKinds: Set<String> = [
     "install_launch_handshake",
@@ -3005,6 +3148,7 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
         case invalidEmoPersonaLockRequest(String)
         case invalidAccessProvisionCommitRequest(String)
         case invalidCompleteCommitRequest(String)
+        case invalidPairingCompletionCommitRequest(String)
         case invalidAdapterBind(String)
         case adapterStartFailed(String)
         case adapterUnavailable(String)
@@ -3035,6 +3179,7 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
                  .invalidEmoPersonaLockRequest(let detail),
                  .invalidAccessProvisionCommitRequest(let detail),
                  .invalidCompleteCommitRequest(let detail),
+                 .invalidPairingCompletionCommitRequest(let detail),
                  .invalidAdapterBind(let detail),
                  .adapterStartFailed(let detail),
                  .adapterUnavailable(let detail),
@@ -3261,6 +3406,23 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
 
     struct DesktopCompleteCommitIngressContext {
         let onboardingSessionID: String
+        let requestID: String
+        let endpoint: String
+        let urlRequest: URLRequest
+    }
+
+    struct DesktopPairingCompletionCommitIngressContext {
+        let sourceSurfaceIdentity: String
+        let onboardingSessionID: String
+        let nextStep: String
+        let onboardingStatus: String?
+        let voiceArtifactSyncReceiptRef: String?
+        let accessEngineInstanceID: String?
+        let deviceID: String
+        let sessionState: String
+        let sessionID: String
+        let sessionAttachOutcome: String
+        let turnID: String?
         let requestID: String
         let endpoint: String
         let urlRequest: URLRequest
@@ -3507,6 +3669,50 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
         let sampleSeed: String?
         let photoBlobRef: String?
         let senderDecision: String?
+        let sessionID: String?
+        let sessionAttachOutcome: String?
+
+        init(
+            correlationID: UInt64,
+            onboardingSessionID: String,
+            idempotencyKey: String,
+            tenantID: String?,
+            action: String,
+            fieldValue: String?,
+            receiptKind: String?,
+            receiptRef: String?,
+            signer: String?,
+            payloadHash: String?,
+            termsVersionID: String?,
+            accepted: Bool?,
+            deviceID: String?,
+            proofOK: Bool?,
+            sampleSeed: String?,
+            photoBlobRef: String?,
+            senderDecision: String?,
+            sessionID: String? = nil,
+            sessionAttachOutcome: String? = nil
+        ) {
+            self.correlationID = correlationID
+            self.onboardingSessionID = onboardingSessionID
+            self.idempotencyKey = idempotencyKey
+            self.tenantID = tenantID
+            self.action = action
+            self.fieldValue = fieldValue
+            self.receiptKind = receiptKind
+            self.receiptRef = receiptRef
+            self.signer = signer
+            self.payloadHash = payloadHash
+            self.termsVersionID = termsVersionID
+            self.accepted = accepted
+            self.deviceID = deviceID
+            self.proofOK = proofOK
+            self.sampleSeed = sampleSeed
+            self.photoBlobRef = photoBlobRef
+            self.senderDecision = senderDecision
+            self.sessionID = sessionID
+            self.sessionAttachOutcome = sessionAttachOutcome
+        }
     }
 
     private struct SessionResumeAdapterRequestPayload: Encodable {
@@ -5197,6 +5403,42 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
         }
     }
 
+    func submitDesktopPairingCompletionCommit(
+        _ ingressContext: DesktopPairingCompletionCommitIngressContext
+    ) async -> DesktopPairingCompletionCommitRuntimeOutcomeState {
+        do {
+            try await ensureAdapterAvailable()
+
+            let (data, response) = try await urlSession.data(for: ingressContext.urlRequest)
+            let decoder = JSONDecoder()
+            decoder.keyDecodingStrategy = .convertFromSnakeCase
+            let httpResponse = response as? HTTPURLResponse
+            let statusCode = httpResponse?.statusCode ?? 0
+            let payload = try decoder.decode(OnboardingContinueAdapterResponsePayload.self, from: data)
+
+            if statusCode == 200,
+               payload.status.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "ok" {
+                return .completed(
+                    ingressContext: ingressContext,
+                    response: payload
+                )
+            }
+
+            return .failed(
+                ingressContext: ingressContext,
+                summary: "The canonical onboarding-continue bridge rejected or failed this bounded desktop pairing-completion request.",
+                detail: "Canonical `/v1/onboarding/continue` failed closed with outcome `\(payload.outcome)` and reason `\(boundedOnboardingContinueField(payload.reason) ?? "not_provided")`. This shell remains limited to exact pairing completion commit, preserves returned onboarding posture read-only only, and does not introduce local reopen authority, conversation selection, search input, tool controls, hidden/background wake auto-start, wake parity, or autonomous unlock.",
+                reason: boundedOnboardingContinueField(payload.reason)
+            )
+        } catch {
+            return .failed(
+                ingressContext: ingressContext,
+                summary: "The canonical onboarding-continue bridge could not deliver this bounded desktop pairing-completion request.",
+                detail: error.localizedDescription
+            )
+        }
+    }
+
     func desktopExplicitVoiceIngressRequestBuilder(
         _ preparedRequest: ExplicitVoiceTurnRequestState
     ) throws -> DesktopExplicitVoiceIngressContext {
@@ -5538,7 +5780,9 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
             proofOK: nil,
             sampleSeed: nil,
             photoBlobRef: nil,
-            senderDecision: nil
+            senderDecision: nil,
+            sessionID: nil,
+            sessionAttachOutcome: nil
         )
 
         let encoder = JSONEncoder()
@@ -5614,7 +5858,9 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
             proofOK: nil,
             sampleSeed: nil,
             photoBlobRef: nil,
-            senderDecision: nil
+            senderDecision: nil,
+            sessionID: nil,
+            sessionAttachOutcome: nil
         )
 
         let encoder = JSONEncoder()
@@ -5688,7 +5934,9 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
             proofOK: nil,
             sampleSeed: nil,
             photoBlobRef: nil,
-            senderDecision: nil
+            senderDecision: nil,
+            sessionID: nil,
+            sessionAttachOutcome: nil
         )
 
         let encoder = JSONEncoder()
@@ -5948,7 +6196,9 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
             proofOK: true,
             sampleSeed: nil,
             photoBlobRef: nil,
-            senderDecision: nil
+            senderDecision: nil,
+            sessionID: nil,
+            sessionAttachOutcome: nil
         )
 
         let encoder = JSONEncoder()
@@ -6075,7 +6325,9 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
             proofOK: nil,
             sampleSeed: boundedSampleSeed,
             photoBlobRef: nil,
-            senderDecision: nil
+            senderDecision: nil,
+            sessionID: nil,
+            sessionAttachOutcome: nil
         )
 
         let encoder = JSONEncoder()
@@ -6152,7 +6404,9 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
             proofOK: nil,
             sampleSeed: nil,
             photoBlobRef: nil,
-            senderDecision: nil
+            senderDecision: nil,
+            sessionID: nil,
+            sessionAttachOutcome: nil
         )
 
         let encoder = JSONEncoder()
@@ -6235,7 +6489,9 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
             proofOK: true,
             sampleSeed: nil,
             photoBlobRef: nil,
-            senderDecision: nil
+            senderDecision: nil,
+            sessionID: nil,
+            sessionAttachOutcome: nil
         )
 
         let encoder = JSONEncoder()
@@ -6312,7 +6568,9 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
             proofOK: nil,
             sampleSeed: nil,
             photoBlobRef: nil,
-            senderDecision: nil
+            senderDecision: nil,
+            sessionID: nil,
+            sessionAttachOutcome: nil
         )
 
         let encoder = JSONEncoder()
@@ -6388,7 +6646,9 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
             proofOK: nil,
             sampleSeed: nil,
             photoBlobRef: nil,
-            senderDecision: nil
+            senderDecision: nil,
+            sessionID: nil,
+            sessionAttachOutcome: nil
         )
 
         let encoder = JSONEncoder()
@@ -6985,7 +7245,9 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
             proofOK: nil,
             sampleSeed: nil,
             photoBlobRef: nil,
-            senderDecision: nil
+            senderDecision: nil,
+            sessionID: nil,
+            sessionAttachOutcome: nil
         )
 
         let encoder = JSONEncoder()
@@ -7052,7 +7314,9 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
             proofOK: nil,
             sampleSeed: nil,
             photoBlobRef: nil,
-            senderDecision: nil
+            senderDecision: nil,
+            sessionID: nil,
+            sessionAttachOutcome: nil
         )
 
         let encoder = JSONEncoder()
@@ -7119,7 +7383,9 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
             proofOK: nil,
             sampleSeed: nil,
             photoBlobRef: nil,
-            senderDecision: nil
+            senderDecision: nil,
+            sessionID: nil,
+            sessionAttachOutcome: nil
         )
 
         let encoder = JSONEncoder()
@@ -7141,6 +7407,111 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
 
         return DesktopCompleteCommitIngressContext(
             onboardingSessionID: onboardingSessionID,
+            requestID: requestID,
+            endpoint: endpointURL.absoluteString,
+            urlRequest: urlRequest
+        )
+    }
+
+    func desktopPairingCompletionCommitRequestBuilder(
+        _ promptState: DesktopPairingCompletionPromptState
+    ) throws -> DesktopPairingCompletionCommitIngressContext {
+        guard let onboardingSessionID = boundedOnboardingContinueField(promptState.onboardingSessionID) else {
+            throw BridgeError.invalidPairingCompletionCommitRequest(
+                "the bounded desktop pairing-completion prompt state did not preserve a lawful onboarding_session_id"
+            )
+        }
+
+        guard let nextStep = boundedOnboardingContinueField(promptState.nextStep),
+              nextStep == "READY" else {
+            throw BridgeError.invalidPairingCompletionCommitRequest(
+                "bounded desktop pairing completion commit is only lawful when canonical onboarding posture remains at exact `READY`"
+            )
+        }
+
+        guard let deviceID = boundedOnboardingContinueField(promptState.deviceID) else {
+            throw BridgeError.invalidPairingCompletionCommitRequest(
+                "the bounded desktop pairing-completion prompt state did not preserve a lawful managed device_id"
+            )
+        }
+
+        guard let sessionState = boundedOnboardingContinueField(promptState.sessionState) else {
+            throw BridgeError.invalidPairingCompletionCommitRequest(
+                "the bounded desktop pairing-completion prompt state did not preserve a lawful session_state"
+            )
+        }
+
+        guard let sessionID = boundedOnboardingContinueField(promptState.sessionID) else {
+            throw BridgeError.invalidPairingCompletionCommitRequest(
+                "the bounded desktop pairing-completion prompt state did not preserve a lawful session_id"
+            )
+        }
+
+        guard ["NEW_SESSION_CREATED", "EXISTING_SESSION_ATTACHED"].contains(
+            promptState.sessionAttachOutcome
+        ) else {
+            throw BridgeError.invalidPairingCompletionCommitRequest(
+                "bounded desktop pairing completion commit is only lawful when exact session_attach_outcome remains `NEW_SESSION_CREATED` or `EXISTING_SESSION_ATTACHED`"
+            )
+        }
+
+        let requestID = "desktop_pairing_completion_commit_request_\(UUID().uuidString.replacingOccurrences(of: "-", with: ""))"
+        let idempotencyKey = "desktop_pairing_completion_commit_\(onboardingSessionID)_\(sessionID)_\(promptState.sessionAttachOutcome.lowercased())"
+        let nonce = UUID().uuidString.replacingOccurrences(of: "-", with: "")
+        let timestampMS = Self.systemTimeNowMS()
+        let correlationID = Swift.max(DispatchTime.now().uptimeNanoseconds, 1)
+
+        let payload = OnboardingContinueAdapterRequestPayload(
+            correlationID: correlationID,
+            onboardingSessionID: onboardingSessionID,
+            idempotencyKey: idempotencyKey,
+            tenantID: tenantID,
+            action: desktopPairingCompletionCommitAction,
+            fieldValue: sessionID,
+            receiptKind: promptState.sessionAttachOutcome,
+            receiptRef: nil,
+            signer: nil,
+            payloadHash: nil,
+            termsVersionID: nil,
+            accepted: nil,
+            deviceID: deviceID,
+            proofOK: nil,
+            sampleSeed: nil,
+            photoBlobRef: nil,
+            senderDecision: nil,
+            sessionID: sessionID,
+            sessionAttachOutcome: promptState.sessionAttachOutcome
+        )
+
+        let encoder = JSONEncoder()
+        encoder.keyEncodingStrategy = .convertToSnakeCase
+        let body = try encoder.encode(payload)
+        let endpointURL = adapterBaseURL.appendingPathComponent("v1/onboarding/continue")
+        var urlRequest = URLRequest(url: endpointURL)
+        urlRequest.httpMethod = "POST"
+        urlRequest.httpBody = body
+        urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        urlRequest.setValue(requestID, forHTTPHeaderField: "x-request-id")
+        urlRequest.setValue(idempotencyKey, forHTTPHeaderField: "idempotency-key")
+        urlRequest.setValue(String(timestampMS), forHTTPHeaderField: "x-selene-timestamp-ms")
+        urlRequest.setValue(nonce, forHTTPHeaderField: "x-selene-nonce")
+        urlRequest.setValue(
+            Self.bearerToken(subject: actorUserID, device: deviceID),
+            forHTTPHeaderField: "Authorization"
+        )
+
+        return DesktopPairingCompletionCommitIngressContext(
+            sourceSurfaceIdentity: promptState.sourceSurfaceIdentity,
+            onboardingSessionID: onboardingSessionID,
+            nextStep: nextStep,
+            onboardingStatus: boundedOnboardingContinueField(promptState.onboardingStatus),
+            voiceArtifactSyncReceiptRef: boundedOnboardingContinueField(promptState.voiceArtifactSyncReceiptRef),
+            accessEngineInstanceID: boundedOnboardingContinueField(promptState.accessEngineInstanceID),
+            deviceID: deviceID,
+            sessionState: sessionState,
+            sessionID: sessionID,
+            sessionAttachOutcome: promptState.sessionAttachOutcome,
+            turnID: boundedOnboardingContinueField(promptState.turnID),
             requestID: requestID,
             endpoint: endpointURL.absoluteString,
             urlRequest: urlRequest
