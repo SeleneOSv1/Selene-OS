@@ -182,6 +182,13 @@ It may only be updated from current repo truth, exact command results, and exact
   H300-H256 truth remains preserved exactly as already recorded, with no regression;
   current native macOS target now preserves bounded conversation-first search/tool completion rendering through exact `DesktopConversationSearchToolCompletionState`, exact `DesktopConversationPrimaryPaneState.searchToolCompletionState`, exact `desktopConversationSearchToolCompletionState`, exact `desktopConversationShouldAttachSearchToolCompletion`, and exact `desktopConversationSearchToolCompletionAttachment`;
   current native macOS target now preserves bounded conversation-first authoritative-reply completion rendering through exact `DesktopConversationAuthoritativeReplyCompletionState`, exact `DesktopConversationPrimaryPaneState.authoritativeReplyCompletionState`, exact `desktopConversationAuthoritativeReplyCompletionState`, exact `desktopConversationShouldAttachAuthoritativeReplyCompletion`, and exact `desktopConversationAuthoritativeReplyCompletionAttachment`;
+  H315 is now implemented as the first canonical post-H314 selected bounded native macOS `desktop_foreground_voice_turn_active_authority_policy_context_thread_policy_flags_transport` implementation build;
+  H314-H256 truth remains preserved exactly as already recorded, with no regression;
+  the H309-H311 micro-polish lane remains closed after H311 and H315 continues executable seam work;
+  current native macOS shell now dispatches one bounded exact `threadPolicyFlags` payload through the already-live exact `/v1/voice/turn` family for exact foreground explicit and exact foreground wake-triggered requests only when the exact current active session preserves one lawful exact `authorityStatePolicyContextRef`;
+  current native macOS shell now preserves exact H314 matching canonical `threadKey` transport, exact H313 positive `device_turn_sequence` transport, and exact H288 structured `audioCaptureRef` transport unchanged;
+  current native macOS shell now preserves exact `projectID: nil` and exact `pinnedContextRefs: nil` in this bounded run;
+  current native macOS shell now preserves exact H312 pairing-completion commit and canonical ready-time handoff plus exact H311-H297 conversation-first rendering seams and broader operational shell truth unchanged;
   corrected H314 is now implemented as the first canonical post-H313 selected bounded native macOS `desktop_foreground_voice_turn_matching_selected_thread_key_transport` implementation build;
   H313-H256 truth remains preserved exactly as already recorded, with no regression;
   the H309-H311 micro-polish lane remains closed after H311 and corrected H314 continues executable seam work;
@@ -238,7 +245,9 @@ It may only be updated from current repo truth, exact command results, and exact
   current native macOS shell now preserves exact H310 archived recent-slice support-rail duplicate-transcript suppression, exact H309 authoritative-reply duplicate-suppression alignment, exact H308 archived Selene authoritative attachment rendering, exact H307 runtime completed-without-inline-reply timeline-entry rendering, exact H306 runtime dispatch/failure timeline-entry rendering, exact H305 wake failed-request attachment for exact wake local failure posture, exact H304 explicit voice failed-request attachment for exact explicit local failure posture, exact H303 wake live-preview attachment for exact wake foreground listening posture, exact H302 explicit voice live-preview attachment for exact explicit foreground listening posture, exact H301 wake-triggered pending attachment for exact prepared wake-triggered posture, exact H300 explicit voice pending attachment for exact prepared explicit voice posture, exact H299 runtime dispatch/failure attachment for exact `dispatching` / exact `failed` runtime posture, exact H298 authoritative-reply completion attachment for direct authoritative-reply completion posture, and exact H297 search/tool completion attachment for exact `FINAL_TOOL` / exact `dispatch_tool` posture;
   current native macOS shell continues to preserve the pre-ready onboarding-first shell when exact operational shell state is not lawful;
   broader desktop generic session attach / reopen mutation beyond the already-landed visible/resumable session-entry seam remains unimplemented;
-  broader desktop explicit voice request contract mutation beyond this exact matching canonical `threadKey` transport remains unimplemented;
+  broader desktop explicit voice request contract mutation beyond this exact active-authority `threadPolicyFlags` transport remains unimplemented;
+  broader desktop project-scoped voice-turn transport remains unimplemented;
+  broader desktop pinned-context voice-turn transport remains unimplemented;
   broader desktop generic session attach / reopen mutation beyond the already-landed visible/resumable session-entry seam remains unimplemented;
   broader desktop conversation-list / session-list selection remains unimplemented;
   broader hidden/background wake auto-start remains unimplemented;
@@ -247,7 +256,7 @@ It may only be updated from current repo truth, exact command results, and exact
   APP_MAC_DESKTOP remains first-class but non-authority, wake-word or explicit-entry as designed, and cloud-authoritative;
   APP_MAC_DESKTOP remains `PARTIAL`;
   no wake parity claim and no autonomous unlock claim are introduced by this run;
-  no post-H314 next exact winner is published in this run.
+  no post-H315 next exact winner is published in this run.
 
 ## Canonical Separation Truth
 

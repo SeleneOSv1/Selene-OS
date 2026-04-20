@@ -5441,7 +5441,8 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
 
     func desktopExplicitVoiceIngressRequestBuilder(
         _ preparedRequest: ExplicitVoiceTurnRequestState,
-        threadKey: String? = nil
+        threadKey: String? = nil,
+        authorityStatePolicyContextRef: String? = nil
     ) throws -> DesktopExplicitVoiceIngressContext {
         let transcript = preparedRequest.transcript.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !transcript.isEmpty else {
@@ -5458,6 +5459,9 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
         let idempotencyKey = "desktop_runtime_idempotency_\(preparedRequest.id)"
         let nonce = UUID().uuidString.replacingOccurrences(of: "-", with: "")
         let audioCaptureRef = try desktopVoiceTurnAudioCaptureRefBuilder(preparedRequest.audioCaptureRefState)
+        let threadPolicyFlags = Self.desktopVoiceTurnThreadPolicyFlagsPayloadBuilder(
+            authorityStatePolicyContextRef
+        )
 
         let payload = VoiceTurnAdapterRequestPayload(
             correlationID: correlationID,
@@ -5480,7 +5484,7 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
             threadKey: threadKey,
             projectID: nil,
             pinnedContextRefs: nil,
-            threadPolicyFlags: nil,
+            threadPolicyFlags: threadPolicyFlags,
             userTextPartial: nil,
             userTextFinal: transcript,
             seleneTextPartial: nil,
@@ -5516,7 +5520,8 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
 
     func desktopWakeTriggeredVoiceIngressRequestBuilder(
         _ preparedRequest: WakeTriggeredVoiceTurnRequestState,
-        threadKey: String? = nil
+        threadKey: String? = nil,
+        authorityStatePolicyContextRef: String? = nil
     ) throws -> DesktopWakeTriggeredVoiceIngressContext {
         let transcript = preparedRequest.transcript.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !transcript.isEmpty else {
@@ -5546,6 +5551,9 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
         let idempotencyKey = "desktop_runtime_idempotency_\(preparedRequest.id)"
         let nonce = UUID().uuidString.replacingOccurrences(of: "-", with: "")
         let audioCaptureRef = try desktopVoiceTurnAudioCaptureRefBuilder(preparedRequest.audioCaptureRefState)
+        let threadPolicyFlags = Self.desktopVoiceTurnThreadPolicyFlagsPayloadBuilder(
+            authorityStatePolicyContextRef
+        )
 
         let payload = VoiceTurnAdapterRequestPayload(
             correlationID: correlationID,
@@ -5568,7 +5576,7 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
             threadKey: threadKey,
             projectID: nil,
             pinnedContextRefs: nil,
-            threadPolicyFlags: nil,
+            threadPolicyFlags: threadPolicyFlags,
             userTextPartial: nil,
             userTextFinal: transcript,
             seleneTextPartial: nil,
@@ -7674,6 +7682,93 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
 
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : trimmed
+    }
+
+    private static func desktopVoiceTurnThreadPolicyFlagsPayloadBuilder(
+        _ authorityStatePolicyContextRef: String?
+    ) -> VoiceTurnThreadPolicyFlagsPayload? {
+        guard let authorityStatePolicyContextRef = nonEmpty(authorityStatePolicyContextRef) else {
+            return nil
+        }
+
+        let fields = authorityStatePolicyContextRef.split(
+            separator: ";",
+            omittingEmptySubsequences: false
+        )
+        guard fields.count == 3 else {
+            return nil
+        }
+
+        var privacyMode: Bool?
+        var doNotDisturb: Bool?
+        var strictSafety: Bool?
+
+        for field in fields {
+            let parts = field.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
+            guard parts.count == 2 else {
+                return nil
+            }
+
+            let key = parts[0].trimmingCharacters(in: .whitespacesAndNewlines)
+            let value = parts[1].trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !key.isEmpty, !value.isEmpty else {
+                return nil
+            }
+
+            switch key {
+            case "privacy_mode":
+                guard privacyMode == nil else {
+                    return nil
+                }
+
+                switch value.lowercased() {
+                case "true":
+                    privacyMode = true
+                case "false":
+                    privacyMode = false
+                default:
+                    return nil
+                }
+            case "do_not_disturb":
+                guard doNotDisturb == nil else {
+                    return nil
+                }
+
+                switch value.lowercased() {
+                case "true":
+                    doNotDisturb = true
+                case "false":
+                    doNotDisturb = false
+                default:
+                    return nil
+                }
+            case "safety_tier":
+                guard strictSafety == nil else {
+                    return nil
+                }
+
+                switch value.uppercased() {
+                case "STANDARD":
+                    strictSafety = false
+                case "STRICT":
+                    strictSafety = true
+                default:
+                    return nil
+                }
+            default:
+                return nil
+            }
+        }
+
+        guard let privacyMode, let doNotDisturb, let strictSafety else {
+            return nil
+        }
+
+        return VoiceTurnThreadPolicyFlagsPayload(
+            privacyMode: privacyMode,
+            doNotDisturb: doNotDisturb,
+            strictSafety: strictSafety
+        )
     }
 
     private static func bearerToken(subject: String, device: String) -> String {

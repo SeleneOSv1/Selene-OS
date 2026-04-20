@@ -6370,6 +6370,15 @@ struct DesktopSessionShellView: View {
         return nil
     }
 
+    private var desktopForegroundVoiceTurnActiveAuthorityPolicyContextRef: String? {
+        guard let activeVisibleContext = latestSessionActiveVisibleContext,
+              activeVisibleContext.sessionState == "SessionState::Active" else {
+            return nil
+        }
+
+        return activeVisibleContext.authorityStatePolicyContextRef
+    }
+
     private var desktopSessionSuspendedVisibilityState: DesktopSessionSuspendedVisibilityState? {
         guard let latestSessionSuspendedVisibleContext else {
             return nil
@@ -14263,7 +14272,8 @@ struct DesktopSessionShellView: View {
         do {
             let ingressContext = try desktopCanonicalRuntimeBridge.desktopExplicitVoiceIngressRequestBuilder(
                 pendingRequest,
-                threadKey: desktopForegroundVoiceTurnMatchingSelectedThreadKey
+                threadKey: desktopForegroundVoiceTurnMatchingSelectedThreadKey,
+                authorityStatePolicyContextRef: desktopForegroundVoiceTurnActiveAuthorityPolicyContextRef
             )
             desktopCanonicalRuntimeOutcomeState = .dispatching(
                 preparedRequestID: ingressContext.preparedRequestID,
@@ -14339,7 +14349,8 @@ struct DesktopSessionShellView: View {
             let ingressContext = try desktopCanonicalRuntimeBridge
                 .desktopWakeTriggeredVoiceIngressRequestBuilder(
                     pendingRequest,
-                    threadKey: desktopForegroundVoiceTurnMatchingSelectedThreadKey
+                    threadKey: desktopForegroundVoiceTurnMatchingSelectedThreadKey,
+                    authorityStatePolicyContextRef: desktopForegroundVoiceTurnActiveAuthorityPolicyContextRef
                 )
             lastStagedWakeTriggeredVoiceTurnRequestState = pendingRequest
             desktopWakeListenerController.markDispatching()
