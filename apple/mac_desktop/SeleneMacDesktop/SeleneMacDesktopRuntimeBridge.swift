@@ -1800,6 +1800,200 @@ struct DesktopSessionRecoverRuntimeOutcomeState: Identifiable, Equatable {
     }
 }
 
+enum DesktopSessionMultiPostureResumeMode: String, Equatable {
+    case softClosedExplicitResume = "SOFT_CLOSED_EXPLICIT_RESUME"
+    case suspendedAuthoritativeRereadRecover = "SUSPENDED_AUTHORITATIVE_REREAD_RECOVER"
+}
+
+struct DesktopSessionMultiPostureResumeRuntimeOutcomeState: Identifiable, Equatable {
+    enum Phase: String, Equatable {
+        case dispatching = "dispatching"
+        case completed = "completed"
+        case failed = "failed"
+    }
+
+    let id: String
+    let phase: Phase
+    let title: String
+    let summary: String
+    let detail: String
+    let endpoint: String
+    let requestID: String
+    let resumeMode: DesktopSessionMultiPostureResumeMode
+    let sourceSurfaceIdentity: String
+    let sessionState: String
+    let sessionID: String
+    let selectedThreadID: String?
+    let selectedThreadTitle: String?
+    let pendingWorkOrderID: String?
+    let resumeTier: String?
+    let resumeSummaryBullets: [String]
+    let recoveryMode: String?
+    let deviceID: String
+    let outcome: String?
+    let reason: String?
+    let sessionAttachOutcome: String?
+
+    static func dispatching(
+        ingressContext: DesktopCanonicalRuntimeBridge.DesktopSessionMultiPostureResumeIngressContext
+    ) -> DesktopSessionMultiPostureResumeRuntimeOutcomeState {
+        let summary: String
+        let detail: String
+
+        switch ingressContext.resumeMode {
+        case .softClosedExplicitResume:
+            summary = "The bounded desktop multi-posture session-resume control selected exact soft-closed explicit resume and is now handing that request into canonical `/v1/session/resume`."
+            detail = "Only exact soft-closed explicit resume is in scope for this dispatch. This shell remains explicitly non-authoritative and does not introduce broader attach/reopen mutation, local conversation selection, search or tool controls, hidden/background wake behavior, or autonomous unlock."
+        case .suspendedAuthoritativeRereadRecover:
+            summary = "The bounded desktop multi-posture session-resume control selected exact suspended-session authoritative-reread recover and is now handing that request into canonical `/v1/session/recover`."
+            detail = "Only exact suspended-session authoritative-reread recover is in scope for this dispatch. This shell remains explicitly non-authoritative and does not introduce local unsuspend authority, broader attach/reopen mutation, local conversation selection, search or tool controls, hidden/background wake behavior, or autonomous unlock."
+        }
+
+        return DesktopSessionMultiPostureResumeRuntimeOutcomeState(
+            id: ingressContext.requestID,
+            phase: .dispatching,
+            title: "Dispatching desktop multi-posture session resume",
+            summary: summary,
+            detail: detail,
+            endpoint: ingressContext.endpoint,
+            requestID: ingressContext.requestID,
+            resumeMode: ingressContext.resumeMode,
+            sourceSurfaceIdentity: ingressContext.sourceSurfaceIdentity,
+            sessionState: ingressContext.sessionState,
+            sessionID: ingressContext.sessionID,
+            selectedThreadID: ingressContext.selectedThreadID,
+            selectedThreadTitle: ingressContext.selectedThreadTitle,
+            pendingWorkOrderID: ingressContext.pendingWorkOrderID,
+            resumeTier: ingressContext.resumeTier,
+            resumeSummaryBullets: ingressContext.resumeSummaryBullets,
+            recoveryMode: ingressContext.recoveryMode,
+            deviceID: ingressContext.deviceID,
+            outcome: nil,
+            reason: nil,
+            sessionAttachOutcome: nil
+        )
+    }
+
+    static func fromSoftClosedRoute(
+        _ routeOutcome: DesktopSessionSoftClosedResumeRuntimeOutcomeState
+    ) -> DesktopSessionMultiPostureResumeRuntimeOutcomeState {
+        let phase: Phase
+        switch routeOutcome.phase {
+        case .dispatching:
+            phase = .dispatching
+        case .completed:
+            phase = .completed
+        case .failed:
+            phase = .failed
+        }
+
+        return DesktopSessionMultiPostureResumeRuntimeOutcomeState(
+            id: routeOutcome.id,
+            phase: phase,
+            title: routeOutcome.title,
+            summary: routeOutcome.summary,
+            detail: routeOutcome.detail,
+            endpoint: routeOutcome.endpoint,
+            requestID: routeOutcome.requestID,
+            resumeMode: .softClosedExplicitResume,
+            sourceSurfaceIdentity: routeOutcome.sourceSurfaceIdentity,
+            sessionState: routeOutcome.sessionState,
+            sessionID: routeOutcome.sessionID,
+            selectedThreadID: routeOutcome.selectedThreadID,
+            selectedThreadTitle: routeOutcome.selectedThreadTitle,
+            pendingWorkOrderID: routeOutcome.pendingWorkOrderID,
+            resumeTier: routeOutcome.resumeTier,
+            resumeSummaryBullets: routeOutcome.resumeSummaryBullets,
+            recoveryMode: nil,
+            deviceID: routeOutcome.deviceID,
+            outcome: routeOutcome.outcome,
+            reason: routeOutcome.reason,
+            sessionAttachOutcome: routeOutcome.sessionAttachOutcome
+        )
+    }
+
+    static func fromRecoverRoute(
+        _ routeOutcome: DesktopSessionRecoverRuntimeOutcomeState
+    ) -> DesktopSessionMultiPostureResumeRuntimeOutcomeState {
+        let phase: Phase
+        switch routeOutcome.phase {
+        case .dispatching:
+            phase = .dispatching
+        case .completed:
+            phase = .completed
+        case .failed:
+            phase = .failed
+        }
+
+        return DesktopSessionMultiPostureResumeRuntimeOutcomeState(
+            id: routeOutcome.id,
+            phase: phase,
+            title: routeOutcome.title,
+            summary: routeOutcome.summary,
+            detail: routeOutcome.detail,
+            endpoint: routeOutcome.endpoint,
+            requestID: routeOutcome.requestID,
+            resumeMode: .suspendedAuthoritativeRereadRecover,
+            sourceSurfaceIdentity: routeOutcome.sourceSurfaceIdentity,
+            sessionState: routeOutcome.sessionState,
+            sessionID: routeOutcome.sessionID,
+            selectedThreadID: nil,
+            selectedThreadTitle: nil,
+            pendingWorkOrderID: nil,
+            resumeTier: nil,
+            resumeSummaryBullets: [],
+            recoveryMode: routeOutcome.recoveryMode,
+            deviceID: routeOutcome.deviceID,
+            outcome: routeOutcome.outcome,
+            reason: routeOutcome.reason,
+            sessionAttachOutcome: routeOutcome.sessionAttachOutcome
+        )
+    }
+
+    static func failed(
+        resumeMode: DesktopSessionMultiPostureResumeMode,
+        sourceSurfaceIdentity: String,
+        sessionState: String,
+        sessionID: String,
+        selectedThreadID: String?,
+        selectedThreadTitle: String?,
+        pendingWorkOrderID: String?,
+        resumeTier: String?,
+        resumeSummaryBullets: [String],
+        recoveryMode: String?,
+        deviceID: String,
+        endpoint: String,
+        requestID: String,
+        summary: String,
+        detail: String,
+        reason: String? = nil
+    ) -> DesktopSessionMultiPostureResumeRuntimeOutcomeState {
+        DesktopSessionMultiPostureResumeRuntimeOutcomeState(
+            id: requestID,
+            phase: .failed,
+            title: "Desktop multi-posture session resume failed",
+            summary: summary,
+            detail: detail,
+            endpoint: endpoint,
+            requestID: requestID,
+            resumeMode: resumeMode,
+            sourceSurfaceIdentity: sourceSurfaceIdentity,
+            sessionState: sessionState,
+            sessionID: sessionID,
+            selectedThreadID: selectedThreadID,
+            selectedThreadTitle: selectedThreadTitle,
+            pendingWorkOrderID: pendingWorkOrderID,
+            resumeTier: resumeTier,
+            resumeSummaryBullets: resumeSummaryBullets,
+            recoveryMode: recoveryMode,
+            deviceID: deviceID,
+            outcome: nil,
+            reason: reason,
+            sessionAttachOutcome: nil
+        )
+    }
+}
+
 struct DesktopWakeProfileAvailabilityRuntimeOutcomeState: Identifiable, Equatable {
     enum Phase: String, Equatable {
         case dispatching = "dispatching"
@@ -2437,6 +2631,7 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
         case invalidWakeEnrollSampleCommitRequest(String)
         case invalidWakeEnrollCompleteCommitRequest(String)
         case invalidWakeEnrollDeferCommitRequest(String)
+        case invalidSessionMultiPostureResumeRequest(String)
         case invalidSessionSoftClosedResumeRequest(String)
         case invalidSessionRecoverRequest(String)
         case invalidWakeProfileAvailabilityRequest(String)
@@ -2464,6 +2659,7 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
                  .invalidWakeEnrollSampleCommitRequest(let detail),
                  .invalidWakeEnrollCompleteCommitRequest(let detail),
                  .invalidWakeEnrollDeferCommitRequest(let detail),
+                 .invalidSessionMultiPostureResumeRequest(let detail),
                  .invalidSessionSoftClosedResumeRequest(let detail),
                  .invalidSessionRecoverRequest(let detail),
                  .invalidWakeProfileAvailabilityRequest(let detail),
@@ -2606,6 +2802,24 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
         let requestID: String
         let endpoint: String
         let urlRequest: URLRequest
+    }
+
+    struct DesktopSessionMultiPostureResumeIngressContext {
+        let resumeMode: DesktopSessionMultiPostureResumeMode
+        let sourceSurfaceIdentity: String
+        let sessionState: String
+        let sessionID: String
+        let selectedThreadID: String?
+        let selectedThreadTitle: String?
+        let pendingWorkOrderID: String?
+        let resumeTier: String?
+        let resumeSummaryBullets: [String]
+        let recoveryMode: String?
+        let deviceID: String
+        let requestID: String
+        let endpoint: String
+        fileprivate let softClosedResumeIngressContext: DesktopSessionSoftClosedResumeIngressContext?
+        fileprivate let sessionRecoverIngressContext: DesktopSessionRecoverIngressContext?
     }
 
     struct DesktopSessionRecoverIngressContext {
@@ -3256,6 +3470,35 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
                 endpoint: sessionRecoverEndpoint,
                 requestID: "unavailable",
                 summary: "The canonical session-recover bridge could not stage this bounded desktop suspended-session recover request.",
+                detail: error.localizedDescription
+            )
+        }
+    }
+
+    func submitDesktopSessionMultiPostureResume(
+        _ promptState: DesktopSessionMultiPostureResumePromptState
+    ) async -> DesktopSessionMultiPostureResumeRuntimeOutcomeState {
+        do {
+            let ingressContext = try desktopSessionMultiPostureResumeRequestBuilder(promptState)
+            return await submitDesktopSessionMultiPostureResume(ingressContext)
+        } catch {
+            return .failed(
+                resumeMode: promptState.resumeMode,
+                sourceSurfaceIdentity: promptState.sourceSurfaceIdentity,
+                sessionState: promptState.sessionState,
+                sessionID: promptState.sessionID,
+                selectedThreadID: promptState.selectedThreadID,
+                selectedThreadTitle: promptState.selectedThreadTitle,
+                pendingWorkOrderID: promptState.pendingWorkOrderID,
+                resumeTier: promptState.resumeTier,
+                resumeSummaryBullets: promptState.resumeSummaryBullets,
+                recoveryMode: promptState.recoveryMode,
+                deviceID: promptState.deviceID,
+                endpoint: promptState.resumeMode == .softClosedExplicitResume
+                    ? sessionResumeEndpoint
+                    : sessionRecoverEndpoint,
+                requestID: "unavailable",
+                summary: "The canonical multi-posture session-resume bridge could not stage this bounded desktop session-resume request.",
                 detail: error.localizedDescription
             )
         }
@@ -4097,6 +4340,60 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
                 summary: "The canonical session-recover bridge could not deliver this bounded desktop suspended-session recover request.",
                 detail: error.localizedDescription
             )
+        }
+    }
+
+    func submitDesktopSessionMultiPostureResume(
+        _ ingressContext: DesktopSessionMultiPostureResumeIngressContext
+    ) async -> DesktopSessionMultiPostureResumeRuntimeOutcomeState {
+        switch ingressContext.resumeMode {
+        case .softClosedExplicitResume:
+            guard let softClosedResumeIngressContext = ingressContext.softClosedResumeIngressContext else {
+                return .failed(
+                    resumeMode: ingressContext.resumeMode,
+                    sourceSurfaceIdentity: ingressContext.sourceSurfaceIdentity,
+                    sessionState: ingressContext.sessionState,
+                    sessionID: ingressContext.sessionID,
+                    selectedThreadID: ingressContext.selectedThreadID,
+                    selectedThreadTitle: ingressContext.selectedThreadTitle,
+                    pendingWorkOrderID: ingressContext.pendingWorkOrderID,
+                    resumeTier: ingressContext.resumeTier,
+                    resumeSummaryBullets: ingressContext.resumeSummaryBullets,
+                    recoveryMode: ingressContext.recoveryMode,
+                    deviceID: ingressContext.deviceID,
+                    endpoint: ingressContext.endpoint,
+                    requestID: ingressContext.requestID,
+                    summary: "The canonical multi-posture session-resume bridge could not select a lawful soft-closed explicit resume route.",
+                    detail: "This bounded desktop session-resume request failed closed because the exact soft-closed route context was unavailable after route selection."
+                )
+            }
+
+            let routeOutcome = await submitDesktopSessionSoftClosedResume(softClosedResumeIngressContext)
+            return .fromSoftClosedRoute(routeOutcome)
+
+        case .suspendedAuthoritativeRereadRecover:
+            guard let sessionRecoverIngressContext = ingressContext.sessionRecoverIngressContext else {
+                return .failed(
+                    resumeMode: ingressContext.resumeMode,
+                    sourceSurfaceIdentity: ingressContext.sourceSurfaceIdentity,
+                    sessionState: ingressContext.sessionState,
+                    sessionID: ingressContext.sessionID,
+                    selectedThreadID: ingressContext.selectedThreadID,
+                    selectedThreadTitle: ingressContext.selectedThreadTitle,
+                    pendingWorkOrderID: ingressContext.pendingWorkOrderID,
+                    resumeTier: ingressContext.resumeTier,
+                    resumeSummaryBullets: ingressContext.resumeSummaryBullets,
+                    recoveryMode: ingressContext.recoveryMode,
+                    deviceID: ingressContext.deviceID,
+                    endpoint: ingressContext.endpoint,
+                    requestID: ingressContext.requestID,
+                    summary: "The canonical multi-posture session-resume bridge could not select a lawful suspended-session recover route.",
+                    detail: "This bounded desktop session-resume request failed closed because the exact suspended-session recover route context was unavailable after route selection."
+                )
+            }
+
+            let routeOutcome = await submitDesktopSessionRecover(sessionRecoverIngressContext)
+            return .fromRecoverRoute(routeOutcome)
         }
     }
 
@@ -5648,6 +5945,88 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
             endpoint: endpointURL.absoluteString,
             urlRequest: urlRequest
         )
+    }
+
+    func desktopSessionMultiPostureResumeRequestBuilder(
+        _ promptState: DesktopSessionMultiPostureResumePromptState
+    ) throws -> DesktopSessionMultiPostureResumeIngressContext {
+        switch promptState.resumeMode {
+        case .softClosedExplicitResume:
+            guard boundedOnboardingContinueField(promptState.recoveryMode) == nil else {
+                throw BridgeError.invalidSessionMultiPostureResumeRequest(
+                    "bounded desktop multi-posture session-resume prompt state cannot preserve suspended-session `recovery_mode` while exact `SOFT_CLOSED_EXPLICIT_RESUME` is selected"
+                )
+            }
+
+            let softClosedPromptState = DesktopSessionSoftClosedResumePromptState(
+                sourceSurfaceIdentity: promptState.sourceSurfaceIdentity,
+                sessionState: promptState.sessionState,
+                sessionID: promptState.sessionID,
+                selectedThreadID: promptState.selectedThreadID,
+                selectedThreadTitle: promptState.selectedThreadTitle,
+                pendingWorkOrderID: promptState.pendingWorkOrderID,
+                resumeTier: promptState.resumeTier,
+                resumeSummaryBullets: promptState.resumeSummaryBullets,
+                deviceID: promptState.deviceID
+            )
+            let ingressContext = try desktopSessionSoftClosedResumeRequestBuilder(softClosedPromptState)
+
+            return DesktopSessionMultiPostureResumeIngressContext(
+                resumeMode: .softClosedExplicitResume,
+                sourceSurfaceIdentity: ingressContext.sourceSurfaceIdentity,
+                sessionState: ingressContext.sessionState,
+                sessionID: ingressContext.sessionID,
+                selectedThreadID: ingressContext.selectedThreadID,
+                selectedThreadTitle: ingressContext.selectedThreadTitle,
+                pendingWorkOrderID: ingressContext.pendingWorkOrderID,
+                resumeTier: ingressContext.resumeTier,
+                resumeSummaryBullets: ingressContext.resumeSummaryBullets,
+                recoveryMode: nil,
+                deviceID: ingressContext.deviceID,
+                requestID: ingressContext.requestID,
+                endpoint: ingressContext.endpoint,
+                softClosedResumeIngressContext: ingressContext,
+                sessionRecoverIngressContext: nil
+            )
+
+        case .suspendedAuthoritativeRereadRecover:
+            guard boundedOnboardingContinueField(promptState.selectedThreadID) == nil,
+                  boundedOnboardingContinueField(promptState.selectedThreadTitle) == nil,
+                  boundedOnboardingContinueField(promptState.pendingWorkOrderID) == nil,
+                  boundedOnboardingContinueField(promptState.resumeTier) == nil,
+                  boundedOnboardingContinueList(promptState.resumeSummaryBullets).isEmpty else {
+                throw BridgeError.invalidSessionMultiPostureResumeRequest(
+                    "bounded desktop multi-posture session-resume prompt state cannot preserve soft-closed explicit resume fields while exact `SUSPENDED_AUTHORITATIVE_REREAD_RECOVER` is selected"
+                )
+            }
+
+            let sessionRecoverPromptState = DesktopSessionRecoverPromptState(
+                sourceSurfaceIdentity: promptState.sourceSurfaceIdentity,
+                sessionState: promptState.sessionState,
+                sessionID: promptState.sessionID,
+                recoveryMode: promptState.recoveryMode,
+                deviceID: promptState.deviceID
+            )
+            let ingressContext = try desktopSessionRecoverRequestBuilder(sessionRecoverPromptState)
+
+            return DesktopSessionMultiPostureResumeIngressContext(
+                resumeMode: .suspendedAuthoritativeRereadRecover,
+                sourceSurfaceIdentity: ingressContext.sourceSurfaceIdentity,
+                sessionState: ingressContext.sessionState,
+                sessionID: ingressContext.sessionID,
+                selectedThreadID: nil,
+                selectedThreadTitle: nil,
+                pendingWorkOrderID: nil,
+                resumeTier: nil,
+                resumeSummaryBullets: [],
+                recoveryMode: ingressContext.recoveryMode,
+                deviceID: ingressContext.deviceID,
+                requestID: ingressContext.requestID,
+                endpoint: ingressContext.endpoint,
+                softClosedResumeIngressContext: nil,
+                sessionRecoverIngressContext: ingressContext
+            )
+        }
     }
 
     func desktopWakeProfileAvailabilityRequestBuilder(

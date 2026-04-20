@@ -3250,6 +3250,34 @@ struct DesktopSessionRecoverPromptState: Identifiable, Equatable {
     }
 }
 
+struct DesktopSessionMultiPostureResumePromptState: Identifiable, Equatable {
+    let resumeMode: DesktopSessionMultiPostureResumeMode
+    let sourceSurfaceIdentity: String
+    let sessionState: String
+    let sessionID: String
+    let selectedThreadID: String?
+    let selectedThreadTitle: String?
+    let pendingWorkOrderID: String?
+    let resumeTier: String?
+    let resumeSummaryBullets: [String]
+    let recoveryMode: String?
+    let deviceID: String
+
+    var id: String {
+        [
+            resumeMode.rawValue,
+            sourceSurfaceIdentity,
+            sessionState,
+            sessionID,
+            selectedThreadID ?? "selected_thread_not_provided",
+            pendingWorkOrderID ?? "pending_work_order_not_provided",
+            resumeTier ?? "resume_tier_not_provided",
+            recoveryMode ?? "recovery_mode_not_provided",
+            deviceID,
+        ].joined(separator: "::")
+    }
+}
+
 struct DesktopEmoPersonaLockPromptState: Identifiable, Equatable {
     let onboardingSessionID: String
     let nextStep: String
@@ -4021,8 +4049,7 @@ struct DesktopSessionShellView: View {
     @State private var desktopWakeEnrollSampleCommitRuntimeOutcomeState: DesktopWakeEnrollSampleCommitRuntimeOutcomeState?
     @State private var desktopWakeEnrollCompleteCommitRuntimeOutcomeState: DesktopWakeEnrollCompleteCommitRuntimeOutcomeState?
     @State private var desktopWakeEnrollDeferCommitRuntimeOutcomeState: DesktopWakeEnrollDeferCommitRuntimeOutcomeState?
-    @State private var desktopSessionSoftClosedResumeRuntimeOutcomeState: DesktopSessionSoftClosedResumeRuntimeOutcomeState?
-    @State private var desktopSessionRecoverRuntimeOutcomeState: DesktopSessionRecoverRuntimeOutcomeState?
+    @State private var desktopSessionMultiPostureResumeRuntimeOutcomeState: DesktopSessionMultiPostureResumeRuntimeOutcomeState?
     @State private var desktopPairingCompletionLocalOutcomeState: DesktopPairingCompletionLocalOutcomeState?
     @State private var desktopReadyTimeHandoffState: DesktopReadyTimeHandoffState?
     @State private var desktopWakeProfileAvailabilityRuntimeOutcomeState: DesktopWakeProfileAvailabilityRuntimeOutcomeState?
@@ -4206,8 +4233,7 @@ struct DesktopSessionShellView: View {
                     desktopPairingCompletionMutationCard
                 }
                 desktopSessionSoftClosedVisibilityCard
-                desktopSessionSoftClosedResumeCard
-                desktopSessionRecoverCard
+                desktopSessionMultiPostureResumeCard
                 desktopSessionSuspendedVisibilityCard
                 desktopRecoveryVisibilityCard
                 desktopInterruptVisibilityCard
@@ -5465,6 +5491,49 @@ struct DesktopSessionShellView: View {
             recoveryMode: latestSessionSuspendedVisibleContext.recoveryMode?.rawValue,
             deviceID: deviceID
         )
+    }
+
+    private var desktopSessionMultiPostureResumePromptState: DesktopSessionMultiPostureResumePromptState? {
+        let softClosedPromptState = desktopSessionSoftClosedResumePromptState
+        let suspendedPromptState = desktopSessionRecoverPromptState
+
+        guard !(softClosedPromptState != nil && suspendedPromptState != nil) else {
+            return nil
+        }
+
+        if let softClosedPromptState {
+            return DesktopSessionMultiPostureResumePromptState(
+                resumeMode: .softClosedExplicitResume,
+                sourceSurfaceIdentity: softClosedPromptState.sourceSurfaceIdentity,
+                sessionState: softClosedPromptState.sessionState,
+                sessionID: softClosedPromptState.sessionID,
+                selectedThreadID: softClosedPromptState.selectedThreadID,
+                selectedThreadTitle: softClosedPromptState.selectedThreadTitle,
+                pendingWorkOrderID: softClosedPromptState.pendingWorkOrderID,
+                resumeTier: softClosedPromptState.resumeTier,
+                resumeSummaryBullets: softClosedPromptState.resumeSummaryBullets,
+                recoveryMode: nil,
+                deviceID: softClosedPromptState.deviceID
+            )
+        }
+
+        if let suspendedPromptState {
+            return DesktopSessionMultiPostureResumePromptState(
+                resumeMode: .suspendedAuthoritativeRereadRecover,
+                sourceSurfaceIdentity: suspendedPromptState.sourceSurfaceIdentity,
+                sessionState: suspendedPromptState.sessionState,
+                sessionID: suspendedPromptState.sessionID,
+                selectedThreadID: nil,
+                selectedThreadTitle: nil,
+                pendingWorkOrderID: nil,
+                resumeTier: nil,
+                resumeSummaryBullets: [],
+                recoveryMode: suspendedPromptState.recoveryMode,
+                deviceID: suspendedPromptState.deviceID
+            )
+        }
+
+        return nil
     }
 
     private var desktopSessionSuspendedVisibilityState: DesktopSessionSuspendedVisibilityState? {
@@ -8186,8 +8255,7 @@ struct DesktopSessionShellView: View {
             posturePanel
             historyCard
             desktopSessionSoftClosedVisibilityCard
-            desktopSessionSoftClosedResumeCard
-            desktopSessionRecoverCard
+            desktopSessionMultiPostureResumeCard
             desktopSessionSuspendedVisibilityCard
             desktopRecoveryVisibilityCard
             desktopInterruptVisibilityCard
@@ -8524,252 +8592,177 @@ struct DesktopSessionShellView: View {
         }
     }
 
-    private var desktopSessionSoftClosedResumeCard: some View {
-        let promptState = desktopSessionSoftClosedResumePromptState
-        let displayedSourceSurface = desktopSessionSoftClosedResumeRuntimeOutcomeState?.sourceSurfaceIdentity
-            ?? promptState?.sourceSurfaceIdentity
-            ?? "SESSION_SOFT_CLOSED_VISIBLE"
-        let displayedSessionState = desktopSessionSoftClosedResumeRuntimeOutcomeState?.sessionState
-            ?? promptState?.sessionState
-            ?? latestSessionSoftClosedVisibleContext?.sessionState
-            ?? "not_provided"
-        let displayedSessionID = desktopSessionSoftClosedResumeRuntimeOutcomeState?.sessionID
-            ?? promptState?.sessionID
-            ?? latestSessionSoftClosedVisibleContext?.sessionID
-            ?? "not_provided"
-        let displayedSelectedThreadID = desktopSessionSoftClosedResumeRuntimeOutcomeState?.selectedThreadID
-            ?? promptState?.selectedThreadID
-            ?? latestSessionSoftClosedVisibleContext?.selectedThreadID
-            ?? "not_provided"
-        let displayedSelectedThreadTitle = desktopSessionSoftClosedResumeRuntimeOutcomeState?.selectedThreadTitle
-            ?? promptState?.selectedThreadTitle
-            ?? latestSessionSoftClosedVisibleContext?.selectedThreadTitle
-            ?? "not_provided"
-        let displayedPendingWorkOrderID = desktopSessionSoftClosedResumeRuntimeOutcomeState?.pendingWorkOrderID
-            ?? promptState?.pendingWorkOrderID
-            ?? latestSessionSoftClosedVisibleContext?.pendingWorkOrderID
-            ?? "not_provided"
-        let displayedResumeTier = desktopSessionSoftClosedResumeRuntimeOutcomeState?.resumeTier
-            ?? promptState?.resumeTier
-            ?? latestSessionSoftClosedVisibleContext?.resumeTier
-            ?? "not_provided"
-        let displayedResumeSummaryBullets = desktopSessionSoftClosedResumeRuntimeOutcomeState?.resumeSummaryBullets
-            ?? promptState?.resumeSummaryBullets
-            ?? latestSessionSoftClosedVisibleContext?.resumeSummaryBullets
-            ?? []
-        let displayedDeviceID = desktopSessionSoftClosedResumeRuntimeOutcomeState?.deviceID
-            ?? promptState?.deviceID
-            ?? desktopManagedPrimaryDeviceID
-            ?? "not_provided"
-
-        return Group {
-            if promptState != nil || desktopSessionSoftClosedResumeRuntimeOutcomeState != nil {
-                GroupBox {
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text("Bounded desktop soft-closed explicit resume submission only. This shell derives one bounded prompt state from the already-live exact soft-closed visibility context plus the exact managed bridge `deviceID`, dispatches exact `/v1/session/resume`, and keeps returned exact `session_state` plus exact `session_attach_outcome` read-only only outside the exact resume control itself.")
-                            .frame(maxWidth: .infinity, alignment: .leading)
-
-                        ForEach(
-                            [
-                                ("source_surface", displayedSourceSurface),
-                                ("session_state", displayedSessionState),
-                                ("session_id", displayedSessionID),
-                                ("selected_thread_id", displayedSelectedThreadID),
-                                ("selected_thread_title", displayedSelectedThreadTitle),
-                                ("pending_work_order_id", displayedPendingWorkOrderID),
-                                ("resume_tier", displayedResumeTier),
-                                ("device_id", displayedDeviceID),
-                            ],
-                            id: \.0
-                        ) { row in
-                            metadataRow(label: row.0, value: row.1)
-                        }
-
-                        if displayedResumeSummaryBullets.isEmpty {
-                            Text("No bounded `resume_summary_bullets` were provided for this soft-closed explicit resume surface.")
-                                .font(.footnote)
-                                .foregroundStyle(.secondary)
-                        } else {
-                            ForEach(Array(displayedResumeSummaryBullets.prefix(3).enumerated()), id: \.offset) { index, bullet in
-                                HStack(alignment: .firstTextBaseline, spacing: 10) {
-                                    Text("\(index + 1).")
-                                        .font(.caption.weight(.semibold))
-                                        .foregroundStyle(.secondary)
-
-                                    Text(bullet)
-                                        .frame(maxWidth: .infinity, alignment: .leading)
-                                }
-                            }
-                        }
-
-                        Text("This exact surface is dispatching canonical soft-closed explicit resume only. No local thread reselection, no local PH1.M synthesis, no pairing completion mutation, no onboarding-derived ready-time handoff, no wake-listener integration, and no autonomous unlock are introduced by this shell.")
-                            .foregroundStyle(.secondary)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-
-                        if let promptState {
-                            Button("Resume the selected thread explicitly") {
-                                Task {
-                                    await submitDesktopSessionSoftClosedResume(promptState: promptState)
-                                }
-                            }
-                            .buttonStyle(.borderedProminent)
-                            .disabled(desktopSessionSoftClosedResumeRuntimeOutcomeState?.phase == .dispatching)
-                        }
-
-                        if let desktopSessionSoftClosedResumeRuntimeOutcomeState {
-                            Divider()
-
-                            Text(desktopSessionSoftClosedResumeRuntimeOutcomeState.title)
-                                .font(.headline)
-
-                            ForEach(
-                                [
-                                    ("dispatch_phase", desktopSessionSoftClosedResumeRuntimeOutcomeState.phase.rawValue),
-                                    ("request_id", desktopSessionSoftClosedResumeRuntimeOutcomeState.requestID),
-                                    ("endpoint", desktopSessionSoftClosedResumeRuntimeOutcomeState.endpoint),
-                                    ("outcome", desktopSessionSoftClosedResumeRuntimeOutcomeState.outcome ?? "not_available"),
-                                    ("reason", desktopSessionSoftClosedResumeRuntimeOutcomeState.reason ?? "not_available"),
-                                    ("session_state", desktopSessionSoftClosedResumeRuntimeOutcomeState.sessionState),
-                                    ("session_attach_outcome", desktopSessionSoftClosedResumeRuntimeOutcomeState.sessionAttachOutcome ?? "not_available"),
-                                ],
-                                id: \.0
-                            ) { row in
-                                metadataRow(label: row.0, value: row.1)
-                            }
-
-                            Text(desktopSessionSoftClosedResumeRuntimeOutcomeState.summary)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-
-                            Text(desktopSessionSoftClosedResumeRuntimeOutcomeState.detail)
-                                .font(.footnote)
-                                .foregroundStyle(.secondary)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                        } else {
-                            Text(promptState != nil
-                                ? "Awaiting explicit user-triggered canonical soft-closed explicit resume. After submission, any returned exact `session_state` and exact `session_attach_outcome` remain bounded read-only only in this shell."
-                                : "Read-only soft-closed posture only. A bounded soft-closed explicit resume is unavailable until lawful prompt state is present with exact soft-closed session posture plus the exact managed bridge `deviceID`.")
-                                .foregroundStyle(.secondary)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                        }
-
-                        Text("Cloud-authored, session-bound, and non-authoritative only. This path does not add local thread reselection, local PH1.M synthesis, broader attach or reopen authority, pairing completion mutation, ready-time handoff, wake-listener integration, wake parity claims, or autonomous unlock.")
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                } label: {
-                    Text("Session Soft-Closed Explicit Resume")
-                        .font(.headline)
-                }
+    private var desktopSessionMultiPostureResumeCard: some View {
+        let promptState = desktopSessionMultiPostureResumePromptState
+        let activeRuntimeOutcomeState: DesktopSessionMultiPostureResumeRuntimeOutcomeState? = {
+            guard let desktopSessionMultiPostureResumeRuntimeOutcomeState else {
+                return nil
             }
-        }
-    }
 
-    private var desktopSessionRecoverCard: some View {
-        let promptState = desktopSessionRecoverPromptState
-        let displayedSourceSurface = desktopSessionRecoverRuntimeOutcomeState?.sourceSurfaceIdentity
+            guard let promptState else {
+                return desktopSessionMultiPostureResumeRuntimeOutcomeState
+            }
+
+            return desktopSessionMultiPostureResumeRuntimeOutcomeState.resumeMode == promptState.resumeMode
+                ? desktopSessionMultiPostureResumeRuntimeOutcomeState
+                : nil
+        }()
+        let displayedResumeMode = activeRuntimeOutcomeState?.resumeMode ?? promptState?.resumeMode
+        let displayedSourceSurface = activeRuntimeOutcomeState?.sourceSurfaceIdentity
             ?? promptState?.sourceSurfaceIdentity
-            ?? "SESSION_SUSPENDED_VISIBLE"
-        let displayedSessionState = desktopSessionRecoverRuntimeOutcomeState?.sessionState
+            ?? "not_provided"
+        let displayedSessionState = activeRuntimeOutcomeState?.sessionState
             ?? promptState?.sessionState
-            ?? latestSessionSuspendedVisibleContext?.sessionState
             ?? "not_provided"
-        let displayedSessionID = desktopSessionRecoverRuntimeOutcomeState?.sessionID
+        let displayedSessionID = activeRuntimeOutcomeState?.sessionID
             ?? promptState?.sessionID
-            ?? latestSessionSuspendedVisibleContext?.sessionID
             ?? "not_provided"
-        let displayedRecoveryMode = desktopSessionRecoverRuntimeOutcomeState?.recoveryMode
-            ?? promptState?.recoveryMode
-            ?? latestSessionSuspendedVisibleContext?.recoveryMode?.rawValue
-        let displayedDeviceID = desktopSessionRecoverRuntimeOutcomeState?.deviceID
+        let displayedDeviceID = activeRuntimeOutcomeState?.deviceID
             ?? promptState?.deviceID
             ?? desktopManagedPrimaryDeviceID
             ?? "not_provided"
+        let displayedSelectedThreadID = activeRuntimeOutcomeState?.selectedThreadID
+            ?? promptState?.selectedThreadID
+        let displayedSelectedThreadTitle = activeRuntimeOutcomeState?.selectedThreadTitle
+            ?? promptState?.selectedThreadTitle
+        let displayedPendingWorkOrderID = activeRuntimeOutcomeState?.pendingWorkOrderID
+            ?? promptState?.pendingWorkOrderID
+        let displayedResumeTier = activeRuntimeOutcomeState?.resumeTier
+            ?? promptState?.resumeTier
+        let displayedResumeSummaryBullets = activeRuntimeOutcomeState?.resumeSummaryBullets
+            ?? promptState?.resumeSummaryBullets
+            ?? []
+        let displayedRecoveryMode = activeRuntimeOutcomeState?.recoveryMode
+            ?? promptState?.recoveryMode
 
         return Group {
-            if promptState != nil || desktopSessionRecoverRuntimeOutcomeState != nil {
+            if promptState != nil || activeRuntimeOutcomeState != nil {
                 GroupBox {
                     VStack(alignment: .leading, spacing: 12) {
-                        Text("Bounded desktop suspended-session recover submission only. This shell derives one bounded prompt state from the already-live exact suspended visibility context plus the exact managed bridge `deviceID`, dispatches exact `/v1/session/recover`, and keeps returned exact `session_state` plus exact `session_attach_outcome` read-only only outside the exact recover control itself.")
+                        Text("Bounded desktop multi-posture session-resume submission only. This shell derives one bounded prompt state from the already-live exact soft-closed explicit resume or exact suspended-session recover prompt, selects exactly one lawful route, dispatches only exact `/v1/session/resume` or exact `/v1/session/recover`, and keeps returned exact `session_state` plus exact `session_attach_outcome` read-only only outside the exact multi-posture control itself.")
                             .frame(maxWidth: .infinity, alignment: .leading)
 
-                        ForEach(
-                            [
-                                ("source_surface", displayedSourceSurface),
-                                ("session_state", displayedSessionState),
-                                ("session_id", displayedSessionID),
-                                ("device_id", displayedDeviceID),
-                            ],
-                            id: \.0
-                        ) { row in
-                            metadataRow(label: row.0, value: row.1)
-                        }
-
-                        if let displayedRecoveryMode {
-                            metadataRow(label: "recovery_mode", value: displayedRecoveryMode)
-                        }
-
-                        Text("This exact surface performs one bounded authoritative-reread recovery submission only. No local unsuspend authority, no local attach or reopen authority, no local search controls, no local tool invocation controls, no hidden/background wake behavior, and no autonomous unlock are introduced by this shell.")
-                            .foregroundStyle(.secondary)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-
-                        if let promptState {
-                            Button("Recover the suspended session authoritatively") {
-                                Task {
-                                    await submitDesktopSessionRecover(promptState: promptState)
-                                }
-                            }
-                            .buttonStyle(.borderedProminent)
-                            .disabled(desktopSessionRecoverRuntimeOutcomeState?.phase == .dispatching)
-                        }
-
-                        if let desktopSessionRecoverRuntimeOutcomeState {
-                            Divider()
-
-                            Text(desktopSessionRecoverRuntimeOutcomeState.title)
-                                .font(.headline)
-
+                        if let displayedResumeMode {
                             ForEach(
                                 [
-                                    ("dispatch_phase", desktopSessionRecoverRuntimeOutcomeState.phase.rawValue),
-                                    ("request_id", desktopSessionRecoverRuntimeOutcomeState.requestID),
-                                    ("endpoint", desktopSessionRecoverRuntimeOutcomeState.endpoint),
-                                    ("outcome", desktopSessionRecoverRuntimeOutcomeState.outcome ?? "not_available"),
-                                    ("reason", desktopSessionRecoverRuntimeOutcomeState.reason ?? "not_available"),
-                                    ("session_id", desktopSessionRecoverRuntimeOutcomeState.sessionID),
-                                    ("session_state", desktopSessionRecoverRuntimeOutcomeState.sessionState),
-                                    (
-                                        "session_attach_outcome",
-                                        desktopSessionRecoverRuntimeOutcomeState.sessionAttachOutcome ?? "not_available"
-                                    ),
+                                    ("source_surface", displayedSourceSurface),
+                                    ("resume_mode", displayedResumeMode.rawValue),
+                                    ("session_state", displayedSessionState),
+                                    ("session_id", displayedSessionID),
+                                    ("device_id", displayedDeviceID),
                                 ],
                                 id: \.0
                             ) { row in
                                 metadataRow(label: row.0, value: row.1)
                             }
 
-                            Text(desktopSessionRecoverRuntimeOutcomeState.summary)
+                            switch displayedResumeMode {
+                            case .softClosedExplicitResume:
+                                metadataRow(
+                                    label: "selected_thread_id",
+                                    value: displayedSelectedThreadID ?? "not_provided"
+                                )
+                                metadataRow(
+                                    label: "selected_thread_title",
+                                    value: displayedSelectedThreadTitle ?? "not_provided"
+                                )
+                                metadataRow(
+                                    label: "pending_work_order_id",
+                                    value: displayedPendingWorkOrderID ?? "not_provided"
+                                )
+                                metadataRow(
+                                    label: "resume_tier",
+                                    value: displayedResumeTier ?? "not_provided"
+                                )
+
+                                if displayedResumeSummaryBullets.isEmpty {
+                                    Text("No bounded `resume_summary_bullets` were provided for this multi-posture soft-closed explicit resume surface.")
+                                        .font(.footnote)
+                                        .foregroundStyle(.secondary)
+                                } else {
+                                    ForEach(Array(displayedResumeSummaryBullets.prefix(3).enumerated()), id: \.offset) { index, bullet in
+                                        HStack(alignment: .firstTextBaseline, spacing: 10) {
+                                            Text("\(index + 1).")
+                                                .font(.caption.weight(.semibold))
+                                                .foregroundStyle(.secondary)
+
+                                            Text(bullet)
+                                                .frame(maxWidth: .infinity, alignment: .leading)
+                                        }
+                                    }
+                                }
+
+                            case .suspendedAuthoritativeRereadRecover:
+                                if let displayedRecoveryMode {
+                                    metadataRow(label: "recovery_mode", value: displayedRecoveryMode)
+                                }
+                            }
+                        }
+
+                        Text("This exact surface performs one bounded session-resume submission only through already-live exact route-specific seams. No local attach or reopen authority, no local conversation selection, no local search controls, no local tool invocation controls, no hidden/background wake behavior, and no autonomous unlock are introduced by this shell.")
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+
+                        if let promptState {
+                            Button(
+                                promptState.resumeMode == .softClosedExplicitResume
+                                    ? "Resume the selected thread explicitly"
+                                    : "Recover the suspended session authoritatively"
+                            ) {
+                                Task {
+                                    await submitDesktopSessionMultiPostureResume(promptState: promptState)
+                                }
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .disabled(activeRuntimeOutcomeState?.phase == .dispatching)
+                        }
+
+                        if let activeRuntimeOutcomeState {
+                            Divider()
+
+                            Text(activeRuntimeOutcomeState.title)
+                                .font(.headline)
+
+                            ForEach(
+                                [
+                                    ("dispatch_phase", activeRuntimeOutcomeState.phase.rawValue),
+                                    ("request_id", activeRuntimeOutcomeState.requestID),
+                                    ("endpoint", activeRuntimeOutcomeState.endpoint),
+                                    ("outcome", activeRuntimeOutcomeState.outcome ?? "not_available"),
+                                    ("reason", activeRuntimeOutcomeState.reason ?? "not_available"),
+                                    ("session_id", activeRuntimeOutcomeState.sessionID),
+                                    ("session_state", activeRuntimeOutcomeState.sessionState),
+                                    ("session_attach_outcome", activeRuntimeOutcomeState.sessionAttachOutcome ?? "not_available"),
+                                ],
+                                id: \.0
+                            ) { row in
+                                metadataRow(label: row.0, value: row.1)
+                            }
+
+                            Text(activeRuntimeOutcomeState.summary)
                                 .frame(maxWidth: .infinity, alignment: .leading)
 
-                            Text(desktopSessionRecoverRuntimeOutcomeState.detail)
+                            Text(activeRuntimeOutcomeState.detail)
                                 .font(.footnote)
                                 .foregroundStyle(.secondary)
                                 .frame(maxWidth: .infinity, alignment: .leading)
-                        } else {
-                            Text(promptState != nil
-                                ? "Awaiting explicit user-triggered canonical suspended-session recover submission. After submission, any returned exact `session_state` and exact `session_attach_outcome` remain bounded read-only only in this shell."
-                                : "Read-only suspended posture only. A bounded suspended-session recover submission is unavailable until lawful prompt state is present with exact suspended session posture, exact local ready-time handoff, and the exact managed bridge `deviceID`.")
-                                .foregroundStyle(.secondary)
-                                .frame(maxWidth: .infinity, alignment: .leading)
+                        } else if let promptState {
+                            Text(
+                                promptState.resumeMode == .softClosedExplicitResume
+                                    ? "Awaiting explicit user-triggered canonical soft-closed explicit resume through the bounded multi-posture control. After submission, any returned exact `session_state` and exact `session_attach_outcome` remain bounded read-only only in this shell."
+                                    : "Awaiting explicit user-triggered canonical suspended-session recover through the bounded multi-posture control. After submission, any returned exact `session_state` and exact `session_attach_outcome` remain bounded read-only only in this shell."
+                            )
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
                         }
 
-                        Text("Cloud-authored, session-bound, and non-authoritative only. This path does not add local unsuspend authority, local attach or reopen authority, keyboard text entry, local search controls, local tool controls, hidden/background wake behavior, wake parity claims, or autonomous unlock.")
+                        Text("Cloud-authored, session-bound, and non-authoritative only. This path does not add local attach or reopen authority, local conversation selection, keyboard text entry, local search controls, local tool controls, hidden/background wake behavior, wake parity claims, or autonomous unlock.")
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
                 } label: {
-                    Text("Session Recover Submission")
+                    Text("Multi-Posture Session Resume")
                         .font(.headline)
                 }
             }
@@ -11954,33 +11947,12 @@ struct DesktopSessionShellView: View {
     }
 
     @MainActor
-    private func submitDesktopSessionSoftClosedResume(
-        promptState: DesktopSessionSoftClosedResumePromptState
+    private func submitDesktopSessionMultiPostureResume(
+        promptState: DesktopSessionMultiPostureResumePromptState
     ) async {
-        do {
-            let ingressContext = try desktopCanonicalRuntimeBridge.desktopSessionSoftClosedResumeRequestBuilder(
-                promptState
-            )
-            desktopSessionSoftClosedResumeRuntimeOutcomeState = .dispatching(
-                sourceSurfaceIdentity: ingressContext.sourceSurfaceIdentity,
-                sessionState: ingressContext.sessionState,
-                sessionID: ingressContext.sessionID,
-                selectedThreadID: ingressContext.selectedThreadID,
-                selectedThreadTitle: ingressContext.selectedThreadTitle,
-                pendingWorkOrderID: ingressContext.pendingWorkOrderID,
-                resumeTier: ingressContext.resumeTier,
-                resumeSummaryBullets: ingressContext.resumeSummaryBullets,
-                deviceID: ingressContext.deviceID,
-                endpoint: ingressContext.endpoint,
-                requestID: ingressContext.requestID
-            )
-
-            let outcomeState = await desktopCanonicalRuntimeBridge.submitDesktopSessionSoftClosedResume(
-                ingressContext
-            )
-            desktopSessionSoftClosedResumeRuntimeOutcomeState = outcomeState
-        } catch {
-            desktopSessionSoftClosedResumeRuntimeOutcomeState = .failed(
+        guard desktopSessionMultiPostureResumePromptState?.id == promptState.id else {
+            desktopSessionMultiPostureResumeRuntimeOutcomeState = .failed(
+                resumeMode: promptState.resumeMode,
                 sourceSurfaceIdentity: promptState.sourceSurfaceIdentity,
                 sessionState: promptState.sessionState,
                 sessionID: promptState.sessionID,
@@ -11989,62 +11961,48 @@ struct DesktopSessionShellView: View {
                 pendingWorkOrderID: promptState.pendingWorkOrderID,
                 resumeTier: promptState.resumeTier,
                 resumeSummaryBullets: promptState.resumeSummaryBullets,
-                deviceID: promptState.deviceID,
-                endpoint: desktopCanonicalRuntimeBridge.sessionResumeEndpoint,
-                requestID: "unavailable",
-                summary: "The canonical session-resume bridge could not stage this bounded desktop soft-closed explicit resume request.",
-                detail: error.localizedDescription
-            )
-        }
-    }
-
-    @MainActor
-    private func submitDesktopSessionRecover(
-        promptState: DesktopSessionRecoverPromptState
-    ) async {
-        guard desktopSessionRecoverPromptState?.id == promptState.id else {
-            desktopSessionRecoverRuntimeOutcomeState = .failed(
-                sourceSurfaceIdentity: promptState.sourceSurfaceIdentity,
-                sessionState: promptState.sessionState,
-                sessionID: promptState.sessionID,
                 recoveryMode: promptState.recoveryMode,
                 deviceID: promptState.deviceID,
-                endpoint: desktopCanonicalRuntimeBridge.sessionRecoverEndpoint,
+                endpoint: promptState.resumeMode == .softClosedExplicitResume
+                    ? desktopCanonicalRuntimeBridge.sessionResumeEndpoint
+                    : desktopCanonicalRuntimeBridge.sessionRecoverEndpoint,
                 requestID: "unavailable",
-                summary: "The suspended-session recover prompt disappeared before dispatch.",
-                detail: "This shell fails closed when exact suspended-session visibility, exact local ready-time handoff, or the exact managed bridge device context is no longer lawful before canonical `/v1/session/recover` dispatch can begin."
+                summary: "The multi-posture session-resume prompt disappeared before dispatch.",
+                detail: "This shell fails closed when the exact lawful posture-specific session-resume prompt no longer remains uniquely available before canonical dispatch can begin."
             )
             return
         }
 
         do {
-            let ingressContext = try desktopCanonicalRuntimeBridge.desktopSessionRecoverRequestBuilder(
+            let ingressContext = try desktopCanonicalRuntimeBridge.desktopSessionMultiPostureResumeRequestBuilder(
                 promptState
             )
-            desktopSessionRecoverRuntimeOutcomeState = .dispatching(
-                sourceSurfaceIdentity: ingressContext.sourceSurfaceIdentity,
-                sessionState: ingressContext.sessionState,
-                sessionID: ingressContext.sessionID,
-                recoveryMode: ingressContext.recoveryMode,
-                deviceID: ingressContext.deviceID,
-                endpoint: ingressContext.endpoint,
-                requestID: ingressContext.requestID
+            desktopSessionMultiPostureResumeRuntimeOutcomeState = .dispatching(
+                ingressContext: ingressContext
             )
 
-            let outcomeState = await desktopCanonicalRuntimeBridge.submitDesktopSessionRecover(
+            let outcomeState = await desktopCanonicalRuntimeBridge.submitDesktopSessionMultiPostureResume(
                 ingressContext
             )
-            desktopSessionRecoverRuntimeOutcomeState = outcomeState
+            desktopSessionMultiPostureResumeRuntimeOutcomeState = outcomeState
         } catch {
-            desktopSessionRecoverRuntimeOutcomeState = .failed(
+            desktopSessionMultiPostureResumeRuntimeOutcomeState = .failed(
+                resumeMode: promptState.resumeMode,
                 sourceSurfaceIdentity: promptState.sourceSurfaceIdentity,
                 sessionState: promptState.sessionState,
                 sessionID: promptState.sessionID,
+                selectedThreadID: promptState.selectedThreadID,
+                selectedThreadTitle: promptState.selectedThreadTitle,
+                pendingWorkOrderID: promptState.pendingWorkOrderID,
+                resumeTier: promptState.resumeTier,
+                resumeSummaryBullets: promptState.resumeSummaryBullets,
                 recoveryMode: promptState.recoveryMode,
                 deviceID: promptState.deviceID,
-                endpoint: desktopCanonicalRuntimeBridge.sessionRecoverEndpoint,
+                endpoint: promptState.resumeMode == .softClosedExplicitResume
+                    ? desktopCanonicalRuntimeBridge.sessionResumeEndpoint
+                    : desktopCanonicalRuntimeBridge.sessionRecoverEndpoint,
                 requestID: "unavailable",
-                summary: "The canonical session-recover bridge could not stage this bounded desktop suspended-session recover request.",
+                summary: "The canonical multi-posture session-resume bridge could not stage this bounded desktop session-resume request.",
                 detail: error.localizedDescription
             )
         }

@@ -166,8 +166,11 @@ It may only be updated from current repo truth, exact command results, and exact
   current native macOS target now preserves bounded suspended-session recover submission through exact `DesktopSessionRecoverPromptState`, exact `DesktopSessionRecoverIngressContext`, exact `DesktopSessionRecoverRuntimeOutcomeState`, exact `desktopSessionRecoverRequestBuilder`, exact `submitDesktopSessionRecover`, and exact `desktopSessionRecoverCard`;
   current native macOS shell now performs one explicit bounded suspended-session recover submission only when exact local ready-time handoff remains active and exact suspended session visibility remains lawful;
   current native macOS shell now renders returned exact `session_state` and exact `session_attach_outcome` in bounded read-only form only outside the exact recover control itself;
+  current native macOS target now preserves bounded multi-posture session-resume submission through exact `DesktopSessionMultiPostureResumeMode`, exact `DesktopSessionMultiPostureResumePromptState`, exact `DesktopSessionMultiPostureResumeIngressContext`, exact `DesktopSessionMultiPostureResumeRuntimeOutcomeState`, exact `desktopSessionMultiPostureResumeRequestBuilder`, exact `submitDesktopSessionMultiPostureResume`, and exact `desktopSessionMultiPostureResumeCard`;
+  current native macOS shell now performs one explicit bounded multi-posture session-resume submission only when exact local ready-time handoff remains active and exactly one lawful posture-specific session-resume prompt remains visible;
+  current native macOS shell now dispatches only exact `/v1/session/resume` for exact soft-closed explicit resume posture or exact `/v1/session/recover` for exact suspended authoritative-reread recover posture while preserving already-live exact route-specific bounded fields;
+  current native macOS shell now renders returned exact `session_state` and exact `session_attach_outcome` in bounded read-only form only outside the exact multi-posture control itself;
   current native macOS shell continues to preserve the pre-ready onboarding-first shell when exact operational shell state is not lawful;
-  broader desktop multi-posture session resume mutation remains unimplemented;
   broader desktop session attach / reopen mutation remains unimplemented;
   broader desktop backend pairing mutation remains unimplemented;
   broader desktop onboarding-derived ready-time local handoff beyond this bounded shell-local foregrounding seam remains unimplemented;
@@ -180,7 +183,7 @@ It may only be updated from current repo truth, exact command results, and exact
   APP_MAC_DESKTOP remains first-class but non-authority, wake-word or explicit-entry as designed, and cloud-authoritative;
   APP_MAC_DESKTOP remains `PARTIAL`;
   no wake parity claim and no autonomous unlock claim are introduced by this run;
-  no post-H293 next exact winner is published in this run.
+  no post-H294 next exact winner is published in this run.
 
 ## Canonical Separation Truth
 
