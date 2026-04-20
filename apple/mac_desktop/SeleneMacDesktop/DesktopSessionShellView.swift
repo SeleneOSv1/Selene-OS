@@ -5376,6 +5376,11 @@ struct DesktopSessionShellView: View {
             )
         }
 
+        let authoritativeResponseText = desktopAuthoritativeReplyRenderState?.authoritativeResponseText?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let searchToolCompletionState = desktopConversationSearchToolCompletionState
+        let readOnlyToolLaneState = searchToolCompletionState?.readOnlyToolLaneState
+        let authoritativeReplyCompletionState = desktopConversationAuthoritativeReplyCompletionState
         let runtimeDispatchFailureAttachmentState = desktopConversationRuntimeDispatchFailureAttachmentState
         if let runtimeDispatchFailureAttachmentState {
             timelineEntries.append(
@@ -5389,9 +5394,7 @@ struct DesktopSessionShellView: View {
             )
         }
 
-        if let authoritativeResponseText = desktopAuthoritativeReplyRenderState?.authoritativeResponseText?
-            .trimmingCharacters(in: .whitespacesAndNewlines),
-           !authoritativeResponseText.isEmpty,
+        if !authoritativeResponseText.isEmpty,
            !timelineEntries.contains(where: { entry in
                entry.body.trimmingCharacters(in: .whitespacesAndNewlines) == authoritativeResponseText
            }) {
@@ -5402,6 +5405,23 @@ struct DesktopSessionShellView: View {
                     body: authoritativeResponseText,
                     detail: "Cloud-authored authoritative reply text only. This shell does not fabricate local answer content.",
                     sourceSurface: "CANONICAL_RUNTIME_COMPLETED"
+                )
+            )
+        }
+
+        if desktopConversationShouldAttachRuntimeCompletedWithoutInlineReply(
+            desktopCanonicalRuntimeOutcomeState,
+            searchToolCompletionState: searchToolCompletionState,
+            authoritativeReplyCompletionState: authoritativeReplyCompletionState
+        ),
+           let outcomeState = desktopCanonicalRuntimeOutcomeState {
+            timelineEntries.append(
+                DesktopConversationTimelineEntryState(
+                    speaker: "Selene",
+                    posture: "runtime_completed_without_inline_reply_preview",
+                    body: outcomeState.summary,
+                    detail: "Bounded canonical runtime completed visibility only when no lawful inline reply attachment is present. Already-live runtime carriers remain read-only, non-authoritative, and do not add local session authority, local search input or execution, local tool invocation or provider selection, wake-listener authority, hidden/background wake behavior, or autonomous unlock.",
+                    sourceSurface: "CANONICAL_RUNTIME_COMPLETED_WITHOUT_INLINE_REPLY"
                 )
             )
         }
@@ -5418,9 +5438,6 @@ struct DesktopSessionShellView: View {
             desktopConversationExplicitVoicePendingAttachmentState(for: timelineEntries)
         let wakeTriggeredVoicePendingAttachmentState =
             desktopConversationWakeTriggeredVoicePendingAttachmentState(for: timelineEntries)
-        let searchToolCompletionState = desktopConversationSearchToolCompletionState
-        let readOnlyToolLaneState = searchToolCompletionState?.readOnlyToolLaneState
-        let authoritativeReplyCompletionState = desktopConversationAuthoritativeReplyCompletionState
 
         return DesktopConversationPrimaryPaneState(
             dominantPosture: dominantPosture,
@@ -9028,6 +9045,18 @@ struct DesktopSessionShellView: View {
                     runtimeDispatchFailureAttachmentState: state.runtimeDispatchFailureAttachmentState
                 )
             })
+        let shouldAttachRuntimeCompletedWithoutInlineReply =
+            desktopConversationShouldAttachRuntimeCompletedWithoutInlineReply(
+                desktopCanonicalRuntimeOutcomeState,
+                searchToolCompletionState: state.searchToolCompletionState,
+                authoritativeReplyCompletionState: state.authoritativeReplyCompletionState
+            )
+        let shouldAttachRuntimeCompletedWithoutInlineReplyInline =
+            shouldAttachRuntimeCompletedWithoutInlineReply
+            && state.timelineEntries.contains(where: { entry in
+                entry.posture == "runtime_completed_without_inline_reply_preview"
+                    && entry.sourceSurface == "CANONICAL_RUNTIME_COMPLETED_WITHOUT_INLINE_REPLY"
+            })
 
         return VStack(alignment: .leading, spacing: 18) {
             VStack(alignment: .leading, spacing: 12) {
@@ -9065,7 +9094,8 @@ struct DesktopSessionShellView: View {
                 if let desktopCanonicalRuntimeOutcomeState,
                    !shouldAttachSearchToolCompletion,
                    !shouldAttachAuthoritativeReplyCompletion,
-                   !shouldAttachRuntimeDispatchFailure {
+                   !shouldAttachRuntimeDispatchFailure,
+                   !shouldAttachRuntimeCompletedWithoutInlineReplyInline {
                     desktopCanonicalRuntimeOutcomeCard(desktopCanonicalRuntimeOutcomeState)
                 }
 
@@ -9270,6 +9300,17 @@ struct DesktopSessionShellView: View {
                     )
                 }
 
+                if entry.posture == "runtime_completed_without_inline_reply_preview",
+                   entry.sourceSurface == "CANONICAL_RUNTIME_COMPLETED_WITHOUT_INLINE_REPLY",
+                   desktopConversationShouldAttachRuntimeCompletedWithoutInlineReply(
+                       desktopCanonicalRuntimeOutcomeState,
+                       searchToolCompletionState: searchToolCompletionState,
+                       authoritativeReplyCompletionState: authoritativeReplyCompletionState
+                   ),
+                   let outcomeState = desktopCanonicalRuntimeOutcomeState {
+                    desktopCanonicalRuntimeOutcomeCard(outcomeState)
+                }
+
                 if desktopConversationShouldAttachAuthoritativeReplyArtifacts(to: entry) {
                     desktopConversationAuthoritativeReplyAttachment(
                         readOnlyToolLaneState: readOnlyToolLaneState,
@@ -9372,6 +9413,26 @@ struct DesktopSessionShellView: View {
         _ runtimeDispatchFailureAttachmentState: DesktopConversationRuntimeDispatchFailureAttachmentState?
     ) -> Bool {
         runtimeDispatchFailureAttachmentState != nil
+    }
+
+    private func desktopConversationShouldAttachRuntimeCompletedWithoutInlineReply(
+        _ outcomeState: DesktopCanonicalRuntimeOutcomeState?,
+        searchToolCompletionState: DesktopConversationSearchToolCompletionState?,
+        authoritativeReplyCompletionState: DesktopConversationAuthoritativeReplyCompletionState?
+    ) -> Bool {
+        guard desktopReadyTimeHandoffIsActive,
+              latestSessionSuspendedVisibleContext == nil,
+              activeRecoveryDisplayState != .quarantinedLocalState,
+              let outcomeState,
+              outcomeState.phase == .completed,
+              searchToolCompletionState == nil,
+              authoritativeReplyCompletionState == nil else {
+            return false
+        }
+
+        let authoritativeResponseText = desktopAuthoritativeReplyRenderState?.authoritativeResponseText?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return authoritativeResponseText.isEmpty
     }
 
     private func desktopConversationShouldAttachRuntimeDispatchFailureInline(
