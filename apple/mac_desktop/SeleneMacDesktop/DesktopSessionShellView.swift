@@ -5376,6 +5376,19 @@ struct DesktopSessionShellView: View {
             )
         }
 
+        let runtimeDispatchFailureAttachmentState = desktopConversationRuntimeDispatchFailureAttachmentState
+        if let runtimeDispatchFailureAttachmentState {
+            timelineEntries.append(
+                DesktopConversationTimelineEntryState(
+                    speaker: "Selene",
+                    posture: "runtime_dispatch_failure_preview",
+                    body: runtimeDispatchFailureAttachmentState.summary,
+                    detail: "Bounded canonical runtime dispatch/failure visibility only. Already-live runtime carriers remain read-only, non-authoritative, and do not add local session or tool authority.",
+                    sourceSurface: "CANONICAL_RUNTIME_DISPATCH_FAILURE"
+                )
+            )
+        }
+
         if let authoritativeResponseText = desktopAuthoritativeReplyRenderState?.authoritativeResponseText?
             .trimmingCharacters(in: .whitespacesAndNewlines),
            !authoritativeResponseText.isEmpty,
@@ -5408,9 +5421,6 @@ struct DesktopSessionShellView: View {
         let searchToolCompletionState = desktopConversationSearchToolCompletionState
         let readOnlyToolLaneState = searchToolCompletionState?.readOnlyToolLaneState
         let authoritativeReplyCompletionState = desktopConversationAuthoritativeReplyCompletionState
-        let runtimeDispatchFailureAttachmentState = timelineEntries.isEmpty
-            ? nil
-            : desktopConversationRuntimeDispatchFailureAttachmentState
 
         return DesktopConversationPrimaryPaneState(
             dominantPosture: dominantPosture,
@@ -9008,10 +9018,16 @@ struct DesktopSessionShellView: View {
                 state.authoritativeReplyCompletionState
             )
         let shouldAttachRuntimeDispatchFailure =
-            !state.timelineEntries.isEmpty
-            && desktopConversationShouldAttachRuntimeDispatchFailure(
+            desktopConversationShouldAttachRuntimeDispatchFailure(
                 state.runtimeDispatchFailureAttachmentState
             )
+        let shouldAttachRuntimeDispatchFailureInline = shouldAttachRuntimeDispatchFailure
+            && state.timelineEntries.contains(where: { entry in
+                desktopConversationShouldAttachRuntimeDispatchFailureInline(
+                    to: entry,
+                    runtimeDispatchFailureAttachmentState: state.runtimeDispatchFailureAttachmentState
+                )
+            })
 
         return VStack(alignment: .leading, spacing: 18) {
             VStack(alignment: .leading, spacing: 12) {
@@ -9071,11 +9087,13 @@ struct DesktopSessionShellView: View {
                                 wakeTriggeredVoicePendingAttachmentState: state.wakeTriggeredVoicePendingAttachmentState,
                                 readOnlyToolLaneState: state.readOnlyToolLaneState,
                                 searchToolCompletionState: state.searchToolCompletionState,
-                                authoritativeReplyCompletionState: state.authoritativeReplyCompletionState
+                                authoritativeReplyCompletionState: state.authoritativeReplyCompletionState,
+                                runtimeDispatchFailureAttachmentState: state.runtimeDispatchFailureAttachmentState
                             )
                         }
 
                         if shouldAttachRuntimeDispatchFailure,
+                           !shouldAttachRuntimeDispatchFailureInline,
                            let runtimeDispatchFailureAttachmentState = state.runtimeDispatchFailureAttachmentState {
                             desktopConversationRuntimeDispatchFailureAttachment(
                                 runtimeDispatchFailureAttachmentState
@@ -9145,7 +9163,8 @@ struct DesktopSessionShellView: View {
         wakeTriggeredVoicePendingAttachmentState: DesktopConversationWakeTriggeredVoicePendingAttachmentState?,
         readOnlyToolLaneState: DesktopConversationReadOnlyToolLaneState?,
         searchToolCompletionState: DesktopConversationSearchToolCompletionState?,
-        authoritativeReplyCompletionState: DesktopConversationAuthoritativeReplyCompletionState?
+        authoritativeReplyCompletionState: DesktopConversationAuthoritativeReplyCompletionState?,
+        runtimeDispatchFailureAttachmentState: DesktopConversationRuntimeDispatchFailureAttachmentState?
     ) -> some View {
         let bubbleColor = entry.isUserAuthored
             ? Color.accentColor.opacity(0.12)
@@ -9238,6 +9257,16 @@ struct DesktopSessionShellView: View {
                    let wakeTriggeredVoicePendingAttachmentState {
                     desktopConversationWakeTriggeredVoicePendingAttachment(
                         wakeTriggeredVoicePendingAttachmentState
+                    )
+                }
+
+                if desktopConversationShouldAttachRuntimeDispatchFailureInline(
+                    to: entry,
+                    runtimeDispatchFailureAttachmentState: runtimeDispatchFailureAttachmentState
+                ),
+                   let runtimeDispatchFailureAttachmentState {
+                    desktopConversationRuntimeDispatchFailureAttachment(
+                        runtimeDispatchFailureAttachmentState
                     )
                 }
 
@@ -9343,6 +9372,18 @@ struct DesktopSessionShellView: View {
         _ runtimeDispatchFailureAttachmentState: DesktopConversationRuntimeDispatchFailureAttachmentState?
     ) -> Bool {
         runtimeDispatchFailureAttachmentState != nil
+    }
+
+    private func desktopConversationShouldAttachRuntimeDispatchFailureInline(
+        to entry: DesktopConversationTimelineEntryState,
+        runtimeDispatchFailureAttachmentState: DesktopConversationRuntimeDispatchFailureAttachmentState?
+    ) -> Bool {
+        guard runtimeDispatchFailureAttachmentState != nil else {
+            return false
+        }
+
+        return entry.posture == "runtime_dispatch_failure_preview"
+            && entry.sourceSurface == "CANONICAL_RUNTIME_DISPATCH_FAILURE"
     }
 
     private func desktopConversationRuntimeDispatchFailureAttachment(
