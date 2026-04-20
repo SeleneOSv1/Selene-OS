@@ -3634,6 +3634,7 @@ struct DesktopConversationPrimaryPaneState: Identifiable, Equatable {
     let explicitVoiceLivePreviewAttachmentState: DesktopConversationExplicitVoiceLivePreviewAttachmentState?
     let wakeTriggeredVoiceLivePreviewAttachmentState: DesktopConversationWakeTriggeredVoiceLivePreviewAttachmentState?
     let explicitVoiceFailedRequestAttachmentState: DesktopConversationExplicitVoiceFailedRequestAttachmentState?
+    let wakeTriggeredVoiceFailedRequestAttachmentState: DesktopConversationWakeTriggeredVoiceFailedRequestAttachmentState?
     let explicitVoicePendingAttachmentState: DesktopConversationExplicitVoicePendingAttachmentState?
     let wakeTriggeredVoicePendingAttachmentState: DesktopConversationWakeTriggeredVoicePendingAttachmentState?
     let readOnlyToolLaneState: DesktopConversationReadOnlyToolLaneState?
@@ -3651,6 +3652,7 @@ struct DesktopConversationPrimaryPaneState: Identifiable, Equatable {
             explicitVoiceLivePreviewAttachmentState?.id ?? "explicit_voice_live_preview_attachment_not_attached",
             wakeTriggeredVoiceLivePreviewAttachmentState?.id ?? "wake_triggered_voice_live_preview_attachment_not_attached",
             explicitVoiceFailedRequestAttachmentState?.id ?? "explicit_voice_failed_request_attachment_not_attached",
+            wakeTriggeredVoiceFailedRequestAttachmentState?.id ?? "wake_triggered_voice_failed_request_attachment_not_attached",
             explicitVoicePendingAttachmentState?.id ?? "explicit_voice_pending_attachment_not_attached",
             wakeTriggeredVoicePendingAttachmentState?.id ?? "wake_triggered_voice_pending_attachment_not_attached",
             readOnlyToolLaneState?.id ?? "read_only_tool_lane_not_attached",
@@ -3873,6 +3875,28 @@ struct DesktopConversationExplicitVoiceFailedRequestAttachmentState: Identifiabl
         [
             failureID,
             sourceSurface,
+            failureTitle,
+            failureSummary,
+            failureDetail,
+        ].joined(separator: "::")
+    }
+}
+
+struct DesktopConversationWakeTriggeredVoiceFailedRequestAttachmentState: Identifiable, Equatable {
+    let failureID: String
+    let sourceSurface: String
+    let listenerState: String
+    let wakeTriggerPhrase: String
+    let failureTitle: String
+    let failureSummary: String
+    let failureDetail: String
+
+    var id: String {
+        [
+            failureID,
+            sourceSurface,
+            listenerState,
+            wakeTriggerPhrase,
             failureTitle,
             failureSummary,
             failureDetail,
@@ -5336,6 +5360,22 @@ struct DesktopSessionShellView: View {
             )
         }
 
+        if desktopWakeListenerPromptState != nil,
+           let failedWakeRequest = desktopWakeListenerController.failedRequest,
+           desktopWakeListenerController.listenerState == .failed,
+           desktopWakeListenerController.pendingRequest == nil,
+           lastStagedWakeTriggeredVoiceTurnRequestState == nil {
+            timelineEntries.append(
+                DesktopConversationTimelineEntryState(
+                    speaker: "You",
+                    posture: "wake_voice_failed_request_preview",
+                    body: failedWakeRequest.summary,
+                    detail: "Bounded wake local failure visibility only. Wake authority, canonical runtime acceptance, and later cloud-visible response remain authoritative.",
+                    sourceSurface: "WAKE_TRIGGERED_VOICE_FAILED_REQUEST"
+                )
+            )
+        }
+
         if let authoritativeResponseText = desktopAuthoritativeReplyRenderState?.authoritativeResponseText?
             .trimmingCharacters(in: .whitespacesAndNewlines),
            !authoritativeResponseText.isEmpty,
@@ -5359,6 +5399,8 @@ struct DesktopSessionShellView: View {
             desktopConversationWakeTriggeredVoiceLivePreviewAttachmentState(for: timelineEntries)
         let explicitVoiceFailedRequestAttachmentState =
             desktopConversationExplicitVoiceFailedRequestAttachmentState(for: timelineEntries)
+        let wakeTriggeredVoiceFailedRequestAttachmentState =
+            desktopConversationWakeTriggeredVoiceFailedRequestAttachmentState(for: timelineEntries)
         let explicitVoicePendingAttachmentState =
             desktopConversationExplicitVoicePendingAttachmentState(for: timelineEntries)
         let wakeTriggeredVoicePendingAttachmentState =
@@ -5379,6 +5421,7 @@ struct DesktopSessionShellView: View {
             explicitVoiceLivePreviewAttachmentState: explicitVoiceLivePreviewAttachmentState,
             wakeTriggeredVoiceLivePreviewAttachmentState: wakeTriggeredVoiceLivePreviewAttachmentState,
             explicitVoiceFailedRequestAttachmentState: explicitVoiceFailedRequestAttachmentState,
+            wakeTriggeredVoiceFailedRequestAttachmentState: wakeTriggeredVoiceFailedRequestAttachmentState,
             explicitVoicePendingAttachmentState: explicitVoicePendingAttachmentState,
             wakeTriggeredVoicePendingAttachmentState: wakeTriggeredVoicePendingAttachmentState,
             readOnlyToolLaneState: readOnlyToolLaneState,
@@ -5592,6 +5635,35 @@ struct DesktopSessionShellView: View {
         return DesktopConversationExplicitVoiceFailedRequestAttachmentState(
             failureID: failedRequest.id,
             sourceSurface: "EXPLICIT_VOICE_FAILED_REQUEST",
+            failureTitle: failedRequest.title,
+            failureSummary: failedRequest.summary,
+            failureDetail: failedRequest.detail
+        )
+    }
+
+    private func desktopConversationWakeTriggeredVoiceFailedRequestAttachmentState(
+        for timelineEntries: [DesktopConversationTimelineEntryState]
+    ) -> DesktopConversationWakeTriggeredVoiceFailedRequestAttachmentState? {
+        guard desktopReadyTimeHandoffIsActive,
+              latestSessionSuspendedVisibleContext == nil,
+              activeRecoveryDisplayState != .quarantinedLocalState,
+              let wakeListenerPromptState = desktopWakeListenerPromptState,
+              let failedRequest = desktopWakeListenerController.failedRequest,
+              desktopWakeListenerController.listenerState == .failed,
+              desktopWakeListenerController.pendingRequest == nil,
+              lastStagedWakeTriggeredVoiceTurnRequestState == nil,
+              timelineEntries.contains(where: { entry in
+                  entry.posture == "wake_voice_failed_request_preview"
+                      && entry.sourceSurface == "WAKE_TRIGGERED_VOICE_FAILED_REQUEST"
+              }) else {
+            return nil
+        }
+
+        return DesktopConversationWakeTriggeredVoiceFailedRequestAttachmentState(
+            failureID: failedRequest.id,
+            sourceSurface: "WAKE_TRIGGERED_VOICE_FAILED_REQUEST",
+            listenerState: desktopWakeListenerController.listenerState.rawValue,
+            wakeTriggerPhrase: wakeListenerPromptState.wakeTriggerPhrase,
             failureTitle: failedRequest.title,
             failureSummary: failedRequest.summary,
             failureDetail: failedRequest.detail
@@ -8785,6 +8857,12 @@ struct DesktopSessionShellView: View {
                     operationalConversationShellState.primaryPaneState.wakeTriggeredVoicePendingAttachmentState
                 )
             } ?? false
+        let shouldAttachWakeTriggeredVoiceFailedRequest =
+            desktopOperationalConversationShellState.map { operationalConversationShellState in
+                desktopConversationShouldAttachWakeTriggeredVoiceFailedRequest(
+                    operationalConversationShellState.primaryPaneState.wakeTriggeredVoiceFailedRequestAttachmentState
+                )
+            } ?? false
 
         return Group {
             if promptState != nil
@@ -8876,7 +8954,11 @@ struct DesktopSessionShellView: View {
                         }
 
                         if let failedRequest = desktopWakeListenerController.failedRequest {
-                            interruptResponseFailedRequestCard(failedRequest)
+                            if shouldAttachWakeTriggeredVoiceFailedRequest {
+                                EmptyView()
+                            } else {
+                                interruptResponseFailedRequestCard(failedRequest)
+                            }
                         } else if promptState != nil
                             && desktopWakeListenerController.listenerState == .idle
                             && displayedRequestState == nil {
@@ -8984,6 +9066,7 @@ struct DesktopSessionShellView: View {
                                 explicitVoiceLivePreviewAttachmentState: state.explicitVoiceLivePreviewAttachmentState,
                                 wakeTriggeredVoiceLivePreviewAttachmentState: state.wakeTriggeredVoiceLivePreviewAttachmentState,
                                 explicitVoiceFailedRequestAttachmentState: state.explicitVoiceFailedRequestAttachmentState,
+                                wakeTriggeredVoiceFailedRequestAttachmentState: state.wakeTriggeredVoiceFailedRequestAttachmentState,
                                 explicitVoicePendingAttachmentState: state.explicitVoicePendingAttachmentState,
                                 wakeTriggeredVoicePendingAttachmentState: state.wakeTriggeredVoicePendingAttachmentState,
                                 readOnlyToolLaneState: state.readOnlyToolLaneState,
@@ -9057,6 +9140,7 @@ struct DesktopSessionShellView: View {
         explicitVoiceLivePreviewAttachmentState: DesktopConversationExplicitVoiceLivePreviewAttachmentState?,
         wakeTriggeredVoiceLivePreviewAttachmentState: DesktopConversationWakeTriggeredVoiceLivePreviewAttachmentState?,
         explicitVoiceFailedRequestAttachmentState: DesktopConversationExplicitVoiceFailedRequestAttachmentState?,
+        wakeTriggeredVoiceFailedRequestAttachmentState: DesktopConversationWakeTriggeredVoiceFailedRequestAttachmentState?,
         explicitVoicePendingAttachmentState: DesktopConversationExplicitVoicePendingAttachmentState?,
         wakeTriggeredVoicePendingAttachmentState: DesktopConversationWakeTriggeredVoicePendingAttachmentState?,
         readOnlyToolLaneState: DesktopConversationReadOnlyToolLaneState?,
@@ -9121,6 +9205,17 @@ struct DesktopSessionShellView: View {
                    let explicitVoiceFailedRequestAttachmentState {
                     desktopConversationExplicitVoiceFailedRequestAttachment(
                         explicitVoiceFailedRequestAttachmentState
+                    )
+                }
+
+                if entry.posture == "wake_voice_failed_request_preview",
+                   entry.sourceSurface == "WAKE_TRIGGERED_VOICE_FAILED_REQUEST",
+                   desktopConversationShouldAttachWakeTriggeredVoiceFailedRequest(
+                       wakeTriggeredVoiceFailedRequestAttachmentState
+                   ),
+                   let wakeTriggeredVoiceFailedRequestAttachmentState {
+                    desktopConversationWakeTriggeredVoiceFailedRequestAttachment(
+                        wakeTriggeredVoiceFailedRequestAttachmentState
                     )
                 }
 
@@ -9212,6 +9307,12 @@ struct DesktopSessionShellView: View {
         _ explicitVoiceFailedRequestAttachmentState: DesktopConversationExplicitVoiceFailedRequestAttachmentState?
     ) -> Bool {
         explicitVoiceFailedRequestAttachmentState != nil
+    }
+
+    private func desktopConversationShouldAttachWakeTriggeredVoiceFailedRequest(
+        _ wakeTriggeredVoiceFailedRequestAttachmentState: DesktopConversationWakeTriggeredVoiceFailedRequestAttachmentState?
+    ) -> Bool {
+        wakeTriggeredVoiceFailedRequestAttachmentState != nil
     }
 
     private func desktopConversationShouldAttachExplicitVoicePendingAttachment(
@@ -9364,6 +9465,35 @@ struct DesktopSessionShellView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
 
                 Text("This path does not add canonical runtime acceptance, local session authority, local search input, local search execution, local tool invocation controls, local provider selection, wake-listener authority, hidden/background wake behavior, or autonomous unlock.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+    }
+
+    private func desktopConversationWakeTriggeredVoiceFailedRequestAttachment(
+        _ state: DesktopConversationWakeTriggeredVoiceFailedRequestAttachmentState
+    ) -> some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Wake failed-request attachment")
+                    .font(.subheadline.weight(.semibold))
+
+                metadataRow(label: "failure_id", value: state.failureID)
+                metadataRow(label: "source_surface", value: state.sourceSurface)
+                metadataRow(label: "listener_state", value: state.listenerState)
+                metadataRow(label: "wake_trigger_phrase", value: state.wakeTriggerPhrase)
+                metadataRow(label: "failure_title", value: state.failureTitle)
+                metadataRow(label: "failure_summary", value: state.failureSummary)
+                metadataRow(label: "failure_detail", value: state.failureDetail)
+
+                Text("This path composes already-live exact wake local failed-request carriers only.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                Text("This path does not add canonical runtime acceptance, wake-listener control authority inline, local session authority, local search input, local search execution, local tool invocation controls, local provider selection, hidden/background wake behavior, or autonomous unlock.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
