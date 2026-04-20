@@ -3632,6 +3632,7 @@ struct DesktopConversationPrimaryPaneState: Identifiable, Equatable {
     let voiceState: String
     let timelineEntries: [DesktopConversationTimelineEntryState]
     let explicitVoiceLivePreviewAttachmentState: DesktopConversationExplicitVoiceLivePreviewAttachmentState?
+    let wakeTriggeredVoiceLivePreviewAttachmentState: DesktopConversationWakeTriggeredVoiceLivePreviewAttachmentState?
     let explicitVoicePendingAttachmentState: DesktopConversationExplicitVoicePendingAttachmentState?
     let wakeTriggeredVoicePendingAttachmentState: DesktopConversationWakeTriggeredVoicePendingAttachmentState?
     let readOnlyToolLaneState: DesktopConversationReadOnlyToolLaneState?
@@ -3647,6 +3648,7 @@ struct DesktopConversationPrimaryPaneState: Identifiable, Equatable {
             voiceState,
             timelineEntries.map(\.id).joined(separator: "|"),
             explicitVoiceLivePreviewAttachmentState?.id ?? "explicit_voice_live_preview_attachment_not_attached",
+            wakeTriggeredVoiceLivePreviewAttachmentState?.id ?? "wake_triggered_voice_live_preview_attachment_not_attached",
             explicitVoicePendingAttachmentState?.id ?? "explicit_voice_pending_attachment_not_attached",
             wakeTriggeredVoicePendingAttachmentState?.id ?? "wake_triggered_voice_pending_attachment_not_attached",
             readOnlyToolLaneState?.id ?? "read_only_tool_lane_not_attached",
@@ -3834,6 +3836,24 @@ struct DesktopConversationExplicitVoiceLivePreviewAttachmentState: Identifiable,
             sourceSurface,
             captureState,
             captureMode,
+            transcriptPosture,
+            transcriptBytes,
+        ].joined(separator: "::")
+    }
+}
+
+struct DesktopConversationWakeTriggeredVoiceLivePreviewAttachmentState: Identifiable, Equatable {
+    let sourceSurface: String
+    let listenerState: String
+    let wakeTriggerPhrase: String
+    let transcriptPosture: String
+    let transcriptBytes: String
+
+    var id: String {
+        [
+            sourceSurface,
+            listenerState,
+            wakeTriggerPhrase,
             transcriptPosture,
             transcriptBytes,
         ].joined(separator: "::")
@@ -5247,6 +5267,24 @@ struct DesktopSessionShellView: View {
             )
         }
 
+        let trimmedWakeTranscriptPreview = desktopWakeListenerController.transcriptPreview
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if desktopWakeListenerPromptState != nil,
+           desktopWakeListenerController.listenerState == .listening,
+           desktopWakeListenerController.pendingRequest == nil,
+           lastStagedWakeTriggeredVoiceTurnRequestState == nil,
+           !trimmedWakeTranscriptPreview.isEmpty {
+            timelineEntries.append(
+                DesktopConversationTimelineEntryState(
+                    speaker: "You",
+                    posture: "wake_voice_live_preview",
+                    body: trimmedWakeTranscriptPreview,
+                    detail: "Bounded wake live transcript preview only. Exact wake-prefix detection, canonical runtime acceptance, and later cloud-visible response remain authoritative.",
+                    sourceSurface: "WAKE_TRIGGERED_VOICE_LISTENING"
+                )
+            )
+        }
+
         if let pendingRequest = explicitVoiceController.pendingRequest {
             timelineEntries.append(
                 DesktopConversationTimelineEntryState(
@@ -5291,6 +5329,8 @@ struct DesktopSessionShellView: View {
 
         let explicitVoiceLivePreviewAttachmentState =
             desktopConversationExplicitVoiceLivePreviewAttachmentState(for: timelineEntries)
+        let wakeTriggeredVoiceLivePreviewAttachmentState =
+            desktopConversationWakeTriggeredVoiceLivePreviewAttachmentState(for: timelineEntries)
         let explicitVoicePendingAttachmentState =
             desktopConversationExplicitVoicePendingAttachmentState(for: timelineEntries)
         let wakeTriggeredVoicePendingAttachmentState =
@@ -5309,6 +5349,7 @@ struct DesktopSessionShellView: View {
             voiceState: desktopOperationalVoiceStateLabel,
             timelineEntries: timelineEntries,
             explicitVoiceLivePreviewAttachmentState: explicitVoiceLivePreviewAttachmentState,
+            wakeTriggeredVoiceLivePreviewAttachmentState: wakeTriggeredVoiceLivePreviewAttachmentState,
             explicitVoicePendingAttachmentState: explicitVoicePendingAttachmentState,
             wakeTriggeredVoicePendingAttachmentState: wakeTriggeredVoicePendingAttachmentState,
             readOnlyToolLaneState: readOnlyToolLaneState,
@@ -5471,6 +5512,35 @@ struct DesktopSessionShellView: View {
             captureMode: "foreground_only",
             transcriptPosture: "non_authoritative_live_preview",
             transcriptBytes: "\(trimmedExplicitVoiceTranscriptPreview.utf8.count)"
+        )
+    }
+
+    private func desktopConversationWakeTriggeredVoiceLivePreviewAttachmentState(
+        for timelineEntries: [DesktopConversationTimelineEntryState]
+    ) -> DesktopConversationWakeTriggeredVoiceLivePreviewAttachmentState? {
+        let trimmedWakeTranscriptPreview = desktopWakeListenerController.transcriptPreview
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard desktopReadyTimeHandoffIsActive,
+              latestSessionSuspendedVisibleContext == nil,
+              activeRecoveryDisplayState != .quarantinedLocalState,
+              let wakeListenerPromptState = desktopWakeListenerPromptState,
+              desktopWakeListenerController.listenerState == .listening,
+              desktopWakeListenerController.pendingRequest == nil,
+              lastStagedWakeTriggeredVoiceTurnRequestState == nil,
+              !trimmedWakeTranscriptPreview.isEmpty,
+              timelineEntries.contains(where: { entry in
+                  entry.posture == "wake_voice_live_preview"
+                      && entry.sourceSurface == "WAKE_TRIGGERED_VOICE_LISTENING"
+              }) else {
+            return nil
+        }
+
+        return DesktopConversationWakeTriggeredVoiceLivePreviewAttachmentState(
+            sourceSurface: "WAKE_TRIGGERED_VOICE_LISTENING",
+            listenerState: desktopWakeListenerController.listenerState.rawValue,
+            wakeTriggerPhrase: wakeListenerPromptState.wakeTriggerPhrase,
+            transcriptPosture: "non_authoritative_live_preview",
+            transcriptBytes: "\(trimmedWakeTranscriptPreview.utf8.count)"
         )
     }
 
@@ -8858,6 +8928,7 @@ struct DesktopSessionShellView: View {
                             desktopConversationTimelineEntryCard(
                                 entry,
                                 explicitVoiceLivePreviewAttachmentState: state.explicitVoiceLivePreviewAttachmentState,
+                                wakeTriggeredVoiceLivePreviewAttachmentState: state.wakeTriggeredVoiceLivePreviewAttachmentState,
                                 explicitVoicePendingAttachmentState: state.explicitVoicePendingAttachmentState,
                                 wakeTriggeredVoicePendingAttachmentState: state.wakeTriggeredVoicePendingAttachmentState,
                                 readOnlyToolLaneState: state.readOnlyToolLaneState,
@@ -8929,6 +9000,7 @@ struct DesktopSessionShellView: View {
     private func desktopConversationTimelineEntryCard(
         _ entry: DesktopConversationTimelineEntryState,
         explicitVoiceLivePreviewAttachmentState: DesktopConversationExplicitVoiceLivePreviewAttachmentState?,
+        wakeTriggeredVoiceLivePreviewAttachmentState: DesktopConversationWakeTriggeredVoiceLivePreviewAttachmentState?,
         explicitVoicePendingAttachmentState: DesktopConversationExplicitVoicePendingAttachmentState?,
         wakeTriggeredVoicePendingAttachmentState: DesktopConversationWakeTriggeredVoicePendingAttachmentState?,
         readOnlyToolLaneState: DesktopConversationReadOnlyToolLaneState?,
@@ -8971,6 +9043,17 @@ struct DesktopSessionShellView: View {
                    let explicitVoiceLivePreviewAttachmentState {
                     desktopConversationExplicitVoiceLivePreviewAttachment(
                         explicitVoiceLivePreviewAttachmentState
+                    )
+                }
+
+                if entry.posture == "wake_voice_live_preview",
+                   entry.sourceSurface == "WAKE_TRIGGERED_VOICE_LISTENING",
+                   desktopConversationShouldAttachWakeTriggeredVoiceLivePreview(
+                       wakeTriggeredVoiceLivePreviewAttachmentState
+                   ),
+                   let wakeTriggeredVoiceLivePreviewAttachmentState {
+                    desktopConversationWakeTriggeredVoiceLivePreviewAttachment(
+                        wakeTriggeredVoiceLivePreviewAttachmentState
                     )
                 }
 
@@ -9050,6 +9133,12 @@ struct DesktopSessionShellView: View {
         _ explicitVoiceLivePreviewAttachmentState: DesktopConversationExplicitVoiceLivePreviewAttachmentState?
     ) -> Bool {
         explicitVoiceLivePreviewAttachmentState != nil
+    }
+
+    private func desktopConversationShouldAttachWakeTriggeredVoiceLivePreview(
+        _ wakeTriggeredVoiceLivePreviewAttachmentState: DesktopConversationWakeTriggeredVoiceLivePreviewAttachmentState?
+    ) -> Bool {
+        wakeTriggeredVoiceLivePreviewAttachmentState != nil
     }
 
     private func desktopConversationShouldAttachExplicitVoicePendingAttachment(
@@ -9148,6 +9237,33 @@ struct DesktopSessionShellView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
 
                 Text("This path does not add canonical runtime acceptance, local session authority, local search input, local search execution, local tool invocation controls, local provider selection, wake-listener authority, hidden/background wake behavior, or autonomous unlock.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+    }
+
+    private func desktopConversationWakeTriggeredVoiceLivePreviewAttachment(
+        _ state: DesktopConversationWakeTriggeredVoiceLivePreviewAttachmentState
+    ) -> some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Wake live-preview attachment")
+                    .font(.subheadline.weight(.semibold))
+
+                metadataRow(label: "source_surface", value: state.sourceSurface)
+                metadataRow(label: "listener_state", value: state.listenerState)
+                metadataRow(label: "wake_trigger_phrase", value: state.wakeTriggerPhrase)
+                metadataRow(label: "transcript_posture", value: state.transcriptPosture)
+                metadataRow(label: "transcript_bytes", value: state.transcriptBytes)
+
+                Text("This path composes already-live exact foreground wake-listener transcript preview carriers only.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                Text("This path does not add canonical runtime acceptance, wake-listener control authority inline, local session authority, local search input, local search execution, local tool invocation controls, local provider selection, hidden/background wake behavior, or autonomous unlock.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
