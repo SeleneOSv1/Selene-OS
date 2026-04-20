@@ -179,11 +179,13 @@ It may only be updated from current repo truth, exact command results, and exact
   current native macOS shell now performs one explicit bounded multi-posture session-entry submission only when exact local ready-time handoff remains active and exactly one lawful route-specific session-entry prompt remains visible;
   current native macOS shell now dispatches only exact `/v1/session/attach` for exact current-visible attach posture or exact `/v1/session/resume` for exact soft-closed explicit resume posture or exact `/v1/session/recover` for exact suspended authoritative-reread recover posture while preserving already-live exact route-specific bounded fields;
   current native macOS shell now renders returned exact `session_state` and exact `session_attach_outcome` in bounded read-only form only outside the exact multi-posture control itself;
-  H296-H256 truth remains preserved exactly as already recorded, with no regression;
+  H297-H256 truth remains preserved exactly as already recorded, with no regression;
   current native macOS target now preserves bounded conversation-first search/tool completion rendering through exact `DesktopConversationSearchToolCompletionState`, exact `DesktopConversationPrimaryPaneState.searchToolCompletionState`, exact `desktopConversationSearchToolCompletionState`, exact `desktopConversationShouldAttachSearchToolCompletion`, and exact `desktopConversationSearchToolCompletionAttachment`;
+  current native macOS target now preserves bounded conversation-first authoritative-reply completion rendering through exact `DesktopConversationAuthoritativeReplyCompletionState`, exact `DesktopConversationPrimaryPaneState.authoritativeReplyCompletionState`, exact `desktopConversationAuthoritativeReplyCompletionState`, exact `desktopConversationShouldAttachAuthoritativeReplyCompletion`, and exact `desktopConversationAuthoritativeReplyCompletionAttachment`;
   current native macOS shell now renders one bounded cloud-authored search/tool completion attachment only when exact local ready-time handoff remains active, exact conversation-first operational shell posture remains lawful, and exact `FINAL_TOOL` / exact `dispatch_tool` completion posture remains present;
-  current native macOS shell now composes already-live exact canonical runtime outcome rows, exact authoritative reply text, exact provenance rows, exact cloud-authored source rows, exact read-only tool-lane rows, and exact bounded playback controls inside the conversation-first primary pane only;
-  current native macOS shell now preserves exact standalone canonical runtime outcome visibility for non-tool, dispatching, and failed runtime postures outside the exact inline search/tool completion attachment;
+  current native macOS shell now renders one bounded cloud-authored authoritative-reply completion attachment only when exact local ready-time handoff remains active, exact conversation-first operational shell posture remains lawful, exact completed canonical runtime posture remains present, exact H297 search/tool-completion state remains absent, and exact authoritative reply text remains present;
+  current native macOS shell now composes already-live exact canonical runtime outcome rows, exact authoritative reply text, exact bounded provenance rows, exact cloud-authored source rows when present, and exact bounded playback controls inside the conversation-first primary pane only for direct authoritative-reply completion posture;
+  current native macOS shell now preserves exact H297 search/tool completion attachment for exact `FINAL_TOOL` / exact `dispatch_tool` posture while preserving exact standalone canonical runtime outcome visibility for dispatching, failed, and completed postures without a lawful inline completion attachment;
   current native macOS shell continues to preserve the pre-ready onboarding-first shell when exact operational shell state is not lawful;
   broader desktop generic session attach / reopen mutation beyond the already-landed visible/resumable session-entry seam remains unimplemented;
   broader desktop backend pairing mutation remains unimplemented;
@@ -196,7 +198,7 @@ It may only be updated from current repo truth, exact command results, and exact
   APP_MAC_DESKTOP remains first-class but non-authority, wake-word or explicit-entry as designed, and cloud-authoritative;
   APP_MAC_DESKTOP remains `PARTIAL`;
   no wake parity claim and no autonomous unlock claim are introduced by this run;
-  no post-H297 next exact winner is published in this run.
+  no post-H298 next exact winner is published in this run.
 
 ## Canonical Separation Truth
 

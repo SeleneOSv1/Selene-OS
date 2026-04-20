@@ -3633,6 +3633,7 @@ struct DesktopConversationPrimaryPaneState: Identifiable, Equatable {
     let timelineEntries: [DesktopConversationTimelineEntryState]
     let readOnlyToolLaneState: DesktopConversationReadOnlyToolLaneState?
     let searchToolCompletionState: DesktopConversationSearchToolCompletionState?
+    let authoritativeReplyCompletionState: DesktopConversationAuthoritativeReplyCompletionState?
 
     var id: String {
         [
@@ -3643,6 +3644,7 @@ struct DesktopConversationPrimaryPaneState: Identifiable, Equatable {
             timelineEntries.map(\.id).joined(separator: "|"),
             readOnlyToolLaneState?.id ?? "read_only_tool_lane_not_attached",
             searchToolCompletionState?.id ?? "search_tool_completion_not_attached",
+            authoritativeReplyCompletionState?.id ?? "authoritative_reply_completion_not_attached",
         ].joined(separator: "::")
     }
 }
@@ -3725,6 +3727,55 @@ struct DesktopConversationSearchToolCompletionState: Identifiable, Equatable {
             cacheStatusLabel ?? "cache_status_not_available",
             sources.map(\.id).joined(separator: "|"),
             readOnlyToolLaneState.id,
+            playbackPhase,
+            playbackTitle,
+            playbackSummary,
+            playbackDetail,
+        ].joined(separator: "::")
+    }
+}
+
+struct DesktopConversationAuthoritativeReplyCompletionState: Identifiable, Equatable {
+    struct Source: Identifiable, Equatable {
+        let title: String
+        let url: String
+
+        var id: String {
+            "\(title)|\(url)"
+        }
+    }
+
+    let dispatchPhase: String
+    let requestID: String
+    let endpoint: String
+    let outcome: String
+    let nextMove: String
+    let reasonCode: String
+    let sessionID: String
+    let turnID: String
+    let authoritativeResponseText: String
+    let retrievedAtLabel: String?
+    let cacheStatusLabel: String?
+    let sources: [Source]
+    let playbackPhase: String
+    let playbackTitle: String
+    let playbackSummary: String
+    let playbackDetail: String
+
+    var id: String {
+        [
+            dispatchPhase,
+            requestID,
+            endpoint,
+            outcome,
+            nextMove,
+            reasonCode,
+            sessionID,
+            turnID,
+            authoritativeResponseText,
+            retrievedAtLabel ?? "retrieved_at_not_available",
+            cacheStatusLabel ?? "cache_status_not_available",
+            sources.map(\.id).joined(separator: "|"),
             playbackPhase,
             playbackTitle,
             playbackSummary,
@@ -5086,6 +5137,7 @@ struct DesktopSessionShellView: View {
 
         let searchToolCompletionState = desktopConversationSearchToolCompletionState
         let readOnlyToolLaneState = searchToolCompletionState?.readOnlyToolLaneState
+        let authoritativeReplyCompletionState = desktopConversationAuthoritativeReplyCompletionState
 
         return DesktopConversationPrimaryPaneState(
             dominantPosture: dominantPosture,
@@ -5094,7 +5146,8 @@ struct DesktopSessionShellView: View {
             voiceState: desktopOperationalVoiceStateLabel,
             timelineEntries: timelineEntries,
             readOnlyToolLaneState: readOnlyToolLaneState,
-            searchToolCompletionState: searchToolCompletionState
+            searchToolCompletionState: searchToolCompletionState,
+            authoritativeReplyCompletionState: authoritativeReplyCompletionState
         )
     }
 
@@ -5154,6 +5207,46 @@ struct DesktopSessionShellView: View {
             cacheStatusLabel: desktopAuthoritativeReplyProvenanceRenderState?.cacheStatusLabel,
             sources: searchToolCompletionSources,
             readOnlyToolLaneState: readOnlyToolLaneState,
+            playbackPhase: desktopAuthoritativeReplyPlaybackState.phase.rawValue,
+            playbackTitle: desktopAuthoritativeReplyPlaybackState.title,
+            playbackSummary: desktopAuthoritativeReplyPlaybackState.summary,
+            playbackDetail: desktopAuthoritativeReplyPlaybackState.detail
+        )
+    }
+
+    private var desktopConversationAuthoritativeReplyCompletionState: DesktopConversationAuthoritativeReplyCompletionState? {
+        guard desktopReadyTimeHandoffIsActive,
+              latestSessionSuspendedVisibleContext == nil,
+              activeRecoveryDisplayState != .quarantinedLocalState,
+              let outcomeState = desktopCanonicalRuntimeOutcomeState,
+              outcomeState.phase == .completed,
+              let authoritativeResponseText = desktopAuthoritativeReplyRenderState?.authoritativeResponseText?
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+              !authoritativeResponseText.isEmpty,
+              desktopConversationSearchToolCompletionState == nil else {
+            return nil
+        }
+
+        let authoritativeReplySources = desktopAuthoritativeReplyProvenanceRenderState?.sources.map {
+            DesktopConversationAuthoritativeReplyCompletionState.Source(
+                title: $0.title,
+                url: $0.url
+            )
+        } ?? []
+
+        return DesktopConversationAuthoritativeReplyCompletionState(
+            dispatchPhase: outcomeState.phase.rawValue,
+            requestID: outcomeState.requestID,
+            endpoint: outcomeState.endpoint,
+            outcome: outcomeState.outcome ?? "not_available",
+            nextMove: outcomeState.nextMove ?? "not_available",
+            reasonCode: outcomeState.reasonCode ?? "not_available",
+            sessionID: outcomeState.sessionID ?? "not_available",
+            turnID: outcomeState.turnID ?? "not_available",
+            authoritativeResponseText: authoritativeResponseText,
+            retrievedAtLabel: desktopAuthoritativeReplyProvenanceRenderState?.retrievedAtLabel,
+            cacheStatusLabel: desktopAuthoritativeReplyProvenanceRenderState?.cacheStatusLabel,
+            sources: authoritativeReplySources,
             playbackPhase: desktopAuthoritativeReplyPlaybackState.phase.rawValue,
             playbackTitle: desktopAuthoritativeReplyPlaybackState.title,
             playbackSummary: desktopAuthoritativeReplyPlaybackState.summary,
@@ -8446,6 +8539,9 @@ struct DesktopSessionShellView: View {
                 if let desktopCanonicalRuntimeOutcomeState,
                    !desktopConversationShouldAttachSearchToolCompletion(
                     state.searchToolCompletionState
+                   ),
+                   !desktopConversationShouldAttachAuthoritativeReplyCompletion(
+                    state.authoritativeReplyCompletionState
                    ) {
                     desktopCanonicalRuntimeOutcomeCard(desktopCanonicalRuntimeOutcomeState)
                 }
@@ -8461,7 +8557,8 @@ struct DesktopSessionShellView: View {
                             desktopConversationTimelineEntryCard(
                                 entry,
                                 readOnlyToolLaneState: state.readOnlyToolLaneState,
-                                searchToolCompletionState: state.searchToolCompletionState
+                                searchToolCompletionState: state.searchToolCompletionState,
+                                authoritativeReplyCompletionState: state.authoritativeReplyCompletionState
                             )
                         }
                     }
@@ -8521,7 +8618,8 @@ struct DesktopSessionShellView: View {
     private func desktopConversationTimelineEntryCard(
         _ entry: DesktopConversationTimelineEntryState,
         readOnlyToolLaneState: DesktopConversationReadOnlyToolLaneState?,
-        searchToolCompletionState: DesktopConversationSearchToolCompletionState?
+        searchToolCompletionState: DesktopConversationSearchToolCompletionState?,
+        authoritativeReplyCompletionState: DesktopConversationAuthoritativeReplyCompletionState?
     ) -> some View {
         let bubbleColor = entry.isUserAuthored
             ? Color.accentColor.opacity(0.12)
@@ -8554,7 +8652,8 @@ struct DesktopSessionShellView: View {
                 if desktopConversationShouldAttachAuthoritativeReplyArtifacts(to: entry) {
                     desktopConversationAuthoritativeReplyAttachment(
                         readOnlyToolLaneState: readOnlyToolLaneState,
-                        searchToolCompletionState: searchToolCompletionState
+                        searchToolCompletionState: searchToolCompletionState,
+                        authoritativeReplyCompletionState: authoritativeReplyCompletionState
                     )
                 }
             }
@@ -8606,15 +8705,25 @@ struct DesktopSessionShellView: View {
         searchToolCompletionState != nil
     }
 
+    private func desktopConversationShouldAttachAuthoritativeReplyCompletion(
+        _ authoritativeReplyCompletionState: DesktopConversationAuthoritativeReplyCompletionState?
+    ) -> Bool {
+        authoritativeReplyCompletionState != nil
+    }
+
     private func desktopConversationAuthoritativeReplyAttachment(
         readOnlyToolLaneState: DesktopConversationReadOnlyToolLaneState?,
-        searchToolCompletionState: DesktopConversationSearchToolCompletionState?
+        searchToolCompletionState: DesktopConversationSearchToolCompletionState?,
+        authoritativeReplyCompletionState: DesktopConversationAuthoritativeReplyCompletionState?
     ) -> some View {
         VStack(alignment: .leading, spacing: 12) {
                 Divider()
             if desktopConversationShouldAttachSearchToolCompletion(searchToolCompletionState),
                let searchToolCompletionState {
                 desktopConversationSearchToolCompletionAttachment(searchToolCompletionState)
+            } else if desktopConversationShouldAttachAuthoritativeReplyCompletion(authoritativeReplyCompletionState),
+                      let authoritativeReplyCompletionState {
+                desktopConversationAuthoritativeReplyCompletionAttachment(authoritativeReplyCompletionState)
             } else {
                 if let desktopAuthoritativeReplyProvenanceRenderState {
                     VStack(alignment: .leading, spacing: 8) {
@@ -8707,6 +8816,114 @@ struct DesktopSessionShellView: View {
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
+            }
+        }
+    }
+
+    private func desktopConversationAuthoritativeReplyCompletionAttachment(
+        _ state: DesktopConversationAuthoritativeReplyCompletionState
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Authoritative reply completion attachment")
+                    .font(.subheadline.weight(.semibold))
+
+                metadataRow(label: "dispatch_phase", value: state.dispatchPhase)
+                metadataRow(label: "request_id", value: state.requestID)
+                metadataRow(label: "endpoint", value: state.endpoint)
+                metadataRow(label: "outcome", value: state.outcome)
+                metadataRow(label: "next_move", value: state.nextMove)
+                metadataRow(label: "reason_code", value: state.reasonCode)
+                metadataRow(label: "session_id", value: state.sessionID)
+                metadataRow(label: "turn_id", value: state.turnID)
+
+                Text(state.authoritativeResponseText)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                Text("This path composes already-live cloud-authored canonical runtime outcome, authoritative reply, provenance, and playback carriers only. It does not add local search input, local search execution, local tool invocation controls, local provider selection, local session authority, hidden/background wake behavior, or autonomous unlock.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            Divider()
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Cloud-authored provenance")
+                    .font(.subheadline.weight(.semibold))
+
+                if let retrievedAtLabel = state.retrievedAtLabel {
+                    metadataRow(label: "retrieved_at", value: retrievedAtLabel)
+                }
+
+                if let cacheStatusLabel = state.cacheStatusLabel {
+                    metadataRow(label: "cache_status", value: cacheStatusLabel)
+                }
+
+                if state.sources.isEmpty {
+                    Text("No cloud-authored source rows were returned for this completed authoritative-reply posture.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                } else {
+                    ForEach(state.sources) { source in
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(source.title)
+                                .font(.subheadline.weight(.medium))
+
+                            if let sourceURL = URL(string: source.url) {
+                                Link(source.url, destination: sourceURL)
+                                    .font(.footnote)
+                            } else {
+                                Text(source.url)
+                                    .font(.footnote)
+                                    .foregroundStyle(.secondary)
+                                    .textSelection(.enabled)
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+            }
+
+            Divider()
+
+            VStack(alignment: .leading, spacing: 10) {
+                Text(state.playbackTitle)
+                    .font(.subheadline.weight(.semibold))
+
+                Text(state.playbackSummary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                Text(state.playbackDetail)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                HStack(spacing: 12) {
+                    Button("Play authoritative reply") {
+                        playAuthoritativeReply()
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(
+                        state.authoritativeResponseText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                            || state.playbackPhase == DesktopAuthoritativeReplyPlaybackState.Phase.speaking.rawValue
+                    )
+
+                    Button("Stop reply playback") {
+                        stopAuthoritativeReplyPlayback()
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(
+                        state.playbackPhase != DesktopAuthoritativeReplyPlaybackState.Phase.speaking.rawValue
+                    )
+                }
+
+                Text("User-triggered bounded reply playback only. No transcript mutation, no conversation-history mutation, no wake parity claim, and no autonomous-unlock claim are introduced by this surface.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
     }
