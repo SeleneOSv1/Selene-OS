@@ -122,9 +122,9 @@ use crate::ph1x::{Ph1xConfig, Ph1xRuntime};
 use crate::runtime_governance::{RuntimeGovernanceDecision, RuntimeGovernanceRuntime};
 use crate::runtime_law::{RuntimeLawDecision, RuntimeLawRuntime};
 use crate::runtime_session_foundation::{
-    PersistedSoftClosedSessionImport, PersistedSuspendedSessionImport,
-    RuntimeSessionFoundation, SessionCoordinationView, SessionFoundationError,
-    SessionFoundationSnapshot,
+    PersistedAttachableSessionImport, PersistedSoftClosedSessionImport,
+    PersistedSuspendedSessionImport, RuntimeSessionFoundation, SessionCoordinationView,
+    SessionFoundationError, SessionFoundationSnapshot,
 };
 use crate::simulation_executor::{
     simulation_id_for_intent_draft_v1, SimulationDispatchOutcome, SimulationExecutor,
@@ -555,6 +555,44 @@ pub struct AppOnboardingContinueOutcome {
 }
 
 #[derive(Debug, Clone)]
+pub struct AppSessionAttachRequest {
+    pub correlation_id: CorrelationId,
+    pub idempotency_key: String,
+    pub session_id: SessionId,
+    pub device_id: DeviceId,
+}
+
+impl AppSessionAttachRequest {
+    pub fn v1(
+        correlation_id: CorrelationId,
+        idempotency_key: String,
+        session_id: SessionId,
+        device_id: DeviceId,
+    ) -> Result<Self, ContractViolation> {
+        correlation_id.validate()?;
+        validate_ascii_token(
+            "app_session_attach_request.idempotency_key",
+            &idempotency_key,
+            128,
+        )?;
+        device_id.validate()?;
+        Ok(Self {
+            correlation_id,
+            idempotency_key,
+            session_id,
+            device_id,
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AppSessionAttachOutcome {
+    pub session_id: String,
+    pub session_state: SessionState,
+    pub session_attach_outcome: SessionAttachOutcome,
+}
+
+#[derive(Debug, Clone)]
 pub struct AppSessionResumeRequest {
     pub correlation_id: CorrelationId,
     pub idempotency_key: String,
@@ -696,6 +734,16 @@ fn session_resume_storage_error(
     })
 }
 
+fn session_attach_storage_error(
+    field: &'static str,
+    error: SessionFoundationError,
+) -> StorageError {
+    StorageError::ContractViolation(ContractViolation::InvalidValue {
+        field,
+        reason: error.reason_code,
+    })
+}
+
 fn session_recover_storage_error(
     field: &'static str,
     error: SessionFoundationError,
@@ -703,6 +751,30 @@ fn session_recover_storage_error(
     StorageError::ContractViolation(ContractViolation::InvalidValue {
         field,
         reason: error.reason_code,
+    })
+}
+
+fn session_attach_import_from_record(
+    record: &StoredSessionRecord,
+) -> Result<PersistedAttachableSessionImport, StorageError> {
+    let attached_devices = record
+        .attached_devices
+        .iter()
+        .map(|device_id| device_id.as_str().to_string())
+        .collect::<Vec<_>>();
+    let device_turn_sequences = record
+        .device_turn_sequences
+        .iter()
+        .map(|(device_id, sequence)| (device_id.as_str().to_string(), *sequence))
+        .collect::<BTreeMap<_, _>>();
+
+    Ok(PersistedAttachableSessionImport {
+        session_id: record.session_id,
+        persisted_session_state: record.session_state,
+        attached_devices,
+        last_attached_device_id: record.last_attached_device_id.as_str().to_string(),
+        last_turn_id: record.last_turn_id,
+        device_turn_sequences,
     })
 }
 
@@ -826,6 +898,68 @@ fn persist_resumed_session_record(
     resumed_record.device_turn_sequences = device_turn_sequences;
 
     store.upsert_session_lifecycle(resumed_record, Some(idempotency_key.to_string()))?;
+    Ok(())
+}
+
+fn persist_attached_session_record(
+    store: &mut Ph1fStore,
+    persisted_record: &StoredSessionRecord,
+    attached_device_id: &DeviceId,
+    snapshot: &SessionFoundationSnapshot,
+    coordination_view: &SessionCoordinationView,
+    now: MonotonicTimeNs,
+    idempotency_key: &str,
+) -> Result<(), StorageError> {
+    let attached_devices = snapshot
+        .attached_devices
+        .iter()
+        .map(|device_id| {
+            DeviceId::new(device_id.clone()).map_err(|_| {
+                StorageError::ContractViolation(ContractViolation::InvalidValue {
+                    field: "app_session_attach_outcome.attached_devices",
+                    reason: "must preserve valid device identifiers",
+                })
+            })
+        })
+        .collect::<Result<BTreeSet<_>, _>>()?;
+    let device_turn_sequences = snapshot
+        .device_timelines
+        .iter()
+        .map(|timeline| {
+            DeviceId::new(timeline.device_id.clone())
+                .map(|device_id| (device_id, timeline.highest_seen_sequence))
+                .map_err(|_| {
+                    StorageError::ContractViolation(ContractViolation::InvalidValue {
+                        field: "app_session_attach_outcome.device_turn_sequences",
+                        reason: "must preserve valid device identifiers",
+                    })
+                })
+        })
+        .collect::<Result<BTreeMap<_, _>, _>>()?;
+    let last_turn_id = snapshot
+        .device_timelines
+        .iter()
+        .map(|timeline| timeline.last_turn_id)
+        .max_by_key(|turn_id| turn_id.0)
+        .or(persisted_record.last_turn_id);
+
+    let mut attached_record = persisted_record.clone();
+    attached_record.session_state = snapshot.session_state;
+    attached_record.attached_devices = attached_devices;
+    attached_record.last_attached_device_id = attached_device_id.clone();
+    attached_record.last_activity_at = now;
+    attached_record.closed_at = None;
+    attached_record.last_turn_id = last_turn_id;
+    attached_record.active_turn_id = None;
+    attached_record.lease_owner_id = Some(coordination_view.owner_runtime_id.clone());
+    attached_record.lease_acquired_at = Some(now);
+    attached_record.lease_expires_at = Some(monotonic_time_ns_from_runtime_ms(
+        "app_session_attach_outcome.lease_expires_at_ms",
+        coordination_view.lease_expires_at_ms,
+    )?);
+    attached_record.device_turn_sequences = device_turn_sequences;
+
+    store.upsert_session_lifecycle(attached_record, Some(idempotency_key.to_string()))?;
     Ok(())
 }
 
@@ -4178,6 +4312,83 @@ impl AppServerIngressRuntime {
             dispatch_now,
         )?;
         Ok(out)
+    }
+
+    pub fn run_session_attach(
+        &self,
+        store: &mut Ph1fStore,
+        request: AppSessionAttachRequest,
+        now: MonotonicTimeNs,
+    ) -> Result<AppSessionAttachOutcome, StorageError> {
+        if now.0 == 0 {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "app_session_attach_request.now",
+                    reason: "must be > 0",
+                },
+            ));
+        }
+
+        let AppSessionAttachRequest {
+            correlation_id: _,
+            idempotency_key,
+            session_id,
+            device_id,
+        } = request;
+
+        let persisted_record =
+            store
+                .get_session(&session_id)
+                .cloned()
+                .ok_or(StorageError::ForeignKeyViolation {
+                    table: "sessions.session_id",
+                    key: session_id.0.to_string(),
+                })?;
+
+        let now_ms = i64::try_from(now.0 / 1_000_000).unwrap_or(i64::MAX);
+        let mut session_runtime = RuntimeSessionFoundation::default();
+        session_runtime.advance_logical_time_ms(now_ms);
+
+        let import = session_attach_import_from_record(&persisted_record)?;
+        session_runtime
+            .import_persisted_attachable_session(import)
+            .map_err(|error| {
+                session_attach_storage_error("app_session_attach_request.session_id", error)
+            })?;
+
+        let attached = session_runtime
+            .attach_session(session_id, device_id.clone())
+            .map_err(|error| {
+                session_attach_storage_error("app_session_attach_request.session_id", error)
+            })?;
+        let snapshot = session_runtime
+            .session_snapshot(session_id)
+            .map_err(|error| {
+                session_attach_storage_error("app_session_attach_request.session_id", error)
+            })?;
+        let coordination_view = session_runtime
+            .coordination_view(session_id)
+            .map_err(|error| {
+                session_attach_storage_error("app_session_attach_request.session_id", error)
+            })?;
+        persist_attached_session_record(
+            store,
+            &persisted_record,
+            &device_id,
+            &snapshot,
+            &coordination_view,
+            now,
+            &idempotency_key,
+        )?;
+
+        Ok(AppSessionAttachOutcome {
+            session_id: session_id.0.to_string(),
+            session_state: attached.projection.session_state,
+            session_attach_outcome: attached
+                .projection
+                .attach_outcome
+                .unwrap_or(SessionAttachOutcome::ExistingSessionReused),
+        })
     }
 
     pub fn run_session_resume(
@@ -8741,6 +8952,59 @@ mod tests {
             .unwrap();
     }
 
+    fn seed_attachable_session(
+        store: &mut Ph1fStore,
+        session_id: SessionId,
+        user_id: &UserId,
+        origin_device_id: &DeviceId,
+        attached_devices: &[DeviceId],
+        last_attached_device_id: &DeviceId,
+        last_turn_id: TurnId,
+        session_state: SessionState,
+    ) {
+        for device_id in attached_devices {
+            if store.get_device(device_id).is_none() {
+                store
+                    .insert_device(
+                        DeviceRecord::v1(
+                            device_id.clone(),
+                            user_id.clone(),
+                            "desktop".to_string(),
+                            MonotonicTimeNs(2),
+                            None,
+                        )
+                        .unwrap(),
+                    )
+                    .unwrap();
+            }
+        }
+
+        let mut record = StoredSessionRecord::v1(
+            session_id,
+            user_id.clone(),
+            origin_device_id.clone(),
+            session_state,
+            MonotonicTimeNs(10),
+            MonotonicTimeNs(20),
+            None,
+        )
+        .unwrap();
+        record.attached_devices = attached_devices.iter().cloned().collect();
+        record.last_attached_device_id = last_attached_device_id.clone();
+        record.last_turn_id = Some(last_turn_id);
+        record.device_turn_sequences = attached_devices
+            .iter()
+            .cloned()
+            .map(|device_id| (device_id, last_turn_id.0))
+            .collect();
+        store
+            .upsert_session_lifecycle(
+                record,
+                Some(format!("seed_attachable_session_{}", session_id.0)),
+            )
+            .unwrap();
+    }
+
     fn seed_suspended_session(
         store: &mut Ph1fStore,
         session_id: SessionId,
@@ -8791,6 +9055,69 @@ mod tests {
                 Some(format!("seed_suspended_session_{}", session_id.0)),
             )
             .unwrap();
+    }
+
+    #[test]
+    fn run_session_attach_from_active_session_returns_attached_outcome() {
+        let runtime = runtime_with_search_tool_fixtures();
+        let actor_user_id = UserId::new("tenant_1:session_attach_success_actor").unwrap();
+        let attached_device_id = DeviceId::new("session_attach_success_device").unwrap();
+        let existing_device_id = DeviceId::new("session_attach_existing_device").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &actor_user_id, &attached_device_id);
+        store
+            .insert_device(
+                DeviceRecord::v1(
+                    existing_device_id.clone(),
+                    actor_user_id.clone(),
+                    "desktop".to_string(),
+                    MonotonicTimeNs(2),
+                    None,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+
+        let session_id = SessionId(4_200);
+        seed_attachable_session(
+            &mut store,
+            session_id,
+            &actor_user_id,
+            &existing_device_id,
+            std::slice::from_ref(&existing_device_id),
+            &existing_device_id,
+            TurnId(76),
+            SessionState::Active,
+        );
+
+        let outcome = runtime
+            .run_session_attach(
+                &mut store,
+                AppSessionAttachRequest::v1(
+                    CorrelationId(91_000),
+                    "session_attach_success".to_string(),
+                    session_id,
+                    attached_device_id.clone(),
+                )
+                .expect("attach request must validate"),
+                MonotonicTimeNs(49_000_000),
+            )
+            .expect("active-session attach must succeed");
+
+        assert_eq!(outcome.session_id, session_id.0.to_string());
+        assert_eq!(outcome.session_state, SessionState::Active);
+        assert_eq!(
+            outcome.session_attach_outcome,
+            SessionAttachOutcome::ExistingSessionAttached
+        );
+
+        let persisted = store
+            .get_session(&session_id)
+            .expect("attached session must remain persisted");
+        assert_eq!(persisted.session_state, SessionState::Active);
+        assert_eq!(persisted.last_attached_device_id, attached_device_id);
+        assert_eq!(persisted.closed_at, None);
+        assert!(persisted.attached_devices.contains(&existing_device_id));
     }
 
     #[test]

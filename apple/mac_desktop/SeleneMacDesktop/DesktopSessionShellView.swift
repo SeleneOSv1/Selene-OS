@@ -3250,6 +3250,26 @@ struct DesktopSessionRecoverPromptState: Identifiable, Equatable {
     }
 }
 
+struct DesktopSessionAttachPromptState: Identifiable, Equatable {
+    let sourceSurfaceIdentity: String
+    let sessionState: String
+    let sessionID: String
+    let currentVisibleSessionAttachOutcome: String?
+    let turnID: String?
+    let deviceID: String
+
+    var id: String {
+        [
+            sourceSurfaceIdentity,
+            sessionState,
+            sessionID,
+            currentVisibleSessionAttachOutcome ?? "current_visible_session_attach_outcome_not_provided",
+            turnID ?? "turn_id_not_provided",
+            deviceID,
+        ].joined(separator: "::")
+    }
+}
+
 struct DesktopSessionMultiPostureResumePromptState: Identifiable, Equatable {
     let resumeMode: DesktopSessionMultiPostureResumeMode
     let sourceSurfaceIdentity: String
@@ -4049,6 +4069,7 @@ struct DesktopSessionShellView: View {
     @State private var desktopWakeEnrollSampleCommitRuntimeOutcomeState: DesktopWakeEnrollSampleCommitRuntimeOutcomeState?
     @State private var desktopWakeEnrollCompleteCommitRuntimeOutcomeState: DesktopWakeEnrollCompleteCommitRuntimeOutcomeState?
     @State private var desktopWakeEnrollDeferCommitRuntimeOutcomeState: DesktopWakeEnrollDeferCommitRuntimeOutcomeState?
+    @State private var desktopSessionAttachRuntimeOutcomeState: DesktopSessionAttachRuntimeOutcomeState?
     @State private var desktopSessionMultiPostureResumeRuntimeOutcomeState: DesktopSessionMultiPostureResumeRuntimeOutcomeState?
     @State private var desktopPairingCompletionLocalOutcomeState: DesktopPairingCompletionLocalOutcomeState?
     @State private var desktopReadyTimeHandoffState: DesktopReadyTimeHandoffState?
@@ -4232,6 +4253,7 @@ struct DesktopSessionShellView: View {
                     desktopPairingCompletionVisibilityCard
                     desktopPairingCompletionMutationCard
                 }
+                desktopSessionAttachCard
                 desktopSessionSoftClosedVisibilityCard
                 desktopSessionMultiPostureResumeCard
                 desktopSessionSuspendedVisibilityCard
@@ -5437,6 +5459,40 @@ struct DesktopSessionShellView: View {
         }
 
         return desktopReadyTimeHandoffState.matches(promptState)
+    }
+
+    private var desktopSessionAttachPromptState: DesktopSessionAttachPromptState? {
+        guard desktopReadyTimeHandoffIsActive,
+              desktopSessionMultiPostureResumePromptState == nil,
+              let activeRecoveryVisibleSurface,
+              let deviceID = desktopManagedPrimaryDeviceID else {
+            return nil
+        }
+
+        switch activeRecoveryVisibleSurface {
+        case .sessionHeader(let context):
+            return DesktopSessionAttachPromptState(
+                sourceSurfaceIdentity: "SESSION_OPEN_VISIBLE",
+                sessionState: context.sessionState,
+                sessionID: context.sessionID,
+                currentVisibleSessionAttachOutcome: context.sessionAttachOutcome,
+                turnID: nil,
+                deviceID: deviceID
+            )
+
+        case .sessionActive(let context):
+            return DesktopSessionAttachPromptState(
+                sourceSurfaceIdentity: "SESSION_ACTIVE_VISIBLE",
+                sessionState: context.sessionState,
+                sessionID: context.sessionID,
+                currentVisibleSessionAttachOutcome: context.sessionAttachOutcome,
+                turnID: context.turnID,
+                deviceID: deviceID
+            )
+
+        case .sessionSoftClosed:
+            return nil
+        }
     }
 
     private var desktopSessionSoftClosedVisibilityState: DesktopSessionSoftClosedVisibilityState? {
@@ -8254,6 +8310,7 @@ struct DesktopSessionShellView: View {
             desktopWakeListenerControlCard
             posturePanel
             historyCard
+            desktopSessionAttachCard
             desktopSessionSoftClosedVisibilityCard
             desktopSessionMultiPostureResumeCard
             desktopSessionSuspendedVisibilityCard
@@ -8586,6 +8643,134 @@ struct DesktopSessionShellView: View {
                     }
                 } label: {
                     Text("Session Soft-Closed Visibility")
+                        .font(.headline)
+                }
+            }
+        }
+    }
+
+    private var desktopSessionAttachCard: some View {
+        let promptState = desktopSessionAttachPromptState
+        let activeRuntimeOutcomeState: DesktopSessionAttachRuntimeOutcomeState? = {
+            guard let desktopSessionAttachRuntimeOutcomeState else {
+                return nil
+            }
+
+            guard let promptState else {
+                return desktopSessionAttachRuntimeOutcomeState
+            }
+
+            return desktopSessionAttachRuntimeOutcomeState.sourceSurfaceIdentity == promptState.sourceSurfaceIdentity
+                && desktopSessionAttachRuntimeOutcomeState.sessionID == promptState.sessionID
+                && desktopSessionAttachRuntimeOutcomeState.deviceID == promptState.deviceID
+                && desktopSessionAttachRuntimeOutcomeState.turnID == promptState.turnID
+                ? desktopSessionAttachRuntimeOutcomeState
+                : nil
+        }()
+        let displayedSourceSurface = activeRuntimeOutcomeState?.sourceSurfaceIdentity
+            ?? promptState?.sourceSurfaceIdentity
+            ?? "not_provided"
+        let displayedSessionState = activeRuntimeOutcomeState?.sessionState
+            ?? promptState?.sessionState
+            ?? "not_provided"
+        let displayedSessionID = activeRuntimeOutcomeState?.sessionID
+            ?? promptState?.sessionID
+            ?? "not_provided"
+        let displayedDeviceID = activeRuntimeOutcomeState?.deviceID
+            ?? promptState?.deviceID
+            ?? desktopManagedPrimaryDeviceID
+            ?? "not_provided"
+        let displayedCurrentVisibleSessionAttachOutcome = activeRuntimeOutcomeState?.currentVisibleSessionAttachOutcome
+            ?? promptState?.currentVisibleSessionAttachOutcome
+        let displayedTurnID = activeRuntimeOutcomeState?.turnID ?? promptState?.turnID
+
+        return Group {
+            if promptState != nil || activeRuntimeOutcomeState != nil {
+                GroupBox {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("Bounded desktop current-visible session attach submission only. This shell derives one bounded prompt state from the already-live exact current visible session surface only, dispatches only exact `/v1/session/attach`, and keeps returned exact `session_state` plus exact `session_attach_outcome` read-only only outside the exact attach control itself.")
+                            .frame(maxWidth: .infinity, alignment: .leading)
+
+                        ForEach(
+                            [
+                                ("source_surface", displayedSourceSurface),
+                                ("session_state", displayedSessionState),
+                                ("session_id", displayedSessionID),
+                                ("device_id", displayedDeviceID),
+                            ],
+                            id: \.0
+                        ) { row in
+                            metadataRow(label: row.0, value: row.1)
+                        }
+
+                        if let displayedCurrentVisibleSessionAttachOutcome {
+                            metadataRow(
+                                label: "current_visible_session_attach_outcome",
+                                value: displayedCurrentVisibleSessionAttachOutcome
+                            )
+                        }
+
+                        if displayedSourceSurface == "SESSION_ACTIVE_VISIBLE",
+                           let displayedTurnID {
+                            metadataRow(label: "turn_id", value: displayedTurnID)
+                        }
+
+                        Text("This exact surface performs one bounded current-visible session attach submission only. No local reopen authority, no local conversation selection, no local search controls, no local tool invocation controls, no hidden/background wake behavior, and no autonomous unlock are introduced by this shell.")
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+
+                        if let promptState {
+                            Button("Attach to the visible session") {
+                                Task {
+                                    await submitDesktopSessionAttach(promptState: promptState)
+                                }
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .disabled(activeRuntimeOutcomeState?.phase == .dispatching)
+                        }
+
+                        if let activeRuntimeOutcomeState {
+                            Divider()
+
+                            Text(activeRuntimeOutcomeState.title)
+                                .font(.headline)
+
+                            ForEach(
+                                [
+                                    ("dispatch_phase", activeRuntimeOutcomeState.phase.rawValue),
+                                    ("request_id", activeRuntimeOutcomeState.requestID),
+                                    ("endpoint", activeRuntimeOutcomeState.endpoint),
+                                    ("outcome", activeRuntimeOutcomeState.outcome ?? "not_available"),
+                                    ("reason", activeRuntimeOutcomeState.reason ?? "not_available"),
+                                    ("session_id", activeRuntimeOutcomeState.sessionID),
+                                    ("session_state", activeRuntimeOutcomeState.sessionState),
+                                    ("session_attach_outcome", activeRuntimeOutcomeState.sessionAttachOutcome ?? "not_available"),
+                                ],
+                                id: \.0
+                            ) { row in
+                                metadataRow(label: row.0, value: row.1)
+                            }
+
+                            Text(activeRuntimeOutcomeState.summary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+
+                            Text(activeRuntimeOutcomeState.detail)
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        } else if promptState != nil {
+                            Text("Awaiting explicit user-triggered canonical current-visible session attach through the bounded attach control. After submission, any returned exact `session_state` and exact `session_attach_outcome` remain bounded read-only only in this shell.")
+                                .foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+
+                        Text("Cloud-authored, session-bound, and non-authoritative only. This path does not add local reopen authority, conversation-list selection, keyboard text entry, local search controls, local tool controls, hidden/background wake behavior, wake parity claims, or autonomous unlock.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                } label: {
+                    Text("Current-Visible Session Attach")
                         .font(.headline)
                 }
             }
@@ -11941,6 +12126,54 @@ struct DesktopSessionShellView: View {
                 endpoint: desktopCanonicalRuntimeBridge.wakeProfileAvailabilityEndpoint,
                 requestID: "unavailable",
                 summary: "The canonical wake-profile availability bridge could not stage this bounded desktop wake-profile local-availability refresh request.",
+                detail: error.localizedDescription
+            )
+        }
+    }
+
+    @MainActor
+    private func submitDesktopSessionAttach(
+        promptState: DesktopSessionAttachPromptState
+    ) async {
+        guard desktopSessionAttachPromptState?.id == promptState.id else {
+            desktopSessionAttachRuntimeOutcomeState = .failed(
+                sourceSurfaceIdentity: promptState.sourceSurfaceIdentity,
+                sessionState: promptState.sessionState,
+                sessionID: promptState.sessionID,
+                currentVisibleSessionAttachOutcome: promptState.currentVisibleSessionAttachOutcome,
+                turnID: promptState.turnID,
+                deviceID: promptState.deviceID,
+                endpoint: desktopCanonicalRuntimeBridge.sessionAttachEndpoint,
+                requestID: "unavailable",
+                summary: "The current-visible session-attach prompt disappeared before dispatch.",
+                detail: "This shell fails closed when the exact lawful current-visible session-attach prompt no longer remains available before canonical dispatch can begin."
+            )
+            return
+        }
+
+        do {
+            let ingressContext = try desktopCanonicalRuntimeBridge.desktopSessionAttachRequestBuilder(
+                promptState
+            )
+            desktopSessionAttachRuntimeOutcomeState = .dispatching(
+                ingressContext: ingressContext
+            )
+
+            let outcomeState = await desktopCanonicalRuntimeBridge.submitDesktopSessionAttach(
+                ingressContext
+            )
+            desktopSessionAttachRuntimeOutcomeState = outcomeState
+        } catch {
+            desktopSessionAttachRuntimeOutcomeState = .failed(
+                sourceSurfaceIdentity: promptState.sourceSurfaceIdentity,
+                sessionState: promptState.sessionState,
+                sessionID: promptState.sessionID,
+                currentVisibleSessionAttachOutcome: promptState.currentVisibleSessionAttachOutcome,
+                turnID: promptState.turnID,
+                deviceID: promptState.deviceID,
+                endpoint: desktopCanonicalRuntimeBridge.sessionAttachEndpoint,
+                requestID: "unavailable",
+                summary: "The canonical session-attach bridge could not stage this bounded desktop current-visible session attach request.",
                 detail: error.localizedDescription
             )
         }

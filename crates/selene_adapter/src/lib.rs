@@ -118,7 +118,8 @@ use selene_kernel_contracts::{
 use selene_os::app_ingress::{
     AppInviteLinkOpenRequest, AppOnboardingContinueAction, AppOnboardingContinueNextStep,
     AppOnboardingContinueRequest, AppServerIngressRuntime,
-    AppSessionRecoverRequest, AppSessionResumeRequest, AppVoiceIngressRequest,
+    AppSessionAttachRequest, AppSessionRecoverRequest, AppSessionResumeRequest,
+    AppVoiceIngressRequest,
     AppVoicePh1xBuildInput, AppVoiceTurnExecutionOutcome, AppVoiceTurnNextMove,
     AppWakeProfileAvailabilityRefreshRequest,
 };
@@ -617,6 +618,24 @@ pub struct OnboardingContinueAdapterResponse {
     pub voice_artifact_sync_receipt_ref: Option<String>,
     pub access_engine_instance_id: Option<String>,
     pub onboarding_status: Option<String>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct SessionAttachAdapterRequest {
+    pub correlation_id: u64,
+    pub idempotency_key: String,
+    pub session_id: String,
+    pub device_id: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct SessionAttachAdapterResponse {
+    pub status: String,
+    pub outcome: String,
+    pub reason: Option<String>,
+    pub session_id: Option<String>,
+    pub session_state: Option<String>,
+    pub session_attach_outcome: Option<String>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -1586,6 +1605,48 @@ impl AdapterRuntime {
         Ok(SessionResumeAdapterResponse {
             status: "ok".to_string(),
             outcome: "SESSION_RESUMED".to_string(),
+            reason: None,
+            session_id: Some(outcome.session_id),
+            session_state: Some(session_state_to_api_value(outcome.session_state)),
+            session_attach_outcome: Some(session_attach_outcome_to_api_value(
+                outcome.session_attach_outcome,
+            )),
+        })
+    }
+
+    pub fn run_session_attach(
+        &self,
+        request: SessionAttachAdapterRequest,
+    ) -> Result<SessionAttachAdapterResponse, String> {
+        let correlation_id = CorrelationId(u128::from(request.correlation_id));
+        let session_id = request
+            .session_id
+            .parse::<u128>()
+            .map(SessionId)
+            .map_err(|err| format!("invalid session_id: {err}"))?;
+        let device_id = DeviceId::new(request.device_id.clone())
+            .map_err(|err| format!("invalid device_id: {err:?}"))?;
+        let ingress_request = AppSessionAttachRequest::v1(
+            correlation_id,
+            request.idempotency_key,
+            session_id,
+            device_id,
+        )
+        .map_err(|err| format!("invalid session_attach request: {err:?}"))?;
+
+        let mut store = self
+            .store
+            .lock()
+            .map_err(|_| "adapter store lock poisoned".to_string())?;
+        let now = MonotonicTimeNs(system_time_now_ns().max(1));
+        let outcome = self
+            .ingress
+            .run_session_attach(&mut store, ingress_request, now)
+            .map_err(storage_error_to_string)?;
+
+        Ok(SessionAttachAdapterResponse {
+            status: "ok".to_string(),
+            outcome: "SESSION_ATTACHED".to_string(),
             reason: None,
             session_id: Some(outcome.session_id),
             session_state: Some(session_state_to_api_value(outcome.session_state)),

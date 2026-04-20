@@ -1542,6 +1542,121 @@ struct DesktopWakeEnrollDeferCommitRuntimeOutcomeState: Identifiable, Equatable 
     }
 }
 
+struct DesktopSessionAttachRuntimeOutcomeState: Identifiable, Equatable {
+    enum Phase: String, Equatable {
+        case dispatching = "dispatching"
+        case completed = "completed"
+        case failed = "failed"
+    }
+
+    let id: String
+    let phase: Phase
+    let title: String
+    let summary: String
+    let detail: String
+    let endpoint: String
+    let requestID: String
+    let sourceSurfaceIdentity: String
+    let sessionState: String
+    let sessionID: String
+    let currentVisibleSessionAttachOutcome: String?
+    let turnID: String?
+    let deviceID: String
+    let outcome: String?
+    let reason: String?
+    let sessionAttachOutcome: String?
+
+    static func dispatching(
+        ingressContext: DesktopCanonicalRuntimeBridge.DesktopSessionAttachIngressContext
+    ) -> DesktopSessionAttachRuntimeOutcomeState {
+        DesktopSessionAttachRuntimeOutcomeState(
+            id: ingressContext.requestID,
+            phase: .dispatching,
+            title: "Dispatching desktop current-visible session attach",
+            summary: "The bounded desktop current-visible session attach request is now being handed into canonical `/v1/session/attach`.",
+            detail: "Only exact current-visible session attach is in scope here. This shell remains explicitly non-authoritative and does not introduce local reopen authority, conversation selection, search or tool controls, hidden/background wake behavior, or autonomous unlock.",
+            endpoint: ingressContext.endpoint,
+            requestID: ingressContext.requestID,
+            sourceSurfaceIdentity: ingressContext.sourceSurfaceIdentity,
+            sessionState: ingressContext.sessionState,
+            sessionID: ingressContext.sessionID,
+            currentVisibleSessionAttachOutcome: ingressContext.currentVisibleSessionAttachOutcome,
+            turnID: ingressContext.turnID,
+            deviceID: ingressContext.deviceID,
+            outcome: nil,
+            reason: nil,
+            sessionAttachOutcome: nil
+        )
+    }
+
+    static func completed(
+        requestID: String,
+        endpoint: String,
+        response: DesktopCanonicalRuntimeBridge.SessionAttachAdapterResponsePayload,
+        fallbackSourceSurfaceIdentity: String,
+        fallbackSessionState: String,
+        fallbackSessionID: String,
+        fallbackCurrentVisibleSessionAttachOutcome: String?,
+        fallbackTurnID: String?,
+        fallbackDeviceID: String
+    ) -> DesktopSessionAttachRuntimeOutcomeState {
+        let boundedSessionState = boundedOnboardingContinueField(response.sessionState)
+        let boundedAttachOutcome = boundedOnboardingContinueField(response.sessionAttachOutcome)
+
+        return DesktopSessionAttachRuntimeOutcomeState(
+            id: requestID,
+            phase: .completed,
+            title: "Desktop current-visible session attach completed",
+            summary: "Canonical `/v1/session/attach` accepted the bounded desktop current-visible session attach request and returned updated session posture.",
+            detail: "Read-only returned posture only. This shell preserves exact returned `session_state` and exact `session_attach_outcome` without introducing local reopen authority, conversation selection, search or tool controls, hidden/background wake behavior, or autonomous unlock.",
+            endpoint: endpoint,
+            requestID: requestID,
+            sourceSurfaceIdentity: fallbackSourceSurfaceIdentity,
+            sessionState: boundedSessionState ?? fallbackSessionState,
+            sessionID: boundedOnboardingContinueField(response.sessionID) ?? fallbackSessionID,
+            currentVisibleSessionAttachOutcome: fallbackCurrentVisibleSessionAttachOutcome,
+            turnID: fallbackTurnID,
+            deviceID: fallbackDeviceID,
+            outcome: boundedOnboardingContinueField(response.outcome) ?? "SESSION_ATTACHED",
+            reason: boundedOnboardingContinueField(response.reason),
+            sessionAttachOutcome: boundedAttachOutcome
+        )
+    }
+
+    static func failed(
+        sourceSurfaceIdentity: String,
+        sessionState: String,
+        sessionID: String,
+        currentVisibleSessionAttachOutcome: String?,
+        turnID: String?,
+        deviceID: String,
+        endpoint: String,
+        requestID: String,
+        summary: String,
+        detail: String,
+        reason: String? = nil
+    ) -> DesktopSessionAttachRuntimeOutcomeState {
+        DesktopSessionAttachRuntimeOutcomeState(
+            id: requestID,
+            phase: .failed,
+            title: "Desktop current-visible session attach failed",
+            summary: summary,
+            detail: detail,
+            endpoint: endpoint,
+            requestID: requestID,
+            sourceSurfaceIdentity: sourceSurfaceIdentity,
+            sessionState: sessionState,
+            sessionID: sessionID,
+            currentVisibleSessionAttachOutcome: currentVisibleSessionAttachOutcome,
+            turnID: turnID,
+            deviceID: deviceID,
+            outcome: nil,
+            reason: reason,
+            sessionAttachOutcome: nil
+        )
+    }
+}
+
 struct DesktopSessionSoftClosedResumeRuntimeOutcomeState: Identifiable, Equatable {
     enum Phase: String, Equatable {
         case dispatching = "dispatching"
@@ -2631,6 +2746,7 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
         case invalidWakeEnrollSampleCommitRequest(String)
         case invalidWakeEnrollCompleteCommitRequest(String)
         case invalidWakeEnrollDeferCommitRequest(String)
+        case invalidSessionAttachRequest(String)
         case invalidSessionMultiPostureResumeRequest(String)
         case invalidSessionSoftClosedResumeRequest(String)
         case invalidSessionRecoverRequest(String)
@@ -2659,6 +2775,7 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
                  .invalidWakeEnrollSampleCommitRequest(let detail),
                  .invalidWakeEnrollCompleteCommitRequest(let detail),
                  .invalidWakeEnrollDeferCommitRequest(let detail),
+                 .invalidSessionAttachRequest(let detail),
                  .invalidSessionMultiPostureResumeRequest(let detail),
                  .invalidSessionSoftClosedResumeRequest(let detail),
                  .invalidSessionRecoverRequest(let detail),
@@ -2783,6 +2900,18 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
 
     struct DesktopWakeEnrollDeferCommitIngressContext {
         let onboardingSessionID: String
+        let deviceID: String
+        let requestID: String
+        let endpoint: String
+        let urlRequest: URLRequest
+    }
+
+    struct DesktopSessionAttachIngressContext {
+        let sourceSurfaceIdentity: String
+        let sessionState: String
+        let sessionID: String
+        let currentVisibleSessionAttachOutcome: String?
+        let turnID: String?
         let deviceID: String
         let requestID: String
         let endpoint: String
@@ -2916,6 +3045,15 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
     }
 
     struct SessionResumeAdapterResponsePayload: Decodable {
+        let status: String
+        let outcome: String
+        let reason: String?
+        let sessionID: String?
+        let sessionState: String?
+        let sessionAttachOutcome: String?
+    }
+
+    struct SessionAttachAdapterResponsePayload: Decodable {
         let status: String
         let outcome: String
         let reason: String?
@@ -3099,6 +3237,13 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
     }
 
     private struct SessionResumeAdapterRequestPayload: Encodable {
+        let correlationID: UInt64
+        let idempotencyKey: String
+        let sessionID: String
+        let deviceID: String
+    }
+
+    private struct SessionAttachAdapterRequestPayload: Encodable {
         let correlationID: UInt64
         let idempotencyKey: String
         let sessionID: String
@@ -3424,6 +3569,28 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
                 endpoint: onboardingContinueEndpoint,
                 requestID: "unavailable",
                 summary: "The canonical onboarding-continue bridge could not stage this bounded desktop wake-enroll defer-commit request.",
+                detail: error.localizedDescription
+            )
+        }
+    }
+
+    func submitDesktopSessionAttach(
+        _ promptState: DesktopSessionAttachPromptState
+    ) async -> DesktopSessionAttachRuntimeOutcomeState {
+        do {
+            let ingressContext = try desktopSessionAttachRequestBuilder(promptState)
+            return await submitDesktopSessionAttach(ingressContext)
+        } catch {
+            return .failed(
+                sourceSurfaceIdentity: promptState.sourceSurfaceIdentity,
+                sessionState: promptState.sessionState,
+                sessionID: promptState.sessionID,
+                currentVisibleSessionAttachOutcome: promptState.currentVisibleSessionAttachOutcome,
+                turnID: promptState.turnID,
+                deviceID: promptState.deviceID,
+                endpoint: sessionAttachEndpoint,
+                requestID: "unavailable",
+                summary: "The canonical session-attach bridge could not stage this bounded desktop current-visible session attach request.",
                 detail: error.localizedDescription
             )
         }
@@ -4218,6 +4385,63 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
                 endpoint: ingressContext.endpoint,
                 requestID: ingressContext.requestID,
                 summary: "The canonical onboarding-continue bridge could not deliver this bounded desktop wake-enroll defer-commit request.",
+                detail: error.localizedDescription
+            )
+        }
+    }
+
+    func submitDesktopSessionAttach(
+        _ ingressContext: DesktopSessionAttachIngressContext
+    ) async -> DesktopSessionAttachRuntimeOutcomeState {
+        do {
+            try await ensureAdapterAvailable()
+
+            let (data, response) = try await urlSession.data(for: ingressContext.urlRequest)
+            let decoder = JSONDecoder()
+            decoder.keyDecodingStrategy = .convertFromSnakeCase
+            let httpResponse = response as? HTTPURLResponse
+            let statusCode = httpResponse?.statusCode ?? 0
+            let payload = try decoder.decode(SessionAttachAdapterResponsePayload.self, from: data)
+
+            if statusCode == 200,
+               payload.status.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "ok" {
+                return .completed(
+                    requestID: ingressContext.requestID,
+                    endpoint: ingressContext.endpoint,
+                    response: payload,
+                    fallbackSourceSurfaceIdentity: ingressContext.sourceSurfaceIdentity,
+                    fallbackSessionState: ingressContext.sessionState,
+                    fallbackSessionID: ingressContext.sessionID,
+                    fallbackCurrentVisibleSessionAttachOutcome: ingressContext.currentVisibleSessionAttachOutcome,
+                    fallbackTurnID: ingressContext.turnID,
+                    fallbackDeviceID: ingressContext.deviceID
+                )
+            }
+
+            return .failed(
+                sourceSurfaceIdentity: ingressContext.sourceSurfaceIdentity,
+                sessionState: ingressContext.sessionState,
+                sessionID: ingressContext.sessionID,
+                currentVisibleSessionAttachOutcome: ingressContext.currentVisibleSessionAttachOutcome,
+                turnID: ingressContext.turnID,
+                deviceID: ingressContext.deviceID,
+                endpoint: ingressContext.endpoint,
+                requestID: ingressContext.requestID,
+                summary: "The canonical session-attach bridge rejected or failed this bounded desktop current-visible session attach request.",
+                detail: "Canonical `/v1/session/attach` failed closed with outcome `\(payload.outcome)` and reason `\(boundedOnboardingContinueField(payload.reason) ?? "not_provided")`. This shell remains limited to exact current-visible session attach submission and does not widen into local reopen authority, conversation selection, search or tool controls, hidden/background wake behavior, or autonomous unlock.",
+                reason: boundedOnboardingContinueField(payload.reason)
+            )
+        } catch {
+            return .failed(
+                sourceSurfaceIdentity: ingressContext.sourceSurfaceIdentity,
+                sessionState: ingressContext.sessionState,
+                sessionID: ingressContext.sessionID,
+                currentVisibleSessionAttachOutcome: ingressContext.currentVisibleSessionAttachOutcome,
+                turnID: ingressContext.turnID,
+                deviceID: ingressContext.deviceID,
+                endpoint: ingressContext.endpoint,
+                requestID: ingressContext.requestID,
+                summary: "The canonical session-attach bridge could not deliver this bounded desktop current-visible session attach request.",
                 detail: error.localizedDescription
             )
         }
@@ -5797,6 +6021,94 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
         )
     }
 
+    func desktopSessionAttachRequestBuilder(
+        _ promptState: DesktopSessionAttachPromptState
+    ) throws -> DesktopSessionAttachIngressContext {
+        guard let sourceSurfaceIdentity = boundedOnboardingContinueField(promptState.sourceSurfaceIdentity),
+              ["SESSION_OPEN_VISIBLE", "SESSION_ACTIVE_VISIBLE"].contains(sourceSurfaceIdentity) else {
+            throw BridgeError.invalidSessionAttachRequest(
+                "bounded desktop current-visible session attach must preserve exact `SESSION_OPEN_VISIBLE` or exact `SESSION_ACTIVE_VISIBLE` source surface identity"
+            )
+        }
+
+        guard let sessionState = boundedOnboardingContinueField(promptState.sessionState),
+              ["OPEN", "ACTIVE"].contains(sessionState) else {
+            throw BridgeError.invalidSessionAttachRequest(
+                "bounded desktop current-visible session attach is only lawful when canonical session posture remains exact `OPEN` or exact `ACTIVE`"
+            )
+        }
+
+        guard let sessionID = boundedOnboardingContinueField(promptState.sessionID) else {
+            throw BridgeError.invalidSessionAttachRequest(
+                "the bounded desktop current-visible session attach prompt state did not preserve a lawful session_id"
+            )
+        }
+
+        guard let managedDeviceID = boundedOnboardingContinueField(deviceID),
+              let promptDeviceID = boundedOnboardingContinueField(promptState.deviceID),
+              promptDeviceID == managedDeviceID else {
+            throw BridgeError.invalidSessionAttachRequest(
+                "bounded desktop current-visible session attach must preserve the exact managed bridge `deviceID` only"
+            )
+        }
+
+        let boundedTurnID = boundedOnboardingContinueField(promptState.turnID)
+        if sourceSurfaceIdentity == "SESSION_OPEN_VISIBLE", boundedTurnID != nil {
+            throw BridgeError.invalidSessionAttachRequest(
+                "bounded desktop current-visible session attach cannot preserve `turn_id` while exact `SESSION_OPEN_VISIBLE` is selected"
+            )
+        }
+        if sourceSurfaceIdentity == "SESSION_ACTIVE_VISIBLE", boundedTurnID == nil {
+            throw BridgeError.invalidSessionAttachRequest(
+                "bounded desktop current-visible session attach must preserve exact `turn_id` while exact `SESSION_ACTIVE_VISIBLE` is selected"
+            )
+        }
+
+        let requestID = "desktop_session_attach_request_\(UUID().uuidString.replacingOccurrences(of: "-", with: ""))"
+        let idempotencyKey = "desktop_session_attach_\(sessionID)_\(managedDeviceID)"
+        let nonce = UUID().uuidString.replacingOccurrences(of: "-", with: "")
+        let timestampMS = Self.systemTimeNowMS()
+        let correlationID = Swift.max(DispatchTime.now().uptimeNanoseconds, 1)
+
+        let payload = SessionAttachAdapterRequestPayload(
+            correlationID: correlationID,
+            idempotencyKey: idempotencyKey,
+            sessionID: sessionID,
+            deviceID: managedDeviceID
+        )
+
+        let encoder = JSONEncoder()
+        encoder.keyEncodingStrategy = .convertToSnakeCase
+        let body = try encoder.encode(payload)
+        let endpointURL = adapterBaseURL.appendingPathComponent("v1/session/attach")
+        var urlRequest = URLRequest(url: endpointURL)
+        urlRequest.httpMethod = "POST"
+        urlRequest.httpBody = body
+        urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        urlRequest.setValue(requestID, forHTTPHeaderField: "x-request-id")
+        urlRequest.setValue(idempotencyKey, forHTTPHeaderField: "idempotency-key")
+        urlRequest.setValue(String(timestampMS), forHTTPHeaderField: "x-selene-timestamp-ms")
+        urlRequest.setValue(nonce, forHTTPHeaderField: "x-selene-nonce")
+        urlRequest.setValue(
+            Self.bearerToken(subject: sessionID, device: managedDeviceID),
+            forHTTPHeaderField: "Authorization"
+        )
+
+        return DesktopSessionAttachIngressContext(
+            sourceSurfaceIdentity: sourceSurfaceIdentity,
+            sessionState: sessionState,
+            sessionID: sessionID,
+            currentVisibleSessionAttachOutcome: boundedOnboardingContinueField(
+                promptState.currentVisibleSessionAttachOutcome
+            ),
+            turnID: boundedTurnID,
+            deviceID: managedDeviceID,
+            requestID: requestID,
+            endpoint: endpointURL.absoluteString,
+            urlRequest: urlRequest
+        )
+    }
+
     func desktopSessionSoftClosedResumeRequestBuilder(
         _ promptState: DesktopSessionSoftClosedResumePromptState
     ) throws -> DesktopSessionSoftClosedResumeIngressContext {
@@ -6314,6 +6626,10 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
 
     var onboardingContinueEndpoint: String {
         adapterBaseURL.appendingPathComponent("v1/onboarding/continue").absoluteString
+    }
+
+    var sessionAttachEndpoint: String {
+        adapterBaseURL.appendingPathComponent("v1/session/attach").absoluteString
     }
 
     var sessionResumeEndpoint: String {

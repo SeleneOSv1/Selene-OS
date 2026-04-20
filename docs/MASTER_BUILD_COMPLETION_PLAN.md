@@ -170,8 +170,13 @@ It may only be updated from current repo truth, exact command results, and exact
   current native macOS shell now performs one explicit bounded multi-posture session-resume submission only when exact local ready-time handoff remains active and exactly one lawful posture-specific session-resume prompt remains visible;
   current native macOS shell now dispatches only exact `/v1/session/resume` for exact soft-closed explicit resume posture or exact `/v1/session/recover` for exact suspended authoritative-reread recover posture while preserving already-live exact route-specific bounded fields;
   current native macOS shell now renders returned exact `session_state` and exact `session_attach_outcome` in bounded read-only form only outside the exact multi-posture control itself;
+  current runtime/app/adapter/mac cross-layer surface now preserves bounded current-visible session attach submission through exact `PersistedAttachableSessionImport`, exact `import_persisted_attachable_session`, exact `AppSessionAttachRequest`, exact `AppSessionAttachOutcome`, exact `run_session_attach`, exact `SessionAttachAdapterRequest`, exact `SessionAttachAdapterResponse`, and exact `/v1/session/attach`;
+  current native macOS target now preserves bounded current-visible session attach submission through exact `DesktopSessionAttachPromptState`, exact `DesktopSessionAttachIngressContext`, exact `DesktopSessionAttachRuntimeOutcomeState`, exact `desktopSessionAttachRequestBuilder`, exact `submitDesktopSessionAttach`, and exact `desktopSessionAttachCard`;
+  current native macOS shell now performs one explicit bounded current-visible session attach submission only when exact local ready-time handoff remains active, exact current visible session surface remains lawful, and exact multi-posture session-resume prompt remains absent;
+  current native macOS shell now dispatches only exact `/v1/session/attach` for exact `SESSION_OPEN_VISIBLE` or exact `SESSION_ACTIVE_VISIBLE` current-session posture while preserving already-live exact visible session carriers;
+  current native macOS shell now renders returned exact `session_state` and exact `session_attach_outcome` in bounded read-only form only outside the exact attach control itself;
   current native macOS shell continues to preserve the pre-ready onboarding-first shell when exact operational shell state is not lawful;
-  broader desktop session attach / reopen mutation remains unimplemented;
+  broader desktop generic session attach / reopen mutation beyond this exact current-visible attach seam remains unimplemented;
   broader desktop backend pairing mutation remains unimplemented;
   broader desktop onboarding-derived ready-time local handoff beyond this bounded shell-local foregrounding seam remains unimplemented;
   broader desktop explicit voice request contract mutation beyond the already-landed H288 bounded audio-capture-ref transport remains unimplemented;
@@ -183,7 +188,7 @@ It may only be updated from current repo truth, exact command results, and exact
   APP_MAC_DESKTOP remains first-class but non-authority, wake-word or explicit-entry as designed, and cloud-authoritative;
   APP_MAC_DESKTOP remains `PARTIAL`;
   no wake parity claim and no autonomous unlock claim are introduced by this run;
-  no post-H294 next exact winner is published in this run.
+  no post-H295 next exact winner is published in this run.
 
 ## Canonical Separation Truth
 
