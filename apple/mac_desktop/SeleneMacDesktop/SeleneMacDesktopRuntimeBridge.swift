@@ -5440,7 +5440,8 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
     }
 
     func desktopExplicitVoiceIngressRequestBuilder(
-        _ preparedRequest: ExplicitVoiceTurnRequestState
+        _ preparedRequest: ExplicitVoiceTurnRequestState,
+        threadKey: String? = nil
     ) throws -> DesktopExplicitVoiceIngressContext {
         let transcript = preparedRequest.transcript.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !transcript.isEmpty else {
@@ -5476,7 +5477,7 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
             tenantID: tenantID,
             deviceID: deviceID,
             nowNS: monotonicNowNS,
-            threadKey: nil,
+            threadKey: threadKey,
             projectID: nil,
             pinnedContextRefs: nil,
             threadPolicyFlags: nil,
@@ -5514,7 +5515,8 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
     }
 
     func desktopWakeTriggeredVoiceIngressRequestBuilder(
-        _ preparedRequest: WakeTriggeredVoiceTurnRequestState
+        _ preparedRequest: WakeTriggeredVoiceTurnRequestState,
+        threadKey: String? = nil
     ) throws -> DesktopWakeTriggeredVoiceIngressContext {
         let transcript = preparedRequest.transcript.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !transcript.isEmpty else {
@@ -5563,7 +5565,7 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
             tenantID: tenantID,
             deviceID: deviceID,
             nowNS: monotonicNowNS,
-            threadKey: nil,
+            threadKey: threadKey,
             projectID: nil,
             pinnedContextRefs: nil,
             threadPolicyFlags: nil,

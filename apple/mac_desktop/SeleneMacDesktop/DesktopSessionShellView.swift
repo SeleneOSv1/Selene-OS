@@ -6346,6 +6346,30 @@ struct DesktopSessionShellView: View {
         }
     }
 
+    private var desktopForegroundVoiceTurnMatchingSelectedThreadKey: String? {
+        guard let activeSessionID = latestSessionActiveVisibleContext?.sessionID else {
+            return nil
+        }
+
+        if let completedEntryOutcome = desktopSessionMultiPostureEntryRuntimeOutcomeState,
+           completedEntryOutcome.phase == .completed,
+           completedEntryOutcome.entryMode == .softClosedExplicitResume,
+           completedEntryOutcome.sessionID == activeSessionID,
+           let selectedThreadID = completedEntryOutcome.selectedThreadID {
+            return selectedThreadID
+        }
+
+        if let completedResumeOutcome = desktopSessionMultiPostureResumeRuntimeOutcomeState,
+           completedResumeOutcome.phase == .completed,
+           completedResumeOutcome.resumeMode == .softClosedExplicitResume,
+           completedResumeOutcome.sessionID == activeSessionID,
+           let selectedThreadID = completedResumeOutcome.selectedThreadID {
+            return selectedThreadID
+        }
+
+        return nil
+    }
+
     private var desktopSessionSuspendedVisibilityState: DesktopSessionSuspendedVisibilityState? {
         guard let latestSessionSuspendedVisibleContext else {
             return nil
@@ -14237,7 +14261,10 @@ struct DesktopSessionShellView: View {
         }
 
         do {
-            let ingressContext = try desktopCanonicalRuntimeBridge.desktopExplicitVoiceIngressRequestBuilder(pendingRequest)
+            let ingressContext = try desktopCanonicalRuntimeBridge.desktopExplicitVoiceIngressRequestBuilder(
+                pendingRequest,
+                threadKey: desktopForegroundVoiceTurnMatchingSelectedThreadKey
+            )
             desktopCanonicalRuntimeOutcomeState = .dispatching(
                 preparedRequestID: ingressContext.preparedRequestID,
                 endpoint: ingressContext.endpoint,
@@ -14310,7 +14337,10 @@ struct DesktopSessionShellView: View {
 
         do {
             let ingressContext = try desktopCanonicalRuntimeBridge
-                .desktopWakeTriggeredVoiceIngressRequestBuilder(pendingRequest)
+                .desktopWakeTriggeredVoiceIngressRequestBuilder(
+                    pendingRequest,
+                    threadKey: desktopForegroundVoiceTurnMatchingSelectedThreadKey
+                )
             lastStagedWakeTriggeredVoiceTurnRequestState = pendingRequest
             desktopWakeListenerController.markDispatching()
             desktopCanonicalRuntimeOutcomeState = .dispatchingWake(
