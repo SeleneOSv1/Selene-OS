@@ -9353,6 +9353,8 @@ struct DesktopSessionShellView: View {
         return entry.posture == "authoritative_reply_text"
             || (entry.posture == "current_selene_turn_text"
                 && normalizedEntryBody == authoritativeResponseText)
+            || (entry.posture == "archived_selene_turn_text"
+                && normalizedEntryBody == authoritativeResponseText)
     }
 
     private func desktopConversationShouldAttachReadOnlyToolLaneCluster(
