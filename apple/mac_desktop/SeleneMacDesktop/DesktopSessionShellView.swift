@@ -1049,6 +1049,7 @@ struct DesktopVoiceTurnAudioCaptureRefState: Equatable {
 
 struct ExplicitVoiceTurnRequestState: Identifiable {
     let id: String
+    let deviceTurnSequence: UInt64
     let transcript: String
     let byteCount: Int
     let audioCaptureRefState: DesktopVoiceTurnAudioCaptureRefState
@@ -1400,6 +1401,7 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
         transcriptPreview = trimmedTranscript
         pendingRequest = ExplicitVoiceTurnRequestState(
             id: String(format: "desktop_voice_turn_request_%03d", requestSequence),
+            deviceTurnSequence: UInt64(requestSequence),
             transcript: trimmedTranscript,
             byteCount: trimmedTranscript.utf8.count,
             audioCaptureRefState: audioCaptureRefState
@@ -1973,6 +1975,7 @@ private final class DesktopWakeListenerController: ObservableObject {
         transcriptPreview = boundedTranscript
         pendingRequest = WakeTriggeredVoiceTurnRequestState(
             id: String(format: "desktop_wake_turn_request_%03d", requestSequence),
+            deviceTurnSequence: UInt64(requestSequence),
             transcript: boundedTranscript,
             byteCount: boundedTranscript.utf8.count,
             wakeTriggerPhrase: wakeTriggerPhrase,
@@ -3564,6 +3567,7 @@ enum DesktopWakeListenerState: String, Equatable {
 
 struct WakeTriggeredVoiceTurnRequestState: Identifiable {
     let id: String
+    let deviceTurnSequence: UInt64
     let transcript: String
     let byteCount: Int
     let wakeTriggerPhrase: String

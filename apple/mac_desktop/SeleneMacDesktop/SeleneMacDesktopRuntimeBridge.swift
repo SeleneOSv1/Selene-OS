@@ -5461,7 +5461,7 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
         let payload = VoiceTurnAdapterRequestPayload(
             correlationID: correlationID,
             turnID: turnID,
-            deviceTurnSequence: nil,
+            deviceTurnSequence: preparedRequest.deviceTurnSequence,
             appPlatform: "DESKTOP",
             platformVersion: nil,
             deviceClass: nil,
@@ -5548,7 +5548,7 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
         let payload = VoiceTurnAdapterRequestPayload(
             correlationID: correlationID,
             turnID: turnID,
-            deviceTurnSequence: nil,
+            deviceTurnSequence: preparedRequest.deviceTurnSequence,
             appPlatform: "DESKTOP",
             platformVersion: nil,
             deviceClass: nil,
