@@ -3632,6 +3632,7 @@ struct DesktopConversationPrimaryPaneState: Identifiable, Equatable {
     let voiceState: String
     let timelineEntries: [DesktopConversationTimelineEntryState]
     let explicitVoicePendingAttachmentState: DesktopConversationExplicitVoicePendingAttachmentState?
+    let wakeTriggeredVoicePendingAttachmentState: DesktopConversationWakeTriggeredVoicePendingAttachmentState?
     let readOnlyToolLaneState: DesktopConversationReadOnlyToolLaneState?
     let searchToolCompletionState: DesktopConversationSearchToolCompletionState?
     let authoritativeReplyCompletionState: DesktopConversationAuthoritativeReplyCompletionState?
@@ -3645,6 +3646,7 @@ struct DesktopConversationPrimaryPaneState: Identifiable, Equatable {
             voiceState,
             timelineEntries.map(\.id).joined(separator: "|"),
             explicitVoicePendingAttachmentState?.id ?? "explicit_voice_pending_attachment_not_attached",
+            wakeTriggeredVoicePendingAttachmentState?.id ?? "wake_triggered_voice_pending_attachment_not_attached",
             readOnlyToolLaneState?.id ?? "read_only_tool_lane_not_attached",
             searchToolCompletionState?.id ?? "search_tool_completion_not_attached",
             authoritativeReplyCompletionState?.id ?? "authoritative_reply_completion_not_attached",
@@ -3838,6 +3840,40 @@ struct DesktopConversationExplicitVoicePendingAttachmentState: Identifiable, Equ
             requestID,
             sourceSurface,
             captureMode,
+            transcriptPosture,
+            transcriptBytes,
+            selectedMic,
+            selectedSpeaker,
+            deviceRoute,
+            localeTag,
+            ttsPlaybackActive,
+            captureDegraded,
+            streamGapDetected,
+            deviceChanged,
+        ].joined(separator: "::")
+    }
+}
+
+struct DesktopConversationWakeTriggeredVoicePendingAttachmentState: Identifiable, Equatable {
+    let requestID: String
+    let sourceSurface: String
+    let wakeTriggerPhrase: String
+    let transcriptPosture: String
+    let transcriptBytes: String
+    let selectedMic: String
+    let selectedSpeaker: String
+    let deviceRoute: String
+    let localeTag: String
+    let ttsPlaybackActive: String
+    let captureDegraded: String
+    let streamGapDetected: String
+    let deviceChanged: String
+
+    var id: String {
+        [
+            requestID,
+            sourceSurface,
+            wakeTriggerPhrase,
             transcriptPosture,
             transcriptBytes,
             selectedMic,
@@ -5212,6 +5248,8 @@ struct DesktopSessionShellView: View {
 
         let explicitVoicePendingAttachmentState =
             desktopConversationExplicitVoicePendingAttachmentState(for: timelineEntries)
+        let wakeTriggeredVoicePendingAttachmentState =
+            desktopConversationWakeTriggeredVoicePendingAttachmentState(for: timelineEntries)
         let searchToolCompletionState = desktopConversationSearchToolCompletionState
         let readOnlyToolLaneState = searchToolCompletionState?.readOnlyToolLaneState
         let authoritativeReplyCompletionState = desktopConversationAuthoritativeReplyCompletionState
@@ -5226,6 +5264,7 @@ struct DesktopSessionShellView: View {
             voiceState: desktopOperationalVoiceStateLabel,
             timelineEntries: timelineEntries,
             explicitVoicePendingAttachmentState: explicitVoicePendingAttachmentState,
+            wakeTriggeredVoicePendingAttachmentState: wakeTriggeredVoicePendingAttachmentState,
             readOnlyToolLaneState: readOnlyToolLaneState,
             searchToolCompletionState: searchToolCompletionState,
             authoritativeReplyCompletionState: authoritativeReplyCompletionState,
@@ -5380,6 +5419,38 @@ struct DesktopSessionShellView: View {
             requestID: pendingRequest.id,
             sourceSurface: "EXPLICIT_VOICE_PENDING",
             captureMode: "foreground_only",
+            transcriptPosture: "non_authoritative_preview",
+            transcriptBytes: "\(pendingRequest.byteCount)",
+            selectedMic: pendingRequest.audioCaptureRefState.selectedMic,
+            selectedSpeaker: pendingRequest.audioCaptureRefState.selectedSpeaker,
+            deviceRoute: pendingRequest.audioCaptureRefState.deviceRoute,
+            localeTag: pendingRequest.audioCaptureRefState.localeTag,
+            ttsPlaybackActive: pendingRequest.audioCaptureRefState.ttsPlaybackActive ? "true" : "false",
+            captureDegraded: pendingRequest.audioCaptureRefState.captureDegraded ? "true" : "false",
+            streamGapDetected: pendingRequest.audioCaptureRefState.streamGapDetected ? "true" : "false",
+            deviceChanged: pendingRequest.audioCaptureRefState.deviceChanged ? "true" : "false"
+        )
+    }
+
+    private func desktopConversationWakeTriggeredVoicePendingAttachmentState(
+        for timelineEntries: [DesktopConversationTimelineEntryState]
+    ) -> DesktopConversationWakeTriggeredVoicePendingAttachmentState? {
+        guard desktopReadyTimeHandoffIsActive,
+              latestSessionSuspendedVisibleContext == nil,
+              activeRecoveryDisplayState != .quarantinedLocalState,
+              let pendingRequest = desktopWakeListenerController.pendingRequest
+                ?? lastStagedWakeTriggeredVoiceTurnRequestState,
+              timelineEntries.contains(where: { entry in
+                  entry.posture == "wake_voice_pending_preview"
+                      && entry.sourceSurface == "WAKE_TRIGGERED_VOICE_PENDING"
+              }) else {
+            return nil
+        }
+
+        return DesktopConversationWakeTriggeredVoicePendingAttachmentState(
+            requestID: pendingRequest.id,
+            sourceSurface: "WAKE_TRIGGERED_VOICE_PENDING",
+            wakeTriggerPhrase: pendingRequest.wakeTriggerPhrase,
             transcriptPosture: "non_authoritative_preview",
             transcriptBytes: "\(pendingRequest.byteCount)",
             selectedMic: pendingRequest.audioCaptureRefState.selectedMic,
@@ -8511,6 +8582,12 @@ struct DesktopSessionShellView: View {
         let promptState = desktopWakeListenerPromptState
         let displayedRequestState = desktopWakeListenerController.pendingRequest
             ?? lastStagedWakeTriggeredVoiceTurnRequestState
+        let shouldAttachWakeTriggeredVoicePendingAttachment =
+            desktopOperationalConversationShellState.map { operationalConversationShellState in
+                desktopConversationShouldAttachWakeTriggeredVoicePendingAttachment(
+                    operationalConversationShellState.primaryPaneState.wakeTriggeredVoicePendingAttachmentState
+                )
+            } ?? false
 
         return Group {
             if promptState != nil
@@ -8554,14 +8631,16 @@ struct DesktopSessionShellView: View {
                             label: "listener_state",
                             value: desktopWakeListenerController.listenerState.rawValue
                         )
-                        metadataRow(
-                            label: "wake_request_id",
-                            value: displayedRequestState?.id ?? "not_available"
-                        )
-                        metadataRow(
-                            label: "wake_transcript_preview",
-                            value: displayedRequestState?.boundedPreview ?? "not_available"
-                        )
+                        if !shouldAttachWakeTriggeredVoicePendingAttachment {
+                            metadataRow(
+                                label: "wake_request_id",
+                                value: displayedRequestState?.id ?? "not_available"
+                            )
+                            metadataRow(
+                                label: "wake_transcript_preview",
+                                value: displayedRequestState?.boundedPreview ?? "not_available"
+                            )
+                        }
 
                         Text("Canonical runtime response posture, session continuity, wake runtime evidence, and local wake-artifact availability remain cloud-authored or bridge-bounded and non-authoritative here.")
                             .foregroundStyle(.secondary)
@@ -8706,6 +8785,7 @@ struct DesktopSessionShellView: View {
                             desktopConversationTimelineEntryCard(
                                 entry,
                                 explicitVoicePendingAttachmentState: state.explicitVoicePendingAttachmentState,
+                                wakeTriggeredVoicePendingAttachmentState: state.wakeTriggeredVoicePendingAttachmentState,
                                 readOnlyToolLaneState: state.readOnlyToolLaneState,
                                 searchToolCompletionState: state.searchToolCompletionState,
                                 authoritativeReplyCompletionState: state.authoritativeReplyCompletionState
@@ -8775,6 +8855,7 @@ struct DesktopSessionShellView: View {
     private func desktopConversationTimelineEntryCard(
         _ entry: DesktopConversationTimelineEntryState,
         explicitVoicePendingAttachmentState: DesktopConversationExplicitVoicePendingAttachmentState?,
+        wakeTriggeredVoicePendingAttachmentState: DesktopConversationWakeTriggeredVoicePendingAttachmentState?,
         readOnlyToolLaneState: DesktopConversationReadOnlyToolLaneState?,
         searchToolCompletionState: DesktopConversationSearchToolCompletionState?,
         authoritativeReplyCompletionState: DesktopConversationAuthoritativeReplyCompletionState?
@@ -8815,6 +8896,17 @@ struct DesktopSessionShellView: View {
                    let explicitVoicePendingAttachmentState {
                     desktopConversationExplicitVoicePendingAttachment(
                         explicitVoicePendingAttachmentState
+                    )
+                }
+
+                if entry.posture == "wake_voice_pending_preview",
+                   entry.sourceSurface == "WAKE_TRIGGERED_VOICE_PENDING",
+                   desktopConversationShouldAttachWakeTriggeredVoicePendingAttachment(
+                       wakeTriggeredVoicePendingAttachmentState
+                   ),
+                   let wakeTriggeredVoicePendingAttachmentState {
+                    desktopConversationWakeTriggeredVoicePendingAttachment(
+                        wakeTriggeredVoicePendingAttachmentState
                     )
                 }
 
@@ -8872,6 +8964,12 @@ struct DesktopSessionShellView: View {
         _ explicitVoicePendingAttachmentState: DesktopConversationExplicitVoicePendingAttachmentState?
     ) -> Bool {
         explicitVoicePendingAttachmentState != nil
+    }
+
+    private func desktopConversationShouldAttachWakeTriggeredVoicePendingAttachment(
+        _ wakeTriggeredVoicePendingAttachmentState: DesktopConversationWakeTriggeredVoicePendingAttachmentState?
+    ) -> Bool {
+        wakeTriggeredVoicePendingAttachmentState != nil
     }
 
     private func desktopConversationShouldAttachSearchToolCompletion(
@@ -8966,6 +9064,41 @@ struct DesktopSessionShellView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
 
                 Text("This path does not add canonical runtime acceptance, local session authority, local search input, local search execution, local tool invocation controls, local provider selection, hidden/background wake behavior, or autonomous unlock.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+    }
+
+    private func desktopConversationWakeTriggeredVoicePendingAttachment(
+        _ state: DesktopConversationWakeTriggeredVoicePendingAttachmentState
+    ) -> some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Wake-triggered pending attachment")
+                    .font(.subheadline.weight(.semibold))
+
+                metadataRow(label: "request_id", value: state.requestID)
+                metadataRow(label: "source_surface", value: state.sourceSurface)
+                metadataRow(label: "wake_trigger_phrase", value: state.wakeTriggerPhrase)
+                metadataRow(label: "transcript_posture", value: state.transcriptPosture)
+                metadataRow(label: "transcript_bytes", value: state.transcriptBytes)
+                metadataRow(label: "selected_mic", value: state.selectedMic)
+                metadataRow(label: "selected_speaker", value: state.selectedSpeaker)
+                metadataRow(label: "device_route", value: state.deviceRoute)
+                metadataRow(label: "locale_tag", value: state.localeTag)
+                metadataRow(label: "tts_playback_active", value: state.ttsPlaybackActive)
+                metadataRow(label: "capture_degraded", value: state.captureDegraded)
+                metadataRow(label: "stream_gap_detected", value: state.streamGapDetected)
+                metadataRow(label: "device_changed", value: state.deviceChanged)
+
+                Text("This path composes already-live exact prepared wake-triggered voice request carriers and exact H288 structured `audioCaptureRef` rows only.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                Text("This path does not add canonical runtime acceptance, wake-listener control authority inline, local session authority, local search input, local search execution, local tool invocation controls, local provider selection, hidden/background wake behavior, or autonomous unlock.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
