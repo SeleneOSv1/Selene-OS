@@ -3631,6 +3631,7 @@ struct DesktopConversationPrimaryPaneState: Identifiable, Equatable {
     let headerDetail: String
     let voiceState: String
     let timelineEntries: [DesktopConversationTimelineEntryState]
+    let explicitVoiceLivePreviewAttachmentState: DesktopConversationExplicitVoiceLivePreviewAttachmentState?
     let explicitVoicePendingAttachmentState: DesktopConversationExplicitVoicePendingAttachmentState?
     let wakeTriggeredVoicePendingAttachmentState: DesktopConversationWakeTriggeredVoicePendingAttachmentState?
     let readOnlyToolLaneState: DesktopConversationReadOnlyToolLaneState?
@@ -3645,6 +3646,7 @@ struct DesktopConversationPrimaryPaneState: Identifiable, Equatable {
             headerDetail,
             voiceState,
             timelineEntries.map(\.id).joined(separator: "|"),
+            explicitVoiceLivePreviewAttachmentState?.id ?? "explicit_voice_live_preview_attachment_not_attached",
             explicitVoicePendingAttachmentState?.id ?? "explicit_voice_pending_attachment_not_attached",
             wakeTriggeredVoicePendingAttachmentState?.id ?? "wake_triggered_voice_pending_attachment_not_attached",
             readOnlyToolLaneState?.id ?? "read_only_tool_lane_not_attached",
@@ -3816,6 +3818,24 @@ struct DesktopConversationRuntimeDispatchFailureAttachmentState: Identifiable, E
             turnID,
             summary,
             detail,
+        ].joined(separator: "::")
+    }
+}
+
+struct DesktopConversationExplicitVoiceLivePreviewAttachmentState: Identifiable, Equatable {
+    let sourceSurface: String
+    let captureState: String
+    let captureMode: String
+    let transcriptPosture: String
+    let transcriptBytes: String
+
+    var id: String {
+        [
+            sourceSurface,
+            captureState,
+            captureMode,
+            transcriptPosture,
+            transcriptBytes,
         ].joined(separator: "::")
     }
 }
@@ -4726,7 +4746,14 @@ struct DesktopSessionShellView: View {
                 }
 
                 if !explicitVoiceController.transcriptPreview.isEmpty {
-                    explicitVoiceTranscriptPreviewCard
+                    if let operationalConversationShellState = desktopOperationalConversationShellState,
+                       desktopConversationShouldAttachExplicitVoiceLivePreview(
+                           operationalConversationShellState.primaryPaneState.explicitVoiceLivePreviewAttachmentState
+                       ) {
+                        EmptyView()
+                    } else {
+                        explicitVoiceTranscriptPreviewCard
+                    }
                 }
 
                 if let pendingRequest = explicitVoiceController.pendingRequest {
@@ -5204,6 +5231,22 @@ struct DesktopSessionShellView: View {
             )
         }
 
+        let trimmedExplicitVoiceTranscriptPreview = explicitVoiceController.transcriptPreview
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if explicitVoiceController.isListening,
+           explicitVoiceController.pendingRequest == nil,
+           !trimmedExplicitVoiceTranscriptPreview.isEmpty {
+            timelineEntries.append(
+                DesktopConversationTimelineEntryState(
+                    speaker: "You",
+                    posture: "explicit_voice_live_preview",
+                    body: trimmedExplicitVoiceTranscriptPreview,
+                    detail: "Bounded explicit live transcript preview only. Canonical runtime acceptance and later cloud-visible response remain authoritative.",
+                    sourceSurface: "EXPLICIT_VOICE_LISTENING"
+                )
+            )
+        }
+
         if let pendingRequest = explicitVoiceController.pendingRequest {
             timelineEntries.append(
                 DesktopConversationTimelineEntryState(
@@ -5246,6 +5289,8 @@ struct DesktopSessionShellView: View {
             )
         }
 
+        let explicitVoiceLivePreviewAttachmentState =
+            desktopConversationExplicitVoiceLivePreviewAttachmentState(for: timelineEntries)
         let explicitVoicePendingAttachmentState =
             desktopConversationExplicitVoicePendingAttachmentState(for: timelineEntries)
         let wakeTriggeredVoicePendingAttachmentState =
@@ -5263,6 +5308,7 @@ struct DesktopSessionShellView: View {
             headerDetail: headerDetail,
             voiceState: desktopOperationalVoiceStateLabel,
             timelineEntries: timelineEntries,
+            explicitVoiceLivePreviewAttachmentState: explicitVoiceLivePreviewAttachmentState,
             explicitVoicePendingAttachmentState: explicitVoicePendingAttachmentState,
             wakeTriggeredVoicePendingAttachmentState: wakeTriggeredVoicePendingAttachmentState,
             readOnlyToolLaneState: readOnlyToolLaneState,
@@ -5398,6 +5444,33 @@ struct DesktopSessionShellView: View {
             turnID: outcomeState.turnID ?? "not_available",
             summary: outcomeState.summary,
             detail: outcomeState.detail
+        )
+    }
+
+    private func desktopConversationExplicitVoiceLivePreviewAttachmentState(
+        for timelineEntries: [DesktopConversationTimelineEntryState]
+    ) -> DesktopConversationExplicitVoiceLivePreviewAttachmentState? {
+        let trimmedExplicitVoiceTranscriptPreview = explicitVoiceController.transcriptPreview
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard desktopReadyTimeHandoffIsActive,
+              latestSessionSuspendedVisibleContext == nil,
+              activeRecoveryDisplayState != .quarantinedLocalState,
+              explicitVoiceController.isListening,
+              explicitVoiceController.pendingRequest == nil,
+              !trimmedExplicitVoiceTranscriptPreview.isEmpty,
+              timelineEntries.contains(where: { entry in
+                  entry.posture == "explicit_voice_live_preview"
+                      && entry.sourceSurface == "EXPLICIT_VOICE_LISTENING"
+              }) else {
+            return nil
+        }
+
+        return DesktopConversationExplicitVoiceLivePreviewAttachmentState(
+            sourceSurface: "EXPLICIT_VOICE_LISTENING",
+            captureState: "foreground_listening",
+            captureMode: "foreground_only",
+            transcriptPosture: "non_authoritative_live_preview",
+            transcriptBytes: "\(trimmedExplicitVoiceTranscriptPreview.utf8.count)"
         )
     }
 
@@ -8784,6 +8857,7 @@ struct DesktopSessionShellView: View {
                         ForEach(state.timelineEntries) { entry in
                             desktopConversationTimelineEntryCard(
                                 entry,
+                                explicitVoiceLivePreviewAttachmentState: state.explicitVoiceLivePreviewAttachmentState,
                                 explicitVoicePendingAttachmentState: state.explicitVoicePendingAttachmentState,
                                 wakeTriggeredVoicePendingAttachmentState: state.wakeTriggeredVoicePendingAttachmentState,
                                 readOnlyToolLaneState: state.readOnlyToolLaneState,
@@ -8854,6 +8928,7 @@ struct DesktopSessionShellView: View {
 
     private func desktopConversationTimelineEntryCard(
         _ entry: DesktopConversationTimelineEntryState,
+        explicitVoiceLivePreviewAttachmentState: DesktopConversationExplicitVoiceLivePreviewAttachmentState?,
         explicitVoicePendingAttachmentState: DesktopConversationExplicitVoicePendingAttachmentState?,
         wakeTriggeredVoicePendingAttachmentState: DesktopConversationWakeTriggeredVoicePendingAttachmentState?,
         readOnlyToolLaneState: DesktopConversationReadOnlyToolLaneState?,
@@ -8887,6 +8962,17 @@ struct DesktopSessionShellView: View {
                     .font(.footnote)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
+
+                if entry.posture == "explicit_voice_live_preview",
+                   entry.sourceSurface == "EXPLICIT_VOICE_LISTENING",
+                   desktopConversationShouldAttachExplicitVoiceLivePreview(
+                       explicitVoiceLivePreviewAttachmentState
+                   ),
+                   let explicitVoiceLivePreviewAttachmentState {
+                    desktopConversationExplicitVoiceLivePreviewAttachment(
+                        explicitVoiceLivePreviewAttachmentState
+                    )
+                }
 
                 if entry.posture == "explicit_voice_pending_preview",
                    entry.sourceSurface == "EXPLICIT_VOICE_PENDING",
@@ -8960,6 +9046,12 @@ struct DesktopSessionShellView: View {
         readOnlyToolLaneState != nil
     }
 
+    private func desktopConversationShouldAttachExplicitVoiceLivePreview(
+        _ explicitVoiceLivePreviewAttachmentState: DesktopConversationExplicitVoiceLivePreviewAttachmentState?
+    ) -> Bool {
+        explicitVoiceLivePreviewAttachmentState != nil
+    }
+
     private func desktopConversationShouldAttachExplicitVoicePendingAttachment(
         _ explicitVoicePendingAttachmentState: DesktopConversationExplicitVoicePendingAttachmentState?
     ) -> Bool {
@@ -9029,6 +9121,33 @@ struct DesktopSessionShellView: View {
                 }
 
                 Text("This path composes already-live canonical runtime outcome carriers only. It does not add local session authority, local search input, local search execution, local tool invocation controls, local provider selection, interrupt-inline authority, hidden/background wake behavior, or autonomous unlock.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+    }
+
+    private func desktopConversationExplicitVoiceLivePreviewAttachment(
+        _ state: DesktopConversationExplicitVoiceLivePreviewAttachmentState
+    ) -> some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Explicit voice live-preview attachment")
+                    .font(.subheadline.weight(.semibold))
+
+                metadataRow(label: "source_surface", value: state.sourceSurface)
+                metadataRow(label: "capture_state", value: state.captureState)
+                metadataRow(label: "capture_mode", value: state.captureMode)
+                metadataRow(label: "transcript_posture", value: state.transcriptPosture)
+                metadataRow(label: "transcript_bytes", value: state.transcriptBytes)
+
+                Text("This path composes already-live exact explicit voice live transcript preview carriers only.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                Text("This path does not add canonical runtime acceptance, local session authority, local search input, local search execution, local tool invocation controls, local provider selection, wake-listener authority, hidden/background wake behavior, or autonomous unlock.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
