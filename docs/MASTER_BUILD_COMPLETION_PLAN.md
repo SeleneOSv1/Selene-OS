@@ -182,6 +182,15 @@ It may only be updated from current repo truth, exact command results, and exact
   H300-H256 truth remains preserved exactly as already recorded, with no regression;
   current native macOS target now preserves bounded conversation-first search/tool completion rendering through exact `DesktopConversationSearchToolCompletionState`, exact `DesktopConversationPrimaryPaneState.searchToolCompletionState`, exact `desktopConversationSearchToolCompletionState`, exact `desktopConversationShouldAttachSearchToolCompletion`, and exact `desktopConversationSearchToolCompletionAttachment`;
   current native macOS target now preserves bounded conversation-first authoritative-reply completion rendering through exact `DesktopConversationAuthoritativeReplyCompletionState`, exact `DesktopConversationPrimaryPaneState.authoritativeReplyCompletionState`, exact `desktopConversationAuthoritativeReplyCompletionState`, exact `desktopConversationShouldAttachAuthoritativeReplyCompletion`, and exact `desktopConversationAuthoritativeReplyCompletionAttachment`;
+  corrected H316 is now implemented as the first canonical post-H315 selected bounded cross-layer `desktop_foreground_voice_turn_thread_key_backed_persisted_project_and_pinned_context_continuity_regression_lock` implementation build;
+  H315-H256 truth remains preserved exactly as already recorded, with no regression;
+  the H309-H311 micro-polish lane remains closed after H311 and corrected H316 continues executable seam work;
+  current native macOS runtime bridge still dispatches exact `projectID: nil` and exact `pinnedContextRefs: nil` through the already-live exact `/v1/voice/turn` family in this bounded run;
+  corrected H314 exact `threadKey` transport already reactivates persisted exact PH1X `project_id` and exact `pinned_context_refs` continuity when one lawful matching exact thread-state row exists;
+  current repo truth still does not claim direct shell-side exact `projectID` transport in this bounded run;
+  current repo truth still does not claim direct shell-side exact `pinnedContextRefs` transport in this bounded run;
+  current native macOS shell now preserves exact H315 `threadPolicyFlags` transport, corrected H314 `threadKey` transport, exact H313 positive `device_turn_sequence` transport, and exact H288 structured `audioCaptureRef` transport unchanged;
+  current native macOS shell now preserves exact H312 pairing-completion commit and canonical ready-time handoff plus exact H311-H297 conversation-first rendering seams and broader operational shell truth unchanged;
   H315 is now implemented as the first canonical post-H314 selected bounded native macOS `desktop_foreground_voice_turn_active_authority_policy_context_thread_policy_flags_transport` implementation build;
   H314-H256 truth remains preserved exactly as already recorded, with no regression;
   the H309-H311 micro-polish lane remains closed after H311 and H315 continues executable seam work;
@@ -246,6 +255,8 @@ It may only be updated from current repo truth, exact command results, and exact
   current native macOS shell continues to preserve the pre-ready onboarding-first shell when exact operational shell state is not lawful;
   broader desktop generic session attach / reopen mutation beyond the already-landed visible/resumable session-entry seam remains unimplemented;
   broader desktop explicit voice request contract mutation beyond this exact active-authority `threadPolicyFlags` transport remains unimplemented;
+  broader desktop shell-side project transport remains unimplemented;
+  broader desktop shell-side pinned-context transport remains unimplemented;
   broader desktop project-scoped voice-turn transport remains unimplemented;
   broader desktop pinned-context voice-turn transport remains unimplemented;
   broader desktop generic session attach / reopen mutation beyond the already-landed visible/resumable session-entry seam remains unimplemented;
@@ -256,6 +267,7 @@ It may only be updated from current repo truth, exact command results, and exact
   APP_MAC_DESKTOP remains first-class but non-authority, wake-word or explicit-entry as designed, and cloud-authoritative;
   APP_MAC_DESKTOP remains `PARTIAL`;
   no wake parity claim and no autonomous unlock claim are introduced by this run;
+  no post-H316 next exact winner is published in this run;
   no post-H315 next exact winner is published in this run.
 
 ## Canonical Separation Truth
