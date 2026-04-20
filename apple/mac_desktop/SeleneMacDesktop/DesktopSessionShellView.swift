@@ -3631,6 +3631,7 @@ struct DesktopConversationPrimaryPaneState: Identifiable, Equatable {
     let headerDetail: String
     let voiceState: String
     let timelineEntries: [DesktopConversationTimelineEntryState]
+    let explicitVoicePendingAttachmentState: DesktopConversationExplicitVoicePendingAttachmentState?
     let readOnlyToolLaneState: DesktopConversationReadOnlyToolLaneState?
     let searchToolCompletionState: DesktopConversationSearchToolCompletionState?
     let authoritativeReplyCompletionState: DesktopConversationAuthoritativeReplyCompletionState?
@@ -3643,6 +3644,7 @@ struct DesktopConversationPrimaryPaneState: Identifiable, Equatable {
             headerDetail,
             voiceState,
             timelineEntries.map(\.id).joined(separator: "|"),
+            explicitVoicePendingAttachmentState?.id ?? "explicit_voice_pending_attachment_not_attached",
             readOnlyToolLaneState?.id ?? "read_only_tool_lane_not_attached",
             searchToolCompletionState?.id ?? "search_tool_completion_not_attached",
             authoritativeReplyCompletionState?.id ?? "authoritative_reply_completion_not_attached",
@@ -3812,6 +3814,40 @@ struct DesktopConversationRuntimeDispatchFailureAttachmentState: Identifiable, E
             turnID,
             summary,
             detail,
+        ].joined(separator: "::")
+    }
+}
+
+struct DesktopConversationExplicitVoicePendingAttachmentState: Identifiable, Equatable {
+    let requestID: String
+    let sourceSurface: String
+    let captureMode: String
+    let transcriptPosture: String
+    let transcriptBytes: String
+    let selectedMic: String
+    let selectedSpeaker: String
+    let deviceRoute: String
+    let localeTag: String
+    let ttsPlaybackActive: String
+    let captureDegraded: String
+    let streamGapDetected: String
+    let deviceChanged: String
+
+    var id: String {
+        [
+            requestID,
+            sourceSurface,
+            captureMode,
+            transcriptPosture,
+            transcriptBytes,
+            selectedMic,
+            selectedSpeaker,
+            deviceRoute,
+            localeTag,
+            ttsPlaybackActive,
+            captureDegraded,
+            streamGapDetected,
+            deviceChanged,
         ].joined(separator: "::")
     }
 }
@@ -4658,7 +4694,14 @@ struct DesktopSessionShellView: View {
                 }
 
                 if let pendingRequest = explicitVoiceController.pendingRequest {
-                    explicitVoicePendingRequestCard(pendingRequest)
+                    if let operationalConversationShellState = desktopOperationalConversationShellState,
+                       desktopConversationShouldAttachExplicitVoicePendingAttachment(
+                           operationalConversationShellState.primaryPaneState.explicitVoicePendingAttachmentState
+                       ) {
+                        EmptyView()
+                    } else {
+                        explicitVoicePendingRequestCard(pendingRequest)
+                    }
                 }
 
                 if desktopOperationalConversationShellState == nil {
@@ -5167,6 +5210,8 @@ struct DesktopSessionShellView: View {
             )
         }
 
+        let explicitVoicePendingAttachmentState =
+            desktopConversationExplicitVoicePendingAttachmentState(for: timelineEntries)
         let searchToolCompletionState = desktopConversationSearchToolCompletionState
         let readOnlyToolLaneState = searchToolCompletionState?.readOnlyToolLaneState
         let authoritativeReplyCompletionState = desktopConversationAuthoritativeReplyCompletionState
@@ -5180,6 +5225,7 @@ struct DesktopSessionShellView: View {
             headerDetail: headerDetail,
             voiceState: desktopOperationalVoiceStateLabel,
             timelineEntries: timelineEntries,
+            explicitVoicePendingAttachmentState: explicitVoicePendingAttachmentState,
             readOnlyToolLaneState: readOnlyToolLaneState,
             searchToolCompletionState: searchToolCompletionState,
             authoritativeReplyCompletionState: authoritativeReplyCompletionState,
@@ -5313,6 +5359,37 @@ struct DesktopSessionShellView: View {
             turnID: outcomeState.turnID ?? "not_available",
             summary: outcomeState.summary,
             detail: outcomeState.detail
+        )
+    }
+
+    private func desktopConversationExplicitVoicePendingAttachmentState(
+        for timelineEntries: [DesktopConversationTimelineEntryState]
+    ) -> DesktopConversationExplicitVoicePendingAttachmentState? {
+        guard desktopReadyTimeHandoffIsActive,
+              latestSessionSuspendedVisibleContext == nil,
+              activeRecoveryDisplayState != .quarantinedLocalState,
+              let pendingRequest = explicitVoiceController.pendingRequest,
+              timelineEntries.contains(where: { entry in
+                  entry.posture == "explicit_voice_pending_preview"
+                      && entry.sourceSurface == "EXPLICIT_VOICE_PENDING"
+              }) else {
+            return nil
+        }
+
+        return DesktopConversationExplicitVoicePendingAttachmentState(
+            requestID: pendingRequest.id,
+            sourceSurface: "EXPLICIT_VOICE_PENDING",
+            captureMode: "foreground_only",
+            transcriptPosture: "non_authoritative_preview",
+            transcriptBytes: "\(pendingRequest.byteCount)",
+            selectedMic: pendingRequest.audioCaptureRefState.selectedMic,
+            selectedSpeaker: pendingRequest.audioCaptureRefState.selectedSpeaker,
+            deviceRoute: pendingRequest.audioCaptureRefState.deviceRoute,
+            localeTag: pendingRequest.audioCaptureRefState.localeTag,
+            ttsPlaybackActive: pendingRequest.audioCaptureRefState.ttsPlaybackActive ? "true" : "false",
+            captureDegraded: pendingRequest.audioCaptureRefState.captureDegraded ? "true" : "false",
+            streamGapDetected: pendingRequest.audioCaptureRefState.streamGapDetected ? "true" : "false",
+            deviceChanged: pendingRequest.audioCaptureRefState.deviceChanged ? "true" : "false"
         )
     }
 
@@ -8628,6 +8705,7 @@ struct DesktopSessionShellView: View {
                         ForEach(state.timelineEntries) { entry in
                             desktopConversationTimelineEntryCard(
                                 entry,
+                                explicitVoicePendingAttachmentState: state.explicitVoicePendingAttachmentState,
                                 readOnlyToolLaneState: state.readOnlyToolLaneState,
                                 searchToolCompletionState: state.searchToolCompletionState,
                                 authoritativeReplyCompletionState: state.authoritativeReplyCompletionState
@@ -8696,6 +8774,7 @@ struct DesktopSessionShellView: View {
 
     private func desktopConversationTimelineEntryCard(
         _ entry: DesktopConversationTimelineEntryState,
+        explicitVoicePendingAttachmentState: DesktopConversationExplicitVoicePendingAttachmentState?,
         readOnlyToolLaneState: DesktopConversationReadOnlyToolLaneState?,
         searchToolCompletionState: DesktopConversationSearchToolCompletionState?,
         authoritativeReplyCompletionState: DesktopConversationAuthoritativeReplyCompletionState?
@@ -8727,6 +8806,17 @@ struct DesktopSessionShellView: View {
                     .font(.footnote)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
+
+                if entry.posture == "explicit_voice_pending_preview",
+                   entry.sourceSurface == "EXPLICIT_VOICE_PENDING",
+                   desktopConversationShouldAttachExplicitVoicePendingAttachment(
+                       explicitVoicePendingAttachmentState
+                   ),
+                   let explicitVoicePendingAttachmentState {
+                    desktopConversationExplicitVoicePendingAttachment(
+                        explicitVoicePendingAttachmentState
+                    )
+                }
 
                 if desktopConversationShouldAttachAuthoritativeReplyArtifacts(to: entry) {
                     desktopConversationAuthoritativeReplyAttachment(
@@ -8776,6 +8866,12 @@ struct DesktopSessionShellView: View {
         _ readOnlyToolLaneState: DesktopConversationReadOnlyToolLaneState?
     ) -> Bool {
         readOnlyToolLaneState != nil
+    }
+
+    private func desktopConversationShouldAttachExplicitVoicePendingAttachment(
+        _ explicitVoicePendingAttachmentState: DesktopConversationExplicitVoicePendingAttachmentState?
+    ) -> Bool {
+        explicitVoicePendingAttachmentState != nil
     }
 
     private func desktopConversationShouldAttachSearchToolCompletion(
@@ -8835,6 +8931,41 @@ struct DesktopSessionShellView: View {
                 }
 
                 Text("This path composes already-live canonical runtime outcome carriers only. It does not add local session authority, local search input, local search execution, local tool invocation controls, local provider selection, interrupt-inline authority, hidden/background wake behavior, or autonomous unlock.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+    }
+
+    private func desktopConversationExplicitVoicePendingAttachment(
+        _ state: DesktopConversationExplicitVoicePendingAttachmentState
+    ) -> some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Explicit voice pending attachment")
+                    .font(.subheadline.weight(.semibold))
+
+                metadataRow(label: "request_id", value: state.requestID)
+                metadataRow(label: "source_surface", value: state.sourceSurface)
+                metadataRow(label: "capture_mode", value: state.captureMode)
+                metadataRow(label: "transcript_posture", value: state.transcriptPosture)
+                metadataRow(label: "transcript_bytes", value: state.transcriptBytes)
+                metadataRow(label: "selected_mic", value: state.selectedMic)
+                metadataRow(label: "selected_speaker", value: state.selectedSpeaker)
+                metadataRow(label: "device_route", value: state.deviceRoute)
+                metadataRow(label: "locale_tag", value: state.localeTag)
+                metadataRow(label: "tts_playback_active", value: state.ttsPlaybackActive)
+                metadataRow(label: "capture_degraded", value: state.captureDegraded)
+                metadataRow(label: "stream_gap_detected", value: state.streamGapDetected)
+                metadataRow(label: "device_changed", value: state.deviceChanged)
+
+                Text("This path composes already-live exact prepared explicit voice request carriers and exact H288 structured `audioCaptureRef` rows only.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                Text("This path does not add canonical runtime acceptance, local session authority, local search input, local search execution, local tool invocation controls, local provider selection, hidden/background wake behavior, or autonomous unlock.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
