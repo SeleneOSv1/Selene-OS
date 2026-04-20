@@ -9369,6 +9369,19 @@ struct DesktopSessionShellView: View {
             && timelineEntries.contains(where: { $0.posture == "archived_selene_turn_text" })
     }
 
+    private func desktopConversationShouldSuppressSupportRailCurrentSessionTranscript() -> Bool {
+        guard desktopReadyTimeHandoffIsActive,
+              latestSessionSuspendedVisibleContext == nil,
+              activeRecoveryDisplayState != .quarantinedLocalState,
+              latestSessionActiveVisibleContext != nil,
+              let timelineEntries = desktopOperationalConversationShellState?.primaryPaneState.timelineEntries else {
+            return false
+        }
+
+        return timelineEntries.contains(where: { $0.posture == "current_user_turn_text" })
+            && timelineEntries.contains(where: { $0.posture == "current_selene_turn_text" })
+    }
+
     private func desktopConversationShouldAttachAuthoritativeReplyArtifacts(
         to entry: DesktopConversationTimelineEntryState
     ) -> Bool {
@@ -11384,6 +11397,8 @@ struct DesktopSessionShellView: View {
     }
 
     private var historyCard: some View {
+        let shouldSuppressSupportRailCurrentSessionTranscript =
+            desktopConversationShouldSuppressSupportRailCurrentSessionTranscript()
         let shouldSuppressSupportRailArchivedRecentSliceTranscript =
             desktopConversationShouldSuppressSupportRailArchivedRecentSliceTranscript()
 
@@ -11414,19 +11429,21 @@ struct DesktopSessionShellView: View {
                         Text("Cloud-authored live dual-transcript evidence only.")
                             .font(.subheadline.weight(.semibold))
 
-                        transcriptEntry(
-                            speaker: "You",
-                            posture: "current_user_turn_text",
-                            body: latestSessionActiveVisibleContext.currentUserTurnText,
-                            detail: "Current user turn remains text-visible, session-bound, and cloud-authoritative for this active desktop session."
-                        )
+                        if !shouldSuppressSupportRailCurrentSessionTranscript {
+                            transcriptEntry(
+                                speaker: "You",
+                                posture: "current_user_turn_text",
+                                body: latestSessionActiveVisibleContext.currentUserTurnText,
+                                detail: "Current user turn remains text-visible, session-bound, and cloud-authoritative for this active desktop session."
+                            )
 
-                        transcriptEntry(
-                            speaker: "Selene",
-                            posture: "current_selene_turn_text",
-                            body: latestSessionActiveVisibleContext.currentSeleneTurnText,
-                            detail: "Current Selene turn remains text-visible and tied to the same active cloud session without a local-only transcript fork."
-                        )
+                            transcriptEntry(
+                                speaker: "Selene",
+                                posture: "current_selene_turn_text",
+                                body: latestSessionActiveVisibleContext.currentSeleneTurnText,
+                                detail: "Current Selene turn remains text-visible and tied to the same active cloud session without a local-only transcript fork."
+                            )
+                        }
 
                         Text("No local transcript authority, no local turn synthesis, and no local dispatch unlock are introduced by this bounded desktop surface.")
                             .font(.footnote)
