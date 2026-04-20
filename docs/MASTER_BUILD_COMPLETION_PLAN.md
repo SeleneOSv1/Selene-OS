@@ -148,7 +148,7 @@ It may only be updated from current repo truth, exact command results, and exact
   H112 remains preserved as executable-unit anti-loop authority by [H112_POST_H111_PERMANENT_EXECUTABLE_UNIT_ANTI_LOOP_SELECTION_LAW_CHANGE_AND_SECTION05_RESIDUAL_FRONTIER_RECLASSIFICATION_BUILD_PLAN.md#L1](/Users/selene/Documents/Selene-OS/docs/PHASE_PLANS/PHASE_H_IMPLEMENTATION/H112_POST_H111_PERMANENT_EXECUTABLE_UNIT_ANTI_LOOP_SELECTION_LAW_CHANGE_AND_SECTION05_RESIDUAL_FRONTIER_RECLASSIFICATION_BUILD_PLAN.md#L1]);
   H236 remains preserved as the first canonical post-H235 APP_MAC_DESKTOP wake-entry and broader-authority residual frontier `NOT_EXPLICIT` correction by [H236_APP_MAC_DESKTOP_FIRST_POST_H235_CANONICAL_WAKE_ENTRY_AND_BROADER_AUTHORITY_RESIDUAL_FRONTIER_NOT_EXPLICIT_PUBLICATION_CORRECTION_BUILD_PLAN.md#L1](/Users/selene/Documents/Selene-OS/docs/PHASE_PLANS/PHASE_H_IMPLEMENTATION/H236_APP_MAC_DESKTOP_FIRST_POST_H235_CANONICAL_WAKE_ENTRY_AND_BROADER_AUTHORITY_RESIDUAL_FRONTIER_NOT_EXPLICIT_PUBLICATION_CORRECTION_BUILD_PLAN.md#L1]);
   the current native macOS app plist still preserves exact `NSMicrophoneUsageDescription` and exact `NSSpeechRecognitionUsageDescription`;
-  H292-H256 truth remains preserved exactly as already recorded, with no regression;
+  H295-H256 truth remains preserved exactly as already recorded, with no regression;
   current app/adapter/mac cross-layer surface now preserves bounded wake-profile local-availability refresh through exact `AppWakeProfileAvailabilityRefreshRequest`, exact `AppWakeProfileAvailabilityRefreshOutcome`, exact `run_wake_profile_availability_refresh`, exact `WakeProfileAvailabilityRefreshAdapterRequest`, exact `WakeProfileAvailabilityRefreshAdapterResponse`, and exact `/v1/wake-profile/availability`;
   current native macOS target now preserves bounded wake-profile local-availability refresh through exact `DesktopWakeProfileAvailabilityPromptState`, exact `DesktopWakeProfileAvailabilityIngressContext`, exact `DesktopWakeProfileAvailabilityRuntimeOutcomeState`, exact `desktopWakeProfileAvailabilityRequestBuilder`, exact `submitDesktopWakeProfileAvailabilityRefresh`, and exact `desktopWakeProfileAvailabilityCard`;
   current native macOS shell now performs one explicit bounded local wake-profile availability refresh only when exact `desktop_wakeword_configured` proof context remains lawful and exact local ready-time handoff remains active;
@@ -175,8 +175,12 @@ It may only be updated from current repo truth, exact command results, and exact
   current native macOS shell now performs one explicit bounded current-visible session attach submission only when exact local ready-time handoff remains active, exact current visible session surface remains lawful, and exact multi-posture session-resume prompt remains absent;
   current native macOS shell now dispatches only exact `/v1/session/attach` for exact `SESSION_OPEN_VISIBLE` or exact `SESSION_ACTIVE_VISIBLE` current-session posture while preserving already-live exact visible session carriers;
   current native macOS shell now renders returned exact `session_state` and exact `session_attach_outcome` in bounded read-only form only outside the exact attach control itself;
+  current native macOS target now preserves bounded multi-posture session-entry submission through exact `DesktopSessionMultiPostureEntryMode`, exact `DesktopSessionMultiPostureEntryPromptState`, exact `DesktopSessionMultiPostureEntryIngressContext`, exact `DesktopSessionMultiPostureEntryRuntimeOutcomeState`, exact `desktopSessionMultiPostureEntryRequestBuilder`, exact `submitDesktopSessionMultiPostureEntry`, and exact `desktopSessionMultiPostureEntryCard`;
+  current native macOS shell now performs one explicit bounded multi-posture session-entry submission only when exact local ready-time handoff remains active and exactly one lawful route-specific session-entry prompt remains visible;
+  current native macOS shell now dispatches only exact `/v1/session/attach` for exact current-visible attach posture or exact `/v1/session/resume` for exact soft-closed explicit resume posture or exact `/v1/session/recover` for exact suspended authoritative-reread recover posture while preserving already-live exact route-specific bounded fields;
+  current native macOS shell now renders returned exact `session_state` and exact `session_attach_outcome` in bounded read-only form only outside the exact multi-posture control itself;
   current native macOS shell continues to preserve the pre-ready onboarding-first shell when exact operational shell state is not lawful;
-  broader desktop generic session attach / reopen mutation beyond this exact current-visible attach seam remains unimplemented;
+  broader desktop generic session attach / reopen mutation beyond this exact visible/resumable session-entry seam remains unimplemented;
   broader desktop backend pairing mutation remains unimplemented;
   broader desktop onboarding-derived ready-time local handoff beyond this bounded shell-local foregrounding seam remains unimplemented;
   broader desktop explicit voice request contract mutation beyond the already-landed H288 bounded audio-capture-ref transport remains unimplemented;
@@ -188,7 +192,7 @@ It may only be updated from current repo truth, exact command results, and exact
   APP_MAC_DESKTOP remains first-class but non-authority, wake-word or explicit-entry as designed, and cloud-authoritative;
   APP_MAC_DESKTOP remains `PARTIAL`;
   no wake parity claim and no autonomous unlock claim are introduced by this run;
-  no post-H295 next exact winner is published in this run.
+  no post-H296 next exact winner is published in this run.
 
 ## Canonical Separation Truth
 
