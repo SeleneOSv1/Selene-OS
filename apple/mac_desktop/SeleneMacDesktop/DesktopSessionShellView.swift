@@ -3634,6 +3634,7 @@ struct DesktopConversationPrimaryPaneState: Identifiable, Equatable {
     let readOnlyToolLaneState: DesktopConversationReadOnlyToolLaneState?
     let searchToolCompletionState: DesktopConversationSearchToolCompletionState?
     let authoritativeReplyCompletionState: DesktopConversationAuthoritativeReplyCompletionState?
+    let runtimeDispatchFailureAttachmentState: DesktopConversationRuntimeDispatchFailureAttachmentState?
 
     var id: String {
         [
@@ -3645,6 +3646,7 @@ struct DesktopConversationPrimaryPaneState: Identifiable, Equatable {
             readOnlyToolLaneState?.id ?? "read_only_tool_lane_not_attached",
             searchToolCompletionState?.id ?? "search_tool_completion_not_attached",
             authoritativeReplyCompletionState?.id ?? "authoritative_reply_completion_not_attached",
+            runtimeDispatchFailureAttachmentState?.id ?? "runtime_dispatch_failure_attachment_not_attached",
         ].joined(separator: "::")
     }
 }
@@ -3780,6 +3782,36 @@ struct DesktopConversationAuthoritativeReplyCompletionState: Identifiable, Equat
             playbackTitle,
             playbackSummary,
             playbackDetail,
+        ].joined(separator: "::")
+    }
+}
+
+struct DesktopConversationRuntimeDispatchFailureAttachmentState: Identifiable, Equatable {
+    let dispatchPhase: String
+    let requestID: String
+    let endpoint: String
+    let outcome: String
+    let nextMove: String
+    let reasonCode: String
+    let failureClass: String
+    let sessionID: String
+    let turnID: String
+    let summary: String
+    let detail: String
+
+    var id: String {
+        [
+            dispatchPhase,
+            requestID,
+            endpoint,
+            outcome,
+            nextMove,
+            reasonCode,
+            failureClass,
+            sessionID,
+            turnID,
+            summary,
+            detail,
         ].joined(separator: "::")
     }
 }
@@ -5138,6 +5170,9 @@ struct DesktopSessionShellView: View {
         let searchToolCompletionState = desktopConversationSearchToolCompletionState
         let readOnlyToolLaneState = searchToolCompletionState?.readOnlyToolLaneState
         let authoritativeReplyCompletionState = desktopConversationAuthoritativeReplyCompletionState
+        let runtimeDispatchFailureAttachmentState = timelineEntries.isEmpty
+            ? nil
+            : desktopConversationRuntimeDispatchFailureAttachmentState
 
         return DesktopConversationPrimaryPaneState(
             dominantPosture: dominantPosture,
@@ -5147,7 +5182,8 @@ struct DesktopSessionShellView: View {
             timelineEntries: timelineEntries,
             readOnlyToolLaneState: readOnlyToolLaneState,
             searchToolCompletionState: searchToolCompletionState,
-            authoritativeReplyCompletionState: authoritativeReplyCompletionState
+            authoritativeReplyCompletionState: authoritativeReplyCompletionState,
+            runtimeDispatchFailureAttachmentState: runtimeDispatchFailureAttachmentState
         )
     }
 
@@ -5251,6 +5287,32 @@ struct DesktopSessionShellView: View {
             playbackTitle: desktopAuthoritativeReplyPlaybackState.title,
             playbackSummary: desktopAuthoritativeReplyPlaybackState.summary,
             playbackDetail: desktopAuthoritativeReplyPlaybackState.detail
+        )
+    }
+
+    private var desktopConversationRuntimeDispatchFailureAttachmentState: DesktopConversationRuntimeDispatchFailureAttachmentState? {
+        guard desktopReadyTimeHandoffIsActive,
+              latestSessionSuspendedVisibleContext == nil,
+              activeRecoveryDisplayState != .quarantinedLocalState,
+              let outcomeState = desktopCanonicalRuntimeOutcomeState,
+              outcomeState.phase == .dispatching || outcomeState.phase == .failed,
+              desktopConversationSearchToolCompletionState == nil,
+              desktopConversationAuthoritativeReplyCompletionState == nil else {
+            return nil
+        }
+
+        return DesktopConversationRuntimeDispatchFailureAttachmentState(
+            dispatchPhase: outcomeState.phase.rawValue,
+            requestID: outcomeState.requestID,
+            endpoint: outcomeState.endpoint,
+            outcome: outcomeState.outcome ?? "not_available",
+            nextMove: outcomeState.nextMove ?? "not_available",
+            reasonCode: outcomeState.reasonCode ?? "not_available",
+            failureClass: outcomeState.failureClass ?? "not_available",
+            sessionID: outcomeState.sessionID ?? "not_available",
+            turnID: outcomeState.turnID ?? "not_available",
+            summary: outcomeState.summary,
+            detail: outcomeState.detail
         )
     }
 
@@ -8503,7 +8565,20 @@ struct DesktopSessionShellView: View {
     private func desktopConversationPrimaryPane(
         _ state: DesktopConversationPrimaryPaneState
     ) -> some View {
-        VStack(alignment: .leading, spacing: 18) {
+        let shouldAttachSearchToolCompletion = desktopConversationShouldAttachSearchToolCompletion(
+            state.searchToolCompletionState
+        )
+        let shouldAttachAuthoritativeReplyCompletion =
+            desktopConversationShouldAttachAuthoritativeReplyCompletion(
+                state.authoritativeReplyCompletionState
+            )
+        let shouldAttachRuntimeDispatchFailure =
+            !state.timelineEntries.isEmpty
+            && desktopConversationShouldAttachRuntimeDispatchFailure(
+                state.runtimeDispatchFailureAttachmentState
+            )
+
+        return VStack(alignment: .leading, spacing: 18) {
             VStack(alignment: .leading, spacing: 12) {
                 HStack(alignment: .top, spacing: 16) {
                     VStack(alignment: .leading, spacing: 6) {
@@ -8537,12 +8612,9 @@ struct DesktopSessionShellView: View {
                 )
             } else {
                 if let desktopCanonicalRuntimeOutcomeState,
-                   !desktopConversationShouldAttachSearchToolCompletion(
-                    state.searchToolCompletionState
-                   ),
-                   !desktopConversationShouldAttachAuthoritativeReplyCompletion(
-                    state.authoritativeReplyCompletionState
-                   ) {
+                   !shouldAttachSearchToolCompletion,
+                   !shouldAttachAuthoritativeReplyCompletion,
+                   !shouldAttachRuntimeDispatchFailure {
                     desktopCanonicalRuntimeOutcomeCard(desktopCanonicalRuntimeOutcomeState)
                 }
 
@@ -8559,6 +8631,13 @@ struct DesktopSessionShellView: View {
                                 readOnlyToolLaneState: state.readOnlyToolLaneState,
                                 searchToolCompletionState: state.searchToolCompletionState,
                                 authoritativeReplyCompletionState: state.authoritativeReplyCompletionState
+                            )
+                        }
+
+                        if shouldAttachRuntimeDispatchFailure,
+                           let runtimeDispatchFailureAttachmentState = state.runtimeDispatchFailureAttachmentState {
+                            desktopConversationRuntimeDispatchFailureAttachment(
+                                runtimeDispatchFailureAttachmentState
                             )
                         }
                     }
@@ -8709,6 +8788,58 @@ struct DesktopSessionShellView: View {
         _ authoritativeReplyCompletionState: DesktopConversationAuthoritativeReplyCompletionState?
     ) -> Bool {
         authoritativeReplyCompletionState != nil
+    }
+
+    private func desktopConversationShouldAttachRuntimeDispatchFailure(
+        _ runtimeDispatchFailureAttachmentState: DesktopConversationRuntimeDispatchFailureAttachmentState?
+    ) -> Bool {
+        runtimeDispatchFailureAttachmentState != nil
+    }
+
+    private func desktopConversationRuntimeDispatchFailureAttachment(
+        _ state: DesktopConversationRuntimeDispatchFailureAttachmentState
+    ) -> some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Runtime dispatch/failure attachment")
+                    .font(.subheadline.weight(.semibold))
+
+                metadataRow(label: "dispatch_phase", value: state.dispatchPhase)
+                metadataRow(label: "request_id", value: state.requestID)
+                metadataRow(label: "endpoint", value: state.endpoint)
+                metadataRow(label: "outcome", value: state.outcome)
+                metadataRow(label: "next_move", value: state.nextMove)
+                metadataRow(label: "reason_code", value: state.reasonCode)
+                metadataRow(label: "failure_class", value: state.failureClass)
+                metadataRow(label: "session_id", value: state.sessionID)
+                metadataRow(label: "turn_id", value: state.turnID)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("summary")
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
+
+                    Text(state.summary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("detail")
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
+
+                    Text(state.detail)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
+                Text("This path composes already-live canonical runtime outcome carriers only. It does not add local session authority, local search input, local search execution, local tool invocation controls, local provider selection, interrupt-inline authority, hidden/background wake behavior, or autonomous unlock.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
     }
 
     private func desktopConversationAuthoritativeReplyAttachment(
