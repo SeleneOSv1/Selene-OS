@@ -15329,6 +15329,100 @@ mod tests {
     }
 
     #[test]
+    fn at_adapter_03g_wake_word_desktop_voice_turn_thread_key_reuses_persisted_project_and_pinned_context_when_request_context_is_nil(
+    ) {
+        let runtime = AdapterRuntime::default();
+        let actor_user_id = UserId::new("tenant_a:user_adapter_test").unwrap();
+        let thread_key = resolve_adapter_thread_key(Some("proj_desktop_wake_continuity"));
+
+        {
+            let mut store = runtime.store.lock().expect("store lock should succeed");
+            ensure_actor_identity_and_device(
+                &mut store,
+                &actor_user_id,
+                None,
+                AppPlatform::Desktop,
+                MonotonicTimeNs(30),
+                true,
+            )
+            .expect("identity + device seed should succeed");
+            let seeded_state = KernelThreadState::empty_v1()
+                .with_project_context(
+                    Some("proj_q3_planning".to_string()),
+                    vec![
+                        "ctx_budget_sheet".to_string(),
+                        "ctx_roadmap_notes".to_string(),
+                    ],
+                )
+                .unwrap();
+            store
+                .ph1x_thread_state_upsert_commit(
+                    MonotonicTimeNs(31),
+                    actor_user_id.clone(),
+                    thread_key.clone(),
+                    seeded_state,
+                    ReasonCodeId(0x5800_7004),
+                    "adapter_thread_key_wake_project_continuity_seed".to_string(),
+                )
+                .expect("thread state seed should commit");
+        }
+
+        let mut req = base_request();
+        req.app_platform = "DESKTOP".to_string();
+        req.trigger = "WAKE_WORD".to_string();
+        req.device_id = Some("adapter_desktop_wake_project_continuity_1".to_string());
+        req.device_turn_sequence = Some(315);
+        req.thread_key = Some(thread_key.clone());
+        req.project_id = None;
+        req.pinned_context_refs = None;
+        req.user_text_final = Some("search the web for H100 pricing".to_string());
+        req.correlation_id = 10_109;
+        req.turn_id = 20_109;
+        req.now_ns = Some(32);
+        seed_wake_enrollment_complete_for_request(&runtime, &mut req, "at_adapter_03g_wake");
+        assert_eq!(req.trigger, "WAKE_WORD");
+        assert_eq!(req.app_platform, "DESKTOP");
+        assert!(req.project_id.is_none());
+        assert!(req.pinned_context_refs.is_none());
+
+        runtime
+            .run_voice_turn(req)
+            .expect("wake-word desktop voice turn with seeded thread state should succeed");
+
+        let packet = runtime
+            .ingress
+            .debug_last_agent_input_packet()
+            .expect("agent packet should be captured");
+        assert_eq!(
+            packet.thread_state.project_id.as_deref(),
+            Some("proj_q3_planning")
+        );
+        assert_eq!(
+            packet.thread_state.pinned_context_refs,
+            vec![
+                "ctx_budget_sheet".to_string(),
+                "ctx_roadmap_notes".to_string()
+            ]
+        );
+
+        let store = runtime.store.lock().expect("store lock should succeed");
+        let current = store
+            .ph1x_thread_state_current_row(&actor_user_id, &thread_key)
+            .expect("thread state should persist for wake-word desktop continuity");
+        assert_eq!(
+            current.thread_state.project_id.as_deref(),
+            Some("proj_q3_planning")
+        );
+        assert_eq!(
+            current.thread_state.pinned_context_refs,
+            vec![
+                "ctx_budget_sheet".to_string(),
+                "ctx_roadmap_notes".to_string()
+            ]
+        );
+    }
+
+    #[test]
     fn at_adapter_03g_read_only_tool_fail_emits_feedback_learn_and_builder_signal() {
         let runtime = AdapterRuntime::default();
         let mut req = base_request();
