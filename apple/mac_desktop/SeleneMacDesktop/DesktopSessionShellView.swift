@@ -5395,9 +5395,10 @@ struct DesktopSessionShellView: View {
         }
 
         if !authoritativeResponseText.isEmpty,
-           !timelineEntries.contains(where: { entry in
-               entry.body.trimmingCharacters(in: .whitespacesAndNewlines) == authoritativeResponseText
-           }) {
+           !desktopConversationShouldSuppressDedicatedAuthoritativeReplyTextEntry(
+               timelineEntries,
+               authoritativeResponseText: authoritativeResponseText
+           ) {
             timelineEntries.append(
                 DesktopConversationTimelineEntryState(
                     speaker: "Selene",
@@ -9338,6 +9339,21 @@ struct DesktopSessionShellView: View {
             .padding(.vertical, 8)
             .background(Color.accentColor.opacity(0.14))
             .clipShape(Capsule())
+    }
+
+    private func desktopConversationShouldSuppressDedicatedAuthoritativeReplyTextEntry(
+        _ timelineEntries: [DesktopConversationTimelineEntryState],
+        authoritativeResponseText: String
+    ) -> Bool {
+        timelineEntries.contains { entry in
+            let normalizedEntryBody = entry.body.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard normalizedEntryBody == authoritativeResponseText else {
+                return false
+            }
+
+            return entry.posture == "current_selene_turn_text"
+                || entry.posture == "archived_selene_turn_text"
+        }
     }
 
     private func desktopConversationShouldAttachAuthoritativeReplyArtifacts(
