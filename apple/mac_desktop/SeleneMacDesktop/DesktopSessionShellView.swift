@@ -1081,12 +1081,15 @@ struct DesktopTypedTurnRequestState: Identifiable {
 
 enum DesktopTypedTurnRequestOrigin: String, Equatable {
     case keyboardComposer = "KEYBOARD_TYPED_TURN"
+    case searchRequestCard = "SEARCH_REQUEST"
     case toolRequestCard = "TOOL_REQUEST"
 
     var requestIDPrefix: String {
         switch self {
         case .keyboardComposer:
             return "desktop_typed_turn_request"
+        case .searchRequestCard:
+            return "desktop_search_request"
         case .toolRequestCard:
             return "desktop_tool_request"
         }
@@ -1096,6 +1099,8 @@ enum DesktopTypedTurnRequestOrigin: String, Equatable {
         switch self {
         case .keyboardComposer:
             return "KEYBOARD_TYPED_TURN_PENDING"
+        case .searchRequestCard:
+            return "SEARCH_REQUEST_PENDING"
         case .toolRequestCard:
             return "TOOL_REQUEST_PENDING"
         }
@@ -1105,6 +1110,8 @@ enum DesktopTypedTurnRequestOrigin: String, Equatable {
         switch self {
         case .keyboardComposer:
             return "KEYBOARD_TYPED_TURN_FAILED_REQUEST"
+        case .searchRequestCard:
+            return "SEARCH_REQUEST_FAILED_REQUEST"
         case .toolRequestCard:
             return "TOOL_REQUEST_FAILED_REQUEST"
         }
@@ -1114,6 +1121,8 @@ enum DesktopTypedTurnRequestOrigin: String, Equatable {
         switch self {
         case .keyboardComposer:
             return "typed_turn_pending_preview"
+        case .searchRequestCard:
+            return "search_request_pending_preview"
         case .toolRequestCard:
             return "tool_request_pending_preview"
         }
@@ -1123,6 +1132,8 @@ enum DesktopTypedTurnRequestOrigin: String, Equatable {
         switch self {
         case .keyboardComposer:
             return "typed_turn_failed_request_preview"
+        case .searchRequestCard:
+            return "search_request_failed_request_preview"
         case .toolRequestCard:
             return "tool_request_failed_request_preview"
         }
@@ -1132,6 +1143,8 @@ enum DesktopTypedTurnRequestOrigin: String, Equatable {
         switch self {
         case .keyboardComposer:
             return "Typed Turn Request"
+        case .searchRequestCard:
+            return "Search Request"
         case .toolRequestCard:
             return "Tool Request"
         }
@@ -1141,8 +1154,32 @@ enum DesktopTypedTurnRequestOrigin: String, Equatable {
         switch self {
         case .keyboardComposer:
             return "This path preserves one bounded typed preview only while canonical runtime dispatch resolves. The shell does not fabricate local assistant output, local transcript authority, or local tool/search execution."
+        case .searchRequestCard:
+            return "This path preserves one bounded search-request preview only while canonical runtime dispatch resolves. Canonical runtime still retains search routing, provider choice, retrieval, and source authority, and the shell does not fabricate local search execution."
         case .toolRequestCard:
             return "This path preserves one bounded tool-request preview only while canonical runtime dispatch resolves. Canonical runtime still retains tool-routing authority, and the shell does not fabricate direct tool-name authority, local provider selection, or local search execution."
+        }
+    }
+
+    var timelinePendingDetail: String {
+        switch self {
+        case .keyboardComposer:
+            return "Bounded typed-turn pending preview only. Canonical runtime acceptance and later cloud-visible response remain authoritative."
+        case .searchRequestCard:
+            return "Bounded search-request pending preview only. Canonical runtime acceptance, search routing, and later cloud-visible response remain authoritative."
+        case .toolRequestCard:
+            return "Bounded tool-request pending preview only. Canonical runtime acceptance, tool routing, and later cloud-visible response remain authoritative."
+        }
+    }
+
+    var timelineFailedDetail: String {
+        switch self {
+        case .keyboardComposer:
+            return "Bounded typed-turn failure visibility only. Canonical runtime acceptance, transcript authority, and later cloud-visible response remain authoritative."
+        case .searchRequestCard:
+            return "Bounded search-request failure visibility only. Canonical runtime acceptance, search routing, and later cloud-visible response remain authoritative."
+        case .toolRequestCard:
+            return "Bounded tool-request failure visibility only. Canonical runtime acceptance, tool routing, and later cloud-visible response remain authoritative."
         }
     }
 }
@@ -4558,9 +4595,11 @@ struct DesktopSessionShellView: View {
     @State private var desktopAuthoritativeReplyProvenanceRenderState: DesktopAuthoritativeReplyProvenanceRenderState?
     @State private var desktopAuthoritativeReplyPlaybackState: DesktopAuthoritativeReplyPlaybackState = .idle
     @State private var desktopTypedTurnDraft: String = ""
+    @State private var desktopSearchRequestDraft: String = ""
     @State private var desktopToolRequestDraft: String = ""
     @State private var desktopTypedTurnPendingRequest: DesktopTypedTurnRequestState?
     @State private var desktopTypedTurnFailedRequest: InterruptContinuityResponseFailureState?
+    @State private var desktopSearchRequestFailedRequest: InterruptContinuityResponseFailureState?
     @State private var desktopToolRequestFailedRequest: InterruptContinuityResponseFailureState?
     @State private var desktopTypedTurnRequestSequence: Int = 0
     @State private var lastStagedWakeTriggeredVoiceTurnRequestState: WakeTriggeredVoiceTurnRequestState?
@@ -5153,6 +5192,10 @@ struct DesktopSessionShellView: View {
         desktopTypedTurnDraft.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    private var trimmedDesktopSearchRequestDraft: String {
+        desktopSearchRequestDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     private var trimmedDesktopToolRequestDraft: String {
         desktopToolRequestDraft.trimmingCharacters(in: .whitespacesAndNewlines)
     }
@@ -5185,6 +5228,43 @@ struct DesktopSessionShellView: View {
         return desktopTypedTurnPendingRequest
     }
 
+    private var searchRequestPendingTypedTurnRequest: DesktopTypedTurnRequestState? {
+        guard let desktopTypedTurnPendingRequest,
+              desktopTypedTurnPendingRequest.origin == .searchRequestCard else {
+            return nil
+        }
+
+        return desktopTypedTurnPendingRequest
+    }
+
+    private var desktopSearchRequestCardIsExecutable: Bool {
+        desktopReadyTimeHandoffIsActive
+            && desktopForegroundSelectionShowsCurrentDominantSurface
+            && foregroundSessionSoftClosedVisibleContext == nil
+            && foregroundSessionSuspendedVisibleContext == nil
+            && activeRecoveryDisplayState != .quarantinedLocalState
+    }
+
+    private var desktopSearchRequestReadOnlyDetail: String {
+        if !desktopForegroundSelectionShowsCurrentDominantSurface {
+            return "This bounded search-request surface stays read-only while a previously observed session surface is foregrounded. Search-request production remains bound to the current lawful dominant desktop surface only."
+        }
+
+        if foregroundSessionSoftClosedVisibleContext != nil {
+            return "This bounded search-request surface stays read-only while the foregrounded session surface is soft-closed. Archived recent-slice visibility does not itself reopen, resume, or retarget canonical runtime dispatch."
+        }
+
+        if foregroundSessionSuspendedVisibleContext != nil {
+            return "This bounded search-request surface stays read-only while the foregrounded session surface remains suspended. Suspended posture stays explanation-only until authoritative reread or later lawful continuation clears the suspension cloud-side."
+        }
+
+        if activeRecoveryDisplayState == .quarantinedLocalState {
+            return "This bounded search-request surface stays read-only while quarantined local recovery posture withholds current active/ready production. Canonical runtime still remains authoritative over later recovery, search routing, and dispatch."
+        }
+
+        return "This bounded search-request surface stays read-only until one lawful current active/ready conversation surface becomes foregrounded."
+    }
+
     private var desktopToolRequestCardIsExecutable: Bool {
         desktopReadyTimeHandoffIsActive
             && desktopForegroundSelectionShowsCurrentDominantSurface
@@ -5215,6 +5295,10 @@ struct DesktopSessionShellView: View {
 
     private var desktopCurrentReadOnlyToolLaneState: DesktopConversationReadOnlyToolLaneState? {
         desktopConversationSearchToolCompletionState?.readOnlyToolLaneState
+    }
+
+    private var desktopCurrentSearchToolCompletionState: DesktopConversationSearchToolCompletionState? {
+        desktopConversationSearchToolCompletionState
     }
 
     private var desktopTypedTurnComposerCard: some View {
@@ -5308,7 +5392,7 @@ struct DesktopSessionShellView: View {
                     interruptResponseFailedRequestCard(failedRequest)
                 }
 
-                Text("No dedicated local search controls, no local tool authoring controls, no shell-side `projectID` or `pinnedContextRefs` transport, no hidden/background wake behavior, and no autonomous unlock claim are introduced by this composer.")
+                Text("This composer itself still does not introduce local search execution, local provider selection, direct tool-name authority, shell-side `projectID` or `pinnedContextRefs` transport, hidden/background wake behavior, or autonomous unlock.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -5453,6 +5537,144 @@ struct DesktopSessionShellView: View {
             }
         } label: {
             Text("Tool Request")
+                .font(.headline)
+        }
+    }
+
+    private var desktopSearchRequestAuthoringCard: some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Bounded search-request authoring only. This surface stays search-lane-adjacent, reuses the already-live canonical `/v1/voice/turn` typed-turn carrier, and still leaves search routing, provider choice, retrieval, and final dispatch posture entirely cloud-side.")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                HStack(alignment: .center, spacing: 12) {
+                    Image(systemName: "magnifyingglass")
+                        .font(.system(size: 24))
+                        .foregroundStyle(.secondary)
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Search-request authoring")
+                            .font(.headline)
+
+                        Text("One bounded search-oriented request only. This surface does not create local search execution, local provider picking, local source authority, or direct tool-name authority.")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Spacer()
+
+                    Text(
+                        searchRequestPendingTypedTurnRequest == nil
+                            ? (desktopSearchRequestCardIsExecutable ? "Ready" : "Read-only")
+                            : "Dispatching"
+                    )
+                    .font(.caption.weight(.semibold))
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(
+                        searchRequestPendingTypedTurnRequest == nil
+                            ? (desktopSearchRequestCardIsExecutable
+                                ? Color.secondary.opacity(0.12)
+                                : Color.orange.opacity(0.16))
+                            : Color.accentColor.opacity(0.16)
+                    )
+                    .clipShape(Capsule())
+                }
+
+                HStack(spacing: 8) {
+                    posturePill("Search-lane adjacent")
+                    posturePill("Canonical /v1/voice/turn")
+                    posturePill("No local search execution")
+                }
+
+                HStack(spacing: 8) {
+                    posturePill("Cloud authoritative")
+                    posturePill("Session-bound")
+                    posturePill("text/plain")
+                }
+
+                if let searchToolCompletionState = desktopCurrentSearchToolCompletionState {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Current cloud-authored search context")
+                            .font(.subheadline.weight(.semibold))
+
+                        metadataRow(label: "outcome", value: searchToolCompletionState.outcome)
+                        metadataRow(label: "next_move", value: searchToolCompletionState.nextMove)
+                        metadataRow(label: "reason_code", value: searchToolCompletionState.reasonCode)
+                        metadataRow(label: "source_count", value: String(searchToolCompletionState.sources.count))
+                    }
+                } else {
+                    Text("No cloud-authored search completion attachment is currently foregrounded. You can still author one bounded search-oriented request below so canonical runtime can decide whether search dispatch is lawful.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
+                if desktopSearchRequestCardIsExecutable {
+                    TextField(
+                        "Author one bounded search-oriented request for canonical routing.",
+                        text: $desktopSearchRequestDraft
+                    )
+                    .textFieldStyle(.roundedBorder)
+                    .disabled(desktopTypedTurnSubmissionInterlocksActive)
+                    .onSubmit {
+                        submitDesktopSearchRequest()
+                    }
+
+                    HStack(spacing: 12) {
+                        Button("Execute search request") {
+                            submitDesktopSearchRequest()
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(
+                            trimmedDesktopSearchRequestDraft.isEmpty
+                                || desktopTypedTurnSubmissionInterlocksActive
+                        )
+
+                        Button("Clear search request") {
+                            desktopSearchRequestDraft = ""
+                            desktopSearchRequestFailedRequest = nil
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(
+                            desktopSearchRequestDraft.isEmpty
+                                && desktopSearchRequestFailedRequest == nil
+                        )
+                    }
+
+                    Text("Draft validation: trimmed non-empty search-oriented text only, canonical `text/plain`, \(trimmedDesktopSearchRequestDraft.utf8.count) / \(maxDesktopTypedTurnBytes) UTF-8 bytes.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                    if desktopTypedTurnSubmissionInterlocksActive {
+                        Text("Search-request production stays single-request only while another bounded typed-turn, explicit voice capture, wake-triggered request, or canonical voice-turn dispatch posture remains active.")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                } else {
+                    Text(desktopSearchRequestReadOnlyDetail)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
+                if let pendingRequest = searchRequestPendingTypedTurnRequest {
+                    desktopTypedTurnPendingRequestCard(pendingRequest)
+                }
+
+                if let failedRequest = desktopSearchRequestFailedRequest {
+                    interruptResponseFailedRequestCard(failedRequest)
+                }
+
+                Text("This card still does not claim standalone local search execution, local provider selection, direct tool-name authority, shell-side `projectID` or `pinnedContextRefs` transport, hidden/background wake behavior, or autonomous unlock.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        } label: {
+            Text("Search Request")
                 .font(.headline)
         }
     }
@@ -5998,9 +6220,7 @@ struct DesktopSessionShellView: View {
                         speaker: "You",
                         posture: pendingTypedTurnRequest.origin.timelinePendingPosture,
                         body: pendingTypedTurnRequest.boundedPreview,
-                        detail: pendingTypedTurnRequest.origin == .keyboardComposer
-                            ? "Bounded typed-turn pending preview only. Canonical runtime acceptance and later cloud-visible response remain authoritative."
-                            : "Bounded tool-request pending preview only. Canonical runtime acceptance, tool routing, and later cloud-visible response remain authoritative.",
+                        detail: pendingTypedTurnRequest.origin.timelinePendingDetail,
                         sourceSurface: pendingTypedTurnRequest.origin.pendingSourceSurface
                     )
                 )
@@ -6013,8 +6233,21 @@ struct DesktopSessionShellView: View {
                         speaker: "You",
                         posture: "typed_turn_failed_request_preview",
                         body: failedTypedTurnRequest.summary,
-                        detail: "Bounded typed-turn failure visibility only. Canonical runtime acceptance, transcript authority, and later cloud-visible response remain authoritative.",
+                        detail: DesktopTypedTurnRequestOrigin.keyboardComposer.timelineFailedDetail,
                         sourceSurface: DesktopTypedTurnRequestOrigin.keyboardComposer.failedSourceSurface
+                    )
+                )
+            }
+
+            if let failedSearchRequest = desktopSearchRequestFailedRequest,
+               desktopTypedTurnPendingRequest == nil {
+                timelineEntries.append(
+                    DesktopConversationTimelineEntryState(
+                        speaker: "You",
+                        posture: DesktopTypedTurnRequestOrigin.searchRequestCard.timelineFailedPosture,
+                        body: failedSearchRequest.summary,
+                        detail: DesktopTypedTurnRequestOrigin.searchRequestCard.timelineFailedDetail,
+                        sourceSurface: DesktopTypedTurnRequestOrigin.searchRequestCard.failedSourceSurface
                     )
                 )
             }
@@ -6026,7 +6259,7 @@ struct DesktopSessionShellView: View {
                         speaker: "You",
                         posture: DesktopTypedTurnRequestOrigin.toolRequestCard.timelineFailedPosture,
                         body: failedToolRequest.summary,
-                        detail: "Bounded tool-request failure visibility only. Canonical runtime acceptance, tool routing, and later cloud-visible response remain authoritative.",
+                        detail: DesktopTypedTurnRequestOrigin.toolRequestCard.timelineFailedDetail,
                         sourceSurface: DesktopTypedTurnRequestOrigin.toolRequestCard.failedSourceSurface
                     )
                 )
@@ -6437,9 +6670,10 @@ struct DesktopSessionShellView: View {
 
         return DesktopConversationSupportRailState(
             title: "Operational controls and status",
-            detail: "Support surfaces remain bounded, session-bound, and non-authoritative while one local observed-session selection rail can foreground already-seen cloud-authored surfaces and one bounded tool-request authoring card can reuse the already-live canonical voice-turn carrier.",
+            detail: "Support surfaces remain bounded, session-bound, and non-authoritative while one local observed-session selection rail can foreground already-seen cloud-authored surfaces, one bounded search-request authoring card can reuse the already-live canonical voice-turn carrier, and one bounded tool-request authoring card remains tool-lane-adjacent.",
             supportSurfaceLabels: [
                 "session_surface_selection_rail",
+                "search_request_authoring",
                 "tool_request_authoring",
                 "posture_panel",
                 "history",
@@ -9817,7 +10051,7 @@ struct DesktopSessionShellView: View {
                     sectionCard(
                         title: "Conversation Timeline",
                         detail: desktopForegroundSelectionShowsCurrentDominantSurface
-                            ? "Awaiting the next lawful cloud-authored turn. Use the bounded keyboard composer, the bounded tool-request authoring card, explicit voice, or the bounded foreground wake listener to start runtime dispatch from this transcript-primary shell without introducing hidden/background wake behavior or fake local authority."
+                            ? "Awaiting the next lawful cloud-authored turn. Use the bounded keyboard composer, the bounded search-request authoring card, the bounded tool-request authoring card, explicit voice, or the bounded foreground wake listener to start runtime dispatch from this transcript-primary shell without introducing hidden/background wake behavior or fake local authority."
                             : "Awaiting read-only foreground visibility for the selected observed session surface. Local selection does not itself attach, resume, recover, reopen, or retarget canonical runtime mutation."
                     )
                 } else {
@@ -9853,7 +10087,7 @@ struct DesktopSessionShellView: View {
                 } else {
                     sectionCard(
                         title: "Selected Surface Status",
-                        detail: "This previously observed session surface is foregrounded in bounded read-only form only. Existing attach / resume / recover controls remain separate, and bounded keyboard typed-turn plus tool-request production stay bound to the current lawful dominant desktop surface."
+                        detail: "This previously observed session surface is foregrounded in bounded read-only form only. Existing attach / resume / recover controls remain separate, and bounded keyboard typed-turn plus bounded search-request and tool-request production stay bound to the current lawful dominant desktop surface."
                     )
                 }
             }
@@ -9877,7 +10111,7 @@ struct DesktopSessionShellView: View {
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
 
-                    Text("Controls and evidence-adjacent support remain bounded, session-bound, and non-authoritative here. One bounded local observed-session selection rail and one bounded tool-request authoring card are now available, but they still do not introduce local attach or reopen authority, standalone local search execution, or hidden/background wake behavior.")
+                    Text("Controls and evidence-adjacent support remain bounded, session-bound, and non-authoritative here. One bounded local observed-session selection rail plus one bounded search-request authoring card and one bounded tool-request authoring card are now available, but they still do not introduce local attach or reopen authority, standalone local search execution, or hidden/background wake behavior.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -9888,6 +10122,7 @@ struct DesktopSessionShellView: View {
             }
 
             desktopSessionSurfaceSelectionRailCard
+            desktopSearchRequestAuthoringCard
             desktopToolRequestAuthoringCard
             explicitVoiceEntryAffordanceCard
             desktopWakeProfileAvailabilityCard
@@ -10751,7 +10986,7 @@ struct DesktopSessionShellView: View {
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
 
-                Text("This path composes already-live cloud-authored canonical runtime outcome, authoritative reply, provenance, and read-only tool-lane carriers only. It does not add local search input, local search execution, local tool invocation controls, local provider selection, local session authority, hidden/background wake behavior, or autonomous unlock.")
+                Text("This path composes already-live cloud-authored canonical runtime outcome, authoritative reply, provenance, and read-only tool-lane carriers only. It does not itself execute search locally, invoke tools locally, pick providers locally, add local session authority, introduce hidden/background wake behavior, or claim autonomous unlock.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -15400,6 +15635,7 @@ struct DesktopSessionShellView: View {
 
         desktopTypedTurnRequestSequence += 1
         desktopTypedTurnFailedRequest = nil
+        desktopSearchRequestFailedRequest = nil
         desktopToolRequestFailedRequest = nil
         desktopCanonicalRuntimeOutcomeState = nil
         desktopAuthoritativeReplyRenderState = nil
@@ -15468,6 +15704,41 @@ struct DesktopSessionShellView: View {
                 title: "Failed typed turn request",
                 summary: "A bounded typed turn could not be produced while another foreground voice capture or voice-turn dispatch posture was still active.",
                 detail: "This shell stays single-request only and does not merge typed and voice production locally, bypass canonical runtime sequencing, or invent local authority."
+            )
+        }
+    }
+
+    private func submitDesktopSearchRequest() {
+        let trimmedDraft = trimmedDesktopSearchRequestDraft
+
+        switch stageDesktopTypedTurnRequest(
+            trimmedDraft: trimmedDraft,
+            origin: .searchRequestCard
+        ) {
+        case .none:
+            desktopSearchRequestDraft = ""
+        case .emptyDraft:
+            return
+        case .byteLimit:
+            desktopSearchRequestFailedRequest = InterruptContinuityResponseFailureState(
+                id: "failed_desktop_search_request_text_plain_validation",
+                title: "Failed search request",
+                summary: "Canonical text-turn validation held this search-oriented request because the bounded `text/plain` payload exceeded 16384 UTF-8 bytes before any authoritative acceptance occurred.",
+                detail: "Failure visibility only; shorten the request and retry through the bounded desktop search-request surface. Canonical runtime still retains search routing, provider choice, and retrieval authority, and no local search execution was produced."
+            )
+        case .pendingRequestActive:
+            desktopSearchRequestFailedRequest = InterruptContinuityResponseFailureState(
+                id: "failed_desktop_search_request_awaiting_authoritative_response",
+                title: "Failed search request",
+                summary: "A later search-oriented request could not be produced while the current bounded typed, search, or tool request is already awaiting authoritative response.",
+                detail: "The shell keeps bounded pending / failed posture only; it does not queue a second request locally, bypass canonical runtime sequencing, or fabricate local search execution."
+            )
+        case .otherForegroundRequestActive:
+            desktopSearchRequestFailedRequest = InterruptContinuityResponseFailureState(
+                id: "failed_desktop_search_request_other_voice_request_active",
+                title: "Failed search request",
+                summary: "A bounded search-oriented request could not be produced while another foreground voice capture or voice-turn dispatch posture was still active.",
+                detail: "This shell stays single-request only and does not merge search-request production with voice capture locally, bypass canonical runtime sequencing, or fabricate local search execution."
             )
         }
     }
