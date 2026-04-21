@@ -19,14 +19,15 @@ use selene_adapter::{
     app_ui_assets, build_runtime_execution_envelope_for_voice_turn_request, AdapterHealthResponse,
     AdapterRuntime, AdapterSyncHealth, InviteLinkOpenAdapterRequest, InviteLinkOpenAdapterResponse,
     OnboardingContinueAdapterRequest, OnboardingContinueAdapterResponse,
-    SessionAttachAdapterRequest, SessionAttachAdapterResponse, SessionRecentListAdapterRequest,
-    SessionRecentListAdapterResponse, SessionRecoverAdapterRequest, SessionRecoverAdapterResponse,
-    SessionResumeAdapterRequest, SessionResumeAdapterResponse, UiChatTranscriptResponse,
-    UiHealthChecksResponse, UiHealthDetailFilter, UiHealthDetailResponse,
-    UiHealthReportQueryRequest, UiHealthReportQueryResponse, UiHealthSummary,
-    UiHealthTimelinePaging, VoiceTurnAdapterRequest, VoiceTurnAdapterResponse,
-    VoiceTurnIngressError, WakeProfileAvailabilityRefreshAdapterRequest,
-    WakeProfileAvailabilityRefreshAdapterResponse,
+    SessionAttachAdapterRequest, SessionAttachAdapterResponse,
+    SessionPostureEvidenceAdapterRequest, SessionPostureEvidenceAdapterResponse,
+    SessionRecentListAdapterRequest, SessionRecentListAdapterResponse,
+    SessionRecoverAdapterRequest, SessionRecoverAdapterResponse, SessionResumeAdapterRequest,
+    SessionResumeAdapterResponse, UiChatTranscriptResponse, UiHealthChecksResponse,
+    UiHealthDetailFilter, UiHealthDetailResponse, UiHealthReportQueryRequest,
+    UiHealthReportQueryResponse, UiHealthSummary, UiHealthTimelinePaging,
+    VoiceTurnAdapterRequest, VoiceTurnAdapterResponse, VoiceTurnIngressError,
+    WakeProfileAvailabilityRefreshAdapterRequest, WakeProfileAvailabilityRefreshAdapterResponse,
 };
 use selene_engines::ph1e::startup_outbound_self_check_logs;
 use selene_kernel_contracts::runtime_execution::{FailureClass, RuntimeExecutionEnvelope};
@@ -227,6 +228,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/v1/session/resume", post(run_session_resume))
         .route("/v1/session/recover", post(run_session_recover))
         .route("/v1/session/recent", post(run_session_recent_list))
+        .route("/v1/session/posture", post(run_session_posture_evidence))
         .route(
             "/v1/wake-profile/availability",
             post(run_wake_profile_availability_refresh),
@@ -944,6 +946,61 @@ async fn run_session_recent_list(
     }
 }
 
+async fn run_session_posture_evidence(
+    State(state): State<HttpAdapterState>,
+    headers: HeaderMap,
+    Json(request): Json<SessionPostureEvidenceAdapterRequest>,
+) -> Response {
+    let request_id = match required_header_token(&headers, "x-request-id", "missing_request_id") {
+        Ok(v) => v,
+        Err(reject) => return session_posture_evidence_security_reject_response(reject),
+    };
+    let timestamp_ms = match required_header_u64(
+        &headers,
+        "x-selene-timestamp-ms",
+        "missing_timestamp_ms",
+        "invalid_timestamp_ms",
+    ) {
+        Ok(v) => v,
+        Err(reject) => return session_posture_evidence_security_reject_response(reject),
+    };
+    let nonce = match required_header_token(&headers, "x-selene-nonce", "missing_nonce") {
+        Ok(v) => v,
+        Err(reject) => return session_posture_evidence_security_reject_response(reject),
+    };
+    let security_input = EndpointSecurityInput {
+        endpoint: "/v1/session/posture",
+        expected_subject: request.session_id.clone(),
+        expected_device: request.device_id.clone(),
+        request_id,
+        idempotency_key: request.idempotency_key.clone(),
+        timestamp_ms,
+        nonce,
+    };
+    if let Err(reject) = enforce_ingress_security(
+        &headers,
+        &state.ingress_security,
+        state.ingress_security_config,
+        security_input,
+    ) {
+        return session_posture_evidence_security_reject_response(reject);
+    }
+
+    let runtime = match state.runtime.lock() {
+        Ok(runtime) => runtime,
+        Err(_) => {
+            return session_posture_evidence_error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "adapter runtime lock poisoned".to_string(),
+            )
+        }
+    };
+    match runtime.run_session_posture_evidence(request) {
+        Ok(response) => (StatusCode::OK, Json(response)).into_response(),
+        Err(reason) => session_posture_evidence_error_response(StatusCode::BAD_REQUEST, reason),
+    }
+}
+
 async fn run_wake_profile_availability_refresh(
     State(state): State<HttpAdapterState>,
     headers: HeaderMap,
@@ -1463,6 +1520,29 @@ fn session_recent_list_security_reject_response(reject: SecurityReject) -> Respo
     json_response_with_optional_retry_after(status, response, reject.retry_after_secs)
 }
 
+fn session_posture_evidence_security_reject_response(reject: SecurityReject) -> Response {
+    let status = status_for_security_reject(reject.kind);
+    let response = SessionPostureEvidenceAdapterResponse {
+        status: "error".to_string(),
+        outcome: "REJECTED".to_string(),
+        reason: Some(reject.reason),
+        session_id: None,
+        session_state: None,
+        last_turn_id: None,
+        project_id: None,
+        pinned_context_refs: None,
+        session_attach_outcome: None,
+        selected_thread_id: None,
+        selected_thread_title: None,
+        pending_work_order_id: None,
+        resume_tier: None,
+        resume_summary_bullets: None,
+        recovery_mode: None,
+        reconciliation_decision: None,
+    };
+    json_response_with_optional_retry_after(status, response, reject.retry_after_secs)
+}
+
 fn wake_profile_availability_security_reject_response(
     reject: SecurityReject,
     device_id: Option<String>,
@@ -1600,6 +1680,31 @@ fn session_recent_list_error_response(status: StatusCode, reason: String) -> Res
             outcome: "REJECTED".to_string(),
             reason: Some(reason),
             sessions: Vec::new(),
+        }),
+    )
+        .into_response()
+}
+
+fn session_posture_evidence_error_response(status: StatusCode, reason: String) -> Response {
+    (
+        status,
+        Json(SessionPostureEvidenceAdapterResponse {
+            status: "error".to_string(),
+            outcome: "REJECTED".to_string(),
+            reason: Some(reason),
+            session_id: None,
+            session_state: None,
+            last_turn_id: None,
+            project_id: None,
+            pinned_context_refs: None,
+            session_attach_outcome: None,
+            selected_thread_id: None,
+            selected_thread_title: None,
+            pending_work_order_id: None,
+            resume_tier: None,
+            resume_summary_bullets: None,
+            recovery_mode: None,
+            reconciliation_decision: None,
         }),
     )
         .into_response()
@@ -1889,6 +1994,15 @@ mod tests {
             correlation_id: 4003,
             idempotency_key: "session-recent-idem-1".to_string(),
             device_id: "recent_device_1".to_string(),
+        }
+    }
+
+    fn base_session_posture_request() -> SessionPostureEvidenceAdapterRequest {
+        SessionPostureEvidenceAdapterRequest {
+            correlation_id: 4004,
+            idempotency_key: "session-posture-idem-1".to_string(),
+            session_id: "4401".to_string(),
+            device_id: "posture_device_1".to_string(),
         }
     }
 
@@ -3082,6 +3196,80 @@ mod tests {
             .sessions
             .iter()
             .all(|session| session.session_id != "4924"));
+    }
+
+    #[tokio::test]
+    async fn http_session_posture_route_returns_current_device_fields_for_session() {
+        let (state, store) = test_state_with_config_and_store(IngressSecurityConfig::from_env());
+        let current_device_id = DeviceId::new("http_session_posture_device").unwrap();
+        let other_device_id = DeviceId::new("http_session_posture_other_device").unwrap();
+        let current_user_id = UserId::new("tenant_1:http_session_posture_actor").unwrap();
+        let other_user_id = UserId::new("tenant_1:http_session_posture_other_actor").unwrap();
+        let session_id = SessionId(4_930);
+
+        {
+            let mut guard = store.lock().expect("store lock must succeed");
+            seed_recent_session_record_for_last_attached_device(
+                &mut guard,
+                session_id,
+                &current_user_id,
+                &current_device_id,
+                std::slice::from_ref(&current_device_id),
+                &current_device_id,
+                SessionState::SoftClosed,
+                MonotonicTimeNs(330),
+                Some(TurnId(930)),
+            );
+            seed_recent_session_record_for_last_attached_device(
+                &mut guard,
+                SessionId(4_931),
+                &other_user_id,
+                &current_device_id,
+                &[current_device_id.clone(), other_device_id.clone()],
+                &other_device_id,
+                SessionState::Active,
+                MonotonicTimeNs(331),
+                Some(TurnId(931)),
+            );
+        }
+
+        let mut request = base_session_posture_request();
+        request.session_id = session_id.0.to_string();
+        request.device_id = current_device_id.as_str().to_string();
+        let now_ms = system_time_now_ms();
+        let headers = security_headers(
+            Some(bearer_for(&request.session_id, &request.device_id)),
+            "req-session-posture-1",
+            "idem-session-posture-1",
+            now_ms,
+            "nonce-session-posture-1",
+        );
+        let response = run_session_posture_evidence(State(state), headers, Json(request)).await;
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body: SessionPostureEvidenceAdapterResponse = decode_json_response(response).await;
+        let (expected_project_id, expected_pinned_context_refs) = session_project_context_fixture();
+        assert_eq!(body.status, "ok");
+        assert_eq!(body.outcome, "SESSION_POSTURE_EVIDENCE_READ");
+        assert_eq!(body.session_id.as_deref(), Some("4930"));
+        assert_eq!(body.session_state.as_deref(), Some("SOFT_CLOSED"));
+        assert_eq!(body.last_turn_id.as_deref(), Some("930"));
+        assert_eq!(
+            body.project_id.as_deref(),
+            Some(expected_project_id.as_str())
+        );
+        assert_eq!(
+            body.pinned_context_refs.as_deref(),
+            Some(expected_pinned_context_refs.as_slice())
+        );
+        assert_eq!(body.session_attach_outcome, None);
+        assert_eq!(body.selected_thread_id, None);
+        assert_eq!(body.selected_thread_title, None);
+        assert_eq!(body.pending_work_order_id, None);
+        assert_eq!(body.resume_tier, None);
+        assert_eq!(body.resume_summary_bullets, None);
+        assert_eq!(body.recovery_mode, None);
+        assert_eq!(body.reconciliation_decision, None);
     }
 
     #[tokio::test]

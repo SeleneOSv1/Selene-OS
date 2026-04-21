@@ -623,6 +623,9 @@ This section is a planning queue only.
 - H337 now consumes that already-live upstream carrier only through one bounded native macOS read-only current-device recent-session visibility card.
 - H337 preserves the existing observed-session rail, exact session-entry controls, and exact same-session `/v1/voice/turn` project-context transport unchanged.
 - H337 does not synthesize active transcript surfaces, archived transcript surfaces, suspended explanation surfaces, recent-row-driven attach / resume / recover authority, or generic reopen authority.
+- H340 now adds one upstream bounded read-only current-device per-session posture-evidence carrier through exact `/v1/session/posture`, returning only lawful current-device evidence for one non-closed session whose exact persisted `last_attached_device_id` still matches the requesting device.
+- H340 exposes only already-grounded per-session posture evidence such as exact `session_attach_outcome`, exact `recovery_mode`, and exact `reconciliation_decision` when current upstream truth lawfully provides them, and does not expose transcript content, archive slices, generic reopen authority, or route-specific mutation authority.
+- H340 changes no desktop code in this run and therefore does not by itself publish a new desktop winner.
 - The pre-H337 desktop candidate-family ordering is now stale until it is refreshed against the newly landed desktop recent-session visibility seam.
 
 ### Explicitly Not Next

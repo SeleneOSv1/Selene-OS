@@ -51,7 +51,7 @@ use selene_kernel_contracts::ph1link::{
     AppPlatform, InviteeType, LinkStatus, Ph1LinkRequest, Ph1LinkResponse, TokenId,
     LINK_INVITE_DRAFT_UPDATE_COMMIT, LINK_INVITE_OPEN_ACTIVATE_COMMIT,
 };
-use selene_kernel_contracts::ph1m::{MemoryCandidate, MemoryConfidence};
+use selene_kernel_contracts::ph1m::{MemoryCandidate, MemoryConfidence, MemoryResumeTier};
 use selene_kernel_contracts::ph1n::{FieldKey, IntentDraft, IntentType, Ph1nResponse};
 use selene_kernel_contracts::ph1onb::{
     OnbAccessInstanceCreateCommitRequest, OnbCompleteCommitRequest,
@@ -90,8 +90,9 @@ use selene_kernel_contracts::runtime_execution::{
     AdmissionState, AuthorityExecutionState, AuthorityPolicyDecision, IdentityExecutionState,
     IdentityRecoveryState, IdentityTrustTier, IdentityVerificationConsistencyLevel,
     MemoryConsistencyLevel, MemoryEligibilityDecision, MemoryExecutionState, MemoryTrustLevel,
-    OnboardingReadinessState, PlatformRuntimeContext, ProofExecutionState, RuntimeEntryTrigger,
-    RuntimeExecutionEnvelope, SessionAttachOutcome, SimulationCertificationState,
+    OnboardingReadinessState, PersistenceRecoveryMode, PlatformRuntimeContext,
+    ProofExecutionState, ReconciliationDecision, RuntimeEntryTrigger, RuntimeExecutionEnvelope,
+    SessionAttachOutcome, SimulationCertificationState,
 };
 use selene_kernel_contracts::runtime_governance::{
     GovernanceClusterConsistency, GovernanceDecisionLogEntry, GovernanceDriftSignal,
@@ -746,6 +747,59 @@ pub struct AppSessionRecentListOutcome {
     pub sessions: Vec<AppSessionRecentListItem>,
 }
 
+#[derive(Debug, Clone)]
+pub struct AppSessionPostureEvidenceRequest {
+    pub correlation_id: CorrelationId,
+    pub idempotency_key: String,
+    pub device_id: DeviceId,
+    pub session_id: SessionId,
+}
+
+impl AppSessionPostureEvidenceRequest {
+    pub fn v1(
+        correlation_id: CorrelationId,
+        idempotency_key: String,
+        device_id: DeviceId,
+        session_id: SessionId,
+    ) -> Result<Self, ContractViolation> {
+        correlation_id.validate()?;
+        validate_ascii_token(
+            "app_session_posture_evidence_request.idempotency_key",
+            &idempotency_key,
+            128,
+        )?;
+        device_id.validate()?;
+        Ok(Self {
+            correlation_id,
+            idempotency_key,
+            device_id,
+            session_id,
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AppSessionPostureEvidence {
+    pub session_id: String,
+    pub session_state: SessionState,
+    pub last_turn_id: Option<String>,
+    pub project_id: Option<String>,
+    pub pinned_context_refs: Option<Vec<String>>,
+    pub session_attach_outcome: Option<SessionAttachOutcome>,
+    pub selected_thread_id: Option<String>,
+    pub selected_thread_title: Option<String>,
+    pub pending_work_order_id: Option<String>,
+    pub resume_tier: Option<MemoryResumeTier>,
+    pub resume_summary_bullets: Option<Vec<String>>,
+    pub recovery_mode: Option<PersistenceRecoveryMode>,
+    pub reconciliation_decision: Option<ReconciliationDecision>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AppSessionPostureEvidenceOutcome {
+    pub evidence: AppSessionPostureEvidence,
+}
+
 fn stored_session_project_context(
     record: &StoredSessionRecord,
 ) -> (Option<String>, Option<Vec<String>>) {
@@ -766,6 +820,25 @@ fn stored_session_recent_list_item(record: &StoredSessionRecord) -> AppSessionRe
         last_turn_id: record.last_turn_id.map(|turn_id| turn_id.0.to_string()),
         project_id,
         pinned_context_refs,
+    }
+}
+
+fn stored_session_posture_evidence(record: &StoredSessionRecord) -> AppSessionPostureEvidence {
+    let (project_id, pinned_context_refs) = stored_session_project_context(record);
+    AppSessionPostureEvidence {
+        session_id: record.session_id.0.to_string(),
+        session_state: record.session_state,
+        last_turn_id: record.last_turn_id.map(|turn_id| turn_id.0.to_string()),
+        project_id,
+        pinned_context_refs,
+        session_attach_outcome: None,
+        selected_thread_id: None,
+        selected_thread_title: None,
+        pending_work_order_id: None,
+        resume_tier: None,
+        resume_summary_bullets: None,
+        recovery_mode: None,
+        reconciliation_decision: None,
     }
 }
 
@@ -4790,6 +4863,32 @@ impl AppServerIngressRuntime {
             .collect();
 
         Ok(AppSessionRecentListOutcome { sessions })
+    }
+
+    pub fn run_session_posture_evidence(
+        &self,
+        store: &Ph1fStore,
+        request: AppSessionPostureEvidenceRequest,
+    ) -> Result<AppSessionPostureEvidenceOutcome, StorageError> {
+        let AppSessionPostureEvidenceRequest {
+            correlation_id: _,
+            idempotency_key: _,
+            device_id,
+            session_id,
+        } = request;
+
+        let record = store
+            .nonclosed_session_for_last_attached_device(&device_id, &session_id)
+            .ok_or(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "app_session_posture_evidence_request.session_id",
+                    reason: "SESSION_NOT_AVAILABLE_FOR_DEVICE",
+                },
+            ))?;
+
+        Ok(AppSessionPostureEvidenceOutcome {
+            evidence: stored_session_posture_evidence(&record),
+        })
     }
 
     pub fn run_device_artifact_sync_worker_pass(
@@ -9387,6 +9486,81 @@ fn session_recent_list_returns_recent_nonclosed_sessions_for_last_attached_devic
         .sessions
         .iter()
         .all(|session| session.session_id != "4924"));
+}
+
+#[cfg(test)]
+#[test]
+fn session_posture_evidence_returns_current_device_fields_for_session() {
+    let runtime = AppServerIngressRuntime::default();
+    let current_device_id = DeviceId::new("session_posture_current_device").unwrap();
+    let other_device_id = DeviceId::new("session_posture_other_device").unwrap();
+    let user_id = UserId::new("tenant_1:session_posture_actor").unwrap();
+    let session_id = SessionId(4_930);
+    let mut store = Ph1fStore::new_in_memory();
+
+    seed_recent_session_record_for_last_attached_device_test(
+        &mut store,
+        session_id,
+        &user_id,
+        &current_device_id,
+        std::slice::from_ref(&current_device_id),
+        &current_device_id,
+        SessionState::SoftClosed,
+        MonotonicTimeNs(330),
+        Some(TurnId(930)),
+    );
+
+    let outcome = runtime
+        .run_session_posture_evidence(
+            &store,
+            AppSessionPostureEvidenceRequest::v1(
+                CorrelationId(92_104),
+                "session_posture_evidence".to_string(),
+                current_device_id.clone(),
+                session_id,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+    let evidence = outcome.evidence;
+    assert_eq!(evidence.session_id, "4930");
+    assert_eq!(evidence.session_state, SessionState::SoftClosed);
+    assert_eq!(evidence.last_turn_id.as_deref(), Some("930"));
+    let (project_id, pinned_context_refs) = test_session_project_context_fixture();
+    assert_eq!(evidence.project_id.as_deref(), Some(project_id.as_str()));
+    assert_eq!(
+        evidence.pinned_context_refs.as_deref(),
+        Some(pinned_context_refs.as_slice())
+    );
+    assert_eq!(evidence.session_attach_outcome, None);
+    assert_eq!(evidence.selected_thread_id, None);
+    assert_eq!(evidence.selected_thread_title, None);
+    assert_eq!(evidence.pending_work_order_id, None);
+    assert_eq!(evidence.resume_tier, None);
+    assert_eq!(evidence.resume_summary_bullets, None);
+    assert_eq!(evidence.recovery_mode, None);
+    assert_eq!(evidence.reconciliation_decision, None);
+
+    let err = runtime
+        .run_session_posture_evidence(
+            &store,
+            AppSessionPostureEvidenceRequest::v1(
+                CorrelationId(92_105),
+                "session_posture_evidence_other_device".to_string(),
+                other_device_id,
+                session_id,
+            )
+            .unwrap(),
+        )
+        .expect_err("other device must fail closed");
+    assert!(matches!(
+        err,
+        StorageError::ContractViolation(ContractViolation::InvalidValue {
+            field: "app_session_posture_evidence_request.session_id",
+            reason: "SESSION_NOT_AVAILABLE_FOR_DEVICE",
+        })
+    ));
 }
 
 #[cfg(test)]

@@ -3968,6 +3968,17 @@ impl Ph1fStore {
         sessions
     }
 
+    pub fn nonclosed_session_for_last_attached_device(
+        &self,
+        device_id: &DeviceId,
+        session_id: &SessionId,
+    ) -> Option<SessionRecord> {
+        self.sessions.get(session_id).and_then(|row| {
+            (row.is_recoverable() && row.last_attached_device_id == *device_id)
+                .then(|| row.clone())
+        })
+    }
+
     pub fn append_memory_ledger_event(
         &mut self,
         user_id: &UserId,

@@ -83,6 +83,7 @@ use selene_kernel_contracts::ph1l::{
 };
 use selene_kernel_contracts::ph1learn::{LearnSignalType, WakeLearnSignalV1, WakeLearnTrigger};
 use selene_kernel_contracts::ph1link::{AppPlatform, TokenId};
+use selene_kernel_contracts::ph1m::MemoryResumeTier;
 use selene_kernel_contracts::ph1n::{Chat as Ph1nChat, Ph1nRequest, Ph1nResponse};
 use selene_kernel_contracts::ph1onb::{
     OnboardingNextStep, OnboardingSessionId, SenderVerifyDecision,
@@ -118,9 +119,10 @@ use selene_kernel_contracts::{
 use selene_os::app_ingress::{
     AppInviteLinkOpenRequest, AppOnboardingContinueAction, AppOnboardingContinueNextStep,
     AppOnboardingContinueRequest, AppServerIngressRuntime, AppSessionAttachRequest,
-    AppSessionRecentListRequest, AppSessionRecoverRequest, AppSessionResumeRequest,
-    AppVoiceIngressRequest, AppVoicePh1xBuildInput, AppVoiceTurnExecutionOutcome,
-    AppVoiceTurnNextMove, AppWakeProfileAvailabilityRefreshRequest,
+    AppSessionPostureEvidenceRequest, AppSessionRecentListRequest,
+    AppSessionRecoverRequest, AppSessionResumeRequest, AppVoiceIngressRequest,
+    AppVoicePh1xBuildInput, AppVoiceTurnExecutionOutcome, AppVoiceTurnNextMove,
+    AppWakeProfileAvailabilityRefreshRequest,
 };
 use selene_os::device_artifact_sync::DeviceArtifactSyncWorkerPassMetrics;
 use selene_os::ph1_voice_id::{
@@ -520,6 +522,13 @@ struct FallbackRuntimeExecutionEnvelopeParams<'a> {
     platform_context: Option<PlatformRuntimeContext>,
 }
 
+#[derive(Debug, Clone, Default)]
+struct SessionPosturePersistenceEvidence {
+    session_attach_outcome: Option<SessionAttachOutcome>,
+    recovery_mode: Option<PersistenceRecoveryMode>,
+    reconciliation_decision: Option<ReconciliationDecision>,
+}
+
 #[derive(Debug, Default)]
 struct OnboardingContinueActionInput {
     field_value: Option<String>,
@@ -702,6 +711,34 @@ pub struct SessionRecentListAdapterResponse {
     pub outcome: String,
     pub reason: Option<String>,
     pub sessions: Vec<SessionRecentListItem>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct SessionPostureEvidenceAdapterRequest {
+    pub correlation_id: u64,
+    pub idempotency_key: String,
+    pub session_id: String,
+    pub device_id: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct SessionPostureEvidenceAdapterResponse {
+    pub status: String,
+    pub outcome: String,
+    pub reason: Option<String>,
+    pub session_id: Option<String>,
+    pub session_state: Option<String>,
+    pub last_turn_id: Option<String>,
+    pub project_id: Option<String>,
+    pub pinned_context_refs: Option<Vec<String>>,
+    pub session_attach_outcome: Option<String>,
+    pub selected_thread_id: Option<String>,
+    pub selected_thread_title: Option<String>,
+    pub pending_work_order_id: Option<String>,
+    pub resume_tier: Option<String>,
+    pub resume_summary_bullets: Option<Vec<String>>,
+    pub recovery_mode: Option<String>,
+    pub reconciliation_decision: Option<String>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -1685,6 +1722,73 @@ impl AdapterRuntime {
         })
     }
 
+    pub fn run_session_posture_evidence(
+        &self,
+        request: SessionPostureEvidenceAdapterRequest,
+    ) -> Result<SessionPostureEvidenceAdapterResponse, String> {
+        let correlation_id = CorrelationId(u128::from(request.correlation_id));
+        let session_id = request
+            .session_id
+            .parse::<u128>()
+            .map(SessionId)
+            .map_err(|err| format!("invalid session_id: {err}"))?;
+        let device_id = DeviceId::new(request.device_id.clone())
+            .map_err(|err| format!("invalid device_id: {err:?}"))?;
+        let ingress_request = AppSessionPostureEvidenceRequest::v1(
+            correlation_id,
+            request.idempotency_key,
+            device_id,
+            session_id,
+        )
+        .map_err(|err| format!("invalid session_posture request: {err:?}"))?;
+
+        let store = self
+            .store
+            .lock()
+            .map_err(|_| "adapter store lock poisoned".to_string())?;
+        let mut evidence = self
+            .ingress
+            .run_session_posture_evidence(&store, ingress_request)
+            .map_err(storage_error_to_string)?
+            .evidence;
+        drop(store);
+
+        let persistence_evidence = self.current_device_session_posture_persistence_evidence(
+            evidence.session_id.as_str(),
+            request.device_id.as_str(),
+        )?;
+        evidence.session_attach_outcome = evidence
+            .session_attach_outcome
+            .or(persistence_evidence.session_attach_outcome);
+        evidence.recovery_mode = evidence.recovery_mode.or(persistence_evidence.recovery_mode);
+        evidence.reconciliation_decision = evidence
+            .reconciliation_decision
+            .or(persistence_evidence.reconciliation_decision);
+
+        Ok(SessionPostureEvidenceAdapterResponse {
+            status: "ok".to_string(),
+            outcome: "SESSION_POSTURE_EVIDENCE_READ".to_string(),
+            reason: None,
+            session_id: Some(evidence.session_id),
+            session_state: Some(session_state_to_api_value(evidence.session_state)),
+            last_turn_id: evidence.last_turn_id,
+            project_id: evidence.project_id,
+            pinned_context_refs: evidence.pinned_context_refs,
+            session_attach_outcome: evidence
+                .session_attach_outcome
+                .map(session_attach_outcome_to_api_value),
+            selected_thread_id: evidence.selected_thread_id,
+            selected_thread_title: evidence.selected_thread_title,
+            pending_work_order_id: evidence.pending_work_order_id,
+            resume_tier: evidence.resume_tier.map(memory_resume_tier_to_api_value),
+            resume_summary_bullets: evidence.resume_summary_bullets,
+            recovery_mode: evidence.recovery_mode.map(persistence_recovery_mode_to_api_value),
+            reconciliation_decision: evidence
+                .reconciliation_decision
+                .map(reconciliation_decision_to_api_value),
+        })
+    }
+
     pub fn run_session_attach(
         &self,
         request: SessionAttachAdapterRequest,
@@ -1809,6 +1913,59 @@ impl AdapterRuntime {
             activated_count: outcome.activated_count,
             noop_count: outcome.noop_count,
             pull_error_count: outcome.pull_error_count,
+        })
+    }
+
+    fn current_device_session_posture_persistence_evidence(
+        &self,
+        session_id: &str,
+        device_id: &str,
+    ) -> Result<SessionPosturePersistenceEvidence, String> {
+        let Some(persistence) = self.persistence.as_ref() else {
+            return Ok(SessionPosturePersistenceEvidence::default());
+        };
+        let guard = persistence
+            .state
+            .lock()
+            .map_err(|_| "adapter persistence state lock poisoned".to_string())?;
+        validate_persistence_state_integrity(&guard)
+            .map_err(|err| format!("persistence state integrity check failed: {err}"))?;
+
+        let latest_authoritative = guard
+            .authoritative_outcomes
+            .values()
+            .filter(|outcome| {
+                outcome.session_id.as_deref() == Some(session_id) && outcome.device_id == device_id
+            })
+            .max_by_key(|outcome| outcome.acknowledged_at_ns);
+        let latest_outbox = guard
+            .outbox_records
+            .values()
+            .filter(|record| {
+                record.session_id.as_deref() == Some(session_id) && record.device_id == device_id
+            })
+            .max_by_key(|record| {
+                (
+                    record.submission_timestamp_ns,
+                    record.turn_id.unwrap_or(0),
+                    u64::from(record.retry_counter),
+                )
+            });
+
+        let session_attach_outcome = latest_authoritative.and_then(|outcome| match &outcome.result
+        {
+            AdapterPersistedAuthoritativeResult::Success(response) => response.session_attach_outcome,
+            AdapterPersistedAuthoritativeResult::Failure(_) => None,
+        });
+        let reconciliation_decision =
+            latest_outbox.and_then(|record| record.last_reconciliation_decision);
+        let recovery_mode =
+            (latest_authoritative.is_some() || latest_outbox.is_some()).then_some(guard.recovery_mode);
+
+        Ok(SessionPosturePersistenceEvidence {
+            session_attach_outcome,
+            recovery_mode,
+            reconciliation_decision,
         })
     }
 
@@ -7152,6 +7309,25 @@ fn session_attach_outcome_to_api_value(session_attach_outcome: SessionAttachOutc
     session_attach_outcome.as_str().to_string()
 }
 
+fn memory_resume_tier_to_api_value(resume_tier: MemoryResumeTier) -> String {
+    match resume_tier {
+        MemoryResumeTier::Hot => "HOT",
+        MemoryResumeTier::Warm => "WARM",
+        MemoryResumeTier::Cold => "COLD",
+    }
+    .to_string()
+}
+
+fn persistence_recovery_mode_to_api_value(recovery_mode: PersistenceRecoveryMode) -> String {
+    recovery_mode.as_str().to_string()
+}
+
+fn reconciliation_decision_to_api_value(
+    reconciliation_decision: ReconciliationDecision,
+) -> String {
+    reconciliation_decision.as_str().to_string()
+}
+
 fn canonical_reason_code_token(reason: &str, failure_class: FailureClass) -> String {
     if reason.starts_with("auth_identity_unknown") {
         return "AUTH_IDENTITY_UNKNOWN".to_string();
@@ -11620,6 +11796,168 @@ fn session_recent_response_returns_recent_nonclosed_sessions_for_last_attached_d
 }
 
 #[cfg(test)]
+#[test]
+fn session_posture_evidence_response_returns_current_device_fields_for_session() {
+    let journal_path = tests::temp_persistence_journal_path("session_posture_evidence");
+    let runtime = AdapterRuntime::new_with_persistence(
+        AppServerIngressRuntime::default(),
+        Arc::new(Mutex::new(Ph1fStore::new_in_memory())),
+        journal_path.clone(),
+        true,
+    )
+    .expect("adapter runtime with persistence must bootstrap");
+    let current_device_id = DeviceId::new("adapter_session_posture_current_device").unwrap();
+    let user_id = UserId::new("tenant_1:adapter_session_posture_actor").unwrap();
+    let session_id = SessionId(5_930);
+
+    seed_adapter_recent_session_record_for_last_attached_device_test(
+        &runtime,
+        session_id,
+        &user_id,
+        &current_device_id,
+        std::slice::from_ref(&current_device_id),
+        &current_device_id,
+        SessionState::SoftClosed,
+        MonotonicTimeNs(330),
+        Some(TurnId(930)),
+    );
+
+    let persistence = runtime
+        .persistence
+        .as_ref()
+        .expect("test runtime must preserve persistence");
+    let mut guard = persistence
+        .state
+        .lock()
+        .expect("persistence state lock must succeed");
+    guard.recovery_mode = PersistenceRecoveryMode::Recovering;
+
+    let actor_user_id = user_id.as_str().to_string();
+    let idempotency_key = "adapter_session_posture_turn".to_string();
+    let operation_id = derived_operation_id(&actor_user_id, &idempotency_key);
+    let request = VoiceTurnAdapterRequest {
+        correlation_id: 93_104,
+        turn_id: 930,
+        device_turn_sequence: Some(930),
+        app_platform: "DESKTOP".to_string(),
+        platform_version: None,
+        device_class: None,
+        runtime_client_version: None,
+        hardware_capability_profile: None,
+        network_profile: None,
+        claimed_capabilities: None,
+        integrity_status: None,
+        attestation_ref: None,
+        trigger: "EXPLICIT".to_string(),
+        actor_user_id: actor_user_id.clone(),
+        tenant_id: None,
+        device_id: Some(current_device_id.as_str().to_string()),
+        now_ns: None,
+        thread_key: None,
+        project_id: None,
+        pinned_context_refs: None,
+        thread_policy_flags: None,
+        user_text_partial: None,
+        user_text_final: Some("resume this session".to_string()),
+        selene_text_partial: None,
+        selene_text_final: None,
+        audio_capture_ref: None,
+        visual_input_ref: None,
+    };
+    guard.outbox_records.insert(
+        operation_id.clone(),
+        AdapterOutboxRecord {
+            operation_id: operation_id.clone(),
+            request_id: "req-session-posture".to_string(),
+            trace_id: "trace-session-posture".to_string(),
+            actor_user_id: actor_user_id.clone(),
+            idempotency_key: idempotency_key.clone(),
+            session_id: Some(session_id.0.to_string()),
+            turn_id: Some(930),
+            device_id: current_device_id.as_str().to_string(),
+            device_turn_sequence: Some(930),
+            submission_timestamp_ns: 930,
+            retry_counter: 0,
+            acknowledgement_state: PersistenceAcknowledgementState::AuthoritativelyAcknowledged,
+            cleared_from_active_outbox_at_ns: Some(931),
+            last_reconciliation_decision: Some(ReconciliationDecision::RequestFreshSessionState),
+            last_conflict_severity: Some(PersistenceConflictSeverity::Info),
+            request,
+        },
+    );
+    guard.authoritative_outcomes.insert(
+        actor_idempotency_lookup_key(&actor_user_id, &idempotency_key),
+        AdapterAuthoritativeOutcomeRecord {
+            actor_user_id: actor_user_id.clone(),
+            idempotency_key: idempotency_key.clone(),
+            session_id: Some(session_id.0.to_string()),
+            turn_id: Some(930),
+            session_state: Some("SOFT_CLOSED".to_string()),
+            device_id: current_device_id.as_str().to_string(),
+            device_turn_sequence: Some(930),
+            acknowledged_at_ns: 932,
+            runtime_node_id: runtime.runtime_node_id.clone(),
+            governance_policy_version: Some(
+                runtime.ingress.runtime_governance_policy_version().to_string(),
+            ),
+            conflict_severity: Some(PersistenceConflictSeverity::Info),
+            result: AdapterPersistedAuthoritativeResult::Success(VoiceTurnAdapterResponse {
+                status: "ok".to_string(),
+                outcome: "TURN_PROCESSED".to_string(),
+                session_id: Some(session_id.0.to_string()),
+                turn_id: Some(930),
+                session_state: Some("SOFT_CLOSED".to_string()),
+                session_attach_outcome: Some(SessionAttachOutcome::ExistingSessionAttached),
+                failure_class: None,
+                reason: None,
+                next_move: "respond".to_string(),
+                response_text: "ready".to_string(),
+                reason_code: "OK".to_string(),
+                provenance: None,
+            }),
+        },
+    );
+    drop(guard);
+
+    let response = runtime
+        .run_session_posture_evidence(SessionPostureEvidenceAdapterRequest {
+            correlation_id: 93_105,
+            idempotency_key: "adapter_session_posture_read".to_string(),
+            session_id: session_id.0.to_string(),
+            device_id: current_device_id.as_str().to_string(),
+        })
+        .unwrap();
+
+    assert_eq!(response.status, "ok");
+    assert_eq!(response.outcome, "SESSION_POSTURE_EVIDENCE_READ");
+    assert_eq!(response.session_id.as_deref(), Some("5930"));
+    assert_eq!(response.session_state.as_deref(), Some("SOFT_CLOSED"));
+    assert_eq!(response.last_turn_id.as_deref(), Some("930"));
+    let (project_id, pinned_context_refs) = adapter_test_session_project_context_fixture();
+    assert_eq!(response.project_id.as_deref(), Some(project_id.as_str()));
+    assert_eq!(
+        response.pinned_context_refs.as_deref(),
+        Some(pinned_context_refs.as_slice())
+    );
+    assert_eq!(
+        response.session_attach_outcome.as_deref(),
+        Some("EXISTING_SESSION_ATTACHED")
+    );
+    assert_eq!(response.selected_thread_id, None);
+    assert_eq!(response.selected_thread_title, None);
+    assert_eq!(response.pending_work_order_id, None);
+    assert_eq!(response.resume_tier, None);
+    assert_eq!(response.resume_summary_bullets, None);
+    assert_eq!(response.recovery_mode.as_deref(), Some("RECOVERING"));
+    assert_eq!(
+        response.reconciliation_decision.as_deref(),
+        Some("REQUEST_FRESH_SESSION_STATE")
+    );
+
+    tests::cleanup_persistence_files_for_test(&journal_path);
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use selene_engines::device_vault::DeviceVault;
@@ -11854,7 +12192,7 @@ mod tests {
         }
     }
 
-    fn temp_persistence_journal_path(label: &str) -> PathBuf {
+    pub(super) fn temp_persistence_journal_path(label: &str) -> PathBuf {
         let seed = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("clock must be >= unix epoch")
@@ -11882,7 +12220,7 @@ mod tests {
         std::fs::write(&state_path, json).expect("persistence state must be writable");
     }
 
-    fn cleanup_persistence_files_for_test(journal_path: &Path) {
+    pub(super) fn cleanup_persistence_files_for_test(journal_path: &Path) {
         let _ = std::fs::remove_file(journal_path);
         let state_path = adapter_persistence_state_path(journal_path);
         let _ = std::fs::remove_file(&state_path);

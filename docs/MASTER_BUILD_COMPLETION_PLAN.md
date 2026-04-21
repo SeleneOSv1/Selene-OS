@@ -254,6 +254,15 @@ It may only be updated from current repo truth, exact command results, and exact
   no wake parity claim is made;
   no autonomous unlock claim is made;
   no post-H337 exact desktop next winner is published in this run;
+  H340 is now implemented as the first post-H337 upstream bounded enabling build `cloud_authored_current_device_per_session_posture_evidence_read_only_carrier_for_later_desktop_entry_work` through [ph1f.rs#L1](/Users/selene/Documents/Selene-OS/crates/selene_storage/src/ph1f.rs#L1), [app_ingress.rs#L1](/Users/selene/Documents/Selene-OS/crates/selene_os/src/app_ingress.rs#L1), [lib.rs#L1](/Users/selene/Documents/Selene-OS/crates/selene_adapter/src/lib.rs#L1), and [http_adapter.rs#L1](/Users/selene/Documents/Selene-OS/crates/selene_adapter/src/bin/http_adapter.rs#L1);
+  current upstream truth now exposes one bounded read-only current-device per-session posture-evidence carrier through exact `/v1/session/posture`;
+  exact `/v1/session/posture` now returns one lawful current-device per-session posture-evidence payload only when the target non-closed session row still matches the requesting device through exact persisted `last_attached_device_id`;
+  exact `/v1/session/posture` exposes only already-grounded read-only evidence through exact `session_id`, exact `session_state`, exact `last_turn_id`, exact `project_id`, exact `pinned_context_refs`, and posture-specific evidence fields such as exact `session_attach_outcome`, exact `recovery_mode`, and exact `reconciliation_decision` when current upstream truth lawfully provides them;
+  exact `/v1/session/posture` fails closed when the target session is not lawful for the requesting device and does not expose transcript content, archive slices, generic reopen authority, or route-specific session mutation authority;
+  exact `/v1/session/attach`, exact `/v1/session/resume`, exact `/v1/session/recover`, exact `/v1/session/recent`, and exact `/v1/voice/turn` semantics remain unchanged in this run;
+  no Apple code changed in this run;
+  APP_MAC_DESKTOP remains queue-held and `PARTIAL` in this run;
+  the desktop queue may be refreshed against this new upstream truth after H340 lands;
   H324 is now implemented as the first canonical post-H323 selected bounded native macOS actual capability unlock `wake_ready_visible_shell_auto_start_of_already_live_foreground_wake_listener_without_fake_parity_claim` implementation build;
   H323-H256 truth remains preserved exactly as already recorded, with no regression;
   H323 was the correct post-H322 unlock because it added bounded tool-request authoring / invocation only through the already-live exact `/v1/voice/turn` typed-turn path, with no new backend route and no direct local tool/search authority;
