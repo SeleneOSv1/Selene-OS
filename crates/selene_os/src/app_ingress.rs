@@ -703,6 +703,49 @@ pub struct AppSessionRecoverOutcome {
     pub pinned_context_refs: Option<Vec<String>>,
 }
 
+#[derive(Debug, Clone)]
+pub struct AppSessionRecentListRequest {
+    pub correlation_id: CorrelationId,
+    pub idempotency_key: String,
+    pub device_id: DeviceId,
+}
+
+impl AppSessionRecentListRequest {
+    pub fn v1(
+        correlation_id: CorrelationId,
+        idempotency_key: String,
+        device_id: DeviceId,
+    ) -> Result<Self, ContractViolation> {
+        correlation_id.validate()?;
+        validate_ascii_token(
+            "app_session_recent_list_request.idempotency_key",
+            &idempotency_key,
+            128,
+        )?;
+        device_id.validate()?;
+        Ok(Self {
+            correlation_id,
+            idempotency_key,
+            device_id,
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AppSessionRecentListItem {
+    pub session_id: String,
+    pub session_state: SessionState,
+    pub last_activity_at: u64,
+    pub last_turn_id: Option<String>,
+    pub project_id: Option<String>,
+    pub pinned_context_refs: Option<Vec<String>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AppSessionRecentListOutcome {
+    pub sessions: Vec<AppSessionRecentListItem>,
+}
+
 fn stored_session_project_context(
     record: &StoredSessionRecord,
 ) -> (Option<String>, Option<Vec<String>>) {
@@ -710,6 +753,20 @@ fn stored_session_project_context(
     let pinned_context_refs =
         (!record.pinned_context_refs.is_empty()).then(|| record.pinned_context_refs.clone());
     (project_id, pinned_context_refs)
+}
+
+const APP_SESSION_RECENT_LIST_MAX_ITEMS: usize = 8;
+
+fn stored_session_recent_list_item(record: &StoredSessionRecord) -> AppSessionRecentListItem {
+    let (project_id, pinned_context_refs) = stored_session_project_context(record);
+    AppSessionRecentListItem {
+        session_id: record.session_id.0.to_string(),
+        session_state: record.session_state,
+        last_activity_at: record.last_activity_at.0,
+        last_turn_id: record.last_turn_id.map(|turn_id| turn_id.0.to_string()),
+        project_id,
+        pinned_context_refs,
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -4710,6 +4767,29 @@ impl AppServerIngressRuntime {
             project_id,
             pinned_context_refs,
         })
+    }
+
+    pub fn run_session_recent_list(
+        &self,
+        store: &Ph1fStore,
+        request: AppSessionRecentListRequest,
+    ) -> Result<AppSessionRecentListOutcome, StorageError> {
+        let AppSessionRecentListRequest {
+            correlation_id: _,
+            idempotency_key: _,
+            device_id,
+        } = request;
+
+        let sessions = store
+            .recent_nonclosed_sessions_for_last_attached_device(
+                &device_id,
+                APP_SESSION_RECENT_LIST_MAX_ITEMS,
+            )
+            .iter()
+            .map(stored_session_recent_list_item)
+            .collect();
+
+        Ok(AppSessionRecentListOutcome { sessions })
     }
 
     pub fn run_device_artifact_sync_worker_pass(
@@ -9028,6 +9108,70 @@ fn seed_session_record_for_project_context_test(
 }
 
 #[cfg(test)]
+fn seed_recent_session_record_for_last_attached_device_test(
+    store: &mut Ph1fStore,
+    session_id: SessionId,
+    user_id: &UserId,
+    origin_device_id: &DeviceId,
+    attached_devices: &[DeviceId],
+    last_attached_device_id: &DeviceId,
+    session_state: SessionState,
+    last_activity_at: MonotonicTimeNs,
+    last_turn_id: Option<TurnId>,
+) {
+    seed_identity_and_device_for_session_project_context_test(store, user_id, origin_device_id);
+    for device_id in attached_devices {
+        if store.get_device(device_id).is_none() {
+            store
+                .insert_device(
+                    DeviceRecord::v1(
+                        device_id.clone(),
+                        user_id.clone(),
+                        "desktop".to_string(),
+                        MonotonicTimeNs(2),
+                        None,
+                    )
+                    .unwrap(),
+                )
+                .unwrap();
+        }
+    }
+
+    let mut record = StoredSessionRecord::v1(
+        session_id,
+        user_id.clone(),
+        origin_device_id.clone(),
+        session_state,
+        MonotonicTimeNs(10),
+        last_activity_at,
+        (session_state == SessionState::Closed).then_some(last_activity_at),
+    )
+    .unwrap();
+    record.attached_devices = attached_devices.iter().cloned().collect();
+    record.last_attached_device_id = last_attached_device_id.clone();
+    record.last_turn_id = last_turn_id;
+    if let Some(turn_id) = last_turn_id {
+        record.device_turn_sequences = attached_devices
+            .iter()
+            .cloned()
+            .map(|device_id| (device_id, turn_id.0))
+            .collect();
+    }
+    let (project_id, pinned_context_refs) = test_session_project_context_fixture();
+    record.project_id = Some(project_id);
+    record.pinned_context_refs = pinned_context_refs;
+    store
+        .upsert_session_lifecycle(
+            record,
+            Some(format!(
+                "seed_session_recent_last_attached_device_{}",
+                session_id.0
+            )),
+        )
+        .unwrap();
+}
+
+#[cfg(test)]
 #[test]
 fn session_attach_outcome_exposes_persisted_session_project_context() {
     let runtime = AppServerIngressRuntime::default();
@@ -9136,6 +9280,113 @@ fn session_recover_outcome_exposes_persisted_session_project_context() {
         outcome.pinned_context_refs.as_deref(),
         Some(pinned_context_refs.as_slice())
     );
+}
+
+#[cfg(test)]
+#[test]
+fn session_recent_list_returns_recent_nonclosed_sessions_for_last_attached_device() {
+    let runtime = AppServerIngressRuntime::default();
+    let current_device_id = DeviceId::new("session_recent_current_device").unwrap();
+    let other_device_id = DeviceId::new("session_recent_other_device").unwrap();
+    let active_user_id = UserId::new("tenant_1:session_recent_active_actor").unwrap();
+    let soft_closed_user_id = UserId::new("tenant_1:session_recent_soft_closed_actor").unwrap();
+    let suspended_user_id = UserId::new("tenant_1:session_recent_suspended_actor").unwrap();
+    let closed_user_id = UserId::new("tenant_1:session_recent_closed_actor").unwrap();
+    let other_device_user_id = UserId::new("tenant_1:session_recent_other_device_actor").unwrap();
+    let mut store = Ph1fStore::new_in_memory();
+
+    seed_recent_session_record_for_last_attached_device_test(
+        &mut store,
+        SessionId(4_920),
+        &active_user_id,
+        &current_device_id,
+        std::slice::from_ref(&current_device_id),
+        &current_device_id,
+        SessionState::Active,
+        MonotonicTimeNs(120),
+        Some(TurnId(920)),
+    );
+    seed_recent_session_record_for_last_attached_device_test(
+        &mut store,
+        SessionId(4_921),
+        &soft_closed_user_id,
+        &current_device_id,
+        std::slice::from_ref(&current_device_id),
+        &current_device_id,
+        SessionState::SoftClosed,
+        MonotonicTimeNs(220),
+        Some(TurnId(921)),
+    );
+    seed_recent_session_record_for_last_attached_device_test(
+        &mut store,
+        SessionId(4_922),
+        &suspended_user_id,
+        &current_device_id,
+        std::slice::from_ref(&current_device_id),
+        &current_device_id,
+        SessionState::Suspended,
+        MonotonicTimeNs(180),
+        Some(TurnId(922)),
+    );
+    seed_recent_session_record_for_last_attached_device_test(
+        &mut store,
+        SessionId(4_923),
+        &closed_user_id,
+        &current_device_id,
+        std::slice::from_ref(&current_device_id),
+        &current_device_id,
+        SessionState::Closed,
+        MonotonicTimeNs(260),
+        Some(TurnId(923)),
+    );
+    seed_recent_session_record_for_last_attached_device_test(
+        &mut store,
+        SessionId(4_924),
+        &other_device_user_id,
+        &current_device_id,
+        &[current_device_id.clone(), other_device_id.clone()],
+        &other_device_id,
+        SessionState::Active,
+        MonotonicTimeNs(320),
+        Some(TurnId(924)),
+    );
+
+    let outcome = runtime
+        .run_session_recent_list(
+            &store,
+            AppSessionRecentListRequest::v1(
+                CorrelationId(92_103),
+                "session_recent_list".to_string(),
+                current_device_id,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+    assert_eq!(outcome.sessions.len(), 3);
+    assert_eq!(outcome.sessions[0].session_id, "4921");
+    assert_eq!(outcome.sessions[1].session_id, "4922");
+    assert_eq!(outcome.sessions[2].session_id, "4920");
+    assert_eq!(outcome.sessions[0].session_state, SessionState::SoftClosed);
+    assert_eq!(outcome.sessions[0].last_activity_at, 220);
+    assert_eq!(outcome.sessions[0].last_turn_id.as_deref(), Some("921"));
+    let (project_id, pinned_context_refs) = test_session_project_context_fixture();
+    assert_eq!(
+        outcome.sessions[0].project_id.as_deref(),
+        Some(project_id.as_str())
+    );
+    assert_eq!(
+        outcome.sessions[0].pinned_context_refs.as_deref(),
+        Some(pinned_context_refs.as_slice())
+    );
+    assert!(outcome
+        .sessions
+        .iter()
+        .all(|session| session.session_id != "4923"));
+    assert!(outcome
+        .sessions
+        .iter()
+        .all(|session| session.session_id != "4924"));
 }
 
 #[cfg(test)]

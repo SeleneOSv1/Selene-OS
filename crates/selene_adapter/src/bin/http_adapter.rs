@@ -19,9 +19,10 @@ use selene_adapter::{
     app_ui_assets, build_runtime_execution_envelope_for_voice_turn_request, AdapterHealthResponse,
     AdapterRuntime, AdapterSyncHealth, InviteLinkOpenAdapterRequest, InviteLinkOpenAdapterResponse,
     OnboardingContinueAdapterRequest, OnboardingContinueAdapterResponse,
-    SessionAttachAdapterRequest, SessionAttachAdapterResponse, SessionRecoverAdapterRequest,
-    SessionRecoverAdapterResponse, SessionResumeAdapterRequest, SessionResumeAdapterResponse,
-    UiChatTranscriptResponse, UiHealthChecksResponse, UiHealthDetailFilter, UiHealthDetailResponse,
+    SessionAttachAdapterRequest, SessionAttachAdapterResponse, SessionRecentListAdapterRequest,
+    SessionRecentListAdapterResponse, SessionRecoverAdapterRequest, SessionRecoverAdapterResponse,
+    SessionResumeAdapterRequest, SessionResumeAdapterResponse, UiChatTranscriptResponse,
+    UiHealthChecksResponse, UiHealthDetailFilter, UiHealthDetailResponse,
     UiHealthReportQueryRequest, UiHealthReportQueryResponse, UiHealthSummary,
     UiHealthTimelinePaging, VoiceTurnAdapterRequest, VoiceTurnAdapterResponse,
     VoiceTurnIngressError, WakeProfileAvailabilityRefreshAdapterRequest,
@@ -225,6 +226,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/v1/session/attach", post(run_session_attach))
         .route("/v1/session/resume", post(run_session_resume))
         .route("/v1/session/recover", post(run_session_recover))
+        .route("/v1/session/recent", post(run_session_recent_list))
         .route(
             "/v1/wake-profile/availability",
             post(run_wake_profile_availability_refresh),
@@ -887,6 +889,61 @@ async fn run_session_recover(
     }
 }
 
+async fn run_session_recent_list(
+    State(state): State<HttpAdapterState>,
+    headers: HeaderMap,
+    Json(request): Json<SessionRecentListAdapterRequest>,
+) -> Response {
+    let request_id = match required_header_token(&headers, "x-request-id", "missing_request_id") {
+        Ok(v) => v,
+        Err(reject) => return session_recent_list_security_reject_response(reject),
+    };
+    let timestamp_ms = match required_header_u64(
+        &headers,
+        "x-selene-timestamp-ms",
+        "missing_timestamp_ms",
+        "invalid_timestamp_ms",
+    ) {
+        Ok(v) => v,
+        Err(reject) => return session_recent_list_security_reject_response(reject),
+    };
+    let nonce = match required_header_token(&headers, "x-selene-nonce", "missing_nonce") {
+        Ok(v) => v,
+        Err(reject) => return session_recent_list_security_reject_response(reject),
+    };
+    let security_input = EndpointSecurityInput {
+        endpoint: "/v1/session/recent",
+        expected_subject: request.device_id.clone(),
+        expected_device: request.device_id.clone(),
+        request_id,
+        idempotency_key: request.idempotency_key.clone(),
+        timestamp_ms,
+        nonce,
+    };
+    if let Err(reject) = enforce_ingress_security(
+        &headers,
+        &state.ingress_security,
+        state.ingress_security_config,
+        security_input,
+    ) {
+        return session_recent_list_security_reject_response(reject);
+    }
+
+    let runtime = match state.runtime.lock() {
+        Ok(runtime) => runtime,
+        Err(_) => {
+            return session_recent_list_error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "adapter runtime lock poisoned".to_string(),
+            )
+        }
+    };
+    match runtime.run_session_recent_list(request) {
+        Ok(response) => (StatusCode::OK, Json(response)).into_response(),
+        Err(reason) => session_recent_list_error_response(StatusCode::BAD_REQUEST, reason),
+    }
+}
+
 async fn run_wake_profile_availability_refresh(
     State(state): State<HttpAdapterState>,
     headers: HeaderMap,
@@ -1395,6 +1452,17 @@ fn session_recover_security_reject_response(reject: SecurityReject) -> Response 
     json_response_with_optional_retry_after(status, response, reject.retry_after_secs)
 }
 
+fn session_recent_list_security_reject_response(reject: SecurityReject) -> Response {
+    let status = status_for_security_reject(reject.kind);
+    let response = SessionRecentListAdapterResponse {
+        status: "error".to_string(),
+        outcome: "REJECTED".to_string(),
+        reason: Some(reject.reason),
+        sessions: Vec::new(),
+    };
+    json_response_with_optional_retry_after(status, response, reject.retry_after_secs)
+}
+
 fn wake_profile_availability_security_reject_response(
     reject: SecurityReject,
     device_id: Option<String>,
@@ -1519,6 +1587,19 @@ fn session_attach_error_response(status: StatusCode, reason: String) -> Response
             session_attach_outcome: None,
             project_id: None,
             pinned_context_refs: None,
+        }),
+    )
+        .into_response()
+}
+
+fn session_recent_list_error_response(status: StatusCode, reason: String) -> Response {
+    (
+        status,
+        Json(SessionRecentListAdapterResponse {
+            status: "error".to_string(),
+            outcome: "REJECTED".to_string(),
+            reason: Some(reason),
+            sessions: Vec::new(),
         }),
     )
         .into_response()
@@ -1800,6 +1881,14 @@ mod tests {
             idempotency_key: "session-recover-idem-1".to_string(),
             session_id: "4301".to_string(),
             device_id: "recover_device_1".to_string(),
+        }
+    }
+
+    fn base_session_recent_list_request() -> SessionRecentListAdapterRequest {
+        SessionRecentListAdapterRequest {
+            correlation_id: 4003,
+            idempotency_key: "session-recent-idem-1".to_string(),
+            device_id: "recent_device_1".to_string(),
         }
     }
 
@@ -2209,6 +2298,74 @@ mod tests {
             .upsert_session_lifecycle(
                 record,
                 Some(format!("seed_http_suspended_session_{}", session_id.0)),
+            )
+            .unwrap();
+    }
+
+    fn seed_recent_session_record_for_last_attached_device(
+        store: &mut Ph1fStore,
+        session_id: SessionId,
+        user_id: &UserId,
+        origin_device_id: &DeviceId,
+        attached_devices: &[DeviceId],
+        last_attached_device_id: &DeviceId,
+        session_state: SessionState,
+        last_activity_at: MonotonicTimeNs,
+        last_turn_id: Option<TurnId>,
+    ) {
+        if store.get_identity(user_id).is_none() {
+            store
+                .insert_identity(IdentityRecord::v1(
+                    user_id.clone(),
+                    None,
+                    None,
+                    MonotonicTimeNs(1),
+                    IdentityStatus::Active,
+                ))
+                .unwrap();
+        }
+        for device_id in attached_devices {
+            if store.get_device(device_id).is_none() {
+                store
+                    .insert_device(
+                        DeviceRecord::v1(
+                            device_id.clone(),
+                            user_id.clone(),
+                            "desktop".to_string(),
+                            MonotonicTimeNs(2),
+                            None,
+                        )
+                        .unwrap(),
+                    )
+                    .unwrap();
+            }
+        }
+
+        let mut record = selene_storage::ph1f::SessionRecord::v1(
+            session_id,
+            user_id.clone(),
+            origin_device_id.clone(),
+            session_state,
+            MonotonicTimeNs(10),
+            last_activity_at,
+            (session_state == SessionState::Closed).then_some(last_activity_at),
+        )
+        .unwrap();
+        record.attached_devices = attached_devices.iter().cloned().collect();
+        record.last_attached_device_id = last_attached_device_id.clone();
+        record.last_turn_id = last_turn_id;
+        if let Some(turn_id) = last_turn_id {
+            record.device_turn_sequences = attached_devices
+                .iter()
+                .cloned()
+                .map(|device_id| (device_id, turn_id.0))
+                .collect();
+        }
+        apply_session_project_context(&mut record);
+        store
+            .upsert_session_lifecycle(
+                record,
+                Some(format!("seed_http_recent_session_{}", session_id.0)),
             )
             .unwrap();
     }
@@ -2809,6 +2966,122 @@ mod tests {
             .expect("attached session must remain persisted");
         assert_eq!(persisted.session_state, SessionState::Active);
         assert_eq!(persisted.last_attached_device_id, attached_device_id);
+    }
+
+    #[tokio::test]
+    async fn http_session_recent_route_returns_recent_nonclosed_sessions_for_last_attached_device()
+    {
+        let (state, store) = test_state_with_config_and_store(IngressSecurityConfig::from_env());
+        let current_device_id = DeviceId::new("http_session_recent_device").unwrap();
+        let other_device_id = DeviceId::new("http_session_recent_other_device").unwrap();
+        let active_user_id = UserId::new("tenant_1:http_session_recent_active_actor").unwrap();
+        let soft_closed_user_id =
+            UserId::new("tenant_1:http_session_recent_soft_closed_actor").unwrap();
+        let suspended_user_id =
+            UserId::new("tenant_1:http_session_recent_suspended_actor").unwrap();
+        let closed_user_id = UserId::new("tenant_1:http_session_recent_closed_actor").unwrap();
+        let other_device_user_id =
+            UserId::new("tenant_1:http_session_recent_other_device_actor").unwrap();
+
+        {
+            let mut guard = store.lock().expect("store lock must succeed");
+            seed_recent_session_record_for_last_attached_device(
+                &mut guard,
+                SessionId(4_920),
+                &active_user_id,
+                &current_device_id,
+                std::slice::from_ref(&current_device_id),
+                &current_device_id,
+                SessionState::Active,
+                MonotonicTimeNs(120),
+                Some(TurnId(920)),
+            );
+            seed_recent_session_record_for_last_attached_device(
+                &mut guard,
+                SessionId(4_921),
+                &soft_closed_user_id,
+                &current_device_id,
+                std::slice::from_ref(&current_device_id),
+                &current_device_id,
+                SessionState::SoftClosed,
+                MonotonicTimeNs(220),
+                Some(TurnId(921)),
+            );
+            seed_recent_session_record_for_last_attached_device(
+                &mut guard,
+                SessionId(4_922),
+                &suspended_user_id,
+                &current_device_id,
+                std::slice::from_ref(&current_device_id),
+                &current_device_id,
+                SessionState::Suspended,
+                MonotonicTimeNs(180),
+                Some(TurnId(922)),
+            );
+            seed_recent_session_record_for_last_attached_device(
+                &mut guard,
+                SessionId(4_923),
+                &closed_user_id,
+                &current_device_id,
+                std::slice::from_ref(&current_device_id),
+                &current_device_id,
+                SessionState::Closed,
+                MonotonicTimeNs(260),
+                Some(TurnId(923)),
+            );
+            seed_recent_session_record_for_last_attached_device(
+                &mut guard,
+                SessionId(4_924),
+                &other_device_user_id,
+                &current_device_id,
+                &[current_device_id.clone(), other_device_id.clone()],
+                &other_device_id,
+                SessionState::Active,
+                MonotonicTimeNs(320),
+                Some(TurnId(924)),
+            );
+        }
+
+        let mut request = base_session_recent_list_request();
+        request.device_id = current_device_id.as_str().to_string();
+        let now_ms = system_time_now_ms();
+        let headers = security_headers(
+            Some(bearer_for(&request.device_id, &request.device_id)),
+            "req-session-recent-1",
+            "idem-session-recent-1",
+            now_ms,
+            "nonce-session-recent-1",
+        );
+        let response = run_session_recent_list(State(state), headers, Json(request)).await;
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body: SessionRecentListAdapterResponse = decode_json_response(response).await;
+        let (expected_project_id, expected_pinned_context_refs) = session_project_context_fixture();
+        assert_eq!(body.status, "ok");
+        assert_eq!(body.outcome, "SESSIONS_LISTED");
+        assert_eq!(body.sessions.len(), 3);
+        assert_eq!(body.sessions[0].session_id, "4921");
+        assert_eq!(body.sessions[1].session_id, "4922");
+        assert_eq!(body.sessions[2].session_id, "4920");
+        assert_eq!(body.sessions[0].session_state, "SOFT_CLOSED");
+        assert_eq!(body.sessions[0].last_activity_at, 220);
+        assert_eq!(body.sessions[0].last_turn_id.as_deref(), Some("921"));
+        assert_eq!(
+            body.sessions[0].project_id.as_deref(),
+            Some(expected_project_id.as_str())
+        );
+        assert_eq!(
+            body.sessions[0].pinned_context_refs.as_deref(),
+            Some(expected_pinned_context_refs.as_slice())
+        );
+        assert!(body
+            .sessions
+            .iter()
+            .all(|session| session.session_id != "4923"));
+        assert!(body
+            .sessions
+            .iter()
+            .all(|session| session.session_id != "4924"));
     }
 
     #[tokio::test]

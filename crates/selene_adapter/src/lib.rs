@@ -118,9 +118,9 @@ use selene_kernel_contracts::{
 use selene_os::app_ingress::{
     AppInviteLinkOpenRequest, AppOnboardingContinueAction, AppOnboardingContinueNextStep,
     AppOnboardingContinueRequest, AppServerIngressRuntime, AppSessionAttachRequest,
-    AppSessionRecoverRequest, AppSessionResumeRequest, AppVoiceIngressRequest,
-    AppVoicePh1xBuildInput, AppVoiceTurnExecutionOutcome, AppVoiceTurnNextMove,
-    AppWakeProfileAvailabilityRefreshRequest,
+    AppSessionRecentListRequest, AppSessionRecoverRequest, AppSessionResumeRequest,
+    AppVoiceIngressRequest, AppVoicePh1xBuildInput, AppVoiceTurnExecutionOutcome,
+    AppVoiceTurnNextMove, AppWakeProfileAvailabilityRefreshRequest,
 };
 use selene_os::device_artifact_sync::DeviceArtifactSyncWorkerPassMetrics;
 use selene_os::ph1_voice_id::{
@@ -677,6 +677,31 @@ pub struct SessionRecoverAdapterResponse {
     pub session_attach_outcome: Option<String>,
     pub project_id: Option<String>,
     pub pinned_context_refs: Option<Vec<String>>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct SessionRecentListAdapterRequest {
+    pub correlation_id: u64,
+    pub idempotency_key: String,
+    pub device_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct SessionRecentListItem {
+    pub session_id: String,
+    pub session_state: String,
+    pub last_activity_at: u64,
+    pub last_turn_id: Option<String>,
+    pub project_id: Option<String>,
+    pub pinned_context_refs: Option<Vec<String>>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct SessionRecentListAdapterResponse {
+    pub status: String,
+    pub outcome: String,
+    pub reason: Option<String>,
+    pub sessions: Vec<SessionRecentListItem>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -1618,6 +1643,45 @@ impl AdapterRuntime {
             )),
             project_id: outcome.project_id,
             pinned_context_refs: outcome.pinned_context_refs,
+        })
+    }
+
+    pub fn run_session_recent_list(
+        &self,
+        request: SessionRecentListAdapterRequest,
+    ) -> Result<SessionRecentListAdapterResponse, String> {
+        let correlation_id = CorrelationId(u128::from(request.correlation_id));
+        let device_id = DeviceId::new(request.device_id.clone())
+            .map_err(|err| format!("invalid device_id: {err:?}"))?;
+        let ingress_request =
+            AppSessionRecentListRequest::v1(correlation_id, request.idempotency_key, device_id)
+                .map_err(|err| format!("invalid session_recent_list request: {err:?}"))?;
+
+        let store = self
+            .store
+            .lock()
+            .map_err(|_| "adapter store lock poisoned".to_string())?;
+        let outcome = self
+            .ingress
+            .run_session_recent_list(&store, ingress_request)
+            .map_err(storage_error_to_string)?;
+
+        Ok(SessionRecentListAdapterResponse {
+            status: "ok".to_string(),
+            outcome: "SESSIONS_LISTED".to_string(),
+            reason: None,
+            sessions: outcome
+                .sessions
+                .into_iter()
+                .map(|session| SessionRecentListItem {
+                    session_id: session.session_id,
+                    session_state: session_state_to_api_value(session.session_state),
+                    last_activity_at: session.last_activity_at,
+                    last_turn_id: session.last_turn_id,
+                    project_id: session.project_id,
+                    pinned_context_refs: session.pinned_context_refs,
+                })
+                .collect(),
         })
     }
 
@@ -11260,6 +11324,98 @@ fn seed_adapter_session_record_for_project_context_test(
 }
 
 #[cfg(test)]
+fn seed_adapter_recent_session_record_for_last_attached_device_test(
+    runtime: &AdapterRuntime,
+    session_id: SessionId,
+    user_id: &UserId,
+    origin_device_id: &DeviceId,
+    attached_devices: &[DeviceId],
+    last_attached_device_id: &DeviceId,
+    session_state: SessionState,
+    last_activity_at: MonotonicTimeNs,
+    last_turn_id: Option<TurnId>,
+) {
+    let mut store = runtime
+        .store
+        .lock()
+        .expect("adapter store lock must succeed");
+    if store.get_identity(user_id).is_none() {
+        store
+            .insert_identity(IdentityRecord::v1(
+                user_id.clone(),
+                None,
+                None,
+                MonotonicTimeNs(1),
+                IdentityStatus::Active,
+            ))
+            .unwrap();
+    }
+    for device_id in attached_devices {
+        if store.get_device(device_id).is_none() {
+            store
+                .insert_device(
+                    DeviceRecord::v1(
+                        device_id.clone(),
+                        user_id.clone(),
+                        "desktop".to_string(),
+                        MonotonicTimeNs(2),
+                        None,
+                    )
+                    .unwrap(),
+                )
+                .unwrap();
+        }
+    }
+    if store.get_device(origin_device_id).is_none() {
+        store
+            .insert_device(
+                DeviceRecord::v1(
+                    origin_device_id.clone(),
+                    user_id.clone(),
+                    "desktop".to_string(),
+                    MonotonicTimeNs(2),
+                    None,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+    }
+
+    let mut record = SessionRecord::v1(
+        session_id,
+        user_id.clone(),
+        origin_device_id.clone(),
+        session_state,
+        MonotonicTimeNs(10),
+        last_activity_at,
+        (session_state == SessionState::Closed).then_some(last_activity_at),
+    )
+    .unwrap();
+    record.attached_devices = attached_devices.iter().cloned().collect();
+    record.last_attached_device_id = last_attached_device_id.clone();
+    record.last_turn_id = last_turn_id;
+    if let Some(turn_id) = last_turn_id {
+        record.device_turn_sequences = attached_devices
+            .iter()
+            .cloned()
+            .map(|device_id| (device_id, turn_id.0))
+            .collect();
+    }
+    let (project_id, pinned_context_refs) = adapter_test_session_project_context_fixture();
+    record.project_id = Some(project_id);
+    record.pinned_context_refs = pinned_context_refs;
+    store
+        .upsert_session_lifecycle(
+            record,
+            Some(format!(
+                "seed_adapter_recent_session_last_attached_device_{}",
+                session_id.0
+            )),
+        )
+        .unwrap();
+}
+
+#[cfg(test)]
 #[test]
 fn session_attach_response_exposes_persisted_session_project_context() {
     let runtime = AdapterRuntime::default();
@@ -11355,6 +11511,112 @@ fn session_recover_response_exposes_persisted_session_project_context() {
         response.pinned_context_refs.as_deref(),
         Some(pinned_context_refs.as_slice())
     );
+}
+
+#[cfg(test)]
+#[test]
+fn session_recent_response_returns_recent_nonclosed_sessions_for_last_attached_device() {
+    let runtime = AdapterRuntime::default();
+    let current_device_id = DeviceId::new("adapter_session_recent_current_device").unwrap();
+    let other_device_id = DeviceId::new("adapter_session_recent_other_device").unwrap();
+    let active_user_id = UserId::new("tenant_1:adapter_session_recent_active_actor").unwrap();
+    let soft_closed_user_id =
+        UserId::new("tenant_1:adapter_session_recent_soft_closed_actor").unwrap();
+    let suspended_user_id = UserId::new("tenant_1:adapter_session_recent_suspended_actor").unwrap();
+    let closed_user_id = UserId::new("tenant_1:adapter_session_recent_closed_actor").unwrap();
+    let other_device_user_id =
+        UserId::new("tenant_1:adapter_session_recent_other_device_actor").unwrap();
+
+    seed_adapter_recent_session_record_for_last_attached_device_test(
+        &runtime,
+        SessionId(5_920),
+        &active_user_id,
+        &current_device_id,
+        std::slice::from_ref(&current_device_id),
+        &current_device_id,
+        SessionState::Active,
+        MonotonicTimeNs(120),
+        Some(TurnId(920)),
+    );
+    seed_adapter_recent_session_record_for_last_attached_device_test(
+        &runtime,
+        SessionId(5_921),
+        &soft_closed_user_id,
+        &current_device_id,
+        std::slice::from_ref(&current_device_id),
+        &current_device_id,
+        SessionState::SoftClosed,
+        MonotonicTimeNs(220),
+        Some(TurnId(921)),
+    );
+    seed_adapter_recent_session_record_for_last_attached_device_test(
+        &runtime,
+        SessionId(5_922),
+        &suspended_user_id,
+        &current_device_id,
+        std::slice::from_ref(&current_device_id),
+        &current_device_id,
+        SessionState::Suspended,
+        MonotonicTimeNs(180),
+        Some(TurnId(922)),
+    );
+    seed_adapter_recent_session_record_for_last_attached_device_test(
+        &runtime,
+        SessionId(5_923),
+        &closed_user_id,
+        &current_device_id,
+        std::slice::from_ref(&current_device_id),
+        &current_device_id,
+        SessionState::Closed,
+        MonotonicTimeNs(260),
+        Some(TurnId(923)),
+    );
+    seed_adapter_recent_session_record_for_last_attached_device_test(
+        &runtime,
+        SessionId(5_924),
+        &other_device_user_id,
+        &current_device_id,
+        &[current_device_id.clone(), other_device_id.clone()],
+        &other_device_id,
+        SessionState::Active,
+        MonotonicTimeNs(320),
+        Some(TurnId(924)),
+    );
+
+    let response = runtime
+        .run_session_recent_list(SessionRecentListAdapterRequest {
+            correlation_id: 93_103,
+            idempotency_key: "adapter_session_recent_list".to_string(),
+            device_id: current_device_id.as_str().to_string(),
+        })
+        .unwrap();
+
+    assert_eq!(response.status, "ok");
+    assert_eq!(response.outcome, "SESSIONS_LISTED");
+    assert_eq!(response.sessions.len(), 3);
+    assert_eq!(response.sessions[0].session_id, "5921");
+    assert_eq!(response.sessions[1].session_id, "5922");
+    assert_eq!(response.sessions[2].session_id, "5920");
+    assert_eq!(response.sessions[0].session_state, "SOFT_CLOSED");
+    assert_eq!(response.sessions[0].last_activity_at, 220);
+    assert_eq!(response.sessions[0].last_turn_id.as_deref(), Some("921"));
+    let (project_id, pinned_context_refs) = adapter_test_session_project_context_fixture();
+    assert_eq!(
+        response.sessions[0].project_id.as_deref(),
+        Some(project_id.as_str())
+    );
+    assert_eq!(
+        response.sessions[0].pinned_context_refs.as_deref(),
+        Some(pinned_context_refs.as_slice())
+    );
+    assert!(response
+        .sessions
+        .iter()
+        .all(|session| session.session_id != "5923"));
+    assert!(response
+        .sessions
+        .iter()
+        .all(|session| session.session_id != "5924"));
 }
 
 #[cfg(test)]

@@ -613,15 +613,18 @@ This section is a planning queue only.
   - what should come next
 
 ### Current Exact Next Winner
-- no post-H331 next exact winner is published until one later lawful exact seam is proven from current repo truth
+- no post-H331 next exact winner is published until the desktop queue is refreshed against current repo truth after H336 upstream recent-session carrier exposure
 
 ### Why No Exact Next Winner Is Published Yet
 - H330 now preserves the upstream selected-session `project_id` / `pinned_context_refs` carrier read-only through exact session lifecycle / attach-resume-recover outputs when same-session voice-turn finalization already carried lawful cloud-authored context.
 - H331 now consumes that already-live upstream carrier only through exact same-session desktop session-context transport on the already-live canonical `/v1/voice/turn` path.
 - H331 does not widen into local project selection, local pinned-context authoring, shell-side thread-policy authoring, broader session fetch, hidden/background wake, or broader standalone search expansion.
-- Broader conversation-list / session-list fetch, broader shell-side context authoring, broader hidden/background wake, and broader search expansion remain candidate families only; none is yet proven as the next exact executable seam on current repo truth.
+- H336 now adds one upstream bounded read-only current-device recent-session list carrier through exact `/v1/session/recent`, returning only already-persisted non-closed session rows whose exact `last_attached_device_id` matches the requesting device.
+- H336 is an upstream enabling build only; it does not by itself publish the next lawful APP_MAC_DESKTOP implementation seam.
+- The pre-H336 desktop candidate-family ordering is now stale until it is refreshed against the newly landed upstream recent-session carrier.
 
 ### Explicitly Not Next
+- not auto-publishing a desktop next winner from H336 alone without refreshing this queue against current repo truth
 - not broader shell-side `projectID` / `pinnedContextRefs` authoring without a newly proven lawful seam
 - not a broader hidden/background wake claim or wake parity claim without a proven lawful seam
 - not a standalone desktop search box with local search execution
@@ -631,10 +634,8 @@ This section is a planning queue only.
 - not another regression-lock-only build unless repo truth changes and a capability unlock becomes blocked
 
 ### Ordered Candidate Families Once A Lawful Exact Seam Is Proven
-1. later broader conversation-list / session-list fetch only if one lawful exact seam is proven without widening into fake local authority
-2. later broader shell-side `projectID` / `pinnedContextRefs` authoring only if one lawful exact seam is proven
-3. later broader hidden/background wake auto-start only if one lawful exact seam is proven without fake parity claims
-4. later broader standalone desktop search input beyond the current bounded search-request authoring surface only if one lawful exact seam is proven without local search execution fakery
+- pre-H336 desktop candidate ordering is intentionally not republished in this run
+- the next lawful APP_MAC_DESKTOP queue must be refreshed against the newly landed upstream `/v1/session/recent` carrier before another desktop implementation brief is written
 
 ### Queue Maintenance Rule After Every Desktop H-Build
 - Refresh the `Current Repo Baseline` section if newly landed work changes what is actually built.

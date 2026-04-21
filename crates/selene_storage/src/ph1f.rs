@@ -3948,6 +3948,26 @@ impl Ph1fStore {
         &self.sessions
     }
 
+    pub fn recent_nonclosed_sessions_for_last_attached_device(
+        &self,
+        device_id: &DeviceId,
+        max_items: usize,
+    ) -> Vec<SessionRecord> {
+        if max_items == 0 {
+            return Vec::new();
+        }
+
+        let mut sessions: Vec<_> = self
+            .sessions
+            .values()
+            .filter(|row| row.is_recoverable() && row.last_attached_device_id == *device_id)
+            .cloned()
+            .collect();
+        sessions.sort_by(|left, right| right.last_activity_at.0.cmp(&left.last_activity_at.0));
+        sessions.truncate(max_items);
+        sessions
+    }
+
     pub fn append_memory_ledger_event(
         &mut self,
         user_id: &UserId,
