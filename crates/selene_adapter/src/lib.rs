@@ -117,9 +117,8 @@ use selene_kernel_contracts::{
 };
 use selene_os::app_ingress::{
     AppInviteLinkOpenRequest, AppOnboardingContinueAction, AppOnboardingContinueNextStep,
-    AppOnboardingContinueRequest, AppServerIngressRuntime,
-    AppSessionAttachRequest, AppSessionRecoverRequest, AppSessionResumeRequest,
-    AppVoiceIngressRequest,
+    AppOnboardingContinueRequest, AppServerIngressRuntime, AppSessionAttachRequest,
+    AppSessionRecoverRequest, AppSessionResumeRequest, AppVoiceIngressRequest,
     AppVoicePh1xBuildInput, AppVoiceTurnExecutionOutcome, AppVoiceTurnNextMove,
     AppWakeProfileAvailabilityRefreshRequest,
 };
@@ -636,6 +635,8 @@ pub struct SessionAttachAdapterResponse {
     pub session_id: Option<String>,
     pub session_state: Option<String>,
     pub session_attach_outcome: Option<String>,
+    pub project_id: Option<String>,
+    pub pinned_context_refs: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -654,6 +655,8 @@ pub struct SessionResumeAdapterResponse {
     pub session_id: Option<String>,
     pub session_state: Option<String>,
     pub session_attach_outcome: Option<String>,
+    pub project_id: Option<String>,
+    pub pinned_context_refs: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -672,6 +675,8 @@ pub struct SessionRecoverAdapterResponse {
     pub session_id: Option<String>,
     pub session_state: Option<String>,
     pub session_attach_outcome: Option<String>,
+    pub project_id: Option<String>,
+    pub pinned_context_refs: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -1611,6 +1616,8 @@ impl AdapterRuntime {
             session_attach_outcome: Some(session_attach_outcome_to_api_value(
                 outcome.session_attach_outcome,
             )),
+            project_id: outcome.project_id,
+            pinned_context_refs: outcome.pinned_context_refs,
         })
     }
 
@@ -1653,6 +1660,8 @@ impl AdapterRuntime {
             session_attach_outcome: Some(session_attach_outcome_to_api_value(
                 outcome.session_attach_outcome,
             )),
+            project_id: outcome.project_id,
+            pinned_context_refs: outcome.pinned_context_refs,
         })
     }
 
@@ -1695,6 +1704,8 @@ impl AdapterRuntime {
             session_attach_outcome: Some(session_attach_outcome_to_api_value(
                 outcome.session_attach_outcome,
             )),
+            project_id: outcome.project_id,
+            pinned_context_refs: outcome.pinned_context_refs,
         })
     }
 
@@ -4650,6 +4661,14 @@ impl AdapterRuntime {
                 )
                 .map_err(post_session_error)?;
             }
+            let session_project_context_source = execution_outcome
+                .ph1x_response
+                .as_ref()
+                .map(|response| &response.thread_state)
+                .or(execution_outcome
+                    .ph1x_request
+                    .as_ref()
+                    .map(|request| &request.thread_state));
             finalize_session_turn_record(
                 &mut store,
                 now,
@@ -4657,6 +4676,7 @@ impl AdapterRuntime {
                 turn_id,
                 &runtime_device_id,
                 session_turn_state.session_id_for_commits,
+                session_project_context_source,
                 session_turn_state.device_turn_sequence,
                 &runtime_execution_envelope.idempotency_key,
                 &self.runtime_node_id,
@@ -8978,6 +8998,7 @@ fn finalize_session_turn_record(
     turn_id: TurnId,
     device_id: &DeviceId,
     session_id: Option<SessionId>,
+    session_project_context: Option<&ThreadState>,
     device_turn_sequence: u64,
     idempotency_key: &str,
     runtime_node_id: &str,
@@ -8999,6 +9020,10 @@ fn finalize_session_turn_record(
     record
         .device_last_idempotency_keys
         .insert(device_id.clone(), truncate_ascii(idempotency_key, 128));
+    if let Some(thread_state) = session_project_context {
+        record.project_id = thread_state.project_id.clone();
+        record.pinned_context_refs = thread_state.pinned_context_refs.clone();
+    }
     if record.session_state == SessionState::Closed {
         record.active_turn_id = None;
         record.lease_owner_id = None;
@@ -11152,6 +11177,184 @@ fn build_builder_detail(
         mttr_ms: None,
     };
     (summary, issues, timeline)
+}
+
+#[cfg(test)]
+fn adapter_test_session_project_context_fixture() -> (String, Vec<String>) {
+    (
+        "proj_q3_planning".to_string(),
+        vec![
+            "ctx:spec/roadmap".to_string(),
+            "ctx:file/launch_checklist".to_string(),
+        ],
+    )
+}
+
+#[cfg(test)]
+fn seed_adapter_session_record_for_project_context_test(
+    runtime: &AdapterRuntime,
+    session_id: SessionId,
+    user_id: &UserId,
+    device_id: &DeviceId,
+    session_state: SessionState,
+) -> (String, Vec<String>) {
+    let (project_id, pinned_context_refs) = adapter_test_session_project_context_fixture();
+    let mut store = runtime
+        .store
+        .lock()
+        .expect("adapter store lock must succeed");
+    if store.get_identity(user_id).is_none() {
+        store
+            .insert_identity(IdentityRecord::v1(
+                user_id.clone(),
+                None,
+                None,
+                MonotonicTimeNs(1),
+                IdentityStatus::Active,
+            ))
+            .unwrap();
+    }
+    if store.get_device(device_id).is_none() {
+        store
+            .insert_device(
+                DeviceRecord::v1(
+                    device_id.clone(),
+                    user_id.clone(),
+                    "desktop".to_string(),
+                    MonotonicTimeNs(2),
+                    None,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+    }
+    let mut record = SessionRecord::v1(
+        session_id,
+        user_id.clone(),
+        device_id.clone(),
+        session_state,
+        MonotonicTimeNs(10),
+        MonotonicTimeNs(20),
+        None,
+    )
+    .unwrap();
+    record.attached_devices.insert(device_id.clone());
+    record.last_attached_device_id = device_id.clone();
+    record.last_turn_id = Some(TurnId(900));
+    record.project_id = Some(project_id.clone());
+    record.pinned_context_refs = pinned_context_refs.clone();
+    record
+        .device_turn_sequences
+        .insert(device_id.clone(), TurnId(900).0);
+    store
+        .upsert_session_lifecycle(
+            record,
+            Some(format!(
+                "seed_adapter_session_project_context_test_{}",
+                session_id.0
+            )),
+        )
+        .unwrap();
+    drop(store);
+    (project_id, pinned_context_refs)
+}
+
+#[cfg(test)]
+#[test]
+fn session_attach_response_exposes_persisted_session_project_context() {
+    let runtime = AdapterRuntime::default();
+    let actor_user_id =
+        UserId::new("tenant_1:adapter_session_attach_project_context_actor").unwrap();
+    let attached_device_id =
+        DeviceId::new("adapter_session_attach_project_context_device").unwrap();
+    let session_id = SessionId(5_910);
+    let (project_id, pinned_context_refs) = seed_adapter_session_record_for_project_context_test(
+        &runtime,
+        session_id,
+        &actor_user_id,
+        &attached_device_id,
+        SessionState::Active,
+    );
+
+    let response = runtime
+        .run_session_attach(SessionAttachAdapterRequest {
+            correlation_id: 93_100,
+            idempotency_key: "adapter_session_attach_project_context".to_string(),
+            session_id: session_id.0.to_string(),
+            device_id: attached_device_id.as_str().to_string(),
+        })
+        .unwrap();
+
+    assert_eq!(response.project_id.as_deref(), Some(project_id.as_str()));
+    assert_eq!(
+        response.pinned_context_refs.as_deref(),
+        Some(pinned_context_refs.as_slice())
+    );
+}
+
+#[cfg(test)]
+#[test]
+fn session_resume_response_exposes_persisted_session_project_context() {
+    let runtime = AdapterRuntime::default();
+    let actor_user_id =
+        UserId::new("tenant_1:adapter_session_resume_project_context_actor").unwrap();
+    let resumed_device_id = DeviceId::new("adapter_session_resume_project_context_device").unwrap();
+    let session_id = SessionId(5_911);
+    let (project_id, pinned_context_refs) = seed_adapter_session_record_for_project_context_test(
+        &runtime,
+        session_id,
+        &actor_user_id,
+        &resumed_device_id,
+        SessionState::SoftClosed,
+    );
+
+    let response = runtime
+        .run_session_resume(SessionResumeAdapterRequest {
+            correlation_id: 93_101,
+            idempotency_key: "adapter_session_resume_project_context".to_string(),
+            session_id: session_id.0.to_string(),
+            device_id: resumed_device_id.as_str().to_string(),
+        })
+        .unwrap();
+
+    assert_eq!(response.project_id.as_deref(), Some(project_id.as_str()));
+    assert_eq!(
+        response.pinned_context_refs.as_deref(),
+        Some(pinned_context_refs.as_slice())
+    );
+}
+
+#[cfg(test)]
+#[test]
+fn session_recover_response_exposes_persisted_session_project_context() {
+    let runtime = AdapterRuntime::default();
+    let actor_user_id =
+        UserId::new("tenant_1:adapter_session_recover_project_context_actor").unwrap();
+    let recovered_device_id =
+        DeviceId::new("adapter_session_recover_project_context_device").unwrap();
+    let session_id = SessionId(5_912);
+    let (project_id, pinned_context_refs) = seed_adapter_session_record_for_project_context_test(
+        &runtime,
+        session_id,
+        &actor_user_id,
+        &recovered_device_id,
+        SessionState::Suspended,
+    );
+
+    let response = runtime
+        .run_session_recover(SessionRecoverAdapterRequest {
+            correlation_id: 93_102,
+            idempotency_key: "adapter_session_recover_project_context".to_string(),
+            session_id: session_id.0.to_string(),
+            device_id: recovered_device_id.as_str().to_string(),
+        })
+        .unwrap();
+
+    assert_eq!(response.project_id.as_deref(), Some(project_id.as_str()));
+    assert_eq!(
+        response.pinned_context_refs.as_deref(),
+        Some(pinned_context_refs.as_slice())
+    );
 }
 
 #[cfg(test)]

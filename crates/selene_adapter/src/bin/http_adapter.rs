@@ -19,10 +19,9 @@ use selene_adapter::{
     app_ui_assets, build_runtime_execution_envelope_for_voice_turn_request, AdapterHealthResponse,
     AdapterRuntime, AdapterSyncHealth, InviteLinkOpenAdapterRequest, InviteLinkOpenAdapterResponse,
     OnboardingContinueAdapterRequest, OnboardingContinueAdapterResponse,
-    SessionAttachAdapterRequest, SessionAttachAdapterResponse,
-    SessionRecoverAdapterRequest, SessionRecoverAdapterResponse,
-    SessionResumeAdapterRequest, SessionResumeAdapterResponse, UiChatTranscriptResponse,
-    UiHealthChecksResponse, UiHealthDetailFilter, UiHealthDetailResponse,
+    SessionAttachAdapterRequest, SessionAttachAdapterResponse, SessionRecoverAdapterRequest,
+    SessionRecoverAdapterResponse, SessionResumeAdapterRequest, SessionResumeAdapterResponse,
+    UiChatTranscriptResponse, UiHealthChecksResponse, UiHealthDetailFilter, UiHealthDetailResponse,
     UiHealthReportQueryRequest, UiHealthReportQueryResponse, UiHealthSummary,
     UiHealthTimelinePaging, VoiceTurnAdapterRequest, VoiceTurnAdapterResponse,
     VoiceTurnIngressError, WakeProfileAvailabilityRefreshAdapterRequest,
@@ -1360,6 +1359,8 @@ fn session_attach_security_reject_response(reject: SecurityReject) -> Response {
         session_id: None,
         session_state: None,
         session_attach_outcome: None,
+        project_id: None,
+        pinned_context_refs: None,
     };
     json_response_with_optional_retry_after(status, response, reject.retry_after_secs)
 }
@@ -1373,6 +1374,8 @@ fn session_resume_security_reject_response(reject: SecurityReject) -> Response {
         session_id: None,
         session_state: None,
         session_attach_outcome: None,
+        project_id: None,
+        pinned_context_refs: None,
     };
     json_response_with_optional_retry_after(status, response, reject.retry_after_secs)
 }
@@ -1386,6 +1389,8 @@ fn session_recover_security_reject_response(reject: SecurityReject) -> Response 
         session_id: None,
         session_state: None,
         session_attach_outcome: None,
+        project_id: None,
+        pinned_context_refs: None,
     };
     json_response_with_optional_retry_after(status, response, reject.retry_after_secs)
 }
@@ -1478,6 +1483,8 @@ fn session_resume_error_response(status: StatusCode, reason: String) -> Response
             session_id: None,
             session_state: None,
             session_attach_outcome: None,
+            project_id: None,
+            pinned_context_refs: None,
         }),
     )
         .into_response()
@@ -1493,6 +1500,8 @@ fn session_recover_error_response(status: StatusCode, reason: String) -> Respons
             session_id: None,
             session_state: None,
             session_attach_outcome: None,
+            project_id: None,
+            pinned_context_refs: None,
         }),
     )
         .into_response()
@@ -1508,6 +1517,8 @@ fn session_attach_error_response(status: StatusCode, reason: String) -> Response
             session_id: None,
             session_state: None,
             session_attach_outcome: None,
+            project_id: None,
+            pinned_context_refs: None,
         }),
     )
         .into_response()
@@ -1567,14 +1578,15 @@ mod tests {
     use axum::http::header::AUTHORIZATION;
     use selene_adapter::VoiceTurnAudioCaptureRef;
     use selene_kernel_contracts::common::SessionState;
-    use selene_kernel_contracts::ph1art::ArtifactVersion;
     use selene_kernel_contracts::ph1_voice_id::{
         UserId, VoiceEmbeddingCaptureRef, VOICE_ID_ENROLL_COMPLETE_COMMIT,
         VOICE_ID_ENROLL_SAMPLE_COMMIT, VOICE_ID_ENROLL_START_DRAFT,
     };
+    use selene_kernel_contracts::ph1art::ArtifactVersion;
     use selene_kernel_contracts::ph1emocore::EMO_SIM_001;
     use selene_kernel_contracts::ph1j::{DeviceId, TurnId};
     use selene_kernel_contracts::ph1l::SessionId;
+    use selene_kernel_contracts::ph1link::AppPlatform;
     use selene_kernel_contracts::ph1link::{
         InviteeType, LINK_INVITE_DRAFT_UPDATE_COMMIT, LINK_INVITE_OPEN_ACTIVATE_COMMIT,
     };
@@ -1588,7 +1600,6 @@ mod tests {
         SimulationVersion,
     };
     use selene_kernel_contracts::{MonotonicTimeNs, ReasonCodeId};
-    use selene_kernel_contracts::ph1link::AppPlatform;
     use selene_os::app_ingress::AppServerIngressRuntime;
     use selene_storage::ph1f::{
         DeviceRecord, IdentityRecord, IdentityStatus, Ph1fStore, TenantCompanyLifecycleState,
@@ -2077,6 +2088,22 @@ mod tests {
         }
     }
 
+    fn session_project_context_fixture() -> (String, Vec<String>) {
+        (
+            "proj_q3_planning".to_string(),
+            vec![
+                "ctx:spec/roadmap".to_string(),
+                "ctx:file/launch_checklist".to_string(),
+            ],
+        )
+    }
+
+    fn apply_session_project_context(record: &mut selene_storage::ph1f::SessionRecord) {
+        let (project_id, pinned_context_refs) = session_project_context_fixture();
+        record.project_id = Some(project_id);
+        record.pinned_context_refs = pinned_context_refs;
+    }
+
     fn seed_soft_closed_session_record(
         store: &mut Ph1fStore,
         session_id: SessionId,
@@ -2104,6 +2131,7 @@ mod tests {
             .cloned()
             .map(|device_id| (device_id, last_turn_id.0))
             .collect();
+        apply_session_project_context(&mut record);
         store
             .upsert_session_lifecycle(
                 record,
@@ -2140,6 +2168,7 @@ mod tests {
             .cloned()
             .map(|device_id| (device_id, last_turn_id.0))
             .collect();
+        apply_session_project_context(&mut record);
         store
             .upsert_session_lifecycle(
                 record,
@@ -2175,6 +2204,7 @@ mod tests {
             .cloned()
             .map(|device_id| (device_id, last_turn_id.0))
             .collect();
+        apply_session_project_context(&mut record);
         store
             .upsert_session_lifecycle(
                 record,
@@ -2581,6 +2611,7 @@ mod tests {
         assert_eq!(response.status(), StatusCode::OK);
 
         let body: SessionResumeAdapterResponse = decode_json_response(response).await;
+        let (expected_project_id, expected_pinned_context_refs) = session_project_context_fixture();
         assert_eq!(body.status, "ok");
         assert_eq!(body.outcome, "SESSION_RESUMED");
         assert_eq!(body.session_id.as_deref(), Some("4201"));
@@ -2588,6 +2619,14 @@ mod tests {
         assert_eq!(
             body.session_attach_outcome.as_deref(),
             Some("EXISTING_SESSION_REUSED")
+        );
+        assert_eq!(
+            body.project_id.as_deref(),
+            Some(expected_project_id.as_str())
+        );
+        assert_eq!(
+            body.pinned_context_refs.as_deref(),
+            Some(expected_pinned_context_refs.as_slice())
         );
 
         let guard = store.lock().expect("store lock must succeed");
@@ -2670,6 +2709,7 @@ mod tests {
         assert_eq!(response.status(), StatusCode::OK);
 
         let body: SessionRecoverAdapterResponse = decode_json_response(response).await;
+        let (expected_project_id, expected_pinned_context_refs) = session_project_context_fixture();
         assert_eq!(body.status, "ok");
         assert_eq!(body.outcome, "SESSION_RECOVERED");
         assert_eq!(body.session_id.as_deref(), Some("4301"));
@@ -2677,6 +2717,14 @@ mod tests {
         assert_eq!(
             body.session_attach_outcome.as_deref(),
             Some("EXISTING_SESSION_REUSED")
+        );
+        assert_eq!(
+            body.project_id.as_deref(),
+            Some(expected_project_id.as_str())
+        );
+        assert_eq!(
+            body.pinned_context_refs.as_deref(),
+            Some(expected_pinned_context_refs.as_slice())
         );
 
         let guard = store.lock().expect("store lock must succeed");
@@ -2737,6 +2785,7 @@ mod tests {
         assert_eq!(response.status(), StatusCode::OK);
 
         let body: SessionAttachAdapterResponse = decode_json_response(response).await;
+        let (expected_project_id, expected_pinned_context_refs) = session_project_context_fixture();
         assert_eq!(body.status, "ok");
         assert_eq!(body.outcome, "SESSION_ATTACHED");
         assert_eq!(body.session_id.as_deref(), Some("4101"));
@@ -2744,6 +2793,14 @@ mod tests {
         assert_eq!(
             body.session_attach_outcome.as_deref(),
             Some("EXISTING_SESSION_ATTACHED")
+        );
+        assert_eq!(
+            body.project_id.as_deref(),
+            Some(expected_project_id.as_str())
+        );
+        assert_eq!(
+            body.pinned_context_refs.as_deref(),
+            Some(expected_pinned_context_refs.as_slice())
         );
 
         let guard = store.lock().expect("store lock must succeed");

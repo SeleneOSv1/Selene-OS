@@ -201,6 +201,18 @@ It may only be updated from current repo truth, exact command results, and exact
   no wake parity claim is made;
   no autonomous unlock claim is made;
   no post-H325 next exact winner is published in this run;
+  H330 is now implemented as the first post-H329 upstream bounded enabling build `cloud_authored_selected_session_project_context_carrier_exposure_for_later_desktop_transport_without_local_authoring` through [ph1f.rs#L791](/Users/selene/Documents/Selene-OS/crates/selene_storage/src/ph1f.rs#L791), [app_ingress.rs#L618](/Users/selene/Documents/Selene-OS/crates/selene_os/src/app_ingress.rs#L618), [lib.rs#L631](/Users/selene/Documents/Selene-OS/crates/selene_adapter/src/lib.rs#L631), and [http_adapter.rs#L726](/Users/selene/Documents/Selene-OS/crates/selene_adapter/src/bin/http_adapter.rs#L726);
+  current upstream session lifecycle truth now preserves bounded read-only selected-session `project_id` / `pinned_context_refs` when exact same-session voice-turn finalization already carried lawful cloud-authored context;
+  exact `AppSessionAttachOutcome`, exact `AppSessionResumeOutcome`, and exact `AppSessionRecoverOutcome` now expose that carrier read-only when present;
+  exact `SessionAttachAdapterResponse`, exact `SessionResumeAdapterResponse`, and exact `SessionRecoverAdapterResponse` now expose that carrier read-only when present;
+  exact `/v1/voice/turn` request semantics remain unchanged in this run;
+  exact request-level `threadPolicyFlags` behavior remains unchanged in this run;
+  exact desktop runtime bridge still preserves exact `projectID: nil` and exact `pinnedContextRefs: nil` in this run;
+  APP_MAC_DESKTOP remains queue-held and `PARTIAL` in this run;
+  no local authoring authority is claimed;
+  no new route is claimed;
+  no next desktop implementation winner is auto-published from H330 alone;
+  the desktop queue must be refreshed against new repo truth before the next APP_MAC_DESKTOP implementation brief is written;
   H324 is now implemented as the first canonical post-H323 selected bounded native macOS actual capability unlock `wake_ready_visible_shell_auto_start_of_already_live_foreground_wake_listener_without_fake_parity_claim` implementation build;
   H323-H256 truth remains preserved exactly as already recorded, with no regression;
   H323 was the correct post-H322 unlock because it added bounded tool-request authoring / invocation only through the already-live exact `/v1/voice/turn` typed-turn path, with no new backend route and no direct local tool/search authority;

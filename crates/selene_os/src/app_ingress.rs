@@ -527,7 +527,8 @@ impl AppOnboardingContinueRequest {
                 device_id.validate()?;
                 if session_id.0 == 0 {
                     return Err(ContractViolation::InvalidValue {
-                        field: "app_onboarding_continue_request.pairing_completion_commit.session_id",
+                        field:
+                            "app_onboarding_continue_request.pairing_completion_commit.session_id",
                         reason: "must be > 0",
                     });
                 }
@@ -618,6 +619,8 @@ pub struct AppSessionAttachOutcome {
     pub session_id: String,
     pub session_state: SessionState,
     pub session_attach_outcome: SessionAttachOutcome,
+    pub project_id: Option<String>,
+    pub pinned_context_refs: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone)]
@@ -656,6 +659,8 @@ pub struct AppSessionResumeOutcome {
     pub session_id: String,
     pub session_state: SessionState,
     pub session_attach_outcome: SessionAttachOutcome,
+    pub project_id: Option<String>,
+    pub pinned_context_refs: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone)]
@@ -694,6 +699,17 @@ pub struct AppSessionRecoverOutcome {
     pub session_id: String,
     pub session_state: SessionState,
     pub session_attach_outcome: SessionAttachOutcome,
+    pub project_id: Option<String>,
+    pub pinned_context_refs: Option<Vec<String>>,
+}
+
+fn stored_session_project_context(
+    record: &StoredSessionRecord,
+) -> (Option<String>, Option<Vec<String>>) {
+    let project_id = record.project_id.clone();
+    let pinned_context_refs =
+        (!record.pinned_context_refs.is_empty()).then(|| record.pinned_context_refs.clone());
+    (project_id, pinned_context_refs)
 }
 
 #[derive(Debug, Clone)]
@@ -3456,13 +3472,14 @@ impl AppServerIngressRuntime {
                 },
             ));
         }
-        let paired_session = store
-            .get_session(&session_id)
-            .cloned()
-            .ok_or(StorageError::ForeignKeyViolation {
-                table: "sessions.session_id",
-                key: session_id.0.to_string(),
-            })?;
+        let paired_session =
+            store
+                .get_session(&session_id)
+                .cloned()
+                .ok_or(StorageError::ForeignKeyViolation {
+                    table: "sessions.session_id",
+                    key: session_id.0.to_string(),
+                })?;
         if paired_session.user_id != sender_user_id {
             return Err(StorageError::ContractViolation(
                 ContractViolation::InvalidValue {
@@ -3985,12 +4002,14 @@ impl AppServerIngressRuntime {
                     let tool_response = maybe_build_local_connector_query_tool_response(
                         store,
                         actor_user_id,
-                        out.ph1x_request.as_ref().ok_or(StorageError::ContractViolation(
-                            ContractViolation::InvalidValue {
-                                field: "app_voice_turn_execution_outcome.ph1x_request",
-                                reason: "must be present before local connector tool dispatch",
-                            },
-                        ))?,
+                        out.ph1x_request
+                            .as_ref()
+                            .ok_or(StorageError::ContractViolation(
+                                ContractViolation::InvalidValue {
+                                    field: "app_voice_turn_execution_outcome.ph1x_request",
+                                    reason: "must be present before local connector tool dispatch",
+                                },
+                            ))?,
                         tool_request,
                     )?
                     .unwrap_or_else(|| self.ph1e_runtime.run(tool_request));
@@ -4519,6 +4538,7 @@ impl AppServerIngressRuntime {
             now,
             &idempotency_key,
         )?;
+        let (project_id, pinned_context_refs) = stored_session_project_context(&persisted_record);
 
         Ok(AppSessionAttachOutcome {
             session_id: session_id.0.to_string(),
@@ -4527,6 +4547,8 @@ impl AppServerIngressRuntime {
                 .projection
                 .attach_outcome
                 .unwrap_or(SessionAttachOutcome::ExistingSessionReused),
+            project_id,
+            pinned_context_refs,
         })
     }
 
@@ -4596,6 +4618,7 @@ impl AppServerIngressRuntime {
             now,
             &idempotency_key,
         )?;
+        let (project_id, pinned_context_refs) = stored_session_project_context(&persisted_record);
 
         Ok(AppSessionResumeOutcome {
             session_id: session_id.0.to_string(),
@@ -4604,6 +4627,8 @@ impl AppServerIngressRuntime {
                 .projection
                 .attach_outcome
                 .unwrap_or(SessionAttachOutcome::ExistingSessionReused),
+            project_id,
+            pinned_context_refs,
         })
     }
 
@@ -4673,6 +4698,7 @@ impl AppServerIngressRuntime {
             now,
             &idempotency_key,
         )?;
+        let (project_id, pinned_context_refs) = stored_session_project_context(&persisted_record);
 
         Ok(AppSessionRecoverOutcome {
             session_id: session_id.0.to_string(),
@@ -4681,6 +4707,8 @@ impl AppServerIngressRuntime {
                 .projection
                 .attach_outcome
                 .unwrap_or(SessionAttachOutcome::ExistingSessionReused),
+            project_id,
+            pinned_context_refs,
         })
     }
 
@@ -4757,14 +4785,13 @@ impl AppServerIngressRuntime {
             ));
         }
 
-        let actor_user_id =
-            store
-                .get_device(&device_id)
-                .map(|record| record.user_id.clone())
-                .ok_or(StorageError::ForeignKeyViolation {
-                    table: "devices.device_id",
-                    key: device_id.as_str().to_string(),
-                })?;
+        let actor_user_id = store
+            .get_device(&device_id)
+            .map(|record| record.user_id.clone())
+            .ok_or(StorageError::ForeignKeyViolation {
+                table: "devices.device_id",
+                key: device_id.as_str().to_string(),
+            })?;
 
         let turn_id = TurnId(now.0);
         let metrics = self.run_device_artifact_sync_worker_pass_with_metrics(
@@ -7968,7 +7995,10 @@ fn maybe_build_list_reminders_tool_response(
         let reminder_text = if row.reminder_request_text.chars().count() > 160 {
             format!(
                 "{}...",
-                row.reminder_request_text.chars().take(157).collect::<String>()
+                row.reminder_request_text
+                    .chars()
+                    .take(157)
+                    .collect::<String>()
             )
         } else {
             row.reminder_request_text.clone()
@@ -8914,6 +8944,201 @@ fn memory_topic_hint_from_nlp_output(nlp_output: Option<&Ph1nResponse>) -> Optio
 }
 
 #[cfg(test)]
+fn test_session_project_context_fixture() -> (String, Vec<String>) {
+    (
+        "proj_q3_planning".to_string(),
+        vec![
+            "ctx:spec/roadmap".to_string(),
+            "ctx:file/launch_checklist".to_string(),
+        ],
+    )
+}
+
+#[cfg(test)]
+fn seed_identity_and_device_for_session_project_context_test(
+    store: &mut Ph1fStore,
+    user_id: &UserId,
+    device_id: &DeviceId,
+) {
+    if store.get_identity(user_id).is_none() {
+        store
+            .insert_identity(IdentityRecord::v1(
+                user_id.clone(),
+                None,
+                None,
+                MonotonicTimeNs(1),
+                IdentityStatus::Active,
+            ))
+            .unwrap();
+    }
+    if store.get_device(device_id).is_none() {
+        store
+            .insert_device(
+                DeviceRecord::v1(
+                    device_id.clone(),
+                    user_id.clone(),
+                    "desktop".to_string(),
+                    MonotonicTimeNs(2),
+                    None,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+    }
+}
+
+#[cfg(test)]
+fn seed_session_record_for_project_context_test(
+    store: &mut Ph1fStore,
+    session_id: SessionId,
+    user_id: &UserId,
+    device_id: &DeviceId,
+    session_state: SessionState,
+) -> (String, Vec<String>) {
+    let (project_id, pinned_context_refs) = test_session_project_context_fixture();
+    seed_identity_and_device_for_session_project_context_test(store, user_id, device_id);
+    let mut record = StoredSessionRecord::v1(
+        session_id,
+        user_id.clone(),
+        device_id.clone(),
+        session_state,
+        MonotonicTimeNs(10),
+        MonotonicTimeNs(20),
+        None,
+    )
+    .unwrap();
+    record.attached_devices.insert(device_id.clone());
+    record.last_attached_device_id = device_id.clone();
+    record.last_turn_id = Some(TurnId(900));
+    record.project_id = Some(project_id.clone());
+    record.pinned_context_refs = pinned_context_refs.clone();
+    record
+        .device_turn_sequences
+        .insert(device_id.clone(), TurnId(900).0);
+    store
+        .upsert_session_lifecycle(
+            record,
+            Some(format!(
+                "seed_session_project_context_test_{}",
+                session_id.0
+            )),
+        )
+        .unwrap();
+    (project_id, pinned_context_refs)
+}
+
+#[cfg(test)]
+#[test]
+fn session_attach_outcome_exposes_persisted_session_project_context() {
+    let runtime = AppServerIngressRuntime::default();
+    let actor_user_id = UserId::new("tenant_1:session_attach_project_context_actor").unwrap();
+    let attached_device_id = DeviceId::new("session_attach_project_context_device").unwrap();
+    let session_id = SessionId(4_910);
+    let mut store = Ph1fStore::new_in_memory();
+    let (project_id, pinned_context_refs) = seed_session_record_for_project_context_test(
+        &mut store,
+        session_id,
+        &actor_user_id,
+        &attached_device_id,
+        SessionState::Active,
+    );
+
+    let outcome = runtime
+        .run_session_attach(
+            &mut store,
+            AppSessionAttachRequest::v1(
+                CorrelationId(92_100),
+                "session_attach_project_context".to_string(),
+                session_id,
+                attached_device_id,
+            )
+            .unwrap(),
+            MonotonicTimeNs(60_000_000),
+        )
+        .unwrap();
+
+    assert_eq!(outcome.project_id.as_deref(), Some(project_id.as_str()));
+    assert_eq!(
+        outcome.pinned_context_refs.as_deref(),
+        Some(pinned_context_refs.as_slice())
+    );
+}
+
+#[cfg(test)]
+#[test]
+fn session_resume_outcome_exposes_persisted_session_project_context() {
+    let runtime = AppServerIngressRuntime::default();
+    let actor_user_id = UserId::new("tenant_1:session_resume_project_context_actor").unwrap();
+    let resumed_device_id = DeviceId::new("session_resume_project_context_device").unwrap();
+    let session_id = SessionId(4_911);
+    let mut store = Ph1fStore::new_in_memory();
+    let (project_id, pinned_context_refs) = seed_session_record_for_project_context_test(
+        &mut store,
+        session_id,
+        &actor_user_id,
+        &resumed_device_id,
+        SessionState::SoftClosed,
+    );
+
+    let outcome = runtime
+        .run_session_resume(
+            &mut store,
+            AppSessionResumeRequest::v1(
+                CorrelationId(92_101),
+                "session_resume_project_context".to_string(),
+                session_id,
+                resumed_device_id,
+            )
+            .unwrap(),
+            MonotonicTimeNs(61_000_000),
+        )
+        .unwrap();
+
+    assert_eq!(outcome.project_id.as_deref(), Some(project_id.as_str()));
+    assert_eq!(
+        outcome.pinned_context_refs.as_deref(),
+        Some(pinned_context_refs.as_slice())
+    );
+}
+
+#[cfg(test)]
+#[test]
+fn session_recover_outcome_exposes_persisted_session_project_context() {
+    let runtime = AppServerIngressRuntime::default();
+    let actor_user_id = UserId::new("tenant_1:session_recover_project_context_actor").unwrap();
+    let recovered_device_id = DeviceId::new("session_recover_project_context_device").unwrap();
+    let session_id = SessionId(4_912);
+    let mut store = Ph1fStore::new_in_memory();
+    let (project_id, pinned_context_refs) = seed_session_record_for_project_context_test(
+        &mut store,
+        session_id,
+        &actor_user_id,
+        &recovered_device_id,
+        SessionState::Suspended,
+    );
+
+    let outcome = runtime
+        .run_session_recover(
+            &mut store,
+            AppSessionRecoverRequest::v1(
+                CorrelationId(92_102),
+                "session_recover_project_context".to_string(),
+                session_id,
+                recovered_device_id,
+            )
+            .unwrap(),
+            MonotonicTimeNs(62_000_000),
+        )
+        .unwrap();
+
+    assert_eq!(outcome.project_id.as_deref(), Some(project_id.as_str()));
+    assert_eq!(
+        outcome.pinned_context_refs.as_deref(),
+        Some(pinned_context_refs.as_slice())
+    );
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::runtime_governance::{
@@ -8967,8 +9192,8 @@ mod tests {
     };
     use selene_storage::ph1f::{
         AccessDeviceTrustLevel, AccessLifecycleState, AccessMode, AccessVerificationLevel,
-        BcastPolicyUpdateValue, DeviceRecord, IdentityRecord, IdentityStatus, WakeSampleResult,
-        SessionRecord as StoredSessionRecord,
+        BcastPolicyUpdateValue, DeviceRecord, IdentityRecord, IdentityStatus,
+        SessionRecord as StoredSessionRecord, WakeSampleResult,
     };
 
     fn sample_voice_id_request(now: MonotonicTimeNs, owner_user_id: UserId) -> Ph1VoiceIdRequest {
@@ -11683,8 +11908,8 @@ mod tests {
         let actor_device_id = request.device_id.clone();
         let actor_tenant_id = request.tenant_id.clone();
         let dispatch_now = x_build.now;
-        let (voice_outcome, runtime_execution_envelope, ph1x_request) = runtime
-            .run_voice_turn_and_build_ph1x_request_internal(store, request, x_build)?;
+        let (voice_outcome, runtime_execution_envelope, ph1x_request) =
+            runtime.run_voice_turn_and_build_ph1x_request_internal(store, request, x_build)?;
         let Some(ph1x_request) = ph1x_request else {
             return Err(StorageError::ContractViolation(
                 ContractViolation::InvalidValue {
@@ -11774,13 +11999,12 @@ mod tests {
                     reason_code: Some(packet.reason_code),
                 },
                 FinderTerminalPacket::MissingSimulation(packet) => {
-                    let runtime_execution_envelope =
-                        missing_simulation_runtime_execution_envelope(
-                            &runtime.ph1comp_runtime,
-                            &runtime_execution_envelope,
-                            &packet,
-                            dispatch_now.0 as i64,
-                        )?;
+                    let runtime_execution_envelope = missing_simulation_runtime_execution_envelope(
+                        &runtime.ph1comp_runtime,
+                        &runtime_execution_envelope,
+                        &packet,
+                        dispatch_now.0 as i64,
+                    )?;
                     let tenant_id = normalized_tenant_scope_for_dev_intake(
                         store,
                         &actor_user_id,
@@ -12813,8 +13037,7 @@ mod tests {
         store: &mut Ph1fStore,
         label: &str,
     ) -> (DeviceId, String, String) {
-        let actor_user_id =
-            UserId::new(format!("tenant_1:{label}_wake_profile_refresh")).unwrap();
+        let actor_user_id = UserId::new(format!("tenant_1:{label}_wake_profile_refresh")).unwrap();
         let device_id = DeviceId::new(format!("{label}_wake_profile_refresh_device")).unwrap();
         seed_actor(store, &actor_user_id, &device_id);
 
@@ -20140,10 +20363,7 @@ mod tests {
             last_failure_reason_code: None,
         };
         let out_2 = run_desktop_voice_turn_end_to_end_with_confirmed_voice_assertion(
-            &runtime,
-            &mut store,
-            request_2,
-            x_build_2,
+            &runtime, &mut store, request_2, x_build_2,
         )
         .unwrap();
         assert_eq!(out_2.next_move, AppVoiceTurnNextMove::Dispatch);
@@ -20241,10 +20461,7 @@ mod tests {
             last_failure_reason_code: None,
         };
         let out = run_desktop_voice_turn_end_to_end_with_confirmed_voice_assertion(
-            &runtime,
-            &mut store,
-            request,
-            x_build,
+            &runtime, &mut store, request, x_build,
         )
         .unwrap();
         assert_eq!(out.next_move, AppVoiceTurnNextMove::Clarify);
@@ -20717,10 +20934,7 @@ mod tests {
             last_failure_reason_code: None,
         };
         let out_2 = run_desktop_voice_turn_end_to_end_with_confirmed_voice_assertion(
-            &runtime,
-            &mut store,
-            request_2,
-            x_build_2,
+            &runtime, &mut store, request_2, x_build_2,
         )
         .unwrap();
         let authority_state = out_2
@@ -21143,10 +21357,7 @@ mod tests {
         };
 
         let out = run_desktop_voice_turn_end_to_end_with_confirmed_voice_assertion(
-            &runtime,
-            &mut store,
-            request,
-            x_build,
+            &runtime, &mut store, request, x_build,
         )
         .unwrap();
         assert_eq!(out.next_move, AppVoiceTurnNextMove::Clarify);
@@ -21228,10 +21439,7 @@ mod tests {
         };
 
         let out = run_desktop_voice_turn_end_to_end_with_confirmed_voice_assertion(
-            &runtime,
-            &mut store,
-            request,
-            x_build,
+            &runtime, &mut store, request, x_build,
         )
         .unwrap();
         assert_eq!(out.next_move, AppVoiceTurnNextMove::Dispatch);

@@ -804,6 +804,8 @@ pub struct SessionRecord {
     pub lease_owner_id: Option<String>,
     pub lease_acquired_at: Option<MonotonicTimeNs>,
     pub lease_expires_at: Option<MonotonicTimeNs>,
+    pub project_id: Option<String>,
+    pub pinned_context_refs: Vec<String>,
     pub device_turn_sequences: BTreeMap<DeviceId, u64>,
     pub device_last_idempotency_keys: BTreeMap<DeviceId, String>,
 }
@@ -836,6 +838,8 @@ impl SessionRecord {
             lease_owner_id: None,
             lease_acquired_at: None,
             lease_expires_at: None,
+            project_id: None,
+            pinned_context_refs: Vec::new(),
             device_turn_sequences: BTreeMap::new(),
             device_last_idempotency_keys: BTreeMap::new(),
         };
@@ -911,6 +915,70 @@ impl Validate for SessionRecord {
         }
         if let Some(active_turn_id) = self.active_turn_id {
             active_turn_id.validate()?;
+        }
+        if let Some(project_id) = &self.project_id {
+            if project_id.trim().is_empty() {
+                return Err(ContractViolation::InvalidValue {
+                    field: "session_record.project_id",
+                    reason: "must not be empty when provided",
+                });
+            }
+            if project_id.len() > 96 {
+                return Err(ContractViolation::InvalidValue {
+                    field: "session_record.project_id",
+                    reason: "must be <= 96 chars",
+                });
+            }
+            if !project_id.is_ascii() {
+                return Err(ContractViolation::InvalidValue {
+                    field: "session_record.project_id",
+                    reason: "must be ASCII",
+                });
+            }
+            if project_id
+                .chars()
+                .any(|c| c.is_control() || c.is_ascii_whitespace())
+            {
+                return Err(ContractViolation::InvalidValue {
+                    field: "session_record.project_id",
+                    reason: "must not contain control chars or whitespace",
+                });
+            }
+        }
+        if self.pinned_context_refs.len() > 16 {
+            return Err(ContractViolation::InvalidValue {
+                field: "session_record.pinned_context_refs",
+                reason: "must be <= 16 entries",
+            });
+        }
+        for context_ref in &self.pinned_context_refs {
+            if context_ref.trim().is_empty() {
+                return Err(ContractViolation::InvalidValue {
+                    field: "session_record.pinned_context_refs[]",
+                    reason: "must not contain empty entries",
+                });
+            }
+            if context_ref.len() > 128 {
+                return Err(ContractViolation::InvalidValue {
+                    field: "session_record.pinned_context_refs[]",
+                    reason: "must be <= 128 chars",
+                });
+            }
+            if !context_ref.is_ascii() {
+                return Err(ContractViolation::InvalidValue {
+                    field: "session_record.pinned_context_refs[]",
+                    reason: "must be ASCII",
+                });
+            }
+            if context_ref
+                .chars()
+                .any(|c| c.is_control() || c.is_ascii_whitespace())
+            {
+                return Err(ContractViolation::InvalidValue {
+                    field: "session_record.pinned_context_refs[]",
+                    reason: "must not contain control chars or whitespace",
+                });
+            }
         }
         if self.session_state == SessionState::Closed {
             if self.active_turn_id.is_some() {
@@ -26668,8 +26736,7 @@ mod tests {
     }
 
     #[test]
-    fn at_fdbk_08_feedback_event_metadata_carries_identity_context_without_overwriting_base_keys()
-    {
+    fn at_fdbk_08_feedback_event_metadata_carries_identity_context_without_overwriting_base_keys() {
         let mut s = store_with_user_device_and_session();
         let mut payload_metadata = std::collections::BTreeMap::new();
         payload_metadata.insert("identity_tier_v2".to_string(), "UNKNOWN".to_string());
@@ -26718,8 +26785,10 @@ mod tests {
         );
 
         let mut duplicate_signal_bucket = std::collections::BTreeMap::new();
-        duplicate_signal_bucket
-            .insert("signal_bucket".to_string(), "VoiceIdFalseAccept".to_string());
+        duplicate_signal_bucket.insert(
+            "signal_bucket".to_string(),
+            "VoiceIdFalseAccept".to_string(),
+        );
         let err = s
             .ph1feedback_event_commit_with_payload_metadata(
                 MonotonicTimeNs(41),

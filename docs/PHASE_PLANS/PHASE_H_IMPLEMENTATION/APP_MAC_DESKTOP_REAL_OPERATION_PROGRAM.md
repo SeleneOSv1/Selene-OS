@@ -617,8 +617,10 @@ This section is a planning queue only.
 
 ### Why No Exact Next Winner Is Published Yet
 - H325 corrected the invalid shell-side `projectID` / `pinnedContextRefs` transport candidate by landing the smaller lawful bounded search-request input seam instead.
+- H330 now preserves the upstream selected-session `project_id` / `pinned_context_refs` carrier read-only through exact session lifecycle / attach-resume-recover outputs when same-session voice-turn finalization already carried lawful cloud-authored context.
 - Current desktop shell surfaces still expose no lawful cloud-authored selected-session `projectID` / `pinnedContextRefs` carrier for direct shell-side transport.
 - Broader conversation-list / session-list fetch, broader hidden/background wake, broader shell-side context transport, and broader search expansion remain candidate families only; none is yet proven as the next exact executable seam on current repo truth.
+- H330 does not itself publish a desktop next winner; the desktop queue must be refreshed against the new upstream carrier truth before the next APP_MAC_DESKTOP implementation brief is written.
 
 ### Explicitly Not Next
 - not shell-side `projectID` / `pinnedContextRefs` transport without a newly proven lawful surface carrier
