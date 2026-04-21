@@ -4514,6 +4514,7 @@ struct DesktopPlatformSetupReceiptDraft: Identifiable, Equatable {
 }
 
 struct DesktopSessionShellView: View {
+    @Environment(\.scenePhase) private var scenePhase
     @State private var latestSessionHeaderContext: DesktopSessionHeaderContext?
     @State private var latestSessionActiveVisibleContext: DesktopSessionActiveVisibleContext?
     @State private var latestSessionSoftClosedVisibleContext: DesktopSessionSoftClosedVisibleContext?
@@ -4563,6 +4564,8 @@ struct DesktopSessionShellView: View {
     @State private var desktopToolRequestFailedRequest: InterruptContinuityResponseFailureState?
     @State private var desktopTypedTurnRequestSequence: Int = 0
     @State private var lastStagedWakeTriggeredVoiceTurnRequestState: WakeTriggeredVoiceTurnRequestState?
+    @State private var desktopWakeAutoStartAttemptedPromptID: String?
+    @State private var desktopWakeAutoStartSuppressedPromptID: String?
     private let maxDesktopTypedTurnBytes = 16_384
 
     var body: some View {
@@ -4578,12 +4581,15 @@ struct DesktopSessionShellView: View {
         .background(Color(nsColor: .windowBackgroundColor))
         .task(id: explicitVoiceController.pendingRequest?.id) {
             await dispatchPreparedExplicitVoiceRequestIfNeeded()
+            await synchronizeDesktopWakeListenerLifecycleState()
         }
         .task(id: desktopWakeListenerController.pendingRequest?.id) {
             await dispatchPreparedWakeTriggeredVoiceRequestIfNeeded()
+            await synchronizeDesktopWakeListenerLifecycleState()
         }
         .task(id: desktopTypedTurnPendingRequest?.id) {
             await dispatchPreparedTypedTurnRequestIfNeeded()
+            await synchronizeDesktopWakeListenerLifecycleState()
         }
         .task(id: desktopOnboardingEntryContext?.id) {
             await openInviteLinkAndStartOnboardingIfNeeded()
@@ -4598,13 +4604,19 @@ struct DesktopSessionShellView: View {
             synchronizeDesktopWakeProfileAvailabilityRuntimeOutcomeState()
         }
         .task(id: desktopWakeListenerPromptState?.id) {
-            synchronizeDesktopWakeListenerControllerState()
+            await synchronizeDesktopWakeListenerLifecycleState()
         }
         .task(id: explicitVoiceController.isListening) {
-            synchronizeDesktopWakeListenerControllerState()
+            await synchronizeDesktopWakeListenerLifecycleState()
         }
         .task(id: explicitVoiceController.pendingRequest?.id) {
-            synchronizeDesktopWakeListenerControllerState()
+            await synchronizeDesktopWakeListenerLifecycleState()
+        }
+        .task(id: desktopOperationalConversationShellState?.id) {
+            await synchronizeDesktopWakeListenerLifecycleState()
+        }
+        .task(id: scenePhase) {
+            await synchronizeDesktopWakeListenerLifecycleState()
         }
         .onReceive(desktopAuthoritativeReplyPlaybackController.$playbackState) { playbackState in
             desktopAuthoritativeReplyPlaybackState = playbackState
@@ -5772,6 +5784,22 @@ struct DesktopSessionShellView: View {
             voiceArtifactSyncReceiptRef: wakewordProofContext.voiceArtifactSyncReceiptRef,
             wakeTriggerPhrase: "Selene"
         )
+    }
+
+    private var desktopWakeAutoStartEligiblePromptState: DesktopWakeListenerPromptState? {
+        guard scenePhase == .active,
+              desktopOperationalConversationShellState != nil,
+              let promptState = desktopWakeListenerPromptState,
+              !explicitVoiceController.isListening,
+              explicitVoiceController.pendingRequest == nil,
+              desktopTypedTurnPendingRequest == nil,
+              desktopWakeListenerController.listenerState == .idle,
+              desktopWakeListenerController.pendingRequest == nil,
+              lastStagedWakeTriggeredVoiceTurnRequestState == nil else {
+            return nil
+        }
+
+        return promptState
     }
 
     private var desktopOperationalConversationShellState: DesktopOperationalConversationShellState? {
@@ -9590,7 +9618,7 @@ struct DesktopSessionShellView: View {
                 || desktopWakeListenerController.failedRequest != nil {
                 GroupBox {
                     VStack(alignment: .leading, spacing: 12) {
-                        Text("Bounded native macOS foreground wake-listener integration only. This shell derives one lawful prompt from already-live local wake-profile availability and exact wakeword-configured proof, starts one explicit foreground wake listener only after direct user action, stages one bounded post-wake transcript remainder only after exact `Selene` prefix detection, and hands that request into canonical `/v1/voice/turn` as exact `WAKE_WORD` while remaining non-authoritative.")
+                        Text("Bounded native macOS foreground wake-listener integration only. This shell derives one lawful prompt from already-live local wake-profile availability and exact wakeword-configured proof, may auto-start one already-live foreground wake listener only while the exact visible shell is active, still allows explicit user start/stop, stages one bounded post-wake transcript remainder only after exact `Selene` prefix detection, and hands that request into canonical `/v1/voice/turn` as exact `WAKE_WORD` while remaining non-authoritative.")
                             .frame(maxWidth: .infinity, alignment: .leading)
 
                         metadataRow(
@@ -9647,13 +9675,7 @@ struct DesktopSessionShellView: View {
                         HStack(spacing: 12) {
                             if let promptState {
                                 Button("Start foreground wake listener") {
-                                    desktopCanonicalRuntimeOutcomeState = nil
-                                    desktopAuthoritativeReplyRenderState = nil
-                                    desktopAuthoritativeReplyProvenanceRenderState = nil
-                                    desktopAuthoritativeReplyPlaybackController.reset()
-                                    desktopAuthoritativeReplyPlaybackState = .idle
-                                    lastStagedWakeTriggeredVoiceTurnRequestState = nil
-                                    desktopWakeListenerController.startListening(promptState: promptState)
+                                    startDesktopWakeListener(promptState: promptState)
                                 }
                                 .buttonStyle(.borderedProminent)
                                 .disabled(
@@ -9666,7 +9688,7 @@ struct DesktopSessionShellView: View {
 
                             if desktopWakeListenerController.listenerState.isActiveForMicrophone {
                                 Button("Stop wake listener") {
-                                    desktopWakeListenerController.stopListening()
+                                    stopDesktopWakeListenerAndSuppressAutoStart(promptState: promptState)
                                 }
                                 .buttonStyle(.bordered)
                             }
@@ -9681,12 +9703,12 @@ struct DesktopSessionShellView: View {
                         } else if promptState != nil
                             && desktopWakeListenerController.listenerState == .idle
                             && displayedRequestState == nil {
-                            Text("Awaiting one explicit user-triggered bounded foreground wake-listener start. After exact local wake-prefix detection and one non-empty post-wake transcript remainder, this shell stages one canonical wake-triggered handoff only and remains non-authoritative.")
+                            Text("Awaiting one bounded foreground wake-listener start from the active visible shell, either through the local visible-shell auto-start seam or explicit user start. After exact local wake-prefix detection and one non-empty post-wake transcript remainder, this shell stages one canonical wake-triggered handoff only and remains non-authoritative.")
                                 .foregroundStyle(.secondary)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                         }
 
-                        Text("No text field, no threshold editor, no hidden/background behavior, no wake parity claim, and no autonomous unlock claim are introduced by this surface.")
+                        Text("No text field, no threshold editor, no true hidden/background behavior, no wake parity claim, and no autonomous unlock claim are introduced by this surface.")
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity, alignment: .leading)
@@ -14695,6 +14717,20 @@ struct DesktopSessionShellView: View {
             || explicitVoiceController.pendingRequest != nil
         let wakeDispatchInFlight = desktopWakeListenerController.listenerState == .dispatching
 
+        guard scenePhase == .active,
+              desktopOperationalConversationShellState != nil else {
+            if desktopWakeListenerController.listenerState.isActiveForMicrophone
+                || (desktopWakeListenerController.pendingRequest != nil && !wakeDispatchInFlight)
+                || (lastStagedWakeTriggeredVoiceTurnRequestState != nil && !wakeDispatchInFlight) {
+                desktopWakeListenerController.haltCaptureSession()
+                if !wakeDispatchInFlight {
+                    desktopWakeListenerController.clearPendingPreparedWakeTurn()
+                    lastStagedWakeTriggeredVoiceTurnRequestState = nil
+                }
+            }
+            return
+        }
+
         if explicitVoiceOwnsMicrophone {
             if desktopWakeListenerController.listenerState.isActiveForMicrophone
                 || (desktopWakeListenerController.pendingRequest != nil && !wakeDispatchInFlight) {
@@ -14732,6 +14768,40 @@ struct DesktopSessionShellView: View {
             }
             return
         }
+    }
+
+    @MainActor
+    private func synchronizeDesktopWakeAutoStartState() {
+        guard scenePhase == .active,
+              let promptState = desktopWakeListenerPromptState else {
+            desktopWakeAutoStartAttemptedPromptID = nil
+            desktopWakeAutoStartSuppressedPromptID = nil
+            return
+        }
+
+        if desktopWakeAutoStartAttemptedPromptID != promptState.id {
+            desktopWakeAutoStartAttemptedPromptID = nil
+        }
+
+        if desktopWakeAutoStartSuppressedPromptID != promptState.id {
+            desktopWakeAutoStartSuppressedPromptID = nil
+        }
+
+        guard let eligiblePromptState = desktopWakeAutoStartEligiblePromptState,
+              eligiblePromptState.id == promptState.id,
+              desktopWakeAutoStartAttemptedPromptID != promptState.id,
+              desktopWakeAutoStartSuppressedPromptID != promptState.id else {
+            return
+        }
+
+        desktopWakeAutoStartAttemptedPromptID = promptState.id
+        startDesktopWakeListener(promptState: eligiblePromptState)
+    }
+
+    @MainActor
+    private func synchronizeDesktopWakeListenerLifecycleState() async {
+        synchronizeDesktopWakeListenerControllerState()
+        synchronizeDesktopWakeAutoStartState()
     }
 
     @MainActor
@@ -15345,6 +15415,26 @@ struct DesktopSessionShellView: View {
         )
 
         return nil
+    }
+
+    private func startDesktopWakeListener(promptState: DesktopWakeListenerPromptState) {
+        desktopCanonicalRuntimeOutcomeState = nil
+        desktopAuthoritativeReplyRenderState = nil
+        desktopAuthoritativeReplyProvenanceRenderState = nil
+        desktopAuthoritativeReplyPlaybackController.reset()
+        desktopAuthoritativeReplyPlaybackState = .idle
+        lastStagedWakeTriggeredVoiceTurnRequestState = nil
+        desktopWakeListenerController.startListening(promptState: promptState)
+    }
+
+    private func stopDesktopWakeListenerAndSuppressAutoStart(
+        promptState: DesktopWakeListenerPromptState?
+    ) {
+        if let promptState {
+            desktopWakeAutoStartAttemptedPromptID = promptState.id
+            desktopWakeAutoStartSuppressedPromptID = promptState.id
+        }
+        desktopWakeListenerController.stopListening()
     }
 
     private func submitDesktopTypedTurn() {

@@ -66,7 +66,7 @@ Desktop Selene is considered real when all of the following are true:
   - bounded tool-request authoring / invocation through the already-live canonical `/v1/voice/turn` carrier in [DesktopSessionShellView.swift#L1](/Users/selene/Documents/Selene-OS/apple/mac_desktop/SeleneMacDesktop/DesktopSessionShellView.swift#L1)
   - bounded onboarding mutation flow from invite entry through access provision, complete commit, pairing-completion commit, and onboarding-derived ready-time handoff as recorded in [MASTER_BUILD_COMPLETION_PLAN.md#L154](/Users/selene/Documents/Selene-OS/docs/MASTER_BUILD_COMPLETION_PLAN.md#L154) and [MASTER_BUILD_COMPLETION_PLAN.md#L198](/Users/selene/Documents/Selene-OS/docs/MASTER_BUILD_COMPLETION_PLAN.md#L198)
   - bounded current-visible session attach, multi-posture session resume, and suspended-session recover seams in [MASTER_BUILD_COMPLETION_PLAN.md#L165](/Users/selene/Documents/Selene-OS/docs/MASTER_BUILD_COMPLETION_PLAN.md#L165) and [DesktopSessionShellView.swift#L10589](/Users/selene/Documents/Selene-OS/apple/mac_desktop/SeleneMacDesktop/DesktopSessionShellView.swift#L10589)
-  - bounded local wake-profile availability refresh plus bounded foreground wake-listener integration and wake-to-turn handoff in [MASTER_BUILD_COMPLETION_PLAN.md#L154](/Users/selene/Documents/Selene-OS/docs/MASTER_BUILD_COMPLETION_PLAN.md#L154), [MASTER_BUILD_COMPLETION_PLAN.md#L156](/Users/selene/Documents/Selene-OS/docs/MASTER_BUILD_COMPLETION_PLAN.md#L156), and [DesktopSessionShellView.swift#L8916](/Users/selene/Documents/Selene-OS/apple/mac_desktop/SeleneMacDesktop/DesktopSessionShellView.swift#L8916)
+  - bounded local wake-profile availability refresh plus bounded foreground wake-listener integration, bounded visible active-shell wake auto-start, and wake-to-turn handoff in [MASTER_BUILD_COMPLETION_PLAN.md#L154](/Users/selene/Documents/Selene-OS/docs/MASTER_BUILD_COMPLETION_PLAN.md#L154), [MASTER_BUILD_COMPLETION_PLAN.md#L156](/Users/selene/Documents/Selene-OS/docs/MASTER_BUILD_COMPLETION_PLAN.md#L156), [MASTER_BUILD_COMPLETION_PLAN.md#L185](/Users/selene/Documents/Selene-OS/docs/MASTER_BUILD_COMPLETION_PLAN.md#L185), and [DesktopSessionShellView.swift#L8916](/Users/selene/Documents/Selene-OS/apple/mac_desktop/SeleneMacDesktop/DesktopSessionShellView.swift#L8916)
   - bounded conversation-first shell baseline plus search/tool completion and read-only tool-lane rendering in [MASTER_BUILD_COMPLETION_PLAN.md#L159](/Users/selene/Documents/Selene-OS/docs/MASTER_BUILD_COMPLETION_PLAN.md#L159), [MASTER_BUILD_COMPLETION_PLAN.md#L183](/Users/selene/Documents/Selene-OS/docs/MASTER_BUILD_COMPLETION_PLAN.md#L183), and [DesktopSessionShellView.swift#L9972](/Users/selene/Documents/Selene-OS/apple/mac_desktop/SeleneMacDesktop/DesktopSessionShellView.swift#L9972)
 - The current Mac app still lacks:
   - broader generic desktop session attach / reopen mutation beyond the already-landed visible / resumable session-entry seams
@@ -94,7 +94,7 @@ Desktop Selene is considered real when all of the following are true:
 - backend proof already exists for desktop web search with provenance and desktop send-link dispatch
 
 ### Built But Still Bounded
-- wake remains foreground-only and direct-user-start only, with no hidden/background auto-start and no wake parity claim
+- wake now preserves one visible active-shell auto-start seam on top of the already-live foreground wake listener only, with no true hidden/background auto-start and no wake parity claim
 - the conversation-first shell now preserves one bounded local observed-session-surface selection rail only; broader conversation-list / session-list selection remains unimplemented
 - search and tool rendering remain cloud-authored and read-only except for one bounded tool-request authoring / submit surface that still routes only through the canonical voice-turn carrier; standalone local search execution, local provider selection, and direct tool-name authority remain unimplemented
 - session entry remains limited to exact route-specific attach / resume / recover seams, with no generic reopen authority
@@ -113,9 +113,9 @@ Desktop Selene is considered real when all of the following are true:
 - Use later strict H-builds to select the exact next winner; this umbrella document does not itself authorize a specific next build.
 
 ### Current Likely Next Capability-Unlock Families
-1. later hidden/background wake auto-start only if a lawful exact seam is proven without fake parity claims
-2. later shell-side `projectID` / `pinnedContextRefs` transport or authoring only if a lawful exact seam is proven
-3. later broader conversation-list / session-list fetch only if a lawful exact seam is proven without widening into fake local authority
+1. later shell-side `projectID` / `pinnedContextRefs` transport or authoring only if a lawful exact seam is proven
+2. later broader conversation-list / session-list fetch only if a lawful exact seam is proven without widening into fake local authority
+3. later broader standalone desktop search input only if a lawful exact seam is proven without local search execution fakery
 
 ## Program Status Crosswalk
 This matrix is descriptive only and does not override [MASTER_BUILD_COMPLETION_PLAN.md](/Users/selene/Documents/Selene-OS/docs/MASTER_BUILD_COMPLETION_PLAN.md).
@@ -612,27 +612,26 @@ This section is a planning queue only.
   - what should come next
 
 ### Current Exact Next Winner
-- later hidden/background wake auto-start only if one lawful exact seam is proven without fake parity claims
+- later shell-side `projectID` / `pinnedContextRefs` transport or authoring only if one lawful exact seam is proven
 
 ### Why This Is Next
-- H323 now covers the bounded tool-request authoring / invocation unlock that was previously next in queue.
-- Current master truth still says broader hidden/background wake auto-start remains unimplemented in the desktop shell.
-- The current shell already preserves bounded foreground wake-listener integration and bounded wake-to-turn handoff, so the smaller remaining wake-facing gap is background-capable start behavior without widening into fake parity claims.
+- H324 now covers the smaller lawful visible active-shell wake auto-start seam that sat underneath the broader hidden/background wake family.
+- Current master truth still says shell-side `projectID` / `pinnedContextRefs` transport or authoring remains unimplemented in the desktop shell.
+- Current runtime and continuity truth already preserve bounded thread-key-backed reuse for persisted project / pinned-context state, so the next candidate unlock is the smaller shell-side context transport seam only if one lawful exact carrier can be proven without widening into fake local authority.
 - This is only a valid next winner if one lawful exact seam can be proven; otherwise the queue should be corrected before another desktop implementation build begins.
 
 ### Explicitly Not Next
-- not a wake parity claim without a proven lawful seam
+- not a broader hidden/background wake claim or wake parity claim without a proven lawful seam
 - not a standalone desktop search box with local search execution
 - not broader conversation-list / session-list fetch or generic reopen authority
-- not shell-side `projectID` / `pinnedContextRefs` transport
 - not shell-side thread-policy authoring controls
 - not broader generic attach / reopen authority
 - not another regression-lock-only build unless repo truth changes and a capability unlock becomes blocked
 
 ### Ordered Queue After The Current Exact Next Winner
-1. later shell-side `projectID` / `pinnedContextRefs` transport or authoring only if one lawful exact seam is proven
-2. later broader conversation-list / session-list fetch only if one lawful exact seam is proven without widening into fake local authority
-3. later broader standalone desktop search input only if one lawful exact seam is proven without local search execution fakery
+1. later broader conversation-list / session-list fetch only if one lawful exact seam is proven without widening into fake local authority
+2. later broader standalone desktop search input only if one lawful exact seam is proven without local search execution fakery
+3. later broader hidden/background wake auto-start only if one lawful exact seam is proven without fake parity claims
 
 ### Queue Maintenance Rule After Every Desktop H-Build
 - Refresh the `Current Repo Baseline` section if newly landed work changes what is actually built.
