@@ -2493,6 +2493,102 @@ struct DesktopSessionMultiPostureEntryRuntimeOutcomeState: Identifiable, Equatab
     }
 }
 
+struct DesktopSessionRecentListRuntimeOutcomeState: Identifiable, Equatable {
+    enum Phase: String, Equatable {
+        case dispatching = "dispatching"
+        case completed = "completed"
+        case failed = "failed"
+    }
+
+    let id: String
+    let phase: Phase
+    let title: String
+    let summary: String
+    let detail: String
+    let endpoint: String
+    let requestID: String
+    let deviceID: String
+    let refreshTriggerID: String
+    let outcome: String?
+    let reason: String?
+    let sessions: [DesktopCanonicalRuntimeBridge.SessionRecentListItemPayload]
+
+    static func dispatching(
+        deviceID: String,
+        refreshTriggerID: String,
+        endpoint: String,
+        requestID: String
+    ) -> DesktopSessionRecentListRuntimeOutcomeState {
+        DesktopSessionRecentListRuntimeOutcomeState(
+            id: requestID,
+            phase: .dispatching,
+            title: "Dispatching desktop current-device recent-session visibility refresh",
+            summary: "The bounded desktop current-device recent-session visibility request is now being handed into canonical `/v1/session/recent`.",
+            detail: "Only exact current-device recent-session read-only visibility is in scope here. This shell remains explicitly non-authoritative and does not introduce synthetic session surfaces, recent-row-driven attach / resume / recover authority, generic reopen authority, or hidden/background wake behavior.",
+            endpoint: endpoint,
+            requestID: requestID,
+            deviceID: deviceID,
+            refreshTriggerID: refreshTriggerID,
+            outcome: nil,
+            reason: nil,
+            sessions: []
+        )
+    }
+
+    static func completed(
+        requestID: String,
+        endpoint: String,
+        response: DesktopCanonicalRuntimeBridge.SessionRecentListAdapterResponsePayload,
+        fallbackDeviceID: String,
+        refreshTriggerID: String
+    ) -> DesktopSessionRecentListRuntimeOutcomeState {
+        let boundedOutcome = boundedOnboardingContinueField(response.outcome)
+        let boundedReason = boundedOnboardingContinueField(response.reason)
+
+        return DesktopSessionRecentListRuntimeOutcomeState(
+            id: requestID,
+            phase: .completed,
+            title: "Desktop current-device recent-session visibility refresh completed",
+            summary: response.sessions.isEmpty
+                ? "Canonical `/v1/session/recent` returned no recent non-closed sessions for the current managed device."
+                : "Canonical `/v1/session/recent` returned bounded read-only recent-session visibility for the current managed device.",
+            detail: "Read-only returned recent-session metadata only. This shell preserves exact returned row order without redefining the already-observed session rail, synthesizing transcript surfaces, or introducing recent-row-driven attach / resume / recover authority.",
+            endpoint: endpoint,
+            requestID: requestID,
+            deviceID: fallbackDeviceID,
+            refreshTriggerID: refreshTriggerID,
+            outcome: boundedOutcome ?? "RECENT_SESSIONS_VISIBLE",
+            reason: boundedReason,
+            sessions: response.sessions
+        )
+    }
+
+    static func failed(
+        deviceID: String,
+        refreshTriggerID: String,
+        endpoint: String,
+        requestID: String,
+        summary: String,
+        detail: String,
+        reason: String? = nil
+    ) -> DesktopSessionRecentListRuntimeOutcomeState {
+        DesktopSessionRecentListRuntimeOutcomeState(
+            id: requestID,
+            phase: .failed,
+            title: "Desktop current-device recent-session visibility refresh failed",
+            summary: summary,
+            detail: detail,
+            endpoint: endpoint,
+            requestID: requestID,
+            deviceID: deviceID,
+            refreshTriggerID: refreshTriggerID,
+            outcome: nil,
+            reason: reason,
+            sessions: []
+        )
+    }
+}
+
 struct DesktopWakeProfileAvailabilityRuntimeOutcomeState: Identifiable, Equatable {
     enum Phase: String, Equatable {
         case dispatching = "dispatching"
@@ -3274,6 +3370,7 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
         case invalidWakeEnrollCompleteCommitRequest(String)
         case invalidWakeEnrollDeferCommitRequest(String)
         case invalidSessionAttachRequest(String)
+        case invalidSessionRecentListRequest(String)
         case invalidSessionMultiPostureEntryRequest(String)
         case invalidSessionMultiPostureResumeRequest(String)
         case invalidSessionSoftClosedResumeRequest(String)
@@ -3305,6 +3402,7 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
                  .invalidWakeEnrollCompleteCommitRequest(let detail),
                  .invalidWakeEnrollDeferCommitRequest(let detail),
                  .invalidSessionAttachRequest(let detail),
+                 .invalidSessionRecentListRequest(let detail),
                  .invalidSessionMultiPostureEntryRequest(let detail),
                  .invalidSessionMultiPostureResumeRequest(let detail),
                  .invalidSessionSoftClosedResumeRequest(let detail),
@@ -3521,6 +3619,13 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
         let urlRequest: URLRequest
     }
 
+    struct DesktopSessionRecentListIngressContext {
+        let deviceID: String
+        let requestID: String
+        let endpoint: String
+        let urlRequest: URLRequest
+    }
+
     struct DesktopWakeProfileAvailabilityIngressContext {
         let receiptKind: String
         let deviceID: String
@@ -3651,6 +3756,22 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
         let sessionAttachOutcome: String?
         let projectID: String?
         let pinnedContextRefs: [String]?
+    }
+
+    struct SessionRecentListItemPayload: Decodable, Equatable {
+        let sessionID: String
+        let sessionState: String
+        let lastActivityAt: UInt64
+        let lastTurnID: String?
+        let projectID: String?
+        let pinnedContextRefs: [String]?
+    }
+
+    struct SessionRecentListAdapterResponsePayload: Decodable {
+        let status: String
+        let outcome: String
+        let reason: String?
+        let sessions: [SessionRecentListItemPayload]
     }
 
     struct WakeProfileAvailabilityRefreshAdapterResponsePayload: Decodable {
@@ -3880,6 +4001,12 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
         let correlationID: UInt64
         let idempotencyKey: String
         let sessionID: String
+        let deviceID: String
+    }
+
+    private struct SessionRecentListAdapterRequestPayload: Encodable {
+        let correlationID: UInt64
+        let idempotencyKey: String
         let deviceID: String
     }
 
@@ -5495,6 +5622,52 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
         }
     }
 
+    func submitDesktopSessionRecentList(
+        _ ingressContext: DesktopSessionRecentListIngressContext,
+        refreshTriggerID: String
+    ) async -> DesktopSessionRecentListRuntimeOutcomeState {
+        do {
+            try await ensureAdapterAvailable()
+
+            let (data, response) = try await urlSession.data(for: ingressContext.urlRequest)
+            let decoder = JSONDecoder()
+            decoder.keyDecodingStrategy = .convertFromSnakeCase
+            let httpResponse = response as? HTTPURLResponse
+            let statusCode = httpResponse?.statusCode ?? 0
+            let payload = try decoder.decode(SessionRecentListAdapterResponsePayload.self, from: data)
+
+            if statusCode == 200,
+               payload.status.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "ok" {
+                return .completed(
+                    requestID: ingressContext.requestID,
+                    endpoint: ingressContext.endpoint,
+                    response: payload,
+                    fallbackDeviceID: ingressContext.deviceID,
+                    refreshTriggerID: refreshTriggerID
+                )
+            }
+
+            return .failed(
+                deviceID: ingressContext.deviceID,
+                refreshTriggerID: refreshTriggerID,
+                endpoint: ingressContext.endpoint,
+                requestID: ingressContext.requestID,
+                summary: "The canonical recent-session visibility bridge rejected or failed this bounded desktop current-device recent-session visibility request.",
+                detail: "Canonical `/v1/session/recent` failed closed with outcome `\(payload.outcome)` and reason `\(boundedOnboardingContinueField(payload.reason) ?? "not_provided")`. This shell remains limited to exact current-device recent-session read-only visibility and does not synthesize session surfaces, or add recent-row-driven attach / resume / recover authority, generic reopen authority, or hidden/background wake behavior.",
+                reason: boundedOnboardingContinueField(payload.reason)
+            )
+        } catch {
+            return .failed(
+                deviceID: ingressContext.deviceID,
+                refreshTriggerID: refreshTriggerID,
+                endpoint: ingressContext.endpoint,
+                requestID: ingressContext.requestID,
+                summary: "The canonical recent-session visibility bridge could not deliver this bounded desktop current-device recent-session visibility request.",
+                detail: error.localizedDescription
+            )
+        }
+    }
+
     func submitDesktopEmoPersonaLock(
         _ ingressContext: DesktopEmoPersonaLockIngressContext
     ) async -> DesktopEmoPersonaLockRuntimeOutcomeState {
@@ -6995,6 +7168,50 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
         )
     }
 
+    func desktopSessionRecentListRequestBuilder() throws -> DesktopSessionRecentListIngressContext {
+        guard let managedDeviceID = boundedOnboardingContinueField(deviceID) else {
+            throw BridgeError.invalidSessionRecentListRequest(
+                "bounded desktop current-device recent-session visibility must preserve the exact managed bridge `deviceID` only"
+            )
+        }
+
+        let requestID = "desktop_session_recent_request_\(UUID().uuidString.replacingOccurrences(of: "-", with: ""))"
+        let idempotencyKey = "desktop_session_recent_\(managedDeviceID)"
+        let nonce = UUID().uuidString.replacingOccurrences(of: "-", with: "")
+        let timestampMS = Self.systemTimeNowMS()
+        let correlationID = Swift.max(DispatchTime.now().uptimeNanoseconds, 1)
+
+        let payload = SessionRecentListAdapterRequestPayload(
+            correlationID: correlationID,
+            idempotencyKey: idempotencyKey,
+            deviceID: managedDeviceID
+        )
+
+        let encoder = JSONEncoder()
+        encoder.keyEncodingStrategy = .convertToSnakeCase
+        let body = try encoder.encode(payload)
+        let endpointURL = adapterBaseURL.appendingPathComponent("v1/session/recent")
+        var urlRequest = URLRequest(url: endpointURL)
+        urlRequest.httpMethod = "POST"
+        urlRequest.httpBody = body
+        urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        urlRequest.setValue(requestID, forHTTPHeaderField: "x-request-id")
+        urlRequest.setValue(idempotencyKey, forHTTPHeaderField: "idempotency-key")
+        urlRequest.setValue(String(timestampMS), forHTTPHeaderField: "x-selene-timestamp-ms")
+        urlRequest.setValue(nonce, forHTTPHeaderField: "x-selene-nonce")
+        urlRequest.setValue(
+            Self.bearerToken(subject: managedDeviceID, device: managedDeviceID),
+            forHTTPHeaderField: "Authorization"
+        )
+
+        return DesktopSessionRecentListIngressContext(
+            deviceID: managedDeviceID,
+            requestID: requestID,
+            endpoint: endpointURL.absoluteString,
+            urlRequest: urlRequest
+        )
+    }
+
     func desktopSessionAttachRequestBuilder(
         _ promptState: DesktopSessionAttachPromptState
     ) throws -> DesktopSessionAttachIngressContext {
@@ -7858,6 +8075,10 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
 
     var sessionRecoverEndpoint: String {
         adapterBaseURL.appendingPathComponent("v1/session/recover").absoluteString
+    }
+
+    var sessionRecentEndpoint: String {
+        adapterBaseURL.appendingPathComponent("v1/session/recent").absoluteString
     }
 
     var wakeProfileAvailabilityEndpoint: String {

@@ -239,6 +239,14 @@ private func boundedOnboardingContinueFieldInput(_ rawValue: String) -> String? 
     return trimmed
 }
 
+private func boundedOnboardingContinueFieldValue(_ rawValue: String?) -> String? {
+    guard let rawValue else {
+        return nil
+    }
+
+    return boundedOnboardingContinueFieldInput(rawValue)
+}
+
 private func boundedBullet(_ rawValue: String?) -> String? {
     guard let rawValue else {
         return nil
@@ -4187,6 +4195,37 @@ struct DesktopConversationSupportRailState: Identifiable, Equatable {
     }
 }
 
+private struct DesktopSessionRecentListRowState: Identifiable, Equatable {
+    let sessionID: String
+    let sessionState: String
+    let lastTurnID: String?
+
+    var id: String {
+        sessionID
+    }
+
+    var title: String {
+        switch sessionState {
+        case "ACTIVE":
+            return "Recent active session"
+        case "SOFT_CLOSED":
+            return "Recent archived slice"
+        case "SUSPENDED":
+            return "Recent suspended session"
+        default:
+            return "Recent session"
+        }
+    }
+
+    var summary: String {
+        if let lastTurnID {
+            return "Read-only recent-session row for `\(sessionID)` with exact `session_state=\(sessionState)` and exact `last_turn_id=\(lastTurnID)`."
+        }
+
+        return "Read-only recent-session row for `\(sessionID)` with exact `session_state=\(sessionState)` and no visible `last_turn_id`."
+    }
+}
+
 struct DesktopSessionSoftClosedVisibilityState: Identifiable, Equatable {
     let sourceSurfaceIdentity: String
     let sessionState: String
@@ -4596,6 +4635,7 @@ struct DesktopSessionShellView: View {
     @State private var desktopPairingCompletionCommitRuntimeOutcomeState: DesktopPairingCompletionCommitRuntimeOutcomeState?
     @State private var desktopReadyTimeHandoffState: DesktopReadyTimeHandoffState?
     @State private var desktopWakeProfileAvailabilityRuntimeOutcomeState: DesktopWakeProfileAvailabilityRuntimeOutcomeState?
+    @State private var desktopSessionRecentListRuntimeOutcomeState: DesktopSessionRecentListRuntimeOutcomeState?
     @State private var desktopEmoPersonaLockRuntimeOutcomeState: DesktopEmoPersonaLockRuntimeOutcomeState?
     @State private var desktopAccessProvisionCommitRuntimeOutcomeState: DesktopAccessProvisionCommitRuntimeOutcomeState?
     @State private var desktopCompleteCommitRuntimeOutcomeState: DesktopCompleteCommitRuntimeOutcomeState?
@@ -4664,6 +4704,16 @@ struct DesktopSessionShellView: View {
         }
         .task(id: desktopOperationalConversationShellState?.id) {
             await synchronizeDesktopWakeListenerLifecycleState()
+            await synchronizeDesktopSessionRecentListRuntimeOutcomeState()
+        }
+        .task(id: desktopSessionAttachRuntimeOutcomeState?.id) {
+            await synchronizeDesktopSessionRecentListRuntimeOutcomeState()
+        }
+        .task(id: desktopSessionMultiPostureResumeRuntimeOutcomeState?.id) {
+            await synchronizeDesktopSessionRecentListRuntimeOutcomeState()
+        }
+        .task(id: desktopSessionMultiPostureEntryRuntimeOutcomeState?.id) {
+            await synchronizeDesktopSessionRecentListRuntimeOutcomeState()
         }
         .task(id: scenePhase) {
             await synchronizeDesktopWakeListenerLifecycleState()
@@ -5057,6 +5107,102 @@ struct DesktopSessionShellView: View {
         let observedSessionIDs = Set(observedSessionSurfaces.map(\.sessionID))
         desktopSelectedSessionProjectContexts = desktopSelectedSessionProjectContexts.filter { sessionID, _ in
             observedSessionIDs.contains(sessionID)
+        }
+    }
+
+    private var desktopSessionRecentListRefreshTriggerID: String? {
+        guard desktopOperationalConversationShellState != nil,
+              let managedDeviceID = boundedOnboardingContinueFieldValue(
+                desktopCanonicalRuntimeBridge.managedDeviceID
+              ) else {
+            return nil
+        }
+
+        let attachTrigger = (desktopSessionAttachRuntimeOutcomeState?.phase == .completed)
+            ? desktopSessionAttachRuntimeOutcomeState?.id
+            : nil
+        let resumeTrigger = (desktopSessionMultiPostureResumeRuntimeOutcomeState?.phase == .completed)
+            ? desktopSessionMultiPostureResumeRuntimeOutcomeState?.id
+            : nil
+        let entryTrigger = (desktopSessionMultiPostureEntryRuntimeOutcomeState?.phase == .completed)
+            ? desktopSessionMultiPostureEntryRuntimeOutcomeState?.id
+            : nil
+
+        return [
+            managedDeviceID,
+            attachTrigger ?? "session_attach_not_completed",
+            resumeTrigger ?? "session_resume_not_completed",
+            entryTrigger ?? "session_entry_not_completed",
+        ].joined(separator: "::")
+    }
+
+    private var desktopSessionRecentListRowStates: [DesktopSessionRecentListRowState] {
+        guard let outcomeState = desktopSessionRecentListRuntimeOutcomeState,
+              outcomeState.phase == .completed else {
+            return []
+        }
+
+        return outcomeState.sessions.map { session in
+            DesktopSessionRecentListRowState(
+                sessionID: session.sessionID,
+                sessionState: session.sessionState,
+                lastTurnID: session.lastTurnID
+            )
+        }
+    }
+
+    @MainActor
+    private func synchronizeDesktopSessionRecentListRuntimeOutcomeState() async {
+        guard let refreshTriggerID = desktopSessionRecentListRefreshTriggerID else {
+            if desktopSessionRecentListRuntimeOutcomeState?.phase != .dispatching {
+                desktopSessionRecentListRuntimeOutcomeState = nil
+            }
+            return
+        }
+
+        if let outcomeState = desktopSessionRecentListRuntimeOutcomeState {
+            if outcomeState.phase == .dispatching {
+                return
+            }
+
+            if outcomeState.refreshTriggerID == refreshTriggerID {
+                return
+            }
+        }
+
+        await submitDesktopSessionRecentListRefresh(refreshTriggerID: refreshTriggerID)
+    }
+
+    @MainActor
+    private func submitDesktopSessionRecentListRefresh(
+        refreshTriggerID: String
+    ) async {
+        do {
+            let ingressContext = try desktopCanonicalRuntimeBridge.desktopSessionRecentListRequestBuilder()
+            desktopSessionRecentListRuntimeOutcomeState = .dispatching(
+                deviceID: ingressContext.deviceID,
+                refreshTriggerID: refreshTriggerID,
+                endpoint: ingressContext.endpoint,
+                requestID: ingressContext.requestID
+            )
+
+            let outcomeState = await desktopCanonicalRuntimeBridge.submitDesktopSessionRecentList(
+                ingressContext,
+                refreshTriggerID: refreshTriggerID
+            )
+            desktopSessionRecentListRuntimeOutcomeState = outcomeState
+        } catch {
+            let managedDeviceID = boundedOnboardingContinueFieldValue(
+                desktopCanonicalRuntimeBridge.managedDeviceID
+            ) ?? "not_available"
+            desktopSessionRecentListRuntimeOutcomeState = .failed(
+                deviceID: managedDeviceID,
+                refreshTriggerID: refreshTriggerID,
+                endpoint: desktopCanonicalRuntimeBridge.sessionRecentEndpoint,
+                requestID: "unavailable",
+                summary: "The canonical recent-session visibility bridge could not stage this bounded desktop current-device recent-session visibility request.",
+                detail: error.localizedDescription
+            )
         }
     }
 
@@ -6756,9 +6902,10 @@ struct DesktopSessionShellView: View {
 
         return DesktopConversationSupportRailState(
             title: "Operational controls and status",
-            detail: "Support surfaces remain bounded, session-bound, and non-authoritative while one local observed-session selection rail can foreground already-seen cloud-authored surfaces, one bounded search-request authoring card can reuse the already-live canonical voice-turn carrier, and one bounded tool-request authoring card remains tool-lane-adjacent.",
+            detail: "Support surfaces remain bounded, session-bound, and non-authoritative while one local observed-session selection rail can foreground already-seen cloud-authored surfaces, one bounded current-device recent-session visibility card can render already-live upstream recent-session metadata in read-only form, one bounded search-request authoring card can reuse the already-live canonical voice-turn carrier, and one bounded tool-request authoring card remains tool-lane-adjacent.",
             supportSurfaceLabels: [
                 "session_surface_selection_rail",
+                "recent_session_visibility",
                 "search_request_authoring",
                 "tool_request_authoring",
                 "posture_panel",
@@ -10197,7 +10344,7 @@ struct DesktopSessionShellView: View {
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
 
-                    Text("Controls and evidence-adjacent support remain bounded, session-bound, and non-authoritative here. One bounded local observed-session selection rail plus one bounded search-request authoring card and one bounded tool-request authoring card are now available, but they still do not introduce local attach or reopen authority, standalone local search execution, or hidden/background wake behavior.")
+                    Text("Controls and evidence-adjacent support remain bounded, session-bound, and non-authoritative here. One bounded local observed-session selection rail plus one bounded current-device recent-session visibility card, one bounded search-request authoring card, and one bounded tool-request authoring card are now available, but they still do not introduce local attach or reopen authority, standalone local search execution, or hidden/background wake behavior.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -10208,6 +10355,7 @@ struct DesktopSessionShellView: View {
             }
 
             desktopSessionSurfaceSelectionRailCard
+            desktopSessionRecentListVisibilityCard
             desktopSearchRequestAuthoringCard
             desktopToolRequestAuthoringCard
             explicitVoiceEntryAffordanceCard
@@ -10298,6 +10446,94 @@ struct DesktopSessionShellView: View {
                         .font(.headline)
                 }
             }
+        }
+    }
+
+    private var desktopSessionRecentListVisibilityCard: some View {
+        let rowStates = desktopSessionRecentListRowStates
+
+        return GroupBox {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Bounded current-device recent-session visibility only. This shell consumes exact `/v1/session/recent`, preserves exact returned row order only, and keeps these recent-session rows separate from the already-observed local session-surface rail.")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                if let outcomeState = desktopSessionRecentListRuntimeOutcomeState {
+                    Text(outcomeState.title)
+                        .font(.subheadline.weight(.semibold))
+
+                    ForEach(
+                        [
+                            ("dispatch_phase", outcomeState.phase.rawValue),
+                            ("request_id", outcomeState.requestID),
+                            ("endpoint", outcomeState.endpoint),
+                            ("outcome", outcomeState.outcome ?? "not_available"),
+                            ("reason", outcomeState.reason ?? "not_available"),
+                            ("device_id", outcomeState.deviceID),
+                        ],
+                        id: \.0
+                    ) { row in
+                        metadataRow(label: row.0, value: row.1)
+                    }
+
+                    Text(outcomeState.summary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                    Text(outcomeState.detail)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                    if outcomeState.phase == .completed {
+                        if rowStates.isEmpty {
+                            Text("No current-device recent-session rows are currently visible from exact `/v1/session/recent` for this managed desktop device.")
+                                .foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        } else {
+                            ForEach(rowStates) { rowState in
+                                VStack(alignment: .leading, spacing: 8) {
+                                    HStack(alignment: .center, spacing: 8) {
+                                        Text(rowState.title)
+                                            .font(.subheadline.weight(.semibold))
+                                            .frame(maxWidth: .infinity, alignment: .leading)
+
+                                        posturePill(rowState.sessionState)
+                                    }
+
+                                    Text(rowState.summary)
+                                        .font(.footnote)
+                                        .foregroundStyle(.secondary)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                                    metadataRow(label: "session_state", value: rowState.sessionState)
+                                    metadataRow(label: "session_id", value: rowState.sessionID)
+                                    metadataRow(
+                                        label: "last_turn_id",
+                                        value: rowState.lastTurnID ?? "not_available"
+                                    )
+                                }
+                                .padding(12)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .background(Color(nsColor: .controlBackgroundColor))
+                                .clipShape(
+                                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                )
+                            }
+                        }
+                    }
+                } else {
+                    Text("Awaiting bounded current-device recent-session visibility refresh. This shell fails closed until exact `/v1/session/recent` returns lawful current-device recent-session rows in read-only form.")
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
+                Text("Recent-session rows remain evidence-only here: no synthetic transcript surface, no merge into `observedSessionSurfaces`, and no recent-row-driven attach / resume / recover or reopen authority are introduced by this card.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        } label: {
+            Text("Current-Device Recent Sessions")
+                .font(.headline)
         }
     }
 
