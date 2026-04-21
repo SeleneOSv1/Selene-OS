@@ -613,17 +613,16 @@ This section is a planning queue only.
   - what should come next
 
 ### Current Exact Next Winner
-- no post-H325 next exact winner is published until one later lawful exact seam is proven from current repo truth
+- no post-H331 next exact winner is published until one later lawful exact seam is proven from current repo truth
 
 ### Why No Exact Next Winner Is Published Yet
-- H325 corrected the invalid shell-side `projectID` / `pinnedContextRefs` transport candidate by landing the smaller lawful bounded search-request input seam instead.
 - H330 now preserves the upstream selected-session `project_id` / `pinned_context_refs` carrier read-only through exact session lifecycle / attach-resume-recover outputs when same-session voice-turn finalization already carried lawful cloud-authored context.
-- Current desktop shell surfaces still expose no lawful cloud-authored selected-session `projectID` / `pinnedContextRefs` carrier for direct shell-side transport.
-- Broader conversation-list / session-list fetch, broader hidden/background wake, broader shell-side context transport, and broader search expansion remain candidate families only; none is yet proven as the next exact executable seam on current repo truth.
-- H330 does not itself publish a desktop next winner; the desktop queue must be refreshed against the new upstream carrier truth before the next APP_MAC_DESKTOP implementation brief is written.
+- H331 now consumes that already-live upstream carrier only through exact same-session desktop session-context transport on the already-live canonical `/v1/voice/turn` path.
+- H331 does not widen into local project selection, local pinned-context authoring, shell-side thread-policy authoring, broader session fetch, hidden/background wake, or broader standalone search expansion.
+- Broader conversation-list / session-list fetch, broader shell-side context authoring, broader hidden/background wake, and broader search expansion remain candidate families only; none is yet proven as the next exact executable seam on current repo truth.
 
 ### Explicitly Not Next
-- not shell-side `projectID` / `pinnedContextRefs` transport without a newly proven lawful surface carrier
+- not broader shell-side `projectID` / `pinnedContextRefs` authoring without a newly proven lawful seam
 - not a broader hidden/background wake claim or wake parity claim without a proven lawful seam
 - not a standalone desktop search box with local search execution
 - not broader conversation-list / session-list fetch or generic reopen authority without a proven lawful seam
@@ -633,7 +632,7 @@ This section is a planning queue only.
 
 ### Ordered Candidate Families Once A Lawful Exact Seam Is Proven
 1. later broader conversation-list / session-list fetch only if one lawful exact seam is proven without widening into fake local authority
-2. later shell-side `projectID` / `pinnedContextRefs` transport or authoring only if one lawful exact seam is proven
+2. later broader shell-side `projectID` / `pinnedContextRefs` authoring only if one lawful exact seam is proven
 3. later broader hidden/background wake auto-start only if one lawful exact seam is proven without fake parity claims
 4. later broader standalone desktop search input beyond the current bounded search-request authoring surface only if one lawful exact seam is proven without local search execution fakery
 

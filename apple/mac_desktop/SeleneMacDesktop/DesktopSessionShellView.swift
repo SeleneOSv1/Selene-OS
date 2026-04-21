@@ -4550,6 +4550,16 @@ struct DesktopPlatformSetupReceiptDraft: Identifiable, Equatable {
     }
 }
 
+private struct DesktopSelectedSessionProjectContextState: Equatable {
+    let sessionID: String
+    let projectID: String?
+    let pinnedContextRefs: [String]
+
+    var hasLawfulCarrier: Bool {
+        projectID != nil || !pinnedContextRefs.isEmpty
+    }
+}
+
 struct DesktopSessionShellView: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var latestSessionHeaderContext: DesktopSessionHeaderContext?
@@ -4558,6 +4568,7 @@ struct DesktopSessionShellView: View {
     @State private var latestSessionSuspendedVisibleContext: DesktopSessionSuspendedVisibleContext?
     @State private var observedSessionSurfaces: [DesktopObservedSessionSurface] = []
     @State private var selectedObservedSessionSurfaceID: String?
+    @State private var desktopSelectedSessionProjectContexts: [String: DesktopSelectedSessionProjectContextState] = [:]
     @State private var desktopOnboardingEntryContext: DesktopOnboardingEntryContext?
     @State private var interruptResponsePendingRequest: InterruptContinuityResponseRequestState?
     @State private var interruptResponseFailedRequest: InterruptContinuityResponseFailureState?
@@ -4901,6 +4912,26 @@ struct DesktopSessionShellView: View {
         selectedObservedSessionSurface ?? currentDominantObservedSessionSurface
     }
 
+    private var desktopForegroundVoiceTurnSelectedSessionProjectContext: DesktopSelectedSessionProjectContextState? {
+        guard let foregroundObservedSessionSurface,
+              let activeVisibleContext = latestSessionActiveVisibleContext,
+              foregroundObservedSessionSurface.sessionID == activeVisibleContext.sessionID,
+              let context = desktopSelectedSessionProjectContexts[foregroundObservedSessionSurface.sessionID],
+              context.hasLawfulCarrier else {
+            return nil
+        }
+
+        return context
+    }
+
+    private var desktopForegroundVoiceTurnSelectedProjectID: String? {
+        desktopForegroundVoiceTurnSelectedSessionProjectContext?.projectID
+    }
+
+    private var desktopForegroundVoiceTurnSelectedPinnedContextRefs: [String] {
+        desktopForegroundVoiceTurnSelectedSessionProjectContext?.pinnedContextRefs ?? []
+    }
+
     private var desktopForegroundSelectionShowsCurrentDominantSurface: Bool {
         guard let selectedObservedSessionSurface else {
             return true
@@ -4964,6 +4995,8 @@ struct DesktopSessionShellView: View {
         if observedSessionSurfaces.count > 8 {
             observedSessionSurfaces.removeSubrange(8...)
         }
+
+        synchronizeDesktopSelectedSessionProjectContextState()
     }
 
     private func selectObservedSessionSurface(_ surface: DesktopObservedSessionSurface) {
@@ -4971,6 +5004,59 @@ struct DesktopSessionShellView: View {
             selectedObservedSessionSurfaceID = nil
         } else {
             selectedObservedSessionSurfaceID = surface.id
+        }
+    }
+
+    @MainActor
+    private func synchronizeDesktopSelectedSessionProjectContextState() {
+        func upsert(
+            sessionID: String,
+            projectID: String?,
+            pinnedContextRefs: [String]
+        ) {
+            let context = DesktopSelectedSessionProjectContextState(
+                sessionID: sessionID,
+                projectID: projectID,
+                pinnedContextRefs: pinnedContextRefs
+            )
+
+            if context.hasLawfulCarrier {
+                desktopSelectedSessionProjectContexts[sessionID] = context
+            } else {
+                desktopSelectedSessionProjectContexts.removeValue(forKey: sessionID)
+            }
+        }
+
+        if let outcomeState = desktopSessionAttachRuntimeOutcomeState,
+           outcomeState.phase == .completed {
+            upsert(
+                sessionID: outcomeState.sessionID,
+                projectID: outcomeState.projectID,
+                pinnedContextRefs: outcomeState.pinnedContextRefs
+            )
+        }
+
+        if let outcomeState = desktopSessionMultiPostureResumeRuntimeOutcomeState,
+           outcomeState.phase == .completed {
+            upsert(
+                sessionID: outcomeState.sessionID,
+                projectID: outcomeState.projectID,
+                pinnedContextRefs: outcomeState.pinnedContextRefs
+            )
+        }
+
+        if let outcomeState = desktopSessionMultiPostureEntryRuntimeOutcomeState,
+           outcomeState.phase == .completed {
+            upsert(
+                sessionID: outcomeState.sessionID,
+                projectID: outcomeState.projectID,
+                pinnedContextRefs: outcomeState.pinnedContextRefs
+            )
+        }
+
+        let observedSessionIDs = Set(observedSessionSurfaces.map(\.sessionID))
+        desktopSelectedSessionProjectContexts = desktopSelectedSessionProjectContexts.filter { sessionID, _ in
+            observedSessionIDs.contains(sessionID)
         }
     }
 
@@ -15104,6 +15190,7 @@ struct DesktopSessionShellView: View {
                 ingressContext
             )
             desktopSessionAttachRuntimeOutcomeState = outcomeState
+            synchronizeDesktopSelectedSessionProjectContextState()
         } catch {
             desktopSessionAttachRuntimeOutcomeState = .failed(
                 sourceSurfaceIdentity: promptState.sourceSurfaceIdentity,
@@ -15159,6 +15246,7 @@ struct DesktopSessionShellView: View {
                 ingressContext
             )
             desktopSessionMultiPostureResumeRuntimeOutcomeState = outcomeState
+            synchronizeDesktopSelectedSessionProjectContextState()
         } catch {
             desktopSessionMultiPostureResumeRuntimeOutcomeState = .failed(
                 resumeMode: promptState.resumeMode,
@@ -15231,6 +15319,7 @@ struct DesktopSessionShellView: View {
                 ingressContext
             )
             desktopSessionMultiPostureEntryRuntimeOutcomeState = outcomeState
+            synchronizeDesktopSelectedSessionProjectContextState()
         } catch {
             let endpoint: String
             switch promptState.entryMode {
@@ -15384,7 +15473,9 @@ struct DesktopSessionShellView: View {
             let ingressContext = try desktopCanonicalRuntimeBridge.desktopExplicitVoiceIngressRequestBuilder(
                 pendingRequest,
                 threadKey: desktopForegroundVoiceTurnMatchingSelectedThreadKey,
-                authorityStatePolicyContextRef: desktopForegroundVoiceTurnActiveAuthorityPolicyContextRef
+                authorityStatePolicyContextRef: desktopForegroundVoiceTurnActiveAuthorityPolicyContextRef,
+                projectID: desktopForegroundVoiceTurnSelectedProjectID,
+                pinnedContextRefs: desktopForegroundVoiceTurnSelectedPinnedContextRefs
             )
             desktopCanonicalRuntimeOutcomeState = .dispatching(
                 preparedRequestID: ingressContext.preparedRequestID,
@@ -15461,7 +15552,9 @@ struct DesktopSessionShellView: View {
                 .desktopWakeTriggeredVoiceIngressRequestBuilder(
                     pendingRequest,
                     threadKey: desktopForegroundVoiceTurnMatchingSelectedThreadKey,
-                    authorityStatePolicyContextRef: desktopForegroundVoiceTurnActiveAuthorityPolicyContextRef
+                    authorityStatePolicyContextRef: desktopForegroundVoiceTurnActiveAuthorityPolicyContextRef,
+                    projectID: desktopForegroundVoiceTurnSelectedProjectID,
+                    pinnedContextRefs: desktopForegroundVoiceTurnSelectedPinnedContextRefs
                 )
             lastStagedWakeTriggeredVoiceTurnRequestState = pendingRequest
             desktopWakeListenerController.markDispatching()
@@ -15540,7 +15633,9 @@ struct DesktopSessionShellView: View {
             let ingressContext = try desktopCanonicalRuntimeBridge.desktopTypedTurnIngressRequestBuilder(
                 pendingRequest,
                 threadKey: desktopForegroundVoiceTurnMatchingSelectedThreadKey,
-                authorityStatePolicyContextRef: desktopForegroundVoiceTurnActiveAuthorityPolicyContextRef
+                authorityStatePolicyContextRef: desktopForegroundVoiceTurnActiveAuthorityPolicyContextRef,
+                projectID: desktopForegroundVoiceTurnSelectedProjectID,
+                pinnedContextRefs: desktopForegroundVoiceTurnSelectedPinnedContextRefs
             )
             desktopCanonicalRuntimeOutcomeState = .dispatchingTyped(
                 preparedRequestID: ingressContext.preparedRequestID,

@@ -1641,6 +1641,8 @@ struct DesktopSessionAttachRuntimeOutcomeState: Identifiable, Equatable {
     let currentVisibleSessionAttachOutcome: String?
     let turnID: String?
     let deviceID: String
+    let projectID: String?
+    let pinnedContextRefs: [String]
     let outcome: String?
     let reason: String?
     let sessionAttachOutcome: String?
@@ -1662,6 +1664,8 @@ struct DesktopSessionAttachRuntimeOutcomeState: Identifiable, Equatable {
             currentVisibleSessionAttachOutcome: ingressContext.currentVisibleSessionAttachOutcome,
             turnID: ingressContext.turnID,
             deviceID: ingressContext.deviceID,
+            projectID: nil,
+            pinnedContextRefs: [],
             outcome: nil,
             reason: nil,
             sessionAttachOutcome: nil
@@ -1681,6 +1685,9 @@ struct DesktopSessionAttachRuntimeOutcomeState: Identifiable, Equatable {
     ) -> DesktopSessionAttachRuntimeOutcomeState {
         let boundedSessionState = boundedOnboardingContinueField(response.sessionState)
         let boundedAttachOutcome = boundedOnboardingContinueField(response.sessionAttachOutcome)
+        let boundedProjectID = DesktopCanonicalRuntimeBridge.boundedSessionProjectID(response.projectID)
+        let boundedPinnedContextRefs = DesktopCanonicalRuntimeBridge
+            .boundedSessionPinnedContextRefs(response.pinnedContextRefs)
 
         return DesktopSessionAttachRuntimeOutcomeState(
             id: requestID,
@@ -1696,6 +1703,8 @@ struct DesktopSessionAttachRuntimeOutcomeState: Identifiable, Equatable {
             currentVisibleSessionAttachOutcome: fallbackCurrentVisibleSessionAttachOutcome,
             turnID: fallbackTurnID,
             deviceID: fallbackDeviceID,
+            projectID: boundedProjectID,
+            pinnedContextRefs: boundedPinnedContextRefs,
             outcome: boundedOnboardingContinueField(response.outcome) ?? "SESSION_ATTACHED",
             reason: boundedOnboardingContinueField(response.reason),
             sessionAttachOutcome: boundedAttachOutcome
@@ -1729,6 +1738,8 @@ struct DesktopSessionAttachRuntimeOutcomeState: Identifiable, Equatable {
             currentVisibleSessionAttachOutcome: currentVisibleSessionAttachOutcome,
             turnID: turnID,
             deviceID: deviceID,
+            projectID: nil,
+            pinnedContextRefs: [],
             outcome: nil,
             reason: reason,
             sessionAttachOutcome: nil
@@ -1759,6 +1770,8 @@ struct DesktopSessionSoftClosedResumeRuntimeOutcomeState: Identifiable, Equatabl
     let resumeTier: String?
     let resumeSummaryBullets: [String]
     let deviceID: String
+    let projectID: String?
+    let pinnedContextRefs: [String]
     let outcome: String?
     let reason: String?
     let sessionAttachOutcome: String?
@@ -1793,6 +1806,8 @@ struct DesktopSessionSoftClosedResumeRuntimeOutcomeState: Identifiable, Equatabl
             resumeTier: resumeTier,
             resumeSummaryBullets: resumeSummaryBullets,
             deviceID: deviceID,
+            projectID: nil,
+            pinnedContextRefs: [],
             outcome: nil,
             reason: nil,
             sessionAttachOutcome: nil
@@ -1815,6 +1830,9 @@ struct DesktopSessionSoftClosedResumeRuntimeOutcomeState: Identifiable, Equatabl
     ) -> DesktopSessionSoftClosedResumeRuntimeOutcomeState {
         let boundedSessionState = boundedOnboardingContinueField(response.sessionState)
         let boundedAttachOutcome = boundedOnboardingContinueField(response.sessionAttachOutcome)
+        let boundedProjectID = DesktopCanonicalRuntimeBridge.boundedSessionProjectID(response.projectID)
+        let boundedPinnedContextRefs = DesktopCanonicalRuntimeBridge
+            .boundedSessionPinnedContextRefs(response.pinnedContextRefs)
 
         return DesktopSessionSoftClosedResumeRuntimeOutcomeState(
             id: requestID,
@@ -1833,6 +1851,8 @@ struct DesktopSessionSoftClosedResumeRuntimeOutcomeState: Identifiable, Equatabl
             resumeTier: fallbackResumeTier,
             resumeSummaryBullets: fallbackResumeSummaryBullets,
             deviceID: fallbackDeviceID,
+            projectID: boundedProjectID,
+            pinnedContextRefs: boundedPinnedContextRefs,
             outcome: boundedOnboardingContinueField(response.outcome) ?? "SESSION_RESUMED",
             reason: boundedOnboardingContinueField(response.reason),
             sessionAttachOutcome: boundedAttachOutcome
@@ -1872,6 +1892,8 @@ struct DesktopSessionSoftClosedResumeRuntimeOutcomeState: Identifiable, Equatabl
             resumeTier: resumeTier,
             resumeSummaryBullets: resumeSummaryBullets,
             deviceID: deviceID,
+            projectID: nil,
+            pinnedContextRefs: [],
             outcome: nil,
             reason: reason,
             sessionAttachOutcome: nil
@@ -1898,6 +1920,8 @@ struct DesktopSessionRecoverRuntimeOutcomeState: Identifiable, Equatable {
     let sessionID: String
     let recoveryMode: String?
     let deviceID: String
+    let projectID: String?
+    let pinnedContextRefs: [String]
     let outcome: String?
     let reason: String?
     let sessionAttachOutcome: String?
@@ -1924,6 +1948,8 @@ struct DesktopSessionRecoverRuntimeOutcomeState: Identifiable, Equatable {
             sessionID: sessionID,
             recoveryMode: recoveryMode,
             deviceID: deviceID,
+            projectID: nil,
+            pinnedContextRefs: [],
             outcome: nil,
             reason: nil,
             sessionAttachOutcome: nil
@@ -1942,6 +1968,9 @@ struct DesktopSessionRecoverRuntimeOutcomeState: Identifiable, Equatable {
     ) -> DesktopSessionRecoverRuntimeOutcomeState {
         let boundedSessionState = boundedOnboardingContinueField(response.sessionState)
         let boundedAttachOutcome = boundedOnboardingContinueField(response.sessionAttachOutcome)
+        let boundedProjectID = DesktopCanonicalRuntimeBridge.boundedSessionProjectID(response.projectID)
+        let boundedPinnedContextRefs = DesktopCanonicalRuntimeBridge
+            .boundedSessionPinnedContextRefs(response.pinnedContextRefs)
 
         return DesktopSessionRecoverRuntimeOutcomeState(
             id: requestID,
@@ -1956,6 +1985,8 @@ struct DesktopSessionRecoverRuntimeOutcomeState: Identifiable, Equatable {
             sessionID: boundedOnboardingContinueField(response.sessionID) ?? fallbackSessionID,
             recoveryMode: fallbackRecoveryMode,
             deviceID: fallbackDeviceID,
+            projectID: boundedProjectID,
+            pinnedContextRefs: boundedPinnedContextRefs,
             outcome: boundedOnboardingContinueField(response.outcome) ?? "SESSION_RECOVERED",
             reason: boundedOnboardingContinueField(response.reason),
             sessionAttachOutcome: boundedAttachOutcome
@@ -1987,6 +2018,8 @@ struct DesktopSessionRecoverRuntimeOutcomeState: Identifiable, Equatable {
             sessionID: sessionID,
             recoveryMode: recoveryMode,
             deviceID: deviceID,
+            projectID: nil,
+            pinnedContextRefs: [],
             outcome: nil,
             reason: reason,
             sessionAttachOutcome: nil
@@ -2030,6 +2063,8 @@ struct DesktopSessionMultiPostureResumeRuntimeOutcomeState: Identifiable, Equata
     let resumeSummaryBullets: [String]
     let recoveryMode: String?
     let deviceID: String
+    let projectID: String?
+    let pinnedContextRefs: [String]
     let outcome: String?
     let reason: String?
     let sessionAttachOutcome: String?
@@ -2068,6 +2103,8 @@ struct DesktopSessionMultiPostureResumeRuntimeOutcomeState: Identifiable, Equata
             resumeSummaryBullets: ingressContext.resumeSummaryBullets,
             recoveryMode: ingressContext.recoveryMode,
             deviceID: ingressContext.deviceID,
+            projectID: nil,
+            pinnedContextRefs: [],
             outcome: nil,
             reason: nil,
             sessionAttachOutcome: nil
@@ -2106,6 +2143,8 @@ struct DesktopSessionMultiPostureResumeRuntimeOutcomeState: Identifiable, Equata
             resumeSummaryBullets: routeOutcome.resumeSummaryBullets,
             recoveryMode: nil,
             deviceID: routeOutcome.deviceID,
+            projectID: routeOutcome.projectID,
+            pinnedContextRefs: routeOutcome.pinnedContextRefs,
             outcome: routeOutcome.outcome,
             reason: routeOutcome.reason,
             sessionAttachOutcome: routeOutcome.sessionAttachOutcome
@@ -2144,6 +2183,8 @@ struct DesktopSessionMultiPostureResumeRuntimeOutcomeState: Identifiable, Equata
             resumeSummaryBullets: [],
             recoveryMode: routeOutcome.recoveryMode,
             deviceID: routeOutcome.deviceID,
+            projectID: routeOutcome.projectID,
+            pinnedContextRefs: routeOutcome.pinnedContextRefs,
             outcome: routeOutcome.outcome,
             reason: routeOutcome.reason,
             sessionAttachOutcome: routeOutcome.sessionAttachOutcome
@@ -2187,6 +2228,8 @@ struct DesktopSessionMultiPostureResumeRuntimeOutcomeState: Identifiable, Equata
             resumeSummaryBullets: resumeSummaryBullets,
             recoveryMode: recoveryMode,
             deviceID: deviceID,
+            projectID: nil,
+            pinnedContextRefs: [],
             outcome: nil,
             reason: reason,
             sessionAttachOutcome: nil
@@ -2221,6 +2264,8 @@ struct DesktopSessionMultiPostureEntryRuntimeOutcomeState: Identifiable, Equatab
     let resumeSummaryBullets: [String]
     let recoveryMode: String?
     let deviceID: String
+    let projectID: String?
+    let pinnedContextRefs: [String]
     let outcome: String?
     let reason: String?
     let sessionAttachOutcome: String?
@@ -2264,6 +2309,8 @@ struct DesktopSessionMultiPostureEntryRuntimeOutcomeState: Identifiable, Equatab
             resumeSummaryBullets: ingressContext.resumeSummaryBullets,
             recoveryMode: ingressContext.recoveryMode,
             deviceID: ingressContext.deviceID,
+            projectID: nil,
+            pinnedContextRefs: [],
             outcome: nil,
             reason: nil,
             sessionAttachOutcome: nil
@@ -2304,6 +2351,8 @@ struct DesktopSessionMultiPostureEntryRuntimeOutcomeState: Identifiable, Equatab
             resumeSummaryBullets: [],
             recoveryMode: nil,
             deviceID: routeOutcome.deviceID,
+            projectID: routeOutcome.projectID,
+            pinnedContextRefs: routeOutcome.pinnedContextRefs,
             outcome: routeOutcome.outcome,
             reason: routeOutcome.reason,
             sessionAttachOutcome: routeOutcome.sessionAttachOutcome
@@ -2344,6 +2393,8 @@ struct DesktopSessionMultiPostureEntryRuntimeOutcomeState: Identifiable, Equatab
             resumeSummaryBullets: routeOutcome.resumeSummaryBullets,
             recoveryMode: nil,
             deviceID: routeOutcome.deviceID,
+            projectID: routeOutcome.projectID,
+            pinnedContextRefs: routeOutcome.pinnedContextRefs,
             outcome: routeOutcome.outcome,
             reason: routeOutcome.reason,
             sessionAttachOutcome: routeOutcome.sessionAttachOutcome
@@ -2384,6 +2435,8 @@ struct DesktopSessionMultiPostureEntryRuntimeOutcomeState: Identifiable, Equatab
             resumeSummaryBullets: [],
             recoveryMode: routeOutcome.recoveryMode,
             deviceID: routeOutcome.deviceID,
+            projectID: routeOutcome.projectID,
+            pinnedContextRefs: routeOutcome.pinnedContextRefs,
             outcome: routeOutcome.outcome,
             reason: routeOutcome.reason,
             sessionAttachOutcome: routeOutcome.sessionAttachOutcome
@@ -2431,6 +2484,8 @@ struct DesktopSessionMultiPostureEntryRuntimeOutcomeState: Identifiable, Equatab
             resumeSummaryBullets: resumeSummaryBullets,
             recoveryMode: recoveryMode,
             deviceID: deviceID,
+            projectID: nil,
+            pinnedContextRefs: [],
             outcome: nil,
             reason: reason,
             sessionAttachOutcome: nil
@@ -3572,6 +3627,8 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
         let sessionID: String?
         let sessionState: String?
         let sessionAttachOutcome: String?
+        let projectID: String?
+        let pinnedContextRefs: [String]?
     }
 
     struct SessionAttachAdapterResponsePayload: Decodable {
@@ -3581,6 +3638,8 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
         let sessionID: String?
         let sessionState: String?
         let sessionAttachOutcome: String?
+        let projectID: String?
+        let pinnedContextRefs: [String]?
     }
 
     struct SessionRecoverAdapterResponsePayload: Decodable {
@@ -3590,6 +3649,8 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
         let sessionID: String?
         let sessionState: String?
         let sessionAttachOutcome: String?
+        let projectID: String?
+        let pinnedContextRefs: [String]?
     }
 
     struct WakeProfileAvailabilityRefreshAdapterResponsePayload: Decodable {
@@ -5599,7 +5660,9 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
     func desktopExplicitVoiceIngressRequestBuilder(
         _ preparedRequest: ExplicitVoiceTurnRequestState,
         threadKey: String? = nil,
-        authorityStatePolicyContextRef: String? = nil
+        authorityStatePolicyContextRef: String? = nil,
+        projectID: String? = nil,
+        pinnedContextRefs: [String] = []
     ) throws -> DesktopExplicitVoiceIngressContext {
         let transcript = preparedRequest.transcript.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !transcript.isEmpty else {
@@ -5619,6 +5682,8 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
         let threadPolicyFlags = Self.desktopVoiceTurnThreadPolicyFlagsPayloadBuilder(
             authorityStatePolicyContextRef
         )
+        let boundedProjectID = Self.boundedSessionProjectID(projectID)
+        let boundedPinnedContextRefs = Self.boundedSessionPinnedContextRefs(pinnedContextRefs)
 
         let payload = VoiceTurnAdapterRequestPayload(
             correlationID: correlationID,
@@ -5639,8 +5704,8 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
             deviceID: deviceID,
             nowNS: monotonicNowNS,
             threadKey: threadKey,
-            projectID: nil,
-            pinnedContextRefs: nil,
+            projectID: boundedProjectID,
+            pinnedContextRefs: boundedPinnedContextRefs.isEmpty ? nil : boundedPinnedContextRefs,
             threadPolicyFlags: threadPolicyFlags,
             userTextPartial: nil,
             userTextFinal: transcript,
@@ -5678,7 +5743,9 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
     func desktopTypedTurnIngressRequestBuilder(
         _ preparedRequest: DesktopTypedTurnRequestState,
         threadKey: String? = nil,
-        authorityStatePolicyContextRef: String? = nil
+        authorityStatePolicyContextRef: String? = nil,
+        projectID: String? = nil,
+        pinnedContextRefs: [String] = []
     ) throws -> DesktopTypedTurnIngressContext {
         let typedText = preparedRequest.text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !typedText.isEmpty else {
@@ -5697,6 +5764,8 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
         let threadPolicyFlags = Self.desktopVoiceTurnThreadPolicyFlagsPayloadBuilder(
             authorityStatePolicyContextRef
         )
+        let boundedProjectID = Self.boundedSessionProjectID(projectID)
+        let boundedPinnedContextRefs = Self.boundedSessionPinnedContextRefs(pinnedContextRefs)
 
         let payload = VoiceTurnAdapterRequestPayload(
             correlationID: correlationID,
@@ -5717,8 +5786,8 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
             deviceID: deviceID,
             nowNS: monotonicNowNS,
             threadKey: threadKey,
-            projectID: nil,
-            pinnedContextRefs: nil,
+            projectID: boundedProjectID,
+            pinnedContextRefs: boundedPinnedContextRefs.isEmpty ? nil : boundedPinnedContextRefs,
             threadPolicyFlags: threadPolicyFlags,
             userTextPartial: nil,
             userTextFinal: typedText,
@@ -5756,7 +5825,9 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
     func desktopWakeTriggeredVoiceIngressRequestBuilder(
         _ preparedRequest: WakeTriggeredVoiceTurnRequestState,
         threadKey: String? = nil,
-        authorityStatePolicyContextRef: String? = nil
+        authorityStatePolicyContextRef: String? = nil,
+        projectID: String? = nil,
+        pinnedContextRefs: [String] = []
     ) throws -> DesktopWakeTriggeredVoiceIngressContext {
         let transcript = preparedRequest.transcript.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !transcript.isEmpty else {
@@ -5789,6 +5860,8 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
         let threadPolicyFlags = Self.desktopVoiceTurnThreadPolicyFlagsPayloadBuilder(
             authorityStatePolicyContextRef
         )
+        let boundedProjectID = Self.boundedSessionProjectID(projectID)
+        let boundedPinnedContextRefs = Self.boundedSessionPinnedContextRefs(pinnedContextRefs)
 
         let payload = VoiceTurnAdapterRequestPayload(
             correlationID: correlationID,
@@ -5809,8 +5882,8 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
             deviceID: deviceID,
             nowNS: monotonicNowNS,
             threadKey: threadKey,
-            projectID: nil,
-            pinnedContextRefs: nil,
+            projectID: boundedProjectID,
+            pinnedContextRefs: boundedPinnedContextRefs.isEmpty ? nil : boundedPinnedContextRefs,
             threadPolicyFlags: threadPolicyFlags,
             userTextPartial: nil,
             userTextFinal: transcript,
@@ -7917,6 +7990,43 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
 
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : trimmed
+    }
+
+    fileprivate static func boundedSessionProjectID(_ value: String?) -> String? {
+        guard let value = nonEmpty(value), value.utf8.count <= 256 else {
+            return nil
+        }
+
+        return value
+    }
+
+    fileprivate static func boundedSessionPinnedContextRef(_ value: String?) -> String? {
+        guard let value = nonEmpty(value), value.utf8.count <= 512 else {
+            return nil
+        }
+
+        return value
+    }
+
+    fileprivate static func boundedSessionPinnedContextRefs(_ values: [String]?) -> [String] {
+        guard let values else {
+            return []
+        }
+
+        var bounded: [String] = []
+        bounded.reserveCapacity(Swift.min(values.count, 16))
+
+        for value in values {
+            guard bounded.count < 16 else {
+                break
+            }
+
+            if let boundedValue = boundedSessionPinnedContextRef(value) {
+                bounded.append(boundedValue)
+            }
+        }
+
+        return bounded
     }
 
     private static func desktopVoiceTurnThreadPolicyFlagsPayloadBuilder(
