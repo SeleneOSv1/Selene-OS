@@ -1065,6 +1065,7 @@ struct ExplicitVoiceTurnRequestState: Identifiable {
 
 struct DesktopTypedTurnRequestState: Identifiable {
     let id: String
+    let origin: DesktopTypedTurnRequestOrigin
     let deviceTurnSequence: UInt64
     let text: String
     let byteCount: Int
@@ -1076,6 +1077,81 @@ struct DesktopTypedTurnRequestState: Identifiable {
 
         return "\(text.prefix(93))..."
     }
+}
+
+enum DesktopTypedTurnRequestOrigin: String, Equatable {
+    case keyboardComposer = "KEYBOARD_TYPED_TURN"
+    case toolRequestCard = "TOOL_REQUEST"
+
+    var requestIDPrefix: String {
+        switch self {
+        case .keyboardComposer:
+            return "desktop_typed_turn_request"
+        case .toolRequestCard:
+            return "desktop_tool_request"
+        }
+    }
+
+    var pendingSourceSurface: String {
+        switch self {
+        case .keyboardComposer:
+            return "KEYBOARD_TYPED_TURN_PENDING"
+        case .toolRequestCard:
+            return "TOOL_REQUEST_PENDING"
+        }
+    }
+
+    var failedSourceSurface: String {
+        switch self {
+        case .keyboardComposer:
+            return "KEYBOARD_TYPED_TURN_FAILED_REQUEST"
+        case .toolRequestCard:
+            return "TOOL_REQUEST_FAILED_REQUEST"
+        }
+    }
+
+    var timelinePendingPosture: String {
+        switch self {
+        case .keyboardComposer:
+            return "typed_turn_pending_preview"
+        case .toolRequestCard:
+            return "tool_request_pending_preview"
+        }
+    }
+
+    var timelineFailedPosture: String {
+        switch self {
+        case .keyboardComposer:
+            return "typed_turn_failed_request_preview"
+        case .toolRequestCard:
+            return "tool_request_failed_request_preview"
+        }
+    }
+
+    var cardTitle: String {
+        switch self {
+        case .keyboardComposer:
+            return "Typed Turn Request"
+        case .toolRequestCard:
+            return "Tool Request"
+        }
+    }
+
+    var pendingSummary: String {
+        switch self {
+        case .keyboardComposer:
+            return "This path preserves one bounded typed preview only while canonical runtime dispatch resolves. The shell does not fabricate local assistant output, local transcript authority, or local tool/search execution."
+        case .toolRequestCard:
+            return "This path preserves one bounded tool-request preview only while canonical runtime dispatch resolves. Canonical runtime still retains tool-routing authority, and the shell does not fabricate direct tool-name authority, local provider selection, or local search execution."
+        }
+    }
+}
+
+private enum DesktopTypedTurnSubmissionFailure {
+    case emptyDraft
+    case byteLimit
+    case pendingRequestActive
+    case otherForegroundRequestActive
 }
 
 private struct DesktopAuthoritativeReplyRenderState: Equatable {
@@ -4481,8 +4557,10 @@ struct DesktopSessionShellView: View {
     @State private var desktopAuthoritativeReplyProvenanceRenderState: DesktopAuthoritativeReplyProvenanceRenderState?
     @State private var desktopAuthoritativeReplyPlaybackState: DesktopAuthoritativeReplyPlaybackState = .idle
     @State private var desktopTypedTurnDraft: String = ""
+    @State private var desktopToolRequestDraft: String = ""
     @State private var desktopTypedTurnPendingRequest: DesktopTypedTurnRequestState?
     @State private var desktopTypedTurnFailedRequest: InterruptContinuityResponseFailureState?
+    @State private var desktopToolRequestFailedRequest: InterruptContinuityResponseFailureState?
     @State private var desktopTypedTurnRequestSequence: Int = 0
     @State private var lastStagedWakeTriggeredVoiceTurnRequestState: WakeTriggeredVoiceTurnRequestState?
     private let maxDesktopTypedTurnBytes = 16_384
@@ -5063,6 +5141,10 @@ struct DesktopSessionShellView: View {
         desktopTypedTurnDraft.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    private var trimmedDesktopToolRequestDraft: String {
+        desktopToolRequestDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     private var desktopTypedTurnSubmissionInterlocksActive: Bool {
         desktopTypedTurnPendingRequest != nil
             || explicitVoiceController.isListening
@@ -5071,6 +5153,56 @@ struct DesktopSessionShellView: View {
             || desktopWakeListenerController.listenerState == .dispatching
             || desktopWakeListenerController.pendingRequest != nil
             || lastStagedWakeTriggeredVoiceTurnRequestState != nil
+    }
+
+    private var keyboardComposerPendingTypedTurnRequest: DesktopTypedTurnRequestState? {
+        guard let desktopTypedTurnPendingRequest,
+              desktopTypedTurnPendingRequest.origin == .keyboardComposer else {
+            return nil
+        }
+
+        return desktopTypedTurnPendingRequest
+    }
+
+    private var toolRequestPendingTypedTurnRequest: DesktopTypedTurnRequestState? {
+        guard let desktopTypedTurnPendingRequest,
+              desktopTypedTurnPendingRequest.origin == .toolRequestCard else {
+            return nil
+        }
+
+        return desktopTypedTurnPendingRequest
+    }
+
+    private var desktopToolRequestCardIsExecutable: Bool {
+        desktopReadyTimeHandoffIsActive
+            && desktopForegroundSelectionShowsCurrentDominantSurface
+            && foregroundSessionSoftClosedVisibleContext == nil
+            && foregroundSessionSuspendedVisibleContext == nil
+            && activeRecoveryDisplayState != .quarantinedLocalState
+    }
+
+    private var desktopToolRequestReadOnlyDetail: String {
+        if !desktopForegroundSelectionShowsCurrentDominantSurface {
+            return "This bounded tool-request surface stays read-only while a previously observed session surface is foregrounded. Tool-request production remains bound to the current lawful dominant desktop surface only."
+        }
+
+        if foregroundSessionSoftClosedVisibleContext != nil {
+            return "This bounded tool-request surface stays read-only while the foregrounded session surface is soft-closed. Archived recent-slice visibility does not itself reopen, resume, or retarget canonical runtime dispatch."
+        }
+
+        if foregroundSessionSuspendedVisibleContext != nil {
+            return "This bounded tool-request surface stays read-only while the foregrounded session surface remains suspended. Suspended posture stays explanation-only until authoritative reread or later lawful continuation clears the suspension cloud-side."
+        }
+
+        if activeRecoveryDisplayState == .quarantinedLocalState {
+            return "This bounded tool-request surface stays read-only while quarantined local recovery posture withholds current active/ready production. Canonical runtime still remains authoritative over later recovery and dispatch."
+        }
+
+        return "This bounded tool-request surface stays read-only until one lawful current active/ready conversation surface becomes foregrounded."
+    }
+
+    private var desktopCurrentReadOnlyToolLaneState: DesktopConversationReadOnlyToolLaneState? {
+        desktopConversationSearchToolCompletionState?.readOnlyToolLaneState
     }
 
     private var desktopTypedTurnComposerCard: some View {
@@ -5095,12 +5227,12 @@ struct DesktopSessionShellView: View {
 
                     Spacer()
 
-                    Text(desktopTypedTurnPendingRequest == nil ? "Ready" : "Dispatching")
+                    Text(keyboardComposerPendingTypedTurnRequest == nil ? "Ready" : "Dispatching")
                         .font(.caption.weight(.semibold))
                         .padding(.horizontal, 10)
                         .padding(.vertical, 6)
                         .background(
-                            desktopTypedTurnPendingRequest == nil
+                            keyboardComposerPendingTypedTurnRequest == nil
                                 ? Color.secondary.opacity(0.12)
                                 : Color.accentColor.opacity(0.16)
                         )
@@ -5156,7 +5288,7 @@ struct DesktopSessionShellView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
 
-                if let pendingRequest = desktopTypedTurnPendingRequest {
+                if let pendingRequest = keyboardComposerPendingTypedTurnRequest {
                     desktopTypedTurnPendingRequestCard(pendingRequest)
                 }
 
@@ -5171,6 +5303,144 @@ struct DesktopSessionShellView: View {
             }
         } label: {
             Text("Keyboard Composer")
+                .font(.headline)
+        }
+    }
+
+    private var desktopToolRequestAuthoringCard: some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Bounded tool-request authoring only. This surface stays tool-lane-adjacent, reuses the already-live canonical `/v1/voice/turn` typed-turn carrier, and still leaves tool-routing authority, provider selection, and final dispatch posture entirely cloud-side.")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                HStack(alignment: .center, spacing: 12) {
+                    Image(systemName: "wrench.and.screwdriver")
+                        .font(.system(size: 24))
+                        .foregroundStyle(.secondary)
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Tool-request authoring")
+                            .font(.headline)
+
+                        Text("One bounded tool-oriented request only. This surface does not create a standalone search box, direct tool-name authority, local provider picking, or local search execution.")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Spacer()
+
+                    Text(
+                        toolRequestPendingTypedTurnRequest == nil
+                            ? (desktopToolRequestCardIsExecutable ? "Ready" : "Read-only")
+                            : "Dispatching"
+                    )
+                    .font(.caption.weight(.semibold))
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(
+                        toolRequestPendingTypedTurnRequest == nil
+                            ? (desktopToolRequestCardIsExecutable
+                                ? Color.secondary.opacity(0.12)
+                                : Color.orange.opacity(0.16))
+                            : Color.accentColor.opacity(0.16)
+                    )
+                    .clipShape(Capsule())
+                }
+
+                HStack(spacing: 8) {
+                    posturePill("Tool-lane adjacent")
+                    posturePill("Canonical /v1/voice/turn")
+                    posturePill("No direct tool authority")
+                }
+
+                HStack(spacing: 8) {
+                    posturePill("Cloud authoritative")
+                    posturePill("Session-bound")
+                    posturePill("text/plain")
+                }
+
+                if let readOnlyToolLaneState = desktopCurrentReadOnlyToolLaneState {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Current cloud-authored tool-lane context")
+                            .font(.subheadline.weight(.semibold))
+
+                        metadataRow(label: "lane_kind", value: readOnlyToolLaneState.laneKind)
+                        metadataRow(label: "outcome", value: readOnlyToolLaneState.outcome)
+                        metadataRow(label: "next_move", value: readOnlyToolLaneState.nextMove)
+                        metadataRow(label: "reason_code", value: readOnlyToolLaneState.reasonCode)
+                    }
+                } else {
+                    Text("No cloud-authored tool-lane attachment is currently foregrounded. You can still author one bounded tool-oriented request below so canonical runtime can decide whether tool dispatch is lawful.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
+                if desktopToolRequestCardIsExecutable {
+                    TextField(
+                        "Author one bounded tool-oriented request for canonical routing.",
+                        text: $desktopToolRequestDraft
+                    )
+                    .textFieldStyle(.roundedBorder)
+                    .disabled(desktopTypedTurnSubmissionInterlocksActive)
+                    .onSubmit {
+                        submitDesktopToolRequest()
+                    }
+
+                    HStack(spacing: 12) {
+                        Button("Execute tool request") {
+                            submitDesktopToolRequest()
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(
+                            trimmedDesktopToolRequestDraft.isEmpty
+                                || desktopTypedTurnSubmissionInterlocksActive
+                        )
+
+                        Button("Clear tool request") {
+                            desktopToolRequestDraft = ""
+                            desktopToolRequestFailedRequest = nil
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(
+                            desktopToolRequestDraft.isEmpty
+                                && desktopToolRequestFailedRequest == nil
+                        )
+                    }
+
+                    Text("Draft validation: trimmed non-empty tool-oriented text only, canonical `text/plain`, \(trimmedDesktopToolRequestDraft.utf8.count) / \(maxDesktopTypedTurnBytes) UTF-8 bytes.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                    if desktopTypedTurnSubmissionInterlocksActive {
+                        Text("Tool-request production stays single-request only while another bounded typed-turn, explicit voice capture, wake-triggered request, or canonical voice-turn dispatch posture remains active.")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                } else {
+                    Text(desktopToolRequestReadOnlyDetail)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
+                if let pendingRequest = toolRequestPendingTypedTurnRequest {
+                    desktopTypedTurnPendingRequestCard(pendingRequest)
+                }
+
+                if let failedRequest = desktopToolRequestFailedRequest {
+                    interruptResponseFailedRequestCard(failedRequest)
+                }
+
+                Text("This card still does not claim standalone local search execution, local provider selection, direct tool-name authority, shell-side `projectID` or `pinnedContextRefs` transport, hidden/background wake behavior, or autonomous unlock.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        } label: {
+            Text("Tool Request")
                 .font(.headline)
         }
     }
@@ -5698,10 +5968,12 @@ struct DesktopSessionShellView: View {
                 timelineEntries.append(
                     DesktopConversationTimelineEntryState(
                         speaker: "You",
-                        posture: "typed_turn_pending_preview",
+                        posture: pendingTypedTurnRequest.origin.timelinePendingPosture,
                         body: pendingTypedTurnRequest.boundedPreview,
-                        detail: "Bounded typed-turn pending preview only. Canonical runtime acceptance and later cloud-visible response remain authoritative.",
-                        sourceSurface: "KEYBOARD_TYPED_TURN_PENDING"
+                        detail: pendingTypedTurnRequest.origin == .keyboardComposer
+                            ? "Bounded typed-turn pending preview only. Canonical runtime acceptance and later cloud-visible response remain authoritative."
+                            : "Bounded tool-request pending preview only. Canonical runtime acceptance, tool routing, and later cloud-visible response remain authoritative.",
+                        sourceSurface: pendingTypedTurnRequest.origin.pendingSourceSurface
                     )
                 )
             }
@@ -5714,7 +5986,20 @@ struct DesktopSessionShellView: View {
                         posture: "typed_turn_failed_request_preview",
                         body: failedTypedTurnRequest.summary,
                         detail: "Bounded typed-turn failure visibility only. Canonical runtime acceptance, transcript authority, and later cloud-visible response remain authoritative.",
-                        sourceSurface: "KEYBOARD_TYPED_TURN_FAILED_REQUEST"
+                        sourceSurface: DesktopTypedTurnRequestOrigin.keyboardComposer.failedSourceSurface
+                    )
+                )
+            }
+
+            if let failedToolRequest = desktopToolRequestFailedRequest,
+               desktopTypedTurnPendingRequest == nil {
+                timelineEntries.append(
+                    DesktopConversationTimelineEntryState(
+                        speaker: "You",
+                        posture: DesktopTypedTurnRequestOrigin.toolRequestCard.timelineFailedPosture,
+                        body: failedToolRequest.summary,
+                        detail: "Bounded tool-request failure visibility only. Canonical runtime acceptance, tool routing, and later cloud-visible response remain authoritative.",
+                        sourceSurface: DesktopTypedTurnRequestOrigin.toolRequestCard.failedSourceSurface
                     )
                 )
             }
@@ -6124,9 +6409,10 @@ struct DesktopSessionShellView: View {
 
         return DesktopConversationSupportRailState(
             title: "Operational controls and status",
-            detail: "Support surfaces remain bounded, session-bound, and non-authoritative while one local observed-session selection rail can foreground already-seen cloud-authored surfaces.",
+            detail: "Support surfaces remain bounded, session-bound, and non-authoritative while one local observed-session selection rail can foreground already-seen cloud-authored surfaces and one bounded tool-request authoring card can reuse the already-live canonical voice-turn carrier.",
             supportSurfaceLabels: [
                 "session_surface_selection_rail",
+                "tool_request_authoring",
                 "posture_panel",
                 "history",
                 "session_multi_posture_entry",
@@ -9509,7 +9795,7 @@ struct DesktopSessionShellView: View {
                     sectionCard(
                         title: "Conversation Timeline",
                         detail: desktopForegroundSelectionShowsCurrentDominantSurface
-                            ? "Awaiting the next lawful cloud-authored turn. Use the bounded keyboard composer, explicit voice, or the bounded foreground wake listener to start runtime dispatch from this transcript-primary shell without introducing session selection or hidden/background wake behavior."
+                            ? "Awaiting the next lawful cloud-authored turn. Use the bounded keyboard composer, the bounded tool-request authoring card, explicit voice, or the bounded foreground wake listener to start runtime dispatch from this transcript-primary shell without introducing hidden/background wake behavior or fake local authority."
                             : "Awaiting read-only foreground visibility for the selected observed session surface. Local selection does not itself attach, resume, recover, reopen, or retarget canonical runtime mutation."
                     )
                 } else {
@@ -9545,7 +9831,7 @@ struct DesktopSessionShellView: View {
                 } else {
                     sectionCard(
                         title: "Selected Surface Status",
-                        detail: "This previously observed session surface is foregrounded in bounded read-only form only. Existing attach / resume / recover controls remain separate, and keyboard typed-turn production stays bound to the current lawful dominant desktop surface."
+                        detail: "This previously observed session surface is foregrounded in bounded read-only form only. Existing attach / resume / recover controls remain separate, and bounded keyboard typed-turn plus tool-request production stay bound to the current lawful dominant desktop surface."
                     )
                 }
             }
@@ -9569,7 +9855,7 @@ struct DesktopSessionShellView: View {
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
 
-                    Text("Controls and evidence-adjacent support remain bounded, session-bound, and non-authoritative here. One bounded local observed-session selection rail is now available, but it changes foreground visibility only and does not introduce local attach or reopen authority, dedicated local search controls, or hidden/background wake behavior.")
+                    Text("Controls and evidence-adjacent support remain bounded, session-bound, and non-authoritative here. One bounded local observed-session selection rail and one bounded tool-request authoring card are now available, but they still do not introduce local attach or reopen authority, standalone local search execution, or hidden/background wake behavior.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -9580,6 +9866,7 @@ struct DesktopSessionShellView: View {
             }
 
             desktopSessionSurfaceSelectionRailCard
+            desktopToolRequestAuthoringCard
             explicitVoiceEntryAffordanceCard
             desktopWakeProfileAvailabilityCard
             desktopWakeListenerControlCard
@@ -13489,7 +13776,7 @@ struct DesktopSessionShellView: View {
                 ForEach(
                     [
                         ("request_id", request.id),
-                        ("source_surface", "KEYBOARD_TYPED_TURN_PENDING"),
+                        ("source_surface", request.origin.pendingSourceSurface),
                         ("trigger", "EXPLICIT"),
                         ("content_type", "text/plain"),
                         ("text_posture", "non_authoritative_preview"),
@@ -13513,13 +13800,13 @@ struct DesktopSessionShellView: View {
                 Text(request.boundedPreview)
                     .frame(maxWidth: .infinity, alignment: .leading)
 
-                Text("This path preserves one bounded typed preview only while canonical runtime dispatch resolves. The shell does not fabricate local assistant output, local transcript authority, or local tool/search execution.")
+                Text(request.origin.pendingSummary)
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
         } label: {
-            Text("Typed Turn Request")
+            Text(request.origin.cardTitle)
                 .font(.headline)
         }
     }
@@ -15016,30 +15303,20 @@ struct DesktopSessionShellView: View {
         }
     }
 
-    private func submitDesktopTypedTurn() {
-        let trimmedDraft = trimmedDesktopTypedTurnDraft
+    private func stageDesktopTypedTurnRequest(
+        trimmedDraft: String,
+        origin: DesktopTypedTurnRequestOrigin
+    ) -> DesktopTypedTurnSubmissionFailure? {
         guard !trimmedDraft.isEmpty else {
-            return
+            return .emptyDraft
         }
 
         if trimmedDraft.utf8.count > maxDesktopTypedTurnBytes {
-            desktopTypedTurnFailedRequest = InterruptContinuityResponseFailureState(
-                id: "failed_desktop_typed_turn_text_plain_validation",
-                title: "Failed typed turn request",
-                summary: "Canonical text-turn validation held this request because the bounded `text/plain` payload exceeded 16384 UTF-8 bytes before any authoritative acceptance occurred.",
-                detail: "Failure visibility only; shorten the draft and retry through the canonical desktop typed-turn path. No local assistant output or authoritative transcript mutation was produced."
-            )
-            return
+            return .byteLimit
         }
 
         guard desktopTypedTurnPendingRequest == nil else {
-            desktopTypedTurnFailedRequest = InterruptContinuityResponseFailureState(
-                id: "failed_desktop_typed_turn_awaiting_authoritative_response",
-                title: "Failed typed turn request",
-                summary: "A later typed-turn request could not be produced while the current bounded typed turn is already awaiting authoritative response.",
-                detail: "The shell keeps bounded pending / failed posture only; it does not queue a second typed request locally, repair transport, or fabricate local assistant output."
-            )
-            return
+            return .pendingRequestActive
         }
 
         guard !explicitVoiceController.isListening,
@@ -15048,29 +15325,96 @@ struct DesktopSessionShellView: View {
               desktopWakeListenerController.listenerState != .dispatching,
               desktopWakeListenerController.pendingRequest == nil,
               lastStagedWakeTriggeredVoiceTurnRequestState == nil else {
-            desktopTypedTurnFailedRequest = InterruptContinuityResponseFailureState(
-                id: "failed_desktop_typed_turn_other_voice_request_active",
-                title: "Failed typed turn request",
-                summary: "A bounded typed turn could not be produced while another foreground voice capture or voice-turn dispatch posture was still active.",
-                detail: "This shell stays single-request only and does not merge typed and voice production locally, bypass canonical runtime sequencing, or invent local authority."
-            )
-            return
+            return .otherForegroundRequestActive
         }
 
         desktopTypedTurnRequestSequence += 1
         desktopTypedTurnFailedRequest = nil
+        desktopToolRequestFailedRequest = nil
         desktopCanonicalRuntimeOutcomeState = nil
         desktopAuthoritativeReplyRenderState = nil
         desktopAuthoritativeReplyProvenanceRenderState = nil
         desktopAuthoritativeReplyPlaybackController.reset()
         desktopAuthoritativeReplyPlaybackState = .idle
         desktopTypedTurnPendingRequest = DesktopTypedTurnRequestState(
-            id: String(format: "desktop_typed_turn_request_%03d", desktopTypedTurnRequestSequence),
+            id: "\(origin.requestIDPrefix)_\(String(format: "%03d", desktopTypedTurnRequestSequence))",
+            origin: origin,
             deviceTurnSequence: UInt64(desktopTypedTurnRequestSequence),
             text: trimmedDraft,
             byteCount: trimmedDraft.utf8.count
         )
-        desktopTypedTurnDraft = ""
+
+        return nil
+    }
+
+    private func submitDesktopTypedTurn() {
+        let trimmedDraft = trimmedDesktopTypedTurnDraft
+
+        switch stageDesktopTypedTurnRequest(
+            trimmedDraft: trimmedDraft,
+            origin: .keyboardComposer
+        ) {
+        case .none:
+            desktopTypedTurnDraft = ""
+        case .emptyDraft:
+            return
+        case .byteLimit:
+            desktopTypedTurnFailedRequest = InterruptContinuityResponseFailureState(
+                id: "failed_desktop_typed_turn_text_plain_validation",
+                title: "Failed typed turn request",
+                summary: "Canonical text-turn validation held this request because the bounded `text/plain` payload exceeded 16384 UTF-8 bytes before any authoritative acceptance occurred.",
+                detail: "Failure visibility only; shorten the draft and retry through the canonical desktop typed-turn path. No local assistant output or authoritative transcript mutation was produced."
+            )
+        case .pendingRequestActive:
+            desktopTypedTurnFailedRequest = InterruptContinuityResponseFailureState(
+                id: "failed_desktop_typed_turn_awaiting_authoritative_response",
+                title: "Failed typed turn request",
+                summary: "A later typed-turn request could not be produced while the current bounded typed turn is already awaiting authoritative response.",
+                detail: "The shell keeps bounded pending / failed posture only; it does not queue a second typed request locally, repair transport, or fabricate local assistant output."
+            )
+        case .otherForegroundRequestActive:
+            desktopTypedTurnFailedRequest = InterruptContinuityResponseFailureState(
+                id: "failed_desktop_typed_turn_other_voice_request_active",
+                title: "Failed typed turn request",
+                summary: "A bounded typed turn could not be produced while another foreground voice capture or voice-turn dispatch posture was still active.",
+                detail: "This shell stays single-request only and does not merge typed and voice production locally, bypass canonical runtime sequencing, or invent local authority."
+            )
+        }
+    }
+
+    private func submitDesktopToolRequest() {
+        let trimmedDraft = trimmedDesktopToolRequestDraft
+
+        switch stageDesktopTypedTurnRequest(
+            trimmedDraft: trimmedDraft,
+            origin: .toolRequestCard
+        ) {
+        case .none:
+            desktopToolRequestDraft = ""
+        case .emptyDraft:
+            return
+        case .byteLimit:
+            desktopToolRequestFailedRequest = InterruptContinuityResponseFailureState(
+                id: "failed_desktop_tool_request_text_plain_validation",
+                title: "Failed tool request",
+                summary: "Canonical text-turn validation held this tool-oriented request because the bounded `text/plain` payload exceeded 16384 UTF-8 bytes before any authoritative acceptance occurred.",
+                detail: "Failure visibility only; shorten the request and retry through the bounded desktop tool-request surface. Canonical runtime still retains tool-routing authority and no local tool execution was produced."
+            )
+        case .pendingRequestActive:
+            desktopToolRequestFailedRequest = InterruptContinuityResponseFailureState(
+                id: "failed_desktop_tool_request_awaiting_authoritative_response",
+                title: "Failed tool request",
+                summary: "A later tool-oriented request could not be produced while the current bounded typed or tool request is already awaiting authoritative response.",
+                detail: "The shell keeps bounded pending / failed posture only; it does not queue a second request locally, bypass canonical runtime sequencing, or fabricate direct tool authority."
+            )
+        case .otherForegroundRequestActive:
+            desktopToolRequestFailedRequest = InterruptContinuityResponseFailureState(
+                id: "failed_desktop_tool_request_other_voice_request_active",
+                title: "Failed tool request",
+                summary: "A bounded tool-oriented request could not be produced while another foreground voice capture or voice-turn dispatch posture was still active.",
+                detail: "This shell stays single-request only and does not merge tool-request production with voice capture locally, bypass canonical runtime sequencing, or fabricate direct tool authority."
+            )
+        }
     }
 
     private func clearInterruptResponseState() {
