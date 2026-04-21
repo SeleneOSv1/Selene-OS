@@ -613,7 +613,7 @@ This section is a planning queue only.
   - what should come next
 
 ### Current Exact Next Winner
-- no post-H337 next exact winner is published until the desktop queue is refreshed against current repo truth after H337 bounded desktop recent-session visibility unlock
+- no post-H341 next exact winner is published until the desktop queue is refreshed against current repo truth after H341 bounded recent-session posture-evidence visibility unlock
 
 ### Why No Exact Next Winner Is Published Yet
 - H330 now preserves the upstream selected-session `project_id` / `pinned_context_refs` carrier read-only through exact session lifecycle / attach-resume-recover outputs when same-session voice-turn finalization already carried lawful cloud-authored context.
@@ -626,10 +626,13 @@ This section is a planning queue only.
 - H340 now adds one upstream bounded read-only current-device per-session posture-evidence carrier through exact `/v1/session/posture`, returning only lawful current-device evidence for one non-closed session whose exact persisted `last_attached_device_id` still matches the requesting device.
 - H340 exposes only already-grounded per-session posture evidence such as exact `session_attach_outcome`, exact `recovery_mode`, and exact `reconciliation_decision` when current upstream truth lawfully provides them, and does not expose transcript content, archive slices, generic reopen authority, or route-specific mutation authority.
 - H340 changes no desktop code in this run and therefore does not by itself publish a new desktop winner.
-- The pre-H337 desktop candidate-family ordering is now stale until it is refreshed against the newly landed desktop recent-session visibility seam.
+- H341 now consumes that already-live upstream posture carrier only through one bounded native macOS read-only recent-session posture-evidence card keyed by one selected current-device recent-session row.
+- H341 preserves the existing observed-session rail, the already-live recent-session row order, exact session-entry controls, and exact same-session `/v1/voice/turn` project-context transport unchanged.
+- H341 does not synthesize active transcript surfaces, archived transcript surfaces, suspended explanation surfaces, recent-row-driven attach / resume / recover authority, or generic reopen authority.
+- The pre-H341 desktop candidate-family ordering is now stale until it is refreshed against the newly landed desktop recent-session posture-evidence visibility seam.
 
 ### Explicitly Not Next
-- not auto-publishing a desktop next winner from H337 alone without refreshing this queue against current repo truth
+- not auto-publishing a desktop next winner from H341 alone without refreshing this queue against current repo truth
 - not broader shell-side `projectID` / `pinnedContextRefs` authoring without a newly proven lawful seam
 - not a broader hidden/background wake claim or wake parity claim without a proven lawful seam
 - not a standalone desktop search box with local search execution
@@ -639,8 +642,8 @@ This section is a planning queue only.
 - not another regression-lock-only build unless repo truth changes and a capability unlock becomes blocked
 
 ### Ordered Candidate Families Once A Lawful Exact Seam Is Proven
-- pre-H337 desktop candidate ordering is intentionally not republished in this run
-- the next lawful APP_MAC_DESKTOP queue must be refreshed against the newly landed desktop recent-session visibility seam before another desktop implementation brief is written
+- pre-H341 desktop candidate ordering is intentionally not republished in this run
+- the next lawful APP_MAC_DESKTOP queue must be refreshed against the newly landed desktop recent-session posture-evidence visibility seam before another desktop implementation brief is written
 
 ### Queue Maintenance Rule After Every Desktop H-Build
 - Refresh the `Current Repo Baseline` section if newly landed work changes what is actually built.

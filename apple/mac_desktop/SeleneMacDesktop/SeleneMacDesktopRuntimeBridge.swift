@@ -2589,6 +2589,108 @@ struct DesktopSessionRecentListRuntimeOutcomeState: Identifiable, Equatable {
     }
 }
 
+struct DesktopSessionPostureEvidenceRuntimeOutcomeState: Identifiable, Equatable {
+    enum Phase: String, Equatable {
+        case dispatching = "dispatching"
+        case completed = "completed"
+        case failed = "failed"
+    }
+
+    let id: String
+    let phase: Phase
+    let title: String
+    let summary: String
+    let detail: String
+    let endpoint: String
+    let requestID: String
+    let deviceID: String
+    let sessionID: String
+    let refreshTriggerID: String
+    let outcome: String?
+    let reason: String?
+    let response: DesktopCanonicalRuntimeBridge.SessionPostureEvidenceAdapterResponsePayload?
+
+    static func dispatching(
+        deviceID: String,
+        sessionID: String,
+        refreshTriggerID: String,
+        endpoint: String,
+        requestID: String
+    ) -> DesktopSessionPostureEvidenceRuntimeOutcomeState {
+        DesktopSessionPostureEvidenceRuntimeOutcomeState(
+            id: requestID,
+            phase: .dispatching,
+            title: "Dispatching desktop recent-session posture-evidence visibility refresh",
+            summary: "The bounded desktop recent-session posture-evidence request is now being handed into canonical `/v1/session/posture`.",
+            detail: "Only exact current-device per-session posture evidence is in scope here. This shell remains explicitly non-authoritative and does not introduce synthetic transcript surfaces, recent-row-driven attach / resume / recover authority, generic reopen authority, or local project / pinned-context authoring.",
+            endpoint: endpoint,
+            requestID: requestID,
+            deviceID: deviceID,
+            sessionID: sessionID,
+            refreshTriggerID: refreshTriggerID,
+            outcome: nil,
+            reason: nil,
+            response: nil
+        )
+    }
+
+    static func completed(
+        requestID: String,
+        endpoint: String,
+        response: DesktopCanonicalRuntimeBridge.SessionPostureEvidenceAdapterResponsePayload,
+        fallbackDeviceID: String,
+        requestedSessionID: String,
+        refreshTriggerID: String
+    ) -> DesktopSessionPostureEvidenceRuntimeOutcomeState {
+        let boundedOutcome = boundedOnboardingContinueField(response.outcome)
+        let boundedReason = boundedOnboardingContinueField(response.reason)
+        let responseSessionID = boundedOnboardingContinueField(response.sessionID) ?? requestedSessionID
+
+        return DesktopSessionPostureEvidenceRuntimeOutcomeState(
+            id: requestID,
+            phase: .completed,
+            title: "Desktop recent-session posture-evidence visibility refresh completed",
+            summary: "Canonical `/v1/session/posture` returned bounded read-only posture evidence for the selected current-device recent-session row.",
+            detail: "Read-only posture evidence only. This shell preserves the selected recent-session row as evidence-only, keeps it separate from `observedSessionSurfaces`, and does not add transcript/archive surfaces, recent-row-driven attach / resume / recover authority, or generic reopen authority.",
+            endpoint: endpoint,
+            requestID: requestID,
+            deviceID: fallbackDeviceID,
+            sessionID: responseSessionID,
+            refreshTriggerID: refreshTriggerID,
+            outcome: boundedOutcome ?? "SESSION_POSTURE_EVIDENCE_VISIBLE",
+            reason: boundedReason,
+            response: response
+        )
+    }
+
+    static func failed(
+        deviceID: String,
+        sessionID: String,
+        refreshTriggerID: String,
+        endpoint: String,
+        requestID: String,
+        summary: String,
+        detail: String,
+        reason: String? = nil
+    ) -> DesktopSessionPostureEvidenceRuntimeOutcomeState {
+        DesktopSessionPostureEvidenceRuntimeOutcomeState(
+            id: requestID,
+            phase: .failed,
+            title: "Desktop recent-session posture-evidence visibility refresh failed",
+            summary: summary,
+            detail: detail,
+            endpoint: endpoint,
+            requestID: requestID,
+            deviceID: deviceID,
+            sessionID: sessionID,
+            refreshTriggerID: refreshTriggerID,
+            outcome: nil,
+            reason: reason,
+            response: nil
+        )
+    }
+}
+
 struct DesktopWakeProfileAvailabilityRuntimeOutcomeState: Identifiable, Equatable {
     enum Phase: String, Equatable {
         case dispatching = "dispatching"
@@ -3371,6 +3473,7 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
         case invalidWakeEnrollDeferCommitRequest(String)
         case invalidSessionAttachRequest(String)
         case invalidSessionRecentListRequest(String)
+        case invalidSessionPostureEvidenceRequest(String)
         case invalidSessionMultiPostureEntryRequest(String)
         case invalidSessionMultiPostureResumeRequest(String)
         case invalidSessionSoftClosedResumeRequest(String)
@@ -3403,6 +3506,7 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
                  .invalidWakeEnrollDeferCommitRequest(let detail),
                  .invalidSessionAttachRequest(let detail),
                  .invalidSessionRecentListRequest(let detail),
+                 .invalidSessionPostureEvidenceRequest(let detail),
                  .invalidSessionMultiPostureEntryRequest(let detail),
                  .invalidSessionMultiPostureResumeRequest(let detail),
                  .invalidSessionSoftClosedResumeRequest(let detail),
@@ -3626,6 +3730,14 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
         let urlRequest: URLRequest
     }
 
+    struct DesktopSessionPostureEvidenceIngressContext {
+        let deviceID: String
+        let sessionID: String
+        let requestID: String
+        let endpoint: String
+        let urlRequest: URLRequest
+    }
+
     struct DesktopWakeProfileAvailabilityIngressContext {
         let receiptKind: String
         let deviceID: String
@@ -3772,6 +3884,25 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
         let outcome: String
         let reason: String?
         let sessions: [SessionRecentListItemPayload]
+    }
+
+    struct SessionPostureEvidenceAdapterResponsePayload: Decodable, Equatable {
+        let status: String
+        let outcome: String
+        let reason: String?
+        let sessionID: String?
+        let sessionState: String?
+        let lastTurnID: String?
+        let projectID: String?
+        let pinnedContextRefs: [String]?
+        let sessionAttachOutcome: String?
+        let selectedThreadID: String?
+        let selectedThreadTitle: String?
+        let pendingWorkOrderID: String?
+        let resumeTier: String?
+        let resumeSummaryBullets: [String]?
+        let recoveryMode: String?
+        let reconciliationDecision: String?
     }
 
     struct WakeProfileAvailabilityRefreshAdapterResponsePayload: Decodable {
@@ -4007,6 +4138,13 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
     private struct SessionRecentListAdapterRequestPayload: Encodable {
         let correlationID: UInt64
         let idempotencyKey: String
+        let deviceID: String
+    }
+
+    private struct SessionPostureEvidenceAdapterRequestPayload: Encodable {
+        let correlationID: UInt64
+        let idempotencyKey: String
+        let sessionID: String
         let deviceID: String
     }
 
@@ -5668,6 +5806,55 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
         }
     }
 
+    func submitDesktopSessionPostureEvidence(
+        _ ingressContext: DesktopSessionPostureEvidenceIngressContext,
+        refreshTriggerID: String
+    ) async -> DesktopSessionPostureEvidenceRuntimeOutcomeState {
+        do {
+            try await ensureAdapterAvailable()
+
+            let (data, response) = try await urlSession.data(for: ingressContext.urlRequest)
+            let decoder = JSONDecoder()
+            decoder.keyDecodingStrategy = .convertFromSnakeCase
+            let httpResponse = response as? HTTPURLResponse
+            let statusCode = httpResponse?.statusCode ?? 0
+            let payload = try decoder.decode(SessionPostureEvidenceAdapterResponsePayload.self, from: data)
+
+            if statusCode == 200,
+               payload.status.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "ok" {
+                return .completed(
+                    requestID: ingressContext.requestID,
+                    endpoint: ingressContext.endpoint,
+                    response: payload,
+                    fallbackDeviceID: ingressContext.deviceID,
+                    requestedSessionID: ingressContext.sessionID,
+                    refreshTriggerID: refreshTriggerID
+                )
+            }
+
+            return .failed(
+                deviceID: ingressContext.deviceID,
+                sessionID: ingressContext.sessionID,
+                refreshTriggerID: refreshTriggerID,
+                endpoint: ingressContext.endpoint,
+                requestID: ingressContext.requestID,
+                summary: "The canonical posture-evidence bridge rejected or failed this bounded desktop recent-session posture-evidence request.",
+                detail: "Canonical `/v1/session/posture` failed closed with outcome `\(payload.outcome)` and reason `\(boundedOnboardingContinueField(payload.reason) ?? "not_provided")`. This shell remains limited to exact read-only current-device posture evidence and does not introduce transcript/archive surfaces, recent-row-driven attach / resume / recover authority, generic reopen authority, or local authoring.",
+                reason: boundedOnboardingContinueField(payload.reason)
+            )
+        } catch {
+            return .failed(
+                deviceID: ingressContext.deviceID,
+                sessionID: ingressContext.sessionID,
+                refreshTriggerID: refreshTriggerID,
+                endpoint: ingressContext.endpoint,
+                requestID: ingressContext.requestID,
+                summary: "The canonical posture-evidence bridge could not deliver this bounded desktop recent-session posture-evidence request.",
+                detail: error.localizedDescription
+            )
+        }
+    }
+
     func submitDesktopEmoPersonaLock(
         _ ingressContext: DesktopEmoPersonaLockIngressContext
     ) async -> DesktopEmoPersonaLockRuntimeOutcomeState {
@@ -7212,6 +7399,60 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
         )
     }
 
+    func desktopSessionPostureEvidenceRequestBuilder(
+        sessionID: String
+    ) throws -> DesktopSessionPostureEvidenceIngressContext {
+        guard let managedDeviceID = boundedOnboardingContinueField(deviceID) else {
+            throw BridgeError.invalidSessionPostureEvidenceRequest(
+                "bounded desktop recent-session posture-evidence visibility must preserve the exact managed bridge `deviceID` only"
+            )
+        }
+
+        guard let boundedSessionID = boundedOnboardingContinueField(sessionID) else {
+            throw BridgeError.invalidSessionPostureEvidenceRequest(
+                "bounded desktop recent-session posture-evidence visibility requires one lawful selected recent-session `session_id`"
+            )
+        }
+
+        let requestID = "desktop_session_posture_request_\(UUID().uuidString.replacingOccurrences(of: "-", with: ""))"
+        let idempotencyKey = "desktop_session_posture_\(boundedSessionID)_\(managedDeviceID)"
+        let nonce = UUID().uuidString.replacingOccurrences(of: "-", with: "")
+        let timestampMS = Self.systemTimeNowMS()
+        let correlationID = Swift.max(DispatchTime.now().uptimeNanoseconds, 1)
+
+        let payload = SessionPostureEvidenceAdapterRequestPayload(
+            correlationID: correlationID,
+            idempotencyKey: idempotencyKey,
+            sessionID: boundedSessionID,
+            deviceID: managedDeviceID
+        )
+
+        let encoder = JSONEncoder()
+        encoder.keyEncodingStrategy = .convertToSnakeCase
+        let body = try encoder.encode(payload)
+        let endpointURL = adapterBaseURL.appendingPathComponent("v1/session/posture")
+        var urlRequest = URLRequest(url: endpointURL)
+        urlRequest.httpMethod = "POST"
+        urlRequest.httpBody = body
+        urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        urlRequest.setValue(requestID, forHTTPHeaderField: "x-request-id")
+        urlRequest.setValue(idempotencyKey, forHTTPHeaderField: "idempotency-key")
+        urlRequest.setValue(String(timestampMS), forHTTPHeaderField: "x-selene-timestamp-ms")
+        urlRequest.setValue(nonce, forHTTPHeaderField: "x-selene-nonce")
+        urlRequest.setValue(
+            Self.bearerToken(subject: boundedSessionID, device: managedDeviceID),
+            forHTTPHeaderField: "Authorization"
+        )
+
+        return DesktopSessionPostureEvidenceIngressContext(
+            deviceID: managedDeviceID,
+            sessionID: boundedSessionID,
+            requestID: requestID,
+            endpoint: endpointURL.absoluteString,
+            urlRequest: urlRequest
+        )
+    }
+
     func desktopSessionAttachRequestBuilder(
         _ promptState: DesktopSessionAttachPromptState
     ) throws -> DesktopSessionAttachIngressContext {
@@ -8079,6 +8320,10 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
 
     var sessionRecentEndpoint: String {
         adapterBaseURL.appendingPathComponent("v1/session/recent").absoluteString
+    }
+
+    var sessionPostureEndpoint: String {
+        adapterBaseURL.appendingPathComponent("v1/session/posture").absoluteString
     }
 
     var wakeProfileAvailabilityEndpoint: String {

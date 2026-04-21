@@ -4636,6 +4636,8 @@ struct DesktopSessionShellView: View {
     @State private var desktopReadyTimeHandoffState: DesktopReadyTimeHandoffState?
     @State private var desktopWakeProfileAvailabilityRuntimeOutcomeState: DesktopWakeProfileAvailabilityRuntimeOutcomeState?
     @State private var desktopSessionRecentListRuntimeOutcomeState: DesktopSessionRecentListRuntimeOutcomeState?
+    @State private var desktopSelectedRecentSessionID: String?
+    @State private var desktopSessionPostureEvidenceRuntimeOutcomeState: DesktopSessionPostureEvidenceRuntimeOutcomeState?
     @State private var desktopEmoPersonaLockRuntimeOutcomeState: DesktopEmoPersonaLockRuntimeOutcomeState?
     @State private var desktopAccessProvisionCommitRuntimeOutcomeState: DesktopAccessProvisionCommitRuntimeOutcomeState?
     @State private var desktopCompleteCommitRuntimeOutcomeState: DesktopCompleteCommitRuntimeOutcomeState?
@@ -4705,6 +4707,7 @@ struct DesktopSessionShellView: View {
         .task(id: desktopOperationalConversationShellState?.id) {
             await synchronizeDesktopWakeListenerLifecycleState()
             await synchronizeDesktopSessionRecentListRuntimeOutcomeState()
+            await synchronizeDesktopSessionPostureEvidenceRuntimeOutcomeState()
         }
         .task(id: desktopSessionAttachRuntimeOutcomeState?.id) {
             await synchronizeDesktopSessionRecentListRuntimeOutcomeState()
@@ -4714,6 +4717,12 @@ struct DesktopSessionShellView: View {
         }
         .task(id: desktopSessionMultiPostureEntryRuntimeOutcomeState?.id) {
             await synchronizeDesktopSessionRecentListRuntimeOutcomeState()
+        }
+        .task(id: desktopSessionRecentListRuntimeOutcomeState?.id) {
+            await synchronizeDesktopSessionPostureEvidenceRuntimeOutcomeState()
+        }
+        .task(id: desktopSelectedRecentSessionID) {
+            await synchronizeDesktopSessionPostureEvidenceRuntimeOutcomeState()
         }
         .task(id: scenePhase) {
             await synchronizeDesktopWakeListenerLifecycleState()
@@ -5151,6 +5160,41 @@ struct DesktopSessionShellView: View {
         }
     }
 
+    private var desktopSelectedRecentSessionRowState: DesktopSessionRecentListRowState? {
+        guard let selectedRecentSessionID = boundedOnboardingContinueFieldValue(
+            desktopSelectedRecentSessionID
+        ) else {
+            return nil
+        }
+
+        return desktopSessionRecentListRowStates.first { rowState in
+            rowState.sessionID == selectedRecentSessionID
+        }
+    }
+
+    private var desktopSessionPostureEvidenceRefreshTriggerID: String? {
+        guard desktopOperationalConversationShellState != nil,
+              let managedDeviceID = boundedOnboardingContinueFieldValue(
+                desktopCanonicalRuntimeBridge.managedDeviceID
+              ),
+              let selectedRecentSessionID = boundedOnboardingContinueFieldValue(
+                desktopSelectedRecentSessionID
+              ),
+              let recentOutcomeState = desktopSessionRecentListRuntimeOutcomeState,
+              recentOutcomeState.phase == .completed,
+              recentOutcomeState.sessions.contains(where: { session in
+                  session.sessionID == selectedRecentSessionID
+              }) else {
+            return nil
+        }
+
+        return [
+            managedDeviceID,
+            selectedRecentSessionID,
+            recentOutcomeState.refreshTriggerID,
+        ].joined(separator: "::")
+    }
+
     @MainActor
     private func synchronizeDesktopSessionRecentListRuntimeOutcomeState() async {
         guard let refreshTriggerID = desktopSessionRecentListRefreshTriggerID else {
@@ -5201,6 +5245,80 @@ struct DesktopSessionShellView: View {
                 endpoint: desktopCanonicalRuntimeBridge.sessionRecentEndpoint,
                 requestID: "unavailable",
                 summary: "The canonical recent-session visibility bridge could not stage this bounded desktop current-device recent-session visibility request.",
+                detail: error.localizedDescription
+            )
+        }
+    }
+
+    @MainActor
+    private func synchronizeDesktopSessionPostureEvidenceRuntimeOutcomeState() async {
+        let visibleRecentSessionIDs = Set(desktopSessionRecentListRowStates.map(\.sessionID))
+        if let selectedRecentSessionID = boundedOnboardingContinueFieldValue(
+            desktopSelectedRecentSessionID
+        ),
+        !visibleRecentSessionIDs.contains(selectedRecentSessionID) {
+            desktopSelectedRecentSessionID = nil
+        }
+
+        guard let refreshTriggerID = desktopSessionPostureEvidenceRefreshTriggerID,
+              let selectedRecentSessionID = boundedOnboardingContinueFieldValue(
+                desktopSelectedRecentSessionID
+              ) else {
+            if desktopSessionPostureEvidenceRuntimeOutcomeState?.phase != .dispatching {
+                desktopSessionPostureEvidenceRuntimeOutcomeState = nil
+            }
+            return
+        }
+
+        if let outcomeState = desktopSessionPostureEvidenceRuntimeOutcomeState {
+            if outcomeState.phase == .dispatching,
+               outcomeState.refreshTriggerID == refreshTriggerID {
+                return
+            }
+
+            if outcomeState.refreshTriggerID == refreshTriggerID {
+                return
+            }
+        }
+
+        await submitDesktopSessionPostureEvidenceRefresh(
+            selectedSessionID: selectedRecentSessionID,
+            refreshTriggerID: refreshTriggerID
+        )
+    }
+
+    @MainActor
+    private func submitDesktopSessionPostureEvidenceRefresh(
+        selectedSessionID: String,
+        refreshTriggerID: String
+    ) async {
+        do {
+            let ingressContext = try desktopCanonicalRuntimeBridge
+                .desktopSessionPostureEvidenceRequestBuilder(sessionID: selectedSessionID)
+            desktopSessionPostureEvidenceRuntimeOutcomeState = .dispatching(
+                deviceID: ingressContext.deviceID,
+                sessionID: ingressContext.sessionID,
+                refreshTriggerID: refreshTriggerID,
+                endpoint: ingressContext.endpoint,
+                requestID: ingressContext.requestID
+            )
+
+            let outcomeState = await desktopCanonicalRuntimeBridge.submitDesktopSessionPostureEvidence(
+                ingressContext,
+                refreshTriggerID: refreshTriggerID
+            )
+            desktopSessionPostureEvidenceRuntimeOutcomeState = outcomeState
+        } catch {
+            let managedDeviceID = boundedOnboardingContinueFieldValue(
+                desktopCanonicalRuntimeBridge.managedDeviceID
+            ) ?? "not_available"
+            desktopSessionPostureEvidenceRuntimeOutcomeState = .failed(
+                deviceID: managedDeviceID,
+                sessionID: selectedSessionID,
+                refreshTriggerID: refreshTriggerID,
+                endpoint: desktopCanonicalRuntimeBridge.sessionPostureEndpoint,
+                requestID: "unavailable",
+                summary: "The canonical posture-evidence bridge could not stage this bounded desktop recent-session posture-evidence request.",
                 detail: error.localizedDescription
             )
         }
@@ -10356,6 +10474,7 @@ struct DesktopSessionShellView: View {
 
             desktopSessionSurfaceSelectionRailCard
             desktopSessionRecentListVisibilityCard
+            desktopSessionPostureEvidenceVisibilityCard
             desktopSearchRequestAuthoringCard
             desktopToolRequestAuthoringCard
             explicitVoiceEntryAffordanceCard
@@ -10454,7 +10573,7 @@ struct DesktopSessionShellView: View {
 
         return GroupBox {
             VStack(alignment: .leading, spacing: 12) {
-                Text("Bounded current-device recent-session visibility only. This shell consumes exact `/v1/session/recent`, preserves exact returned row order only, and keeps these recent-session rows separate from the already-observed local session-surface rail.")
+                Text("Bounded current-device recent-session visibility only. This shell consumes exact `/v1/session/recent`, preserves exact returned row order only, and keeps these recent-session rows separate from the already-observed local session-surface rail. One bounded local row-selection seam is now allowed here for read-only posture-evidence inspection only.")
                     .frame(maxWidth: .infinity, alignment: .leading)
 
                 if let outcomeState = desktopSessionRecentListRuntimeOutcomeState {
@@ -10490,33 +10609,57 @@ struct DesktopSessionShellView: View {
                                 .frame(maxWidth: .infinity, alignment: .leading)
                         } else {
                             ForEach(rowStates) { rowState in
-                                VStack(alignment: .leading, spacing: 8) {
-                                    HStack(alignment: .center, spacing: 8) {
-                                        Text(rowState.title)
-                                            .font(.subheadline.weight(.semibold))
+                                let isSelected = rowState.sessionID == desktopSelectedRecentSessionID
+
+                                Button {
+                                    desktopSelectedRecentSessionID = isSelected ? nil : rowState.sessionID
+                                } label: {
+                                    VStack(alignment: .leading, spacing: 8) {
+                                        HStack(alignment: .center, spacing: 8) {
+                                            Text(rowState.title)
+                                                .font(.subheadline.weight(.semibold))
+                                                .frame(maxWidth: .infinity, alignment: .leading)
+
+                                            if isSelected {
+                                                posturePill("SELECTED")
+                                            }
+
+                                            posturePill(rowState.sessionState)
+                                        }
+
+                                        Text(rowState.summary)
+                                            .font(.footnote)
+                                            .foregroundStyle(.secondary)
                                             .frame(maxWidth: .infinity, alignment: .leading)
 
-                                        posturePill(rowState.sessionState)
-                                    }
+                                        metadataRow(label: "session_state", value: rowState.sessionState)
+                                        metadataRow(label: "session_id", value: rowState.sessionID)
+                                        metadataRow(
+                                            label: "last_turn_id",
+                                            value: rowState.lastTurnID ?? "not_available"
+                                        )
 
-                                    Text(rowState.summary)
+                                        Text(
+                                            isSelected
+                                                ? "Selected for bounded read-only posture-evidence inspection only."
+                                                : "Select this row to inspect bounded read-only posture evidence through exact `/v1/session/posture`."
+                                        )
                                         .font(.footnote)
                                         .foregroundStyle(.secondary)
                                         .frame(maxWidth: .infinity, alignment: .leading)
-
-                                    metadataRow(label: "session_state", value: rowState.sessionState)
-                                    metadataRow(label: "session_id", value: rowState.sessionID)
-                                    metadataRow(
-                                        label: "last_turn_id",
-                                        value: rowState.lastTurnID ?? "not_available"
+                                    }
+                                    .padding(12)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .background(
+                                        isSelected
+                                            ? Color.accentColor.opacity(0.12)
+                                            : Color(nsColor: .controlBackgroundColor)
+                                    )
+                                    .clipShape(
+                                        RoundedRectangle(cornerRadius: 14, style: .continuous)
                                     )
                                 }
-                                .padding(12)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .background(Color(nsColor: .controlBackgroundColor))
-                                .clipShape(
-                                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                )
+                                .buttonStyle(.plain)
                             }
                         }
                     }
@@ -10533,6 +10676,118 @@ struct DesktopSessionShellView: View {
             }
         } label: {
             Text("Current-Device Recent Sessions")
+                .font(.headline)
+        }
+    }
+
+    private var desktopSessionPostureEvidenceVisibilityCard: some View {
+        let selectedRowState = desktopSelectedRecentSessionRowState
+
+        return GroupBox {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Bounded current-device recent-session posture-evidence visibility only. This shell consumes exact `/v1/session/posture` for one locally selected recent-session row only and keeps that read-only evidence separate from the already-observed local session-surface rail.")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                if let selectedRowState {
+                    metadataRow(label: "selected_session_id", value: selectedRowState.sessionID)
+                    metadataRow(label: "selected_session_state", value: selectedRowState.sessionState)
+                } else {
+                    Text("Select one current-device recent-session row above to inspect bounded read-only posture evidence for that session only.")
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
+                if let outcomeState = desktopSessionPostureEvidenceRuntimeOutcomeState,
+                   selectedRowState?.sessionID == outcomeState.sessionID {
+                    Text(outcomeState.title)
+                        .font(.subheadline.weight(.semibold))
+
+                    ForEach(
+                        [
+                            ("dispatch_phase", outcomeState.phase.rawValue),
+                            ("request_id", outcomeState.requestID),
+                            ("endpoint", outcomeState.endpoint),
+                            ("device_id", outcomeState.deviceID),
+                            ("session_id", outcomeState.sessionID),
+                            ("outcome", outcomeState.outcome ?? "not_available"),
+                            ("reason", outcomeState.reason ?? "not_available"),
+                        ],
+                        id: \.0
+                    ) { row in
+                        metadataRow(label: row.0, value: row.1)
+                    }
+
+                    Text(outcomeState.summary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                    Text(outcomeState.detail)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                    if outcomeState.phase == .completed,
+                       let response = outcomeState.response {
+                        if let sessionState = response.sessionState {
+                            metadataRow(label: "session_state", value: sessionState)
+                        }
+                        if let lastTurnID = response.lastTurnID {
+                            metadataRow(label: "last_turn_id", value: lastTurnID)
+                        }
+                        if let projectID = response.projectID {
+                            metadataRow(label: "project_id", value: projectID)
+                        }
+                        if let pinnedContextRefs = response.pinnedContextRefs,
+                           !pinnedContextRefs.isEmpty {
+                            metadataRow(
+                                label: "pinned_context_refs",
+                                value: pinnedContextRefs.joined(separator: ", ")
+                            )
+                        }
+                        if let sessionAttachOutcome = response.sessionAttachOutcome {
+                            metadataRow(label: "session_attach_outcome", value: sessionAttachOutcome)
+                        }
+                        if let selectedThreadID = response.selectedThreadID {
+                            metadataRow(label: "selected_thread_id", value: selectedThreadID)
+                        }
+                        if let selectedThreadTitle = response.selectedThreadTitle {
+                            metadataRow(label: "selected_thread_title", value: selectedThreadTitle)
+                        }
+                        if let pendingWorkOrderID = response.pendingWorkOrderID {
+                            metadataRow(label: "pending_work_order_id", value: pendingWorkOrderID)
+                        }
+                        if let resumeTier = response.resumeTier {
+                            metadataRow(label: "resume_tier", value: resumeTier)
+                        }
+                        if let resumeSummaryBullets = response.resumeSummaryBullets,
+                           !resumeSummaryBullets.isEmpty {
+                            metadataRow(
+                                label: "resume_summary_bullets",
+                                value: resumeSummaryBullets.joined(separator: " | ")
+                            )
+                        }
+                        if let recoveryMode = response.recoveryMode {
+                            metadataRow(label: "recovery_mode", value: recoveryMode)
+                        }
+                        if let reconciliationDecision = response.reconciliationDecision {
+                            metadataRow(
+                                label: "reconciliation_decision",
+                                value: reconciliationDecision
+                            )
+                        }
+                    }
+                } else if selectedRowState != nil {
+                    Text("Awaiting bounded recent-session posture-evidence visibility refresh for the selected current-device recent-session row.")
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
+                Text("This card remains read-only only: no synthetic transcript surface, no merge into `observedSessionSurfaces`, and no recent-row-driven attach / resume / recover or reopen authority are introduced here.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        } label: {
+            Text("Recent-Session Posture Evidence")
                 .font(.headline)
         }
     }
