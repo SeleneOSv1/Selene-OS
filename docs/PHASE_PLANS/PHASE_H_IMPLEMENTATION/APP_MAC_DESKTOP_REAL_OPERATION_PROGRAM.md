@@ -93,13 +93,13 @@ Desktop Selene is considered real when all of the following are true:
 
 ### Built But Still Bounded
 - wake remains foreground-only and direct-user-start only, with no hidden/background auto-start and no wake parity claim
-- the conversation-first shell remains session-bound and non-authoritative, with no conversation-list / session-list selection yet
+- the conversation-first shell now preserves one bounded local observed-session-surface selection rail only; broader conversation-list / session-list selection remains unimplemented
 - search and tool rendering remain cloud-authored and read-only, with no local search input or local tool invocation controls yet
 - session entry remains limited to exact route-specific attach / resume / recover seams, with no generic reopen authority
 - thread-key-backed continuity proofs are live for persisted project / pinned-context / thread-policy reuse, but the shell still does not author or directly transport those broader carriers
 
 ### Still Missing
-- broader desktop conversation-list / session-list selection
+- broader desktop conversation-list / session-list selection beyond the current bounded observed-session-surface rail
 - broader desktop search input beyond already-landed keyboard typed-turn request production
 - broader desktop tool authoring / invocation controls
 - broader hidden/background wake auto-start and broader wake parity
@@ -111,10 +111,9 @@ Desktop Selene is considered real when all of the following are true:
 - Use later strict H-builds to select the exact next winner; this umbrella document does not itself authorize a specific next build.
 
 ### Current Likely Next Capability-Unlock Families
-1. desktop conversation-list / session-list selection
-2. desktop tool authoring / invocation controls
-3. later hidden/background wake auto-start only if a lawful exact seam is proven
-4. later shell-side `projectID` / `pinnedContextRefs` transport or authoring only if a lawful exact seam is proven
+1. desktop tool authoring / invocation controls
+2. later hidden/background wake auto-start only if a lawful exact seam is proven
+3. later shell-side `projectID` / `pinnedContextRefs` transport or authoring only if a lawful exact seam is proven
 
 ## Program Status Crosswalk
 This matrix is descriptive only and does not override [MASTER_BUILD_COMPLETION_PLAN.md](/Users/selene/Documents/Selene-OS/docs/MASTER_BUILD_COMPLETION_PLAN.md).
@@ -511,7 +510,7 @@ This program does not authorize a UI-only redesign that ignores the runtime. The
 
 ### Phase 7. Conversation-First Desktop Shell — baseline built, product completion partial
 - transcript-primary conversation shell, support rail, bounded keyboard typed-turn request production, authoritative reply attachments, provenance, playback, runtime timeline entries, and read-only tool-lane rendering are live
-- conversation-list / session-list selection, broader search input, and tool controls remain missing
+- bounded local observed-session-surface selection is now live; broader search input and tool controls remain missing
 
 ### Phase 8. Search and Tool Completion — rendering built, local input / invocation still missing
 - canonical search/tool completion rendering, sources, retrieval metadata, and read-only tool posture are live
@@ -611,18 +610,18 @@ This section is a planning queue only.
   - what should come next
 
 ### Current Exact Next Winner
-- bounded native macOS conversation-list / session-list selection on top of the already-live conversation-first shell
+- bounded native macOS read-only-to-executable tool authoring / invocation controls through the already-live canonical tool lane
 
 ### Why This Is Next
-- It is the next actual desktop product-surface capability unlock after the now-landed typed-turn keyboard composer.
-- Current master truth still says broader desktop conversation-list / session-list selection remains unimplemented: [MASTER_BUILD_COMPLETION_PLAN.md#L208](/Users/selene/Documents/Selene-OS/docs/MASTER_BUILD_COMPLETION_PLAN.md#L208).
-- The current conversation-first shell is still session-bound and non-authoritative, with no user-selectable conversation/session rail yet.
-- The shell now already supports explicit voice, bounded foreground wake-to-turn, and bounded typed-turn production, so conversation/session selection is the next smallest coherent unlock that materially improves desktop usability without widening into fake local authority.
+- It is the next actual desktop product-surface capability unlock after the now-landed bounded observed-session-surface selection rail.
+- Current master truth still says broader desktop tool authoring / invocation controls remain unimplemented: [MASTER_BUILD_COMPLETION_PLAN.md#L203](/Users/selene/Documents/Selene-OS/docs/MASTER_BUILD_COMPLETION_PLAN.md#L203).
+- The current conversation-first shell already renders cloud-authored read-only tool/search outcomes, but it still exposes no bounded executable local tool authoring / invocation controls.
+- The shell now already supports explicit voice, bounded foreground wake-to-turn, bounded typed-turn production, and bounded observed-session-surface selection, so tool authoring / invocation is the next smallest coherent unlock that materially improves desktop usefulness without widening into fake local authority.
 - This unlock stays on the product-surface lane rather than falling back into another proof-only regression-lock slice.
 
 ### Explicitly Not Next
 - not a standalone desktop search box with local search execution
-- not desktop tool authoring / invocation controls yet
+- not broader conversation-list / session-list fetch or generic reopen authority
 - not hidden/background wake auto-start or wake parity
 - not shell-side `projectID` / `pinnedContextRefs` transport
 - not shell-side thread-policy authoring controls
@@ -630,9 +629,9 @@ This section is a planning queue only.
 - not another regression-lock-only build unless repo truth changes and a capability unlock becomes blocked
 
 ### Ordered Queue After The Current Exact Next Winner
-1. bounded native macOS read-only-to-executable tool authoring / invocation controls through the already-live canonical tool lane
-2. later hidden/background wake auto-start only if one lawful exact seam is proven without fake parity claims
-3. later shell-side `projectID` / `pinnedContextRefs` transport or authoring only if one lawful exact seam is proven
+1. later hidden/background wake auto-start only if one lawful exact seam is proven without fake parity claims
+2. later shell-side `projectID` / `pinnedContextRefs` transport or authoring only if one lawful exact seam is proven
+3. later broader conversation-list / session-list fetch only if one lawful exact seam is proven without widening into fake local authority
 
 ### Queue Maintenance Rule After Every Desktop H-Build
 - Refresh the `Current Repo Baseline` section if newly landed work changes what is actually built.

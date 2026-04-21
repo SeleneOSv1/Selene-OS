@@ -2984,6 +2984,95 @@ private enum DesktopRecoveryVisibleSurface {
     }
 }
 
+private enum DesktopObservedSessionSurface: Equatable, Identifiable {
+    case sessionHeader(DesktopSessionHeaderContext)
+    case sessionActive(DesktopSessionActiveVisibleContext)
+    case sessionSoftClosed(DesktopSessionSoftClosedVisibleContext)
+    case sessionSuspended(DesktopSessionSuspendedVisibleContext)
+
+    var id: String {
+        "\(sourceSurfaceIdentity)::\(sessionID)"
+    }
+
+    var sourceSurfaceIdentity: String {
+        switch self {
+        case .sessionHeader:
+            return "SESSION_OPEN_VISIBLE"
+        case .sessionActive:
+            return "SESSION_ACTIVE_VISIBLE"
+        case .sessionSoftClosed:
+            return "SESSION_SOFT_CLOSED_VISIBLE"
+        case .sessionSuspended:
+            return "SESSION_SUSPENDED_VISIBLE"
+        }
+    }
+
+    var sessionState: String {
+        switch self {
+        case .sessionHeader(let context):
+            return context.sessionState
+        case .sessionActive(let context):
+            return context.sessionState
+        case .sessionSoftClosed(let context):
+            return context.sessionState
+        case .sessionSuspended(let context):
+            return context.sessionState
+        }
+    }
+
+    var sessionID: String {
+        switch self {
+        case .sessionHeader(let context):
+            return context.sessionID
+        case .sessionActive(let context):
+            return context.sessionID
+        case .sessionSoftClosed(let context):
+            return context.sessionID
+        case .sessionSuspended(let context):
+            return context.sessionID
+        }
+    }
+
+    var postureLabel: String {
+        switch self {
+        case .sessionHeader:
+            return "current"
+        case .sessionActive:
+            return "active"
+        case .sessionSoftClosed:
+            return "soft-closed"
+        case .sessionSuspended:
+            return "suspended"
+        }
+    }
+
+    var selectionTitle: String {
+        switch self {
+        case .sessionHeader:
+            return "Current session header"
+        case .sessionActive:
+            return "Active conversation"
+        case .sessionSoftClosed(let context):
+            return context.selectedThreadTitle ?? "Archived recent slice"
+        case .sessionSuspended:
+            return "Suspended session"
+        }
+    }
+
+    var selectionSummary: String {
+        switch self {
+        case .sessionHeader(let context):
+            return "Read-only current session header for `\(context.sessionID)` with exact `session_attach_outcome=\(context.sessionAttachOutcome)`."
+        case .sessionActive(let context):
+            return "Read-only active visible transcript surface for `\(context.sessionID)` turn `\(context.turnID)`."
+        case .sessionSoftClosed(let context):
+            return "Read-only archived recent slice for `\(context.sessionID)` with bounded explicit resume context only."
+        case .sessionSuspended(let context):
+            return "Read-only suspended posture for `\(context.sessionID)` with allowed-next-step visibility only."
+        }
+    }
+}
+
 enum DesktopOnboardingEntryRouteKind: String, Equatable {
     case inviteOpen = "INVITE_OPEN"
     case appOpen = "APP_OPEN"
@@ -4353,6 +4442,8 @@ struct DesktopSessionShellView: View {
     @State private var latestSessionActiveVisibleContext: DesktopSessionActiveVisibleContext?
     @State private var latestSessionSoftClosedVisibleContext: DesktopSessionSoftClosedVisibleContext?
     @State private var latestSessionSuspendedVisibleContext: DesktopSessionSuspendedVisibleContext?
+    @State private var observedSessionSurfaces: [DesktopObservedSessionSurface] = []
+    @State private var selectedObservedSessionSurfaceID: String?
     @State private var desktopOnboardingEntryContext: DesktopOnboardingEntryContext?
     @State private var interruptResponsePendingRequest: InterruptContinuityResponseRequestState?
     @State private var interruptResponseFailedRequest: InterruptContinuityResponseFailureState?
@@ -4480,16 +4571,20 @@ struct DesktopSessionShellView: View {
                 latestSessionSuspendedVisibleContext = nil
 
                 if let sessionAttachOutcome = context.sessionAttachOutcome {
-                    latestSessionHeaderContext = DesktopSessionHeaderContext(
+                    let headerContext = DesktopSessionHeaderContext(
                         sessionState: context.sessionState,
                         sessionID: context.sessionID,
                         sessionAttachOutcome: sessionAttachOutcome,
                         recoveryMode: context.recoveryMode,
                         reconciliationDecision: context.reconciliationDecision
                     )
+                    latestSessionHeaderContext = headerContext
+                    recordObservedSessionSurface(.sessionHeader(headerContext))
                 } else if latestSessionHeaderContext?.sessionID != context.sessionID {
                     latestSessionHeaderContext = nil
                 }
+
+                recordObservedSessionSurface(.sessionActive(context))
 
                 return
             }
@@ -4504,6 +4599,8 @@ struct DesktopSessionShellView: View {
                     latestSessionHeaderContext = nil
                 }
 
+                recordObservedSessionSurface(.sessionSoftClosed(context))
+
                 return
             }
 
@@ -4517,6 +4614,8 @@ struct DesktopSessionShellView: View {
                     latestSessionHeaderContext = nil
                 }
 
+                recordObservedSessionSurface(.sessionSuspended(context))
+
                 return
             }
 
@@ -4526,6 +4625,7 @@ struct DesktopSessionShellView: View {
                 latestSessionActiveVisibleContext = nil
                 latestSessionSoftClosedVisibleContext = nil
                 latestSessionSuspendedVisibleContext = nil
+                recordObservedSessionSurface(.sessionHeader(context))
             }
         }
     }
@@ -4591,20 +4691,20 @@ struct DesktopSessionShellView: View {
     }
 
     private var activeRecoveryVisibleSurface: DesktopRecoveryVisibleSurface? {
-        guard latestSessionSuspendedVisibleContext == nil else {
+        guard foregroundSessionSuspendedVisibleContext == nil else {
             return nil
         }
 
-        if let latestSessionActiveVisibleContext {
-            return .sessionActive(latestSessionActiveVisibleContext)
+        if let foregroundSessionActiveVisibleContext {
+            return .sessionActive(foregroundSessionActiveVisibleContext)
         }
 
-        if let latestSessionSoftClosedVisibleContext {
-            return .sessionSoftClosed(latestSessionSoftClosedVisibleContext)
+        if let foregroundSessionSoftClosedVisibleContext {
+            return .sessionSoftClosed(foregroundSessionSoftClosedVisibleContext)
         }
 
-        if let latestSessionHeaderContext {
-            return .sessionHeader(latestSessionHeaderContext)
+        if let foregroundSessionHeaderContext {
+            return .sessionHeader(foregroundSessionHeaderContext)
         }
 
         return nil
@@ -4628,16 +4728,121 @@ struct DesktopSessionShellView: View {
 
     private var activeInterruptDisplayState: DesktopInterruptDisplayState? {
         guard activeRecoveryDisplayState == nil,
-              latestSessionSuspendedVisibleContext == nil,
-              let latestSessionActiveVisibleContext else {
+              foregroundSessionSuspendedVisibleContext == nil,
+              let foregroundSessionActiveVisibleContext else {
             return nil
         }
 
         return resolvedInterruptDisplayState(
-            interruptSubjectRelation: latestSessionActiveVisibleContext.interruptSubjectRelation,
-            interruptContinuityOutcome: latestSessionActiveVisibleContext.interruptContinuityOutcome,
-            interruptResumePolicy: latestSessionActiveVisibleContext.interruptResumePolicy
+            interruptSubjectRelation: foregroundSessionActiveVisibleContext.interruptSubjectRelation,
+            interruptContinuityOutcome: foregroundSessionActiveVisibleContext.interruptContinuityOutcome,
+            interruptResumePolicy: foregroundSessionActiveVisibleContext.interruptResumePolicy
         )
+    }
+
+    private var currentDominantObservedSessionSurface: DesktopObservedSessionSurface? {
+        if let latestSessionSuspendedVisibleContext {
+            return .sessionSuspended(latestSessionSuspendedVisibleContext)
+        }
+
+        if let latestSessionActiveVisibleContext {
+            return .sessionActive(latestSessionActiveVisibleContext)
+        }
+
+        if let latestSessionSoftClosedVisibleContext {
+            return .sessionSoftClosed(latestSessionSoftClosedVisibleContext)
+        }
+
+        if let latestSessionHeaderContext {
+            return .sessionHeader(latestSessionHeaderContext)
+        }
+
+        return nil
+    }
+
+    private var selectedObservedSessionSurface: DesktopObservedSessionSurface? {
+        guard let selectedObservedSessionSurfaceID else {
+            return nil
+        }
+
+        return observedSessionSurfaces.first { $0.id == selectedObservedSessionSurfaceID }
+    }
+
+    private var foregroundObservedSessionSurface: DesktopObservedSessionSurface? {
+        selectedObservedSessionSurface ?? currentDominantObservedSessionSurface
+    }
+
+    private var desktopForegroundSelectionShowsCurrentDominantSurface: Bool {
+        guard let selectedObservedSessionSurface else {
+            return true
+        }
+
+        return selectedObservedSessionSurface.id == currentDominantObservedSessionSurface?.id
+    }
+
+    private var foregroundSessionHeaderContext: DesktopSessionHeaderContext? {
+        guard let foregroundObservedSessionSurface else {
+            return nil
+        }
+
+        if case .sessionHeader(let context) = foregroundObservedSessionSurface {
+            return context
+        }
+
+        return nil
+    }
+
+    private var foregroundSessionActiveVisibleContext: DesktopSessionActiveVisibleContext? {
+        guard let foregroundObservedSessionSurface else {
+            return nil
+        }
+
+        if case .sessionActive(let context) = foregroundObservedSessionSurface {
+            return context
+        }
+
+        return nil
+    }
+
+    private var foregroundSessionSoftClosedVisibleContext: DesktopSessionSoftClosedVisibleContext? {
+        guard let foregroundObservedSessionSurface else {
+            return nil
+        }
+
+        if case .sessionSoftClosed(let context) = foregroundObservedSessionSurface {
+            return context
+        }
+
+        return nil
+    }
+
+    private var foregroundSessionSuspendedVisibleContext: DesktopSessionSuspendedVisibleContext? {
+        guard let foregroundObservedSessionSurface else {
+            return nil
+        }
+
+        if case .sessionSuspended(let context) = foregroundObservedSessionSurface {
+            return context
+        }
+
+        return nil
+    }
+
+    private func recordObservedSessionSurface(_ surface: DesktopObservedSessionSurface) {
+        observedSessionSurfaces.removeAll { $0.id == surface.id }
+        observedSessionSurfaces.insert(surface, at: 0)
+
+        if observedSessionSurfaces.count > 8 {
+            observedSessionSurfaces.removeSubrange(8...)
+        }
+    }
+
+    private func selectObservedSessionSurface(_ surface: DesktopObservedSessionSurface) {
+        if surface.id == currentDominantObservedSessionSurface?.id {
+            selectedObservedSessionSurfaceID = nil
+        } else {
+            selectedObservedSessionSurfaceID = surface.id
+        }
     }
 
     private var posturePanel: some View {
@@ -4959,7 +5164,7 @@ struct DesktopSessionShellView: View {
                     interruptResponseFailedRequestCard(failedRequest)
                 }
 
-                Text("No dedicated local search controls, no local tool authoring controls, no conversation-list selection, no shell-side `projectID` or `pinnedContextRefs` transport, no hidden/background wake behavior, and no autonomous unlock claim are introduced by this composer.")
+                Text("No dedicated local search controls, no local tool authoring controls, no shell-side `projectID` or `pinnedContextRefs` transport, no hidden/background wake behavior, and no autonomous unlock claim are introduced by this composer.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -5316,11 +5521,12 @@ struct DesktopSessionShellView: View {
             return nil
         }
 
+        let isShowingCurrentDominantSurface = desktopForegroundSelectionShowsCurrentDominantSurface
         let dominantPosture: String
         let headerTitle: String
         let headerDetail: String
 
-        if latestSessionSuspendedVisibleContext != nil {
+        if foregroundSessionSuspendedVisibleContext != nil {
             dominantPosture = "SESSION_SUSPENDED_VISIBLE"
             headerTitle = "Conversation unavailable while the session is suspended"
             headerDetail = "This transcript-primary pane fails closed to explanation-only content while the authoritative runtime keeps the desktop session in a hard full takeover posture."
@@ -5328,14 +5534,20 @@ struct DesktopSessionShellView: View {
             dominantPosture = "QUARANTINED_LOCAL_STATE"
             headerTitle = "Conversation unavailable while local state is quarantined"
             headerDetail = "This transcript-primary pane fails closed to explanation-only content until authoritative reread clears the quarantine posture cloud-side."
-        } else if let latestSessionActiveVisibleContext {
-            dominantPosture = latestSessionActiveVisibleContext.sessionState
+        } else if let foregroundSessionActiveVisibleContext {
+            dominantPosture = foregroundSessionActiveVisibleContext.sessionState
             headerTitle = "Active conversation"
-            headerDetail = "Cloud-authored active-session transcript, bounded runtime dispatch posture, and authoritative reply surfaces remain visible here without introducing local session authority."
-        } else if let latestSessionSoftClosedVisibleContext {
-            dominantPosture = latestSessionSoftClosedVisibleContext.sessionState
+            headerDetail = isShowingCurrentDominantSurface
+                ? "Cloud-authored active-session transcript, bounded runtime dispatch posture, and authoritative reply surfaces remain visible here without introducing local session authority."
+                : "A previously observed active-session transcript surface is foregrounded here in bounded read-only form only; local selection does not retarget runtime mutation."
+        } else if let foregroundSessionSoftClosedVisibleContext {
+            dominantPosture = foregroundSessionSoftClosedVisibleContext.sessionState
             headerTitle = "Archived recent slice"
             headerDetail = "Soft-closed archive truth remains distinct from PH1.M resume context while explicit resume stays bounded and non-authoritative."
+        } else if let foregroundSessionHeaderContext {
+            dominantPosture = foregroundSessionHeaderContext.sessionState
+            headerTitle = "Current session header"
+            headerDetail = "Cloud-authored session-header visibility remains foregrounded here in bounded read-only form only while local selection stays non-authoritative."
         } else if let activeRecoveryDisplayState {
             dominantPosture = activeRecoveryDisplayState.rawValue
             headerTitle = "\(activeRecoveryDisplayState.rawValue) conversation posture"
@@ -5352,12 +5564,12 @@ struct DesktopSessionShellView: View {
 
         var timelineEntries: [DesktopConversationTimelineEntryState] = []
 
-        if let latestSessionActiveVisibleContext {
+        if let foregroundSessionActiveVisibleContext {
             timelineEntries.append(
                 DesktopConversationTimelineEntryState(
                     speaker: "You",
                     posture: "current_user_turn_text",
-                    body: latestSessionActiveVisibleContext.currentUserTurnText,
+                    body: foregroundSessionActiveVisibleContext.currentUserTurnText,
                     detail: "Current user turn remains text-visible, session-bound, and cloud-authoritative for the active desktop session.",
                     sourceSurface: "SESSION_ACTIVE_VISIBLE"
                 )
@@ -5366,17 +5578,17 @@ struct DesktopSessionShellView: View {
                 DesktopConversationTimelineEntryState(
                     speaker: "Selene",
                     posture: "current_selene_turn_text",
-                    body: latestSessionActiveVisibleContext.currentSeleneTurnText,
+                    body: foregroundSessionActiveVisibleContext.currentSeleneTurnText,
                     detail: "Current Selene turn remains text-visible and tied to the same active cloud session without a local-only transcript fork.",
                     sourceSurface: "SESSION_ACTIVE_VISIBLE"
                 )
             )
-        } else if let latestSessionSoftClosedVisibleContext {
+        } else if let foregroundSessionSoftClosedVisibleContext {
             timelineEntries.append(
                 DesktopConversationTimelineEntryState(
                     speaker: "You",
                     posture: "archived_user_turn_text",
-                    body: latestSessionSoftClosedVisibleContext.archivedUserTurnText,
+                    body: foregroundSessionSoftClosedVisibleContext.archivedUserTurnText,
                     detail: "Archived recent slice remains durable archived conversation truth and stays distinct from bounded PH1.M resume-context output.",
                     sourceSurface: "SESSION_SOFT_CLOSED_VISIBLE"
                 )
@@ -5385,133 +5597,143 @@ struct DesktopSessionShellView: View {
                 DesktopConversationTimelineEntryState(
                     speaker: "Selene",
                     posture: "archived_selene_turn_text",
-                    body: latestSessionSoftClosedVisibleContext.archivedSeleneTurnText,
+                    body: foregroundSessionSoftClosedVisibleContext.archivedSeleneTurnText,
                     detail: "Archived recent slice remains text-visible after visual reset without local auto-reopen, hidden spoken-only output, or local transcript authority.",
                     sourceSurface: "SESSION_SOFT_CLOSED_VISIBLE"
                 )
             )
         }
 
-        let trimmedExplicitVoiceTranscriptPreview = explicitVoiceController.transcriptPreview
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        if explicitVoiceController.isListening,
-           explicitVoiceController.pendingRequest == nil,
-           !trimmedExplicitVoiceTranscriptPreview.isEmpty {
-            timelineEntries.append(
-                DesktopConversationTimelineEntryState(
-                    speaker: "You",
-                    posture: "explicit_voice_live_preview",
-                    body: trimmedExplicitVoiceTranscriptPreview,
-                    detail: "Bounded explicit live transcript preview only. Canonical runtime acceptance and later cloud-visible response remain authoritative.",
-                    sourceSurface: "EXPLICIT_VOICE_LISTENING"
+        if isShowingCurrentDominantSurface {
+            let trimmedExplicitVoiceTranscriptPreview = explicitVoiceController.transcriptPreview
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if explicitVoiceController.isListening,
+               explicitVoiceController.pendingRequest == nil,
+               !trimmedExplicitVoiceTranscriptPreview.isEmpty {
+                timelineEntries.append(
+                    DesktopConversationTimelineEntryState(
+                        speaker: "You",
+                        posture: "explicit_voice_live_preview",
+                        body: trimmedExplicitVoiceTranscriptPreview,
+                        detail: "Bounded explicit live transcript preview only. Canonical runtime acceptance and later cloud-visible response remain authoritative.",
+                        sourceSurface: "EXPLICIT_VOICE_LISTENING"
+                    )
                 )
-            )
+            }
+
+            let trimmedWakeTranscriptPreview = desktopWakeListenerController.transcriptPreview
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if desktopWakeListenerPromptState != nil,
+               desktopWakeListenerController.listenerState == .listening,
+               desktopWakeListenerController.pendingRequest == nil,
+               lastStagedWakeTriggeredVoiceTurnRequestState == nil,
+               !trimmedWakeTranscriptPreview.isEmpty {
+                timelineEntries.append(
+                    DesktopConversationTimelineEntryState(
+                        speaker: "You",
+                        posture: "wake_voice_live_preview",
+                        body: trimmedWakeTranscriptPreview,
+                        detail: "Bounded wake live transcript preview only. Exact wake-prefix detection, canonical runtime acceptance, and later cloud-visible response remain authoritative.",
+                        sourceSurface: "WAKE_TRIGGERED_VOICE_LISTENING"
+                    )
+                )
+            }
+
+            if let pendingRequest = explicitVoiceController.pendingRequest {
+                timelineEntries.append(
+                    DesktopConversationTimelineEntryState(
+                        speaker: "You",
+                        posture: "explicit_voice_pending_preview",
+                        body: pendingRequest.boundedPreview,
+                        detail: "Bounded explicit voice pending preview only. Canonical runtime and later cloud-visible acceptance remain authoritative.",
+                        sourceSurface: "EXPLICIT_VOICE_PENDING"
+                    )
+                )
+            }
+
+            if let pendingWakeRequest = desktopWakeListenerController.pendingRequest
+                ?? lastStagedWakeTriggeredVoiceTurnRequestState {
+                timelineEntries.append(
+                    DesktopConversationTimelineEntryState(
+                        speaker: "You",
+                        posture: "wake_voice_pending_preview",
+                        body: pendingWakeRequest.boundedPreview,
+                        detail: "Bounded post-wake transcript remainder only. This foreground wake-trigger preview remains non-authoritative until canonical runtime returns.",
+                        sourceSurface: "WAKE_TRIGGERED_VOICE_PENDING"
+                    )
+                )
+            }
+
+            if let failedRequest = explicitVoiceController.failedRequest,
+               !explicitVoiceController.isListening,
+               explicitVoiceController.pendingRequest == nil {
+                timelineEntries.append(
+                    DesktopConversationTimelineEntryState(
+                        speaker: "You",
+                        posture: "explicit_voice_failed_request_preview",
+                        body: failedRequest.summary,
+                        detail: "Bounded explicit local failure visibility only. Canonical runtime acceptance, transcript authority, and later cloud-visible response remain authoritative.",
+                        sourceSurface: "EXPLICIT_VOICE_FAILED_REQUEST"
+                    )
+                )
+            }
+
+            if desktopWakeListenerPromptState != nil,
+               let failedWakeRequest = desktopWakeListenerController.failedRequest,
+               desktopWakeListenerController.listenerState == .failed,
+               desktopWakeListenerController.pendingRequest == nil,
+               lastStagedWakeTriggeredVoiceTurnRequestState == nil {
+                timelineEntries.append(
+                    DesktopConversationTimelineEntryState(
+                        speaker: "You",
+                        posture: "wake_voice_failed_request_preview",
+                        body: failedWakeRequest.summary,
+                        detail: "Bounded wake local failure visibility only. Wake authority, canonical runtime acceptance, and later cloud-visible response remain authoritative.",
+                        sourceSurface: "WAKE_TRIGGERED_VOICE_FAILED_REQUEST"
+                    )
+                )
+            }
+
+            if let pendingTypedTurnRequest = desktopTypedTurnPendingRequest {
+                timelineEntries.append(
+                    DesktopConversationTimelineEntryState(
+                        speaker: "You",
+                        posture: "typed_turn_pending_preview",
+                        body: pendingTypedTurnRequest.boundedPreview,
+                        detail: "Bounded typed-turn pending preview only. Canonical runtime acceptance and later cloud-visible response remain authoritative.",
+                        sourceSurface: "KEYBOARD_TYPED_TURN_PENDING"
+                    )
+                )
+            }
+
+            if let failedTypedTurnRequest = desktopTypedTurnFailedRequest,
+               desktopTypedTurnPendingRequest == nil {
+                timelineEntries.append(
+                    DesktopConversationTimelineEntryState(
+                        speaker: "You",
+                        posture: "typed_turn_failed_request_preview",
+                        body: failedTypedTurnRequest.summary,
+                        detail: "Bounded typed-turn failure visibility only. Canonical runtime acceptance, transcript authority, and later cloud-visible response remain authoritative.",
+                        sourceSurface: "KEYBOARD_TYPED_TURN_FAILED_REQUEST"
+                    )
+                )
+            }
         }
 
-        let trimmedWakeTranscriptPreview = desktopWakeListenerController.transcriptPreview
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        if desktopWakeListenerPromptState != nil,
-           desktopWakeListenerController.listenerState == .listening,
-           desktopWakeListenerController.pendingRequest == nil,
-           lastStagedWakeTriggeredVoiceTurnRequestState == nil,
-           !trimmedWakeTranscriptPreview.isEmpty {
-            timelineEntries.append(
-                DesktopConversationTimelineEntryState(
-                    speaker: "You",
-                    posture: "wake_voice_live_preview",
-                    body: trimmedWakeTranscriptPreview,
-                    detail: "Bounded wake live transcript preview only. Exact wake-prefix detection, canonical runtime acceptance, and later cloud-visible response remain authoritative.",
-                    sourceSurface: "WAKE_TRIGGERED_VOICE_LISTENING"
-                )
-            )
-        }
-
-        if let pendingRequest = explicitVoiceController.pendingRequest {
-            timelineEntries.append(
-                DesktopConversationTimelineEntryState(
-                    speaker: "You",
-                    posture: "explicit_voice_pending_preview",
-                    body: pendingRequest.boundedPreview,
-                    detail: "Bounded explicit voice pending preview only. Canonical runtime and later cloud-visible acceptance remain authoritative.",
-                    sourceSurface: "EXPLICIT_VOICE_PENDING"
-                )
-            )
-        }
-
-        if let pendingWakeRequest = desktopWakeListenerController.pendingRequest
-            ?? lastStagedWakeTriggeredVoiceTurnRequestState {
-            timelineEntries.append(
-                DesktopConversationTimelineEntryState(
-                    speaker: "You",
-                    posture: "wake_voice_pending_preview",
-                    body: pendingWakeRequest.boundedPreview,
-                    detail: "Bounded post-wake transcript remainder only. This foreground wake-trigger preview remains non-authoritative until canonical runtime returns.",
-                    sourceSurface: "WAKE_TRIGGERED_VOICE_PENDING"
-                )
-            )
-        }
-
-        if let failedRequest = explicitVoiceController.failedRequest,
-           !explicitVoiceController.isListening,
-           explicitVoiceController.pendingRequest == nil {
-            timelineEntries.append(
-                DesktopConversationTimelineEntryState(
-                    speaker: "You",
-                    posture: "explicit_voice_failed_request_preview",
-                    body: failedRequest.summary,
-                    detail: "Bounded explicit local failure visibility only. Canonical runtime acceptance, transcript authority, and later cloud-visible response remain authoritative.",
-                    sourceSurface: "EXPLICIT_VOICE_FAILED_REQUEST"
-                )
-            )
-        }
-
-        if desktopWakeListenerPromptState != nil,
-           let failedWakeRequest = desktopWakeListenerController.failedRequest,
-           desktopWakeListenerController.listenerState == .failed,
-           desktopWakeListenerController.pendingRequest == nil,
-           lastStagedWakeTriggeredVoiceTurnRequestState == nil {
-            timelineEntries.append(
-                DesktopConversationTimelineEntryState(
-                    speaker: "You",
-                    posture: "wake_voice_failed_request_preview",
-                    body: failedWakeRequest.summary,
-                    detail: "Bounded wake local failure visibility only. Wake authority, canonical runtime acceptance, and later cloud-visible response remain authoritative.",
-                    sourceSurface: "WAKE_TRIGGERED_VOICE_FAILED_REQUEST"
-                )
-            )
-        }
-
-        if let pendingTypedTurnRequest = desktopTypedTurnPendingRequest {
-            timelineEntries.append(
-                DesktopConversationTimelineEntryState(
-                    speaker: "You",
-                    posture: "typed_turn_pending_preview",
-                    body: pendingTypedTurnRequest.boundedPreview,
-                    detail: "Bounded typed-turn pending preview only. Canonical runtime acceptance and later cloud-visible response remain authoritative.",
-                    sourceSurface: "KEYBOARD_TYPED_TURN_PENDING"
-                )
-            )
-        }
-
-        if let failedTypedTurnRequest = desktopTypedTurnFailedRequest,
-           desktopTypedTurnPendingRequest == nil {
-            timelineEntries.append(
-                DesktopConversationTimelineEntryState(
-                    speaker: "You",
-                    posture: "typed_turn_failed_request_preview",
-                    body: failedTypedTurnRequest.summary,
-                    detail: "Bounded typed-turn failure visibility only. Canonical runtime acceptance, transcript authority, and later cloud-visible response remain authoritative.",
-                    sourceSurface: "KEYBOARD_TYPED_TURN_FAILED_REQUEST"
-                )
-            )
-        }
-
-        let authoritativeResponseText = desktopAuthoritativeReplyRenderState?.authoritativeResponseText?
-            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let searchToolCompletionState = desktopConversationSearchToolCompletionState
+        let authoritativeResponseText = isShowingCurrentDominantSurface
+            ? desktopAuthoritativeReplyRenderState?.authoritativeResponseText?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            : ""
+        let searchToolCompletionState = isShowingCurrentDominantSurface
+            ? desktopConversationSearchToolCompletionState
+            : nil
         let readOnlyToolLaneState = searchToolCompletionState?.readOnlyToolLaneState
-        let authoritativeReplyCompletionState = desktopConversationAuthoritativeReplyCompletionState
-        let runtimeDispatchFailureAttachmentState = desktopConversationRuntimeDispatchFailureAttachmentState
+        let authoritativeReplyCompletionState = isShowingCurrentDominantSurface
+            ? desktopConversationAuthoritativeReplyCompletionState
+            : nil
+        let runtimeDispatchFailureAttachmentState = isShowingCurrentDominantSurface
+            ? desktopConversationRuntimeDispatchFailureAttachmentState
+            : nil
         if let runtimeDispatchFailureAttachmentState {
             timelineEntries.append(
                 DesktopConversationTimelineEntryState(
@@ -5540,11 +5762,12 @@ struct DesktopSessionShellView: View {
             )
         }
 
-        if desktopConversationShouldAttachRuntimeCompletedWithoutInlineReply(
-            desktopCanonicalRuntimeOutcomeState,
-            searchToolCompletionState: searchToolCompletionState,
-            authoritativeReplyCompletionState: authoritativeReplyCompletionState
-        ),
+        if isShowingCurrentDominantSurface,
+           desktopConversationShouldAttachRuntimeCompletedWithoutInlineReply(
+               desktopCanonicalRuntimeOutcomeState,
+               searchToolCompletionState: searchToolCompletionState,
+               authoritativeReplyCompletionState: authoritativeReplyCompletionState
+           ),
            let outcomeState = desktopCanonicalRuntimeOutcomeState {
             timelineEntries.append(
                 DesktopConversationTimelineEntryState(
@@ -5591,7 +5814,8 @@ struct DesktopSessionShellView: View {
 
     private var desktopConversationSearchToolCompletionState: DesktopConversationSearchToolCompletionState? {
         guard desktopReadyTimeHandoffIsActive,
-              latestSessionSuspendedVisibleContext == nil,
+              desktopForegroundSelectionShowsCurrentDominantSurface,
+              foregroundSessionSuspendedVisibleContext == nil,
               activeRecoveryDisplayState != .quarantinedLocalState,
               let outcomeState = desktopCanonicalRuntimeOutcomeState,
               outcomeState.phase == .completed,
@@ -5654,7 +5878,8 @@ struct DesktopSessionShellView: View {
 
     private var desktopConversationAuthoritativeReplyCompletionState: DesktopConversationAuthoritativeReplyCompletionState? {
         guard desktopReadyTimeHandoffIsActive,
-              latestSessionSuspendedVisibleContext == nil,
+              desktopForegroundSelectionShowsCurrentDominantSurface,
+              foregroundSessionSuspendedVisibleContext == nil,
               activeRecoveryDisplayState != .quarantinedLocalState,
               let outcomeState = desktopCanonicalRuntimeOutcomeState,
               outcomeState.phase == .completed,
@@ -5694,7 +5919,8 @@ struct DesktopSessionShellView: View {
 
     private var desktopConversationRuntimeDispatchFailureAttachmentState: DesktopConversationRuntimeDispatchFailureAttachmentState? {
         guard desktopReadyTimeHandoffIsActive,
-              latestSessionSuspendedVisibleContext == nil,
+              desktopForegroundSelectionShowsCurrentDominantSurface,
+              foregroundSessionSuspendedVisibleContext == nil,
               activeRecoveryDisplayState != .quarantinedLocalState,
               let outcomeState = desktopCanonicalRuntimeOutcomeState,
               outcomeState.phase == .dispatching || outcomeState.phase == .failed,
@@ -5724,7 +5950,7 @@ struct DesktopSessionShellView: View {
         let trimmedExplicitVoiceTranscriptPreview = explicitVoiceController.transcriptPreview
             .trimmingCharacters(in: .whitespacesAndNewlines)
         guard desktopReadyTimeHandoffIsActive,
-              latestSessionSuspendedVisibleContext == nil,
+              foregroundSessionSuspendedVisibleContext == nil,
               activeRecoveryDisplayState != .quarantinedLocalState,
               explicitVoiceController.isListening,
               explicitVoiceController.pendingRequest == nil,
@@ -5751,7 +5977,7 @@ struct DesktopSessionShellView: View {
         let trimmedWakeTranscriptPreview = desktopWakeListenerController.transcriptPreview
             .trimmingCharacters(in: .whitespacesAndNewlines)
         guard desktopReadyTimeHandoffIsActive,
-              latestSessionSuspendedVisibleContext == nil,
+              foregroundSessionSuspendedVisibleContext == nil,
               activeRecoveryDisplayState != .quarantinedLocalState,
               let wakeListenerPromptState = desktopWakeListenerPromptState,
               desktopWakeListenerController.listenerState == .listening,
@@ -5778,7 +6004,7 @@ struct DesktopSessionShellView: View {
         for timelineEntries: [DesktopConversationTimelineEntryState]
     ) -> DesktopConversationExplicitVoiceFailedRequestAttachmentState? {
         guard desktopReadyTimeHandoffIsActive,
-              latestSessionSuspendedVisibleContext == nil,
+              foregroundSessionSuspendedVisibleContext == nil,
               activeRecoveryDisplayState != .quarantinedLocalState,
               let failedRequest = explicitVoiceController.failedRequest,
               !explicitVoiceController.isListening,
@@ -5803,7 +6029,7 @@ struct DesktopSessionShellView: View {
         for timelineEntries: [DesktopConversationTimelineEntryState]
     ) -> DesktopConversationWakeTriggeredVoiceFailedRequestAttachmentState? {
         guard desktopReadyTimeHandoffIsActive,
-              latestSessionSuspendedVisibleContext == nil,
+              foregroundSessionSuspendedVisibleContext == nil,
               activeRecoveryDisplayState != .quarantinedLocalState,
               let wakeListenerPromptState = desktopWakeListenerPromptState,
               let failedRequest = desktopWakeListenerController.failedRequest,
@@ -5832,7 +6058,7 @@ struct DesktopSessionShellView: View {
         for timelineEntries: [DesktopConversationTimelineEntryState]
     ) -> DesktopConversationExplicitVoicePendingAttachmentState? {
         guard desktopReadyTimeHandoffIsActive,
-              latestSessionSuspendedVisibleContext == nil,
+              foregroundSessionSuspendedVisibleContext == nil,
               activeRecoveryDisplayState != .quarantinedLocalState,
               let pendingRequest = explicitVoiceController.pendingRequest,
               timelineEntries.contains(where: { entry in
@@ -5863,7 +6089,7 @@ struct DesktopSessionShellView: View {
         for timelineEntries: [DesktopConversationTimelineEntryState]
     ) -> DesktopConversationWakeTriggeredVoicePendingAttachmentState? {
         guard desktopReadyTimeHandoffIsActive,
-              latestSessionSuspendedVisibleContext == nil,
+              foregroundSessionSuspendedVisibleContext == nil,
               activeRecoveryDisplayState != .quarantinedLocalState,
               let pendingRequest = desktopWakeListenerController.pendingRequest
                 ?? lastStagedWakeTriggeredVoiceTurnRequestState,
@@ -5898,8 +6124,9 @@ struct DesktopSessionShellView: View {
 
         return DesktopConversationSupportRailState(
             title: "Operational controls and status",
-            detail: "Support surfaces remain bounded, session-bound, and non-authoritative while the primary pane stays transcript-first.",
+            detail: "Support surfaces remain bounded, session-bound, and non-authoritative while one local observed-session selection rail can foreground already-seen cloud-authored surfaces.",
             supportSurfaceLabels: [
+                "session_surface_selection_rail",
                 "posture_panel",
                 "history",
                 "session_multi_posture_entry",
@@ -6347,21 +6574,21 @@ struct DesktopSessionShellView: View {
     }
 
     private var desktopSessionSoftClosedVisibilityState: DesktopSessionSoftClosedVisibilityState? {
-        guard let latestSessionSoftClosedVisibleContext else {
+        guard let foregroundSessionSoftClosedVisibleContext else {
             return nil
         }
 
         return DesktopSessionSoftClosedVisibilityState(
             sourceSurfaceIdentity: "SESSION_SOFT_CLOSED_VISIBLE",
-            sessionState: latestSessionSoftClosedVisibleContext.sessionState,
-            sessionID: latestSessionSoftClosedVisibleContext.sessionID,
-            selectedThreadID: latestSessionSoftClosedVisibleContext.selectedThreadID,
-            selectedThreadTitle: latestSessionSoftClosedVisibleContext.selectedThreadTitle,
-            pendingWorkOrderID: latestSessionSoftClosedVisibleContext.pendingWorkOrderID,
-            resumeTier: latestSessionSoftClosedVisibleContext.resumeTier,
-            resumeSummaryBullets: latestSessionSoftClosedVisibleContext.resumeSummaryBullets,
-            archivedUserTurnText: latestSessionSoftClosedVisibleContext.archivedUserTurnText,
-            archivedSeleneTurnText: latestSessionSoftClosedVisibleContext.archivedSeleneTurnText
+            sessionState: foregroundSessionSoftClosedVisibleContext.sessionState,
+            sessionID: foregroundSessionSoftClosedVisibleContext.sessionID,
+            selectedThreadID: foregroundSessionSoftClosedVisibleContext.selectedThreadID,
+            selectedThreadTitle: foregroundSessionSoftClosedVisibleContext.selectedThreadTitle,
+            pendingWorkOrderID: foregroundSessionSoftClosedVisibleContext.pendingWorkOrderID,
+            resumeTier: foregroundSessionSoftClosedVisibleContext.resumeTier,
+            resumeSummaryBullets: foregroundSessionSoftClosedVisibleContext.resumeSummaryBullets,
+            archivedUserTurnText: foregroundSessionSoftClosedVisibleContext.archivedUserTurnText,
+            archivedSeleneTurnText: foregroundSessionSoftClosedVisibleContext.archivedSeleneTurnText
         )
     }
 
@@ -6544,19 +6771,19 @@ struct DesktopSessionShellView: View {
     }
 
     private var desktopSessionSuspendedVisibilityState: DesktopSessionSuspendedVisibilityState? {
-        guard let latestSessionSuspendedVisibleContext else {
+        guard let foregroundSessionSuspendedVisibleContext else {
             return nil
         }
 
         return DesktopSessionSuspendedVisibilityState(
             sourceSurfaceIdentity: "SESSION_SUSPENDED_VISIBLE",
-            sessionState: latestSessionSuspendedVisibleContext.sessionState,
-            sessionID: latestSessionSuspendedVisibleContext.sessionID,
-            nextAllowedActionsMaySpeak: latestSessionSuspendedVisibleContext.nextAllowedActionsMaySpeak,
-            nextAllowedActionsMustWait: latestSessionSuspendedVisibleContext.nextAllowedActionsMustWait,
-            nextAllowedActionsMustRewake: latestSessionSuspendedVisibleContext.nextAllowedActionsMustRewake,
-            recoveryMode: latestSessionSuspendedVisibleContext.recoveryMode?.rawValue,
-            reconciliationDecision: latestSessionSuspendedVisibleContext.reconciliationDecision?.rawValue
+            sessionState: foregroundSessionSuspendedVisibleContext.sessionState,
+            sessionID: foregroundSessionSuspendedVisibleContext.sessionID,
+            nextAllowedActionsMaySpeak: foregroundSessionSuspendedVisibleContext.nextAllowedActionsMaySpeak,
+            nextAllowedActionsMustWait: foregroundSessionSuspendedVisibleContext.nextAllowedActionsMustWait,
+            nextAllowedActionsMustRewake: foregroundSessionSuspendedVisibleContext.nextAllowedActionsMustRewake,
+            recoveryMode: foregroundSessionSuspendedVisibleContext.recoveryMode?.rawValue,
+            reconciliationDecision: foregroundSessionSuspendedVisibleContext.reconciliationDecision?.rawValue
         )
     }
 
@@ -6578,23 +6805,23 @@ struct DesktopSessionShellView: View {
     private var desktopInterruptVisibilityState: DesktopInterruptVisibilityState? {
         guard
             activeInterruptDisplayState == .interruptVisible,
-            let latestSessionActiveVisibleContext
+            let foregroundSessionActiveVisibleContext
         else {
             return nil
         }
 
         return DesktopInterruptVisibilityState(
             sourceSurfaceIdentity: "INTERRUPT_VISIBLE",
-            sessionState: latestSessionActiveVisibleContext.sessionState,
-            sessionID: latestSessionActiveVisibleContext.sessionID,
-            turnID: latestSessionActiveVisibleContext.turnID,
-            interruptSubjectRelation: latestSessionActiveVisibleContext.interruptSubjectRelation?
+            sessionState: foregroundSessionActiveVisibleContext.sessionState,
+            sessionID: foregroundSessionActiveVisibleContext.sessionID,
+            turnID: foregroundSessionActiveVisibleContext.turnID,
+            interruptSubjectRelation: foregroundSessionActiveVisibleContext.interruptSubjectRelation?
                 .rawValue,
-            interruptContinuityOutcome: latestSessionActiveVisibleContext
+            interruptContinuityOutcome: foregroundSessionActiveVisibleContext
                 .interruptContinuityOutcome?.rawValue,
-            interruptResumePolicy: latestSessionActiveVisibleContext.interruptResumePolicy?.rawValue,
-            returnCheckPending: latestSessionActiveVisibleContext.returnCheckPending,
-            acceptedInterruptPostureSummary: latestSessionActiveVisibleContext
+            interruptResumePolicy: foregroundSessionActiveVisibleContext.interruptResumePolicy?.rawValue,
+            returnCheckPending: foregroundSessionActiveVisibleContext.returnCheckPending,
+            acceptedInterruptPostureSummary: foregroundSessionActiveVisibleContext
                 .acceptedInterruptPostureSummary
         )
     }
@@ -6602,31 +6829,31 @@ struct DesktopSessionShellView: View {
     private var desktopInterruptResponseProductionState: DesktopInterruptResponseProductionState? {
         guard
             activeInterruptDisplayState == .interruptVisible,
-            let latestSessionActiveVisibleContext,
-            latestSessionActiveVisibleContext.hasInterruptResponseProductionSurface
+            let foregroundSessionActiveVisibleContext,
+            foregroundSessionActiveVisibleContext.hasInterruptResponseProductionSurface
         else {
             return nil
         }
 
         return DesktopInterruptResponseProductionState(
             sourceSurfaceIdentity: "INTERRUPT_VISIBLE",
-            sessionState: latestSessionActiveVisibleContext.sessionState,
-            sessionID: latestSessionActiveVisibleContext.sessionID,
-            turnID: latestSessionActiveVisibleContext.turnID,
-            interruptSubjectRelation: latestSessionActiveVisibleContext.interruptSubjectRelation?
+            sessionState: foregroundSessionActiveVisibleContext.sessionState,
+            sessionID: foregroundSessionActiveVisibleContext.sessionID,
+            turnID: foregroundSessionActiveVisibleContext.turnID,
+            interruptSubjectRelation: foregroundSessionActiveVisibleContext.interruptSubjectRelation?
                 .rawValue,
-            interruptContinuityOutcome: latestSessionActiveVisibleContext
+            interruptContinuityOutcome: foregroundSessionActiveVisibleContext
                 .interruptContinuityOutcome?.rawValue,
-            interruptResumePolicy: latestSessionActiveVisibleContext.interruptResumePolicy?.rawValue,
-            returnCheckPending: latestSessionActiveVisibleContext.returnCheckPending,
-            hasInterruptResponseConflict: latestSessionActiveVisibleContext
+            interruptResumePolicy: foregroundSessionActiveVisibleContext.interruptResumePolicy?.rawValue,
+            returnCheckPending: foregroundSessionActiveVisibleContext.returnCheckPending,
+            hasInterruptResponseConflict: foregroundSessionActiveVisibleContext
                 .hasInterruptResponseConflict,
-            hasLawfulInterruptClarifyDirective: latestSessionActiveVisibleContext
+            hasLawfulInterruptClarifyDirective: foregroundSessionActiveVisibleContext
                 .hasLawfulInterruptClarifyDirective,
-            interruptClarifyQuestion: latestSessionActiveVisibleContext.interruptClarifyQuestion,
-            interruptAcceptedAnswerFormats: latestSessionActiveVisibleContext
+            interruptClarifyQuestion: foregroundSessionActiveVisibleContext.interruptClarifyQuestion,
+            interruptAcceptedAnswerFormats: foregroundSessionActiveVisibleContext
                 .interruptAcceptedAnswerFormats,
-            activeContext: latestSessionActiveVisibleContext
+            activeContext: foregroundSessionActiveVisibleContext
         )
     }
 
@@ -6635,22 +6862,22 @@ struct DesktopSessionShellView: View {
     {
         guard
             activeInterruptDisplayState == .interruptVisible,
-            let latestSessionActiveVisibleContext,
-            latestSessionActiveVisibleContext.hasLawfulInterruptSubjectReferences
+            let foregroundSessionActiveVisibleContext,
+            foregroundSessionActiveVisibleContext.hasLawfulInterruptSubjectReferences
         else {
             return nil
         }
 
         return DesktopInterruptSubjectReferencesVisibilityState(
             sourceSurfaceIdentity: "INTERRUPT_VISIBLE",
-            sessionState: latestSessionActiveVisibleContext.sessionState,
-            sessionID: latestSessionActiveVisibleContext.sessionID,
-            turnID: latestSessionActiveVisibleContext.turnID,
-            interruptSubjectRelation: latestSessionActiveVisibleContext.interruptSubjectRelation?
+            sessionState: foregroundSessionActiveVisibleContext.sessionState,
+            sessionID: foregroundSessionActiveVisibleContext.sessionID,
+            turnID: foregroundSessionActiveVisibleContext.turnID,
+            interruptSubjectRelation: foregroundSessionActiveVisibleContext.interruptSubjectRelation?
                 .rawValue,
-            activeSubjectRef: latestSessionActiveVisibleContext.activeSubjectRef,
-            interruptedSubjectRef: latestSessionActiveVisibleContext.interruptedSubjectRef,
-            hasLawfulInterruptSubjectReferences: latestSessionActiveVisibleContext
+            activeSubjectRef: foregroundSessionActiveVisibleContext.activeSubjectRef,
+            interruptedSubjectRef: foregroundSessionActiveVisibleContext.interruptedSubjectRef,
+            hasLawfulInterruptSubjectReferences: foregroundSessionActiveVisibleContext
                 .hasLawfulInterruptSubjectReferences
         )
     }
@@ -6660,22 +6887,22 @@ struct DesktopSessionShellView: View {
     {
         guard
             activeInterruptDisplayState == .interruptVisible,
-            let latestSessionActiveVisibleContext,
-            latestSessionActiveVisibleContext.hasLawfulInterruptSubjectRelationConfidence
+            let foregroundSessionActiveVisibleContext,
+            foregroundSessionActiveVisibleContext.hasLawfulInterruptSubjectRelationConfidence
         else {
             return nil
         }
 
         return DesktopInterruptSubjectRelationConfidenceVisibilityState(
             sourceSurfaceIdentity: "INTERRUPT_VISIBLE",
-            sessionState: latestSessionActiveVisibleContext.sessionState,
-            sessionID: latestSessionActiveVisibleContext.sessionID,
-            turnID: latestSessionActiveVisibleContext.turnID,
-            interruptSubjectRelation: latestSessionActiveVisibleContext.interruptSubjectRelation?
+            sessionState: foregroundSessionActiveVisibleContext.sessionState,
+            sessionID: foregroundSessionActiveVisibleContext.sessionID,
+            turnID: foregroundSessionActiveVisibleContext.turnID,
+            interruptSubjectRelation: foregroundSessionActiveVisibleContext.interruptSubjectRelation?
                 .rawValue,
-            interruptSubjectRelationConfidence: latestSessionActiveVisibleContext
+            interruptSubjectRelationConfidence: foregroundSessionActiveVisibleContext
                 .interruptSubjectRelationConfidence,
-            hasLawfulInterruptSubjectRelationConfidence: latestSessionActiveVisibleContext
+            hasLawfulInterruptSubjectRelationConfidence: foregroundSessionActiveVisibleContext
                 .hasLawfulInterruptSubjectRelationConfidence
         )
     }
@@ -6685,26 +6912,26 @@ struct DesktopSessionShellView: View {
     {
         guard
             activeInterruptDisplayState == .interruptVisible,
-            let latestSessionActiveVisibleContext,
-            latestSessionActiveVisibleContext.hasLawfulInterruptReturnCheckExpiry
+            let foregroundSessionActiveVisibleContext,
+            foregroundSessionActiveVisibleContext.hasLawfulInterruptReturnCheckExpiry
         else {
             return nil
         }
 
         return DesktopInterruptReturnCheckExpiryVisibilityState(
             sourceSurfaceIdentity: "INTERRUPT_VISIBLE",
-            sessionState: latestSessionActiveVisibleContext.sessionState,
-            sessionID: latestSessionActiveVisibleContext.sessionID,
-            turnID: latestSessionActiveVisibleContext.turnID,
-            interruptSubjectRelation: latestSessionActiveVisibleContext.interruptSubjectRelation?
+            sessionState: foregroundSessionActiveVisibleContext.sessionState,
+            sessionID: foregroundSessionActiveVisibleContext.sessionID,
+            turnID: foregroundSessionActiveVisibleContext.turnID,
+            interruptSubjectRelation: foregroundSessionActiveVisibleContext.interruptSubjectRelation?
                 .rawValue,
-            interruptContinuityOutcome: latestSessionActiveVisibleContext
+            interruptContinuityOutcome: foregroundSessionActiveVisibleContext
                 .interruptContinuityOutcome?.rawValue,
-            interruptResumePolicy: latestSessionActiveVisibleContext.interruptResumePolicy?
+            interruptResumePolicy: foregroundSessionActiveVisibleContext.interruptResumePolicy?
                 .rawValue,
-            returnCheckPending: latestSessionActiveVisibleContext.returnCheckPending,
-            returnCheckExpiresAt: latestSessionActiveVisibleContext.returnCheckExpiresAt,
-            hasLawfulInterruptReturnCheckExpiry: latestSessionActiveVisibleContext
+            returnCheckPending: foregroundSessionActiveVisibleContext.returnCheckPending,
+            returnCheckExpiresAt: foregroundSessionActiveVisibleContext.returnCheckExpiresAt,
+            hasLawfulInterruptReturnCheckExpiry: foregroundSessionActiveVisibleContext
                 .hasLawfulInterruptReturnCheckExpiry
         )
     }
@@ -8878,7 +9105,7 @@ struct DesktopSessionShellView: View {
                             .foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity, alignment: .leading)
 
-                        Text("This path does not add generic reopen authority, conversation selection authority, search input, tool controls, hidden/background wake auto-start, wake parity, or autonomous unlock.")
+                        Text("This path does not add generic reopen authority, broader session-list fetch authority, search input, tool controls, hidden/background wake auto-start, wake parity, or autonomous unlock.")
                             .foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity, alignment: .leading)
 
@@ -9281,7 +9508,9 @@ struct DesktopSessionShellView: View {
                 if state.timelineEntries.isEmpty {
                     sectionCard(
                         title: "Conversation Timeline",
-                        detail: "Awaiting the next lawful cloud-authored turn. Use the bounded keyboard composer, explicit voice, or the bounded foreground wake listener to start runtime dispatch from this transcript-primary shell without introducing session selection or hidden/background wake behavior."
+                        detail: desktopForegroundSelectionShowsCurrentDominantSurface
+                            ? "Awaiting the next lawful cloud-authored turn. Use the bounded keyboard composer, explicit voice, or the bounded foreground wake listener to start runtime dispatch from this transcript-primary shell without introducing session selection or hidden/background wake behavior."
+                            : "Awaiting read-only foreground visibility for the selected observed session surface. Local selection does not itself attach, resume, recover, reopen, or retarget canonical runtime mutation."
                     )
                 } else {
                     VStack(alignment: .leading, spacing: 14) {
@@ -9311,7 +9540,14 @@ struct DesktopSessionShellView: View {
                     }
                 }
 
-                desktopTypedTurnComposerCard
+                if desktopForegroundSelectionShowsCurrentDominantSurface {
+                    desktopTypedTurnComposerCard
+                } else {
+                    sectionCard(
+                        title: "Selected Surface Status",
+                        detail: "This previously observed session surface is foregrounded in bounded read-only form only. Existing attach / resume / recover controls remain separate, and keyboard typed-turn production stays bound to the current lawful dominant desktop surface."
+                    )
+                }
             }
         }
         .frame(maxWidth: .infinity, alignment: .topLeading)
@@ -9333,7 +9569,7 @@ struct DesktopSessionShellView: View {
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
 
-                    Text("Controls and evidence-adjacent support remain bounded, session-bound, and non-authoritative here. No local session selection, no attach or reopen authority, no dedicated local search controls, and no hidden/background wake behavior are introduced by this rail.")
+                    Text("Controls and evidence-adjacent support remain bounded, session-bound, and non-authoritative here. One bounded local observed-session selection rail is now available, but it changes foreground visibility only and does not introduce local attach or reopen authority, dedicated local search controls, or hidden/background wake behavior.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -9343,6 +9579,7 @@ struct DesktopSessionShellView: View {
                     .font(.headline)
             }
 
+            desktopSessionSurfaceSelectionRailCard
             explicitVoiceEntryAffordanceCard
             desktopWakeProfileAvailabilityCard
             desktopWakeListenerControlCard
@@ -9362,6 +9599,76 @@ struct DesktopSessionShellView: View {
             needsAttentionCard
         }
         .frame(maxWidth: .infinity, alignment: .topLeading)
+    }
+
+    private var desktopSessionSurfaceSelectionRailCard: some View {
+        let foregroundSurfaceID = foregroundObservedSessionSurface?.id
+
+        return Group {
+            if !observedSessionSurfaces.isEmpty {
+                GroupBox {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("Bounded local observed-session selection only. This rail foregrounds already-observed cloud-authored session surfaces from the current shell lifetime and changes visibility only; it does not itself attach, resume, recover, reopen, or grant local authority.")
+                            .frame(maxWidth: .infinity, alignment: .leading)
+
+                        ForEach(observedSessionSurfaces) { surface in
+                            let isForegrounded = surface.id == foregroundSurfaceID
+                            let isCurrentDominant = surface.id == currentDominantObservedSessionSurface?.id
+
+                            Button {
+                                selectObservedSessionSurface(surface)
+                            } label: {
+                                VStack(alignment: .leading, spacing: 8) {
+                                    HStack(alignment: .center, spacing: 8) {
+                                        Text(surface.selectionTitle)
+                                            .font(.subheadline.weight(.semibold))
+                                            .frame(maxWidth: .infinity, alignment: .leading)
+
+                                        if isCurrentDominant {
+                                            posturePill("CURRENT")
+                                        }
+
+                                        posturePill(surface.postureLabel.uppercased())
+                                    }
+
+                                    Text(surface.selectionSummary)
+                                        .font(.footnote)
+                                        .foregroundStyle(.secondary)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                                    HStack(alignment: .firstTextBaseline, spacing: 10) {
+                                        Text("session_id")
+                                            .font(.caption.monospaced())
+                                            .foregroundStyle(.secondary)
+
+                                        Text(surface.sessionID)
+                                            .font(.caption.monospaced())
+                                            .foregroundStyle(.secondary)
+                                    }
+                                }
+                                .padding(12)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .background(
+                                    isForegrounded
+                                        ? Color.accentColor.opacity(0.12)
+                                        : Color(nsColor: .controlBackgroundColor)
+                                )
+                                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                            }
+                            .buttonStyle(.plain)
+                        }
+
+                        Text("Foreground selection fails closed to the current lawful dominant session surface whenever no selected observed surface remains available.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                } label: {
+                    Text("Session Surface Selection")
+                        .font(.headline)
+                }
+            }
+        }
     }
 
     private func desktopConversationTimelineEntryCard(
@@ -9538,9 +9845,9 @@ struct DesktopSessionShellView: View {
 
     private func desktopConversationShouldSuppressSupportRailArchivedRecentSliceTranscript() -> Bool {
         guard desktopReadyTimeHandoffIsActive,
-              latestSessionSuspendedVisibleContext == nil,
+              foregroundSessionSuspendedVisibleContext == nil,
               activeRecoveryDisplayState != .quarantinedLocalState,
-              latestSessionSoftClosedVisibleContext != nil,
+              foregroundSessionSoftClosedVisibleContext != nil,
               let timelineEntries = desktopOperationalConversationShellState?.primaryPaneState.timelineEntries else {
             return false
         }
@@ -9551,9 +9858,9 @@ struct DesktopSessionShellView: View {
 
     private func desktopConversationShouldSuppressSupportRailCurrentSessionTranscript() -> Bool {
         guard desktopReadyTimeHandoffIsActive,
-              latestSessionSuspendedVisibleContext == nil,
+              foregroundSessionSuspendedVisibleContext == nil,
               activeRecoveryDisplayState != .quarantinedLocalState,
-              latestSessionActiveVisibleContext != nil,
+              foregroundSessionActiveVisibleContext != nil,
               let timelineEntries = desktopOperationalConversationShellState?.primaryPaneState.timelineEntries else {
             return false
         }
@@ -9645,7 +9952,7 @@ struct DesktopSessionShellView: View {
         authoritativeReplyCompletionState: DesktopConversationAuthoritativeReplyCompletionState?
     ) -> Bool {
         guard desktopReadyTimeHandoffIsActive,
-              latestSessionSuspendedVisibleContext == nil,
+              foregroundSessionSuspendedVisibleContext == nil,
               activeRecoveryDisplayState != .quarantinedLocalState,
               let outcomeState,
               outcomeState.phase == .completed,
@@ -10515,7 +10822,7 @@ struct DesktopSessionShellView: View {
                             }
                         }
 
-                        Text("This exact surface performs one bounded session-entry submission only through already-live exact route-specific seams. No local generic reopen authority, no local conversation selection, no local search controls, no local tool invocation controls, no hidden/background wake behavior, and no autonomous unlock are introduced by this shell.")
+                        Text("This exact surface performs one bounded session-entry submission only through already-live exact route-specific seams. No local generic reopen authority, no broader session-list fetch authority, no local search controls, no local tool invocation controls, no hidden/background wake behavior, and no autonomous unlock are introduced by this shell.")
                             .foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity, alignment: .leading)
 
@@ -10643,7 +10950,7 @@ struct DesktopSessionShellView: View {
                             metadataRow(label: "turn_id", value: displayedTurnID)
                         }
 
-                        Text("This exact surface performs one bounded current-visible session attach submission only. No local reopen authority, no local conversation selection, no local search controls, no local tool invocation controls, no hidden/background wake behavior, and no autonomous unlock are introduced by this shell.")
+                        Text("This exact surface performs one bounded current-visible session attach submission only. No local reopen authority, no broader session-list fetch authority, no local search controls, no local tool invocation controls, no hidden/background wake behavior, and no autonomous unlock are introduced by this shell.")
                             .foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity, alignment: .leading)
 
@@ -10812,7 +11119,7 @@ struct DesktopSessionShellView: View {
                             }
                         }
 
-                        Text("This exact surface performs one bounded session-resume submission only through already-live exact route-specific seams. No local attach or reopen authority, no local conversation selection, no local search controls, no local tool invocation controls, no hidden/background wake behavior, and no autonomous unlock are introduced by this shell.")
+                        Text("This exact surface performs one bounded session-resume submission only through already-live exact route-specific seams. No local attach or reopen authority, no broader session-list fetch authority, no local search controls, no local tool invocation controls, no hidden/background wake behavior, and no autonomous unlock are introduced by this shell.")
                             .foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity, alignment: .leading)
 
@@ -10869,7 +11176,7 @@ struct DesktopSessionShellView: View {
                             .frame(maxWidth: .infinity, alignment: .leading)
                         }
 
-                        Text("Cloud-authored, session-bound, and non-authoritative only. This path does not add local attach or reopen authority, local conversation selection, keyboard text entry, local search controls, local tool controls, hidden/background wake behavior, wake parity claims, or autonomous unlock.")
+                        Text("Cloud-authored, session-bound, and non-authoritative only. This path does not add local attach or reopen authority, broader session-list fetch authority, keyboard text entry beyond the already-landed bounded composer, local search controls, local tool controls, hidden/background wake behavior, wake parity claims, or autonomous unlock.")
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity, alignment: .leading)
@@ -11355,7 +11662,7 @@ struct DesktopSessionShellView: View {
 
     private var sessionCard: some View {
         Group {
-            if let latestSessionSuspendedVisibleContext {
+            if let foregroundSessionSuspendedVisibleContext {
                 GroupBox {
                     VStack(alignment: .leading, spacing: 12) {
                         Text("Cloud-authored desktop suspended-session evidence only.")
@@ -11364,7 +11671,7 @@ struct DesktopSessionShellView: View {
                         Text("Bounded read-only suspended posture for the cloud-authoritative desktop session surface.")
                             .foregroundStyle(.secondary)
 
-                        ForEach(latestSessionSuspendedVisibleContext.suspendedStatusRows, id: \.label) { row in
+                        ForEach(foregroundSessionSuspendedVisibleContext.suspendedStatusRows, id: \.label) { row in
                             metadataRow(label: row.label, value: row.value)
                         }
 
@@ -11385,7 +11692,7 @@ struct DesktopSessionShellView: View {
                       let activeRecoveryVisibleSurface
             {
                 quarantinedLocalStateSessionCard(activeRecoveryVisibleSurface)
-            } else if let latestSessionSoftClosedVisibleContext {
+            } else if let foregroundSessionSoftClosedVisibleContext {
                 GroupBox {
                     VStack(alignment: .leading, spacing: 12) {
                         Text("Cloud-authored desktop soft-closed evidence only.")
@@ -11394,8 +11701,8 @@ struct DesktopSessionShellView: View {
                         Text("Bounded read-only soft-closed session posture for the cloud-authoritative desktop session surface.")
                             .foregroundStyle(.secondary)
 
-                        metadataRow(label: "session_state", value: latestSessionSoftClosedVisibleContext.sessionState)
-                        metadataRow(label: "session_id", value: latestSessionSoftClosedVisibleContext.sessionID)
+                        metadataRow(label: "session_state", value: foregroundSessionSoftClosedVisibleContext.sessionState)
+                        metadataRow(label: "session_id", value: foregroundSessionSoftClosedVisibleContext.sessionID)
 
                         Text("Visual reset may clear the screen, but archive truth remains durable and the explicit resume affordance remains non-producing here.")
                             .font(.footnote)
@@ -11414,7 +11721,7 @@ struct DesktopSessionShellView: View {
                     Text("Session")
                         .font(.headline)
                 }
-            } else if let latestSessionActiveVisibleContext {
+            } else if let foregroundSessionActiveVisibleContext {
                 GroupBox {
                     VStack(alignment: .leading, spacing: 12) {
                         Text("Cloud-authored desktop active-session evidence only.")
@@ -11423,11 +11730,11 @@ struct DesktopSessionShellView: View {
                         Text("Bounded read-only current session and current turn posture for the cloud-authoritative desktop session surface.")
                             .foregroundStyle(.secondary)
 
-                        metadataRow(label: "session_state", value: latestSessionActiveVisibleContext.sessionState)
-                        metadataRow(label: "session_id", value: latestSessionActiveVisibleContext.sessionID)
-                        metadataRow(label: "turn_id", value: latestSessionActiveVisibleContext.turnID)
+                        metadataRow(label: "session_state", value: foregroundSessionActiveVisibleContext.sessionState)
+                        metadataRow(label: "session_id", value: foregroundSessionActiveVisibleContext.sessionID)
+                        metadataRow(label: "turn_id", value: foregroundSessionActiveVisibleContext.turnID)
 
-                        if let sessionAttachOutcome = latestSessionActiveVisibleContext.sessionAttachOutcome {
+                        if let sessionAttachOutcome = foregroundSessionActiveVisibleContext.sessionAttachOutcome {
                             metadataRow(label: "session_attach_outcome", value: sessionAttachOutcome)
 
                             Text(continuityLabel(for: sessionAttachOutcome))
@@ -11444,7 +11751,7 @@ struct DesktopSessionShellView: View {
                     Text("Session")
                         .font(.headline)
                 }
-            } else if let latestSessionHeaderContext {
+            } else if let foregroundSessionHeaderContext {
                 GroupBox {
                     VStack(alignment: .leading, spacing: 12) {
                         Text("Cloud-authored desktop session-header evidence only.")
@@ -11453,14 +11760,14 @@ struct DesktopSessionShellView: View {
                         Text("Bounded read-only session posture for the current cloud-authoritative desktop session surface.")
                             .foregroundStyle(.secondary)
 
-                        metadataRow(label: "session_state", value: latestSessionHeaderContext.sessionState)
-                        metadataRow(label: "session_id", value: latestSessionHeaderContext.sessionID)
+                        metadataRow(label: "session_state", value: foregroundSessionHeaderContext.sessionState)
+                        metadataRow(label: "session_id", value: foregroundSessionHeaderContext.sessionID)
                         metadataRow(
                             label: "session_attach_outcome",
-                            value: latestSessionHeaderContext.sessionAttachOutcome
+                            value: foregroundSessionHeaderContext.sessionAttachOutcome
                         )
 
-                        Text(continuityLabel(for: latestSessionHeaderContext.sessionAttachOutcome))
+                        Text(continuityLabel(for: foregroundSessionHeaderContext.sessionAttachOutcome))
                             .font(.footnote)
                             .foregroundStyle(.secondary)
 
@@ -11583,7 +11890,7 @@ struct DesktopSessionShellView: View {
             desktopConversationShouldSuppressSupportRailArchivedRecentSliceTranscript()
 
         return Group {
-            if latestSessionSuspendedVisibleContext != nil {
+            if foregroundSessionSuspendedVisibleContext != nil {
                 GroupBox {
                     VStack(alignment: .leading, spacing: 12) {
                         Text("Cloud-authored suspended-status explanation only.")
@@ -11603,7 +11910,7 @@ struct DesktopSessionShellView: View {
                 }
             } else if activeRecoveryDisplayState == .quarantinedLocalState {
                 quarantinedLocalStateHistoryCard
-            } else if let latestSessionActiveVisibleContext {
+            } else if let foregroundSessionActiveVisibleContext {
                 GroupBox {
                     VStack(alignment: .leading, spacing: 12) {
                         Text("Cloud-authored live dual-transcript evidence only.")
@@ -11613,14 +11920,14 @@ struct DesktopSessionShellView: View {
                             transcriptEntry(
                                 speaker: "You",
                                 posture: "current_user_turn_text",
-                                body: latestSessionActiveVisibleContext.currentUserTurnText,
+                                body: foregroundSessionActiveVisibleContext.currentUserTurnText,
                                 detail: "Current user turn remains text-visible, session-bound, and cloud-authoritative for this active desktop session."
                             )
 
                             transcriptEntry(
                                 speaker: "Selene",
                                 posture: "current_selene_turn_text",
-                                body: latestSessionActiveVisibleContext.currentSeleneTurnText,
+                                body: foregroundSessionActiveVisibleContext.currentSeleneTurnText,
                                 detail: "Current Selene turn remains text-visible and tied to the same active cloud session without a local-only transcript fork."
                             )
                         }
@@ -11634,7 +11941,7 @@ struct DesktopSessionShellView: View {
                     Text("History")
                         .font(.headline)
                 }
-            } else if let latestSessionSoftClosedVisibleContext {
+            } else if let foregroundSessionSoftClosedVisibleContext {
                 GroupBox {
                     VStack(alignment: .leading, spacing: 12) {
                         Text("Cloud-authored archived recent-slice evidence only.")
@@ -11644,14 +11951,14 @@ struct DesktopSessionShellView: View {
                             transcriptEntry(
                                 speaker: "You",
                                 posture: "archived_user_turn_text",
-                                body: latestSessionSoftClosedVisibleContext.archivedUserTurnText,
+                                body: foregroundSessionSoftClosedVisibleContext.archivedUserTurnText,
                                 detail: "Archived recent slice remains durable archived conversation truth and stays distinct from bounded PH1.M resume-context output."
                             )
 
                             transcriptEntry(
                                 speaker: "Selene",
                                 posture: "archived_selene_turn_text",
-                                body: latestSessionSoftClosedVisibleContext.archivedSeleneTurnText,
+                                body: foregroundSessionSoftClosedVisibleContext.archivedSeleneTurnText,
                                 detail: "Archived recent slice remains text-visible after visual reset without local auto-reopen, hidden spoken-only output, or local transcript authority."
                             )
                         }
@@ -11676,17 +11983,17 @@ struct DesktopSessionShellView: View {
 
     private var systemActivityCard: some View {
         Group {
-            if let latestSessionSuspendedVisibleContext {
+            if let foregroundSessionSuspendedVisibleContext {
                 GroupBox {
                     VStack(alignment: .leading, spacing: 12) {
                         Text("Cloud-authored allowed-next-step evidence only.")
                             .font(.subheadline.weight(.semibold))
 
-                        ForEach(latestSessionSuspendedVisibleContext.allowedNextStepRows, id: \.label) { row in
+                        ForEach(foregroundSessionSuspendedVisibleContext.allowedNextStepRows, id: \.label) { row in
                             metadataRow(label: row.label, value: row.value)
                         }
 
-                        Text(latestSessionSuspendedVisibleContext.allowedNextStepSummary)
+                        Text(foregroundSessionSuspendedVisibleContext.allowedNextStepSummary)
                             .font(.footnote)
                             .foregroundStyle(.secondary)
 
@@ -11701,7 +12008,7 @@ struct DesktopSessionShellView: View {
                 }
             } else if activeRecoveryDisplayState == .quarantinedLocalState {
                 quarantinedLocalStateSystemActivityCard
-            } else if let latestSessionActiveVisibleContext {
+            } else if let foregroundSessionActiveVisibleContext {
                 GroupBox {
                     VStack(alignment: .leading, spacing: 12) {
                         Text("Cloud-authored governed-output summary evidence only.")
@@ -11709,23 +12016,23 @@ struct DesktopSessionShellView: View {
 
                         metadataRow(
                             label: "current_governed_output_summary",
-                            value: latestSessionActiveVisibleContext.currentGovernedOutputSummary
+                            value: foregroundSessionActiveVisibleContext.currentGovernedOutputSummary
                         )
 
-                        if latestSessionActiveVisibleContext
+                        if foregroundSessionActiveVisibleContext
                             .hasLawfulOnboardingPlatformSetupReceiptCarrierFamily
                         {
-                            onboardingPlatformSetupReceiptCard(latestSessionActiveVisibleContext)
+                            onboardingPlatformSetupReceiptCard(foregroundSessionActiveVisibleContext)
                         }
 
-                        if latestSessionActiveVisibleContext.hasLawfulAuthorityStateCarrierFamily {
-                            authorityStateCard(latestSessionActiveVisibleContext)
+                        if foregroundSessionActiveVisibleContext.hasLawfulAuthorityStateCarrierFamily {
+                            authorityStateCard(foregroundSessionActiveVisibleContext)
                         }
 
-                        if latestSessionActiveVisibleContext
+                        if foregroundSessionActiveVisibleContext
                             .hasLawfulWakeRuntimeEventEvidenceCarrierFamily
                         {
-                            wakeRuntimeEventEvidenceCard(latestSessionActiveVisibleContext)
+                            wakeRuntimeEventEvidenceCard(foregroundSessionActiveVisibleContext)
                         }
 
                         Text("Bounded summary only. No local governed-output synthesis, no local artifact expansion, and no local dispatch unlock authority are introduced by this desktop surface.")
@@ -11737,27 +12044,27 @@ struct DesktopSessionShellView: View {
                     Text("System Activity")
                         .font(.headline)
                 }
-            } else if let latestSessionSoftClosedVisibleContext {
+            } else if let foregroundSessionSoftClosedVisibleContext {
                 GroupBox {
                     VStack(alignment: .leading, spacing: 12) {
                         Text("Cloud-authored PH1.M resume-context evidence only.")
                             .font(.subheadline.weight(.semibold))
 
                         ForEach([
-                            ("selected_thread_id", latestSessionSoftClosedVisibleContext.selectedThreadID ?? "not_provided"),
-                            ("selected_thread_title", latestSessionSoftClosedVisibleContext.selectedThreadTitle ?? "not_provided"),
-                            ("pending_work_order_id", latestSessionSoftClosedVisibleContext.pendingWorkOrderID ?? "not_provided"),
-                            ("resume_tier", latestSessionSoftClosedVisibleContext.resumeTier ?? "not_provided"),
+                            ("selected_thread_id", foregroundSessionSoftClosedVisibleContext.selectedThreadID ?? "not_provided"),
+                            ("selected_thread_title", foregroundSessionSoftClosedVisibleContext.selectedThreadTitle ?? "not_provided"),
+                            ("pending_work_order_id", foregroundSessionSoftClosedVisibleContext.pendingWorkOrderID ?? "not_provided"),
+                            ("resume_tier", foregroundSessionSoftClosedVisibleContext.resumeTier ?? "not_provided"),
                         ], id: \.0) { row in
                             metadataRow(label: row.0, value: row.1)
                         }
 
-                        if latestSessionSoftClosedVisibleContext.resumeSummaryBullets.isEmpty {
+                        if foregroundSessionSoftClosedVisibleContext.resumeSummaryBullets.isEmpty {
                             Text("No bounded `resume_summary_bullets` were provided for this soft-closed preview.")
                                 .font(.footnote)
                                 .foregroundStyle(.secondary)
                         } else {
-                            ForEach(Array(latestSessionSoftClosedVisibleContext.resumeSummaryBullets.prefix(3).enumerated()), id: \.offset) { index, bullet in
+                            ForEach(Array(foregroundSessionSoftClosedVisibleContext.resumeSummaryBullets.prefix(3).enumerated()), id: \.offset) { index, bullet in
                                 HStack(alignment: .firstTextBaseline, spacing: 10) {
                                     Text("\(index + 1).")
                                         .font(.caption.weight(.semibold))
@@ -11794,9 +12101,9 @@ struct DesktopSessionShellView: View {
             } else if activeRecoveryDisplayState == .degradedRecovery, let activeRecoveryVisibleSurface {
                 recoveryRestrictionCard(activeRecoveryVisibleSurface, state: .degradedRecovery)
             } else if activeInterruptDisplayState == .interruptVisible,
-                      let latestSessionActiveVisibleContext
+                      let foregroundSessionActiveVisibleContext
             {
-                interruptVisibleCard(latestSessionActiveVisibleContext)
+                interruptVisibleCard(foregroundSessionActiveVisibleContext)
             } else {
                 sectionCard(
                     title: "Needs Attention",
