@@ -41,9 +41,9 @@ Desktop Selene is considered real when all of the following are true:
 - The native macOS app exists in-tree:
   - [/Users/selene/Documents/Selene-OS/apple/mac_desktop/SeleneMacDesktop.xcodeproj](/Users/selene/Documents/Selene-OS/apple/mac_desktop/SeleneMacDesktop.xcodeproj)
   - [/Users/selene/Documents/Selene-OS/apple/mac_desktop/SeleneMacDesktop/DesktopSessionShellView.swift](/Users/selene/Documents/Selene-OS/apple/mac_desktop/SeleneMacDesktop/DesktopSessionShellView.swift)
-- The current Mac shell is still evidence-first and explicitly non-authority:
-  - wake evidence surface: [DesktopSessionShellView.swift#L2324](/Users/selene/Documents/Selene-OS/apple/mac_desktop/SeleneMacDesktop/DesktopSessionShellView.swift#L2324)
-  - read-only onboarding receipt posture: [DesktopSessionShellView.swift#L2221](/Users/selene/Documents/Selene-OS/apple/mac_desktop/SeleneMacDesktop/DesktopSessionShellView.swift#L2221)
+- The current Mac shell now preserves a bounded conversation-first operational shell while remaining explicitly non-authoritative:
+  - transcript-primary operational shell and support rail: [DesktopSessionShellView.swift#L9025](/Users/selene/Documents/Selene-OS/apple/mac_desktop/SeleneMacDesktop/DesktopSessionShellView.swift#L9025)
+  - read-only onboarding, ready, and session-entry support surfaces remain live: [DesktopSessionShellView.swift#L10195](/Users/selene/Documents/Selene-OS/apple/mac_desktop/SeleneMacDesktop/DesktopSessionShellView.swift#L10195)
 - Canonical desktop runtime entry already exists:
   - [app_ingress.rs#L3186](/Users/selene/Documents/Selene-OS/crates/selene_os/src/app_ingress.rs#L3186)
 - Desktop send-link dispatch is already proven in backend tests:
@@ -60,48 +60,78 @@ Desktop Selene is considered real when all of the following are true:
   - [app_ingress.rs#L6457](/Users/selene/Documents/Selene-OS/crates/selene_os/src/app_ingress.rs#L6457)
 - The current Mac app already preserves:
   - microphone and speech-recognition permission keys in [Info.plist](/Users/selene/Documents/Selene-OS/apple/mac_desktop/SeleneMacDesktop/Info.plist)
-  - bounded foreground audio capture and speech recognition substrate in [DesktopSessionShellView.swift#L1107](/Users/selene/Documents/Selene-OS/apple/mac_desktop/SeleneMacDesktop/DesktopSessionShellView.swift#L1107)
-  - bounded canonical desktop runtime bridge plus authoritative reply rendering / provenance / playback in [SeleneMacDesktopRuntimeBridge.swift#L1](/Users/selene/Documents/Selene-OS/apple/mac_desktop/SeleneMacDesktop/SeleneMacDesktopRuntimeBridge.swift#L1) and [DesktopSessionShellView.swift#L8662](/Users/selene/Documents/Selene-OS/apple/mac_desktop/SeleneMacDesktop/DesktopSessionShellView.swift#L8662)
-  - bounded onboarding mutation flow through wake-enroll defer and bounded completion truth as recorded in [MASTER_BUILD_COMPLETION_PLAN.md#L96](/Users/selene/Documents/Selene-OS/docs/MASTER_BUILD_COMPLETION_PLAN.md#L96)
+  - bounded foreground explicit audio capture and speech recognition substrate in [DesktopSessionShellView.swift#L1259](/Users/selene/Documents/Selene-OS/apple/mac_desktop/SeleneMacDesktop/DesktopSessionShellView.swift#L1259)
+  - bounded canonical desktop runtime bridge plus authoritative reply rendering / provenance / playback in [SeleneMacDesktopRuntimeBridge.swift#L5461](/Users/selene/Documents/Selene-OS/apple/mac_desktop/SeleneMacDesktop/SeleneMacDesktopRuntimeBridge.swift#L5461), [DesktopSessionShellView.swift#L9817](/Users/selene/Documents/Selene-OS/apple/mac_desktop/SeleneMacDesktop/DesktopSessionShellView.swift#L9817), and [DesktopSessionShellView.swift#L1148](/Users/selene/Documents/Selene-OS/apple/mac_desktop/SeleneMacDesktop/DesktopSessionShellView.swift#L1148)
+  - bounded onboarding mutation flow from invite entry through access provision, complete commit, pairing-completion commit, and onboarding-derived ready-time handoff as recorded in [MASTER_BUILD_COMPLETION_PLAN.md#L154](/Users/selene/Documents/Selene-OS/docs/MASTER_BUILD_COMPLETION_PLAN.md#L154) and [MASTER_BUILD_COMPLETION_PLAN.md#L198](/Users/selene/Documents/Selene-OS/docs/MASTER_BUILD_COMPLETION_PLAN.md#L198)
+  - bounded current-visible session attach, multi-posture session resume, and suspended-session recover seams in [MASTER_BUILD_COMPLETION_PLAN.md#L165](/Users/selene/Documents/Selene-OS/docs/MASTER_BUILD_COMPLETION_PLAN.md#L165) and [DesktopSessionShellView.swift#L10589](/Users/selene/Documents/Selene-OS/apple/mac_desktop/SeleneMacDesktop/DesktopSessionShellView.swift#L10589)
+  - bounded local wake-profile availability refresh plus bounded foreground wake-listener integration and wake-to-turn handoff in [MASTER_BUILD_COMPLETION_PLAN.md#L154](/Users/selene/Documents/Selene-OS/docs/MASTER_BUILD_COMPLETION_PLAN.md#L154), [MASTER_BUILD_COMPLETION_PLAN.md#L156](/Users/selene/Documents/Selene-OS/docs/MASTER_BUILD_COMPLETION_PLAN.md#L156), and [DesktopSessionShellView.swift#L8916](/Users/selene/Documents/Selene-OS/apple/mac_desktop/SeleneMacDesktop/DesktopSessionShellView.swift#L8916)
+  - bounded conversation-first shell baseline plus search/tool completion and read-only tool-lane rendering in [MASTER_BUILD_COMPLETION_PLAN.md#L159](/Users/selene/Documents/Selene-OS/docs/MASTER_BUILD_COMPLETION_PLAN.md#L159), [MASTER_BUILD_COMPLETION_PLAN.md#L183](/Users/selene/Documents/Selene-OS/docs/MASTER_BUILD_COMPLETION_PLAN.md#L183), and [DesktopSessionShellView.swift#L9972](/Users/selene/Documents/Selene-OS/apple/mac_desktop/SeleneMacDesktop/DesktopSessionShellView.swift#L9972)
 - The current Mac app still lacks:
-  - a lawful desktop soft-closed explicit resume submit seam
-  - broader desktop session attach / reopen mutation
-  - broader desktop pairing completion mutation and onboarding-derived ready-time local handoff
-  - proven native wake-listener integration
-  - wake-to-turn handoff
-  - a conversation-first ChatGPT-style app layout
+  - broader generic desktop session attach / reopen mutation beyond the already-landed visible / resumable session-entry seams
+  - broader desktop conversation-list / session-list selection
+  - broader desktop search input and keyboard text entry
+  - broader desktop tool authoring / invocation controls
+  - broader hidden/background wake auto-start and broader wake parity
+  - broader shell-side `projectID` / `pinnedContextRefs` transport and broader desktop thread-policy authoring authority
 
 ## Current Desktop Completion Matrix
 
-### Already Built
+### Built And Live
 - permission posture is live on macOS through the native app plist and shell-local permission handling
 - explicit foreground voice capture and speech-recognition substrate are live
-- canonical runtime bridge is live for bounded desktop explicit voice turns
+- canonical runtime bridge is live for bounded desktop explicit and bounded wake-triggered voice turns
 - authoritative reply rendering, provenance rendering, and native reply playback are live
-- bounded onboarding mutation flow is live across invite entry, platform receipts, terms, primary-device confirm, voice enroll lock, wake enroll start / sample / complete / defer, emo/persona lock, access provision, and complete commit
+- bounded onboarding mutation flow is live across invite entry, platform receipts, terms, primary-device confirm, voice-enroll lock, wake-enroll start / sample / complete / defer, emo/persona lock, access provision, and complete commit
+- bounded pairing-completion commit and onboarding-derived ready-time handoff are live
+- bounded current-visible session attach, multi-posture session resume, and suspended-session recover seams are live
+- bounded local wake-profile availability refresh is live
+- bounded foreground wake-listener integration plus wake-to-turn handoff are live
+- bounded conversation-first operational shell baseline, runtime timeline rendering, authoritative-reply completion rendering, provenance rendering, and read-only tool-lane rendering are live
 - backend proof already exists for desktop web search with provenance and desktop send-link dispatch
 
-### Blocked By Missing Lawful Seam
-- soft-closed explicit resume is not a lawful app-only build from current repo truth
-- the shell already preserves the exact soft-closed visibility carrier family and disabled explicit resume affordance, but the desktop adapter / public ingress surface still lacks the bounded compatibility seam needed to reach the already-live exact session-resume runtime primitive without widening into unauthorized local resume law
+### Built But Still Bounded
+- wake remains foreground-only and direct-user-start only, with no hidden/background auto-start and no wake parity claim
+- the conversation-first shell remains session-bound and non-authoritative, with no conversation-list / session-list selection yet
+- search and tool rendering remain cloud-authored and read-only, with no local search input or local tool invocation controls yet
+- session entry remains limited to exact route-specific attach / resume / recover seams, with no generic reopen authority
+- thread-key-backed continuity proofs are live for persisted project / pinned-context / thread-policy reuse, but the shell still does not author or directly transport those broader carriers
 
-### Still To Build
-- lawful cross-layer desktop session resume closure
-- pairing completion mutation
-- onboarding-derived ready-time handoff
-- native wake-listener integration
-- wake-to-turn handoff
-- conversation-first desktop shell
+### Still Missing
+- broader desktop conversation-list / session-list selection
+- broader desktop search input and keyboard text entry
+- broader desktop tool authoring / invocation controls
+- broader hidden/background wake auto-start and broader wake parity
+- broader shell-side `projectID` / `pinnedContextRefs` transport and broader desktop thread-policy authoring authority
+- broader generic desktop session attach / reopen mutation beyond the already-landed visible / resumable session-entry seams
 
 ### Selection Rule
-- Do not do another read-only slice on an already-visible desktop carrier family when a lawful executable winner is exposed.
-- Once bounded visibility exists for a desktop carrier family, the next selected winner should be executable unless repo truth proves no lawful executable seam exists yet.
+- Prefer actual desktop capability unlocks over further regression-lock or visibility-only work when current repo truth already preserves the underlying lawful seam.
+- Use later strict H-builds to select the exact next winner; this umbrella document does not itself authorize a specific next build.
 
-### Post-H285 Finish Order
-1. Rewrite H286 as a cross-layer executable build that includes the missing lawful desktop session-resume seam instead of keeping it app-only.
-2. After H286, land pairing-completion mutation plus onboarding-derived ready-time handoff.
-3. After that, land real native wake-listener integration plus wake-to-turn handoff.
-4. After those core operations are real, refactor the shell into a conversation-first desktop UI.
+### Current Likely Next Capability-Unlock Families
+1. bounded native macOS conversation-first keyboard-composer typed-turn request production through the already-live canonical runtime path
+2. desktop conversation-list / session-list selection
+3. desktop tool authoring / invocation controls
+4. later hidden/background wake auto-start only if a lawful exact seam is proven
+
+## Program Status Crosswalk
+This matrix is descriptive only and does not override [MASTER_BUILD_COMPLETION_PLAN.md](/Users/selene/Documents/Selene-OS/docs/MASTER_BUILD_COMPLETION_PLAN.md).
+
+| Program section | Status | Current repo-backed note | Likely next H-slice family |
+| --- | --- | --- | --- |
+| 1. Purpose | `PARTIAL` | Real explicit voice, bounded wake, onboarding, search/tool rendering, and authoritative reply paths exist, but the full desktop product target is not complete. | actual capability unlocks, not more proof-only work |
+| 2. Governing Repo Truth | `ACTIVE` | Desktop remains downstream and non-authoritative, and `APP_MAC_DESKTOP` still remains `PARTIAL`. | none |
+| 3. Product Target | `PARTIAL` | Most hot-path runtime requirements are live; broader desktop product-surface capabilities remain missing. | search input or session selection |
+| 4. Current Desktop Baseline | `REFRESHED` | Earlier missing-bullet assumptions were stale and are corrected above. | doc-only refresh unless repo truth changes |
+| 5. End-to-End Desktop Runtime Chain | `PARTIAL` | The explicit path is live end to end, and the wake path is live in bounded foreground form. | broadened entry surfaces |
+| 6. Engine Map | `VALID_PARTIAL_ADOPTION` | The engine map remains lawful, but desktop adoption is not yet generalized across every lane. | continue adoption with no architecture fork |
+| 7. Real Desktop Feature Areas | `PARTIAL` | Audio, reply speech, onboarding mutation, pairing/ready handoff, bounded wake, and conversation-first baseline are all live. | search, tools, and session UX |
+| 8. Program Phases | `PARTIAL` | Early phases are materially built; later product-complete phases remain open. | product-surface unlocks |
+| 9. Verification Journeys | `PARTIAL` | Explicit talk, search, bounded onboarding, and bounded wake are materially testable today. | product-grade end-to-end polish |
+| 10. Non-Negotiable Constraints | `ACTIVE` | Non-authority, no fake search, no wake parity, and no autonomous unlock remain preserved. | none |
+| 11. Completion Definition | `NOT_MET` | Current master truth still marks desktop as partial. | multiple later slices |
+| 12. Execution Method | `ACTIVE` | The umbrella-program plus bounded H-slice method is already in use. | keep using bounded slices |
+| 13. Judgment | `NEEDS_REFRESH` | The original judgment still points in the right direction, but it now understates how much wiring is already live. | umbrella-doc refresh only |
 
 ## End-to-End Desktop Runtime Chain
 1. A user and device enter through the existing link and onboarding path.
@@ -444,67 +474,58 @@ Primary UX targets:
 - visible source/provenance treatment for search/tool answers
 - settings / status area for permissions, onboarding, pairing, wake, and device readiness
 - explicit voice entry remains available as fallback
-- wake-word entry becomes the real hands-free target once implemented
+- wake-word entry becomes the broader hands-free target once hidden/background behavior and any parity claim are lawfully implemented
 
 This program does not authorize a UI-only redesign that ignores the runtime. The conversation-first UI must sit on top of the real runtime path.
 
 ## Program Phases
 
-### Phase 1. Desktop Client Foundation
-- app permission posture
-- native audio capture substrate
-- speech recognition substrate
-- TTS playback substrate
-- local voice state handling
+### Phase 1. Desktop Client Foundation — materially built
+- permission posture is live
+- bounded foreground audio capture, speech recognition, TTS playback, and local voice-state handling are live
+- remaining work in this lane is product-surface expansion, not missing substrate
 
-### Phase 2. Canonical Desktop Runtime Bridge
-- build the app-to-runtime bridge
-- render authoritative outcomes
-- support respond / clarify / refuse / dispatch
+### Phase 2. Canonical Desktop Runtime Bridge — materially built
+- the Mac app already constructs lawful desktop voice ingress and dispatches into the canonical runtime
+- authoritative respond / clarify / refuse / dispatch outcomes already render in the shell
+- remaining work is broader product controls and polish, not bridge existence
 
-### Phase 3. Onboarding, Employee, and Bounded Access Mutation Chain
-- real invite handling
-- onboarding mutation flow
-- position / employee readiness flow
-- per-user access creation
-- wake-enroll defer completion path
+### Phase 3. Onboarding, Employee, and Bounded Access Mutation Chain — largely built in bounded form
+- invite entry, onboarding continue actions, platform receipts, voice enroll, wake enroll, emo/persona lock, access provision, complete commit, and pairing-completion commit are live in bounded form
+- onboarding-derived ready-time handoff is also live in bounded form
+- remaining work is broader product completion and later cross-device polish, not absence of onboarding mutation
 
-### Phase 4. Cross-Layer Session Resume Closure
-- rewrite H286 as a cross-layer executable build instead of an app-only build
-- add the bounded lawful desktop session-resume seam needed to reach the already-live canonical session-resume runtime primitive
-- keep broader attach / reopen work out of scope
+### Phase 4. Session Entry, Resume, and Recover — bounded seams built, broader generic reopen still partial
+- suspended-session recover, multi-posture resume, and current-visible session attach are live through exact route-specific seams
+- broader generic attach / reopen authority, conversation selection, and local thread-selection remain out of scope
 
-### Phase 5. Pairing Completion and Ready-Time Handoff
-- pairing completion mutation
-- onboarding-derived ready-time handoff
-- lawful session continuity after readiness
+### Phase 5. Pairing Completion and Ready-Time Handoff — built in bounded form
+- pairing-completion commit and onboarding-derived ready-time handoff are already live
+- remaining work is broader conversation/session product behavior after readiness, not missing handoff law
 
-### Phase 6. Native Wake Listener and Wake Handoff
-- local wake-listener integration
-- suppression handling
-- wake-to-turn handoff into the canonical runtime
+### Phase 6. Native Wake Listener and Wake Handoff — built in bounded foreground form
+- local wake-profile availability refresh, native foreground wake listener, and wake-to-turn handoff are already live
+- remaining work is suppression hardening, hidden/background auto-start, and any future parity claim
 
-### Phase 7. Conversation-First Desktop Shell
-- redesign the desktop shell around the transcript and conversation experience
-- keep evidence/status surfaces as secondary support panes
-- move the product surface from evidence-first to conversation-first only after core operations are real
+### Phase 7. Conversation-First Desktop Shell — baseline built, product completion partial
+- transcript-primary conversation shell, support rail, authoritative reply attachments, provenance, playback, runtime timeline entries, and read-only tool-lane rendering are live
+- conversation-list / session-list selection, keyboard text entry, search input, and tool controls remain missing
 
-### Phase 8. Search and Tool Completion
-- wire web search and tool responses into the conversation-first desktop shell
-- preserve provenance and retrieval metadata
+### Phase 8. Search and Tool Completion — rendering built, local input / invocation still missing
+- canonical search/tool completion rendering, sources, retrieval metadata, and read-only tool posture are live
+- local search input and local tool authoring / invocation remain unimplemented
 
-### Phase 9. Memory, Persona, and Adaptive Quality
-- memory continuity
-- context and knowledge assist
-- bounded persona/tone integration
-- feedback and learning capture
+### Phase 9. Memory, Persona, and Adaptive Quality — partial by architecture truth
+- continuity and bounded context reuse already inform desktop behavior through the shared runtime
+- broader architecture closure remains partial under repo-wide `PH1.M` truth and later desktop product surfaces remain open
 
-### Phase 10. Cross-Device Desktop-First Handoff
-- desktop sends iPhone invite link
-- iPhone receives and continues onboarding
+### Phase 10. Cross-Device Desktop-First Handoff — partial
+- backend desktop send-link dispatch is proven and desktop already participates in canonical invite/onboarding entry
+- remaining work is broader polished desktop-first product handoff, not invention of a new runtime path
 
-### Phase 11. Hardening, Proof, Governance, and Law
-- final audit, quota, health, and law verification across the desktop path
+### Phase 11. Hardening, Proof, Governance, and Law — ongoing
+- current desktop work already preserves proof, governance, quota, and law boundaries
+- generalized desktop completion and broader architecture closure remain open, so this phase is not complete
 
 ## Verification Journeys
 
@@ -536,7 +557,7 @@ This program does not authorize a UI-only redesign that ignores the runtime. The
 
 ### Journey 5. Wake-Word Desktop Operation
 - desktop wake enrollment is complete
-- wake listener is active
+- foreground wake listener is active
 - user speaks wake word
 - wake handoff starts a lawful runtime turn
 - Selene responds and speaks back
@@ -578,9 +599,54 @@ This program is complete when:
   - verification
   - master-doc truth catch-up
 
-## Recommended Next Step
-- Use this document as the umbrella program.
-- Next, rewrite H286 as a cross-layer executable build that includes the missing lawful desktop session-resume seam instead of keeping it app-only.
-- After H286, land pairing-completion mutation plus onboarding-derived ready-time handoff.
-- After that, land real native wake-listener integration plus wake-to-turn handoff.
-- After those core operations are real, refactor the shell into a conversation-first desktop UI.
+## Current Desktop Execution Queue
+This section is a planning queue only.
+- It does not override [MASTER_BUILD_COMPLETION_PLAN.md](/Users/selene/Documents/Selene-OS/docs/MASTER_BUILD_COMPLETION_PLAN.md).
+- It does not claim that the current exact next winner is already canonically published in master truth.
+- It exists so the umbrella program remains the single desktop planning home for:
+  - what is already built
+  - what still needs building
+  - what should come next
+
+### Current Exact Next Winner
+- bounded native macOS conversation-first keyboard-composer typed-turn request production through the already-live canonical `/v1/voice/turn` text-turn path
+
+### Why This Is Next
+- It is an actual user-facing capability unlock, not another regression-lock or visibility-only refinement.
+- The current desktop shell explicitly still lacks a keyboard composer: [DesktopSessionShellView.swift#L9170](/Users/selene/Documents/Selene-OS/apple/mac_desktop/SeleneMacDesktop/DesktopSessionShellView.swift#L9170).
+- Current master truth already says broader desktop search input remains unimplemented: [MASTER_BUILD_COMPLETION_PLAN.md#L209](/Users/selene/Documents/Selene-OS/docs/MASTER_BUILD_COMPLETION_PLAN.md#L209).
+- The shared runtime already supports canonical text turns through the same canonical route family, with normalized `text/plain` validation: [runtime_ingress_turn_foundation.rs#L1300](/Users/selene/Documents/Selene-OS/crates/selene_os/src/runtime_ingress_turn_foundation.rs#L1300).
+- The native iPhone shell already proves the bounded typed-turn composer pattern is lawful and aligned to the shared runtime: [SessionShellView.swift#L4557](/Users/selene/Documents/Selene-OS/apple/iphone/SeleneIPhone/SessionShellView.swift#L4557).
+- The desktop conversation-first shell baseline is already live, so typed-turn production is the smallest coherent capability unlock that makes the Mac client feel more like a real conversation product without widening into fake local authority.
+- Once typed-turn production exists, desktop users can naturally trigger already-live canonical search/tool routing from text, rather than waiting for a special local search-only control.
+
+### Explicitly Not Next
+- not a standalone desktop search box with local search execution
+- not desktop tool authoring / invocation controls yet
+- not desktop conversation-list / session-list selection yet
+- not hidden/background wake auto-start or wake parity
+- not shell-side `projectID` / `pinnedContextRefs` transport
+- not shell-side thread-policy authoring controls
+- not broader generic attach / reopen authority
+- not another regression-lock-only build unless repo truth changes and a capability unlock becomes blocked
+
+### Ordered Queue After The Current Exact Next Winner
+1. bounded native macOS conversation-list / session-list selection on top of the already-live conversation-first shell
+2. bounded native macOS read-only-to-executable tool authoring / invocation controls through the already-live canonical tool lane
+3. later hidden/background wake auto-start only if one lawful exact seam is proven without fake parity claims
+4. later shell-side `projectID` / `pinnedContextRefs` transport or authoring only if one lawful exact seam is proven
+
+### Queue Maintenance Rule After Every Desktop H-Build
+- Refresh the `Current Repo Baseline` section if newly landed work changes what is actually built.
+- Refresh the `Current Desktop Completion Matrix` built / bounded / missing lists.
+- Refresh the `Program Status Crosswalk` only when a section-level status materially changes.
+- Refresh this `Current Desktop Execution Queue` section so it always preserves:
+  - one exact current next winner
+  - why it is next
+  - what is explicitly not next
+  - the ordered queue after that winner
+- Update [MASTER_BUILD_COMPLETION_PLAN.md](/Users/selene/Documents/Selene-OS/docs/MASTER_BUILD_COMPLETION_PLAN.md) and the ledger only for landed truth, not merely because the planning queue changed.
+
+### Selection Discipline
+- If the current exact next winner lands successfully, promote the next queued item into `Current Exact Next Winner` unless repo truth changed and made that promotion inaccurate.
+- If the current exact next winner becomes blocked by repo truth, update this queue immediately and record the smaller lawful replacement here before asking for another desktop implementation brief.
