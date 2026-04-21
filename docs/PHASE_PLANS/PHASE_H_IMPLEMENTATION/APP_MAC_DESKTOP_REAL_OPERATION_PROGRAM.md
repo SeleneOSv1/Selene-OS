@@ -62,6 +62,7 @@ Desktop Selene is considered real when all of the following are true:
   - microphone and speech-recognition permission keys in [Info.plist](/Users/selene/Documents/Selene-OS/apple/mac_desktop/SeleneMacDesktop/Info.plist)
   - bounded foreground explicit audio capture and speech recognition substrate in [DesktopSessionShellView.swift#L1259](/Users/selene/Documents/Selene-OS/apple/mac_desktop/SeleneMacDesktop/DesktopSessionShellView.swift#L1259)
   - bounded canonical desktop runtime bridge plus authoritative reply rendering / provenance / playback in [SeleneMacDesktopRuntimeBridge.swift#L5461](/Users/selene/Documents/Selene-OS/apple/mac_desktop/SeleneMacDesktop/SeleneMacDesktopRuntimeBridge.swift#L5461), [DesktopSessionShellView.swift#L9817](/Users/selene/Documents/Selene-OS/apple/mac_desktop/SeleneMacDesktop/DesktopSessionShellView.swift#L9817), and [DesktopSessionShellView.swift#L1148](/Users/selene/Documents/Selene-OS/apple/mac_desktop/SeleneMacDesktop/DesktopSessionShellView.swift#L1148)
+  - bounded conversation-first keyboard typed-turn request production through the already-live canonical `/v1/voice/turn` carrier in [DesktopSessionShellView.swift#L1](/Users/selene/Documents/Selene-OS/apple/mac_desktop/SeleneMacDesktop/DesktopSessionShellView.swift#L1) and [SeleneMacDesktopRuntimeBridge.swift#L1](/Users/selene/Documents/Selene-OS/apple/mac_desktop/SeleneMacDesktop/SeleneMacDesktopRuntimeBridge.swift#L1)
   - bounded onboarding mutation flow from invite entry through access provision, complete commit, pairing-completion commit, and onboarding-derived ready-time handoff as recorded in [MASTER_BUILD_COMPLETION_PLAN.md#L154](/Users/selene/Documents/Selene-OS/docs/MASTER_BUILD_COMPLETION_PLAN.md#L154) and [MASTER_BUILD_COMPLETION_PLAN.md#L198](/Users/selene/Documents/Selene-OS/docs/MASTER_BUILD_COMPLETION_PLAN.md#L198)
   - bounded current-visible session attach, multi-posture session resume, and suspended-session recover seams in [MASTER_BUILD_COMPLETION_PLAN.md#L165](/Users/selene/Documents/Selene-OS/docs/MASTER_BUILD_COMPLETION_PLAN.md#L165) and [DesktopSessionShellView.swift#L10589](/Users/selene/Documents/Selene-OS/apple/mac_desktop/SeleneMacDesktop/DesktopSessionShellView.swift#L10589)
   - bounded local wake-profile availability refresh plus bounded foreground wake-listener integration and wake-to-turn handoff in [MASTER_BUILD_COMPLETION_PLAN.md#L154](/Users/selene/Documents/Selene-OS/docs/MASTER_BUILD_COMPLETION_PLAN.md#L154), [MASTER_BUILD_COMPLETION_PLAN.md#L156](/Users/selene/Documents/Selene-OS/docs/MASTER_BUILD_COMPLETION_PLAN.md#L156), and [DesktopSessionShellView.swift#L8916](/Users/selene/Documents/Selene-OS/apple/mac_desktop/SeleneMacDesktop/DesktopSessionShellView.swift#L8916)
@@ -69,7 +70,7 @@ Desktop Selene is considered real when all of the following are true:
 - The current Mac app still lacks:
   - broader generic desktop session attach / reopen mutation beyond the already-landed visible / resumable session-entry seams
   - broader desktop conversation-list / session-list selection
-  - broader desktop search input and keyboard text entry
+  - broader desktop search input beyond the already-landed keyboard typed-turn request production seam
   - broader desktop tool authoring / invocation controls
   - broader hidden/background wake auto-start and broader wake parity
   - broader shell-side `projectID` / `pinnedContextRefs` transport and broader desktop thread-policy authoring authority
@@ -87,6 +88,7 @@ Desktop Selene is considered real when all of the following are true:
 - bounded local wake-profile availability refresh is live
 - bounded foreground wake-listener integration plus wake-to-turn handoff are live
 - bounded conversation-first operational shell baseline, runtime timeline rendering, authoritative-reply completion rendering, provenance rendering, and read-only tool-lane rendering are live
+- bounded conversation-first keyboard typed-turn request production through the already-live canonical `/v1/voice/turn` carrier is live
 - backend proof already exists for desktop web search with provenance and desktop send-link dispatch
 
 ### Built But Still Bounded
@@ -98,7 +100,7 @@ Desktop Selene is considered real when all of the following are true:
 
 ### Still Missing
 - broader desktop conversation-list / session-list selection
-- broader desktop search input and keyboard text entry
+- broader desktop search input beyond already-landed keyboard typed-turn request production
 - broader desktop tool authoring / invocation controls
 - broader hidden/background wake auto-start and broader wake parity
 - broader shell-side `projectID` / `pinnedContextRefs` transport and broader desktop thread-policy authoring authority
@@ -109,10 +111,10 @@ Desktop Selene is considered real when all of the following are true:
 - Use later strict H-builds to select the exact next winner; this umbrella document does not itself authorize a specific next build.
 
 ### Current Likely Next Capability-Unlock Families
-1. bounded native macOS conversation-first keyboard-composer typed-turn request production through the already-live canonical runtime path
-2. desktop conversation-list / session-list selection
-3. desktop tool authoring / invocation controls
-4. later hidden/background wake auto-start only if a lawful exact seam is proven
+1. desktop conversation-list / session-list selection
+2. desktop tool authoring / invocation controls
+3. later hidden/background wake auto-start only if a lawful exact seam is proven
+4. later shell-side `projectID` / `pinnedContextRefs` transport or authoring only if a lawful exact seam is proven
 
 ## Program Status Crosswalk
 This matrix is descriptive only and does not override [MASTER_BUILD_COMPLETION_PLAN.md](/Users/selene/Documents/Selene-OS/docs/MASTER_BUILD_COMPLETION_PLAN.md).
@@ -508,8 +510,8 @@ This program does not authorize a UI-only redesign that ignores the runtime. The
 - remaining work is suppression hardening, hidden/background auto-start, and any future parity claim
 
 ### Phase 7. Conversation-First Desktop Shell — baseline built, product completion partial
-- transcript-primary conversation shell, support rail, authoritative reply attachments, provenance, playback, runtime timeline entries, and read-only tool-lane rendering are live
-- conversation-list / session-list selection, keyboard text entry, search input, and tool controls remain missing
+- transcript-primary conversation shell, support rail, bounded keyboard typed-turn request production, authoritative reply attachments, provenance, playback, runtime timeline entries, and read-only tool-lane rendering are live
+- conversation-list / session-list selection, broader search input, and tool controls remain missing
 
 ### Phase 8. Search and Tool Completion — rendering built, local input / invocation still missing
 - canonical search/tool completion rendering, sources, retrieval metadata, and read-only tool posture are live
@@ -609,21 +611,18 @@ This section is a planning queue only.
   - what should come next
 
 ### Current Exact Next Winner
-- bounded native macOS conversation-first keyboard-composer typed-turn request production through the already-live canonical `/v1/voice/turn` text-turn path
+- bounded native macOS conversation-list / session-list selection on top of the already-live conversation-first shell
 
 ### Why This Is Next
-- It is an actual user-facing capability unlock, not another regression-lock or visibility-only refinement.
-- The current desktop shell explicitly still lacks a keyboard composer: [DesktopSessionShellView.swift#L9170](/Users/selene/Documents/Selene-OS/apple/mac_desktop/SeleneMacDesktop/DesktopSessionShellView.swift#L9170).
-- Current master truth already says broader desktop search input remains unimplemented: [MASTER_BUILD_COMPLETION_PLAN.md#L209](/Users/selene/Documents/Selene-OS/docs/MASTER_BUILD_COMPLETION_PLAN.md#L209).
-- The shared runtime already supports canonical text turns through the same canonical route family, with normalized `text/plain` validation: [runtime_ingress_turn_foundation.rs#L1300](/Users/selene/Documents/Selene-OS/crates/selene_os/src/runtime_ingress_turn_foundation.rs#L1300).
-- The native iPhone shell already proves the bounded typed-turn composer pattern is lawful and aligned to the shared runtime: [SessionShellView.swift#L4557](/Users/selene/Documents/Selene-OS/apple/iphone/SeleneIPhone/SessionShellView.swift#L4557).
-- The desktop conversation-first shell baseline is already live, so typed-turn production is the smallest coherent capability unlock that makes the Mac client feel more like a real conversation product without widening into fake local authority.
-- Once typed-turn production exists, desktop users can naturally trigger already-live canonical search/tool routing from text, rather than waiting for a special local search-only control.
+- It is the next actual desktop product-surface capability unlock after the now-landed typed-turn keyboard composer.
+- Current master truth still says broader desktop conversation-list / session-list selection remains unimplemented: [MASTER_BUILD_COMPLETION_PLAN.md#L208](/Users/selene/Documents/Selene-OS/docs/MASTER_BUILD_COMPLETION_PLAN.md#L208).
+- The current conversation-first shell is still session-bound and non-authoritative, with no user-selectable conversation/session rail yet.
+- The shell now already supports explicit voice, bounded foreground wake-to-turn, and bounded typed-turn production, so conversation/session selection is the next smallest coherent unlock that materially improves desktop usability without widening into fake local authority.
+- This unlock stays on the product-surface lane rather than falling back into another proof-only regression-lock slice.
 
 ### Explicitly Not Next
 - not a standalone desktop search box with local search execution
 - not desktop tool authoring / invocation controls yet
-- not desktop conversation-list / session-list selection yet
 - not hidden/background wake auto-start or wake parity
 - not shell-side `projectID` / `pinnedContextRefs` transport
 - not shell-side thread-policy authoring controls
@@ -631,10 +630,9 @@ This section is a planning queue only.
 - not another regression-lock-only build unless repo truth changes and a capability unlock becomes blocked
 
 ### Ordered Queue After The Current Exact Next Winner
-1. bounded native macOS conversation-list / session-list selection on top of the already-live conversation-first shell
-2. bounded native macOS read-only-to-executable tool authoring / invocation controls through the already-live canonical tool lane
-3. later hidden/background wake auto-start only if one lawful exact seam is proven without fake parity claims
-4. later shell-side `projectID` / `pinnedContextRefs` transport or authoring only if one lawful exact seam is proven
+1. bounded native macOS read-only-to-executable tool authoring / invocation controls through the already-live canonical tool lane
+2. later hidden/background wake auto-start only if one lawful exact seam is proven without fake parity claims
+3. later shell-side `projectID` / `pinnedContextRefs` transport or authoring only if one lawful exact seam is proven
 
 ### Queue Maintenance Rule After Every Desktop H-Build
 - Refresh the `Current Repo Baseline` section if newly landed work changes what is actually built.

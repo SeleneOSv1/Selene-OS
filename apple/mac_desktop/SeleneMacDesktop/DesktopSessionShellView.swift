@@ -1063,6 +1063,21 @@ struct ExplicitVoiceTurnRequestState: Identifiable {
     }
 }
 
+struct DesktopTypedTurnRequestState: Identifiable {
+    let id: String
+    let deviceTurnSequence: UInt64
+    let text: String
+    let byteCount: Int
+
+    var boundedPreview: String {
+        if text.count <= 96 {
+            return text
+        }
+
+        return "\(text.prefix(93))..."
+    }
+}
+
 private struct DesktopAuthoritativeReplyRenderState: Equatable {
     let title: String
     let summary: String
@@ -4374,7 +4389,12 @@ struct DesktopSessionShellView: View {
     @State private var desktopAuthoritativeReplyRenderState: DesktopAuthoritativeReplyRenderState?
     @State private var desktopAuthoritativeReplyProvenanceRenderState: DesktopAuthoritativeReplyProvenanceRenderState?
     @State private var desktopAuthoritativeReplyPlaybackState: DesktopAuthoritativeReplyPlaybackState = .idle
+    @State private var desktopTypedTurnDraft: String = ""
+    @State private var desktopTypedTurnPendingRequest: DesktopTypedTurnRequestState?
+    @State private var desktopTypedTurnFailedRequest: InterruptContinuityResponseFailureState?
+    @State private var desktopTypedTurnRequestSequence: Int = 0
     @State private var lastStagedWakeTriggeredVoiceTurnRequestState: WakeTriggeredVoiceTurnRequestState?
+    private let maxDesktopTypedTurnBytes = 16_384
 
     var body: some View {
         Group {
@@ -4392,6 +4412,9 @@ struct DesktopSessionShellView: View {
         }
         .task(id: desktopWakeListenerController.pendingRequest?.id) {
             await dispatchPreparedWakeTriggeredVoiceRequestIfNeeded()
+        }
+        .task(id: desktopTypedTurnPendingRequest?.id) {
+            await dispatchPreparedTypedTurnRequestIfNeeded()
         }
         .task(id: desktopOnboardingEntryContext?.id) {
             await openInviteLinkAndStartOnboardingIfNeeded()
@@ -4831,6 +4854,122 @@ struct DesktopSessionShellView: View {
         }
     }
 
+    private var trimmedDesktopTypedTurnDraft: String {
+        desktopTypedTurnDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var desktopTypedTurnSubmissionInterlocksActive: Bool {
+        desktopTypedTurnPendingRequest != nil
+            || explicitVoiceController.isListening
+            || explicitVoiceController.pendingRequest != nil
+            || desktopWakeListenerController.listenerState.isActiveForMicrophone
+            || desktopWakeListenerController.listenerState == .dispatching
+            || desktopWakeListenerController.pendingRequest != nil
+            || lastStagedWakeTriggeredVoiceTurnRequestState != nil
+    }
+
+    private var desktopTypedTurnComposerCard: some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Conversation-first keyboard entry now produces one bounded desktop typed-turn request into the already-live canonical runtime path while transcript authority, authoritative acceptance, search/tool routing, and authoritative reply remain cloud-side.")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                HStack(alignment: .center, spacing: 12) {
+                    Image(systemName: "text.cursor")
+                        .font(.system(size: 26))
+                        .foregroundStyle(.secondary)
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Keyboard composer")
+                            .font(.headline)
+
+                        Text("Bounded typed request production only. This surface reuses the already-live canonical `/v1/voice/turn` carrier and does not invent a local assistant, local search execution, or local tool authority.")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Spacer()
+
+                    Text(desktopTypedTurnPendingRequest == nil ? "Ready" : "Dispatching")
+                        .font(.caption.weight(.semibold))
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(
+                            desktopTypedTurnPendingRequest == nil
+                                ? Color.secondary.opacity(0.12)
+                                : Color.accentColor.opacity(0.16)
+                        )
+                        .clipShape(Capsule())
+                }
+
+                HStack(spacing: 8) {
+                    posturePill("EXPLICIT_ONLY")
+                    posturePill("Keyboard typed turn")
+                    posturePill("text/plain")
+                }
+
+                HStack(spacing: 8) {
+                    posturePill("Cloud authoritative")
+                    posturePill("Session-bound")
+                    posturePill("No local authority")
+                }
+
+                TextField(
+                    "Type a follow-up for canonical text-turn ingress.",
+                    text: $desktopTypedTurnDraft
+                )
+                .textFieldStyle(.roundedBorder)
+                .disabled(desktopTypedTurnSubmissionInterlocksActive)
+                .onSubmit {
+                    submitDesktopTypedTurn()
+                }
+
+                HStack(spacing: 12) {
+                    Button("Send typed turn") {
+                        submitDesktopTypedTurn()
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(trimmedDesktopTypedTurnDraft.isEmpty || desktopTypedTurnSubmissionInterlocksActive)
+
+                    Button("Clear draft") {
+                        desktopTypedTurnDraft = ""
+                        desktopTypedTurnFailedRequest = nil
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(desktopTypedTurnDraft.isEmpty && desktopTypedTurnFailedRequest == nil)
+                }
+
+                Text("Draft validation: trimmed non-empty text only, canonical `text/plain`, \(trimmedDesktopTypedTurnDraft.utf8.count) / \(maxDesktopTypedTurnBytes) UTF-8 bytes.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                if desktopTypedTurnSubmissionInterlocksActive {
+                    Text("Typed-turn production stays single-request only while another foreground capture or canonical voice-turn dispatch posture remains active.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
+                if let pendingRequest = desktopTypedTurnPendingRequest {
+                    desktopTypedTurnPendingRequestCard(pendingRequest)
+                }
+
+                if let failedRequest = desktopTypedTurnFailedRequest {
+                    interruptResponseFailedRequestCard(failedRequest)
+                }
+
+                Text("No dedicated local search controls, no local tool authoring controls, no conversation-list selection, no shell-side `projectID` or `pinnedContextRefs` transport, no hidden/background wake behavior, and no autonomous unlock claim are introduced by this composer.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        } label: {
+            Text("Keyboard Composer")
+                .font(.headline)
+        }
+    }
+
     private var desktopOnboardingContinuePromptState: DesktopOnboardingContinuePromptState? {
         if let desktopOnboardingContinueRuntimeOutcomeState,
            desktopOnboardingContinueRuntimeOutcomeState.phase == .completed,
@@ -5208,7 +5347,7 @@ struct DesktopSessionShellView: View {
         } else {
             dominantPosture = "READY_FOR_OPERATION"
             headerTitle = "Conversation ready"
-            headerDetail = "Use explicit voice or the bounded foreground wake listener to start the next lawful cloud-authored turn from this transcript-primary shell."
+            headerDetail = "Use the bounded keyboard composer, explicit voice, or the bounded foreground wake listener to start the next lawful cloud-authored turn from this transcript-primary shell."
         }
 
         var timelineEntries: [DesktopConversationTimelineEntryState] = []
@@ -5338,6 +5477,31 @@ struct DesktopSessionShellView: View {
                     body: failedWakeRequest.summary,
                     detail: "Bounded wake local failure visibility only. Wake authority, canonical runtime acceptance, and later cloud-visible response remain authoritative.",
                     sourceSurface: "WAKE_TRIGGERED_VOICE_FAILED_REQUEST"
+                )
+            )
+        }
+
+        if let pendingTypedTurnRequest = desktopTypedTurnPendingRequest {
+            timelineEntries.append(
+                DesktopConversationTimelineEntryState(
+                    speaker: "You",
+                    posture: "typed_turn_pending_preview",
+                    body: pendingTypedTurnRequest.boundedPreview,
+                    detail: "Bounded typed-turn pending preview only. Canonical runtime acceptance and later cloud-visible response remain authoritative.",
+                    sourceSurface: "KEYBOARD_TYPED_TURN_PENDING"
+                )
+            )
+        }
+
+        if let failedTypedTurnRequest = desktopTypedTurnFailedRequest,
+           desktopTypedTurnPendingRequest == nil {
+            timelineEntries.append(
+                DesktopConversationTimelineEntryState(
+                    speaker: "You",
+                    posture: "typed_turn_failed_request_preview",
+                    body: failedTypedTurnRequest.summary,
+                    detail: "Bounded typed-turn failure visibility only. Canonical runtime acceptance, transcript authority, and later cloud-visible response remain authoritative.",
+                    sourceSurface: "KEYBOARD_TYPED_TURN_FAILED_REQUEST"
                 )
             )
         }
@@ -9117,7 +9281,7 @@ struct DesktopSessionShellView: View {
                 if state.timelineEntries.isEmpty {
                     sectionCard(
                         title: "Conversation Timeline",
-                        detail: "Awaiting the next lawful cloud-authored turn. Use explicit voice or the bounded foreground wake listener to start runtime dispatch from this transcript-primary shell without introducing local keyboard entry, session selection, or hidden/background wake behavior."
+                        detail: "Awaiting the next lawful cloud-authored turn. Use the bounded keyboard composer, explicit voice, or the bounded foreground wake listener to start runtime dispatch from this transcript-primary shell without introducing session selection or hidden/background wake behavior."
                     )
                 } else {
                     VStack(alignment: .leading, spacing: 14) {
@@ -9146,6 +9310,8 @@ struct DesktopSessionShellView: View {
                         }
                     }
                 }
+
+                desktopTypedTurnComposerCard
             }
         }
         .frame(maxWidth: .infinity, alignment: .topLeading)
@@ -9167,7 +9333,7 @@ struct DesktopSessionShellView: View {
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
 
-                    Text("Controls and evidence-adjacent support remain bounded, session-bound, and non-authoritative here. No local session selection, no attach or reopen authority, no keyboard composer, and no hidden/background wake behavior are introduced by this rail.")
+                    Text("Controls and evidence-adjacent support remain bounded, session-bound, and non-authoritative here. No local session selection, no attach or reopen authority, no dedicated local search controls, and no hidden/background wake behavior are introduced by this rail.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -13005,6 +13171,52 @@ struct DesktopSessionShellView: View {
         }
     }
 
+    private func desktopTypedTurnPendingRequestCard(
+        _ request: DesktopTypedTurnRequestState
+    ) -> some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Awaiting authoritative response")
+                    .font(.headline)
+
+                ForEach(
+                    [
+                        ("request_id", request.id),
+                        ("source_surface", "KEYBOARD_TYPED_TURN_PENDING"),
+                        ("trigger", "EXPLICIT"),
+                        ("content_type", "text/plain"),
+                        ("text_posture", "non_authoritative_preview"),
+                        ("text_bytes", "\(request.byteCount)"),
+                        ("audio_capture_ref", "nil"),
+                    ],
+                    id: \.0
+                ) { row in
+                    HStack(alignment: .top, spacing: 12) {
+                        Text(row.0)
+                            .font(.caption.monospaced())
+                            .foregroundStyle(.secondary)
+                            .frame(width: 170, alignment: .leading)
+
+                        Text(row.1)
+                            .font(.body.monospaced())
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+
+                Text(request.boundedPreview)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                Text("This path preserves one bounded typed preview only while canonical runtime dispatch resolves. The shell does not fabricate local assistant output, local transcript authority, or local tool/search execution.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        } label: {
+            Text("Typed Turn Request")
+                .font(.headline)
+        }
+    }
+
     private func desktopCanonicalRuntimeOutcomeCard(
         _ outcomeState: DesktopCanonicalRuntimeOutcomeState
     ) -> some View {
@@ -14417,6 +14629,141 @@ struct DesktopSessionShellView: View {
             desktopAuthoritativeReplyPlaybackState = .idle
             desktopWakeListenerController.clearPendingPreparedWakeTurn()
         }
+    }
+
+    @MainActor
+    private func dispatchPreparedTypedTurnRequestIfNeeded() async {
+        guard let pendingRequest = desktopTypedTurnPendingRequest else {
+            return
+        }
+
+        do {
+            let ingressContext = try desktopCanonicalRuntimeBridge.desktopTypedTurnIngressRequestBuilder(
+                pendingRequest,
+                threadKey: desktopForegroundVoiceTurnMatchingSelectedThreadKey,
+                authorityStatePolicyContextRef: desktopForegroundVoiceTurnActiveAuthorityPolicyContextRef
+            )
+            desktopCanonicalRuntimeOutcomeState = .dispatchingTyped(
+                preparedRequestID: ingressContext.preparedRequestID,
+                endpoint: ingressContext.endpoint,
+                requestID: ingressContext.requestID
+            )
+            desktopAuthoritativeReplyRenderState = nil
+            desktopAuthoritativeReplyProvenanceRenderState = nil
+            desktopAuthoritativeReplyPlaybackController.reset()
+            desktopAuthoritativeReplyPlaybackState = .idle
+
+            let outcomeState = await desktopCanonicalRuntimeBridge.dispatchPreparedTypedTurnRequest(
+                ingressContext
+            )
+            guard desktopTypedTurnPendingRequest?.id == pendingRequest.id else {
+                return
+            }
+
+            desktopCanonicalRuntimeOutcomeState = outcomeState
+            if outcomeState.phase == .completed {
+                desktopAuthoritativeReplyRenderState = DesktopAuthoritativeReplyRenderState(
+                    title: "Cloud-authored authoritative reply",
+                    summary: outcomeState.authoritativeResponseText == nil
+                        ? "The canonical runtime completed without reply text for this bounded typed turn."
+                        : "Read-only canonical reply text from the completed typed-turn runtime dispatch is now visible here while the shell remains explicitly non-authoritative.",
+                    authoritativeResponseText: outcomeState.authoritativeResponseText
+                )
+                desktopAuthoritativeReplyProvenanceRenderState = DesktopAuthoritativeReplyProvenanceRenderState(
+                    title: "Cloud-authored authoritative reply provenance",
+                    summary: outcomeState.authoritativeResponseProvenance == nil
+                        ? "The canonical runtime completed without provenance for this bounded typed turn."
+                        : "Read-only canonical provenance from the completed typed-turn runtime dispatch is now visible here while the shell remains explicitly non-authoritative.",
+                    authoritativeResponseProvenance: outcomeState.authoritativeResponseProvenance,
+                    sources: outcomeState.authoritativeResponseProvenance?.sources.map {
+                        DesktopAuthoritativeReplyProvenanceRenderState.Source(
+                            title: $0.title,
+                            url: $0.url
+                        )
+                    } ?? [],
+                    retrievedAtLabel: formatAuthoritativeReplyRetrievedAt(
+                        outcomeState.authoritativeResponseProvenance?.retrievedAt
+                    ),
+                    cacheStatusLabel: outcomeState.authoritativeResponseProvenance?.cacheStatus
+                )
+            } else {
+                desktopAuthoritativeReplyRenderState = nil
+                desktopAuthoritativeReplyProvenanceRenderState = nil
+            }
+            desktopTypedTurnPendingRequest = nil
+        } catch {
+            desktopCanonicalRuntimeOutcomeState = .failedTyped(
+                preparedRequestID: pendingRequest.id,
+                endpoint: desktopCanonicalRuntimeBridge.voiceTurnEndpoint,
+                requestID: "unavailable",
+                summary: "The canonical runtime bridge could not stage the bounded typed-turn request for dispatch.",
+                detail: error.localizedDescription,
+                reasonCode: "desktop_runtime_bridge_failure",
+                failureClass: "RetryableRuntime"
+            )
+            desktopAuthoritativeReplyRenderState = nil
+            desktopAuthoritativeReplyProvenanceRenderState = nil
+            desktopAuthoritativeReplyPlaybackController.reset()
+            desktopAuthoritativeReplyPlaybackState = .idle
+            desktopTypedTurnPendingRequest = nil
+        }
+    }
+
+    private func submitDesktopTypedTurn() {
+        let trimmedDraft = trimmedDesktopTypedTurnDraft
+        guard !trimmedDraft.isEmpty else {
+            return
+        }
+
+        if trimmedDraft.utf8.count > maxDesktopTypedTurnBytes {
+            desktopTypedTurnFailedRequest = InterruptContinuityResponseFailureState(
+                id: "failed_desktop_typed_turn_text_plain_validation",
+                title: "Failed typed turn request",
+                summary: "Canonical text-turn validation held this request because the bounded `text/plain` payload exceeded 16384 UTF-8 bytes before any authoritative acceptance occurred.",
+                detail: "Failure visibility only; shorten the draft and retry through the canonical desktop typed-turn path. No local assistant output or authoritative transcript mutation was produced."
+            )
+            return
+        }
+
+        guard desktopTypedTurnPendingRequest == nil else {
+            desktopTypedTurnFailedRequest = InterruptContinuityResponseFailureState(
+                id: "failed_desktop_typed_turn_awaiting_authoritative_response",
+                title: "Failed typed turn request",
+                summary: "A later typed-turn request could not be produced while the current bounded typed turn is already awaiting authoritative response.",
+                detail: "The shell keeps bounded pending / failed posture only; it does not queue a second typed request locally, repair transport, or fabricate local assistant output."
+            )
+            return
+        }
+
+        guard !explicitVoiceController.isListening,
+              explicitVoiceController.pendingRequest == nil,
+              !desktopWakeListenerController.listenerState.isActiveForMicrophone,
+              desktopWakeListenerController.listenerState != .dispatching,
+              desktopWakeListenerController.pendingRequest == nil,
+              lastStagedWakeTriggeredVoiceTurnRequestState == nil else {
+            desktopTypedTurnFailedRequest = InterruptContinuityResponseFailureState(
+                id: "failed_desktop_typed_turn_other_voice_request_active",
+                title: "Failed typed turn request",
+                summary: "A bounded typed turn could not be produced while another foreground voice capture or voice-turn dispatch posture was still active.",
+                detail: "This shell stays single-request only and does not merge typed and voice production locally, bypass canonical runtime sequencing, or invent local authority."
+            )
+            return
+        }
+
+        desktopTypedTurnRequestSequence += 1
+        desktopTypedTurnFailedRequest = nil
+        desktopCanonicalRuntimeOutcomeState = nil
+        desktopAuthoritativeReplyRenderState = nil
+        desktopAuthoritativeReplyProvenanceRenderState = nil
+        desktopAuthoritativeReplyPlaybackController.reset()
+        desktopAuthoritativeReplyPlaybackState = .idle
+        desktopTypedTurnPendingRequest = DesktopTypedTurnRequestState(
+            id: String(format: "desktop_typed_turn_request_%03d", desktopTypedTurnRequestSequence),
+            deviceTurnSequence: UInt64(desktopTypedTurnRequestSequence),
+            text: trimmedDraft,
+            byteCount: trimmedDraft.utf8.count
+        )
+        desktopTypedTurnDraft = ""
     }
 
     private func clearInterruptResponseState() {

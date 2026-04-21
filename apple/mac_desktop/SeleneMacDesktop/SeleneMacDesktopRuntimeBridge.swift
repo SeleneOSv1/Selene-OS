@@ -64,6 +64,30 @@ struct DesktopCanonicalRuntimeOutcomeState: Identifiable, Equatable {
         )
     }
 
+    static func dispatchingTyped(
+        preparedRequestID: String,
+        endpoint: String,
+        requestID: String
+    ) -> DesktopCanonicalRuntimeOutcomeState {
+        DesktopCanonicalRuntimeOutcomeState(
+            id: preparedRequestID,
+            phase: .dispatching,
+            title: "Dispatching prepared typed-turn request",
+            summary: "The bounded keyboard typed-turn request is now being handed into the canonical runtime bridge.",
+            detail: "Bridge dispatch only. This shell remains non-authoritative and does not fabricate local assistant output, local search execution, or local tool invocation while canonical runtime execution is in flight.",
+            endpoint: endpoint,
+            requestID: requestID,
+            outcome: nil,
+            nextMove: nil,
+            reasonCode: nil,
+            sessionID: nil,
+            turnID: nil,
+            failureClass: nil,
+            authoritativeResponseText: nil,
+            authoritativeResponseProvenance: nil
+        )
+    }
+
     static func dispatchingWake(
         preparedRequestID: String,
         endpoint: String,
@@ -138,6 +162,31 @@ struct DesktopCanonicalRuntimeOutcomeState: Identifiable, Equatable {
         )
     }
 
+    static func completedTyped(
+        preparedRequestID: String,
+        endpoint: String,
+        requestID: String,
+        response: DesktopCanonicalRuntimeBridge.VoiceTurnAdapterResponsePayload
+    ) -> DesktopCanonicalRuntimeOutcomeState {
+        DesktopCanonicalRuntimeOutcomeState(
+            id: preparedRequestID,
+            phase: .completed,
+            title: "Canonical typed-turn runtime dispatch completed",
+            summary: "The bounded keyboard typed-turn request reached the canonical runtime and returned a cloud-authored outcome posture.",
+            detail: "Outcome visibility plus bounded read-only reply and provenance rendering only. This bridge preserves cloud-authored reply text and provenance for shell-local display without fabricating local transcript authority, search execution, or tool invocation.",
+            endpoint: endpoint,
+            requestID: requestID,
+            outcome: response.outcome,
+            nextMove: response.nextMove,
+            reasonCode: response.reasonCode,
+            sessionID: response.sessionID,
+            turnID: response.turnID.map(String.init),
+            failureClass: response.failureClass,
+            authoritativeResponseText: boundedAuthoritativeResponseText(response.responseText),
+            authoritativeResponseProvenance: boundedAuthoritativeResponseProvenance(response.provenance)
+        )
+    }
+
     static func failed(
         preparedRequestID: String,
         endpoint: String,
@@ -183,6 +232,36 @@ struct DesktopCanonicalRuntimeOutcomeState: Identifiable, Equatable {
             id: preparedRequestID,
             phase: .failed,
             title: "Canonical wake-triggered runtime dispatch failed",
+            summary: summary,
+            detail: detail,
+            endpoint: endpoint,
+            requestID: requestID,
+            outcome: nil,
+            nextMove: nil,
+            reasonCode: reasonCode,
+            sessionID: sessionID,
+            turnID: turnID,
+            failureClass: failureClass,
+            authoritativeResponseText: nil,
+            authoritativeResponseProvenance: nil
+        )
+    }
+
+    static func failedTyped(
+        preparedRequestID: String,
+        endpoint: String,
+        requestID: String,
+        summary: String,
+        detail: String,
+        reasonCode: String? = nil,
+        failureClass: String? = nil,
+        sessionID: String? = nil,
+        turnID: String? = nil
+    ) -> DesktopCanonicalRuntimeOutcomeState {
+        DesktopCanonicalRuntimeOutcomeState(
+            id: preparedRequestID,
+            phase: .failed,
+            title: "Canonical typed-turn runtime dispatch failed",
             summary: summary,
             detail: detail,
             endpoint: endpoint,
@@ -3198,6 +3277,13 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
         let urlRequest: URLRequest
     }
 
+    struct DesktopTypedTurnIngressContext {
+        let preparedRequestID: String
+        let requestID: String
+        let endpoint: String
+        let urlRequest: URLRequest
+    }
+
     struct DesktopWakeTriggeredVoiceIngressContext {
         let preparedRequestID: String
         let requestID: String
@@ -3806,6 +3892,25 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
         }
     }
 
+    func dispatchPreparedTypedTurnRequest(
+        _ preparedRequest: DesktopTypedTurnRequestState
+    ) async -> DesktopCanonicalRuntimeOutcomeState {
+        do {
+            let ingressContext = try desktopTypedTurnIngressRequestBuilder(preparedRequest)
+            return await dispatchPreparedTypedTurnRequest(ingressContext)
+        } catch {
+            return .failedTyped(
+                preparedRequestID: preparedRequest.id,
+                endpoint: voiceTurnEndpoint,
+                requestID: "unavailable",
+                summary: "The canonical runtime bridge could not deliver the bounded typed-turn request.",
+                detail: error.localizedDescription,
+                reasonCode: "desktop_runtime_bridge_failure",
+                failureClass: "RetryableRuntime"
+            )
+        }
+    }
+
     func dispatchPreparedWakeTriggeredVoiceRequest(
         _ preparedRequest: WakeTriggeredVoiceTurnRequestState
     ) async -> DesktopCanonicalRuntimeOutcomeState {
@@ -4305,6 +4410,58 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
                 endpoint: ingressContext.endpoint,
                 requestID: ingressContext.requestID,
                 summary: "The canonical runtime bridge could not deliver the bounded explicit voice request.",
+                detail: error.localizedDescription,
+                reasonCode: "desktop_runtime_bridge_failure",
+                failureClass: "RetryableRuntime"
+            )
+        }
+    }
+
+    func dispatchPreparedTypedTurnRequest(
+        _ ingressContext: DesktopTypedTurnIngressContext
+    ) async -> DesktopCanonicalRuntimeOutcomeState {
+        do {
+            try await ensureAdapterAvailable()
+
+            let (data, response) = try await urlSession.data(for: ingressContext.urlRequest)
+            let decoder = JSONDecoder()
+            decoder.keyDecodingStrategy = .convertFromSnakeCase
+            let httpResponse = response as? HTTPURLResponse
+            let statusCode = httpResponse?.statusCode ?? 0
+
+            if statusCode == 200 {
+                let payload = try decoder.decode(VoiceTurnAdapterResponsePayload.self, from: data)
+                return .completedTyped(
+                    preparedRequestID: ingressContext.preparedRequestID,
+                    endpoint: ingressContext.endpoint,
+                    requestID: ingressContext.requestID,
+                    response: payload
+                )
+            }
+
+            if let payload = try? decoder.decode(VoiceTurnIngressErrorPayload.self, from: data) {
+                return .failedTyped(
+                    preparedRequestID: ingressContext.preparedRequestID,
+                    endpoint: ingressContext.endpoint,
+                    requestID: ingressContext.requestID,
+                    summary: "The canonical runtime rejected or failed the bounded typed-turn request before reply rendering was allowed.",
+                    detail: "Canonical typed-turn dispatch failed closed with reason code `\(payload.reasonCode)` and failure class `\(payload.failureClass)`. This shell does not fabricate local assistant output, local search execution, or bypass runtime law.",
+                    reasonCode: payload.reasonCode,
+                    failureClass: payload.failureClass,
+                    sessionID: payload.sessionID,
+                    turnID: payload.turnID.map(String.init)
+                )
+            }
+
+            throw BridgeError.responseDecodingFailed(
+                "canonical runtime bridge returned status \(statusCode) with an unreadable response payload"
+            )
+        } catch {
+            return .failedTyped(
+                preparedRequestID: ingressContext.preparedRequestID,
+                endpoint: ingressContext.endpoint,
+                requestID: ingressContext.requestID,
+                summary: "The canonical runtime bridge could not deliver the bounded typed-turn request.",
                 detail: error.localizedDescription,
                 reasonCode: "desktop_runtime_bridge_failure",
                 failureClass: "RetryableRuntime"
@@ -5511,6 +5668,84 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
         )
 
         return DesktopExplicitVoiceIngressContext(
+            preparedRequestID: preparedRequest.id,
+            requestID: requestID,
+            endpoint: endpointURL.absoluteString,
+            urlRequest: urlRequest
+        )
+    }
+
+    func desktopTypedTurnIngressRequestBuilder(
+        _ preparedRequest: DesktopTypedTurnRequestState,
+        threadKey: String? = nil,
+        authorityStatePolicyContextRef: String? = nil
+    ) throws -> DesktopTypedTurnIngressContext {
+        let typedText = preparedRequest.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !typedText.isEmpty else {
+            throw BridgeError.invalidPreparedRequest(
+                "the prepared typed-turn request contained no text after bounded shell validation"
+            )
+        }
+
+        let timestampMS = Self.systemTimeNowMS()
+        let monotonicNowNS = Swift.max(DispatchTime.now().uptimeNanoseconds, 1)
+        let correlationID = monotonicNowNS
+        let turnID = monotonicNowNS &+ 1
+        let requestID = "desktop_typed_runtime_request_\(preparedRequest.id)_\(UUID().uuidString.replacingOccurrences(of: "-", with: ""))"
+        let idempotencyKey = "desktop_typed_runtime_idempotency_\(preparedRequest.id)"
+        let nonce = UUID().uuidString.replacingOccurrences(of: "-", with: "")
+        let threadPolicyFlags = Self.desktopVoiceTurnThreadPolicyFlagsPayloadBuilder(
+            authorityStatePolicyContextRef
+        )
+
+        let payload = VoiceTurnAdapterRequestPayload(
+            correlationID: correlationID,
+            turnID: turnID,
+            deviceTurnSequence: preparedRequest.deviceTurnSequence,
+            appPlatform: "DESKTOP",
+            platformVersion: nil,
+            deviceClass: nil,
+            runtimeClientVersion: nil,
+            hardwareCapabilityProfile: nil,
+            networkProfile: nil,
+            claimedCapabilities: nil,
+            integrityStatus: nil,
+            attestationRef: nil,
+            trigger: "EXPLICIT",
+            actorUserID: actorUserID,
+            tenantID: tenantID,
+            deviceID: deviceID,
+            nowNS: monotonicNowNS,
+            threadKey: threadKey,
+            projectID: nil,
+            pinnedContextRefs: nil,
+            threadPolicyFlags: threadPolicyFlags,
+            userTextPartial: nil,
+            userTextFinal: typedText,
+            seleneTextPartial: nil,
+            seleneTextFinal: nil,
+            audioCaptureRef: nil,
+            visualInputRef: nil
+        )
+
+        let encoder = JSONEncoder()
+        encoder.keyEncodingStrategy = .convertToSnakeCase
+        let body = try encoder.encode(payload)
+        let endpointURL = adapterBaseURL.appendingPathComponent("v1/voice/turn")
+        var urlRequest = URLRequest(url: endpointURL)
+        urlRequest.httpMethod = "POST"
+        urlRequest.httpBody = body
+        urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        urlRequest.setValue(requestID, forHTTPHeaderField: "x-request-id")
+        urlRequest.setValue(idempotencyKey, forHTTPHeaderField: "idempotency-key")
+        urlRequest.setValue(String(timestampMS), forHTTPHeaderField: "x-selene-timestamp-ms")
+        urlRequest.setValue(nonce, forHTTPHeaderField: "x-selene-nonce")
+        urlRequest.setValue(
+            Self.bearerToken(subject: actorUserID, device: deviceID),
+            forHTTPHeaderField: "Authorization"
+        )
+
+        return DesktopTypedTurnIngressContext(
             preparedRequestID: preparedRequest.id,
             requestID: requestID,
             endpoint: endpointURL.absoluteString,
