@@ -454,7 +454,6 @@ impl SimulationExecutor {
             &actor_user_id,
             &tenant_id,
             BCAST_POLICY_UPDATE_ACTION,
-            "simulation_candidate_dispatch.bcast_wait_policy.access_instance_id",
             "simulation_candidate_dispatch.bcast_wait_policy.access_decision",
             now,
         )?;
@@ -504,7 +503,6 @@ impl SimulationExecutor {
             &actor_user_id,
             &tenant_id,
             BCAST_POLICY_UPDATE_ACTION,
-            "simulation_candidate_dispatch.bcast_urgent_followup_policy.access_instance_id",
             "simulation_candidate_dispatch.bcast_urgent_followup_policy.access_decision",
             now,
         )?;
@@ -959,7 +957,6 @@ impl SimulationExecutor {
             actor_user_id,
             tenant_id,
             BCAST_WAIT_POLICY_UPDATE_ACTION,
-            "simulation_candidate_dispatch.bcast_wait_policy.access_instance_id",
             "simulation_candidate_dispatch.bcast_wait_policy.access_decision",
             now,
         )
@@ -977,7 +974,6 @@ impl SimulationExecutor {
             actor_user_id,
             tenant_id,
             BCAST_URGENT_FOLLOWUP_POLICY_UPDATE_ACTION,
-            "simulation_candidate_dispatch.bcast_urgent_followup_policy.access_instance_id",
             "simulation_candidate_dispatch.bcast_urgent_followup_policy.access_decision",
             now,
         )
@@ -2123,19 +2119,6 @@ impl SimulationExecutor {
         const ACCESS_STEP_UP_DEFER_UNVERIFIED: ReasonCodeId = ReasonCodeId(0x4153_0002);
 
         let tenant_id = resolve_reminder_tenant_id(store, &dispatch.intent_draft, &actor_user_id)?;
-        let Some(access_instance) =
-            store.ph2access_get_instance_by_tenant_user(tenant_id.as_str(), &actor_user_id)
-        else {
-            return Err(StorageError::ContractViolation(
-                ContractViolation::InvalidValue {
-                    field: "access_step_up_dispatch.access_instance_id",
-                    reason: "missing access instance for actor_user_id + tenant_id",
-                },
-            ));
-        };
-        let access_instance_id = access_instance.access_instance_id.clone();
-        let access_device_trust_level = access_instance.device_trust_level;
-        let access_verification_level = access_instance.verification_level;
 
         let audit_key_prefix = x_idempotency_key
             .map(|k| format!("access_step_up:{k}"))
@@ -2154,23 +2137,41 @@ impl SimulationExecutor {
             format!("{audit_key_prefix}:start"),
         )?;
 
-        let gate = store.ph1access_gate_decide(
-            actor_user_id.clone(),
-            access_instance_id,
-            dispatch.requested_action.clone(),
-            AccessMode::A,
-            access_device_trust_level,
-            false,
-            now,
-        )?;
+        let (access_decision, gate_reason_code, access_verification_level) =
+            if let Some(access_instance) =
+                store.ph2access_get_instance_by_tenant_user(tenant_id.as_str(), &actor_user_id)
+            {
+                let gate = store.ph1access_gate_decide(
+                    actor_user_id.clone(),
+                    access_instance.access_instance_id.clone(),
+                    dispatch.requested_action.clone(),
+                    AccessMode::A,
+                    access_instance.device_trust_level,
+                    false,
+                    now,
+                )?;
+                (
+                    gate.access_decision,
+                    gate.reason_code,
+                    Some(access_instance.verification_level),
+                )
+            } else {
+                (
+                    AccessDecision::Deny,
+                    reason_codes::SIM_DISPATCH_GUARD_ACCESS_REQUIRED,
+                    None,
+                )
+            };
 
-        let (outcome, reason_code) = match gate.access_decision {
-            AccessDecision::Deny => (StepUpOutcome::Refuse, gate.reason_code),
-            AccessDecision::Escalate => (StepUpOutcome::Defer, gate.reason_code),
+        let (outcome, reason_code) = match access_decision {
+            AccessDecision::Deny => (StepUpOutcome::Refuse, gate_reason_code),
+            AccessDecision::Escalate => (StepUpOutcome::Defer, gate_reason_code),
             AccessDecision::Allow => {
+                let access_verification_level =
+                    access_verification_level.expect("allow step-up requires access verification");
                 if step_up_challenge_satisfied(access_verification_level, dispatch.challenge_method)
                 {
-                    (StepUpOutcome::Continue, gate.reason_code)
+                    (StepUpOutcome::Continue, gate_reason_code)
                 } else {
                     (StepUpOutcome::Defer, ACCESS_STEP_UP_DEFER_UNVERIFIED)
                 }
@@ -3379,7 +3380,6 @@ impl SimulationExecutor {
             actor_user_id,
             tenant_id,
             "CAPREQ_MANAGE",
-            "simulation_candidate_dispatch.capreq.access_instance_id",
             "simulation_candidate_dispatch.capreq.access_decision",
             now,
         )
@@ -3397,7 +3397,6 @@ impl SimulationExecutor {
             actor_user_id,
             tenant_id,
             "LINK_INVITE",
-            "simulation_candidate_dispatch.link.access_instance_id",
             "simulation_candidate_dispatch.link.access_decision",
             now,
         )
@@ -3415,7 +3414,6 @@ impl SimulationExecutor {
             actor_user_id,
             tenant_id,
             "DELIVERY_SEND",
-            "simulation_candidate_dispatch.link_delivery.access_instance_id",
             "simulation_candidate_dispatch.link_delivery.access_decision",
             now,
         )
@@ -3433,7 +3431,6 @@ impl SimulationExecutor {
             actor_user_id,
             tenant_id,
             "ACCESS_SCHEMA_MANAGE",
-            "simulation_candidate_dispatch.access_schema.access_instance_id",
             "simulation_candidate_dispatch.access_schema.access_decision",
             now,
         )
@@ -3451,7 +3448,6 @@ impl SimulationExecutor {
             actor_user_id,
             tenant_id,
             "ACCESS_ESCALATION_VOTE",
-            "simulation_candidate_dispatch.access_escalation_vote.access_instance_id",
             "simulation_candidate_dispatch.access_escalation_vote.access_decision",
             now,
         )
@@ -3469,7 +3465,6 @@ impl SimulationExecutor {
             actor_user_id,
             tenant_id,
             "ACCESS_INSTANCE_COMPILE_REFRESH",
-            "simulation_candidate_dispatch.access_instance_compile.access_instance_id",
             "simulation_candidate_dispatch.access_instance_compile.access_decision",
             now,
         )
@@ -3485,11 +3480,9 @@ impl SimulationExecutor {
         let Some(access_instance) =
             store.ph2access_get_instance_by_tenant_user(tenant_id.as_str(), actor_user_id)
         else {
-            return Err(StorageError::ContractViolation(
-                ContractViolation::InvalidValue {
-                    field: "simulation_candidate_dispatch.calendar_event.access_instance_id",
-                    reason: "missing access instance for actor_user_id + tenant_id",
-                },
+            return Err(Self::fail_closed_dispatch_access_error(
+                "simulation_candidate_dispatch.calendar_event.access_decision",
+                AccessDecision::Deny,
             ));
         };
         let gate = store.ph1access_gate_decide(
@@ -3501,31 +3494,16 @@ impl SimulationExecutor {
             false,
             now,
         )?;
-        match gate.access_decision {
-            AccessDecision::Allow => {}
-            AccessDecision::Deny => {
-                return Err(StorageError::ContractViolation(
-                    ContractViolation::InvalidValue {
-                        field: "simulation_candidate_dispatch.calendar_event.access_decision",
-                        reason: "ACCESS_SCOPE_VIOLATION",
-                    },
-                ));
-            }
-            AccessDecision::Escalate => {
-                return Err(StorageError::ContractViolation(
-                    ContractViolation::InvalidValue {
-                        field: "simulation_candidate_dispatch.calendar_event.access_decision",
-                        reason: "ACCESS_AP_REQUIRED",
-                    },
-                ));
-            }
+        if gate.access_decision != AccessDecision::Allow {
+            return Err(Self::fail_closed_dispatch_access_error(
+                "simulation_candidate_dispatch.calendar_event.access_decision",
+                gate.access_decision,
+            ));
         }
         if !role_template_is_owner_or_admin(&access_instance.role_template_id) {
-            return Err(StorageError::ContractViolation(
-                ContractViolation::InvalidValue {
-                    field: "simulation_candidate_dispatch.calendar_event.access_decision",
-                    reason: "ACCESS_AP_REQUIRED",
-                },
+            return Err(Self::fail_closed_dispatch_access_error(
+                "simulation_candidate_dispatch.calendar_event.access_decision",
+                AccessDecision::Escalate,
             ));
         }
         Ok(())
@@ -3542,11 +3520,9 @@ impl SimulationExecutor {
         let Some(access_instance) =
             store.ph2access_get_instance_by_tenant_user(tenant_id.as_str(), actor_user_id)
         else {
-            return Err(StorageError::ContractViolation(
-                ContractViolation::InvalidValue {
-                    field: "simulation_candidate_dispatch.reminder.access_instance_id",
-                    reason: "missing access instance for actor_user_id + tenant_id",
-                },
+            return Err(Self::fail_closed_dispatch_access_error(
+                "simulation_candidate_dispatch.reminder.access_decision",
+                AccessDecision::Deny,
             ));
         };
         let gate = store.ph1access_gate_decide(
@@ -3558,31 +3534,16 @@ impl SimulationExecutor {
             false,
             now,
         )?;
-        match gate.access_decision {
-            AccessDecision::Allow => {}
-            AccessDecision::Deny => {
-                return Err(StorageError::ContractViolation(
-                    ContractViolation::InvalidValue {
-                        field: "simulation_candidate_dispatch.reminder.access_decision",
-                        reason: "ACCESS_SCOPE_VIOLATION",
-                    },
-                ));
-            }
-            AccessDecision::Escalate => {
-                return Err(StorageError::ContractViolation(
-                    ContractViolation::InvalidValue {
-                        field: "simulation_candidate_dispatch.reminder.access_decision",
-                        reason: "ACCESS_AP_REQUIRED",
-                    },
-                ));
-            }
+        if gate.access_decision != AccessDecision::Allow {
+            return Err(Self::fail_closed_dispatch_access_error(
+                "simulation_candidate_dispatch.reminder.access_decision",
+                gate.access_decision,
+            ));
         }
         if !role_template_is_owner_or_admin(&access_instance.role_template_id) {
-            return Err(StorageError::ContractViolation(
-                ContractViolation::InvalidValue {
-                    field: "simulation_candidate_dispatch.reminder.access_decision",
-                    reason: "ACCESS_AP_REQUIRED",
-                },
+            return Err(Self::fail_closed_dispatch_access_error(
+                "simulation_candidate_dispatch.reminder.access_decision",
+                AccessDecision::Escalate,
             ));
         }
         Ok(())
@@ -3594,18 +3555,15 @@ impl SimulationExecutor {
         actor_user_id: &UserId,
         tenant_id: &TenantId,
         requested_action: &str,
-        field_access_instance: &'static str,
         field_access_decision: &'static str,
         now: MonotonicTimeNs,
     ) -> Result<(), StorageError> {
         let Some(access_instance) =
             store.ph2access_get_instance_by_tenant_user(tenant_id.as_str(), actor_user_id)
         else {
-            return Err(StorageError::ContractViolation(
-                ContractViolation::InvalidValue {
-                    field: field_access_instance,
-                    reason: "missing access instance for actor_user_id + tenant_id",
-                },
+            return Err(Self::fail_closed_dispatch_access_error(
+                field_access_decision,
+                AccessDecision::Deny,
             ));
         };
 
@@ -3621,19 +3579,27 @@ impl SimulationExecutor {
 
         match gate.access_decision {
             AccessDecision::Allow => Ok(()),
-            AccessDecision::Deny => Err(StorageError::ContractViolation(
-                ContractViolation::InvalidValue {
-                    field: field_access_decision,
-                    reason: "ACCESS_SCOPE_VIOLATION",
-                },
-            )),
-            AccessDecision::Escalate => Err(StorageError::ContractViolation(
-                ContractViolation::InvalidValue {
-                    field: field_access_decision,
-                    reason: "ACCESS_AP_REQUIRED",
-                },
+            decision => Err(Self::fail_closed_dispatch_access_error(
+                field_access_decision,
+                decision,
             )),
         }
+    }
+
+    fn fail_closed_dispatch_access_error(
+        field_access_decision: &'static str,
+        access_decision: AccessDecision,
+    ) -> StorageError {
+        let reason = match access_decision {
+            AccessDecision::Allow => "ACCESS_SCOPE_VIOLATION",
+            AccessDecision::Deny => "ACCESS_SCOPE_VIOLATION",
+            AccessDecision::Escalate => "ACCESS_AP_REQUIRED",
+        };
+
+        StorageError::ContractViolation(ContractViolation::InvalidValue {
+            field: field_access_decision,
+            reason,
+        })
     }
 }
 
@@ -8914,8 +8880,8 @@ mod tests {
             out,
             Err(StorageError::ContractViolation(
                 ContractViolation::InvalidValue {
-                    field: "simulation_candidate_dispatch.link.access_instance_id",
-                    reason: "missing access instance for actor_user_id + tenant_id",
+                    field: "simulation_candidate_dispatch.link.access_decision",
+                    reason: "ACCESS_SCOPE_VIOLATION",
                 }
             ))
         ));
@@ -10215,8 +10181,8 @@ mod tests {
             out,
             Err(StorageError::ContractViolation(
                 ContractViolation::InvalidValue {
-                    field: "simulation_candidate_dispatch.capreq.access_instance_id",
-                    reason: "missing access instance for actor_user_id + tenant_id",
+                    field: "simulation_candidate_dispatch.capreq.access_decision",
+                    reason: "ACCESS_SCOPE_VIOLATION",
                 }
             ))
         ));
@@ -11373,6 +11339,61 @@ mod tests {
             step_up_result.challenge_method,
             StepUpChallengeMethod::DeviceBiometric
         );
+    }
+
+    #[test]
+    fn at_sim_exec_16b_access_step_up_missing_access_context_refuses_and_emits_start_finish_audit() {
+        let mut store = Ph1fStore::new_in_memory();
+        let exec = SimulationExecutor::default();
+        let actor = UserId::new("tenant_2:stepup_actor_missing").unwrap();
+        store
+            .insert_identity(IdentityRecord::v1(
+                actor.clone(),
+                None,
+                None,
+                MonotonicTimeNs(1),
+                IdentityStatus::Active,
+            ))
+            .unwrap();
+        seed_access_instance_with_permissions(
+            &mut store,
+            &actor,
+            "tenant_1",
+            "role.access_admin",
+            "{\"allow\":[\"ACCESS_SCHEMA_MANAGE\"]}",
+            AccessMode::A,
+            true,
+            AccessDeviceTrustLevel::Dtl4,
+            AccessLifecycleState::Active,
+        );
+
+        let x = access_step_up_x(
+            4,
+            access_draft(
+                IntentType::AccessSchemaManage,
+                vec![access_field(FieldKey::TenantId, "tenant_2")],
+            ),
+            "ACCESS_SCHEMA_MANAGE",
+            StepUpChallengeMethod::DevicePasscode,
+            "idem-stepup-missing-context",
+        );
+
+        let out = exec
+            .execute_ph1x_dispatch_simulation_candidate(&mut store, actor, MonotonicTimeNs(2), &x)
+            .unwrap();
+        match out {
+            SimulationDispatchOutcome::AccessStepUp { outcome, reason_code, .. } => {
+                assert_eq!(outcome, StepUpOutcome::Refuse);
+                assert_eq!(
+                    reason_code,
+                    reason_codes::SIM_DISPATCH_GUARD_ACCESS_REQUIRED
+                );
+            }
+            _ => panic!("expected AccessStepUp outcome"),
+        }
+
+        let audit_rows = store.ph1access_capreq_audit_rows(CorrelationId(10));
+        assert_eq!(audit_rows.len(), 2);
     }
 
     #[test]
