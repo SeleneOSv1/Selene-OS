@@ -10727,6 +10727,19 @@ struct DesktopSessionShellView: View {
 
                     if outcomeState.phase == .completed,
                        let response = outcomeState.response {
+                        let archivedRecentSlicePair: (user: String, selene: String)? = {
+                            guard let archivedUserTurnText = response.archivedUserTurnText?
+                                    .trimmingCharacters(in: .whitespacesAndNewlines),
+                                  let archivedSeleneTurnText = response.archivedSeleneTurnText?
+                                    .trimmingCharacters(in: .whitespacesAndNewlines),
+                                  !archivedUserTurnText.isEmpty,
+                                  !archivedSeleneTurnText.isEmpty else {
+                                return nil
+                            }
+
+                            return (user: archivedUserTurnText, selene: archivedSeleneTurnText)
+                        }()
+
                         if let sessionState = response.sessionState {
                             metadataRow(label: "session_state", value: sessionState)
                         }
@@ -10772,6 +10785,25 @@ struct DesktopSessionShellView: View {
                             metadataRow(
                                 label: "reconciliation_decision",
                                 value: reconciliationDecision
+                            )
+                        }
+                        if let archivedRecentSlicePair = archivedRecentSlicePair {
+                            Text("Cloud-authored archived recent-slice evidence only.")
+                                .font(.subheadline.weight(.semibold))
+                                .frame(maxWidth: .infinity, alignment: .leading)
+
+                            transcriptEntry(
+                                speaker: "You",
+                                posture: "archived_user_turn_text",
+                                body: archivedRecentSlicePair.user,
+                                detail: "Archived recent slice remains durable archived conversation truth and stays distinct from PH1.M resume-context output."
+                            )
+
+                            transcriptEntry(
+                                speaker: "Selene",
+                                posture: "archived_selene_turn_text",
+                                body: archivedRecentSlicePair.selene,
+                                detail: "Archived recent slice remains text-visible without local auto-reopen, archive-browser synthesis, or local transcript authority."
                             )
                         }
                     }

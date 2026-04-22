@@ -307,6 +307,16 @@ It may only be updated from current repo truth, exact command results, and exact
   no new backend route, no Rust edits, no merge into `observedSessionSurfaces`, no synthetic transcript or archive-browser surface, no recent-row-driven attach / resume / recover authority, and no generic reopen authority are claimed by this publication;
   APP_MAC_DESKTOP remains `PARTIAL`;
   the next desktop implementation brief may now be written from this exact published winner;
+  H347 is now implemented as the first post-H346 APP_MAC_DESKTOP bounded actual capability unlock `current_device_recent_session_archived_recent_slice_read_only_visibility_from_already_live_posture_carrier` through [SeleneMacDesktopRuntimeBridge.swift#L1](/Users/selene/Documents/Selene-OS/apple/mac_desktop/SeleneMacDesktop/SeleneMacDesktopRuntimeBridge.swift#L1), [DesktopSessionShellView.swift#L1](/Users/selene/Documents/Selene-OS/apple/mac_desktop/SeleneMacDesktop/DesktopSessionShellView.swift#L1), [MASTER_BUILD_COMPLETION_PLAN.md#L1](/Users/selene/Documents/Selene-OS/docs/MASTER_BUILD_COMPLETION_PLAN.md#L1), [MASTER_BUILD_COMPLETION_LEDGER.md#L1](/Users/selene/Documents/Selene-OS/docs/MASTER_BUILD_COMPLETION_LEDGER.md#L1), and [APP_MAC_DESKTOP_REAL_OPERATION_PROGRAM.md#L1](/Users/selene/Documents/Selene-OS/docs/PHASE_PLANS/PHASE_H_IMPLEMENTATION/APP_MAC_DESKTOP_REAL_OPERATION_PROGRAM.md#L1]);
+  H346-H321 truth remains preserved exactly as already recorded, with no regression;
+  current native macOS runtime bridge now consumes exact `archived_user_turn_text` and exact `archived_selene_turn_text` through the already-live exact `/v1/session/posture` response family only;
+  current native macOS shell now renders one bounded read-only archived recent-slice evidence pair inside the already-live selected recent-session posture-evidence card only when the selected current-device posture payload lawfully returns both exact archived fields;
+  the card now renders only already-cloud-authored archived recent-slice evidence for the selected recent-session row, keeps that row separate from `observedSessionSurfaces`, and does not foreground that row as a session surface;
+  the card adds no active transcript surface, no archive browser surface, no recent-row-driven attach / resume / recover authority, and no generic reopen authority;
+  exact H341 recent-session posture-evidence visibility remains preserved in this run;
+  exact H345 upstream archived recent-slice carrier truth remains preserved in this run;
+  APP_MAC_DESKTOP remains `PARTIAL`;
+  no post-H347 exact desktop next winner is published in this run;
   H324 is now implemented as the first canonical post-H323 selected bounded native macOS actual capability unlock `wake_ready_visible_shell_auto_start_of_already_live_foreground_wake_listener_without_fake_parity_claim` implementation build;
   H323-H256 truth remains preserved exactly as already recorded, with no regression;
   H323 was the correct post-H322 unlock because it added bounded tool-request authoring / invocation only through the already-live exact `/v1/voice/turn` typed-turn path, with no new backend route and no direct local tool/search authority;

@@ -613,25 +613,23 @@ This section is a planning queue only.
   - what should come next
 
 ### Current Exact Next Winner
-- bounded native macOS `current_device_recent_session_archived_recent_slice_read_only_visibility_from_already_live_posture_carrier`
-- the exact next implementation seam is:
-  - extend exact `DesktopCanonicalRuntimeBridge.SessionPostureEvidenceAdapterResponsePayload` consumption of exact `/v1/session/posture` to include exact `archived_user_turn_text` and exact `archived_selene_turn_text`
-  - render those exact archived recent-slice fields inside exact `desktopSessionPostureEvidenceVisibilityCard` for one selected current-device recent-session row only
-  - preserve the card as read-only only, keep the row separate from `observedSessionSurfaces`, and add no recent-row-driven attach / resume / recover or generic reopen authority
+- no post-H347 next exact winner is published until the desktop queue is refreshed against current repo truth after H347 bounded archived recent-slice visibility unlock
 
-### Why This Winner Is Now Exact
+### Why No Exact Next Winner Is Published Yet
 - H336 and H337 already provide one bounded native macOS current-device recent-session visibility card whose rows remain separate from `observedSessionSurfaces`.
 - H340 and H341 already provide one bounded native macOS recent-session posture-evidence card keyed by one selected current-device recent-session row only.
 - H343 already widened that same exact `/v1/session/posture` carrier with lawful PH1.M resume-selection evidence, and the current native macOS recent-session posture-evidence card already consumes those exact returned fields in read-only form.
 - H345 now widens that same exact `/v1/session/posture` carrier again with one bounded archived recent-slice evidence pair through exact `archived_user_turn_text` and exact `archived_selene_turn_text`.
 - Current native macOS shell already proves this archived recent-slice pair is lawful desktop-visible cloud-authored evidence on bounded soft-closed visible observed-session surfaces.
-- Current native macOS runtime bridge still decodes exact recent-session posture evidence through exact `SessionPostureEvidenceAdapterResponsePayload` without exact `archived_user_turn_text` or exact `archived_selene_turn_text`.
-- Current native macOS recent-session posture-evidence card still renders returned posture metadata plus resume-selection evidence only and does not yet render the newly live archived recent-slice pair.
-- Therefore the smallest lawful next desktop seam is not broader conversation/session selection, not broader shell-side context authoring, not hidden/background wake, and not broader standalone search input.
-- The smallest lawful next desktop seam is the adjacent read-only archived recent-slice visibility addition on top of the already-live selected recent-session posture-evidence path.
-- This winner requires no new backend route, no Rust edits, no merge into `observedSessionSurfaces`, no synthetic transcript or archive-browser surface, no recent-row-driven mutation authority, and no generic reopen authority.
+- H346 then truthfully published the exact current desktop winner as bounded native macOS `current_device_recent_session_archived_recent_slice_read_only_visibility_from_already_live_posture_carrier`.
+- H347 now implements that exact winner by extending exact `SessionPostureEvidenceAdapterResponsePayload` consumption of exact `/v1/session/posture` with exact `archived_user_turn_text` and exact `archived_selene_turn_text`, then rendering that archived recent-slice pair inside exact `desktopSessionPostureEvidenceVisibilityCard` for one selected current-device recent-session row only.
+- H347 preserves the existing recent-session row order, existing recent-row selection seam, returned posture metadata, returned PH1.M resume-selection evidence, exact session-entry controls, and exact same-session `/v1/voice/turn` project-context transport unchanged.
+- H347 keeps the selected recent-session row separate from `observedSessionSurfaces`, does not foreground that row as a session surface, and does not synthesize active transcript surfaces, archive-browser surfaces, or local archive truth.
+- H347 does not add recent-row-driven attach / resume / recover authority or generic reopen authority.
+- The pre-H347 desktop candidate-family ordering is now stale until it is refreshed against the newly landed desktop archived recent-slice visibility seam.
 
 ### Explicitly Not Next
+- not auto-publishing a desktop next winner from H347 alone without refreshing this queue against current repo truth
 - not merging recent-session rows or recent-session posture evidence into `observedSessionSurfaces`
 - not recent-row-driven attach / resume / recover authority
 - not generic reopen authority
@@ -643,13 +641,9 @@ This section is a planning queue only.
 - not broader generic attach / reopen authority beyond the already-landed visible / resumable session-entry seam
 - not another regression-lock-only build unless repo truth changes and a capability unlock becomes blocked
 
-### Ordered Candidate Families After This Winner
-- refresh the desktop queue again against then-current repo truth after this winner lands instead of auto-promoting a broader family blindly
-- until that winner lands, the broader remaining families still stay:
-  - broader conversation/session selection beyond the current observed-session rail plus read-only recent-session evidence cards
-  - broader shell-side `projectID` / `pinnedContextRefs` authoring
-  - broader hidden/background wake behavior
-  - broader standalone desktop search input
+### Ordered Candidate Families Once A Lawful Exact Seam Is Proven
+- pre-H347 desktop candidate ordering is intentionally not republished in this run
+- the next lawful APP_MAC_DESKTOP queue must be refreshed against the newly landed desktop archived recent-slice visibility seam before another desktop implementation brief is written
 
 ### Queue Maintenance Rule After Every Desktop H-Build
 - Refresh the `Current Repo Baseline` section if newly landed work changes what is actually built.

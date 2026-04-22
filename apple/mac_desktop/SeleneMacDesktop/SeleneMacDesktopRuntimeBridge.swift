@@ -3901,6 +3901,8 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
         let pendingWorkOrderID: String?
         let resumeTier: String?
         let resumeSummaryBullets: [String]?
+        let archivedUserTurnText: String?
+        let archivedSeleneTurnText: String?
         let recoveryMode: String?
         let reconciliationDecision: String?
     }
