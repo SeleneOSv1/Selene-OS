@@ -632,10 +632,13 @@ This section is a planning queue only.
 - H343 now completes the already-live exact `/v1/session/posture` carrier by lawfully exposing PH1.M resume-selection evidence such as exact `selected_thread_id`, exact `selected_thread_title`, exact `resume_tier`, and exact `resume_summary_bullets` when exact current-device session attribution exists.
 - H343 preserves the exact `/v1/session/posture` route, preserves read-only semantics, leaves exact `pending_work_order_id` absent unless lawful exact evidence exists, and still exposes no transcript content, archive slices, generic reopen authority, or route-specific mutation authority.
 - H343 changes no desktop code in this run and therefore does not by itself publish a new desktop winner.
-- The pre-H343 desktop candidate-family ordering is now stale until it is refreshed against the newly landed upstream posture-carrier completion seam.
+- H345 now completes the already-live exact `/v1/session/posture` carrier by lawfully exposing one bounded archived recent-slice evidence pair through exact `archived_user_turn_text` and exact `archived_selene_turn_text` when exact current-device soft-closed session attribution exists through exact `last_turn_id` and exact session-attributed conversation-turn truth.
+- H345 preserves the exact `/v1/session/posture` route, preserves read-only semantics, adds no active-session transcript fields, adds no archive browser surface, and still exposes no generic reopen authority or route-specific mutation authority.
+- H345 changes no desktop code in this run and therefore does not by itself publish a new desktop winner.
+- The pre-H345 desktop candidate-family ordering is now stale until it is refreshed against the newly landed upstream posture-carrier archived recent-slice completion seam.
 
 ### Explicitly Not Next
-- not auto-publishing a desktop next winner from H343 alone without refreshing this queue against current repo truth
+- not auto-publishing a desktop next winner from H345 alone without refreshing this queue against current repo truth
 - not broader shell-side `projectID` / `pinnedContextRefs` authoring without a newly proven lawful seam
 - not a broader hidden/background wake claim or wake parity claim without a proven lawful seam
 - not a standalone desktop search box with local search execution
@@ -645,8 +648,8 @@ This section is a planning queue only.
 - not another regression-lock-only build unless repo truth changes and a capability unlock becomes blocked
 
 ### Ordered Candidate Families Once A Lawful Exact Seam Is Proven
-- pre-H343 desktop candidate ordering is intentionally not republished in this run
-- the next lawful APP_MAC_DESKTOP queue must be refreshed against the newly landed upstream posture-carrier completion seam before another desktop implementation brief is written
+- pre-H345 desktop candidate ordering is intentionally not republished in this run
+- the next lawful APP_MAC_DESKTOP queue must be refreshed against the newly landed upstream posture-carrier archived recent-slice completion seam before another desktop implementation brief is written
 
 ### Queue Maintenance Rule After Every Desktop H-Build
 - Refresh the `Current Repo Baseline` section if newly landed work changes what is actually built.

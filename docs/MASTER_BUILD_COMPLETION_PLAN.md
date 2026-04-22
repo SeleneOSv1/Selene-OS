@@ -288,6 +288,16 @@ It may only be updated from current repo truth, exact command results, and exact
   APP_MAC_DESKTOP remains queue-held and `PARTIAL` in this run;
   the desktop queue may be refreshed against this new upstream truth after H343 lands;
   no post-H343 exact desktop next winner is published in this run;
+  H345 is now implemented as the first post-H344 upstream bounded enabling build `current_device_per_session_archived_recent_slice_evidence_completion_on_already_live_posture_carrier` through [app_ingress.rs#L1](/Users/selene/Documents/Selene-OS/crates/selene_os/src/app_ingress.rs#L1), [lib.rs#L1](/Users/selene/Documents/Selene-OS/crates/selene_adapter/src/lib.rs#L1), and [http_adapter.rs#L1](/Users/selene/Documents/Selene-OS/crates/selene_adapter/src/bin/http_adapter.rs#L1);
+  H343-H321 truth remains preserved exactly as already recorded, with no regression;
+  exact `/v1/session/posture` remains the route and exact `device_id` plus exact `session_id` request law remains unchanged in this run;
+  current upstream truth now completes the already-live posture carrier by lawfully exposing one bounded archived recent-slice evidence pair for one exact current-device soft-closed session when exact `last_turn_id` plus exact session-attributed conversation-turn truth yields both one exact user row and one exact Selene output row for the same exact turn;
+  exact `/v1/session/posture` now lawfully exposes exact `archived_user_turn_text` and exact `archived_selene_turn_text` only when that exact current-device session attribution exists and both sides of the bounded archived pair are lawfully available, while exact active-session transcript fields remain out of scope and absent in this run;
+  exact `/v1/session/posture` still adds no active transcript content, no archive browser surface, no recent-row-driven mutation authority, and no generic reopen authority in this run;
+  no Apple code changed in this run;
+  APP_MAC_DESKTOP remains queue-held and `PARTIAL` in this run;
+  the desktop queue may be refreshed against this new upstream truth after H345 lands;
+  no post-H345 exact desktop next winner is published in this run;
   H324 is now implemented as the first canonical post-H323 selected bounded native macOS actual capability unlock `wake_ready_visible_shell_auto_start_of_already_live_foreground_wake_listener_without_fake_parity_claim` implementation build;
   H323-H256 truth remains preserved exactly as already recorded, with no regression;
   H323 was the correct post-H322 unlock because it added bounded tool-request authoring / invocation only through the already-live exact `/v1/voice/turn` typed-turn path, with no new backend route and no direct local tool/search authority;

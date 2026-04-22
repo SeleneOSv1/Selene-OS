@@ -1537,6 +1537,8 @@ fn session_posture_evidence_security_reject_response(reject: SecurityReject) -> 
         pending_work_order_id: None,
         resume_tier: None,
         resume_summary_bullets: None,
+        archived_user_turn_text: None,
+        archived_selene_turn_text: None,
         recovery_mode: None,
         reconciliation_decision: None,
     };
@@ -1703,6 +1705,8 @@ fn session_posture_evidence_error_response(status: StatusCode, reason: String) -
             pending_work_order_id: None,
             resume_tier: None,
             resume_summary_bullets: None,
+            archived_user_turn_text: None,
+            archived_selene_turn_text: None,
             recovery_mode: None,
             reconciliation_decision: None,
         }),
@@ -2549,6 +2553,63 @@ mod tests {
             .unwrap();
     }
 
+    fn seed_session_archived_recent_slice_evidence_for_posture(
+        store: &mut Ph1fStore,
+        session_id: SessionId,
+        user_id: &UserId,
+        device_id: &DeviceId,
+        turn_id: TurnId,
+    ) {
+        store
+            .append_conversation_turn(
+                selene_kernel_contracts::ph1f::ConversationTurnInput::v1(
+                    MonotonicTimeNs(340),
+                    selene_kernel_contracts::ph1j::CorrelationId(94_108),
+                    turn_id,
+                    Some(session_id),
+                    user_id.clone(),
+                    Some(device_id.clone()),
+                    selene_kernel_contracts::ph1f::ConversationRole::User,
+                    selene_kernel_contracts::ph1f::ConversationSource::TypedText,
+                    "show me the archived session slice".to_string(),
+                    format!("hash_http_archived_user_slice_{}", session_id.0),
+                    selene_kernel_contracts::ph1f::PrivacyScope::PublicChat,
+                    Some(format!(
+                        "seed_http_session_posture_archived_user_turn_{}",
+                        session_id.0
+                    )),
+                    None,
+                    None,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        store
+            .append_conversation_turn(
+                selene_kernel_contracts::ph1f::ConversationTurnInput::v1(
+                    MonotonicTimeNs(341),
+                    selene_kernel_contracts::ph1j::CorrelationId(94_109),
+                    turn_id,
+                    Some(session_id),
+                    user_id.clone(),
+                    Some(device_id.clone()),
+                    selene_kernel_contracts::ph1f::ConversationRole::Selene,
+                    selene_kernel_contracts::ph1f::ConversationSource::SeleneOutput,
+                    "Here is the archived session slice summary.".to_string(),
+                    format!("hash_http_archived_selene_slice_{}", session_id.0),
+                    selene_kernel_contracts::ph1f::PrivacyScope::PublicChat,
+                    Some(format!(
+                        "seed_http_session_posture_archived_selene_turn_{}",
+                        session_id.0
+                    )),
+                    None,
+                    None,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+    }
+
     fn seed_simulation_catalog_status(
         store: &mut Ph1fStore,
         tenant: &str,
@@ -3333,6 +3394,8 @@ mod tests {
         assert_eq!(body.pending_work_order_id, None);
         assert_eq!(body.resume_tier, None);
         assert_eq!(body.resume_summary_bullets, None);
+        assert_eq!(body.archived_user_turn_text, None);
+        assert_eq!(body.archived_selene_turn_text, None);
         assert_eq!(body.recovery_mode, None);
         assert_eq!(body.reconciliation_decision, None);
     }
@@ -3399,6 +3462,137 @@ mod tests {
                 ][..]
             )
         );
+        assert_eq!(body.archived_user_turn_text, None);
+        assert_eq!(body.archived_selene_turn_text, None);
+    }
+
+    #[tokio::test]
+    async fn http_session_posture_route_returns_archived_recent_slice_fields_when_lawfully_available_for_current_device_session(
+    ) {
+        let (state, store) = test_state_with_config_and_store(IngressSecurityConfig::from_env());
+        let current_device_id =
+            DeviceId::new("http_session_posture_archived_recent_slice_device").unwrap();
+        let user_id =
+            UserId::new("tenant_1:http_session_posture_archived_recent_slice_actor").unwrap();
+        let session_id = SessionId(4_933);
+
+        {
+            let mut guard = store.lock().expect("store lock must succeed");
+            seed_recent_session_record_for_last_attached_device(
+                &mut guard,
+                session_id,
+                &user_id,
+                &current_device_id,
+                std::slice::from_ref(&current_device_id),
+                &current_device_id,
+                SessionState::SoftClosed,
+                MonotonicTimeNs(340),
+                Some(TurnId(933)),
+            );
+            seed_session_archived_recent_slice_evidence_for_posture(
+                &mut guard,
+                session_id,
+                &user_id,
+                &current_device_id,
+                TurnId(933),
+            );
+        }
+
+        let mut request = base_session_posture_request();
+        request.session_id = session_id.0.to_string();
+        request.device_id = current_device_id.as_str().to_string();
+        let now_ms = system_time_now_ms();
+        let headers = security_headers(
+            Some(bearer_for(&request.session_id, &request.device_id)),
+            "req-session-posture-3",
+            "idem-session-posture-3",
+            now_ms,
+            "nonce-session-posture-3",
+        );
+        let response = run_session_posture_evidence(State(state), headers, Json(request)).await;
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body: SessionPostureEvidenceAdapterResponse = decode_json_response(response).await;
+        assert_eq!(body.status, "ok");
+        assert_eq!(body.outcome, "SESSION_POSTURE_EVIDENCE_READ");
+        assert_eq!(body.session_id.as_deref(), Some("4933"));
+        assert_eq!(
+            body.archived_user_turn_text.as_deref(),
+            Some("show me the archived session slice")
+        );
+        assert_eq!(
+            body.archived_selene_turn_text.as_deref(),
+            Some("Here is the archived session slice summary.")
+        );
+    }
+
+    #[tokio::test]
+    async fn http_session_posture_route_keeps_archived_recent_slice_fields_absent_when_pair_is_not_lawfully_available(
+    ) {
+        let (state, store) = test_state_with_config_and_store(IngressSecurityConfig::from_env());
+        let current_device_id =
+            DeviceId::new("http_session_posture_archived_recent_slice_absent_device").unwrap();
+        let user_id =
+            UserId::new("tenant_1:http_session_posture_archived_recent_slice_absent_actor")
+                .unwrap();
+        let session_id = SessionId(4_934);
+
+        {
+            let mut guard = store.lock().expect("store lock must succeed");
+            seed_recent_session_record_for_last_attached_device(
+                &mut guard,
+                session_id,
+                &user_id,
+                &current_device_id,
+                std::slice::from_ref(&current_device_id),
+                &current_device_id,
+                SessionState::SoftClosed,
+                MonotonicTimeNs(350),
+                Some(TurnId(934)),
+            );
+            guard
+                .append_conversation_turn(
+                    selene_kernel_contracts::ph1f::ConversationTurnInput::v1(
+                        MonotonicTimeNs(350),
+                        selene_kernel_contracts::ph1j::CorrelationId(94_110),
+                        TurnId(934),
+                        Some(session_id),
+                        user_id.clone(),
+                        Some(current_device_id.clone()),
+                        selene_kernel_contracts::ph1f::ConversationRole::User,
+                        selene_kernel_contracts::ph1f::ConversationSource::TypedText,
+                        "only the archived user side exists".to_string(),
+                        "hash_http_archived_recent_slice_user_only".to_string(),
+                        selene_kernel_contracts::ph1f::PrivacyScope::PublicChat,
+                        Some("seed_http_session_posture_archived_recent_slice_user_only".to_string()),
+                        None,
+                        None,
+                    )
+                    .unwrap(),
+                )
+                .unwrap();
+        }
+
+        let mut request = base_session_posture_request();
+        request.session_id = session_id.0.to_string();
+        request.device_id = current_device_id.as_str().to_string();
+        let now_ms = system_time_now_ms();
+        let headers = security_headers(
+            Some(bearer_for(&request.session_id, &request.device_id)),
+            "req-session-posture-4",
+            "idem-session-posture-4",
+            now_ms,
+            "nonce-session-posture-4",
+        );
+        let response = run_session_posture_evidence(State(state), headers, Json(request)).await;
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body: SessionPostureEvidenceAdapterResponse = decode_json_response(response).await;
+        assert_eq!(body.status, "ok");
+        assert_eq!(body.outcome, "SESSION_POSTURE_EVIDENCE_READ");
+        assert_eq!(body.session_id.as_deref(), Some("4934"));
+        assert_eq!(body.archived_user_turn_text, None);
+        assert_eq!(body.archived_selene_turn_text, None);
     }
 
     #[tokio::test]
