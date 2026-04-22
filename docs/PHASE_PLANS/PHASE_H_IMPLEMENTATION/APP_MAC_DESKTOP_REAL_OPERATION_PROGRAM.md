@@ -110,13 +110,15 @@ Desktop Selene is considered real when all of the following are true:
 
 ### Selection Rule
 - Prefer actual desktop capability unlocks over further regression-lock or visibility-only work when current repo truth already preserves the underlying lawful seam.
-- Use later strict H-builds to select the exact next winner; this umbrella document does not itself authorize a specific next build.
+- Use later strict H-builds to publish one exact next winner only when current repo truth genuinely exposes one; otherwise the lawful fallback is an intentional implementation-first closure program for the remaining broader desktop families.
 
-### Current Likely Next Capability-Unlock Families
-1. later broader conversation-list / session-list fetch only if a lawful exact seam is proven without widening into fake local authority
-2. later shell-side `projectID` / `pinnedContextRefs` transport or authoring only if a lawful exact seam is proven
-3. later broader hidden/background wake auto-start only if a lawful exact seam is proven without fake parity claims
-4. later broader standalone desktop search input beyond the current bounded search-request authoring surface only if a lawful exact seam is proven without local search execution fakery
+### Current Remaining Implementation-First Closure Families
+1. broader desktop conversation-list / session-list selection beyond the current bounded observed-session-surface rail
+2. broader desktop search input beyond the current bounded search-request authoring surface
+3. broader desktop tool authoring / invocation controls beyond the current bounded tool-request authoring surface
+4. broader hidden/background wake auto-start and broader wake parity
+5. broader shell-side `projectID` / `pinnedContextRefs` transport and broader desktop thread-policy authoring authority
+6. broader generic desktop session attach / reopen mutation beyond the already-landed visible / resumable session-entry seams
 
 ## Program Status Crosswalk
 This matrix is descriptive only and does not override [MASTER_BUILD_COMPLETION_PLAN.md](/Users/selene/Documents/Selene-OS/docs/MASTER_BUILD_COMPLETION_PLAN.md).
@@ -125,8 +127,8 @@ This matrix is descriptive only and does not override [MASTER_BUILD_COMPLETION_P
 | --- | --- | --- | --- |
 | 1. Purpose | `PARTIAL` | Real explicit voice, bounded wake, onboarding, search/tool rendering, and authoritative reply paths exist, but the full desktop product target is not complete. | actual capability unlocks, not more proof-only work |
 | 2. Governing Repo Truth | `ACTIVE` | Desktop remains downstream and non-authoritative, and `APP_MAC_DESKTOP` still remains `PARTIAL`. | none |
-| 3. Product Target | `PARTIAL` | Most hot-path runtime requirements are live; broader desktop product-surface capabilities remain missing even after bounded search-request input landed. | later lawful seam proof |
-| 4. Current Desktop Baseline | `REFRESHED` | Earlier missing-bullet assumptions were stale and are corrected above. | doc-only refresh unless repo truth changes |
+| 3. Product Target | `PARTIAL` | Most hot-path runtime requirements are live; broader desktop product-surface capabilities remain missing even after bounded search-request input landed. | implementation-first closure programs |
+| 4. Current Desktop Baseline | `REFRESHED` | Earlier missing-bullet assumptions were stale and the post-H347 closure-program mode is now recorded. | H259 child implementations |
 | 5. End-to-End Desktop Runtime Chain | `PARTIAL` | The explicit path is live end to end, and the wake path is live in bounded foreground form. | broadened entry surfaces |
 | 6. Engine Map | `VALID_PARTIAL_ADOPTION` | The engine map remains lawful, but desktop adoption is not yet generalized across every lane. | continue adoption with no architecture fork |
 | 7. Real Desktop Feature Areas | `PARTIAL` | Audio, reply speech, onboarding mutation, pairing/ready handoff, bounded wake, and conversation-first baseline are all live. | search, tools, and session UX |
@@ -135,7 +137,7 @@ This matrix is descriptive only and does not override [MASTER_BUILD_COMPLETION_P
 | 10. Non-Negotiable Constraints | `ACTIVE` | Non-authority, no fake search, no wake parity, and no autonomous unlock remain preserved. | none |
 | 11. Completion Definition | `NOT_MET` | Current master truth still marks desktop as partial. | multiple later slices |
 | 12. Execution Method | `ACTIVE` | The umbrella-program plus bounded H-slice method is already in use. | keep using bounded slices |
-| 13. Judgment | `NEEDS_REFRESH` | The original judgment still points in the right direction, but it now understates how much wiring is already live. | umbrella-doc refresh only |
+| 13. Judgment | `ACTIVE` | Post-H347 exact-next-winner replay is now retired in favor of the implementation-first closure program for the six remaining families. | H259 child implementations |
 
 ## End-to-End Desktop Runtime Chain
 1. A user and device enter through the existing link and onboarding path.
@@ -603,59 +605,70 @@ This program is complete when:
   - verification
   - master-doc truth catch-up
 
-## Current Desktop Execution Queue
-This section is a planning queue only.
+## Current Desktop Execution Program
+This section is a planning program only.
 - It does not override [MASTER_BUILD_COMPLETION_PLAN.md](/Users/selene/Documents/Selene-OS/docs/MASTER_BUILD_COMPLETION_PLAN.md).
-- It does not claim that the current exact next winner is already canonically published in master truth.
+- It does not claim that one single exact post-H347 next winner is already canonically published in master truth.
 - It exists so the umbrella program remains the single desktop planning home for:
   - what is already built
   - what still needs building
-  - what should come next
+  - how the remaining families will be drained
 
-### Current Exact Next Winner
-- no post-H347 next exact winner is published until the desktop queue is refreshed against current repo truth after H347 bounded archived recent-slice visibility unlock
+### Current Post-H347 Planning State
+- no single post-H347 exact next winner is published from H347 alone
+- H259 intentionally switches APP_MAC_DESKTOP from exact-next-winner queue mode to implementation-first closure-program mode for the six remaining real-operation families
+- H347 bounded archived recent-slice visibility truth remains preserved exactly
 
-### Why No Exact Next Winner Is Published Yet
-- H336 and H337 already provide one bounded native macOS current-device recent-session visibility card whose rows remain separate from `observedSessionSurfaces`.
-- H340 and H341 already provide one bounded native macOS recent-session posture-evidence card keyed by one selected current-device recent-session row only.
-- H343 already widened that same exact `/v1/session/posture` carrier with lawful PH1.M resume-selection evidence, and the current native macOS recent-session posture-evidence card already consumes those exact returned fields in read-only form.
-- H345 now widens that same exact `/v1/session/posture` carrier again with one bounded archived recent-slice evidence pair through exact `archived_user_turn_text` and exact `archived_selene_turn_text`.
-- Current native macOS shell already proves this archived recent-slice pair is lawful desktop-visible cloud-authored evidence on bounded soft-closed visible observed-session surfaces.
-- H346 then truthfully published the exact current desktop winner as bounded native macOS `current_device_recent_session_archived_recent_slice_read_only_visibility_from_already_live_posture_carrier`.
-- H347 now implements that exact winner by extending exact `SessionPostureEvidenceAdapterResponsePayload` consumption of exact `/v1/session/posture` with exact `archived_user_turn_text` and exact `archived_selene_turn_text`, then rendering that archived recent-slice pair inside exact `desktopSessionPostureEvidenceVisibilityCard` for one selected current-device recent-session row only.
-- H347 preserves the existing recent-session row order, existing recent-row selection seam, returned posture metadata, returned PH1.M resume-selection evidence, exact session-entry controls, and exact same-session `/v1/voice/turn` project-context transport unchanged.
-- H347 keeps the selected recent-session row separate from `observedSessionSurfaces`, does not foreground that row as a session surface, and does not synthesize active transcript surfaces, archive-browser surfaces, or local archive truth.
-- H347 does not add recent-row-driven attach / resume / recover authority or generic reopen authority.
-- The pre-H347 desktop candidate-family ordering is now stale until it is refreshed against the newly landed desktop archived recent-slice visibility seam.
+### Why The Planning Mode Changes Here
+- H346 truthfully refreshed the pre-H347 queue and H347 then landed one real bounded desktop capability unlock.
+- Current repo truth after H347 still preserves exactly six broader remaining desktop families.
+- Post-H347 candidate-family refresh proved those families remain real, code-bearing, and desktop-local, but it did not expose one unique smallest lawful exact next winner across all six.
+- Continued exact-next-winner replay would keep restating preserved no-winner truth instead of draining actual desktop capability gaps.
+- Under H237 this later docs-only publication is lawful because H347 is a same-frontier source change, not wording-only replay on unchanged repo truth.
 
-### Explicitly Not Next
-- not auto-publishing a desktop next winner from H347 alone without refreshing this queue against current repo truth
+### Current Implementation-First Closure Program
+- Program A: broader desktop conversation-list / session-list selection beyond the current bounded observed-session-surface rail
+- Program B: broader desktop search input beyond the current bounded search-request authoring surface
+- Program C: broader desktop tool authoring / invocation controls beyond the current bounded tool-request authoring surface
+- Program D: broader hidden/background wake auto-start and broader wake parity beyond the current bounded visible active-shell wake auto-start seam
+- Program E: broader shell-side `projectID` / `pinnedContextRefs` transport and broader desktop thread-policy authoring authority beyond the current bounded same-session `/v1/voice/turn` transport continuity
+- Program F: broader generic desktop session attach / reopen mutation beyond the already-landed visible / resumable session-entry seams
+
+### Program Order
+1. Program A
+2. Program B
+3. Program C
+4. Program D
+5. Program E
+6. Program F
+
+### Explicitly Not Claimed
+- not auto-publishing one single desktop next winner from H259 alone
+- not claiming any H259 program is already reduced to one exact child seam before implementation work begins
 - not merging recent-session rows or recent-session posture evidence into `observedSessionSurfaces`
 - not recent-row-driven attach / resume / recover authority
 - not generic reopen authority
-- not broader shell-side `projectID` / `pinnedContextRefs` authoring without a newly proven lawful seam
-- not a broader hidden/background wake claim or wake parity claim without a proven lawful seam
-- not a standalone desktop search box with local search execution
-- not broader conversation-list / session-list fetch or generic reopen authority without a proven lawful seam
-- not shell-side thread-policy authoring controls
-- not broader generic attach / reopen authority beyond the already-landed visible / resumable session-entry seam
-- not another regression-lock-only build unless repo truth changes and a capability unlock becomes blocked
-
-### Ordered Candidate Families Once A Lawful Exact Seam Is Proven
-- pre-H347 desktop candidate ordering is intentionally not republished in this run
-- the next lawful APP_MAC_DESKTOP queue must be refreshed against the newly landed desktop archived recent-slice visibility seam before another desktop implementation brief is written
+- not local search execution or local provider authority
+- not direct local tool-name authority
+- not broader shell-side `projectID` / `pinnedContextRefs` authoring outside a lawful H259 Program E child implementation
+- not a fake hidden/background wake parity claim
+- not shell-side thread-policy authoring controls outside a lawful H259 Program E child implementation
+- not broader generic attach / reopen authority outside a lawful H259 Program F child implementation
+- not another proof-only queue replay unless repo truth materially changes again
 
 ### Queue Maintenance Rule After Every Desktop H-Build
 - Refresh the `Current Repo Baseline` section if newly landed work changes what is actually built.
 - Refresh the `Current Desktop Completion Matrix` built / bounded / missing lists.
 - Refresh the `Program Status Crosswalk` only when a section-level status materially changes.
-- Refresh this `Current Desktop Execution Queue` section so it always preserves:
-  - one exact current next winner
-  - why it is next
-  - what is explicitly not next
-  - the ordered queue after that winner
-- Update [MASTER_BUILD_COMPLETION_PLAN.md](/Users/selene/Documents/Selene-OS/docs/MASTER_BUILD_COMPLETION_PLAN.md) and the ledger only for landed truth, not merely because the planning queue changed.
+- Refresh this `Current Desktop Execution Program` section so it always preserves:
+  - whether desktop is in exact-next-winner mode or implementation-first closure-program mode
+  - which remaining families/programs are still open
+  - what is explicitly not claimed
+  - which H259 child program is current if one is active
+- Update [MASTER_BUILD_COMPLETION_PLAN.md](/Users/selene/Documents/Selene-OS/docs/MASTER_BUILD_COMPLETION_PLAN.md) and the ledger only for landed truth or new canonical program publications, not merely because wording changed.
 
 ### Selection Discipline
-- If one current exact next winner is published and it lands successfully, promote the next queued item into `Current Exact Next Winner` unless repo truth changed and made that promotion inaccurate.
-- If the current exact next winner becomes blocked by repo truth, update this queue immediately and record the smaller lawful replacement here before asking for another desktop implementation brief.
+- While H259 remains current, do not require one globally published exact desktop next winner before every later desktop implementation brief.
+- Every later H259 child build must be implementation-only and remain confined to one selected program unless repo truth changes.
+- If a later H259 child build does not expose a lawful code-bearing seam inside its selected program, stop that child run without forced desktop widening.
+- If future repo truth later exposes one unique exact desktop winner again, this section may return to exact-next-winner mode.
