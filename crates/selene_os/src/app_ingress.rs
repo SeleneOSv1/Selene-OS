@@ -3,6 +3,7 @@
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 
+use selene_engines::ph1m::{Ph1mConfig as EnginePh1mConfig, Ph1mRuntime as EnginePh1mRuntime};
 use selene_engines::ph1_voice_id::{
     reason_codes as voice_id_reason_codes, simulation_profile_embedding_from_seed,
     EnrolledSpeaker as EngineEnrolledSpeaker, VoiceIdObservation as EngineVoiceIdObservation,
@@ -22,9 +23,10 @@ use selene_engines::ph1simfinder::{
     FinderSimulationCatalogEntry, Ph1SimFinderRuntime,
 };
 use selene_kernel_contracts::ph1_voice_id::{
-    IdentityConfidence, IdentityTierV2, Ph1VoiceIdRequest, Ph1VoiceIdResponse,
-    SpeakerAssertionUnknown, SpeakerId, SpoofLivenessStatus, UserId, VoiceEmbeddingCaptureRef,
-    VOICE_ID_ENROLL_COMPLETE_COMMIT, VOICE_ID_ENROLL_SAMPLE_COMMIT, VOICE_ID_ENROLL_START_DRAFT,
+    DiarizationSegment, IdentityConfidence, IdentityTierV2, Ph1VoiceIdRequest,
+    Ph1VoiceIdResponse, SpeakerAssertionOk, SpeakerAssertionUnknown, SpeakerId, SpeakerLabel,
+    SpoofLivenessStatus, UserId, VoiceEmbeddingCaptureRef, VOICE_ID_ENROLL_COMPLETE_COMMIT,
+    VOICE_ID_ENROLL_SAMPLE_COMMIT, VOICE_ID_ENROLL_START_DRAFT,
 };
 use selene_kernel_contracts::ph1agent::AgentInputPacket;
 use selene_kernel_contracts::ph1d::{PolicyContextRef, SafetyTier};
@@ -51,7 +53,10 @@ use selene_kernel_contracts::ph1link::{
     AppPlatform, InviteeType, LinkStatus, Ph1LinkRequest, Ph1LinkResponse, TokenId,
     LINK_INVITE_DRAFT_UPDATE_COMMIT, LINK_INVITE_OPEN_ACTIVATE_COMMIT,
 };
-use selene_kernel_contracts::ph1m::{MemoryCandidate, MemoryConfidence, MemoryResumeTier};
+use selene_kernel_contracts::ph1m::{
+    MemoryCandidate, MemoryConfidence, MemoryResumeAction, MemoryResumeTier,
+    MemoryRetentionMode, Ph1mResumeSelectRequest, Ph1mThreadDigestUpsertRequest,
+};
 use selene_kernel_contracts::ph1n::{FieldKey, IntentDraft, IntentType, Ph1nResponse};
 use selene_kernel_contracts::ph1onb::{
     OnbAccessInstanceCreateCommitRequest, OnbCompleteCommitRequest,
@@ -840,6 +845,101 @@ fn stored_session_posture_evidence(record: &StoredSessionRecord) -> AppSessionPo
         recovery_mode: None,
         reconciliation_decision: None,
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct StoredSessionResumeSelectionEvidence {
+    selected_thread_id: Option<String>,
+    selected_thread_title: Option<String>,
+    pending_work_order_id: Option<String>,
+    resume_tier: Option<MemoryResumeTier>,
+    resume_summary_bullets: Option<Vec<String>>,
+}
+
+fn synthetic_session_posture_speaker_assertion(
+    user_id: &UserId,
+) -> Result<Ph1VoiceIdResponse, ContractViolation> {
+    Ok(Ph1VoiceIdResponse::SpeakerAssertionOk(
+        SpeakerAssertionOk::v1(
+            SpeakerId::new("spk_session_posture")?,
+            Some(user_id.clone()),
+            vec![DiarizationSegment::v1(
+                MonotonicTimeNs(0),
+                MonotonicTimeNs(1),
+                Some(SpeakerLabel::speaker_a()),
+            )?],
+            SpeakerLabel::speaker_a(),
+        )?,
+    ))
+}
+
+fn stored_session_resume_selection_evidence(
+    store: &Ph1fStore,
+    record: &StoredSessionRecord,
+) -> Result<Option<StoredSessionResumeSelectionEvidence>, StorageError> {
+    let session_threads =
+        store.ph1m_thread_current_rows_for_user_session(&record.user_id, &record.session_id);
+    if session_threads.is_empty() {
+        return Ok(None);
+    }
+
+    let speaker_assertion = synthetic_session_posture_speaker_assertion(&record.user_id)
+        .map_err(StorageError::ContractViolation)?;
+    let retention_mode = store
+        .ph1m_retention_preference_row(&record.user_id)
+        .map(|row| row.memory_retention_mode)
+        .unwrap_or(MemoryRetentionMode::Default);
+    let now = session_threads
+        .iter()
+        .fold(record.last_activity_at, |current, row| {
+            MonotonicTimeNs(current.0.max(row.digest.last_updated_at.0))
+        });
+    let mut runtime = EnginePh1mRuntime::new(EnginePh1mConfig::mvp_v1());
+
+    for (idx, row) in session_threads.into_iter().enumerate() {
+        let request = Ph1mThreadDigestUpsertRequest::v1(
+            row.digest.last_updated_at,
+            speaker_assertion.clone(),
+            PolicyContextRef::v1(false, false, SafetyTier::Standard),
+            row.memory_retention_mode,
+            row.digest,
+            format!("session_posture_thread:{}:{idx}", record.session_id.0),
+        )
+        .map_err(StorageError::ContractViolation)?;
+        runtime
+            .thread_digest_upsert(&request)
+            .map_err(StorageError::ContractViolation)?;
+    }
+
+    let request = Ph1mResumeSelectRequest::v1(
+        now,
+        speaker_assertion,
+        PolicyContextRef::v1(false, false, SafetyTier::Standard),
+        retention_mode,
+        true,
+        true,
+        true,
+        false,
+        3,
+        None,
+    )
+    .map_err(StorageError::ContractViolation)?;
+    let response = runtime
+        .resume_select(&request)
+        .map_err(StorageError::ContractViolation)?;
+
+    if matches!(response.resume_action, MemoryResumeAction::None) {
+        return Ok(None);
+    }
+
+    Ok(Some(StoredSessionResumeSelectionEvidence {
+        selected_thread_id: response.selected_thread_id,
+        selected_thread_title: response.selected_thread_title,
+        pending_work_order_id: response.pending_work_order_id,
+        resume_tier: response.resume_tier,
+        resume_summary_bullets: (!response.resume_summary_bullets.is_empty())
+            .then_some(response.resume_summary_bullets),
+    }))
 }
 
 #[derive(Debug, Clone)]
@@ -4886,8 +4986,17 @@ impl AppServerIngressRuntime {
                 },
             ))?;
 
+        let mut evidence = stored_session_posture_evidence(&record);
+        if let Some(resume_selection) = stored_session_resume_selection_evidence(store, &record)? {
+            evidence.selected_thread_id = resume_selection.selected_thread_id;
+            evidence.selected_thread_title = resume_selection.selected_thread_title;
+            evidence.pending_work_order_id = resume_selection.pending_work_order_id;
+            evidence.resume_tier = resume_selection.resume_tier;
+            evidence.resume_summary_bullets = resume_selection.resume_summary_bullets;
+        }
+
         Ok(AppSessionPostureEvidenceOutcome {
-            evidence: stored_session_posture_evidence(&record),
+            evidence,
         })
     }
 
@@ -9271,6 +9380,72 @@ fn seed_recent_session_record_for_last_attached_device_test(
 }
 
 #[cfg(test)]
+fn seed_session_resume_selection_evidence_for_posture_test(
+    store: &mut Ph1fStore,
+    session_id: SessionId,
+    user_id: &UserId,
+    device_id: &DeviceId,
+    turn_id: TurnId,
+) {
+    store
+        .append_conversation_turn(
+            selene_kernel_contracts::ph1f::ConversationTurnInput::v1(
+                MonotonicTimeNs(330),
+                CorrelationId(92_106),
+                turn_id,
+                Some(session_id),
+                user_id.clone(),
+                Some(device_id.clone()),
+                selene_kernel_contracts::ph1f::ConversationRole::User,
+                selene_kernel_contracts::ph1f::ConversationSource::TypedText,
+                "resume this session".to_string(),
+                "hash_resume_this_session".to_string(),
+                selene_kernel_contracts::ph1f::PrivacyScope::PublicChat,
+                Some(format!(
+                    "seed_session_posture_resume_selection_turn_{}",
+                    session_id.0
+                )),
+                None,
+                None,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+    let digest = selene_kernel_contracts::ph1m::MemoryThreadDigest::v1(
+        "thread_resume_hot".to_string(),
+        "Japan ski trip".to_string(),
+        vec![
+            "Flights shortlisted".to_string(),
+            "Need hotel confirmation".to_string(),
+        ],
+        false,
+        true,
+        MonotonicTimeNs(330),
+        5,
+    )
+    .unwrap();
+    store
+        .ph1m_thread_digest_upsert_commit(
+            user_id,
+            selene_kernel_contracts::ph1m::MemoryRetentionMode::Default,
+            digest,
+            selene_storage::ph1f::MemoryThreadEventKind::ThreadDigestUpsert,
+            ReasonCodeId(0x4D00_1001),
+            format!("seed_session_posture_resume_selection_digest_{}", session_id.0),
+        )
+        .unwrap();
+    store
+        .ph1m_upsert_thread_refs_for_user_turn_with_session(
+            user_id,
+            "thread_resume_hot",
+            turn_id,
+            MonotonicTimeNs(331),
+        )
+        .unwrap();
+}
+
+#[cfg(test)]
 #[test]
 fn session_attach_outcome_exposes_persisted_session_project_context() {
     let runtime = AppServerIngressRuntime::default();
@@ -9561,6 +9736,64 @@ fn session_posture_evidence_returns_current_device_fields_for_session() {
             reason: "SESSION_NOT_AVAILABLE_FOR_DEVICE",
         })
     ));
+}
+
+#[cfg(test)]
+#[test]
+fn session_posture_evidence_returns_resume_selection_fields_when_lawfully_available_for_current_device_session(
+) {
+    let runtime = AppServerIngressRuntime::default();
+    let current_device_id =
+        DeviceId::new("session_posture_resume_selection_current_device").unwrap();
+    let user_id = UserId::new("tenant_1:session_posture_resume_selection_actor").unwrap();
+    let session_id = SessionId(4_931);
+    let mut store = Ph1fStore::new_in_memory();
+
+    seed_recent_session_record_for_last_attached_device_test(
+        &mut store,
+        session_id,
+        &user_id,
+        &current_device_id,
+        std::slice::from_ref(&current_device_id),
+        &current_device_id,
+        SessionState::SoftClosed,
+        MonotonicTimeNs(330),
+        Some(TurnId(931)),
+    );
+    seed_session_resume_selection_evidence_for_posture_test(
+        &mut store,
+        session_id,
+        &user_id,
+        &current_device_id,
+        TurnId(931),
+    );
+
+    let outcome = runtime
+        .run_session_posture_evidence(
+            &store,
+            AppSessionPostureEvidenceRequest::v1(
+                CorrelationId(92_107),
+                "session_posture_evidence_resume_selection".to_string(),
+                current_device_id,
+                session_id,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+    let evidence = outcome.evidence;
+    assert_eq!(evidence.session_id, "4931");
+    assert_eq!(evidence.selected_thread_id.as_deref(), Some("thread_resume_hot"));
+    assert_eq!(evidence.selected_thread_title.as_deref(), Some("Japan ski trip"));
+    assert_eq!(evidence.pending_work_order_id, None);
+    assert_eq!(evidence.resume_tier, Some(MemoryResumeTier::Hot));
+    assert_eq!(
+        evidence.resume_summary_bullets,
+        Some(vec![
+            "Flights shortlisted".to_string(),
+            "Need hotel confirmation".to_string()
+        ])
+    );
 }
 
 #[cfg(test)]

@@ -4450,6 +4450,62 @@ impl Ph1fStore {
             .collect()
     }
 
+    pub fn ph1m_upsert_thread_refs_for_user_turn_with_session(
+        &mut self,
+        user_id: &UserId,
+        thread_id: &str,
+        turn_id: TurnId,
+        now: MonotonicTimeNs,
+    ) -> Result<u16, StorageError> {
+        let conversation_turn_ids = self
+            .conversation_ledger
+            .iter()
+            .filter(|row| {
+                row.user_id == *user_id && row.turn_id == turn_id && row.session_id.is_some()
+            })
+            .map(|row| row.conversation_turn_id.0)
+            .collect::<Vec<_>>();
+        if conversation_turn_ids.is_empty() {
+            return Ok(0);
+        }
+        self.ph1m_upsert_thread_refs(user_id, thread_id, conversation_turn_ids, now)
+    }
+
+    pub fn ph1m_thread_current_rows_for_user_session(
+        &self,
+        user_id: &UserId,
+        session_id: &SessionId,
+    ) -> Vec<MemoryThreadCurrentRecord> {
+        let session_turn_ids = self
+            .conversation_ledger
+            .iter()
+            .filter(|row| row.user_id == *user_id && row.session_id == Some(*session_id))
+            .map(|row| row.conversation_turn_id.0)
+            .collect::<BTreeSet<_>>();
+        if session_turn_ids.is_empty() {
+            return Vec::new();
+        }
+
+        let session_thread_ids = self
+            .memory_thread_refs_current
+            .iter()
+            .filter_map(|((uid, thread_id, conversation_turn_id), _)| {
+                (uid == user_id && session_turn_ids.contains(conversation_turn_id))
+                    .then(|| thread_id.clone())
+            })
+            .collect::<BTreeSet<_>>();
+        if session_thread_ids.is_empty() {
+            return Vec::new();
+        }
+
+        self.memory_threads_current
+            .iter()
+            .filter_map(|((uid, thread_id), record)| {
+                (uid == user_id && session_thread_ids.contains(thread_id)).then(|| record.clone())
+            })
+            .collect()
+    }
+
     pub fn ph1m_upsert_thread_refs(
         &mut self,
         user_id: &UserId,

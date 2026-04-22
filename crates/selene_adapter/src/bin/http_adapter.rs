@@ -2484,6 +2484,71 @@ mod tests {
             .unwrap();
     }
 
+    fn seed_session_resume_selection_evidence_for_posture(
+        store: &mut Ph1fStore,
+        session_id: SessionId,
+        user_id: &UserId,
+        device_id: &DeviceId,
+        turn_id: TurnId,
+    ) {
+        store
+            .append_conversation_turn(
+                selene_kernel_contracts::ph1f::ConversationTurnInput::v1(
+                    MonotonicTimeNs(330),
+                    selene_kernel_contracts::ph1j::CorrelationId(94_106),
+                    turn_id,
+                    Some(session_id),
+                    user_id.clone(),
+                    Some(device_id.clone()),
+                    selene_kernel_contracts::ph1f::ConversationRole::User,
+                    selene_kernel_contracts::ph1f::ConversationSource::TypedText,
+                    "resume this session".to_string(),
+                    "hash_http_resume_this_session".to_string(),
+                    selene_kernel_contracts::ph1f::PrivacyScope::PublicChat,
+                    Some(format!(
+                        "seed_http_session_posture_resume_selection_turn_{}",
+                        session_id.0
+                    )),
+                    None,
+                    None,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+
+        let digest = selene_kernel_contracts::ph1m::MemoryThreadDigest::v1(
+            "thread_resume_hot".to_string(),
+            "Japan ski trip".to_string(),
+            vec![
+                "Flights shortlisted".to_string(),
+                "Need hotel confirmation".to_string(),
+            ],
+            false,
+            true,
+            MonotonicTimeNs(330),
+            5,
+        )
+        .unwrap();
+        store
+            .ph1m_thread_digest_upsert_commit(
+                user_id,
+                selene_kernel_contracts::ph1m::MemoryRetentionMode::Default,
+                digest,
+                selene_storage::ph1f::MemoryThreadEventKind::ThreadDigestUpsert,
+                ReasonCodeId(0x4D00_1003),
+                format!("seed_http_session_posture_resume_selection_digest_{}", session_id.0),
+            )
+            .unwrap();
+        store
+            .ph1m_upsert_thread_refs_for_user_turn_with_session(
+                user_id,
+                "thread_resume_hot",
+                turn_id,
+                MonotonicTimeNs(331),
+            )
+            .unwrap();
+    }
+
     fn seed_simulation_catalog_status(
         store: &mut Ph1fStore,
         tenant: &str,
@@ -3270,6 +3335,70 @@ mod tests {
         assert_eq!(body.resume_summary_bullets, None);
         assert_eq!(body.recovery_mode, None);
         assert_eq!(body.reconciliation_decision, None);
+    }
+
+    #[tokio::test]
+    async fn http_session_posture_route_returns_resume_selection_fields_when_lawfully_available_for_current_device_session(
+    ) {
+        let (state, store) = test_state_with_config_and_store(IngressSecurityConfig::from_env());
+        let current_device_id =
+            DeviceId::new("http_session_posture_resume_selection_device").unwrap();
+        let user_id = UserId::new("tenant_1:http_session_posture_resume_selection_actor").unwrap();
+        let session_id = SessionId(4_932);
+
+        {
+            let mut guard = store.lock().expect("store lock must succeed");
+            seed_recent_session_record_for_last_attached_device(
+                &mut guard,
+                session_id,
+                &user_id,
+                &current_device_id,
+                std::slice::from_ref(&current_device_id),
+                &current_device_id,
+                SessionState::SoftClosed,
+                MonotonicTimeNs(330),
+                Some(TurnId(932)),
+            );
+            seed_session_resume_selection_evidence_for_posture(
+                &mut guard,
+                session_id,
+                &user_id,
+                &current_device_id,
+                TurnId(932),
+            );
+        }
+
+        let mut request = base_session_posture_request();
+        request.session_id = session_id.0.to_string();
+        request.device_id = current_device_id.as_str().to_string();
+        let now_ms = system_time_now_ms();
+        let headers = security_headers(
+            Some(bearer_for(&request.session_id, &request.device_id)),
+            "req-session-posture-2",
+            "idem-session-posture-2",
+            now_ms,
+            "nonce-session-posture-2",
+        );
+        let response = run_session_posture_evidence(State(state), headers, Json(request)).await;
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body: SessionPostureEvidenceAdapterResponse = decode_json_response(response).await;
+        assert_eq!(body.status, "ok");
+        assert_eq!(body.outcome, "SESSION_POSTURE_EVIDENCE_READ");
+        assert_eq!(body.session_id.as_deref(), Some("4932"));
+        assert_eq!(body.selected_thread_id.as_deref(), Some("thread_resume_hot"));
+        assert_eq!(body.selected_thread_title.as_deref(), Some("Japan ski trip"));
+        assert_eq!(body.pending_work_order_id, None);
+        assert_eq!(body.resume_tier.as_deref(), Some("HOT"));
+        assert_eq!(
+            body.resume_summary_bullets.as_deref(),
+            Some(
+                &[
+                    "Flights shortlisted".to_string(),
+                    "Need hotel confirmation".to_string(),
+                ][..]
+            )
+        );
     }
 
     #[tokio::test]

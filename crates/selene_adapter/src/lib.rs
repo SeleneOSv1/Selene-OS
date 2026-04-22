@@ -11592,6 +11592,79 @@ fn seed_adapter_recent_session_record_for_last_attached_device_test(
 }
 
 #[cfg(test)]
+fn seed_adapter_session_resume_selection_evidence_for_posture_test(
+    runtime: &AdapterRuntime,
+    session_id: SessionId,
+    user_id: &UserId,
+    device_id: &DeviceId,
+    turn_id: TurnId,
+) {
+    let mut store = runtime
+        .store
+        .lock()
+        .expect("adapter store lock must succeed");
+    store
+        .append_conversation_turn(
+            ConversationTurnInput::v1(
+                MonotonicTimeNs(330),
+                CorrelationId(93_106),
+                turn_id,
+                Some(session_id),
+                user_id.clone(),
+                Some(device_id.clone()),
+                ConversationRole::User,
+                ConversationSource::TypedText,
+                "resume this session".to_string(),
+                "hash_adapter_resume_this_session".to_string(),
+                PrivacyScope::PublicChat,
+                Some(format!(
+                    "seed_adapter_session_posture_resume_selection_turn_{}",
+                    session_id.0
+                )),
+                None,
+                None,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+    let digest = selene_kernel_contracts::ph1m::MemoryThreadDigest::v1(
+        "thread_resume_hot".to_string(),
+        "Japan ski trip".to_string(),
+        vec![
+            "Flights shortlisted".to_string(),
+            "Need hotel confirmation".to_string(),
+        ],
+        false,
+        true,
+        MonotonicTimeNs(330),
+        5,
+    )
+    .unwrap();
+    store
+        .ph1m_thread_digest_upsert_commit(
+            user_id,
+            selene_kernel_contracts::ph1m::MemoryRetentionMode::Default,
+            digest,
+            selene_storage::ph1f::MemoryThreadEventKind::ThreadDigestUpsert,
+            ReasonCodeId(0x4D00_1002),
+            format!(
+                "seed_adapter_session_posture_resume_selection_digest_{}",
+                session_id.0
+            ),
+        )
+        .unwrap();
+    store
+        .ph1m_upsert_thread_refs_for_user_turn_with_session(
+            user_id,
+            "thread_resume_hot",
+            turn_id,
+            MonotonicTimeNs(331),
+        )
+        .unwrap();
+}
+
+#[cfg(test)]
 #[test]
 fn session_attach_response_exposes_persisted_session_project_context() {
     let runtime = AdapterRuntime::default();
@@ -11955,6 +12028,63 @@ fn session_posture_evidence_response_returns_current_device_fields_for_session()
     );
 
     tests::cleanup_persistence_files_for_test(&journal_path);
+}
+
+#[cfg(test)]
+#[test]
+fn session_posture_evidence_response_returns_resume_selection_fields_when_lawfully_available_for_current_device_session(
+) {
+    let runtime = AdapterRuntime::default();
+    let current_device_id =
+        DeviceId::new("adapter_session_posture_resume_selection_current_device").unwrap();
+    let user_id =
+        UserId::new("tenant_1:adapter_session_posture_resume_selection_actor").unwrap();
+    let session_id = SessionId(5_931);
+
+    seed_adapter_recent_session_record_for_last_attached_device_test(
+        &runtime,
+        session_id,
+        &user_id,
+        &current_device_id,
+        std::slice::from_ref(&current_device_id),
+        &current_device_id,
+        SessionState::SoftClosed,
+        MonotonicTimeNs(330),
+        Some(TurnId(931)),
+    );
+    seed_adapter_session_resume_selection_evidence_for_posture_test(
+        &runtime,
+        session_id,
+        &user_id,
+        &current_device_id,
+        TurnId(931),
+    );
+
+    let response = runtime
+        .run_session_posture_evidence(SessionPostureEvidenceAdapterRequest {
+            correlation_id: 93_107,
+            idempotency_key: "adapter_session_posture_resume_selection_read".to_string(),
+            session_id: session_id.0.to_string(),
+            device_id: current_device_id.as_str().to_string(),
+        })
+        .unwrap();
+
+    assert_eq!(response.status, "ok");
+    assert_eq!(response.outcome, "SESSION_POSTURE_EVIDENCE_READ");
+    assert_eq!(response.session_id.as_deref(), Some("5931"));
+    assert_eq!(response.selected_thread_id.as_deref(), Some("thread_resume_hot"));
+    assert_eq!(response.selected_thread_title.as_deref(), Some("Japan ski trip"));
+    assert_eq!(response.pending_work_order_id, None);
+    assert_eq!(response.resume_tier.as_deref(), Some("HOT"));
+    assert_eq!(
+        response.resume_summary_bullets.as_deref(),
+        Some(
+            &[
+                "Flights shortlisted".to_string(),
+                "Need hotel confirmation".to_string(),
+            ][..]
+        )
+    );
 }
 
 #[cfg(test)]

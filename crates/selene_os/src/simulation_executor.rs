@@ -3308,7 +3308,22 @@ impl SimulationExecutor {
             Ok(v) => v,
             Err(_) => return,
         };
-        let _ = self.memory.borrow_mut().run_turn_and_persist(store, &input);
+        let outcome = match self.memory.borrow_mut().run_turn_and_persist(store, &input) {
+            Ok(v) => v,
+            Err(_) => return,
+        };
+        let MemoryWiringOutcome::Forwarded(bundle) = outcome else {
+            return;
+        };
+        let MemoryTurnOutput::ThreadDigestUpsert(resp) = bundle.output else {
+            return;
+        };
+        let _ = store.ph1m_upsert_thread_refs_for_user_turn_with_session(
+            actor_user_id,
+            &resp.thread_id,
+            turn_id,
+            now,
+        );
     }
 
     fn best_effort_emit_send_link_delivery_audit(
