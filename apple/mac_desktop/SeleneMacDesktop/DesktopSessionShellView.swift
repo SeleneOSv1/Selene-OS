@@ -10500,114 +10500,78 @@ struct DesktopSessionShellView: View {
 
     private var desktopSessionSurfaceSelectionRailCard: some View {
         let foregroundSurfaceID = foregroundObservedSessionSurface?.id
-
-        return Group {
-            if !observedSessionSurfaces.isEmpty {
-                GroupBox {
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text("Bounded local observed-session selection only. This rail foregrounds already-observed cloud-authored session surfaces from the current shell lifetime and changes visibility only; it does not itself attach, resume, recover, reopen, or grant local authority.")
-                            .frame(maxWidth: .infinity, alignment: .leading)
-
-                        ForEach(observedSessionSurfaces) { surface in
-                            let isForegrounded = surface.id == foregroundSurfaceID
-                            let isCurrentDominant = surface.id == currentDominantObservedSessionSurface?.id
-
-                            Button {
-                                selectObservedSessionSurface(surface)
-                            } label: {
-                                VStack(alignment: .leading, spacing: 8) {
-                                    HStack(alignment: .center, spacing: 8) {
-                                        Text(surface.selectionTitle)
-                                            .font(.subheadline.weight(.semibold))
-                                            .frame(maxWidth: .infinity, alignment: .leading)
-
-                                        if isCurrentDominant {
-                                            posturePill("CURRENT")
-                                        }
-
-                                        posturePill(surface.postureLabel.uppercased())
-                                    }
-
-                                    Text(surface.selectionSummary)
-                                        .font(.footnote)
-                                        .foregroundStyle(.secondary)
-                                        .frame(maxWidth: .infinity, alignment: .leading)
-
-                                    HStack(alignment: .firstTextBaseline, spacing: 10) {
-                                        Text("session_id")
-                                            .font(.caption.monospaced())
-                                            .foregroundStyle(.secondary)
-
-                                        Text(surface.sessionID)
-                                            .font(.caption.monospaced())
-                                            .foregroundStyle(.secondary)
-                                    }
-                                }
-                                .padding(12)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .background(
-                                    isForegrounded
-                                        ? Color.accentColor.opacity(0.12)
-                                        : Color(nsColor: .controlBackgroundColor)
-                                )
-                                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                            }
-                            .buttonStyle(.plain)
-                        }
-
-                        Text("Foreground selection fails closed to the current lawful dominant session surface whenever no selected observed surface remains available.")
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                } label: {
-                    Text("Session Surface Selection")
-                        .font(.headline)
-                }
-            }
-        }
-    }
-
-    private var desktopSessionRecentListVisibilityCard: some View {
         let rowStates = desktopSessionRecentListRowStates
 
-        return GroupBox {
-            VStack(alignment: .leading, spacing: 12) {
-                Text("Bounded current-device recent-session visibility only. This shell consumes exact `/v1/session/recent`, preserves exact returned row order only, and keeps these recent-session rows separate from the already-observed local session-surface rail. One bounded local row-selection seam is now allowed here for read-only posture-evidence inspection only.")
-                    .frame(maxWidth: .infinity, alignment: .leading)
+        return Group {
+            if !observedSessionSurfaces.isEmpty || !rowStates.isEmpty {
+                GroupBox {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("Bounded desktop session selection only. This rail foregrounds already-observed cloud-authored session surfaces from the current shell lifetime and separately selects exact current-device recent-session rows for read-only posture-evidence inspection only. It does not itself attach, resume, recover, reopen, or grant local authority.")
+                            .frame(maxWidth: .infinity, alignment: .leading)
 
-                if let outcomeState = desktopSessionRecentListRuntimeOutcomeState {
-                    Text(outcomeState.title)
-                        .font(.subheadline.weight(.semibold))
+                        if !observedSessionSurfaces.isEmpty {
+                            Text("Observed Session Surfaces")
+                                .font(.subheadline.weight(.semibold))
+                                .frame(maxWidth: .infinity, alignment: .leading)
 
-                    ForEach(
-                        [
-                            ("dispatch_phase", outcomeState.phase.rawValue),
-                            ("request_id", outcomeState.requestID),
-                            ("endpoint", outcomeState.endpoint),
-                            ("outcome", outcomeState.outcome ?? "not_available"),
-                            ("reason", outcomeState.reason ?? "not_available"),
-                            ("device_id", outcomeState.deviceID),
-                        ],
-                        id: \.0
-                    ) { row in
-                        metadataRow(label: row.0, value: row.1)
-                    }
+                            ForEach(observedSessionSurfaces) { surface in
+                                let isForegrounded = surface.id == foregroundSurfaceID
+                                let isCurrentDominant = surface.id == currentDominantObservedSessionSurface?.id
 
-                    Text(outcomeState.summary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                                Button {
+                                    selectObservedSessionSurface(surface)
+                                } label: {
+                                    VStack(alignment: .leading, spacing: 8) {
+                                        HStack(alignment: .center, spacing: 8) {
+                                            Text(surface.selectionTitle)
+                                                .font(.subheadline.weight(.semibold))
+                                                .frame(maxWidth: .infinity, alignment: .leading)
 
-                    Text(outcomeState.detail)
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                                            if isCurrentDominant {
+                                                posturePill("CURRENT")
+                                            }
 
-                    if outcomeState.phase == .completed {
-                        if rowStates.isEmpty {
-                            Text("No current-device recent-session rows are currently visible from exact `/v1/session/recent` for this managed desktop device.")
+                                            posturePill(surface.postureLabel.uppercased())
+                                        }
+
+                                        Text(surface.selectionSummary)
+                                            .font(.footnote)
+                                            .foregroundStyle(.secondary)
+                                            .frame(maxWidth: .infinity, alignment: .leading)
+
+                                        HStack(alignment: .firstTextBaseline, spacing: 10) {
+                                            Text("session_id")
+                                                .font(.caption.monospaced())
+                                                .foregroundStyle(.secondary)
+
+                                            Text(surface.sessionID)
+                                                .font(.caption.monospaced())
+                                                .foregroundStyle(.secondary)
+                                        }
+                                    }
+                                    .padding(12)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .background(
+                                        isForegrounded
+                                            ? Color.accentColor.opacity(0.12)
+                                            : Color(nsColor: .controlBackgroundColor)
+                                    )
+                                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                                }
+                                .buttonStyle(.plain)
+                            }
+
+                            Text("Foreground observed-session selection fails closed to the current lawful dominant session surface whenever no selected observed surface remains available.")
+                                .font(.footnote)
                                 .foregroundStyle(.secondary)
                                 .frame(maxWidth: .infinity, alignment: .leading)
-                        } else {
+                        }
+
+                        if !rowStates.isEmpty {
+                            Text("Current-Device Recent Sessions")
+                                .font(.subheadline.weight(.semibold))
+                                .frame(maxWidth: .infinity, alignment: .leading)
+
                             ForEach(rowStates) { rowState in
                                 let isSelected = rowState.sessionID == desktopSelectedRecentSessionID
 
@@ -10642,7 +10606,7 @@ struct DesktopSessionShellView: View {
                                         Text(
                                             isSelected
                                                 ? "Selected for bounded read-only posture-evidence inspection only."
-                                                : "Select this row to inspect bounded read-only posture evidence through exact `/v1/session/posture`."
+                                                : "Select this row for bounded read-only posture-evidence inspection through exact `/v1/session/posture`."
                                         )
                                         .font(.footnote)
                                         .foregroundStyle(.secondary)
@@ -10661,6 +10625,73 @@ struct DesktopSessionShellView: View {
                                 }
                                 .buttonStyle(.plain)
                             }
+
+                            Text("Current-device recent-session rows remain evidence-only here: they stay separate from `observedSessionSurfaces` and do not introduce transcript surfaces, archive-browser surfaces, or recent-row-driven attach / resume / recover / reopen authority.")
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                    }
+                } label: {
+                    Text("Session Selection")
+                        .font(.headline)
+                }
+            }
+        }
+    }
+
+    private var desktopSessionRecentListVisibilityCard: some View {
+        let rowStates = desktopSessionRecentListRowStates
+
+        return GroupBox {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Bounded current-device recent-session visibility only. This shell consumes exact `/v1/session/recent`, preserves exact returned row order only, and keeps these recent-session rows separate from the already-observed local session-surface rail. The current row-selection surface now lives in the session-selection rail above for read-only posture-evidence inspection only.")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                if let outcomeState = desktopSessionRecentListRuntimeOutcomeState {
+                    Text(outcomeState.title)
+                        .font(.subheadline.weight(.semibold))
+
+                    ForEach(
+                        [
+                            ("dispatch_phase", outcomeState.phase.rawValue),
+                            ("request_id", outcomeState.requestID),
+                            ("endpoint", outcomeState.endpoint),
+                            ("outcome", outcomeState.outcome ?? "not_available"),
+                            ("reason", outcomeState.reason ?? "not_available"),
+                            ("device_id", outcomeState.deviceID),
+                        ],
+                        id: \.0
+                    ) { row in
+                        metadataRow(label: row.0, value: row.1)
+                    }
+
+                    Text(outcomeState.summary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                    Text(outcomeState.detail)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                    if outcomeState.phase == .completed {
+                        if rowStates.isEmpty {
+                            Text("No current-device recent-session rows are currently visible from exact `/v1/session/recent` for this managed desktop device.")
+                                .foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        } else {
+                            metadataRow(label: "visible_row_count", value: String(rowStates.count))
+
+                            if let selectedRecentSessionID = desktopSelectedRecentSessionID {
+                                metadataRow(
+                                    label: "selected_recent_session_id",
+                                    value: selectedRecentSessionID
+                                )
+                            }
+
+                            Text("These exact returned recent-session rows are now selectable from the session-selection rail above. This card remains the bounded read-only visibility and refresh-proof surface for exact `/v1/session/recent` only.")
+                                .foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
                         }
                     }
                 } else {
@@ -10692,7 +10723,7 @@ struct DesktopSessionShellView: View {
                     metadataRow(label: "selected_session_id", value: selectedRowState.sessionID)
                     metadataRow(label: "selected_session_state", value: selectedRowState.sessionState)
                 } else {
-                    Text("Select one current-device recent-session row above to inspect bounded read-only posture evidence for that session only.")
+                    Text("Select one current-device recent-session row from the session-selection rail above to inspect bounded read-only posture evidence for that session only.")
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
