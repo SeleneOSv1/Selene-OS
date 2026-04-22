@@ -298,6 +298,15 @@ It may only be updated from current repo truth, exact command results, and exact
   APP_MAC_DESKTOP remains queue-held and `PARTIAL` in this run;
   the desktop queue may be refreshed against this new upstream truth after H345 lands;
   no post-H345 exact desktop next winner is published in this run;
+  H346 queue refresh proof update: H346 is now completed as the first post-H345 APP_MAC_DESKTOP queue-refresh proof build through [MASTER_BUILD_COMPLETION_PLAN.md#L1](/Users/selene/Documents/Selene-OS/docs/MASTER_BUILD_COMPLETION_PLAN.md#L1), [MASTER_BUILD_COMPLETION_LEDGER.md#L1](/Users/selene/Documents/Selene-OS/docs/MASTER_BUILD_COMPLETION_LEDGER.md#L1), and [APP_MAC_DESKTOP_REAL_OPERATION_PROGRAM.md#L1](/Users/selene/Documents/Selene-OS/docs/PHASE_PLANS/PHASE_H_IMPLEMENTATION/APP_MAC_DESKTOP_REAL_OPERATION_PROGRAM.md#L1]);
+  H345-H321 truth remains preserved exactly as already recorded, with no regression;
+  current repo truth now proves the current exact APP_MAC_DESKTOP next winner is bounded native macOS `current_device_recent_session_archived_recent_slice_read_only_visibility_from_already_live_posture_carrier`;
+  the smallest lawful next desktop seam is to extend exact `DesktopCanonicalRuntimeBridge.SessionPostureEvidenceAdapterResponsePayload` plus exact `desktopSessionPostureEvidenceVisibilityCard` so the already-live selected recent-session posture card consumes and renders exact `archived_user_turn_text` and exact `archived_selene_turn_text` from exact `/v1/session/posture` for one selected current-device recent-session row only;
+  this winner is smaller than broader conversation/session selection, broader shell-side `projectID` / `pinnedContextRefs` authoring, broader hidden/background wake behavior, and broader standalone desktop search expansion;
+  no product code changed in this proof run;
+  no new backend route, no Rust edits, no merge into `observedSessionSurfaces`, no synthetic transcript or archive-browser surface, no recent-row-driven attach / resume / recover authority, and no generic reopen authority are claimed by this publication;
+  APP_MAC_DESKTOP remains `PARTIAL`;
+  the next desktop implementation brief may now be written from this exact published winner;
   H324 is now implemented as the first canonical post-H323 selected bounded native macOS actual capability unlock `wake_ready_visible_shell_auto_start_of_already_live_foreground_wake_listener_without_fake_parity_claim` implementation build;
   H323-H256 truth remains preserved exactly as already recorded, with no regression;
   H323 was the correct post-H322 unlock because it added bounded tool-request authoring / invocation only through the already-live exact `/v1/voice/turn` typed-turn path, with no new backend route and no direct local tool/search authority;

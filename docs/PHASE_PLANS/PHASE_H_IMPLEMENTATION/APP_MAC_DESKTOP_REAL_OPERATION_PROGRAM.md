@@ -613,43 +613,43 @@ This section is a planning queue only.
   - what should come next
 
 ### Current Exact Next Winner
-- no post-H343 next exact winner is published until the desktop queue is refreshed against current repo truth after H343 upstream resume-selection evidence completion on the already-live posture carrier
+- bounded native macOS `current_device_recent_session_archived_recent_slice_read_only_visibility_from_already_live_posture_carrier`
+- the exact next implementation seam is:
+  - extend exact `DesktopCanonicalRuntimeBridge.SessionPostureEvidenceAdapterResponsePayload` consumption of exact `/v1/session/posture` to include exact `archived_user_turn_text` and exact `archived_selene_turn_text`
+  - render those exact archived recent-slice fields inside exact `desktopSessionPostureEvidenceVisibilityCard` for one selected current-device recent-session row only
+  - preserve the card as read-only only, keep the row separate from `observedSessionSurfaces`, and add no recent-row-driven attach / resume / recover or generic reopen authority
 
-### Why No Exact Next Winner Is Published Yet
-- H330 now preserves the upstream selected-session `project_id` / `pinned_context_refs` carrier read-only through exact session lifecycle / attach-resume-recover outputs when same-session voice-turn finalization already carried lawful cloud-authored context.
-- H331 now consumes that already-live upstream carrier only through exact same-session desktop session-context transport on the already-live canonical `/v1/voice/turn` path.
-- H331 does not widen into local project selection, local pinned-context authoring, shell-side thread-policy authoring, broader session fetch, hidden/background wake, or broader standalone search expansion.
-- H336 now adds one upstream bounded read-only current-device recent-session list carrier through exact `/v1/session/recent`, returning only already-persisted non-closed session rows whose exact `last_attached_device_id` matches the requesting device.
-- H337 now consumes that already-live upstream carrier only through one bounded native macOS read-only current-device recent-session visibility card.
-- H337 preserves the existing observed-session rail, exact session-entry controls, and exact same-session `/v1/voice/turn` project-context transport unchanged.
-- H337 does not synthesize active transcript surfaces, archived transcript surfaces, suspended explanation surfaces, recent-row-driven attach / resume / recover authority, or generic reopen authority.
-- H340 now adds one upstream bounded read-only current-device per-session posture-evidence carrier through exact `/v1/session/posture`, returning only lawful current-device evidence for one non-closed session whose exact persisted `last_attached_device_id` still matches the requesting device.
-- H340 exposes only already-grounded per-session posture evidence such as exact `session_attach_outcome`, exact `recovery_mode`, and exact `reconciliation_decision` when current upstream truth lawfully provides them, and does not expose transcript content, archive slices, generic reopen authority, or route-specific mutation authority.
-- H340 changes no desktop code in this run and therefore does not by itself publish a new desktop winner.
-- H341 now consumes that already-live upstream posture carrier only through one bounded native macOS read-only recent-session posture-evidence card keyed by one selected current-device recent-session row.
-- H341 preserves the existing observed-session rail, the already-live recent-session row order, exact session-entry controls, and exact same-session `/v1/voice/turn` project-context transport unchanged.
-- H341 does not synthesize active transcript surfaces, archived transcript surfaces, suspended explanation surfaces, recent-row-driven attach / resume / recover authority, or generic reopen authority.
-- H343 now completes the already-live exact `/v1/session/posture` carrier by lawfully exposing PH1.M resume-selection evidence such as exact `selected_thread_id`, exact `selected_thread_title`, exact `resume_tier`, and exact `resume_summary_bullets` when exact current-device session attribution exists.
-- H343 preserves the exact `/v1/session/posture` route, preserves read-only semantics, leaves exact `pending_work_order_id` absent unless lawful exact evidence exists, and still exposes no transcript content, archive slices, generic reopen authority, or route-specific mutation authority.
-- H343 changes no desktop code in this run and therefore does not by itself publish a new desktop winner.
-- H345 now completes the already-live exact `/v1/session/posture` carrier by lawfully exposing one bounded archived recent-slice evidence pair through exact `archived_user_turn_text` and exact `archived_selene_turn_text` when exact current-device soft-closed session attribution exists through exact `last_turn_id` and exact session-attributed conversation-turn truth.
-- H345 preserves the exact `/v1/session/posture` route, preserves read-only semantics, adds no active-session transcript fields, adds no archive browser surface, and still exposes no generic reopen authority or route-specific mutation authority.
-- H345 changes no desktop code in this run and therefore does not by itself publish a new desktop winner.
-- The pre-H345 desktop candidate-family ordering is now stale until it is refreshed against the newly landed upstream posture-carrier archived recent-slice completion seam.
+### Why This Winner Is Now Exact
+- H336 and H337 already provide one bounded native macOS current-device recent-session visibility card whose rows remain separate from `observedSessionSurfaces`.
+- H340 and H341 already provide one bounded native macOS recent-session posture-evidence card keyed by one selected current-device recent-session row only.
+- H343 already widened that same exact `/v1/session/posture` carrier with lawful PH1.M resume-selection evidence, and the current native macOS recent-session posture-evidence card already consumes those exact returned fields in read-only form.
+- H345 now widens that same exact `/v1/session/posture` carrier again with one bounded archived recent-slice evidence pair through exact `archived_user_turn_text` and exact `archived_selene_turn_text`.
+- Current native macOS shell already proves this archived recent-slice pair is lawful desktop-visible cloud-authored evidence on bounded soft-closed visible observed-session surfaces.
+- Current native macOS runtime bridge still decodes exact recent-session posture evidence through exact `SessionPostureEvidenceAdapterResponsePayload` without exact `archived_user_turn_text` or exact `archived_selene_turn_text`.
+- Current native macOS recent-session posture-evidence card still renders returned posture metadata plus resume-selection evidence only and does not yet render the newly live archived recent-slice pair.
+- Therefore the smallest lawful next desktop seam is not broader conversation/session selection, not broader shell-side context authoring, not hidden/background wake, and not broader standalone search input.
+- The smallest lawful next desktop seam is the adjacent read-only archived recent-slice visibility addition on top of the already-live selected recent-session posture-evidence path.
+- This winner requires no new backend route, no Rust edits, no merge into `observedSessionSurfaces`, no synthetic transcript or archive-browser surface, no recent-row-driven mutation authority, and no generic reopen authority.
 
 ### Explicitly Not Next
-- not auto-publishing a desktop next winner from H345 alone without refreshing this queue against current repo truth
+- not merging recent-session rows or recent-session posture evidence into `observedSessionSurfaces`
+- not recent-row-driven attach / resume / recover authority
+- not generic reopen authority
 - not broader shell-side `projectID` / `pinnedContextRefs` authoring without a newly proven lawful seam
 - not a broader hidden/background wake claim or wake parity claim without a proven lawful seam
 - not a standalone desktop search box with local search execution
 - not broader conversation-list / session-list fetch or generic reopen authority without a proven lawful seam
 - not shell-side thread-policy authoring controls
-- not broader generic attach / reopen authority
+- not broader generic attach / reopen authority beyond the already-landed visible / resumable session-entry seam
 - not another regression-lock-only build unless repo truth changes and a capability unlock becomes blocked
 
-### Ordered Candidate Families Once A Lawful Exact Seam Is Proven
-- pre-H345 desktop candidate ordering is intentionally not republished in this run
-- the next lawful APP_MAC_DESKTOP queue must be refreshed against the newly landed upstream posture-carrier archived recent-slice completion seam before another desktop implementation brief is written
+### Ordered Candidate Families After This Winner
+- refresh the desktop queue again against then-current repo truth after this winner lands instead of auto-promoting a broader family blindly
+- until that winner lands, the broader remaining families still stay:
+  - broader conversation/session selection beyond the current observed-session rail plus read-only recent-session evidence cards
+  - broader shell-side `projectID` / `pinnedContextRefs` authoring
+  - broader hidden/background wake behavior
+  - broader standalone desktop search input
 
 ### Queue Maintenance Rule After Every Desktop H-Build
 - Refresh the `Current Repo Baseline` section if newly landed work changes what is actually built.
