@@ -4890,9 +4890,9 @@ struct DesktopSessionShellView: View {
         let historySurfaces = desktopSidebarHistorySurfaces
         let sidebarBackground = Color(
             nsColor: NSColor(
-                srgbRed: 0.974,
-                green: 0.970,
-                blue: 0.963,
+                srgbRed: 0.986,
+                green: 0.983,
+                blue: 0.977,
                 alpha: 1.0
             )
         )
