@@ -5,9 +5,9 @@ Architecture baseline updated to System_Core + Build Sections 01–11.
 ## 0A) Architecture Rebaseline (Authoritative)
 - Current closure baseline includes PH1.COMP and PH1.LAW as first-class architecture engines.
 - Current architecture wiring truth is tracked in:
-  - `/Users/xiamo/Documents/A-Selene/Selene-OS/docs/SELENE_AUTHORITATIVE_ENGINE_INVENTORY.md`
-  - `/Users/xiamo/Documents/A-Selene/Selene-OS/docs/COVERAGE_MATRIX.md`
-  - `/Users/xiamo/Documents/A-Selene/Selene-OS/docs/33_ENGINE_REVIEW_TRACKER.md`
+  - `/Users/selene/Documents/Selene-OS/docs/SELENE_AUTHORITATIVE_ENGINE_INVENTORY.md`
+  - `/Users/selene/Documents/Selene-OS/docs/COVERAGE_MATRIX.md`
+  - `/Users/selene/Documents/Selene-OS/docs/33_ENGINE_REVIEW_TRACKER.md`
 - Current architecture-owned wiring status:
   - `PH1.J` -> `PARTIALLY_WIRED`
   - `PH1.M` -> `PARTIALLY_WIRED`
@@ -34,7 +34,7 @@ Architecture baseline updated to System_Core + Build Sections 01–11.
   - one-engine-at-a-time closure units.
 
 ## 1) Operating Model (Hybrid)
-- Use `/Users/xiamo/Documents/A-Selene/Selene-OS/docs/33_ENGINE_REVIEW_TRACKER.md` as fixed engine order and status truth.
+- Use `/Users/selene/Documents/Selene-OS/docs/33_ENGINE_REVIEW_TRACKER.md` as fixed engine order and status truth.
 - Execute one engine at a time as the unit of closure.
 - Keep cross-engine relationship checks mandatory before marking any engine `DONE`.
 - Do not bypass gates:
@@ -45,7 +45,7 @@ Architecture baseline updated to System_Core + Build Sections 01–11.
 ## 1A) Current Cycle Lock (Second-Round Engine Finalization)
 - Current active cycle is the second round per engine.
 - This round must finalize engines one-by-one before production hardening starts.
-- An engine cannot be marked `READY_FOR_PRODUCTION_HARDENING` until all actionable engine rows in `/Users/xiamo/Documents/A-Selene/Selene-OS/docs/33_ENGINE_REVIEW_TRACKER.md` complete this second-round finalization (`EXEMPT`/`MERGED` excluded).
+- An engine cannot be marked `READY_FOR_PRODUCTION_HARDENING` until all actionable engine rows in `/Users/selene/Documents/Selene-OS/docs/33_ENGINE_REVIEW_TRACKER.md` complete this second-round finalization (`EXEMPT`/`MERGED` excluded).
 - Production hardening work is blocked until this gate is satisfied.
 - Locked priority start queue for this round:
   - `PH1.VISION` (completed)
@@ -54,17 +54,17 @@ Architecture baseline updated to System_Core + Build Sections 01–11.
   - `PH1.D`
 
 ## 2) Canonical Control Files
-- `/Users/xiamo/Documents/A-Selene/Selene-OS/docs/CORE_ARCHITECTURE.md`
-- `/Users/xiamo/Documents/A-Selene/Selene-OS/docs/BUILD_SECTIONS/`
-- `/Users/xiamo/Documents/A-Selene/Selene-OS/docs/SELENE_BUILD_EXECUTION_ORDER.md`
-- `/Users/xiamo/Documents/A-Selene/Selene-OS/docs/SELENE_AUTHORITATIVE_ENGINE_INVENTORY.md`
-- `/Users/xiamo/Documents/A-Selene/Selene-OS/docs/33_ENGINE_REVIEW_TRACKER.md`
-- `/Users/xiamo/Documents/A-Selene/Selene-OS/docs/06_ENGINE_MAP.md`
-- `/Users/xiamo/Documents/A-Selene/Selene-OS/docs/08_SIMULATION_CATALOG.md`
-- `/Users/xiamo/Documents/A-Selene/Selene-OS/docs/09_BLUEPRINT_REGISTRY.md`
-- `/Users/xiamo/Documents/A-Selene/Selene-OS/docs/10_DB_OWNERSHIP_MATRIX.md`
-- `/Users/xiamo/Documents/A-Selene/Selene-OS/docs/COVERAGE_MATRIX.md`
-- `/Users/xiamo/Documents/A-Selene/Selene-OS/docs/03_BUILD_LEDGER.md`
+- `/Users/selene/Documents/Selene-OS/docs/CORE_ARCHITECTURE.md`
+- `/Users/selene/Documents/Selene-OS/docs/BUILD_SECTIONS/`
+- `/Users/selene/Documents/Selene-OS/docs/SELENE_BUILD_EXECUTION_ORDER.md`
+- `/Users/selene/Documents/Selene-OS/docs/SELENE_AUTHORITATIVE_ENGINE_INVENTORY.md`
+- `/Users/selene/Documents/Selene-OS/docs/33_ENGINE_REVIEW_TRACKER.md`
+- `/Users/selene/Documents/Selene-OS/docs/06_ENGINE_MAP.md`
+- `/Users/selene/Documents/Selene-OS/docs/08_SIMULATION_CATALOG.md`
+- `/Users/selene/Documents/Selene-OS/docs/09_BLUEPRINT_REGISTRY.md`
+- `/Users/selene/Documents/Selene-OS/docs/10_DB_OWNERSHIP_MATRIX.md`
+- `/Users/selene/Documents/Selene-OS/docs/COVERAGE_MATRIX.md`
+- `/Users/selene/Documents/Selene-OS/docs/03_BUILD_LEDGER.md`
 
 ## 3) Per-Engine Closure Unit (Repeat Per Engine)
 1. Lock target engine ID and related-engine set.

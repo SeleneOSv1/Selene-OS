@@ -3,7 +3,7 @@
 Architecture baseline updated to System_Core + Build Sections 01–11.
 
 Execution plan pointer:
-- `/Users/xiamo/Documents/A-Selene/Selene-OS/docs/34_ENGINE_CLOSURE_EXECUTION_PLAN.md`
+- `/Users/selene/Documents/Selene-OS/docs/34_ENGINE_CLOSURE_EXECUTION_PLAN.md`
 
 Purpose:
 - Lock the runtime engine inventory against the current architecture law stack (`docs/CORE_ARCHITECTURE.md`, `docs/BUILD_SECTIONS/`, `docs/SELENE_BUILD_EXECUTION_ORDER.md`, `docs/SELENE_AUTHORITATIVE_ENGINE_INVENTORY.md`) and execution trackers (`docs/COVERAGE_MATRIX.md`, `docs/34_ENGINE_CLOSURE_EXECUTION_PLAN.md`).
