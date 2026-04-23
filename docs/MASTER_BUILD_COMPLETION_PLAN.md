@@ -338,6 +338,15 @@ It may only be updated from current repo truth, exact command results, and exact
   later phases beyond this visual-shell simplification remain blocked pending separate approval;
   APP_MAC_DESKTOP remains `PARTIAL`;
   no post-H349 next exact winner is published in this run;
+  H350 is now implemented as the corrective post-H349 APP_MAC_DESKTOP bounded visual-shell-only actual capability alignment `chat_first_desktop_shell_visible_sidebar_history_and_main_composer_alignment_without_runtime_authority_change` through [DesktopSessionShellView.swift#L1](/Users/selene/Documents/Selene-OS/apple/mac_desktop/SeleneMacDesktop/DesktopSessionShellView.swift#L1), [MASTER_BUILD_COMPLETION_PLAN.md#L1](/Users/selene/Documents/Selene-OS/docs/MASTER_BUILD_COMPLETION_PLAN.md#L1), and [MASTER_BUILD_COMPLETION_LEDGER.md#L1](/Users/selene/Documents/Selene-OS/docs/MASTER_BUILD_COMPLETION_LEDGER.md#L1]);
+  H349 remains complete for its own approved scope, but H349 was not the final approved visual target; H350 preserves H349, H259, H348, and H324 truth exactly as already recorded, with no regression;
+  the default native macOS shell now opens with a visible left sidebar by default, shows conversation/session history in that sidebar by default, keeps one transcript-first main conversation pane, and keeps one visible bottom composer ready in the default main pane;
+  the corrective H350 shell removes large placeholder explanation cards from the default view and removes top-right `History` / `Setup` / `More` buttons from the primary shell structure while preserving typed turns and spoken turns inside the same visible thread and preserving spoken TTS reply as the spoken form of the same assistant turn;
+  current lawful attach / resume / recover routing remains unchanged; no backend route, no wake-law change, no session-law change, and no identity / access / simulation logic change are introduced in this corrective run;
+  current native macOS shell still does not claim hidden/background wake behavior or wake parity in this run, and no false wake-parity claim is introduced;
+  later phases beyond this corrective visible-sidebar and main-composer alignment remain blocked pending separate approval;
+  APP_MAC_DESKTOP remains `PARTIAL`;
+  no post-H350 next exact winner is published in this run;
   H324 is now implemented as the first canonical post-H323 selected bounded native macOS actual capability unlock `wake_ready_visible_shell_auto_start_of_already_live_foreground_wake_listener_without_fake_parity_claim` implementation build;
   H323-H256 truth remains preserved exactly as already recorded, with no regression;
   H323 was the correct post-H322 unlock because it added bounded tool-request authoring / invocation only through the already-live exact `/v1/voice/turn` typed-turn path, with no new backend route and no direct local tool/search authority;

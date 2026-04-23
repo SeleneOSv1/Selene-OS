@@ -4846,32 +4846,195 @@ struct DesktopSessionShellView: View {
     }
 
     private var desktopEvidenceFirstOperationalShell: some View {
-        let workspaceTitle = desktopReadyTimeHandoffIsActive ? "Controls" : "Setup"
-        let detail = desktopReadyTimeHandoffIsActive
-            ? "The default shell stays focused on one conversation surface. Session controls, voice controls, and operational details remain available when you need them."
-            : "Setup, onboarding, and runtime details stay out of the default shell. Open them only when you need them."
-
-        return VStack(alignment: .leading, spacing: 24) {
-            desktopShellHeader(
-                title: "Selene",
-                detail: detail,
-                voiceState: nil,
-                workspaceTitle: workspaceTitle
-            )
-
-            VStack(alignment: .leading, spacing: 18) {
-                sectionCard(
-                    title: "Conversation",
-                    detail: desktopReadyTimeHandoffIsActive
-                        ? "Selene is ready for a clean conversation-first desktop surface. Open Controls when you want voice, search, tool, or session-entry support."
-                        : "Selene starts clean here. Use Setup to reach onboarding or pairing controls without loading the default shell with engineering detail."
-                )
-
-                sessionCard
-                    .frame(maxWidth: .infinity, minHeight: 420, alignment: .topLeading)
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        desktopChatShellLayout {
+            desktopEvidenceFirstConversationPane
         }
+    }
+
+    private var desktopSidebarHistorySurfaces: [DesktopObservedSessionSurface] {
+        var surfaces: [DesktopObservedSessionSurface] = []
+
+        if let currentDominantObservedSessionSurface {
+            surfaces.append(currentDominantObservedSessionSurface)
+        }
+
+        for surface in observedSessionSurfaces where !surfaces.contains(where: { $0.id == surface.id }) {
+            surfaces.append(surface)
+        }
+
+        return surfaces
+    }
+
+    private func desktopChatShellLayout<MainContent: View>(
+        @ViewBuilder mainContent: () -> MainContent
+    ) -> some View {
+        HStack(spacing: 0) {
+            desktopVisibleConversationSidebar
+
+            Divider()
+                .overlay(Color.primary.opacity(0.05))
+
+            mainContent()
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(Color(nsColor: .windowBackgroundColor))
+        .overlay(
+            RoundedRectangle(cornerRadius: 28, style: .continuous)
+                .stroke(Color.primary.opacity(0.06), lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
+    }
+
+    private var desktopVisibleConversationSidebar: some View {
+        let historySurfaces = desktopSidebarHistorySurfaces
+
+        return VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 10) {
+                Image(systemName: "sparkles")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(.primary)
+
+                Text("Selene")
+                    .font(.system(size: 20, weight: .semibold))
+            }
+            .padding(.horizontal, 20)
+            .padding(.top, 18)
+            .padding(.bottom, 16)
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    Text("Chats")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 4)
+
+                    if historySurfaces.isEmpty {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("No conversations yet")
+                                .font(.subheadline.weight(.semibold))
+
+                            Text("Your conversation history will appear here as you talk with Selene.")
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                        }
+                        .padding(16)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Color.white.opacity(0.72))
+                        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                .stroke(Color.primary.opacity(0.06), lineWidth: 1)
+                        )
+                    } else {
+                        VStack(alignment: .leading, spacing: 8) {
+                            ForEach(historySurfaces) { surface in
+                                desktopSidebarHistoryRow(surface)
+                            }
+                        }
+                    }
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+            }
+        }
+        .frame(minWidth: 280, idealWidth: 300, maxWidth: 320, maxHeight: .infinity, alignment: .topLeading)
+        .background(Color(nsColor: .controlBackgroundColor).opacity(0.42))
+    }
+
+    private func desktopSidebarHistoryRow(_ surface: DesktopObservedSessionSurface) -> some View {
+        let isSelected = foregroundObservedSessionSurface?.id == surface.id
+
+        return Button {
+            selectObservedSessionSurface(surface)
+        } label: {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(desktopSidebarHistoryTitle(for: surface))
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+
+                Text(desktopSidebarHistoryPreview(for: surface))
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                isSelected
+                    ? Color.white.opacity(0.96)
+                    : Color.clear
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .stroke(
+                        isSelected ? Color.primary.opacity(0.08) : Color.clear,
+                        lineWidth: 1
+                    )
+            )
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func desktopSidebarHistoryTitle(for surface: DesktopObservedSessionSurface) -> String {
+        switch surface {
+        case .sessionHeader:
+            return "New conversation"
+        case .sessionActive(let context):
+            return desktopSidebarNormalizedConversationLine(
+                context.currentUserTurnText,
+                fallback: "Active conversation"
+            )
+        case .sessionSoftClosed(let context):
+            return desktopSidebarNormalizedConversationLine(
+                context.selectedThreadTitle ?? context.archivedUserTurnText,
+                fallback: "Archived conversation"
+            )
+        case .sessionSuspended(let context):
+            return desktopSidebarNormalizedConversationLine(
+                context.allowedNextStepSummary,
+                fallback: "Conversation paused"
+            )
+        }
+    }
+
+    private func desktopSidebarHistoryPreview(for surface: DesktopObservedSessionSurface) -> String {
+        switch surface {
+        case .sessionHeader:
+            return "Start the next conversation here."
+        case .sessionActive(let context):
+            return desktopSidebarNormalizedConversationLine(
+                context.currentSeleneTurnText,
+                fallback: "Selene is ready when you are."
+            )
+        case .sessionSoftClosed(let context):
+            return desktopSidebarNormalizedConversationLine(
+                context.archivedSeleneTurnText,
+                fallback: "This conversation is available in archived form."
+            )
+        case .sessionSuspended:
+            return "This conversation is currently unavailable."
+        }
+    }
+
+    private func desktopSidebarNormalizedConversationLine(
+        _ text: String?,
+        fallback: String
+    ) -> String {
+        guard let text else {
+            return fallback
+        }
+
+        let normalized = text
+            .replacingOccurrences(of: "\n", with: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        return normalized.isEmpty ? fallback : normalized
     }
 
     private func desktopSecondaryPanelButton(
@@ -5888,7 +6051,7 @@ struct DesktopSessionShellView: View {
     }
 
     private var desktopTypedTurnComposerCard: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 12) {
             if explicitVoiceController.isListening {
                 HStack(spacing: 10) {
                     Image(systemName: "waveform")
@@ -5907,12 +6070,12 @@ struct DesktopSessionShellView: View {
                         desktopAuthoritativeReplyPlaybackState = .idle
                         explicitVoiceController.stopCaptureAndPrepareVoiceTurn()
                     }
-                    .buttonStyle(.bordered)
+                    .buttonStyle(.borderless)
                 }
-                .padding(.horizontal, 2)
+                .padding(.horizontal, 4)
             }
 
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 14) {
                 TextField(
                     "Message Selene",
                     text: $desktopTypedTurnDraft,
@@ -5924,31 +6087,12 @@ struct DesktopSessionShellView: View {
                 .onSubmit {
                     submitDesktopTypedTurn()
                 }
-                .padding(16)
-                .background(Color(nsColor: .textBackgroundColor))
-                .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 20, style: .continuous)
-                        .stroke(Color.primary.opacity(0.07), lineWidth: 1)
-                )
 
                 if !explicitVoiceController.transcriptPreview.isEmpty {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("Voice preview")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(.secondary)
-
-                        Text(explicitVoiceController.transcriptPreview)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                    .padding(14)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Color(nsColor: .textBackgroundColor))
-                    .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 18, style: .continuous)
-                            .stroke(Color.primary.opacity(0.06), lineWidth: 1)
-                    )
+                    Text(explicitVoiceController.transcriptPreview)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
 
                 if let failedRequest = desktopTypedTurnFailedRequest {
@@ -5979,12 +6123,13 @@ struct DesktopSessionShellView: View {
                         desktopAuthoritativeReplyPlaybackState = .idle
                         explicitVoiceController.startExplicitVoiceTurn()
                     } label: {
-                        Label(
-                            explicitVoiceController.isListening ? "Listening" : "Voice",
-                            systemImage: explicitVoiceController.isListening ? "waveform" : "mic"
-                        )
+                        Image(systemName: explicitVoiceController.isListening ? "waveform" : "mic")
+                            .font(.system(size: 16, weight: .semibold))
+                            .frame(width: 34, height: 34)
+                            .background(Color.primary.opacity(0.05))
+                            .clipShape(Circle())
                     }
-                    .buttonStyle(.bordered)
+                    .buttonStyle(.plain)
                     .disabled(
                         explicitVoiceController.isListening
                             || explicitVoiceController.pendingRequest != nil
@@ -5993,17 +6138,11 @@ struct DesktopSessionShellView: View {
                     if keyboardComposerPendingTypedTurnRequest != nil {
                         Text("Sending")
                             .font(.caption.weight(.semibold))
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 6)
-                            .background(Color.accentColor.opacity(0.14))
-                            .clipShape(Capsule())
+                            .foregroundStyle(.secondary)
                     } else if desktopTypedTurnSubmissionInterlocksActive {
                         Text("Busy")
                             .font(.caption.weight(.semibold))
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 6)
-                            .background(Color.secondary.opacity(0.12))
-                            .clipShape(Capsule())
+                            .foregroundStyle(.secondary)
                     }
 
                     Spacer()
@@ -6013,20 +6152,34 @@ struct DesktopSessionShellView: View {
                     } label: {
                         Image(systemName: "arrow.up")
                             .font(.headline.weight(.semibold))
-                            .frame(width: 34, height: 34)
+                            .foregroundStyle(
+                                trimmedDesktopTypedTurnDraft.isEmpty ? Color.secondary : Color.white
+                            )
+                            .frame(width: 36, height: 36)
+                            .background(
+                                trimmedDesktopTypedTurnDraft.isEmpty || desktopTypedTurnSubmissionInterlocksActive
+                                    ? Color.primary.opacity(0.08)
+                                    : Color.black.opacity(0.94)
+                            )
+                            .clipShape(Circle())
                     }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(.plain)
                     .disabled(
                         trimmedDesktopTypedTurnDraft.isEmpty
                             || desktopTypedTurnSubmissionInterlocksActive
                     )
                 }
             }
+            .padding(.horizontal, 18)
+            .padding(.vertical, 16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color(nsColor: .textBackgroundColor))
+            .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 28, style: .continuous)
+                    .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+            )
         }
-        .padding(18)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(nsColor: .controlBackgroundColor).opacity(0.65))
-        .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
     }
 
     private var desktopToolRequestAuthoringCard: some View {
@@ -10585,84 +10738,234 @@ struct DesktopSessionShellView: View {
     private func desktopOperationalConversationShell(
         _ state: DesktopOperationalConversationShellState
     ) -> some View {
-        VStack(alignment: .leading, spacing: 24) {
-            desktopShellHeader(
-                title: state.primaryPaneState.headerTitle,
-                detail: state.primaryPaneState.headerDetail,
-                voiceState: state.primaryPaneState.voiceState,
-                workspaceTitle: "Controls"
-            )
+        desktopChatShellLayout {
+            desktopOperationalConversationMainPane(state.primaryPaneState)
+        }
+    }
+
+    private var desktopEvidenceFirstConversationPane: some View {
+        VStack(spacing: 0) {
+            desktopConversationTopBar(title: "Selene", voiceState: nil)
+
+            Divider()
+                .overlay(Color.primary.opacity(0.05))
 
             ScrollView {
-                desktopConversationPrimaryPane(state.primaryPaneState)
+                desktopConversationReadyCanvas(
+                    title: "Selene",
+                    detail: nil
+                )
+                .padding(.horizontal, 36)
+                .padding(.vertical, 28)
+                .frame(maxWidth: .infinity, alignment: .center)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+
+            Divider()
+                .overlay(Color.primary.opacity(0.05))
+
+            desktopConversationComposerRegion(
+                isWritable: true,
+                readOnlyMessage: nil
+            )
+            .padding(.horizontal, 24)
+            .padding(.top, 18)
+            .padding(.bottom, 24)
+            .background(Color(nsColor: .windowBackgroundColor))
         }
+    }
+
+    private func desktopOperationalConversationMainPane(
+        _ state: DesktopConversationPrimaryPaneState
+    ) -> some View {
+        let title = foregroundObservedSessionSurface.map { surface in
+            desktopSidebarHistoryTitle(for: surface)
+        } ?? state.headerTitle
+        let isWritable = state.dominantPosture != "SESSION_SUSPENDED_VISIBLE"
+            && state.dominantPosture != "QUARANTINED_LOCAL_STATE"
+            && desktopForegroundSelectionShowsCurrentDominantSurface
+
+        return VStack(spacing: 0) {
+            desktopConversationTopBar(
+                title: title,
+                voiceState: state.voiceState
+            )
+
+            Divider()
+                .overlay(Color.primary.opacity(0.05))
+
+            ScrollView {
+                desktopConversationPrimaryPane(state)
+                    .padding(.horizontal, 36)
+                    .padding(.vertical, 28)
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+
+            Divider()
+                .overlay(Color.primary.opacity(0.05))
+
+            desktopConversationComposerRegion(
+                isWritable: isWritable,
+                readOnlyMessage: desktopConversationReadOnlyComposerMessage
+            )
+            .padding(.horizontal, 24)
+            .padding(.top, 18)
+            .padding(.bottom, 24)
+            .background(Color(nsColor: .windowBackgroundColor))
+        }
+    }
+
+    private func desktopConversationTopBar(
+        title: String,
+        voiceState: String?
+    ) -> some View {
+        HStack(spacing: 14) {
+            Text(title)
+                .font(.system(size: 22, weight: .semibold))
+                .lineLimit(1)
+
+            Spacer()
+
+            if let voiceState {
+                desktopConversationVoiceStateBadge(voiceState)
+            }
+        }
+        .padding(.horizontal, 28)
+        .padding(.vertical, 18)
     }
 
     private func desktopConversationPrimaryPane(
         _ state: DesktopConversationPrimaryPaneState
     ) -> some View {
-        return VStack(alignment: .leading, spacing: 24) {
+        Group {
             if state.dominantPosture == "SESSION_SUSPENDED_VISIBLE" {
-                sectionCard(
+                desktopConversationStatusCanvas(
                     title: "Conversation unavailable",
-                    detail: "This conversation is suspended right now, so Selene keeps the thread explanation-only until the authoritative runtime changes that posture."
+                    detail: "This conversation is temporarily unavailable right now."
                 )
             } else if state.dominantPosture == "QUARANTINED_LOCAL_STATE" {
-                sectionCard(
+                desktopConversationStatusCanvas(
                     title: "Conversation unavailable",
-                    detail: "This conversation is temporarily quarantined, so Selene withholds live thread detail until authoritative recovery clears the posture."
+                    detail: "Selene is waiting for this conversation to become available again."
+                )
+            } else if state.timelineEntries.isEmpty {
+                desktopConversationReadyCanvas(
+                    title: "Selene",
+                    detail: desktopForegroundSelectionShowsCurrentDominantSurface
+                        ? nil
+                        : "This conversation is open in read-only view."
                 )
             } else {
-                if state.timelineEntries.isEmpty {
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text("Start a conversation")
-                            .font(.title3.weight(.semibold))
-
-                        Text(
-                            desktopForegroundSelectionShowsCurrentDominantSurface
-                                ? "Type below or use the conversation controls when you want Selene to respond. The default shell stays focused on the thread itself."
-                                : "This selected session stays read-only here. Open Controls when you need session navigation or bounded entry controls."
+                LazyVStack(alignment: .leading, spacing: 18) {
+                    ForEach(state.timelineEntries) { entry in
+                        desktopConversationTimelineEntryCard(
+                            entry,
+                            explicitVoiceLivePreviewAttachmentState: state.explicitVoiceLivePreviewAttachmentState,
+                            wakeTriggeredVoiceLivePreviewAttachmentState: state.wakeTriggeredVoiceLivePreviewAttachmentState,
+                            explicitVoiceFailedRequestAttachmentState: state.explicitVoiceFailedRequestAttachmentState,
+                            wakeTriggeredVoiceFailedRequestAttachmentState: state.wakeTriggeredVoiceFailedRequestAttachmentState,
+                            explicitVoicePendingAttachmentState: state.explicitVoicePendingAttachmentState,
+                            wakeTriggeredVoicePendingAttachmentState: state.wakeTriggeredVoicePendingAttachmentState,
+                            readOnlyToolLaneState: state.readOnlyToolLaneState,
+                            searchToolCompletionState: state.searchToolCompletionState,
+                            authoritativeReplyCompletionState: state.authoritativeReplyCompletionState,
+                            runtimeDispatchFailureAttachmentState: state.runtimeDispatchFailureAttachmentState
                         )
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
                     }
-                    .padding(28)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Color(nsColor: .controlBackgroundColor).opacity(0.55))
-                    .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
-                } else {
-                    LazyVStack(alignment: .leading, spacing: 18) {
-                        ForEach(state.timelineEntries) { entry in
-                            desktopConversationTimelineEntryCard(
-                                entry,
-                                explicitVoiceLivePreviewAttachmentState: state.explicitVoiceLivePreviewAttachmentState,
-                                wakeTriggeredVoiceLivePreviewAttachmentState: state.wakeTriggeredVoiceLivePreviewAttachmentState,
-                                explicitVoiceFailedRequestAttachmentState: state.explicitVoiceFailedRequestAttachmentState,
-                                wakeTriggeredVoiceFailedRequestAttachmentState: state.wakeTriggeredVoiceFailedRequestAttachmentState,
-                                explicitVoicePendingAttachmentState: state.explicitVoicePendingAttachmentState,
-                                wakeTriggeredVoicePendingAttachmentState: state.wakeTriggeredVoicePendingAttachmentState,
-                                readOnlyToolLaneState: state.readOnlyToolLaneState,
-                                searchToolCompletionState: state.searchToolCompletionState,
-                                authoritativeReplyCompletionState: state.authoritativeReplyCompletionState,
-                                runtimeDispatchFailureAttachmentState: state.runtimeDispatchFailureAttachmentState
-                            )
-                        }
-                    }
-                }
-
-                if desktopForegroundSelectionShowsCurrentDominantSurface {
-                    desktopTypedTurnComposerCard
-                } else {
-                    sectionCard(
-                        title: "Selected Surface Status",
-                        detail: "This previously observed session surface is foregrounded in bounded read-only form only. Existing attach / resume / recover controls remain separate, and bounded keyboard typed-turn plus bounded search-request and tool-request production stay bound to the current lawful dominant desktop surface."
-                    )
                 }
             }
         }
-        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .frame(maxWidth: .infinity, minHeight: 520, alignment: .topLeading)
+    }
+
+    private func desktopConversationReadyCanvas(
+        title: String,
+        detail: String?
+    ) -> some View {
+        VStack(spacing: 10) {
+            Spacer(minLength: 120)
+
+            Text(title)
+                .font(.system(size: 34, weight: .semibold))
+                .foregroundStyle(Color.primary.opacity(0.82))
+
+            if let detail {
+                Text(detail)
+                    .font(.body)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: 360)
+            }
+
+            Spacer(minLength: 120)
+        }
+        .frame(maxWidth: .infinity, minHeight: 520, alignment: .center)
+    }
+
+    private func desktopConversationStatusCanvas(
+        title: String,
+        detail: String
+    ) -> some View {
+        VStack(spacing: 10) {
+            Spacer(minLength: 120)
+
+            Text(title)
+                .font(.title3.weight(.semibold))
+
+            Text(detail)
+                .font(.body)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: 380)
+
+            Spacer(minLength: 120)
+        }
+        .frame(maxWidth: .infinity, minHeight: 520, alignment: .center)
+    }
+
+    private func desktopConversationComposerRegion(
+        isWritable: Bool,
+        readOnlyMessage: String?
+    ) -> some View {
+        Group {
+            if isWritable {
+                desktopTypedTurnComposerCard
+            } else {
+                desktopReadOnlyComposerCard(
+                    message: readOnlyMessage ?? "This conversation is read-only here."
+                )
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var desktopConversationReadOnlyComposerMessage: String {
+        if foregroundSessionSuspendedVisibleContext != nil || activeRecoveryDisplayState == .quarantinedLocalState {
+            return "This conversation is temporarily unavailable."
+        }
+
+        return "Open the current conversation to keep chatting."
+    }
+
+    private func desktopReadOnlyComposerCard(message: String) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: "lock")
+                .foregroundStyle(.secondary)
+
+            Text(message)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.horizontal, 18)
+        .padding(.vertical, 18)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(nsColor: .textBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 26, style: .continuous)
+                .stroke(Color.primary.opacity(0.07), lineWidth: 1)
+        )
     }
 
     private func desktopConversationSupportRail(
@@ -11088,11 +11391,12 @@ struct DesktopSessionShellView: View {
         runtimeDispatchFailureAttachmentState: DesktopConversationRuntimeDispatchFailureAttachmentState?
     ) -> some View {
         let bubbleColor = entry.isUserAuthored
-            ? Color.accentColor.opacity(0.12)
+            ? Color.black.opacity(0.96)
             : Color(nsColor: .textBackgroundColor)
         let bubbleStroke = entry.isUserAuthored
-            ? Color.accentColor.opacity(0.12)
+            ? Color.black.opacity(0.96)
             : Color.primary.opacity(0.06)
+        let foregroundColor = entry.isUserAuthored ? Color.white : Color.primary
         let showsSupplementaryDetail = !entry.detail.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             && ![
                 "current_user_turn_text",
@@ -11108,18 +11412,15 @@ struct DesktopSessionShellView: View {
             }
 
             VStack(alignment: .leading, spacing: 10) {
-                Text(entry.isUserAuthored ? "You" : "Selene")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-
                 Text(entry.body)
                     .textSelection(.enabled)
+                    .foregroundStyle(foregroundColor)
                     .frame(maxWidth: .infinity, alignment: .leading)
 
                 if showsSupplementaryDetail {
                     Text(entry.detail)
                         .font(.footnote)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(entry.isUserAuthored ? Color.white.opacity(0.78) : .secondary)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
 
@@ -11150,7 +11451,7 @@ struct DesktopSessionShellView: View {
                 RoundedRectangle(cornerRadius: 22, style: .continuous)
                     .stroke(bubbleStroke, lineWidth: 1)
             )
-            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
 
             if !entry.isUserAuthored {
                 Spacer(minLength: 88)
