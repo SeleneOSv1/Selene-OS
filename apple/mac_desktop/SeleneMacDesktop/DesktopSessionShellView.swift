@@ -10846,45 +10846,269 @@ struct DesktopSessionShellView: View {
     private func desktopConversationPrimaryPane(
         _ state: DesktopConversationPrimaryPaneState
     ) -> some View {
-        Group {
-            if state.dominantPosture == "SESSION_SUSPENDED_VISIBLE" {
-                desktopConversationStatusCanvas(
-                    title: "Conversation unavailable",
-                    detail: "This conversation is temporarily unavailable right now."
-                )
-            } else if state.dominantPosture == "QUARANTINED_LOCAL_STATE" {
-                desktopConversationStatusCanvas(
-                    title: "Conversation unavailable",
-                    detail: "Selene is waiting for this conversation to become available again."
-                )
-            } else if state.timelineEntries.isEmpty {
-                desktopConversationReadyCanvas(
-                    title: "Selene",
-                    detail: desktopForegroundSelectionShowsCurrentDominantSurface
-                        ? nil
-                        : "This conversation is open in read-only view."
-                )
-            } else {
-                LazyVStack(alignment: .leading, spacing: 18) {
-                    ForEach(state.timelineEntries) { entry in
-                        desktopConversationTimelineEntryCard(
-                            entry,
-                            explicitVoiceLivePreviewAttachmentState: state.explicitVoiceLivePreviewAttachmentState,
-                            wakeTriggeredVoiceLivePreviewAttachmentState: state.wakeTriggeredVoiceLivePreviewAttachmentState,
-                            explicitVoiceFailedRequestAttachmentState: state.explicitVoiceFailedRequestAttachmentState,
-                            wakeTriggeredVoiceFailedRequestAttachmentState: state.wakeTriggeredVoiceFailedRequestAttachmentState,
-                            explicitVoicePendingAttachmentState: state.explicitVoicePendingAttachmentState,
-                            wakeTriggeredVoicePendingAttachmentState: state.wakeTriggeredVoicePendingAttachmentState,
-                            readOnlyToolLaneState: state.readOnlyToolLaneState,
-                            searchToolCompletionState: state.searchToolCompletionState,
-                            authoritativeReplyCompletionState: state.authoritativeReplyCompletionState,
-                            runtimeDispatchFailureAttachmentState: state.runtimeDispatchFailureAttachmentState
-                        )
+        VStack(alignment: .leading, spacing: 18) {
+            desktopConversationInlineDominantSessionEntryCard()
+
+            Group {
+                if state.dominantPosture == "SESSION_SUSPENDED_VISIBLE" {
+                    desktopConversationStatusCanvas(
+                        title: "Conversation unavailable",
+                        detail: "This conversation is temporarily unavailable right now."
+                    )
+                } else if state.dominantPosture == "QUARANTINED_LOCAL_STATE" {
+                    desktopConversationStatusCanvas(
+                        title: "Conversation unavailable",
+                        detail: "Selene is waiting for this conversation to become available again."
+                    )
+                } else if state.timelineEntries.isEmpty {
+                    desktopConversationReadyCanvas(
+                        title: "Selene",
+                        detail: desktopForegroundSelectionShowsCurrentDominantSurface
+                            ? nil
+                            : "This conversation is open in read-only view."
+                    )
+                } else {
+                    LazyVStack(alignment: .leading, spacing: 18) {
+                        ForEach(state.timelineEntries) { entry in
+                            desktopConversationTimelineEntryCard(
+                                entry,
+                                explicitVoiceLivePreviewAttachmentState: state.explicitVoiceLivePreviewAttachmentState,
+                                wakeTriggeredVoiceLivePreviewAttachmentState: state.wakeTriggeredVoiceLivePreviewAttachmentState,
+                                explicitVoiceFailedRequestAttachmentState: state.explicitVoiceFailedRequestAttachmentState,
+                                wakeTriggeredVoiceFailedRequestAttachmentState: state.wakeTriggeredVoiceFailedRequestAttachmentState,
+                                explicitVoicePendingAttachmentState: state.explicitVoicePendingAttachmentState,
+                                wakeTriggeredVoicePendingAttachmentState: state.wakeTriggeredVoicePendingAttachmentState,
+                                readOnlyToolLaneState: state.readOnlyToolLaneState,
+                                searchToolCompletionState: state.searchToolCompletionState,
+                                authoritativeReplyCompletionState: state.authoritativeReplyCompletionState,
+                                runtimeDispatchFailureAttachmentState: state.runtimeDispatchFailureAttachmentState
+                            )
+                        }
                     }
                 }
             }
         }
         .frame(maxWidth: .infinity, minHeight: 520, alignment: .topLeading)
+    }
+
+    @ViewBuilder
+    private func desktopConversationInlineDominantSessionEntryCard() -> some View {
+        if desktopForegroundSelectionShowsCurrentDominantSurface,
+           activeRecoveryDisplayState != .quarantinedLocalState {
+            let promptState = desktopSessionMultiPostureEntryPromptState
+            let activeRuntimeOutcomeState: DesktopSessionMultiPostureEntryRuntimeOutcomeState? = {
+                guard let desktopSessionMultiPostureEntryRuntimeOutcomeState else {
+                    return nil
+                }
+
+                guard let promptState else {
+                    return desktopSessionMultiPostureEntryRuntimeOutcomeState
+                }
+
+                return desktopSessionMultiPostureEntryRuntimeOutcomeState.entryMode == promptState.entryMode
+                    && desktopSessionMultiPostureEntryRuntimeOutcomeState.sourceSurfaceIdentity ==
+                    promptState.sourceSurfaceIdentity
+                    && desktopSessionMultiPostureEntryRuntimeOutcomeState.sessionID == promptState.sessionID
+                    && desktopSessionMultiPostureEntryRuntimeOutcomeState.deviceID == promptState.deviceID
+                    && desktopSessionMultiPostureEntryRuntimeOutcomeState.turnID == promptState.turnID
+                    && desktopSessionMultiPostureEntryRuntimeOutcomeState.selectedThreadID ==
+                    promptState.selectedThreadID
+                    && desktopSessionMultiPostureEntryRuntimeOutcomeState.recoveryMode ==
+                    promptState.recoveryMode
+                    ? desktopSessionMultiPostureEntryRuntimeOutcomeState
+                    : nil
+            }()
+
+            if let displayedEntryMode = activeRuntimeOutcomeState?.entryMode ?? promptState?.entryMode {
+                let displayedSourceSurface = activeRuntimeOutcomeState?.sourceSurfaceIdentity
+                    ?? promptState?.sourceSurfaceIdentity
+                    ?? "not_provided"
+                let displayedResumeSummaryBullets = activeRuntimeOutcomeState?.resumeSummaryBullets
+                    ?? promptState?.resumeSummaryBullets
+                    ?? []
+                let actionTitle = desktopConversationInlineSessionEntryActionTitle(
+                    for: displayedEntryMode
+                )
+                let title = desktopConversationInlineSessionEntryHeadline(
+                    for: displayedEntryMode
+                )
+                let detail = desktopConversationInlineSessionEntryDetail(
+                    for: displayedEntryMode,
+                    sourceSurfaceIdentity: displayedSourceSurface
+                )
+                let surfaceLabel = desktopConversationInlineSessionEntrySurfaceLabel(
+                    for: displayedSourceSurface
+                )
+                let outcomePhaseLabel = desktopConversationInlineSessionEntryOutcomePhaseLabel(
+                    activeRuntimeOutcomeState?.phase
+                )
+
+                VStack(alignment: .leading, spacing: 14) {
+                    HStack(alignment: .top, spacing: 12) {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text(title)
+                                .font(.title3.weight(.semibold))
+
+                            Text(detail)
+                                .foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+
+                        Spacer(minLength: 12)
+
+                        if let outcomePhaseLabel {
+                            Text(outcomePhaseLabel)
+                                .font(.caption.weight(.semibold))
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 6)
+                                .background(Color.primary.opacity(0.06))
+                                .clipShape(Capsule())
+                        } else {
+                            Text(surfaceLabel)
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.secondary)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 6)
+                                .background(Color.primary.opacity(0.04))
+                                .clipShape(Capsule())
+                        }
+                    }
+
+                    if displayedEntryMode == .softClosedExplicitResume,
+                       !displayedResumeSummaryBullets.isEmpty {
+                        VStack(alignment: .leading, spacing: 8) {
+                            ForEach(
+                                Array(displayedResumeSummaryBullets.prefix(3).enumerated()),
+                                id: \.offset
+                            ) { index, bullet in
+                                HStack(alignment: .firstTextBaseline, spacing: 10) {
+                                    Text("\(index + 1).")
+                                        .font(.caption.weight(.semibold))
+                                        .foregroundStyle(.secondary)
+
+                                    Text(bullet)
+                                        .font(.subheadline)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                }
+                            }
+                        }
+                    }
+
+                    if let activeRuntimeOutcomeState {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text(activeRuntimeOutcomeState.title)
+                                .font(.subheadline.weight(.semibold))
+
+                            Text(activeRuntimeOutcomeState.summary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+
+                            Text(activeRuntimeOutcomeState.detail)
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        .padding(14)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Color(nsColor: .controlBackgroundColor))
+                        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                    }
+
+                    if let promptState {
+                        Button(actionTitle) {
+                            Task {
+                                await submitDesktopSessionMultiPostureEntry(promptState: promptState)
+                            }
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(activeRuntimeOutcomeState?.phase == .dispatching)
+                    }
+                }
+                .padding(22)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color.white)
+                .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 24, style: .continuous)
+                        .stroke(Color.primary.opacity(0.06), lineWidth: 1)
+                )
+            }
+        }
+    }
+
+    private func desktopConversationInlineSessionEntryHeadline(
+        for entryMode: DesktopSessionMultiPostureEntryMode
+    ) -> String {
+        switch entryMode {
+        case .currentVisibleAttach:
+            return "Continue from the current session"
+        case .softClosedExplicitResume:
+            return "Resume this conversation"
+        case .suspendedAuthoritativeRereadRecover:
+            return "Recover this conversation"
+        }
+    }
+
+    private func desktopConversationInlineSessionEntryActionTitle(
+        for entryMode: DesktopSessionMultiPostureEntryMode
+    ) -> String {
+        switch entryMode {
+        case .currentVisibleAttach:
+            return "Attach to the visible session"
+        case .softClosedExplicitResume:
+            return "Resume the selected thread explicitly"
+        case .suspendedAuthoritativeRereadRecover:
+            return "Recover the suspended session authoritatively"
+        }
+    }
+
+    private func desktopConversationInlineSessionEntryDetail(
+        for entryMode: DesktopSessionMultiPostureEntryMode,
+        sourceSurfaceIdentity: String
+    ) -> String {
+        switch entryMode {
+        case .currentVisibleAttach:
+            return "This current conversation can continue directly from the main pane without leaving the transcript."
+        case .softClosedExplicitResume:
+            return "This archived conversation can be resumed from here while the rest of the shell stays unchanged."
+        case .suspendedAuthoritativeRereadRecover:
+            if sourceSurfaceIdentity == "SESSION_SUSPENDED_VISIBLE" {
+                return "This conversation is paused right now, but the lawful recover action is available here in the main pane."
+            }
+
+            return "The lawful recover action is available here in the main pane."
+        }
+    }
+
+    private func desktopConversationInlineSessionEntrySurfaceLabel(
+        for sourceSurfaceIdentity: String
+    ) -> String {
+        switch sourceSurfaceIdentity {
+        case "SESSION_OPEN_VISIBLE", "SESSION_ACTIVE_VISIBLE":
+            return "Current session"
+        case "SESSION_SOFT_CLOSED_VISIBLE":
+            return "Archived conversation"
+        case "SESSION_SUSPENDED_VISIBLE":
+            return "Suspended conversation"
+        default:
+            return "Conversation action"
+        }
+    }
+
+    private func desktopConversationInlineSessionEntryOutcomePhaseLabel(
+        _ phase: DesktopSessionMultiPostureEntryRuntimeOutcomeState.Phase?
+    ) -> String? {
+        guard let phase else {
+            return nil
+        }
+
+        switch phase {
+        case .dispatching:
+            return "Working…"
+        case .completed:
+            return "Updated"
+        case .failed:
+            return "Needs attention"
+        }
     }
 
     private func desktopConversationReadyCanvas(

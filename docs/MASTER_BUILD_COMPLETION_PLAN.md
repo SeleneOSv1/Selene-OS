@@ -347,6 +347,16 @@ It may only be updated from current repo truth, exact command results, and exact
   later phases beyond this corrective visible-sidebar and main-composer alignment remain blocked pending separate approval;
   APP_MAC_DESKTOP remains `PARTIAL`;
   no post-H350 next exact winner is published in this run;
+  H352 is now implemented as the post-H350 APP_MAC_DESKTOP bounded main-pane operational alignment actual capability unlock `inline_current_dominant_surface_session_entry_actions_inside_the_existing_h350_main_pane_without_runtime_authority_change` through [DesktopSessionShellView.swift#L1](/Users/selene/Documents/Selene-OS/apple/mac_desktop/SeleneMacDesktop/DesktopSessionShellView.swift#L1), [MASTER_BUILD_COMPLETION_PLAN.md#L1](/Users/selene/Documents/Selene-OS/docs/MASTER_BUILD_COMPLETION_PLAN.md#L1), and [MASTER_BUILD_COMPLETION_LEDGER.md#L1](/Users/selene/Documents/Selene-OS/docs/MASTER_BUILD_COMPLETION_LEDGER.md#L1]);
+  H351 was reviewed on unchanged repo truth and had no truthful code-bearing delta, so H351 was not forced into implementation;
+  H352 preserves H350, H349, H259, H348, H324, H322, H321, and H312 truth exactly as already recorded, with no regression;
+  the current native macOS shell now surfaces the already-live exact multi-posture session-entry control inline in the H350 main pane only when the lawful current dominant surface still exposes one already-live exact attach / resume / recover prompt state, while exact non-dominant, suspended, and quarantined selections remain fail-closed and read-only;
+  current native macOS shell now preserves the already-wired exact `/v1/session/attach`, exact `/v1/session/resume`, exact `/v1/session/recover`, and exact `/v1/voice/turn` submit paths unchanged in this bounded run, preserves already-wired voice and TTS in the same visible thread unchanged, and adds no new prompt-state family, no new local message lane, no generic reopen shortcut, and no recent-row-driven authority;
+  no RuntimeBridge change, no backend route change, no wake-law change, no session-law change, and no identity / access / simulation logic change are introduced in this run;
+  current native macOS shell still does not claim hidden/background wake behavior or wake parity in this run, and no false wake-parity claim is introduced;
+  later phases beyond this bounded dominant-surface main-pane inline action alignment remain blocked pending separate approval;
+  APP_MAC_DESKTOP remains `PARTIAL`;
+  no post-H352 next exact winner is published in this run;
   H324 is now implemented as the first canonical post-H323 selected bounded native macOS actual capability unlock `wake_ready_visible_shell_auto_start_of_already_live_foreground_wake_listener_without_fake_parity_claim` implementation build;
   H323-H256 truth remains preserved exactly as already recorded, with no regression;
   H323 was the correct post-H322 unlock because it added bounded tool-request authoring / invocation only through the already-live exact `/v1/voice/turn` typed-turn path, with no new backend route and no direct local tool/search authority;
