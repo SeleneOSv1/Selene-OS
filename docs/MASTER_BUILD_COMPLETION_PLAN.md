@@ -329,6 +329,15 @@ It may only be updated from current repo truth, exact command results, and exact
   no new backend route, no generic reopen authority, no recent-row-driven attach / resume / recover authority, and no synthetic transcript or archive truth are introduced by this run;
   Program A remains partial;
   no post-H348 next exact Program A child winner is published in this run;
+  H349 is now implemented as the first post-H348 APP_MAC_DESKTOP bounded visual-shell-only actual capability unlock `chat_first_desktop_shell_simplification_with_secondary_history_controls_and_developer_surfaces_without_runtime_authority_change` through [DesktopSessionShellView.swift#L1](/Users/selene/Documents/Selene-OS/apple/mac_desktop/SeleneMacDesktop/DesktopSessionShellView.swift#L1), [MASTER_BUILD_COMPLETION_PLAN.md#L1](/Users/selene/Documents/Selene-OS/docs/MASTER_BUILD_COMPLETION_PLAN.md#L1), and [MASTER_BUILD_COMPLETION_LEDGER.md#L1](/Users/selene/Documents/Selene-OS/docs/MASTER_BUILD_COMPLETION_LEDGER.md#L1]);
+  H349 preserves H259/H348/H324 truth exactly as already recorded, with no regression;
+  the default native macOS user-facing shell now opens as one clean chat-first conversation surface with secondary presentation only for history, controls, and developer detail;
+  typed turns and spoken turns remain visible inside the same conversation thread, and spoken TTS reply remains preserved as part of the same assistant turn rather than splitting into a new authority surface;
+  current lawful attach / resume / recover routing remains unchanged; no backend route, no wake-law change, no session-law change, and no identity / access / simulation logic change are introduced in this run;
+  current native macOS shell still does not claim hidden/background wake behavior or wake parity in this run;
+  later phases beyond this visual-shell simplification remain blocked pending separate approval;
+  APP_MAC_DESKTOP remains `PARTIAL`;
+  no post-H349 next exact winner is published in this run;
   H324 is now implemented as the first canonical post-H323 selected bounded native macOS actual capability unlock `wake_ready_visible_shell_auto_start_of_already_live_foreground_wake_listener_without_fake_parity_claim` implementation build;
   H323-H256 truth remains preserved exactly as already recorded, with no regression;
   H323 was the correct post-H322 unlock because it added bounded tool-request authoring / invocation only through the already-live exact `/v1/voice/turn` typed-turn path, with no new backend route and no direct local tool/search authority;

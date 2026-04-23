@@ -4599,6 +4599,14 @@ private struct DesktopSelectedSessionProjectContextState: Equatable {
     }
 }
 
+private enum DesktopShellSecondaryPanel: String, Identifiable {
+    case history
+    case workspace
+    case developer
+
+    var id: String { rawValue }
+}
+
 struct DesktopSessionShellView: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var latestSessionHeaderContext: DesktopSessionHeaderContext?
@@ -4658,6 +4666,7 @@ struct DesktopSessionShellView: View {
     @State private var lastStagedWakeTriggeredVoiceTurnRequestState: WakeTriggeredVoiceTurnRequestState?
     @State private var desktopWakeAutoStartAttemptedPromptID: String?
     @State private var desktopWakeAutoStartSuppressedPromptID: String?
+    @State private var desktopPresentedSecondaryPanel: DesktopShellSecondaryPanel?
     private let maxDesktopTypedTurnBytes = 16_384
 
     var body: some View {
@@ -4671,6 +4680,13 @@ struct DesktopSessionShellView: View {
         .padding(24)
         .frame(minWidth: 1180, minHeight: 720, alignment: .topLeading)
         .background(Color(nsColor: .windowBackgroundColor))
+        .sheet(item: $desktopPresentedSecondaryPanel) { panel in
+            if let operationalConversationShellState = desktopOperationalConversationShellState {
+                desktopOperationalSecondaryPanelSheet(panel, state: operationalConversationShellState)
+            } else {
+                desktopEvidenceFirstSecondaryPanelSheet(panel)
+            }
+        }
         .task(id: explicitVoiceController.pendingRequest?.id) {
             await dispatchPreparedExplicitVoiceRequestIfNeeded()
             await synchronizeDesktopWakeListenerLifecycleState()
@@ -4830,63 +4846,283 @@ struct DesktopSessionShellView: View {
     }
 
     private var desktopEvidenceFirstOperationalShell: some View {
-        HStack(alignment: .top, spacing: 20) {
-            VStack(alignment: .leading, spacing: 16) {
-                posturePanel
+        let workspaceTitle = desktopReadyTimeHandoffIsActive ? "Controls" : "Setup"
+        let detail = desktopReadyTimeHandoffIsActive
+            ? "The default shell stays focused on one conversation surface. Session controls, voice controls, and operational details remain available when you need them."
+            : "Setup, onboarding, and runtime details stay out of the default shell. Open them only when you need them."
 
-                historyCard
-            }
-            .frame(width: 270, alignment: .topLeading)
+        return VStack(alignment: .leading, spacing: 24) {
+            desktopShellHeader(
+                title: "Selene",
+                detail: detail,
+                voiceState: nil,
+                workspaceTitle: workspaceTitle
+            )
 
-            VStack(alignment: .leading, spacing: 16) {
-                explicitVoiceEntryAffordanceCard
-                desktopWakeProfileAvailabilityCard
-                desktopWakeListenerControlCard
-
-                if desktopReadyTimeHandoffIsActive {
-                    desktopPairingCompletionMutationCard
-                } else {
-                    desktopOnboardingEntryCard
-                    desktopOnboardingContinuePromptCard
-                    desktopPlatformSetupReceiptSubmissionCard
-                    desktopTermsAcceptCard
-                    desktopSenderVerificationVisibilityCard
-                    desktopEmployeePhotoCaptureSendCard
-                    desktopEmployeeSenderVerifyCommitCard
-                    desktopPrimaryDeviceConfirmCard
-                    desktopVoiceEnrollCard
-                    desktopWakeEnrollStartDraftCard
-                    desktopWakeEnrollSampleCommitCard
-                    desktopWakeEnrollCompleteCommitCard
-                    desktopWakeEnrollDeferCommitCard
-                    desktopEmoPersonaLockCard
-                    desktopAccessProvisionCommitCard
-                    desktopCompleteCommitCard
-                    desktopReadyVisibilityCard
-                    desktopPairingCompletionVisibilityCard
-                    desktopPairingCompletionMutationCard
-                }
-                desktopSessionSoftClosedVisibilityCard
-                desktopSessionSuspendedVisibilityCard
-                desktopRecoveryVisibilityCard
-                desktopInterruptVisibilityCard
-                desktopInterruptResponseProductionCard
-                desktopInterruptSubjectReferencesVisibilityCard
-                desktopInterruptSubjectRelationConfidenceVisibilityCard
-                desktopInterruptReturnCheckExpiryVisibilityCard
+            VStack(alignment: .leading, spacing: 18) {
+                sectionCard(
+                    title: "Conversation",
+                    detail: desktopReadyTimeHandoffIsActive
+                        ? "Selene is ready for a clean conversation-first desktop surface. Open Controls when you want voice, search, tool, or session-entry support."
+                        : "Selene starts clean here. Use Setup to reach onboarding or pairing controls without loading the default shell with engineering detail."
+                )
 
                 sessionCard
-                    .frame(maxWidth: .infinity, minHeight: 360, alignment: .topLeading)
+                    .frame(maxWidth: .infinity, minHeight: 420, alignment: .topLeading)
             }
-            .frame(maxWidth: .infinity, alignment: .topLeading)
-
-            VStack(alignment: .leading, spacing: 16) {
-                systemActivityCard
-
-                needsAttentionCard
-            }
-            .frame(width: 300, alignment: .topLeading)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
+    }
+
+    private func desktopSecondaryPanelButton(
+        title: String,
+        systemImage: String,
+        panel: DesktopShellSecondaryPanel
+    ) -> some View {
+        Button {
+            desktopPresentedSecondaryPanel = panel
+        } label: {
+            Label(title, systemImage: systemImage)
+        }
+        .buttonStyle(.bordered)
+    }
+
+    private func desktopShellHeader(
+        title: String,
+        detail: String,
+        voiceState: String?,
+        workspaceTitle: String
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .top, spacing: 16) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(title)
+                        .font(.system(size: 30, weight: .semibold, design: .default))
+
+                    Text(detail)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
+                Spacer(minLength: 20)
+
+                if let voiceState {
+                    desktopConversationVoiceStateBadge(voiceState)
+                }
+
+                HStack(spacing: 10) {
+                    desktopSecondaryPanelButton(
+                        title: "History",
+                        systemImage: "clock.arrow.circlepath",
+                        panel: .history
+                    )
+
+                    desktopSecondaryPanelButton(
+                        title: workspaceTitle,
+                        systemImage: "slider.horizontal.3",
+                        panel: .workspace
+                    )
+
+                    Menu {
+                        Button("Developer details") {
+                            desktopPresentedSecondaryPanel = .developer
+                        }
+                    } label: {
+                        Label("More", systemImage: "ellipsis.circle")
+                    }
+                }
+            }
+        }
+        .padding(20)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(nsColor: .controlBackgroundColor).opacity(0.65))
+        .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+    }
+
+    private func desktopSecondaryPanelSheetContainer<Content: View>(
+        title: String,
+        detail: String,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 18) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(title)
+                    .font(.title2.weight(.semibold))
+
+                Text(detail)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    content()
+                }
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+            }
+        }
+        .padding(24)
+        .frame(minWidth: 520, minHeight: 700, alignment: .topLeading)
+        .background(Color(nsColor: .windowBackgroundColor))
+    }
+
+    private func desktopOperationalSecondaryPanelSheet(
+        _ panel: DesktopShellSecondaryPanel,
+        state: DesktopOperationalConversationShellState
+    ) -> some View {
+        switch panel {
+        case .history:
+            return AnyView(
+                desktopSecondaryPanelSheetContainer(
+                    title: "History",
+                    detail: "Conversation history stays out of the default shell, but remains available here."
+                ) {
+                    historyCard
+                }
+            )
+        case .workspace:
+            return AnyView(
+                desktopSecondaryPanelSheetContainer(
+                    title: "Controls",
+                    detail: "Conversation controls remain available without crowding the default chat surface."
+                ) {
+                    desktopOperationalWorkspacePanel(state)
+                }
+            )
+        case .developer:
+            return AnyView(
+                desktopSecondaryPanelSheetContainer(
+                    title: "Developer Details",
+                    detail: "Engineering and runtime detail remain secondary and hidden from the default user view."
+                ) {
+                    desktopOperationalDeveloperPanel(state)
+                }
+            )
+        }
+    }
+
+    private func desktopEvidenceFirstSecondaryPanelSheet(
+        _ panel: DesktopShellSecondaryPanel
+    ) -> some View {
+        switch panel {
+        case .history:
+            return AnyView(
+                desktopSecondaryPanelSheetContainer(
+                    title: "History",
+                    detail: "History remains available here without preloading the default shell."
+                ) {
+                    historyCard
+                }
+            )
+        case .workspace:
+            return AnyView(
+                desktopSecondaryPanelSheetContainer(
+                    title: desktopReadyTimeHandoffIsActive ? "Controls" : "Setup",
+                    detail: desktopReadyTimeHandoffIsActive
+                        ? "Session and voice controls stay available here without crowding the default shell."
+                        : "Onboarding and setup remain available here without turning the default shell into an engineering dashboard."
+                ) {
+                    desktopEvidenceFirstWorkspacePanel
+                }
+            )
+        case .developer:
+            return AnyView(
+                desktopSecondaryPanelSheetContainer(
+                    title: "Developer Details",
+                    detail: "Runtime and posture detail remain secondary and hidden from the default user view."
+                ) {
+                    desktopEvidenceFirstDeveloperPanel
+                }
+            )
+        }
+    }
+
+    private func desktopOperationalWorkspacePanel(
+        _ state: DesktopOperationalConversationShellState
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 16) {
+            desktopSessionSurfaceSelectionRailCard
+            desktopSessionRecentListVisibilityCard
+            desktopSessionPostureEvidenceVisibilityCard
+            desktopSearchRequestAuthoringCard
+            desktopToolRequestAuthoringCard
+            explicitVoiceEntryAffordanceCard
+            desktopSessionMultiPostureEntryCard
+            sessionCard
+        }
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+    }
+
+    private var desktopEvidenceFirstWorkspacePanel: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            explicitVoiceEntryAffordanceCard
+
+            if desktopReadyTimeHandoffIsActive {
+                desktopPairingCompletionMutationCard
+                desktopSessionMultiPostureEntryCard
+            } else {
+                desktopOnboardingEntryCard
+                desktopOnboardingContinuePromptCard
+                desktopPlatformSetupReceiptSubmissionCard
+                desktopTermsAcceptCard
+                desktopSenderVerificationVisibilityCard
+                desktopEmployeePhotoCaptureSendCard
+                desktopEmployeeSenderVerifyCommitCard
+                desktopPrimaryDeviceConfirmCard
+                desktopVoiceEnrollCard
+                desktopWakeEnrollStartDraftCard
+                desktopWakeEnrollSampleCommitCard
+                desktopWakeEnrollCompleteCommitCard
+                desktopWakeEnrollDeferCommitCard
+                desktopEmoPersonaLockCard
+                desktopAccessProvisionCommitCard
+                desktopCompleteCommitCard
+                desktopReadyVisibilityCard
+                desktopPairingCompletionVisibilityCard
+                desktopPairingCompletionMutationCard
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+    }
+
+    private func desktopOperationalDeveloperPanel(
+        _ state: DesktopOperationalConversationShellState
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 16) {
+            desktopWakeProfileAvailabilityCard
+            desktopWakeListenerControlCard
+            posturePanel
+            desktopSessionSoftClosedVisibilityCard
+            desktopSessionSuspendedVisibilityCard
+            desktopRecoveryVisibilityCard
+            desktopInterruptVisibilityCard
+            desktopInterruptResponseProductionCard
+            desktopInterruptSubjectReferencesVisibilityCard
+            desktopInterruptSubjectRelationConfidenceVisibilityCard
+            desktopInterruptReturnCheckExpiryVisibilityCard
+            systemActivityCard
+            needsAttentionCard
+        }
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+    }
+
+    private var desktopEvidenceFirstDeveloperPanel: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            desktopWakeProfileAvailabilityCard
+            desktopWakeListenerControlCard
+            posturePanel
+            desktopSessionSoftClosedVisibilityCard
+            desktopSessionSuspendedVisibilityCard
+            desktopRecoveryVisibilityCard
+            desktopInterruptVisibilityCard
+            desktopInterruptResponseProductionCard
+            desktopInterruptSubjectReferencesVisibilityCard
+            desktopInterruptSubjectRelationConfidenceVisibilityCard
+            desktopInterruptReturnCheckExpiryVisibilityCard
+            systemActivityCard
+            needsAttentionCard
+        }
+        .frame(maxWidth: .infinity, alignment: .topLeading)
     }
 
     private var activeRecoveryVisibleSurface: DesktopRecoveryVisibleSurface? {
@@ -5652,105 +5888,145 @@ struct DesktopSessionShellView: View {
     }
 
     private var desktopTypedTurnComposerCard: some View {
-        GroupBox {
-            VStack(alignment: .leading, spacing: 12) {
-                Text("Conversation-first keyboard entry now produces one bounded desktop typed-turn request into the already-live canonical runtime path while transcript authority, authoritative acceptance, search/tool routing, and authoritative reply remain cloud-side.")
-                    .frame(maxWidth: .infinity, alignment: .leading)
+        VStack(alignment: .leading, spacing: 14) {
+            if explicitVoiceController.isListening {
+                HStack(spacing: 10) {
+                    Image(systemName: "waveform")
+                        .foregroundStyle(Color.accentColor)
 
-                HStack(alignment: .center, spacing: 12) {
-                    Image(systemName: "text.cursor")
-                        .font(.system(size: 26))
-                        .foregroundStyle(.secondary)
-
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Keyboard composer")
-                            .font(.headline)
-
-                        Text("Bounded typed request production only. This surface reuses the already-live canonical `/v1/voice/turn` carrier and does not invent a local assistant, local search execution, or local tool authority.")
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                    }
+                    Text("Listening")
+                        .font(.subheadline.weight(.semibold))
 
                     Spacer()
 
-                    Text(keyboardComposerPendingTypedTurnRequest == nil ? "Ready" : "Dispatching")
-                        .font(.caption.weight(.semibold))
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 6)
-                        .background(
-                            keyboardComposerPendingTypedTurnRequest == nil
-                                ? Color.secondary.opacity(0.12)
-                                : Color.accentColor.opacity(0.16)
-                        )
-                        .clipShape(Capsule())
+                    Button("Stop voice") {
+                        desktopCanonicalRuntimeOutcomeState = nil
+                        desktopAuthoritativeReplyRenderState = nil
+                        desktopAuthoritativeReplyProvenanceRenderState = nil
+                        desktopAuthoritativeReplyPlaybackController.reset()
+                        desktopAuthoritativeReplyPlaybackState = .idle
+                        explicitVoiceController.stopCaptureAndPrepareVoiceTurn()
+                    }
+                    .buttonStyle(.bordered)
                 }
+                .padding(.horizontal, 2)
+            }
 
-                HStack(spacing: 8) {
-                    posturePill("EXPLICIT_ONLY")
-                    posturePill("Keyboard typed turn")
-                    posturePill("text/plain")
-                }
-
-                HStack(spacing: 8) {
-                    posturePill("Cloud authoritative")
-                    posturePill("Session-bound")
-                    posturePill("No local authority")
-                }
-
+            VStack(alignment: .leading, spacing: 12) {
                 TextField(
-                    "Type a follow-up for canonical text-turn ingress.",
-                    text: $desktopTypedTurnDraft
+                    "Message Selene",
+                    text: $desktopTypedTurnDraft,
+                    axis: .vertical
                 )
-                .textFieldStyle(.roundedBorder)
+                .textFieldStyle(.plain)
+                .lineLimit(1...6)
                 .disabled(desktopTypedTurnSubmissionInterlocksActive)
                 .onSubmit {
                     submitDesktopTypedTurn()
                 }
+                .padding(16)
+                .background(Color(nsColor: .textBackgroundColor))
+                .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 20, style: .continuous)
+                        .stroke(Color.primary.opacity(0.07), lineWidth: 1)
+                )
 
-                HStack(spacing: 12) {
-                    Button("Send typed turn") {
-                        submitDesktopTypedTurn()
+                if !explicitVoiceController.transcriptPreview.isEmpty {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Voice preview")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+
+                        Text(explicitVoiceController.transcriptPreview)
+                            .frame(maxWidth: .infinity, alignment: .leading)
                     }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(trimmedDesktopTypedTurnDraft.isEmpty || desktopTypedTurnSubmissionInterlocksActive)
-
-                    Button("Clear draft") {
-                        desktopTypedTurnDraft = ""
-                        desktopTypedTurnFailedRequest = nil
-                    }
-                    .buttonStyle(.bordered)
-                    .disabled(desktopTypedTurnDraft.isEmpty && desktopTypedTurnFailedRequest == nil)
-                }
-
-                Text("Draft validation: trimmed non-empty text only, canonical `text/plain`, \(trimmedDesktopTypedTurnDraft.utf8.count) / \(maxDesktopTypedTurnBytes) UTF-8 bytes.")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
+                    .padding(14)
                     .frame(maxWidth: .infinity, alignment: .leading)
-
-                if desktopTypedTurnSubmissionInterlocksActive {
-                    Text("Typed-turn production stays single-request only while another foreground capture or canonical voice-turn dispatch posture remains active.")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-
-                if let pendingRequest = keyboardComposerPendingTypedTurnRequest {
-                    desktopTypedTurnPendingRequestCard(pendingRequest)
+                    .background(Color(nsColor: .textBackgroundColor))
+                    .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 18, style: .continuous)
+                            .stroke(Color.primary.opacity(0.06), lineWidth: 1)
+                    )
                 }
 
                 if let failedRequest = desktopTypedTurnFailedRequest {
-                    interruptResponseFailedRequestCard(failedRequest)
+                    Text(failedRequest.summary)
+                        .font(.footnote)
+                        .foregroundStyle(.red)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                } else if let failedRequest = explicitVoiceController.failedRequest {
+                    Text(failedRequest.summary)
+                        .font(.footnote)
+                        .foregroundStyle(.red)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
 
-                Text("This composer itself still does not introduce local search execution, local provider selection, direct tool-name authority, shell-side `projectID` or `pinnedContextRefs` transport, hidden/background wake behavior, or autonomous unlock.")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                HStack(spacing: 12) {
+                    Button {
+                        let wakeDispatchInFlight =
+                            desktopWakeListenerController.listenerState == .dispatching
+                        desktopWakeListenerController.haltCaptureSession()
+                        if !wakeDispatchInFlight {
+                            desktopWakeListenerController.clearPendingPreparedWakeTurn()
+                            lastStagedWakeTriggeredVoiceTurnRequestState = nil
+                        }
+                        desktopCanonicalRuntimeOutcomeState = nil
+                        desktopAuthoritativeReplyRenderState = nil
+                        desktopAuthoritativeReplyProvenanceRenderState = nil
+                        desktopAuthoritativeReplyPlaybackController.reset()
+                        desktopAuthoritativeReplyPlaybackState = .idle
+                        explicitVoiceController.startExplicitVoiceTurn()
+                    } label: {
+                        Label(
+                            explicitVoiceController.isListening ? "Listening" : "Voice",
+                            systemImage: explicitVoiceController.isListening ? "waveform" : "mic"
+                        )
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(
+                        explicitVoiceController.isListening
+                            || explicitVoiceController.pendingRequest != nil
+                    )
+
+                    if keyboardComposerPendingTypedTurnRequest != nil {
+                        Text("Sending")
+                            .font(.caption.weight(.semibold))
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .background(Color.accentColor.opacity(0.14))
+                            .clipShape(Capsule())
+                    } else if desktopTypedTurnSubmissionInterlocksActive {
+                        Text("Busy")
+                            .font(.caption.weight(.semibold))
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .background(Color.secondary.opacity(0.12))
+                            .clipShape(Capsule())
+                    }
+
+                    Spacer()
+
+                    Button {
+                        submitDesktopTypedTurn()
+                    } label: {
+                        Image(systemName: "arrow.up")
+                            .font(.headline.weight(.semibold))
+                            .frame(width: 34, height: 34)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(
+                        trimmedDesktopTypedTurnDraft.isEmpty
+                            || desktopTypedTurnSubmissionInterlocksActive
+                    )
+                }
             }
-        } label: {
-            Text("Keyboard Composer")
-                .font(.headline)
         }
+        .padding(18)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(nsColor: .controlBackgroundColor).opacity(0.65))
+        .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
     }
 
     private var desktopToolRequestAuthoringCard: some View {
@@ -10309,104 +10585,55 @@ struct DesktopSessionShellView: View {
     private func desktopOperationalConversationShell(
         _ state: DesktopOperationalConversationShellState
     ) -> some View {
-        HStack(alignment: .top, spacing: 20) {
+        VStack(alignment: .leading, spacing: 24) {
+            desktopShellHeader(
+                title: state.primaryPaneState.headerTitle,
+                detail: state.primaryPaneState.headerDetail,
+                voiceState: state.primaryPaneState.voiceState,
+                workspaceTitle: "Controls"
+            )
+
             ScrollView {
                 desktopConversationPrimaryPane(state.primaryPaneState)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-
-            ScrollView {
-                desktopConversationSupportRail(state.supportRailState)
-            }
-            .frame(width: 340)
-            .frame(maxHeight: .infinity, alignment: .topLeading)
         }
     }
 
     private func desktopConversationPrimaryPane(
         _ state: DesktopConversationPrimaryPaneState
     ) -> some View {
-        let shouldAttachSearchToolCompletion = desktopConversationShouldAttachSearchToolCompletion(
-            state.searchToolCompletionState
-        )
-        let shouldAttachAuthoritativeReplyCompletion =
-            desktopConversationShouldAttachAuthoritativeReplyCompletion(
-                state.authoritativeReplyCompletionState
-            )
-        let shouldAttachRuntimeDispatchFailure =
-            desktopConversationShouldAttachRuntimeDispatchFailure(
-                state.runtimeDispatchFailureAttachmentState
-            )
-        let shouldAttachRuntimeDispatchFailureInline = shouldAttachRuntimeDispatchFailure
-            && state.timelineEntries.contains(where: { entry in
-                desktopConversationShouldAttachRuntimeDispatchFailureInline(
-                    to: entry,
-                    runtimeDispatchFailureAttachmentState: state.runtimeDispatchFailureAttachmentState
-                )
-            })
-        let shouldAttachRuntimeCompletedWithoutInlineReply =
-            desktopConversationShouldAttachRuntimeCompletedWithoutInlineReply(
-                desktopCanonicalRuntimeOutcomeState,
-                searchToolCompletionState: state.searchToolCompletionState,
-                authoritativeReplyCompletionState: state.authoritativeReplyCompletionState
-            )
-        let shouldAttachRuntimeCompletedWithoutInlineReplyInline =
-            shouldAttachRuntimeCompletedWithoutInlineReply
-            && state.timelineEntries.contains(where: { entry in
-                entry.posture == "runtime_completed_without_inline_reply_preview"
-                    && entry.sourceSurface == "CANONICAL_RUNTIME_COMPLETED_WITHOUT_INLINE_REPLY"
-            })
-
-        return VStack(alignment: .leading, spacing: 18) {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack(alignment: .top, spacing: 16) {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text(state.headerTitle)
-                            .font(.largeTitle.weight(.semibold))
-
-                        Text(state.headerDetail)
-                            .foregroundStyle(.secondary)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-
-                    Spacer(minLength: 16)
-
-                    desktopConversationVoiceStateBadge(state.voiceState)
-                }
-            }
-            .padding(20)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color(nsColor: .controlBackgroundColor))
-            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-
+        return VStack(alignment: .leading, spacing: 24) {
             if state.dominantPosture == "SESSION_SUSPENDED_VISIBLE" {
                 sectionCard(
-                    title: "Conversation Status",
-                    detail: "Suspended posture remains explanation-only on macOS in this run. No transcript authority, no archive fabrication, no hidden continuation, and no local unsuspend path are introduced while the authoritative runtime keeps the session suspended."
+                    title: "Conversation unavailable",
+                    detail: "This conversation is suspended right now, so Selene keeps the thread explanation-only until the authoritative runtime changes that posture."
                 )
             } else if state.dominantPosture == "QUARANTINED_LOCAL_STATE" {
                 sectionCard(
-                    title: "Conversation Status",
-                    detail: "QUARANTINED_LOCAL_STATE withholds live dual transcript and archived recent-slice visibility from this transcript-primary pane until authoritative reread clears the recovery posture cloud-side."
+                    title: "Conversation unavailable",
+                    detail: "This conversation is temporarily quarantined, so Selene withholds live thread detail until authoritative recovery clears the posture."
                 )
             } else {
-                if let desktopCanonicalRuntimeOutcomeState,
-                   !shouldAttachSearchToolCompletion,
-                   !shouldAttachAuthoritativeReplyCompletion,
-                   !shouldAttachRuntimeDispatchFailure,
-                   !shouldAttachRuntimeCompletedWithoutInlineReplyInline {
-                    desktopCanonicalRuntimeOutcomeCard(desktopCanonicalRuntimeOutcomeState)
-                }
-
                 if state.timelineEntries.isEmpty {
-                    sectionCard(
-                        title: "Conversation Timeline",
-                        detail: desktopForegroundSelectionShowsCurrentDominantSurface
-                            ? "Awaiting the next lawful cloud-authored turn. Use the bounded keyboard composer, the bounded search-request authoring card, the bounded tool-request authoring card, explicit voice, or the bounded foreground wake listener to start runtime dispatch from this transcript-primary shell without introducing hidden/background wake behavior or fake local authority."
-                            : "Awaiting read-only foreground visibility for the selected observed session surface. Local selection does not itself attach, resume, recover, reopen, or retarget canonical runtime mutation."
-                    )
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Start a conversation")
+                            .font(.title3.weight(.semibold))
+
+                        Text(
+                            desktopForegroundSelectionShowsCurrentDominantSurface
+                                ? "Type below or use the conversation controls when you want Selene to respond. The default shell stays focused on the thread itself."
+                                : "This selected session stays read-only here. Open Controls when you need session navigation or bounded entry controls."
+                        )
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .padding(28)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color(nsColor: .controlBackgroundColor).opacity(0.55))
+                    .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
                 } else {
-                    VStack(alignment: .leading, spacing: 14) {
+                    LazyVStack(alignment: .leading, spacing: 18) {
                         ForEach(state.timelineEntries) { entry in
                             desktopConversationTimelineEntryCard(
                                 entry,
@@ -10420,14 +10647,6 @@ struct DesktopSessionShellView: View {
                                 searchToolCompletionState: state.searchToolCompletionState,
                                 authoritativeReplyCompletionState: state.authoritativeReplyCompletionState,
                                 runtimeDispatchFailureAttachmentState: state.runtimeDispatchFailureAttachmentState
-                            )
-                        }
-
-                        if shouldAttachRuntimeDispatchFailure,
-                           !shouldAttachRuntimeDispatchFailureInline,
-                           let runtimeDispatchFailureAttachmentState = state.runtimeDispatchFailureAttachmentState {
-                            desktopConversationRuntimeDispatchFailureAttachment(
-                                runtimeDispatchFailureAttachmentState
                             )
                         }
                     }
@@ -10870,106 +11089,38 @@ struct DesktopSessionShellView: View {
     ) -> some View {
         let bubbleColor = entry.isUserAuthored
             ? Color.accentColor.opacity(0.12)
-            : Color(nsColor: .controlBackgroundColor)
+            : Color(nsColor: .textBackgroundColor)
+        let bubbleStroke = entry.isUserAuthored
+            ? Color.accentColor.opacity(0.12)
+            : Color.primary.opacity(0.06)
+        let showsSupplementaryDetail = !entry.detail.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && ![
+                "current_user_turn_text",
+                "current_selene_turn_text",
+                "archived_user_turn_text",
+                "archived_selene_turn_text",
+                "authoritative_reply_text",
+            ].contains(entry.posture)
 
         return HStack(alignment: .top, spacing: 0) {
             if entry.isUserAuthored {
-                Spacer(minLength: 72)
+                Spacer(minLength: 88)
             }
 
             VStack(alignment: .leading, spacing: 10) {
-                HStack(alignment: .firstTextBaseline, spacing: 10) {
-                    Text(entry.speaker)
-                        .font(.subheadline.weight(.semibold))
-
-                    Text(entry.sourceSurface)
-                        .font(.caption.monospaced())
-                        .foregroundStyle(.secondary)
-                }
+                Text(entry.isUserAuthored ? "You" : "Selene")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
 
                 Text(entry.body)
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
 
-                Text("\(entry.posture): \(entry.detail)")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-
-                if entry.posture == "explicit_voice_live_preview",
-                   entry.sourceSurface == "EXPLICIT_VOICE_LISTENING",
-                   desktopConversationShouldAttachExplicitVoiceLivePreview(
-                       explicitVoiceLivePreviewAttachmentState
-                   ),
-                   let explicitVoiceLivePreviewAttachmentState {
-                    desktopConversationExplicitVoiceLivePreviewAttachment(
-                        explicitVoiceLivePreviewAttachmentState
-                    )
-                }
-
-                if entry.posture == "wake_voice_live_preview",
-                   entry.sourceSurface == "WAKE_TRIGGERED_VOICE_LISTENING",
-                   desktopConversationShouldAttachWakeTriggeredVoiceLivePreview(
-                       wakeTriggeredVoiceLivePreviewAttachmentState
-                   ),
-                   let wakeTriggeredVoiceLivePreviewAttachmentState {
-                    desktopConversationWakeTriggeredVoiceLivePreviewAttachment(
-                        wakeTriggeredVoiceLivePreviewAttachmentState
-                    )
-                }
-
-                if entry.posture == "explicit_voice_failed_request_preview",
-                   entry.sourceSurface == "EXPLICIT_VOICE_FAILED_REQUEST",
-                   desktopConversationShouldAttachExplicitVoiceFailedRequest(
-                       explicitVoiceFailedRequestAttachmentState
-                   ),
-                   let explicitVoiceFailedRequestAttachmentState {
-                    desktopConversationExplicitVoiceFailedRequestAttachment(
-                        explicitVoiceFailedRequestAttachmentState
-                    )
-                }
-
-                if entry.posture == "wake_voice_failed_request_preview",
-                   entry.sourceSurface == "WAKE_TRIGGERED_VOICE_FAILED_REQUEST",
-                   desktopConversationShouldAttachWakeTriggeredVoiceFailedRequest(
-                       wakeTriggeredVoiceFailedRequestAttachmentState
-                   ),
-                   let wakeTriggeredVoiceFailedRequestAttachmentState {
-                    desktopConversationWakeTriggeredVoiceFailedRequestAttachment(
-                        wakeTriggeredVoiceFailedRequestAttachmentState
-                    )
-                }
-
-                if entry.posture == "explicit_voice_pending_preview",
-                   entry.sourceSurface == "EXPLICIT_VOICE_PENDING",
-                   desktopConversationShouldAttachExplicitVoicePendingAttachment(
-                       explicitVoicePendingAttachmentState
-                   ),
-                   let explicitVoicePendingAttachmentState {
-                    desktopConversationExplicitVoicePendingAttachment(
-                        explicitVoicePendingAttachmentState
-                    )
-                }
-
-                if entry.posture == "wake_voice_pending_preview",
-                   entry.sourceSurface == "WAKE_TRIGGERED_VOICE_PENDING",
-                   desktopConversationShouldAttachWakeTriggeredVoicePendingAttachment(
-                       wakeTriggeredVoicePendingAttachmentState
-                   ),
-                   let wakeTriggeredVoicePendingAttachmentState {
-                    desktopConversationWakeTriggeredVoicePendingAttachment(
-                        wakeTriggeredVoicePendingAttachmentState
-                    )
-                }
-
-                if desktopConversationShouldAttachRuntimeDispatchFailureInline(
-                    to: entry,
-                    runtimeDispatchFailureAttachmentState: runtimeDispatchFailureAttachmentState
-                ),
-                   let runtimeDispatchFailureAttachmentState {
-                    desktopConversationRuntimeDispatchFailureAttachment(
-                        runtimeDispatchFailureAttachmentState
-                    )
+                if showsSupplementaryDetail {
+                    Text(entry.detail)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
 
                 if entry.posture == "runtime_completed_without_inline_reply_preview",
@@ -10991,13 +11142,18 @@ struct DesktopSessionShellView: View {
                     )
                 }
             }
-            .padding(16)
-            .frame(maxWidth: 720, alignment: .leading)
+            .padding(.horizontal, 18)
+            .padding(.vertical, 16)
+            .frame(maxWidth: 760, alignment: .leading)
             .background(bubbleColor)
+            .overlay(
+                RoundedRectangle(cornerRadius: 22, style: .continuous)
+                    .stroke(bubbleStroke, lineWidth: 1)
+            )
             .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
 
             if !entry.isUserAuthored {
-                Spacer(minLength: 72)
+                Spacer(minLength: 88)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
