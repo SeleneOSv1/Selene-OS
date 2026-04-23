@@ -4847,7 +4847,11 @@ struct DesktopSessionShellView: View {
 
     private var desktopEvidenceFirstOperationalShell: some View {
         desktopChatShellLayout {
-            desktopEvidenceFirstConversationPane
+            if let preReadyConversationPrimaryPaneState = desktopPreReadyConversationPrimaryPaneState {
+                desktopOperationalConversationMainPane(preReadyConversationPrimaryPaneState)
+            } else {
+                desktopEvidenceFirstConversationPane
+            }
         }
     }
 
@@ -6824,7 +6828,230 @@ struct DesktopSessionShellView: View {
     }
 
     private var desktopConversationPrimaryPaneState: DesktopConversationPrimaryPaneState? {
-        guard desktopReadyTimeHandoffIsActive else {
+        desktopConversationPrimaryPaneState(requiresReadyTimeHandoff: true)
+    }
+
+    private var desktopPreReadyConversationPrimaryPaneState: DesktopConversationPrimaryPaneState? {
+        guard !desktopReadyTimeHandoffIsActive else {
+            return nil
+        }
+
+        let isShowingCurrentDominantSurface = desktopForegroundSelectionShowsCurrentDominantSurface
+        let dominantPosture: String
+        let headerTitle: String
+        let headerDetail: String
+
+        if foregroundSessionSuspendedVisibleContext != nil {
+            dominantPosture = "SESSION_SUSPENDED_VISIBLE"
+            headerTitle = "Conversation unavailable while the session is suspended"
+            headerDetail = "This transcript-primary pane fails closed to explanation-only content while the authoritative runtime keeps the desktop session in a hard full takeover posture."
+        } else if activeRecoveryDisplayState == .quarantinedLocalState {
+            dominantPosture = "QUARANTINED_LOCAL_STATE"
+            headerTitle = "Conversation unavailable while local state is quarantined"
+            headerDetail = "This transcript-primary pane fails closed to explanation-only content until authoritative reread clears the quarantine posture cloud-side."
+        } else if let foregroundSessionActiveVisibleContext {
+            dominantPosture = foregroundSessionActiveVisibleContext.sessionState
+            headerTitle = "Active conversation"
+            headerDetail = isShowingCurrentDominantSurface
+                ? "Cloud-authored active-session transcript, bounded runtime dispatch posture, and authoritative reply surfaces remain visible here without introducing local session authority."
+                : "A previously observed active-session transcript surface is foregrounded here in bounded read-only form only; local selection does not retarget runtime mutation."
+        } else if let foregroundSessionSoftClosedVisibleContext {
+            dominantPosture = foregroundSessionSoftClosedVisibleContext.sessionState
+            headerTitle = "Archived recent slice"
+            headerDetail = "Soft-closed archive truth remains distinct from PH1.M resume context while explicit resume stays bounded and non-authoritative."
+        } else if let foregroundSessionHeaderContext {
+            dominantPosture = foregroundSessionHeaderContext.sessionState
+            headerTitle = "Current session header"
+            headerDetail = "Cloud-authored session-header visibility remains foregrounded here in bounded read-only form only while local selection stays non-authoritative."
+        } else if let activeRecoveryDisplayState {
+            dominantPosture = activeRecoveryDisplayState.rawValue
+            headerTitle = "\(activeRecoveryDisplayState.rawValue) conversation posture"
+            headerDetail = "The lawful main session surface remains visible while recovery restriction posture stays cloud-authored, bounded, and non-authoritative."
+        } else if desktopCanonicalRuntimeOutcomeState != nil || desktopAuthoritativeReplyRenderState != nil {
+            dominantPosture = "CANONICAL_RUNTIME_VISIBLE"
+            headerTitle = "Operational conversation"
+            headerDetail = "Canonical runtime outcome and cloud-authored reply posture remain visible in transcript-first form only."
+        } else {
+            dominantPosture = "READY_FOR_OPERATION"
+            headerTitle = "Conversation ready"
+            headerDetail = "Use the bounded keyboard composer or explicit voice to stage the next lawful cloud-authored turn from this transcript-primary shell."
+        }
+
+        var timelineEntries: [DesktopConversationTimelineEntryState] = []
+
+        if let foregroundSessionActiveVisibleContext {
+            timelineEntries.append(
+                DesktopConversationTimelineEntryState(
+                    speaker: "You",
+                    posture: "current_user_turn_text",
+                    body: foregroundSessionActiveVisibleContext.currentUserTurnText,
+                    detail: "Current user turn remains text-visible, session-bound, and cloud-authoritative for the active desktop session.",
+                    sourceSurface: "SESSION_ACTIVE_VISIBLE"
+                )
+            )
+            timelineEntries.append(
+                DesktopConversationTimelineEntryState(
+                    speaker: "Selene",
+                    posture: "current_selene_turn_text",
+                    body: foregroundSessionActiveVisibleContext.currentSeleneTurnText,
+                    detail: "Current Selene turn remains text-visible and tied to the same active cloud session without a local-only transcript fork.",
+                    sourceSurface: "SESSION_ACTIVE_VISIBLE"
+                )
+            )
+        } else if let foregroundSessionSoftClosedVisibleContext {
+            timelineEntries.append(
+                DesktopConversationTimelineEntryState(
+                    speaker: "You",
+                    posture: "archived_user_turn_text",
+                    body: foregroundSessionSoftClosedVisibleContext.archivedUserTurnText,
+                    detail: "Archived recent slice remains durable archived conversation truth and stays distinct from bounded PH1.M resume-context output.",
+                    sourceSurface: "SESSION_SOFT_CLOSED_VISIBLE"
+                )
+            )
+            timelineEntries.append(
+                DesktopConversationTimelineEntryState(
+                    speaker: "Selene",
+                    posture: "archived_selene_turn_text",
+                    body: foregroundSessionSoftClosedVisibleContext.archivedSeleneTurnText,
+                    detail: "Archived recent slice remains text-visible after visual reset without local auto-reopen, hidden spoken-only output, or local transcript authority.",
+                    sourceSurface: "SESSION_SOFT_CLOSED_VISIBLE"
+                )
+            )
+        }
+
+        if isShowingCurrentDominantSurface {
+            let trimmedExplicitVoiceTranscriptPreview = explicitVoiceController.transcriptPreview
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if explicitVoiceController.isListening,
+               explicitVoiceController.pendingRequest == nil,
+               !trimmedExplicitVoiceTranscriptPreview.isEmpty {
+                timelineEntries.append(
+                    DesktopConversationTimelineEntryState(
+                        speaker: "You",
+                        posture: "explicit_voice_live_preview",
+                        body: trimmedExplicitVoiceTranscriptPreview,
+                        detail: "Bounded explicit live transcript preview only. Canonical runtime acceptance and later cloud-visible response remain authoritative.",
+                        sourceSurface: "EXPLICIT_VOICE_LISTENING"
+                    )
+                )
+            }
+
+            if let pendingRequest = explicitVoiceController.pendingRequest {
+                timelineEntries.append(
+                    DesktopConversationTimelineEntryState(
+                        speaker: "You",
+                        posture: "explicit_voice_pending_preview",
+                        body: pendingRequest.boundedPreview,
+                        detail: "Bounded explicit voice pending preview only. Canonical runtime and later cloud-visible acceptance remain authoritative.",
+                        sourceSurface: "EXPLICIT_VOICE_PENDING"
+                    )
+                )
+            }
+
+            if let failedRequest = explicitVoiceController.failedRequest,
+               !explicitVoiceController.isListening,
+               explicitVoiceController.pendingRequest == nil {
+                timelineEntries.append(
+                    DesktopConversationTimelineEntryState(
+                        speaker: "You",
+                        posture: "explicit_voice_failed_request_preview",
+                        body: failedRequest.summary,
+                        detail: "Bounded explicit local failure visibility only. Canonical runtime acceptance, transcript authority, and later cloud-visible response remain authoritative.",
+                        sourceSurface: "EXPLICIT_VOICE_FAILED_REQUEST"
+                    )
+                )
+            }
+
+            if let pendingTypedTurnRequest = desktopTypedTurnPendingRequest {
+                timelineEntries.append(
+                    DesktopConversationTimelineEntryState(
+                        speaker: "You",
+                        posture: pendingTypedTurnRequest.origin.timelinePendingPosture,
+                        body: pendingTypedTurnRequest.boundedPreview,
+                        detail: pendingTypedTurnRequest.origin.timelinePendingDetail,
+                        sourceSurface: pendingTypedTurnRequest.origin.pendingSourceSurface
+                    )
+                )
+            }
+
+            if let failedTypedTurnRequest = desktopTypedTurnFailedRequest,
+               desktopTypedTurnPendingRequest == nil {
+                timelineEntries.append(
+                    DesktopConversationTimelineEntryState(
+                        speaker: "You",
+                        posture: "typed_turn_failed_request_preview",
+                        body: failedTypedTurnRequest.summary,
+                        detail: DesktopTypedTurnRequestOrigin.keyboardComposer.timelineFailedDetail,
+                        sourceSurface: DesktopTypedTurnRequestOrigin.keyboardComposer.failedSourceSurface
+                    )
+                )
+            }
+        }
+
+        let runtimeDispatchFailureAttachmentState = isShowingCurrentDominantSurface
+            ? desktopConversationRuntimeDispatchFailureAttachmentState(requiresReadyTimeHandoff: false)
+            : nil
+        if let runtimeDispatchFailureAttachmentState {
+            timelineEntries.append(
+                DesktopConversationTimelineEntryState(
+                    speaker: "Selene",
+                    posture: "runtime_dispatch_failure_preview",
+                    body: runtimeDispatchFailureAttachmentState.summary,
+                    detail: "Bounded canonical runtime dispatch/failure visibility only. Already-live runtime carriers remain read-only, non-authoritative, and do not add local session or tool authority.",
+                    sourceSurface: "CANONICAL_RUNTIME_DISPATCH_FAILURE"
+                )
+            )
+        }
+
+        let authoritativeResponseText = isShowingCurrentDominantSurface
+            ? desktopAuthoritativeReplyRenderState?.authoritativeResponseText?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            : ""
+        if !authoritativeResponseText.isEmpty,
+           !desktopConversationShouldSuppressDedicatedAuthoritativeReplyTextEntry(
+               timelineEntries,
+               authoritativeResponseText: authoritativeResponseText
+           ) {
+            timelineEntries.append(
+                DesktopConversationTimelineEntryState(
+                    speaker: "Selene",
+                    posture: "authoritative_reply_text",
+                    body: authoritativeResponseText,
+                    detail: "Cloud-authored authoritative reply text only. This shell does not fabricate local answer content.",
+                    sourceSurface: "CANONICAL_RUNTIME_COMPLETED"
+                )
+            )
+        }
+
+        guard !timelineEntries.isEmpty
+            || dominantPosture == "SESSION_SUSPENDED_VISIBLE"
+            || dominantPosture == "QUARANTINED_LOCAL_STATE" else {
+            return nil
+        }
+
+        return DesktopConversationPrimaryPaneState(
+            dominantPosture: dominantPosture,
+            headerTitle: headerTitle,
+            headerDetail: headerDetail,
+            voiceState: desktopOperationalVoiceStateLabel,
+            timelineEntries: timelineEntries,
+            explicitVoiceLivePreviewAttachmentState: nil,
+            wakeTriggeredVoiceLivePreviewAttachmentState: nil,
+            explicitVoiceFailedRequestAttachmentState: nil,
+            wakeTriggeredVoiceFailedRequestAttachmentState: nil,
+            explicitVoicePendingAttachmentState: nil,
+            wakeTriggeredVoicePendingAttachmentState: nil,
+            readOnlyToolLaneState: nil,
+            searchToolCompletionState: nil,
+            authoritativeReplyCompletionState: nil,
+            runtimeDispatchFailureAttachmentState: runtimeDispatchFailureAttachmentState
+        )
+    }
+
+    private func desktopConversationPrimaryPaneState(
+        requiresReadyTimeHandoff: Bool
+    ) -> DesktopConversationPrimaryPaneState? {
+        guard !requiresReadyTimeHandoff || desktopReadyTimeHandoffIsActive else {
             return nil
         }
 
@@ -7065,7 +7292,9 @@ struct DesktopSessionShellView: View {
             ? desktopConversationAuthoritativeReplyCompletionState
             : nil
         let runtimeDispatchFailureAttachmentState = isShowingCurrentDominantSurface
-            ? desktopConversationRuntimeDispatchFailureAttachmentState
+            ? desktopConversationRuntimeDispatchFailureAttachmentState(
+                requiresReadyTimeHandoff: requiresReadyTimeHandoff
+            )
             : nil
         if let runtimeDispatchFailureAttachmentState {
             timelineEntries.append(
@@ -7251,7 +7480,13 @@ struct DesktopSessionShellView: View {
     }
 
     private var desktopConversationRuntimeDispatchFailureAttachmentState: DesktopConversationRuntimeDispatchFailureAttachmentState? {
-        guard desktopReadyTimeHandoffIsActive,
+        desktopConversationRuntimeDispatchFailureAttachmentState(requiresReadyTimeHandoff: true)
+    }
+
+    private func desktopConversationRuntimeDispatchFailureAttachmentState(
+        requiresReadyTimeHandoff: Bool
+    ) -> DesktopConversationRuntimeDispatchFailureAttachmentState? {
+        guard !requiresReadyTimeHandoff || desktopReadyTimeHandoffIsActive,
               desktopForegroundSelectionShowsCurrentDominantSurface,
               foregroundSessionSuspendedVisibleContext == nil,
               activeRecoveryDisplayState != .quarantinedLocalState,
