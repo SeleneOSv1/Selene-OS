@@ -4,6 +4,10 @@
 
 Implement one narrow APP_MAC_DESKTOP visual-shell-only build that converts the default native macOS desktop shell into a clean chat-first Selene conversation surface without changing backend routes, wake law, session law, identity law, access law, simulation law, or other runtime authority boundaries.
 
+The canonical repo path for this build and every command in the future implementation run is:
+
+- `/Users/selene/Documents/Selene-OS`
+
 This build is intentionally split into two approved execution slices only:
 
 - Phase 0: discard any unapproved local scratch shell diff and confirm a clean approved baseline
@@ -137,15 +141,16 @@ After successful completion only, landed-truth docs may be updated if repo law r
 
 ## Phase 0
 
-Phase 0 is mandatory baseline cleanup:
+Phase 0 is mandatory baseline restore and repo-proof:
 
 - discard the prior unapproved scratch UI diff
 - confirm the repo is on a clean approved baseline
+- prove the future implementation run is operating only from the canonical repo path `/Users/selene/Documents/Selene-OS`
 - confirm no accidental presentation experiment remains in `DesktopSessionShellView.swift`
 - stop immediately if baseline restoration would require changes outside the one desktop shell file
 
 Phase 0 is not feature work.
-Phase 0 is baseline restoration only.
+Phase 0 is baseline restoration and repo-proof only.
 
 ## Phase 1
 
@@ -158,6 +163,7 @@ Phase 1 is visual-shell UI only:
 - place debug/runtime surfaces into developer/debug mode only
 - keep existing lawful attach / resume / recover behavior intact
 - keep existing voice, typed-turn, search, tool, provenance, and playback runtime behaviors intact
+- keep spoken TTS reply preserved as part of the same assistant turn and the same visible conversation thread
 - allow only shell composition, view hierarchy, user-facing labeling, spacing, and presentation simplification changes
 
 Phase 1 must not widen authority.
@@ -182,6 +188,7 @@ The future implementation run passes only if all of the following are true:
 - the default user-facing desktop shell opens as a clean chat-first Selene conversation surface
 - no default right-side or left-side engineering clutter remains visible
 - voice and text appear in the same visible conversation thread
+- spoken TTS reply remains preserved as part of the same assistant turn rather than splitting into a separate authority surface
 - history/settings/debug are no longer dumped into the default shell and are reachable only through secondary navigation or developer/debug mode
 - lawful session reopen behavior is preserved exactly
 - no backend route change is introduced
