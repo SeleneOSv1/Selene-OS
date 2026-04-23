@@ -4888,6 +4888,14 @@ struct DesktopSessionShellView: View {
 
     private var desktopVisibleConversationSidebar: some View {
         let historySurfaces = desktopSidebarHistorySurfaces
+        let sidebarBackground = Color(
+            nsColor: NSColor(
+                srgbRed: 0.968,
+                green: 0.963,
+                blue: 0.955,
+                alpha: 1.0
+            )
+        )
 
         return VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 10) {
@@ -4940,7 +4948,7 @@ struct DesktopSessionShellView: View {
             }
         }
         .frame(minWidth: 280, idealWidth: 300, maxWidth: 320, maxHeight: .infinity, alignment: .topLeading)
-        .background(Color(nsColor: .controlBackgroundColor).opacity(0.42))
+        .background(sidebarBackground)
     }
 
     private func desktopSidebarHistoryRow(_ surface: DesktopObservedSessionSurface) -> some View {
