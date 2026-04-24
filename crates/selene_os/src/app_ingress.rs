@@ -7580,6 +7580,9 @@ fn classify_governance_drift_fail_closed_for_directive(
     {
         return None;
     }
+    if directive_is_public_deterministic_read_only_tool(directive) {
+        return None;
+    }
     if governance_state
         .drift_signals
         .contains(&GovernanceDriftSignal::PolicyVersionDrift)
@@ -7595,6 +7598,17 @@ fn classify_governance_drift_fail_closed_for_directive(
         user_message: "I can't continue because governance state is out of sync right now.",
         audit_response_kind: "GOVERNANCE_CLUSTER_DRIFT_FAIL_CLOSED",
     })
+}
+
+fn directive_is_public_deterministic_read_only_tool(directive: &Ph1xDirective) -> bool {
+    matches!(
+        directive,
+        Ph1xDirective::Dispatch(dispatch)
+            if matches!(
+                &dispatch.dispatch_request,
+                DispatchRequest::Tool(tool) if tool.tool_name == ToolName::Time
+            )
+    )
 }
 
 fn classify_access_fail_closed_error(err: &StorageError) -> Option<AccessFailClosedBehavior> {

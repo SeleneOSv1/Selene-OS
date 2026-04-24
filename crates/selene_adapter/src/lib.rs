@@ -88,7 +88,9 @@ use selene_kernel_contracts::ph1l::{
 use selene_kernel_contracts::ph1learn::{LearnSignalType, WakeLearnSignalV1, WakeLearnTrigger};
 use selene_kernel_contracts::ph1link::{AppPlatform, TokenId};
 use selene_kernel_contracts::ph1m::MemoryResumeTier;
-use selene_kernel_contracts::ph1n::{Chat as Ph1nChat, Ph1nRequest, Ph1nResponse, TranscriptHash};
+use selene_kernel_contracts::ph1n::{
+    Chat as Ph1nChat, IntentType, Ph1nRequest, Ph1nResponse, TranscriptHash,
+};
 use selene_kernel_contracts::ph1onb::{
     OnboardingNextStep, OnboardingSessionId, SenderVerifyDecision,
 };
@@ -5219,7 +5221,7 @@ impl AdapterRuntime {
                 policy_context_ref: PolicyContextRef::v1(false, false, SafetyTier::Standard),
                 memory_candidates: Vec::new(),
                 confirm_answer,
-                nlp_output: Some(nlp_output),
+                nlp_output: Some(nlp_output.clone()),
                 tool_response: None,
                 interruption: None,
                 locale,
@@ -5229,6 +5231,11 @@ impl AdapterRuntime {
                 .ingress
                 .run_voice_turn_end_to_end(&mut store, ingress_request, x_build)
                 .map_err(|err| post_session_error(storage_error_to_string(err)))?;
+            let typed_public_deterministic_answer_text =
+                recover_typed_public_deterministic_tool_answer(
+                    request.audio_capture_ref.is_none(),
+                    &mut execution_outcome,
+                );
             if let Some(ph1x_response) = execution_outcome.ph1x_response.as_ref() {
                 persist_ph1x_thread_state(
                     &mut store,
@@ -5290,7 +5297,9 @@ impl AdapterRuntime {
                 user_text_partial,
                 user_text_final,
                 selene_text_partial,
-                selene_text_final.or(ph1d_public_answer_text),
+                selene_text_final
+                    .or(typed_public_deterministic_answer_text)
+                    .or(ph1d_public_answer_text),
             )
             .map_err(post_session_error)?;
             if let Some(ph1c) = ph1c_live_outcome.as_ref() {
@@ -7565,6 +7574,9 @@ fn normalize_claimed_capabilities(
     let mut claimed = std::collections::BTreeSet::new();
     if let Some(raw_capabilities) = request.claimed_capabilities.as_ref() {
         for raw in raw_capabilities {
+            if raw.trim().eq_ignore_ascii_case("TEXT_INPUT") {
+                continue;
+            }
             let capability = parse_device_capability_literal(raw)?;
             if !supported_set.contains(&capability) {
                 return Err(format!(
@@ -8568,6 +8580,60 @@ fn provenance_from_tool_response(tool_response: &ToolResponse) -> VoiceTurnProve
         sources,
         retrieved_at,
         cache_status: cache_status_label(tool_response.cache_status).to_string(),
+    }
+}
+
+fn recover_typed_public_deterministic_tool_answer(
+    typed_only: bool,
+    execution: &mut AppVoiceTurnExecutionOutcome,
+) -> Option<String> {
+    if !typed_only {
+        return None;
+    }
+    let tool_response = execution.tool_response.as_ref()?;
+    if tool_response.tool_status != ToolStatus::Ok {
+        return None;
+    }
+    let is_public_deterministic = execution
+        .ph1x_request
+        .as_ref()
+        .and_then(|request| request.nlp_output.as_ref())
+        .is_some_and(|nlp_output| {
+            matches!(
+                nlp_output,
+                Ph1nResponse::IntentDraft(intent)
+                    if matches!(intent.intent_type, IntentType::TimeQuery)
+            )
+        });
+    if !is_public_deterministic {
+        return None;
+    }
+    let Some(Ph1xResponseLike::Respond(response_text, reason_code)) =
+        typed_public_deterministic_ph1x_response_summary(execution)
+    else {
+        return None;
+    };
+
+    execution.next_move = AppVoiceTurnNextMove::Respond;
+    execution.response_text = Some(response_text.clone());
+    execution.reason_code = Some(reason_code);
+    Some(response_text)
+}
+
+enum Ph1xResponseLike {
+    Respond(String, ReasonCodeId),
+}
+
+fn typed_public_deterministic_ph1x_response_summary(
+    execution: &AppVoiceTurnExecutionOutcome,
+) -> Option<Ph1xResponseLike> {
+    let response = execution.ph1x_response.as_ref()?;
+    match &response.directive {
+        Ph1xDirective::Respond(respond) => Some(Ph1xResponseLike::Respond(
+            respond.response_text.clone(),
+            response.reason_code,
+        )),
+        _ => None,
     }
 }
 
@@ -16113,6 +16179,47 @@ mod tests {
     }
 
     #[test]
+    fn at_os_04b_legacy_text_input_capability_is_ignored_during_replay() {
+        let runtime = AdapterRuntime::default();
+        let mut request = base_request();
+        request.correlation_id = 32_014;
+        request.turn_id = 42_014;
+        request.app_platform = "DESKTOP".to_string();
+        request.device_class = Some("DESKTOP".to_string());
+        request.device_id = Some("desktop_legacy_text_input_device".to_string());
+        request.audio_capture_ref = None;
+        request.claimed_capabilities = Some(vec![
+            "TEXT_INPUT".to_string(),
+            "MICROPHONE".to_string(),
+            "SPEAKER_OUTPUT".to_string(),
+        ]);
+        request.user_text_final = Some("what is the time in New York".to_string());
+
+        runtime
+            .run_voice_turn(request)
+            .expect("legacy TEXT_INPUT replay should not block desktop runtime startup");
+        let packet = runtime
+            .ingress
+            .debug_last_agent_input_packet()
+            .expect("agent packet should be captured");
+        let platform_context = packet
+            .runtime_execution_envelope
+            .expect("runtime execution envelope must exist")
+            .platform_context;
+
+        assert_eq!(
+            platform_context.claimed_capabilities,
+            vec![
+                DeviceCapability::Microphone,
+                DeviceCapability::SpeakerOutput,
+            ]
+        );
+        assert!(!platform_context
+            .claimed_capabilities
+            .contains(&DeviceCapability::WakeWord));
+    }
+
+    #[test]
     fn at_os_05_trust_integrity_and_compatibility_survive_ingress() {
         let _min_version = ScopedEnvVar::set("SELENE_MIN_CLIENT_VERSION_TABLET", "5.0.0");
         let runtime = AdapterRuntime::default();
@@ -19777,5 +19884,27 @@ mod tests {
 
         let normal_answer = ph1d_public_no_intent_test_outcome("The answer is 4.");
         assert!(!execution_outcome_is_public_no_intent(&normal_answer));
+    }
+
+    #[test]
+    fn at_adapter_40_time_in_new_york_returns_clean_current_time_answer() {
+        let runtime = AdapterRuntime::default();
+        let mut req = base_request();
+        req.app_platform = "DESKTOP".to_string();
+        req.audio_capture_ref = None;
+        req.user_text_final = Some("what is the time in New York".to_string());
+
+        let out = runtime
+            .run_voice_turn(req)
+            .expect("desktop deterministic time request should complete");
+        assert_eq!(out.status, "ok");
+        assert_eq!(out.outcome, "FINAL_TOOL");
+        assert!(out.response_text.starts_with("It's "));
+        assert!(out.response_text.ends_with(" in New York."));
+        assert!(!out.response_text.contains("2026-01-01T00:00:00Z"));
+        assert!(!out.response_text.contains("Sources:"));
+        assert!(!out.response_text.contains("Retrieved at (unix_ms):"));
+        assert!(!out.response_text.contains("Current local time in USA"));
+        assert!(!out.response_text.contains("&#x27;"));
     }
 }

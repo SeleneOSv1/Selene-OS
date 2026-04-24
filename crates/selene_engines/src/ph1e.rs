@@ -298,7 +298,7 @@ impl Ph1eRuntime {
         let cache_status = cache_status_for_request(req);
         let (tool_result, source_metadata) = match &req.tool_name {
             ToolName::Time => ToolResult::Time {
-                local_time_iso: "2026-01-01T00:00:00Z".to_string(),
+                local_time_iso: current_time_result_for_query(&req.query),
             }
             .with_default_source_metadata(
                 &req.tool_name,
@@ -731,13 +731,10 @@ impl Ph1eRuntime {
 
 pub fn startup_outbound_self_check_logs() -> Vec<String> {
     let provider_config = Ph1eProviderConfig::from_env();
-    run_startup_outbound_self_check_with_probe(
-        &provider_config,
-        probe_provider_connectivity,
-    )
-    .into_iter()
-    .map(|failure| failure.safe_log_line())
-    .collect()
+    run_startup_outbound_self_check_with_probe(&provider_config, probe_provider_connectivity)
+        .into_iter()
+        .map(|failure| failure.safe_log_line())
+        .collect()
 }
 
 fn run_startup_outbound_self_check_with_probe<F>(
@@ -791,9 +788,9 @@ fn probe_provider_connectivity(
     match agent.head(endpoint).call() {
         Ok(_) => Ok(()),
         Err(ureq::Error::Status(_, _)) => Ok(()),
-        Err(ureq::Error::Transport(transport)) => Err(provider_error_from_transport(
-            provider, transport,
-        )),
+        Err(ureq::Error::Transport(transport)) => {
+            Err(provider_error_from_transport(provider, transport))
+        }
     }
 }
 
@@ -936,10 +933,7 @@ fn resolve_proxy_config(proxy_config: &Ph1eProxyConfig) -> Result<ResolvedProxyC
             env::var("HTTPS_PROXY").ok().and_then(trim_non_empty),
         ),
         Ph1eProxyMode::Explicit => (
-            proxy_config
-                .http_proxy_url
-                .clone()
-                .and_then(trim_non_empty),
+            proxy_config.http_proxy_url.clone().and_then(trim_non_empty),
             proxy_config
                 .https_proxy_url
                 .clone()
@@ -947,7 +941,9 @@ fn resolve_proxy_config(proxy_config: &Ph1eProxyConfig) -> Result<ResolvedProxyC
         ),
     };
 
-    if matches!(mode, Ph1eProxyMode::Explicit) && (http_proxy_url.is_none() || https_proxy_url.is_none()) {
+    if matches!(mode, Ph1eProxyMode::Explicit)
+        && (http_proxy_url.is_none() || https_proxy_url.is_none())
+    {
         return Err(
             "explicit proxy mode requires SELENE_HTTP_PROXY_URL and SELENE_HTTPS_PROXY_URL"
                 .to_string(),
@@ -1180,9 +1176,7 @@ fn combine_live_search_failure_detail(
         (None, Some(openai)) => openai.safe_detail(),
         (None, None) => "provider=unknown error=upstream".to_string(),
     };
-    if let Some(proxy_hint) =
-        proxy_hint_for_failures(brave_failure, openai_failure, proxy_config)
-    {
+    if let Some(proxy_hint) = proxy_hint_for_failures(brave_failure, openai_failure, proxy_config) {
         detail.push(' ');
         detail.push_str(&proxy_hint);
     }
@@ -1445,6 +1439,125 @@ fn now_unix_ms() -> u64 {
         .max(1)
 }
 
+fn current_time_result_for_query(query: &str) -> String {
+    let normalized = query.to_ascii_lowercase();
+    if normalized.contains("new york") || normalized.contains("nyc") {
+        return current_new_york_time_iso(SystemTime::now());
+    }
+
+    current_utc_time_iso(SystemTime::now())
+}
+
+fn current_utc_time_iso(now: SystemTime) -> String {
+    let parts = unix_seconds_to_utc_parts(system_time_to_unix_seconds(now));
+    format!(
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
+        parts.year, parts.month, parts.day, parts.hour, parts.minute, parts.second
+    )
+}
+
+fn current_new_york_time_iso(now: SystemTime) -> String {
+    let utc_seconds = system_time_to_unix_seconds(now);
+    let offset_hours = new_york_utc_offset_hours(utc_seconds);
+    let local_seconds = utc_seconds + i64::from(offset_hours) * 3_600;
+    let parts = unix_seconds_to_utc_parts(local_seconds);
+    format!(
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}{}[America/New_York]",
+        parts.year,
+        parts.month,
+        parts.day,
+        parts.hour,
+        parts.minute,
+        parts.second,
+        format_utc_offset(offset_hours)
+    )
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct DateTimeParts {
+    year: i32,
+    month: u32,
+    day: u32,
+    hour: u32,
+    minute: u32,
+    second: u32,
+}
+
+fn system_time_to_unix_seconds(now: SystemTime) -> i64 {
+    now.duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs() as i64)
+        .unwrap_or(0)
+}
+
+fn unix_seconds_to_utc_parts(seconds: i64) -> DateTimeParts {
+    let days = seconds.div_euclid(86_400);
+    let seconds_of_day = seconds.rem_euclid(86_400);
+    let (year, month, day) = civil_from_days(days);
+    DateTimeParts {
+        year,
+        month,
+        day,
+        hour: (seconds_of_day / 3_600) as u32,
+        minute: ((seconds_of_day % 3_600) / 60) as u32,
+        second: (seconds_of_day % 60) as u32,
+    }
+}
+
+fn new_york_utc_offset_hours(utc_seconds: i64) -> i32 {
+    let utc_parts = unix_seconds_to_utc_parts(utc_seconds);
+    let year = utc_parts.year;
+    let dst_start_day = nth_weekday_of_month_day(year, 3, 0, 2);
+    let dst_end_day = nth_weekday_of_month_day(year, 11, 0, 1);
+    let dst_start_utc = days_from_civil(year, 3, dst_start_day) * 86_400 + 7 * 3_600;
+    let dst_end_utc = days_from_civil(year, 11, dst_end_day) * 86_400 + 6 * 3_600;
+
+    if utc_seconds >= dst_start_utc && utc_seconds < dst_end_utc {
+        -4
+    } else {
+        -5
+    }
+}
+
+fn nth_weekday_of_month_day(year: i32, month: u32, weekday: u32, nth: u32) -> u32 {
+    let first_day = days_from_civil(year, month, 1);
+    let first_weekday = weekday_from_days(first_day);
+    let offset = (7 + weekday as i32 - first_weekday as i32).rem_euclid(7) as u32;
+    1 + offset + (nth - 1) * 7
+}
+
+fn weekday_from_days(days: i64) -> u32 {
+    (days + 4).rem_euclid(7) as u32
+}
+
+fn civil_from_days(days_since_unix_epoch: i64) -> (i32, u32, u32) {
+    let z = days_since_unix_epoch + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe as i32 + era as i32 * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = mp + if mp < 10 { 3 } else { -9 };
+    let year = y + if month <= 2 { 1 } else { 0 };
+    (year, month as u32, day as u32)
+}
+
+fn days_from_civil(year: i32, month: u32, day: u32) -> i64 {
+    let year = year - i32::from(month <= 2);
+    let era = if year >= 0 { year } else { year - 399 } / 400;
+    let yoe = (year - era * 400) as i64;
+    let month = month as i64;
+    let doy = (153 * (month + if month > 2 { -3 } else { 9 }) + 2) / 5 + day as i64 - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    era as i64 * 146_097 + doe - 719_468
+}
+
+fn format_utc_offset(offset_hours: i32) -> String {
+    let sign = if offset_hours < 0 { '-' } else { '+' };
+    format!("{sign}{:02}:00", offset_hours.abs())
+}
+
 fn trim_non_empty(raw: String) -> Option<String> {
     let trimmed = raw.trim();
     if trimmed.is_empty() {
@@ -1629,8 +1742,14 @@ fn fail_response_with_detail(
     let safe_detail = fail_detail
         .map(sanitize_fail_detail_text)
         .filter(|detail| !detail.is_empty());
-    ToolResponse::fail_with_detail_v1(req.request_id, req.query_hash, code, safe_detail, cache_status)
-        .expect("ToolResponse::fail_v1 must construct for bounded PH1.E failure output")
+    ToolResponse::fail_with_detail_v1(
+        req.request_id,
+        req.query_hash,
+        code,
+        safe_detail,
+        cache_status,
+    )
+    .expect("ToolResponse::fail_v1 must construct for bounded PH1.E failure output")
 }
 
 fn sanitize_fail_detail_text(detail: &str) -> String {
@@ -1644,8 +1763,8 @@ mod tests {
     use selene_kernel_contracts::ph1e::{ToolRequestOrigin, ToolStatus};
     use std::ffi::OsString;
     use std::sync::{Mutex, OnceLock};
-    use std::{env, fs};
     use std::time::{SystemTime, UNIX_EPOCH};
+    use std::{env, fs};
 
     struct ScopedEnvVar {
         key: &'static str,
@@ -1794,6 +1913,29 @@ mod tests {
         assert!(out.tool_result.is_some());
         assert!(out.source_metadata.is_some());
         assert_eq!(out.reason_code, reason_codes::E_OK_TOOL_RESULT);
+    }
+
+    #[test]
+    fn at_e_time_query_returns_current_new_york_time() {
+        let rt = Ph1eRuntime::new(Ph1eConfig::mvp_v1());
+        let out = rt.run(&req(
+            ToolName::Time,
+            "what is the time in New York",
+            false,
+            false,
+        ));
+        assert_eq!(out.tool_status, ToolStatus::Ok);
+        match out.tool_result.expect("time result should be present") {
+            ToolResult::Time { local_time_iso } => {
+                assert_ne!(local_time_iso, "2026-01-01T00:00:00Z");
+                assert!(local_time_iso.contains("[America/New_York]"));
+                assert!(
+                    local_time_iso.contains("-04:00") || local_time_iso.contains("-05:00"),
+                    "New York time must carry an Eastern offset: {local_time_iso}"
+                );
+            }
+            other => panic!("expected time result, got {other:?}"),
+        }
     }
 
     #[test]

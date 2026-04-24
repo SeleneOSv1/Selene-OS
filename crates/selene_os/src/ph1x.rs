@@ -1833,9 +1833,7 @@ fn tool_ok_text(tr: &ToolResponse) -> String {
     if let Some(r) = &tr.tool_result {
         match r {
             ToolResult::Time { local_time_iso } => {
-                out.push_str("It's ");
-                out.push_str(local_time_iso);
-                out.push('.');
+                out.push_str(&time_tool_answer_text(local_time_iso));
             }
             ToolResult::Weather { summary } => {
                 out.push_str(summary);
@@ -1963,13 +1961,16 @@ fn tool_ok_text(tr: &ToolResponse) -> String {
             }
         }
     }
-    if let Some(meta) = &tr.source_metadata {
-        if !out.ends_with('\n') && !out.is_empty() {
-            out.push('\n');
-        }
-        out.push_str("Sources:\n");
-        for (i, s) in meta.sources.iter().enumerate().take(5) {
-            out.push_str(&format!("{}. {} ({})\n", i + 1, s.title, s.url));
+    let should_append_sources = !matches!(tr.tool_result, Some(ToolResult::Time { .. }));
+    if should_append_sources {
+        if let Some(meta) = &tr.source_metadata {
+            if !out.ends_with('\n') && !out.is_empty() {
+                out.push('\n');
+            }
+            out.push_str("Sources:\n");
+            for (i, s) in meta.sources.iter().enumerate().take(5) {
+                out.push_str(&format!("{}. {} ({})\n", i + 1, s.title, s.url));
+            }
         }
     }
     if out.trim().is_empty() {
@@ -1978,6 +1979,27 @@ fn tool_ok_text(tr: &ToolResponse) -> String {
     } else {
         out
     }
+}
+
+fn time_tool_answer_text(local_time_iso: &str) -> String {
+    if let Some(display) = new_york_display_time(local_time_iso) {
+        return format!("It's {display} in New York.");
+    }
+
+    format!("It's {local_time_iso}.")
+}
+
+fn new_york_display_time(local_time_iso: &str) -> Option<String> {
+    let timestamp = local_time_iso.strip_suffix("[America/New_York]")?;
+    let time = timestamp.split_once('T')?.1;
+    let hour: u32 = time.get(0..2)?.parse().ok()?;
+    let minute = time.get(3..5)?;
+    let suffix = if hour >= 12 { "PM" } else { "AM" };
+    let display_hour = match hour % 12 {
+        0 => 12,
+        value => value,
+    };
+    Some(format!("{display_hour}:{minute} {suffix}"))
 }
 
 fn intent_query_text(d: &IntentDraft) -> String {
@@ -3690,6 +3712,82 @@ mod tests {
         }
         assert!(out2.thread_state.pending.is_none());
         assert!(out2.idempotency_key.is_some());
+    }
+
+    #[test]
+    fn at_x_tool_ok_time_new_york_renders_clean_final_answer_without_sources() {
+        let rt = Ph1xRuntime::new(Ph1xConfig::mvp_v1());
+
+        let first = Ph1xRequest::v1(
+            7,
+            11,
+            now(1),
+            base_thread(),
+            SessionState::Active,
+            id_text(),
+            policy_ok(),
+            vec![],
+            None,
+            Some(Ph1nResponse::IntentDraft(intent_draft(
+                IntentType::TimeQuery,
+            ))),
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+        let out1 = rt.decide(&first).unwrap();
+        let (request_id, query_hash) = match &out1.directive {
+            Ph1xDirective::Dispatch(d) => match &d.dispatch_request {
+                DispatchRequest::Tool(t) => (t.request_id, t.query_hash),
+                DispatchRequest::SimulationCandidate(_) => panic!("expected Tool dispatch"),
+                DispatchRequest::AccessStepUp(_) => panic!("expected Tool dispatch"),
+            },
+            _ => panic!("expected Dispatch"),
+        };
+
+        let tool_ok = ToolResponse::ok_v1(
+            request_id,
+            query_hash,
+            ToolResult::Time {
+                local_time_iso: "2026-04-24T22:42:00-04:00[America/New_York]".to_string(),
+            },
+            dummy_source_metadata(),
+            None,
+            ReasonCodeId(1),
+            CacheStatus::Bypassed,
+        )
+        .unwrap();
+
+        let second = Ph1xRequest::v1(
+            7,
+            12,
+            now(2),
+            out1.thread_state.clone(),
+            SessionState::Active,
+            id_text(),
+            policy_ok(),
+            vec![],
+            None,
+            None,
+            Some(tool_ok),
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+        let out2 = rt.decide(&second).unwrap();
+        match out2.directive {
+            Ph1xDirective::Respond(r) => {
+                assert_eq!(r.response_text, "It's 10:42 PM in New York.");
+                assert!(!r.response_text.contains("Sources:"));
+                assert!(!r.response_text.contains("Retrieved at (unix_ms):"));
+            }
+            _ => panic!("expected Respond"),
+        }
     }
 
     #[test]

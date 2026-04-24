@@ -4,6 +4,29 @@ import AVFoundation
 import Speech
 import SwiftUI
 
+private func desktopAppendRuntimeBridgeDebugLog(_ message: String) {
+    let logURL = FileManager.default.temporaryDirectory
+        .appendingPathComponent("selene_mac_desktop_managed_adapter.log")
+    if !FileManager.default.fileExists(atPath: logURL.path) {
+        FileManager.default.createFile(atPath: logURL.path, contents: nil)
+    }
+
+    guard let handle = try? FileHandle(forWritingTo: logURL) else {
+        return
+    }
+
+    try? handle.seekToEnd()
+    let line = "[SeleneMacDesktop] \(message)\n"
+    if let data = line.data(using: .utf8) {
+        try? handle.write(contentsOf: data)
+    }
+    try? handle.close()
+}
+
+private func desktopEpochNowNS() -> UInt64 {
+    UInt64(Date().timeIntervalSince1970 * 1_000) &* 1_000_000
+}
+
 private func firstQueryValue(in queryItems: [URLQueryItem], name: String) -> String? {
     queryItems.first(where: { $0.name == name })?.value
 }
@@ -1871,8 +1894,8 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
     }
 
     private func nextDeviceTurnSequence() -> UInt64 {
-        let monotonicNowNS = Swift.max(DispatchTime.now().uptimeNanoseconds, 1)
-        let nextSequence = Swift.max(monotonicNowNS, lastGeneratedDeviceTurnSequence &+ 1)
+        let epochNowNS = desktopEpochNowNS()
+        let nextSequence = Swift.max(epochNowNS, lastGeneratedDeviceTurnSequence &+ 1)
         lastGeneratedDeviceTurnSequence = nextSequence
         return nextSequence
     }
@@ -2353,8 +2376,8 @@ private final class DesktopWakeListenerController: ObservableObject {
     }
 
     private func nextDeviceTurnSequence() -> UInt64 {
-        let monotonicNowNS = Swift.max(DispatchTime.now().uptimeNanoseconds, 1)
-        let nextSequence = Swift.max(monotonicNowNS, lastGeneratedDeviceTurnSequence &+ 1)
+        let epochNowNS = desktopEpochNowNS()
+        let nextSequence = Swift.max(epochNowNS, lastGeneratedDeviceTurnSequence &+ 1)
         lastGeneratedDeviceTurnSequence = nextSequence
         return nextSequence
     }
@@ -4982,6 +5005,7 @@ struct DesktopSessionShellView: View {
     @State private var desktopSearchRequestDraft: String = ""
     @State private var desktopToolRequestDraft: String = ""
     @State private var desktopTypedTurnPendingRequest: DesktopTypedTurnRequestState?
+    @State private var desktopTypedTurnDispatchInFlightRequestID: String?
     @State private var desktopTypedTurnFailedRequest: InterruptContinuityResponseFailureState?
     @State private var desktopSubmittedUserContinuityPreviewState: DesktopSubmittedUserContinuityPreviewState?
     @State private var desktopPersistedConversationTimelineHistory: [DesktopPersistedConversationTimelineHistoryEntry] = []
@@ -12966,7 +12990,8 @@ struct DesktopSessionShellView: View {
                 return false
             }
 
-            return entry.posture == "current_selene_turn_text"
+            return entry.posture == "authoritative_reply_text"
+                || entry.posture == "current_selene_turn_text"
                 || entry.posture == "archived_selene_turn_text"
         }
     }
@@ -18242,16 +18267,30 @@ struct DesktopSessionShellView: View {
         guard let pendingRequest = desktopTypedTurnPendingRequest else {
             return
         }
+        guard desktopTypedTurnDispatchInFlightRequestID != pendingRequest.id else {
+            return
+        }
+
+        desktopTypedTurnDispatchInFlightRequestID = pendingRequest.id
+        defer {
+            if desktopTypedTurnDispatchInFlightRequestID == pendingRequest.id {
+                desktopTypedTurnDispatchInFlightRequestID = nil
+            }
+        }
 
         let conversationKey = desktopForegroundConversationHistoryKey
 
         do {
+            desktopAppendRuntimeBridgeDebugLog("typed dispatch start id=\(pendingRequest.id)")
             let ingressContext = try desktopCanonicalRuntimeBridge.desktopTypedTurnIngressRequestBuilder(
                 pendingRequest,
                 threadKey: desktopForegroundVoiceTurnMatchingSelectedThreadKey,
                 authorityStatePolicyContextRef: desktopForegroundVoiceTurnActiveAuthorityPolicyContextRef,
                 projectID: desktopForegroundVoiceTurnSelectedProjectID,
                 pinnedContextRefs: desktopForegroundVoiceTurnSelectedPinnedContextRefs
+            )
+            desktopAppendRuntimeBridgeDebugLog(
+                "typed dispatch built ingress id=\(pendingRequest.id) endpoint=\(ingressContext.endpoint)"
             )
             desktopCanonicalRuntimeOutcomeState = .dispatchingTyped(
                 preparedRequestID: ingressContext.preparedRequestID,
@@ -18265,6 +18304,9 @@ struct DesktopSessionShellView: View {
 
             let outcomeState = await desktopCanonicalRuntimeBridge.dispatchPreparedTypedTurnRequest(
                 ingressContext
+            )
+            desktopAppendRuntimeBridgeDebugLog(
+                "typed dispatch outcome id=\(pendingRequest.id) phase=\(outcomeState.phase.rawValue)"
             )
             guard desktopTypedTurnPendingRequest?.id == pendingRequest.id else {
                 return
@@ -18336,6 +18378,9 @@ struct DesktopSessionShellView: View {
             }
             desktopTypedTurnPendingRequest = nil
         } catch {
+            desktopAppendRuntimeBridgeDebugLog(
+                "typed dispatch catch id=\(pendingRequest.id) error=\(error.localizedDescription)"
+            )
             desktopCanonicalRuntimeOutcomeState = .failedTyped(
                 preparedRequestID: pendingRequest.id,
                 endpoint: desktopCanonicalRuntimeBridge.voiceTurnEndpoint,
@@ -18430,8 +18475,8 @@ struct DesktopSessionShellView: View {
     }
 
     private func nextDesktopTypedTurnSequence() -> UInt64 {
-        let monotonicNowNS = Swift.max(DispatchTime.now().uptimeNanoseconds, 1)
-        let nextSequence = Swift.max(monotonicNowNS, desktopLastGeneratedTypedTurnSequence &+ 1)
+        let epochNowNS = desktopEpochNowNS()
+        let nextSequence = Swift.max(epochNowNS, desktopLastGeneratedTypedTurnSequence &+ 1)
         desktopLastGeneratedTypedTurnSequence = nextSequence
         return nextSequence
     }
@@ -18465,8 +18510,15 @@ struct DesktopSessionShellView: View {
             origin: .keyboardComposer
         ) {
         case .none:
+            desktopAppendRuntimeBridgeDebugLog(
+                "typed submit staged id=\(desktopTypedTurnPendingRequest?.id ?? "missing")"
+            )
             desktopTypedTurnDraft = ""
             desktopComposerAttachmentSelections = []
+            Task { @MainActor in
+                await dispatchPreparedTypedTurnRequestIfNeeded()
+                await synchronizeDesktopWakeListenerLifecycleState()
+            }
         case .emptyDraft:
             return
         case .byteLimit:

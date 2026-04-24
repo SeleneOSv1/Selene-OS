@@ -3795,6 +3795,26 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
         let sources: [VoiceTurnProvenanceSourcePayload]
         let retrievedAt: UInt64?
         let cacheStatus: String?
+
+        private enum CodingKeys: String, CodingKey {
+            case sources
+            case retrievedAt = "retrieved_at"
+            case cacheStatus = "cache_status"
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            sources = (try? container.decode([VoiceTurnProvenanceSourcePayload].self, forKey: .sources)) ?? []
+            if let value = try? container.decode(UInt64.self, forKey: .retrievedAt) {
+                retrievedAt = value
+            } else if let value = try? container.decode(String.self, forKey: .retrievedAt),
+                      let parsed = UInt64(value) {
+                retrievedAt = parsed
+            } else {
+                retrievedAt = nil
+            }
+            cacheStatus = try? container.decode(String.self, forKey: .cacheStatus)
+        }
     }
 
     struct VoiceTurnAdapterResponsePayload: Decodable {
@@ -3810,6 +3830,21 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
         let responseText: String
         let reasonCode: String
         let provenance: VoiceTurnProvenancePayload?
+
+        private enum CodingKeys: String, CodingKey {
+            case status
+            case outcome
+            case sessionID = "session_id"
+            case turnID = "turn_id"
+            case sessionState = "session_state"
+            case sessionAttachOutcome = "session_attach_outcome"
+            case failureClass = "failure_class"
+            case reason
+            case nextMove = "next_move"
+            case responseText = "response_text"
+            case reasonCode = "reason_code"
+            case provenance
+        }
     }
 
     struct InviteLinkOpenAdapterResponsePayload: Decodable {
@@ -4171,6 +4206,7 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
     private let deviceID: String
     private let urlSession: URLSession
     private var managedAdapterProcess: Process?
+    private var managedAdapterLogHandle: FileHandle?
 
     init(processInfo: ProcessInfo = .processInfo) {
         self.repoRootURL = Self.resolveRepoRoot(processInfo: processInfo)
@@ -4199,6 +4235,8 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
         }
 
         self.managedAdapterProcess = nil
+        try? managedAdapterLogHandle?.close()
+        managedAdapterLogHandle = nil
     }
 
     func dispatchPreparedExplicitVoiceRequest(
@@ -4706,7 +4744,7 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
             let statusCode = httpResponse?.statusCode ?? 0
 
             if statusCode == 200 {
-                let payload = try decoder.decode(VoiceTurnAdapterResponsePayload.self, from: data)
+                let payload = try Self.decodeVoiceTurnAdapterResponsePayload(data)
                 return .completed(
                     preparedRequestID: ingressContext.preparedRequestID,
                     endpoint: ingressContext.endpoint,
@@ -4761,7 +4799,7 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
             let statusCode = httpResponse?.statusCode ?? 0
 
             if statusCode == 200 {
-                let payload = try decoder.decode(VoiceTurnAdapterResponsePayload.self, from: data)
+                let payload = try Self.decodeVoiceTurnAdapterResponsePayload(data)
                 return .completedTyped(
                     preparedRequestID: ingressContext.preparedRequestID,
                     endpoint: ingressContext.endpoint,
@@ -4791,6 +4829,9 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
                 "canonical runtime bridge returned status \(statusCode) with an unreadable response payload"
             )
         } catch {
+            Self.appendManagedAdapterDiagnosticLog(
+                "typed bridge failure request_id=\(ingressContext.requestID) detail=\(error.localizedDescription)"
+            )
             return .failedTyped(
                 preparedRequestID: ingressContext.preparedRequestID,
                 endpoint: ingressContext.endpoint,
@@ -4816,7 +4857,7 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
             let statusCode = httpResponse?.statusCode ?? 0
 
             if statusCode == 200 {
-                let payload = try decoder.decode(VoiceTurnAdapterResponsePayload.self, from: data)
+                let payload = try Self.decodeVoiceTurnAdapterResponsePayload(data)
                 return .completedWake(
                     preparedRequestID: ingressContext.preparedRequestID,
                     endpoint: ingressContext.endpoint,
@@ -6043,9 +6084,10 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
         }
 
         let timestampMS = Self.systemTimeNowMS()
+        let epochNowNS = timestampMS &* 1_000_000
         let monotonicNowNS = Swift.max(DispatchTime.now().uptimeNanoseconds, 1)
-        let correlationID = monotonicNowNS
-        let turnID = monotonicNowNS &+ 1
+        let correlationID = epochNowNS
+        let turnID = epochNowNS &+ 1
         let ingressIdentity = Self.boundedRuntimeIngressIdentity(
             prefix: "dvr",
             monotonicNowNS: monotonicNowNS
@@ -6074,7 +6116,7 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
             actorUserID: actorUserID,
             tenantID: tenantID,
             deviceID: deviceID,
-            nowNS: monotonicNowNS,
+            nowNS: epochNowNS,
             threadKey: threadKey,
             projectID: boundedProjectID,
             pinnedContextRefs: boundedPinnedContextRefs.isEmpty ? nil : boundedPinnedContextRefs,
@@ -6127,9 +6169,10 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
         }
 
         let timestampMS = Self.systemTimeNowMS()
+        let epochNowNS = timestampMS &* 1_000_000
         let monotonicNowNS = Swift.max(DispatchTime.now().uptimeNanoseconds, 1)
-        let correlationID = monotonicNowNS
-        let turnID = monotonicNowNS &+ 1
+        let correlationID = epochNowNS
+        let turnID = epochNowNS &+ 1
         let ingressIdentity = Self.boundedRuntimeIngressIdentity(
             prefix: "dtt",
             monotonicNowNS: monotonicNowNS
@@ -6157,7 +6200,7 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
             actorUserID: actorUserID,
             tenantID: tenantID,
             deviceID: deviceID,
-            nowNS: monotonicNowNS,
+            nowNS: epochNowNS,
             threadKey: threadKey,
             projectID: boundedProjectID,
             pinnedContextRefs: boundedPinnedContextRefs.isEmpty ? nil : boundedPinnedContextRefs,
@@ -6223,9 +6266,10 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
         }
 
         let timestampMS = Self.systemTimeNowMS()
+        let epochNowNS = timestampMS &* 1_000_000
         let monotonicNowNS = Swift.max(DispatchTime.now().uptimeNanoseconds, 1)
-        let correlationID = monotonicNowNS
-        let turnID = monotonicNowNS &+ 1
+        let correlationID = epochNowNS
+        let turnID = epochNowNS &+ 1
         let ingressIdentity = Self.boundedRuntimeIngressIdentity(
             prefix: "dwr",
             monotonicNowNS: monotonicNowNS
@@ -6254,7 +6298,7 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
             actorUserID: actorUserID,
             tenantID: tenantID,
             deviceID: deviceID,
-            nowNS: monotonicNowNS,
+            nowNS: epochNowNS,
             threadKey: threadKey,
             projectID: boundedProjectID,
             pinnedContextRefs: boundedPinnedContextRefs.isEmpty ? nil : boundedPinnedContextRefs,
@@ -8379,28 +8423,126 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
             return
         }
 
-        let cargoExecutable = URL(fileURLWithPath: "/usr/bin/env")
         let process = Process()
-        process.executableURL = cargoExecutable
+        let cargoExecutable = Self.managedAdapterCargoExecutableURL()
+        process.executableURL = cargoExecutable.url
         process.currentDirectoryURL = repoRootURL
-        process.arguments = ["cargo", "run", "--quiet", "-p", "selene_adapter", "--bin", "selene_adapter_http"]
+        process.arguments = cargoExecutable.arguments + [
+            "run",
+            "--quiet",
+            "-p",
+            "selene_adapter",
+            "--bin",
+            "selene_adapter_http"
+        ]
 
         var environment = ProcessInfo.processInfo.environment
         let bindValue = Self.bindValue(for: adapterBaseURL)
         environment["SELENE_HTTP_BIND"] = bindValue
         environment["SELENE_ADAPTER_SYNC_WORKER_ENABLED"] = "true"
+        environment["PATH"] = Self.managedAdapterLaunchPath(environment["PATH"])
         process.environment = environment
-        process.standardOutput = FileHandle(forWritingAtPath: "/dev/null")
-        process.standardError = FileHandle(forWritingAtPath: "/dev/null")
+        let logHandle = Self.openManagedAdapterLogHandle()
+        Self.appendManagedAdapterLaunchLog(
+            logHandle,
+            repoRootURL: repoRootURL,
+            cargoExecutable: cargoExecutable.url,
+            arguments: process.arguments ?? [],
+            bindValue: bindValue
+        )
+        process.standardOutput = logHandle ?? FileHandle(forWritingAtPath: "/dev/null")
+        process.standardError = logHandle ?? FileHandle(forWritingAtPath: "/dev/null")
 
         do {
             try process.run()
             managedAdapterProcess = process
+            managedAdapterLogHandle = logHandle
         } catch {
             throw BridgeError.adapterStartFailed(
                 "failed to launch the managed selene_adapter_http process from \(repoRootURL.path): \(error.localizedDescription)"
             )
         }
+    }
+
+    private static func managedAdapterLogURL() -> URL {
+        FileManager.default.temporaryDirectory
+            .appendingPathComponent("selene_mac_desktop_managed_adapter.log")
+    }
+
+    private static func openManagedAdapterLogHandle() -> FileHandle? {
+        let logURL = managedAdapterLogURL()
+        if !FileManager.default.fileExists(atPath: logURL.path) {
+            FileManager.default.createFile(atPath: logURL.path, contents: nil)
+        }
+
+        guard let handle = try? FileHandle(forWritingTo: logURL) else {
+            return nil
+        }
+
+        try? handle.seekToEnd()
+        return handle
+    }
+
+    private static func appendManagedAdapterLaunchLog(
+        _ handle: FileHandle?,
+        repoRootURL: URL,
+        cargoExecutable: URL,
+        arguments: [String],
+        bindValue: String
+    ) {
+        guard let handle else {
+            return
+        }
+
+        let line = """
+
+        [SeleneMacDesktop] launching managed adapter
+        repo_root=\(repoRootURL.path)
+        executable=\(cargoExecutable.path)
+        arguments=\(arguments.joined(separator: " "))
+        bind=\(bindValue)
+
+        """
+        if let data = line.data(using: .utf8) {
+            try? handle.write(contentsOf: data)
+        }
+    }
+
+    private static func managedAdapterCargoExecutableURL() -> (url: URL, arguments: [String]) {
+        let candidates = [
+            "\(NSHomeDirectory())/.cargo/bin/cargo",
+            "/opt/homebrew/bin/cargo",
+            "/usr/local/bin/cargo",
+            "/usr/bin/cargo"
+        ]
+
+        for candidate in candidates where FileManager.default.isExecutableFile(atPath: candidate) {
+            return (URL(fileURLWithPath: candidate), [])
+        }
+
+        return (URL(fileURLWithPath: "/usr/bin/env"), ["cargo"])
+    }
+
+    private static func managedAdapterLaunchPath(_ currentPath: String?) -> String {
+        var pathComponents = (currentPath ?? "")
+            .split(separator: ":")
+            .map(String.init)
+            .filter { !$0.isEmpty }
+        let fallbackComponents = [
+            "\(NSHomeDirectory())/.cargo/bin",
+            "/opt/homebrew/bin",
+            "/usr/local/bin",
+            "/usr/bin",
+            "/bin",
+            "/usr/sbin",
+            "/sbin"
+        ]
+
+        for component in fallbackComponents where !pathComponents.contains(component) {
+            pathComponents.append(component)
+        }
+
+        return pathComponents.joined(separator: ":")
     }
 
     private func adapterHealthCheck() async -> Bool {
@@ -8490,6 +8632,25 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
     ) -> String {
         let runtimeDetail = nonEmpty(payload.reason).map { " Runtime detail: \($0)." } ?? ""
         return "Canonical \(requestKind) dispatch failed closed with reason code `\(payload.reasonCode)` and failure class `\(payload.failureClass)`. This shell does not fabricate local assistant output or bypass runtime law.\(runtimeDetail)"
+    }
+
+    private static func decodeVoiceTurnAdapterResponsePayload(
+        _ data: Data
+    ) throws -> VoiceTurnAdapterResponsePayload {
+        let decoder = JSONDecoder()
+        return try decoder.decode(VoiceTurnAdapterResponsePayload.self, from: data)
+    }
+
+    private static func appendManagedAdapterDiagnosticLog(_ message: String) {
+        guard let handle = openManagedAdapterLogHandle() else {
+            return
+        }
+
+        let line = "[SeleneMacDesktop] \(message)\n"
+        if let data = line.data(using: .utf8) {
+            try? handle.write(contentsOf: data)
+        }
+        try? handle.close()
     }
 
     fileprivate static func boundedSessionProjectID(_ value: String?) -> String? {
