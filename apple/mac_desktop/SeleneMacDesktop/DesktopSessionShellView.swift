@@ -1549,6 +1549,13 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
         teardownRecognitionSession()
     }
 
+    func discardCurrentVoiceTurn() {
+        teardownRecognitionSession()
+        pendingRequest = nil
+        transcriptPreview = ""
+        failedRequest = nil
+    }
+
     func clearPendingPreparedVoiceTurn() {
         pendingRequest = nil
     }
@@ -5950,7 +5957,7 @@ struct DesktopSessionShellView: View {
     }
 
     private var trimmedDesktopTypedTurnDraft: String {
-        desktopTypedTurnDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        desktopVisibleTypedTurnDraft.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private var trimmedDesktopSearchRequestDraft: String {
@@ -5969,6 +5976,63 @@ struct DesktopSessionShellView: View {
             || desktopWakeListenerController.listenerState == .dispatching
             || desktopWakeListenerController.pendingRequest != nil
             || lastStagedWakeTriggeredVoiceTurnRequestState != nil
+    }
+
+    private var desktopVisibleTypedTurnDraft: String {
+        if explicitVoiceController.isListening,
+           desktopTypedTurnDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+           !explicitVoiceController.transcriptPreview.isEmpty {
+            return explicitVoiceController.transcriptPreview
+        }
+
+        return desktopTypedTurnDraft
+    }
+
+    private var desktopTypedTurnComposerEditingInterlocksActive: Bool {
+        keyboardComposerPendingTypedTurnRequest != nil
+            || explicitVoiceController.pendingRequest != nil
+            || desktopWakeListenerController.listenerState.isActiveForMicrophone
+            || desktopWakeListenerController.listenerState == .dispatching
+            || desktopWakeListenerController.pendingRequest != nil
+            || lastStagedWakeTriggeredVoiceTurnRequestState != nil
+    }
+
+    private var desktopTypedTurnComposerSubmissionInterlocksActive: Bool {
+        keyboardComposerPendingTypedTurnRequest != nil
+            || explicitVoiceController.pendingRequest != nil
+            || desktopWakeListenerController.listenerState.isActiveForMicrophone
+            || desktopWakeListenerController.listenerState == .dispatching
+            || desktopWakeListenerController.pendingRequest != nil
+            || lastStagedWakeTriggeredVoiceTurnRequestState != nil
+    }
+
+    private var desktopTypedTurnComposerLineCountEstimate: Int {
+        let draft = desktopVisibleTypedTurnDraft
+        let newlineLineCount = max(draft.components(separatedBy: .newlines).count, 1)
+        let wrappedLineEstimate = max(Int(ceil(Double(max(draft.count, 1)) / 64.0)), 1)
+        return min(10, max(newlineLineCount, wrappedLineEstimate))
+    }
+
+    private var desktopTypedTurnComposerEditorHeight: CGFloat {
+        let lineHeight: CGFloat = 22
+        let visibleLineCount = CGFloat(min(10, desktopTypedTurnComposerLineCountEstimate))
+        return max(52, visibleLineCount * lineHeight + 8)
+    }
+
+    private var desktopTypedTurnComposerDraftBinding: Binding<String> {
+        Binding(
+            get: {
+                desktopVisibleTypedTurnDraft
+            },
+            set: { newValue in
+                if explicitVoiceController.isListening,
+                   newValue != explicitVoiceController.transcriptPreview {
+                    explicitVoiceController.discardCurrentVoiceTurn()
+                }
+
+                desktopTypedTurnDraft = newValue
+            }
+        )
     }
 
     private var keyboardComposerPendingTypedTurnRequest: DesktopTypedTurnRequestState? {
@@ -6064,47 +6128,20 @@ struct DesktopSessionShellView: View {
 
     private var desktopTypedTurnComposerCard: some View {
         VStack(alignment: .leading, spacing: 12) {
-            if explicitVoiceController.isListening {
-                HStack(spacing: 10) {
-                    Image(systemName: "waveform")
-                        .foregroundStyle(Color.accentColor)
-
-                    Text("Listening")
-                        .font(.subheadline.weight(.semibold))
-
-                    Spacer()
-
-                    Button("Stop voice") {
-                        desktopCanonicalRuntimeOutcomeState = nil
-                        desktopAuthoritativeReplyRenderState = nil
-                        desktopAuthoritativeReplyProvenanceRenderState = nil
-                        desktopAuthoritativeReplyPlaybackController.reset()
-                        desktopAuthoritativeReplyPlaybackState = .idle
-                        explicitVoiceController.stopCaptureAndPrepareVoiceTurn()
-                    }
-                    .buttonStyle(.borderless)
-                }
-                .padding(.horizontal, 4)
-            }
-
             VStack(alignment: .leading, spacing: 14) {
-                TextField(
-                    "Message Selene",
-                    text: $desktopTypedTurnDraft,
-                    axis: .vertical
-                )
-                .textFieldStyle(.plain)
-                .lineLimit(1...6)
-                .disabled(desktopTypedTurnSubmissionInterlocksActive)
-                .onSubmit {
-                    submitDesktopTypedTurn()
-                }
+                ZStack(alignment: .topLeading) {
+                    if desktopVisibleTypedTurnDraft.isEmpty {
+                        Text("Message Selene")
+                            .foregroundStyle(.secondary)
+                            .padding(.top, 8)
+                            .padding(.leading, 4)
+                    }
 
-                if !explicitVoiceController.transcriptPreview.isEmpty {
-                    Text(explicitVoiceController.transcriptPreview)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                    TextEditor(text: desktopTypedTurnComposerDraftBinding)
+                        .font(.system(size: 16))
+                        .scrollContentBackground(.hidden)
+                        .frame(height: desktopTypedTurnComposerEditorHeight)
+                        .disabled(desktopTypedTurnComposerEditingInterlocksActive)
                 }
 
                 if let failedRequest = desktopTypedTurnFailedRequest {
@@ -6121,34 +6158,52 @@ struct DesktopSessionShellView: View {
 
                 HStack(spacing: 12) {
                     Button {
-                        let wakeDispatchInFlight =
-                            desktopWakeListenerController.listenerState == .dispatching
-                        desktopWakeListenerController.haltCaptureSession()
-                        if !wakeDispatchInFlight {
-                            desktopWakeListenerController.clearPendingPreparedWakeTurn()
-                            lastStagedWakeTriggeredVoiceTurnRequestState = nil
+                        if explicitVoiceController.isListening {
+                            desktopCanonicalRuntimeOutcomeState = nil
+                            desktopAuthoritativeReplyRenderState = nil
+                            desktopAuthoritativeReplyProvenanceRenderState = nil
+                            desktopAuthoritativeReplyPlaybackController.reset()
+                            desktopAuthoritativeReplyPlaybackState = .idle
+                            explicitVoiceController.stopCaptureAndPrepareVoiceTurn()
+                        } else {
+                            let wakeDispatchInFlight =
+                                desktopWakeListenerController.listenerState == .dispatching
+                            desktopWakeListenerController.haltCaptureSession()
+                            if !wakeDispatchInFlight {
+                                desktopWakeListenerController.clearPendingPreparedWakeTurn()
+                                lastStagedWakeTriggeredVoiceTurnRequestState = nil
+                            }
+                            desktopCanonicalRuntimeOutcomeState = nil
+                            desktopAuthoritativeReplyRenderState = nil
+                            desktopAuthoritativeReplyProvenanceRenderState = nil
+                            desktopAuthoritativeReplyPlaybackController.reset()
+                            desktopAuthoritativeReplyPlaybackState = .idle
+                            explicitVoiceController.startExplicitVoiceTurn()
                         }
-                        desktopCanonicalRuntimeOutcomeState = nil
-                        desktopAuthoritativeReplyRenderState = nil
-                        desktopAuthoritativeReplyProvenanceRenderState = nil
-                        desktopAuthoritativeReplyPlaybackController.reset()
-                        desktopAuthoritativeReplyPlaybackState = .idle
-                        explicitVoiceController.startExplicitVoiceTurn()
                     } label: {
                         Image(systemName: explicitVoiceController.isListening ? "waveform" : "mic")
-                            .font(.system(size: 16, weight: .semibold))
+                            .font(.system(size: 17, weight: .semibold))
                             .frame(width: 34, height: 34)
-                            .background(Color.primary.opacity(0.05))
+                            .background(
+                                explicitVoiceController.isListening
+                                    ? Color.accentColor.opacity(0.12)
+                                    : Color.primary.opacity(0.05)
+                            )
                             .clipShape(Circle())
                     }
                     .buttonStyle(.plain)
-                    .disabled(
-                        explicitVoiceController.isListening
-                            || explicitVoiceController.pendingRequest != nil
-                    )
+                    .disabled(explicitVoiceController.pendingRequest != nil)
 
                     if keyboardComposerPendingTypedTurnRequest != nil {
                         Text("Sending")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                    } else if explicitVoiceController.isListening {
+                        Text("Listening")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(Color.accentColor)
+                    } else if explicitVoiceController.pendingRequest != nil {
+                        Text("Voice pending")
                             .font(.caption.weight(.semibold))
                             .foregroundStyle(.secondary)
                     } else if desktopTypedTurnSubmissionInterlocksActive {
@@ -6178,7 +6233,7 @@ struct DesktopSessionShellView: View {
                     .buttonStyle(.plain)
                     .disabled(
                         trimmedDesktopTypedTurnDraft.isEmpty
-                            || desktopTypedTurnSubmissionInterlocksActive
+                            || desktopTypedTurnComposerSubmissionInterlocksActive
                     )
                 }
             }
@@ -17247,6 +17302,12 @@ struct DesktopSessionShellView: View {
     }
 
     private func submitDesktopTypedTurn() {
+        if explicitVoiceController.isListening {
+            let preservedDraft = trimmedDesktopTypedTurnDraft
+            explicitVoiceController.discardCurrentVoiceTurn()
+            desktopTypedTurnDraft = preservedDraft
+        }
+
         let trimmedDraft = trimmedDesktopTypedTurnDraft
 
         switch stageDesktopTypedTurnRequest(
