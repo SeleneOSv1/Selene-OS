@@ -6919,11 +6919,42 @@ struct DesktopSessionShellView: View {
     private func desktopFriendlyRuntimeFailureMessage(
         summary: String,
         reasonCode: String?,
-        failureClass: String?
+        failureClass: String?,
+        detail: String?
     ) -> String {
+        let normalizedSummary = summary.lowercased()
+        let normalizedDetail = (detail ?? "").lowercased()
+        let indicatesProfileNotEnrolled =
+            normalizedSummary.contains("voice profile")
+            || normalizedDetail.contains("voice profile")
+            || normalizedDetail.contains("vid_fail_profile_not_enrolled")
+            || normalizedDetail.contains("1447624709")
+        let indicatesLowConfidence =
+            normalizedSummary.contains("verify your identity strongly enough")
+            || normalizedDetail.contains("vid_fail_low_confidence")
+            || normalizedDetail.contains("1447624706")
+
         switch reasonCode {
         case "AUTH_IDENTITY_UNKNOWN":
-            return "I can't answer from this desktop shell yet because the current Selene runtime identity is not recognized."
+            if indicatesProfileNotEnrolled {
+                if desktopVoiceEnrollPromptState != nil {
+                    return "I don't recognize this voice yet. Would you like me to capture your voice print now through the existing enrollment path?"
+                }
+
+                if desktopOnboardingEntryContext != nil
+                    || desktopInviteOpenRuntimeOutcomeState != nil
+                    || desktopOnboardingContinueRuntimeOutcomeState != nil {
+                    return "I don't recognize this voice yet. This desktop can capture your voice print once the current onboarding flow reaches the existing voice-enrollment step."
+                }
+
+                return "I don't recognize this voice yet. This desktop still needs the existing onboarding-to-voice-enrollment path before I can capture your voice print."
+            }
+
+            if indicatesLowConfidence {
+                return "I heard you, but I couldn't verify your identity strongly enough to continue."
+            }
+
+            return "I couldn't verify who is speaking yet, so I can't continue from this desktop shell."
         case "desktop_runtime_bridge_failure":
             return "I couldn't answer just now because the desktop runtime bridge did not complete the request."
         default:
@@ -6940,6 +6971,7 @@ struct DesktopSessionShellView: View {
         summary: String,
         reasonCode: String?,
         failureClass: String?,
+        detail: String? = nil,
         conversationKey: String
     ) {
         let entry = DesktopConversationTimelineEntryState(
@@ -6949,9 +6981,10 @@ struct DesktopSessionShellView: View {
             body: desktopFriendlyRuntimeFailureMessage(
                 summary: summary,
                 reasonCode: reasonCode,
-                failureClass: failureClass
+                failureClass: failureClass,
+                detail: detail
             ),
-            detail: summary,
+            detail: detail ?? summary,
             sourceSurface: "CANONICAL_RUNTIME_FAILED"
         )
         desktopPersistConversationTimelineEntry(entry, conversationKey: conversationKey)
@@ -18074,6 +18107,7 @@ struct DesktopSessionShellView: View {
                     summary: outcomeState.summary,
                     reasonCode: outcomeState.reasonCode,
                     failureClass: outcomeState.failureClass,
+                    detail: outcomeState.detail,
                     conversationKey: conversationKey
                 )
             }
@@ -18113,6 +18147,7 @@ struct DesktopSessionShellView: View {
                 summary: "The canonical runtime bridge could not deliver the bounded explicit voice request.",
                 reasonCode: "desktop_runtime_bridge_failure",
                 failureClass: "RetryableRuntime",
+                detail: error.localizedDescription,
                 conversationKey: conversationKey
             )
             explicitVoiceController.clearPendingPreparedVoiceTurn()
@@ -18295,6 +18330,7 @@ struct DesktopSessionShellView: View {
                     summary: outcomeState.summary,
                     reasonCode: outcomeState.reasonCode,
                     failureClass: outcomeState.failureClass,
+                    detail: outcomeState.detail,
                     conversationKey: conversationKey
                 )
             }
@@ -18330,6 +18366,7 @@ struct DesktopSessionShellView: View {
                     summary: "The canonical runtime bridge could not deliver the bounded typed-turn request.",
                     reasonCode: "desktop_runtime_bridge_failure",
                     failureClass: "RetryableRuntime",
+                    detail: error.localizedDescription,
                     conversationKey: conversationKey
                 )
             }

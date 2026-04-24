@@ -4721,7 +4721,10 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
                     endpoint: ingressContext.endpoint,
                     requestID: ingressContext.requestID,
                     summary: "The canonical runtime rejected or failed the bounded explicit voice request before reply rendering was allowed.",
-                    detail: "Canonical dispatch failed closed with reason code `\(payload.reasonCode)` and failure class `\(payload.failureClass)`. This shell does not fabricate local assistant output or bypass runtime law.",
+                    detail: Self.voiceTurnIngressFailureDetail(
+                        requestKind: "explicit voice",
+                        payload: payload
+                    ),
                     reasonCode: payload.reasonCode,
                     failureClass: payload.failureClass,
                     sessionID: payload.sessionID,
@@ -4773,7 +4776,10 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
                     endpoint: ingressContext.endpoint,
                     requestID: ingressContext.requestID,
                     summary: "The canonical runtime rejected or failed the bounded typed-turn request before reply rendering was allowed.",
-                    detail: "Canonical typed-turn dispatch failed closed with reason code `\(payload.reasonCode)` and failure class `\(payload.failureClass)`. This shell does not fabricate local assistant output, local search execution, or bypass runtime law.",
+                    detail: Self.voiceTurnIngressFailureDetail(
+                        requestKind: "typed turn",
+                        payload: payload
+                    ),
                     reasonCode: payload.reasonCode,
                     failureClass: payload.failureClass,
                     sessionID: payload.sessionID,
@@ -4825,7 +4831,10 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
                     endpoint: ingressContext.endpoint,
                     requestID: ingressContext.requestID,
                     summary: "The canonical runtime rejected or failed the bounded wake-triggered voice request before reply rendering was allowed.",
-                    detail: "Canonical wake-triggered dispatch failed closed with reason code `\(payload.reasonCode)` and failure class `\(payload.failureClass)`. This shell does not fabricate local assistant output or bypass runtime law.",
+                    detail: Self.voiceTurnIngressFailureDetail(
+                        requestKind: "wake-triggered voice",
+                        payload: payload
+                    ),
                     reasonCode: payload.reasonCode,
                     failureClass: payload.failureClass,
                     sessionID: payload.sessionID,
@@ -8379,7 +8388,7 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
         var environment = ProcessInfo.processInfo.environment
         let bindValue = Self.bindValue(for: adapterBaseURL)
         environment["SELENE_HTTP_BIND"] = bindValue
-        environment["SELENE_ADAPTER_SYNC_WORKER_ENABLED"] = "false"
+        environment["SELENE_ADAPTER_SYNC_WORKER_ENABLED"] = "true"
         process.environment = environment
         process.standardOutput = FileHandle(forWritingAtPath: "/dev/null")
         process.standardError = FileHandle(forWritingAtPath: "/dev/null")
@@ -8473,6 +8482,14 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
         let requestID = "\(prefix)_\(base36Now)_\(shortEntropy)"
         let idempotencyKey = "idem_\(prefix)_\(base36Now)_\(shortEntropy)"
         return (requestID, idempotencyKey, entropy)
+    }
+
+    private static func voiceTurnIngressFailureDetail(
+        requestKind: String,
+        payload: VoiceTurnIngressErrorPayload
+    ) -> String {
+        let runtimeDetail = nonEmpty(payload.reason).map { " Runtime detail: \($0)." } ?? ""
+        return "Canonical \(requestKind) dispatch failed closed with reason code `\(payload.reasonCode)` and failure class `\(payload.failureClass)`. This shell does not fabricate local assistant output or bypass runtime law.\(runtimeDetail)"
     }
 
     fileprivate static func boundedSessionProjectID(_ value: String?) -> String? {
