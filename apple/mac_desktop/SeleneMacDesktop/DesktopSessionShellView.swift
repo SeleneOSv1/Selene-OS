@@ -1399,8 +1399,8 @@ private struct DesktopChatComposerTextView: NSViewRepresentable {
     let isEditable: Bool
     let onSubmit: () -> Void
 
-    private let minHeight: CGFloat = 32
-    private let maxHeight: CGFloat = 224
+    private let minHeight: CGFloat = 22
+    private let maxHeight: CGFloat = 204
 
     func makeCoordinator() -> Coordinator {
         Coordinator(self)
@@ -1427,8 +1427,8 @@ private struct DesktopChatComposerTextView: NSViewRepresentable {
         textView.isGrammarCheckingEnabled = false
         textView.isHorizontallyResizable = false
         textView.isVerticallyResizable = true
-        textView.textContainerInset = NSSize(width: 0, height: 6)
-        textView.font = .systemFont(ofSize: 18)
+        textView.textContainerInset = NSSize(width: 0, height: 1)
+        textView.font = .systemFont(ofSize: 16)
         textView.textContainer?.lineFragmentPadding = 0
         textView.textContainer?.widthTracksTextView = true
         textView.textContainer?.containerSize = NSSize(
@@ -4410,6 +4410,34 @@ private struct DesktopPersistedConversationTimelineHistoryEntry: Identifiable, E
     let entry: DesktopConversationTimelineEntryState
 }
 
+private struct DesktopSidebarConversationMetadata: Equatable {
+    var customTitle: String?
+    var isPinned: Bool = false
+    var isArchived: Bool = false
+    var isDeleted: Bool = false
+}
+
+private struct DesktopComposerAttachmentSelection: Identifiable, Equatable {
+    let url: URL
+
+    var id: String {
+        url.standardizedFileURL.path
+    }
+
+    var displayName: String {
+        url.lastPathComponent
+    }
+}
+
+private struct DesktopSidebarConversationItem: Identifiable, Equatable {
+    let conversationKey: String
+    let surface: DesktopObservedSessionSurface?
+
+    var id: String {
+        conversationKey
+    }
+}
+
 struct DesktopConversationSupportRailState: Identifiable, Equatable {
     let title: String
     let detail: String
@@ -4888,6 +4916,13 @@ struct DesktopSessionShellView: View {
     @State private var desktopTypedTurnFailedRequest: InterruptContinuityResponseFailureState?
     @State private var desktopSubmittedUserContinuityPreviewState: DesktopSubmittedUserContinuityPreviewState?
     @State private var desktopPersistedConversationTimelineHistory: [DesktopPersistedConversationTimelineHistoryEntry] = []
+    @State private var desktopSidebarConversationMetadata: [String: DesktopSidebarConversationMetadata] = [:]
+    @State private var desktopSidebarSearchQuery: String = ""
+    @State private var desktopSidebarSearchIsVisible: Bool = false
+    @State private var desktopSidebarRenameConversationKey: String?
+    @State private var desktopSidebarRenameDraft: String = ""
+    @State private var desktopSelectedPersistedConversationKey: String?
+    @State private var desktopComposerAttachmentSelections: [DesktopComposerAttachmentSelection] = []
     @State private var desktopSearchRequestFailedRequest: InterruptContinuityResponseFailureState?
     @State private var desktopToolRequestFailedRequest: InterruptContinuityResponseFailureState?
     @State private var desktopTypedTurnRequestSequence: Int = 0
@@ -4914,6 +4949,19 @@ struct DesktopSessionShellView: View {
             } else {
                 desktopEvidenceFirstSecondaryPanelSheet(panel)
             }
+        }
+        .sheet(
+            isPresented: Binding(
+                get: { desktopSidebarRenameConversationKey != nil },
+                set: { isPresented in
+                    if !isPresented {
+                        desktopSidebarRenameConversationKey = nil
+                        desktopSidebarRenameDraft = ""
+                    }
+                }
+            )
+        ) {
+            desktopSidebarRenameSheet
         }
         .task(id: explicitVoiceController.pendingRequest?.id) {
             await dispatchPreparedExplicitVoiceRequestIfNeeded()
@@ -5097,6 +5145,185 @@ struct DesktopSessionShellView: View {
         return surfaces
     }
 
+    private var desktopVisibleSidebarHistoryItems: [DesktopSidebarConversationItem] {
+        let trimmedQuery = desktopSidebarSearchQuery
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .localizedLowercase
+
+        var items: [DesktopSidebarConversationItem] = []
+
+        for surface in desktopSidebarHistorySurfaces {
+            let conversationKey = desktopConversationHistoryKey(for: surface)
+            if !items.contains(where: { $0.conversationKey == conversationKey }) {
+                items.append(
+                    DesktopSidebarConversationItem(
+                        conversationKey: conversationKey,
+                        surface: surface
+                    )
+                )
+            }
+        }
+
+        for historyEntry in desktopPersistedConversationTimelineHistory {
+            if !items.contains(where: { $0.conversationKey == historyEntry.conversationKey }) {
+                items.append(
+                    DesktopSidebarConversationItem(
+                        conversationKey: historyEntry.conversationKey,
+                        surface: nil
+                    )
+                )
+            }
+        }
+
+        let filteredItems = items.filter { item in
+            let conversationKey = item.conversationKey
+            let metadata = desktopSidebarConversationMetadata[conversationKey] ?? .init()
+
+            guard !metadata.isArchived, !metadata.isDeleted else {
+                return false
+            }
+
+            guard !trimmedQuery.isEmpty else {
+                return true
+            }
+
+            let title = desktopSidebarHistoryTitle(for: item).localizedLowercase
+            let preview = desktopSidebarHistoryPreview(for: item).localizedLowercase
+            return title.contains(trimmedQuery) || preview.contains(trimmedQuery)
+        }
+
+        return filteredItems.sorted { lhs, rhs in
+            let lhsKey = lhs.conversationKey
+            let rhsKey = rhs.conversationKey
+            let lhsMetadata = desktopSidebarConversationMetadata[lhsKey] ?? .init()
+            let rhsMetadata = desktopSidebarConversationMetadata[rhsKey] ?? .init()
+
+            if lhsMetadata.isPinned != rhsMetadata.isPinned {
+                return lhsMetadata.isPinned
+            }
+
+            return items.firstIndex(where: { $0.conversationKey == lhs.conversationKey }) ?? 0
+                < items.firstIndex(where: { $0.conversationKey == rhs.conversationKey }) ?? 0
+        }
+    }
+
+    private func desktopConversationHistoryKey(for surface: DesktopObservedSessionSurface) -> String {
+        switch surface {
+        case .sessionHeader(let context):
+            return "session::\(context.sessionID)"
+        case .sessionActive(let context):
+            return "session::\(context.sessionID)"
+        case .sessionSoftClosed(let context):
+            return "session::\(context.sessionID)"
+        case .sessionSuspended(let context):
+            return "session::\(context.sessionID)"
+        }
+    }
+
+    private func desktopPersistedTimelineEntries(
+        forConversationKey conversationKey: String
+    ) -> [DesktopConversationTimelineEntryState] {
+        desktopPersistedConversationTimelineHistory
+            .filter { $0.conversationKey == conversationKey }
+            .map(\.entry)
+    }
+
+    private func desktopSidebarAutoTitle(for conversationKey: String) -> String? {
+        desktopPersistedTimelineEntries(forConversationKey: conversationKey)
+            .first(where: \.isUserAuthored)?
+            .body
+            .replacingOccurrences(of: "\n", with: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func desktopSidebarLatestPreview(for conversationKey: String) -> String? {
+        desktopPersistedTimelineEntries(forConversationKey: conversationKey)
+            .last?
+            .body
+            .replacingOccurrences(of: "\n", with: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func desktopSidebarMetadata(for conversationKey: String) -> DesktopSidebarConversationMetadata {
+        desktopSidebarConversationMetadata[conversationKey] ?? .init()
+    }
+
+    private func desktopSetSidebarMetadata(
+        for conversationKey: String,
+        mutate: (inout DesktopSidebarConversationMetadata) -> Void
+    ) {
+        var metadata = desktopSidebarConversationMetadata[conversationKey] ?? .init()
+        mutate(&metadata)
+        desktopSidebarConversationMetadata[conversationKey] = metadata
+    }
+
+    private func desktopStartSidebarRename(for item: DesktopSidebarConversationItem) {
+        let conversationKey = item.conversationKey
+        desktopSidebarRenameConversationKey = conversationKey
+        desktopSidebarRenameDraft = desktopSidebarHistoryTitle(for: item)
+    }
+
+    private func desktopCommitSidebarRename() {
+        guard let conversationKey = desktopSidebarRenameConversationKey else {
+            return
+        }
+
+        let trimmedTitle = desktopSidebarRenameDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        desktopSetSidebarMetadata(for: conversationKey) { metadata in
+            metadata.customTitle = trimmedTitle.isEmpty ? nil : trimmedTitle
+        }
+        desktopSidebarRenameConversationKey = nil
+        desktopSidebarRenameDraft = ""
+    }
+
+    private func desktopArchiveSidebarConversation(_ item: DesktopSidebarConversationItem) {
+        let conversationKey = item.conversationKey
+        desktopSetSidebarMetadata(for: conversationKey) { metadata in
+            metadata.isArchived = true
+        }
+
+        if foregroundObservedSessionSurface?.id == item.surface?.id {
+            selectedObservedSessionSurfaceID = currentDominantObservedSessionSurface?.id
+        }
+
+        if desktopSelectedPersistedConversationKey == conversationKey {
+            desktopSelectedPersistedConversationKey = nil
+        }
+    }
+
+    private func desktopDeleteSidebarConversation(_ item: DesktopSidebarConversationItem) {
+        let conversationKey = item.conversationKey
+        desktopSetSidebarMetadata(for: conversationKey) { metadata in
+            metadata.isDeleted = true
+        }
+        desktopPersistedConversationTimelineHistory.removeAll { $0.conversationKey == conversationKey }
+
+        if foregroundObservedSessionSurface?.id == item.surface?.id {
+            selectedObservedSessionSurfaceID = currentDominantObservedSessionSurface?.id
+        }
+
+        if desktopSelectedPersistedConversationKey == conversationKey {
+            desktopSelectedPersistedConversationKey = nil
+        }
+    }
+
+    private func desktopStartNewChatFromSidebar() {
+        desktopTypedTurnDraft = ""
+        desktopComposerAttachmentSelections = []
+        desktopSelectedPersistedConversationKey = nil
+        explicitVoiceController.discardCurrentVoiceTurn()
+
+        if let latestSessionHeaderContext {
+            let headerSurface = DesktopObservedSessionSurface.sessionHeader(latestSessionHeaderContext)
+            recordObservedSessionSurface(headerSurface)
+            selectObservedSessionSurface(headerSurface)
+        } else if let currentDominantObservedSessionSurface {
+            selectObservedSessionSurface(currentDominantObservedSessionSurface)
+        } else {
+            selectedObservedSessionSurfaceID = nil
+        }
+    }
+
     private func desktopChatShellLayout<MainContent: View>(
         @ViewBuilder mainContent: () -> MainContent
     ) -> some View {
@@ -5119,7 +5346,7 @@ struct DesktopSessionShellView: View {
     }
 
     private var desktopVisibleConversationSidebar: some View {
-        let historySurfaces = desktopSidebarHistorySurfaces
+        let historyItems = desktopVisibleSidebarHistoryItems
         let sidebarBackground = Color(
             nsColor: NSColor(
                 srgbRed: 0.986,
@@ -5140,19 +5367,50 @@ struct DesktopSessionShellView: View {
             }
             .padding(.horizontal, 20)
             .padding(.top, 18)
-            .padding(.bottom, 16)
+            .padding(.bottom, 14)
 
             ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
-                    Text("Chats")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 4)
+                VStack(alignment: .leading, spacing: 16) {
+                    desktopSidebarActionRow(
+                        title: "New chat",
+                        systemImage: "square.and.pencil"
+                    ) {
+                        desktopStartNewChatFromSidebar()
+                    }
 
-                    if !historySurfaces.isEmpty {
+                    desktopSidebarActionRow(
+                        title: "Search chats",
+                        systemImage: "magnifyingglass"
+                    ) {
+                        desktopSidebarSearchIsVisible.toggle()
+                        if !desktopSidebarSearchIsVisible {
+                            desktopSidebarSearchQuery = ""
+                        }
+                    }
+
+                    if desktopSidebarSearchIsVisible {
+                        TextField("Search chats", text: $desktopSidebarSearchQuery)
+                            .textFieldStyle(.plain)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 10)
+                            .background(Color.white.opacity(0.96))
+                            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                    .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+                            )
+                    }
+
+                    if !historyItems.isEmpty {
                         VStack(alignment: .leading, spacing: 8) {
-                            ForEach(historySurfaces) { surface in
-                                desktopSidebarHistoryRow(surface)
+                            Text("Recents")
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(.secondary)
+                                .padding(.horizontal, 10)
+                                .padding(.bottom, 4)
+
+                            ForEach(historyItems) { item in
+                                desktopSidebarHistoryRow(item)
                             }
                         }
                     }
@@ -5166,45 +5424,129 @@ struct DesktopSessionShellView: View {
         .background(sidebarBackground)
     }
 
-    private func desktopSidebarHistoryRow(_ surface: DesktopObservedSessionSurface) -> some View {
-        let isSelected = foregroundObservedSessionSurface?.id == surface.id
+    private func desktopSidebarActionRow(
+        title: String,
+        systemImage: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: 12) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 18, weight: .medium))
+                    .frame(width: 24, alignment: .center)
 
-        return Button {
-            selectObservedSessionSurface(surface)
-        } label: {
-            VStack(alignment: .leading, spacing: 6) {
-                Text(desktopSidebarHistoryTitle(for: surface))
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(.primary)
-                    .lineLimit(1)
+                Text(title)
+                    .font(.system(size: 17, weight: .medium))
 
-                Text(desktopSidebarHistoryPreview(for: surface))
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                Spacer(minLength: 0)
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 12)
+            .foregroundStyle(.primary)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                isSelected
-                    ? Color.white.opacity(0.96)
-                    : Color.clear
-            )
-            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .stroke(
-                        isSelected ? Color.primary.opacity(0.08) : Color.clear,
-                        lineWidth: 1
-                    )
-            )
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
     }
 
-    private func desktopSidebarHistoryTitle(for surface: DesktopObservedSessionSurface) -> String {
+    private func desktopSidebarHistoryRow(_ item: DesktopSidebarConversationItem) -> some View {
+        let isSelected = item.conversationKey == desktopForegroundConversationHistoryKey
+        let conversationKey = item.conversationKey
+        let metadata = desktopSidebarMetadata(for: conversationKey)
+
+        return HStack(spacing: 8) {
+            Button {
+                if let surface = item.surface {
+                    desktopSelectedPersistedConversationKey = nil
+                    selectObservedSessionSurface(surface)
+                } else {
+                    selectedObservedSessionSurfaceID = nil
+                    desktopSelectedPersistedConversationKey = conversationKey
+                }
+            } label: {
+                HStack(spacing: 8) {
+                    if metadata.isPinned {
+                        Image(systemName: "pin.fill")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Text(desktopSidebarHistoryTitle(for: item))
+                        .font(.system(size: 16, weight: isSelected ? .semibold : .medium))
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            Menu {
+                Button("Rename") {
+                    desktopStartSidebarRename(for: item)
+                }
+
+                Button(metadata.isPinned ? "Unpin chat" : "Pin chat") {
+                    desktopSetSidebarMetadata(for: conversationKey) { rowMetadata in
+                        rowMetadata.isPinned.toggle()
+                    }
+                }
+
+                Button("Archive") {
+                    desktopArchiveSidebarConversation(item)
+                }
+
+                Divider()
+
+                Button("Delete", role: .destructive) {
+                    desktopDeleteSidebarConversation(item)
+                }
+            } label: {
+                Image(systemName: "ellipsis")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 26, height: 26)
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            isSelected
+                ? Color.white.opacity(0.96)
+                : Color.clear
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(
+                    isSelected ? Color.primary.opacity(0.08) : Color.clear,
+                    lineWidth: 1
+                )
+        )
+    }
+
+    private func desktopSidebarHistoryTitle(for item: DesktopSidebarConversationItem) -> String {
+        let conversationKey = item.conversationKey
+        let metadata = desktopSidebarMetadata(for: conversationKey)
+
+        if let customTitle = metadata.customTitle?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !customTitle.isEmpty {
+            return customTitle
+        }
+
+        if let autoTitle = desktopSidebarAutoTitle(for: conversationKey),
+           !autoTitle.isEmpty {
+            return boundedTitle(autoTitle) ?? autoTitle
+        }
+
+        guard let surface = item.surface else {
+            return "New conversation"
+        }
+
         switch surface {
         case .sessionHeader:
             return "New conversation"
@@ -5226,7 +5568,17 @@ struct DesktopSessionShellView: View {
         }
     }
 
-    private func desktopSidebarHistoryPreview(for surface: DesktopObservedSessionSurface) -> String {
+    private func desktopSidebarHistoryPreview(for item: DesktopSidebarConversationItem) -> String {
+        let conversationKey = item.conversationKey
+        if let latestPreview = desktopSidebarLatestPreview(for: conversationKey),
+           !latestPreview.isEmpty {
+            return boundedTitle(latestPreview) ?? latestPreview
+        }
+
+        guard let surface = item.surface else {
+            return "Continue this conversation here."
+        }
+
         switch surface {
         case .sessionHeader:
             return "Start the next conversation here."
@@ -5258,6 +5610,33 @@ struct DesktopSessionShellView: View {
             .trimmingCharacters(in: .whitespacesAndNewlines)
 
         return normalized.isEmpty ? fallback : normalized
+    }
+
+    private var desktopSidebarRenameSheet: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            Text("Rename chat")
+                .font(.title3.weight(.semibold))
+
+            TextField("Chat title", text: $desktopSidebarRenameDraft)
+                .textFieldStyle(.roundedBorder)
+
+            HStack {
+                Spacer()
+
+                Button("Cancel") {
+                    desktopSidebarRenameConversationKey = nil
+                    desktopSidebarRenameDraft = ""
+                }
+                .keyboardShortcut(.cancelAction)
+
+                Button("Save") {
+                    desktopCommitSidebarRename()
+                }
+                .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(24)
+        .frame(width: 360)
     }
 
     private func desktopSecondaryPanelButton(
@@ -5590,7 +5969,11 @@ struct DesktopSessionShellView: View {
     }
 
     private var foregroundObservedSessionSurface: DesktopObservedSessionSurface? {
-        selectedObservedSessionSurface ?? currentDominantObservedSessionSurface
+        if desktopSelectedPersistedConversationKey != nil {
+            return nil
+        }
+
+        return selectedObservedSessionSurface ?? currentDominantObservedSessionSurface
     }
 
     private var desktopForegroundVoiceTurnSelectedSessionProjectContext: DesktopSelectedSessionProjectContextState? {
@@ -5614,6 +5997,10 @@ struct DesktopSessionShellView: View {
     }
 
     private var desktopForegroundSelectionShowsCurrentDominantSurface: Bool {
+        if desktopSelectedPersistedConversationKey != nil {
+            return false
+        }
+
         guard let selectedObservedSessionSurface else {
             return true
         }
@@ -5681,6 +6068,8 @@ struct DesktopSessionShellView: View {
     }
 
     private func selectObservedSessionSurface(_ surface: DesktopObservedSessionSurface) {
+        desktopSelectedPersistedConversationKey = nil
+
         if surface.id == currentDominantObservedSessionSurface?.id {
             selectedObservedSessionSurfaceID = nil
         } else {
@@ -6168,6 +6557,34 @@ struct DesktopSessionShellView: View {
         desktopVisibleTypedTurnDraft.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    private var desktopComposerAttachmentSummaryText: String {
+        let attachmentNames = desktopComposerAttachmentSelections.map(\.displayName)
+        guard !attachmentNames.isEmpty else {
+            return ""
+        }
+
+        if attachmentNames.count == 1 {
+            return "Attached file: \(attachmentNames[0])"
+        }
+
+        return "Attached files: \(attachmentNames.joined(separator: ", "))"
+    }
+
+    private var desktopPreparedTypedComposerSubmissionText: String {
+        let trimmedDraft = trimmedDesktopVisibleTypedTurnDraft
+        let attachmentSummary = desktopComposerAttachmentSummaryText
+
+        guard !attachmentSummary.isEmpty else {
+            return trimmedDraft
+        }
+
+        if trimmedDraft.isEmpty {
+            return attachmentSummary
+        }
+
+        return "\(trimmedDraft)\n\n\(attachmentSummary)"
+    }
+
     private var trimmedDesktopSearchRequestDraft: String {
         desktopSearchRequestDraft.trimmingCharacters(in: .whitespacesAndNewlines)
     }
@@ -6177,6 +6594,10 @@ struct DesktopSessionShellView: View {
     }
 
     private var desktopForegroundConversationHistoryKey: String {
+        if let desktopSelectedPersistedConversationKey {
+            return desktopSelectedPersistedConversationKey
+        }
+
         if let foregroundSessionActiveVisibleContext {
             return "session::\(foregroundSessionActiveVisibleContext.sessionID)"
         }
@@ -6246,8 +6667,7 @@ struct DesktopSessionShellView: View {
             }
 
             let alreadyVisible = mergedTimelineEntries.contains { entry in
-                entry.speaker == persistedEntry.speaker
-                    && entry.body.trimmingCharacters(in: .whitespacesAndNewlines) == normalizedPersistedBody
+                entry.id == persistedEntry.id
             }
 
             if !alreadyVisible {
@@ -6301,6 +6721,71 @@ struct DesktopSessionShellView: View {
         desktopPersistConversationTimelineEntry(entry, conversationKey: conversationKey)
     }
 
+    private func desktopPersistMissingReplyMessageIfNeeded(
+        requestID: String,
+        inputMode: DesktopSubmittedUserContinuityPreviewState.InputMode,
+        conversationKey: String
+    ) {
+        let body: String
+        switch inputMode {
+        case .typed:
+            body = "I received your message, but no Selene reply text came back from the current runtime turn."
+        case .explicitVoice:
+            body = "I heard your voice message, but no Selene reply text came back from the current runtime turn."
+        }
+
+        let entry = DesktopConversationTimelineEntryState(
+            stableID: "selene_missing_reply::\(requestID)",
+            speaker: "Selene",
+            posture: "canonical_runtime_missing_reply_text",
+            body: body,
+            detail: "Completed runtime turn without reply text.",
+            sourceSurface: "CANONICAL_RUNTIME_COMPLETED"
+        )
+        desktopPersistConversationTimelineEntry(entry, conversationKey: conversationKey)
+    }
+
+    private func desktopFriendlyRuntimeFailureMessage(
+        summary: String,
+        reasonCode: String?,
+        failureClass: String?
+    ) -> String {
+        switch reasonCode {
+        case "AUTH_IDENTITY_UNKNOWN":
+            return "I can't answer from this desktop shell yet because the current Selene runtime identity is not recognized."
+        case "desktop_runtime_bridge_failure":
+            return "I couldn't answer just now because the desktop runtime bridge did not complete the request."
+        default:
+            if failureClass == "AUTHENTICATION_FAILURE" {
+                return "I couldn't answer from this desktop shell because the runtime rejected the current identity."
+            }
+
+            return "I couldn't answer that just now. Please try again."
+        }
+    }
+
+    private func desktopPersistRuntimeFailureReplyIfNeeded(
+        requestID: String,
+        summary: String,
+        reasonCode: String?,
+        failureClass: String?,
+        conversationKey: String
+    ) {
+        let entry = DesktopConversationTimelineEntryState(
+            stableID: "selene_failure::\(requestID)",
+            speaker: "Selene",
+            posture: "canonical_runtime_failure_text",
+            body: desktopFriendlyRuntimeFailureMessage(
+                summary: summary,
+                reasonCode: reasonCode,
+                failureClass: failureClass
+            ),
+            detail: summary,
+            sourceSurface: "CANONICAL_RUNTIME_FAILED"
+        )
+        desktopPersistConversationTimelineEntry(entry, conversationKey: conversationKey)
+    }
+
     private var desktopTypedTurnSubmissionInterlocksActive: Bool {
         desktopTypedTurnPendingRequest != nil
             || explicitVoiceController.isListening
@@ -6340,7 +6825,7 @@ struct DesktopSessionShellView: View {
     }
 
     private var desktopTypedTurnComposerEditorHeight: CGFloat {
-        min(224, max(32, desktopTypedTurnComposerMeasuredHeight))
+        min(176, max(24, desktopTypedTurnComposerMeasuredHeight))
     }
 
     private var desktopTypedTurnComposerDraftBinding: Binding<String> {
@@ -6363,7 +6848,29 @@ struct DesktopSessionShellView: View {
         explicitVoiceController.isListening || explicitVoiceController.pendingRequest != nil
     }
 
-    private func startDesktopComposerDictation() {
+    private func presentDesktopComposerAttachmentPicker() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = true
+        panel.resolvesAliases = true
+        panel.title = "Attach files"
+
+        guard panel.runModal() == .OK else {
+            return
+        }
+
+        let selectedAttachments = panel.urls.map(DesktopComposerAttachmentSelection.init(url:))
+        for attachment in selectedAttachments where !desktopComposerAttachmentSelections.contains(attachment) {
+            desktopComposerAttachmentSelections.append(attachment)
+        }
+    }
+
+    private func removeDesktopComposerAttachment(_ attachment: DesktopComposerAttachmentSelection) {
+        desktopComposerAttachmentSelections.removeAll { $0 == attachment }
+    }
+
+    private func startDesktopComposerVoiceTurn() {
         let wakeDispatchInFlight = desktopWakeListenerController.listenerState == .dispatching
         desktopWakeListenerController.haltCaptureSession()
         if !wakeDispatchInFlight {
@@ -6378,18 +6885,57 @@ struct DesktopSessionShellView: View {
         explicitVoiceController.startExplicitVoiceTurn()
     }
 
-    private func stopDesktopComposerDictationAndKeepDraft() {
-        let transcriptPreview = explicitVoiceController.transcriptPreview
+    private func stopDesktopComposerVoiceTurnAndSend() {
+        explicitVoiceController.stopCaptureAndPrepareVoiceTurn()
+    }
+
+    private var desktopComposerHasLocalAttachments: Bool {
+        !desktopComposerAttachmentSelections.isEmpty
+    }
+
+    private var desktopComposerHasSubmissionContent: Bool {
+        !desktopPreparedTypedComposerSubmissionText
             .trimmingCharacters(in: .whitespacesAndNewlines)
+            .isEmpty
+    }
 
-        explicitVoiceController.stopCaptureAndKeepTranscriptPreview()
+    private var desktopComposerShouldShowSendButton: Bool {
+        desktopComposerHasSubmissionContent && !explicitVoiceController.isListening
+    }
 
-        if !transcriptPreview.isEmpty {
-            if !desktopTypedTurnDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                desktopTypedTurnDraft += " " + transcriptPreview
-            } else {
-                desktopTypedTurnDraft = transcriptPreview
+    private var desktopVisibleComposerPlaceholder: String {
+        desktopComposerHasLocalAttachments ? "Add a message about these files" : "Ask anything"
+    }
+
+    private var desktopComposerAttachmentChips: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(desktopComposerAttachmentSelections) { attachment in
+                    HStack(spacing: 8) {
+                        Image(systemName: "doc")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(.secondary)
+
+                        Text(attachment.displayName)
+                            .font(.system(size: 13, weight: .medium))
+                            .lineLimit(1)
+
+                        Button {
+                            removeDesktopComposerAttachment(attachment)
+                        } label: {
+                            Image(systemName: "xmark")
+                                .font(.system(size: 10, weight: .bold))
+                                .foregroundStyle(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 7)
+                    .background(Color.primary.opacity(0.05))
+                    .clipShape(Capsule())
+                }
             }
+            .padding(.bottom, 2)
         }
     }
 
@@ -6485,85 +7031,113 @@ struct DesktopSessionShellView: View {
     }
 
     private var desktopTypedTurnComposerCard: some View {
-        HStack(alignment: .bottom, spacing: 14) {
-            Button {
-                // The leading affordance is visual-only for this correction pass.
-            } label: {
-                Image(systemName: "plus")
-                    .font(.system(size: 24, weight: .light))
-                    .foregroundStyle(Color.primary.opacity(0.92))
-                    .frame(width: 40, height: 40)
+        VStack(alignment: .leading, spacing: 12) {
+            if desktopComposerHasLocalAttachments {
+                desktopComposerAttachmentChips
             }
-            .buttonStyle(.plain)
 
-            ZStack(alignment: .topLeading) {
-                if desktopVisibleTypedTurnDraft.isEmpty {
-                    Text("Ask anything")
-                        .font(.system(size: 18))
-                        .foregroundStyle(.secondary)
-                        .padding(.top, 7)
-                }
-
-                DesktopChatComposerTextView(
-                    text: desktopTypedTurnComposerDraftBinding,
-                    measuredHeight: $desktopTypedTurnComposerMeasuredHeight,
-                    isEditable: !desktopTypedTurnComposerEditingInterlocksActive
-                ) {
-                    submitDesktopTypedTurnFromPrimaryControl()
-                }
-                .frame(height: desktopTypedTurnComposerEditorHeight)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-
-            HStack(spacing: 12) {
+            HStack(alignment: .bottom, spacing: 12) {
                 Button {
-                    if explicitVoiceController.isListening {
-                        stopDesktopComposerDictationAndKeepDraft()
-                    } else {
-                        startDesktopComposerDictation()
-                    }
+                    presentDesktopComposerAttachmentPicker()
                 } label: {
-                    Image(systemName: "mic")
-                        .font(.system(size: 18, weight: .medium))
+                    Image(systemName: "plus")
+                        .font(.system(size: 20, weight: .light))
                         .foregroundStyle(Color.primary.opacity(0.92))
-                        .frame(width: 28, height: 28)
+                        .frame(width: 34, height: 34)
                 }
                 .buttonStyle(.plain)
-                .disabled(explicitVoiceController.pendingRequest != nil)
 
-                Button {
-                    if explicitVoiceController.isListening {
-                        stopDesktopComposerDictationAndKeepDraft()
-                    } else {
-                        startDesktopComposerDictation()
+                ZStack(alignment: .topLeading) {
+                    if desktopVisibleTypedTurnDraft.isEmpty {
+                        Text(desktopVisibleComposerPlaceholder)
+                            .font(.system(size: 16))
+                            .foregroundStyle(.secondary)
+                            .padding(.top, 2)
                     }
-                } label: {
-                    Image(systemName: "waveform")
-                        .font(.system(size: 19, weight: .semibold))
-                        .foregroundStyle(desktopComposerShouldShowWaveformActiveState ? .primary : .secondary)
-                        .frame(width: 40, height: 40)
-                        .background(
-                            desktopComposerShouldShowWaveformActiveState
-                                ? Color.primary.opacity(0.10)
-                                : Color.primary.opacity(0.06)
-                        )
-                        .clipShape(Circle())
+
+                    DesktopChatComposerTextView(
+                        text: desktopTypedTurnComposerDraftBinding,
+                        measuredHeight: $desktopTypedTurnComposerMeasuredHeight,
+                        isEditable: !desktopTypedTurnComposerEditingInterlocksActive
+                    ) {
+                        submitDesktopTypedTurnFromPrimaryControl()
+                    }
+                    .frame(height: desktopTypedTurnComposerEditorHeight)
                 }
-                .buttonStyle(.plain)
-                .disabled(explicitVoiceController.pendingRequest != nil)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+                HStack(spacing: 10) {
+                    if explicitVoiceController.isListening || !desktopComposerShouldShowSendButton {
+                        Button {
+                            if explicitVoiceController.isListening {
+                                stopDesktopComposerVoiceTurnAndSend()
+                            } else {
+                                startDesktopComposerVoiceTurn()
+                            }
+                        } label: {
+                            Image(systemName: explicitVoiceController.isListening ? "stop.fill" : "mic")
+                                .font(.system(size: 17, weight: .medium))
+                                .foregroundStyle(Color.primary.opacity(0.92))
+                                .frame(width: 28, height: 28)
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(explicitVoiceController.pendingRequest != nil)
+                    }
+
+                    Button {
+                        if explicitVoiceController.isListening {
+                            stopDesktopComposerVoiceTurnAndSend()
+                        } else {
+                            startDesktopComposerVoiceTurn()
+                        }
+                    } label: {
+                        Image(systemName: "waveform")
+                            .font(.system(size: 18, weight: .semibold))
+                            .foregroundStyle(desktopComposerShouldShowWaveformActiveState ? .primary : .secondary)
+                            .frame(width: 36, height: 36)
+                            .background(
+                                desktopComposerShouldShowWaveformActiveState
+                                    ? Color.primary.opacity(0.10)
+                                    : Color.primary.opacity(0.06)
+                            )
+                            .clipShape(Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(explicitVoiceController.pendingRequest != nil)
+
+                    if desktopComposerShouldShowSendButton {
+                        Button {
+                            submitDesktopTypedTurnFromPrimaryControl()
+                        } label: {
+                            Image(systemName: "arrow.up")
+                                .font(.system(size: 16, weight: .semibold))
+                                .foregroundStyle(.white)
+                                .frame(width: 40, height: 40)
+                                .background(Color.black)
+                                .clipShape(Circle())
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(!desktopComposerHasSubmissionContent || desktopTypedTurnComposerSubmissionInterlocksActive)
+                        .opacity(
+                            (!desktopComposerHasSubmissionContent || desktopTypedTurnComposerSubmissionInterlocksActive)
+                                ? 0.45
+                                : 1
+                        )
+                    }
+                }
+                .padding(.bottom, 2)
             }
-            .padding(.bottom, 4)
         }
-        .padding(.horizontal, 22)
-        .padding(.vertical, 18)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color.white)
-        .clipShape(RoundedRectangle(cornerRadius: 38, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 38, style: .continuous)
+            RoundedRectangle(cornerRadius: 28, style: .continuous)
                 .stroke(Color.primary.opacity(0.12), lineWidth: 1)
         )
-        .shadow(color: Color.black.opacity(0.05), radius: 16, x: 0, y: 8)
+        .shadow(color: Color.black.opacity(0.04), radius: 10, x: 0, y: 5)
     }
 
     private var desktopToolRequestAuthoringCard: some View {
@@ -12082,7 +12656,7 @@ struct DesktopSessionShellView: View {
             }
             .padding(.horizontal, 18)
             .padding(.vertical, 16)
-            .frame(maxWidth: 760, alignment: .leading)
+            .frame(maxWidth: 500, alignment: .leading)
             .background(bubbleColor)
             .overlay(
                 RoundedRectangle(cornerRadius: 22, style: .continuous)
@@ -17236,9 +17810,26 @@ struct DesktopSessionShellView: View {
                     text: outcomeState.authoritativeResponseText,
                     conversationKey: conversationKey
                 )
+                if outcomeState.authoritativeResponseText?
+                    .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
+                    playAuthoritativeReply()
+                } else {
+                    desktopPersistMissingReplyMessageIfNeeded(
+                        requestID: pendingRequest.id,
+                        inputMode: .explicitVoice,
+                        conversationKey: conversationKey
+                    )
+                }
             } else {
                 desktopAuthoritativeReplyRenderState = nil
                 desktopAuthoritativeReplyProvenanceRenderState = nil
+                desktopPersistRuntimeFailureReplyIfNeeded(
+                    requestID: pendingRequest.id,
+                    summary: outcomeState.summary,
+                    reasonCode: outcomeState.reasonCode,
+                    failureClass: outcomeState.failureClass,
+                    conversationKey: conversationKey
+                )
             }
             explicitVoiceController.clearPendingPreparedVoiceTurn()
         } catch {
@@ -17264,6 +17855,13 @@ struct DesktopSessionShellView: View {
                 requestID: pendingRequest.id,
                 inputMode: .explicitVoice,
                 text: pendingRequest.transcript,
+                conversationKey: conversationKey
+            )
+            desktopPersistRuntimeFailureReplyIfNeeded(
+                requestID: pendingRequest.id,
+                summary: "The canonical runtime bridge could not deliver the bounded explicit voice request.",
+                reasonCode: "desktop_runtime_bridge_failure",
+                failureClass: "RetryableRuntime",
                 conversationKey: conversationKey
             )
             explicitVoiceController.clearPendingPreparedVoiceTurn()
@@ -17429,9 +18027,24 @@ struct DesktopSessionShellView: View {
                     text: outcomeState.authoritativeResponseText,
                     conversationKey: conversationKey
                 )
+                if outcomeState.authoritativeResponseText?
+                    .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false {
+                    desktopPersistMissingReplyMessageIfNeeded(
+                        requestID: pendingRequest.id,
+                        inputMode: .typed,
+                        conversationKey: conversationKey
+                    )
+                }
             } else {
                 desktopAuthoritativeReplyRenderState = nil
                 desktopAuthoritativeReplyProvenanceRenderState = nil
+                desktopPersistRuntimeFailureReplyIfNeeded(
+                    requestID: pendingRequest.id,
+                    summary: outcomeState.summary,
+                    reasonCode: outcomeState.reasonCode,
+                    failureClass: outcomeState.failureClass,
+                    conversationKey: conversationKey
+                )
             }
             desktopTypedTurnPendingRequest = nil
         } catch {
@@ -17458,6 +18071,13 @@ struct DesktopSessionShellView: View {
                     requestID: pendingRequest.id,
                     inputMode: .typed,
                     text: pendingRequest.text,
+                    conversationKey: conversationKey
+                )
+                desktopPersistRuntimeFailureReplyIfNeeded(
+                    requestID: pendingRequest.id,
+                    summary: "The canonical runtime bridge could not deliver the bounded typed-turn request.",
+                    reasonCode: "desktop_runtime_bridge_failure",
+                    failureClass: "RetryableRuntime",
                     conversationKey: conversationKey
                 )
             }
@@ -17531,7 +18151,7 @@ struct DesktopSessionShellView: View {
     }
 
     private func submitDesktopTypedTurn() {
-        let preservedVisibleDraft = trimmedDesktopVisibleTypedTurnDraft
+        let preservedVisibleDraft = desktopPreparedTypedComposerSubmissionText
 
         if explicitVoiceController.isListening {
             explicitVoiceController.discardCurrentVoiceTurn()
@@ -17546,6 +18166,7 @@ struct DesktopSessionShellView: View {
         ) {
         case .none:
             desktopTypedTurnDraft = ""
+            desktopComposerAttachmentSelections = []
         case .emptyDraft:
             return
         case .byteLimit:
