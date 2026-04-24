@@ -77,6 +77,7 @@ impl Validate for PolicyContextRef {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Ph1dProviderTask {
+    LlmInterpret,
     OcrTextExtract,
     SttTranscribe,
 }
@@ -84,6 +85,7 @@ pub enum Ph1dProviderTask {
 impl Ph1dProviderTask {
     pub const fn as_str(self) -> &'static str {
         match self {
+            Ph1dProviderTask::LlmInterpret => "LLM_INTERPRET",
             Ph1dProviderTask::OcrTextExtract => "OCR_TEXT_EXTRACT",
             Ph1dProviderTask::SttTranscribe => "STT_TRANSCRIBE",
         }
@@ -109,6 +111,7 @@ impl Ph1dProviderRouteClass {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Ph1dProviderInputPayloadKind {
+    Text,
     Image,
     Document,
     Audio,
@@ -117,6 +120,7 @@ pub enum Ph1dProviderInputPayloadKind {
 impl Ph1dProviderInputPayloadKind {
     pub const fn as_str(self) -> &'static str {
         match self {
+            Ph1dProviderInputPayloadKind::Text => "TEXT",
             Ph1dProviderInputPayloadKind::Image => "IMAGE",
             Ph1dProviderInputPayloadKind::Document => "DOCUMENT",
             Ph1dProviderInputPayloadKind::Audio => "AUDIO",

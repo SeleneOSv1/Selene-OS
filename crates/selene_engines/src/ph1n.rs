@@ -216,6 +216,17 @@ fn looks_like_bcast_urgent_followup_policy_update(lower: &str) -> bool {
     has_urgent && has_followup && has_update_verb && has_behavior_hint
 }
 
+fn looks_like_time_query(lower: &str) -> bool {
+    lower == "time"
+        || lower.starts_with("time ")
+        || lower.contains("what time")
+        || lower.contains("current time")
+        || lower.contains("local time")
+        || lower.contains("what is the time")
+        || lower.contains("what's the time")
+        || lower.contains("tell me the time")
+}
+
 fn looks_like_web_search(lower: &str) -> bool {
     (contains_word(lower, "search")
         && (contains_word(lower, "web")
@@ -428,11 +439,7 @@ fn detect_intents(lower: &str) -> Vec<IntentType> {
     {
         push(IntentType::MemoryRememberRequest);
     }
-    if s.contains("what time")
-        || s == "time"
-        || s.starts_with("time ")
-        || s.contains("current time")
-    {
+    if looks_like_time_query(s) {
         push(IntentType::TimeQuery);
     }
     if looks_like_web_search(s) {
@@ -3956,6 +3963,22 @@ mod tests {
                 assert_eq!(c.accepted_answer_formats.len(), 3);
             }
             _ => panic!("expected clarify"),
+        }
+    }
+
+    #[test]
+    fn at_n_38_time_in_new_york_is_deterministic_time_query() {
+        let rt = Ph1nRuntime::new(Ph1nConfig::mvp_v1());
+        let out = rt
+            .run(&req("Selene what is the time in New York", "en"))
+            .unwrap();
+        match out {
+            Ph1nResponse::IntentDraft(d) => {
+                assert_eq!(d.intent_type, IntentType::TimeQuery);
+                assert_eq!(d.overall_confidence, OverallConfidence::High);
+                assert!(!d.requires_confirmation);
+            }
+            _ => panic!("expected deterministic time intent"),
         }
     }
 }

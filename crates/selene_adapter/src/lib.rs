@@ -6,9 +6,11 @@ use std::fs::{self, File, OpenOptions};
 use std::hash::{Hash, Hasher};
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
+use selene_engines::device_vault;
 use selene_engines::ph1_voice_id::VoiceIdObservation as EngineVoiceIdObservation;
 use selene_engines::ph1c::{
     reason_codes as ph1c_reason_codes, Ph1cConfig as EnginePh1cConfig, Ph1cLiveProviderContext,
@@ -54,8 +56,10 @@ use selene_kernel_contracts::ph1c::{
 };
 use selene_kernel_contracts::ph1context::{Ph1ContextRequest, Ph1ContextResponse};
 use selene_kernel_contracts::ph1d::{
-    Ph1dFailureKind, Ph1dOk, Ph1dProviderCallRequest, Ph1dProviderCallResponse, Ph1dResponse,
-    PolicyContextRef, SafetyTier,
+    Ph1dFailureKind, Ph1dOk, Ph1dProviderCallRequest, Ph1dProviderCallResponse,
+    Ph1dProviderInputPayloadKind, Ph1dProviderRouteClass, Ph1dProviderStatus, Ph1dProviderTask,
+    Ph1dProviderValidationStatus, Ph1dRequest, Ph1dResponse, PolicyContextRef, RequestId,
+    SafetyTier, SchemaHash, PH1D_PROVIDER_NORMALIZED_OUTPUT_SCHEMA_HASH_V1,
 };
 use selene_kernel_contracts::ph1e::{
     CacheStatus, ToolCatalogRef, ToolName, ToolResponse, ToolStatus,
@@ -84,7 +88,7 @@ use selene_kernel_contracts::ph1l::{
 use selene_kernel_contracts::ph1learn::{LearnSignalType, WakeLearnSignalV1, WakeLearnTrigger};
 use selene_kernel_contracts::ph1link::{AppPlatform, TokenId};
 use selene_kernel_contracts::ph1m::MemoryResumeTier;
-use selene_kernel_contracts::ph1n::{Chat as Ph1nChat, Ph1nRequest, Ph1nResponse};
+use selene_kernel_contracts::ph1n::{Chat as Ph1nChat, Ph1nRequest, Ph1nResponse, TranscriptHash};
 use selene_kernel_contracts::ph1onb::{
     OnboardingNextStep, OnboardingSessionId, SenderVerifyDecision,
 };
@@ -103,6 +107,7 @@ use selene_kernel_contracts::ph1w::{
 use selene_kernel_contracts::ph1x::{
     ConfirmAnswer, PendingState, Ph1xDirective, ThreadPolicyFlags, ThreadState,
 };
+use selene_kernel_contracts::provider_secrets::ProviderSecretId;
 use selene_kernel_contracts::runtime_execution::{
     default_device_class_for_platform, default_hardware_capability_profile,
     supported_capabilities_for_platform, AdmissionState, ClientCompatibilityStatus,
@@ -119,10 +124,9 @@ use selene_kernel_contracts::{
 use selene_os::app_ingress::{
     AppInviteLinkOpenRequest, AppOnboardingContinueAction, AppOnboardingContinueNextStep,
     AppOnboardingContinueRequest, AppServerIngressRuntime, AppSessionAttachRequest,
-    AppSessionPostureEvidenceRequest, AppSessionRecentListRequest,
-    AppSessionRecoverRequest, AppSessionResumeRequest, AppVoiceIngressRequest,
-    AppVoicePh1xBuildInput, AppVoiceTurnExecutionOutcome, AppVoiceTurnNextMove,
-    AppWakeProfileAvailabilityRefreshRequest,
+    AppSessionPostureEvidenceRequest, AppSessionRecentListRequest, AppSessionRecoverRequest,
+    AppSessionResumeRequest, AppVoiceIngressRequest, AppVoicePh1xBuildInput,
+    AppVoiceTurnExecutionOutcome, AppVoiceTurnNextMove, AppWakeProfileAvailabilityRefreshRequest,
 };
 use selene_os::device_artifact_sync::DeviceArtifactSyncWorkerPassMetrics;
 use selene_os::ph1_voice_id::{
@@ -1288,10 +1292,25 @@ struct Ph1cLiveTurnOutcomeSummary {
     provider_call_trace: Vec<Ph1dProviderCallResponse>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 struct EnvPh1dLiveAdapter {
     provider_id: String,
     model_id: String,
+    endpoint: String,
+    api_key: String,
+    timeout_ms: u32,
+}
+
+impl std::fmt::Debug for EnvPh1dLiveAdapter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("EnvPh1dLiveAdapter")
+            .field("provider_id", &self.provider_id)
+            .field("model_id", &self.model_id)
+            .field("endpoint", &self.endpoint)
+            .field("api_key", &"<redacted>")
+            .field("timeout_ms", &self.timeout_ms)
+            .finish()
+    }
 }
 
 impl EnvPh1dLiveAdapter {
@@ -1300,29 +1319,306 @@ impl EnvPh1dLiveAdapter {
             .ok()
             .map(|v| truncate_ascii(v.trim(), 64))
             .filter(|v| !v.is_empty())
-            .ok_or_else(|| "missing SELENE_PH1D_LIVE_PROVIDER_ID".to_string())?;
+            .unwrap_or_else(|| "openai".to_string());
+        if provider_id != "openai" && provider_id != "openai_primary" {
+            return Err(format!(
+                "unsupported SELENE_PH1D_LIVE_PROVIDER_ID={provider_id}"
+            ));
+        }
         let model_id = env::var("SELENE_PH1D_LIVE_MODEL_ID")
+            .or_else(|_| env::var("OPENAI_MODEL"))
             .ok()
             .map(|v| truncate_ascii(v.trim(), 128))
             .filter(|v| !v.is_empty())
-            .unwrap_or_else(|| "ph1d_live_model_default".to_string());
+            .unwrap_or_else(|| "gpt-4o-mini".to_string());
+        let endpoint = env::var("OPENAI_RESPONSES_URL")
+            .ok()
+            .map(|v| truncate_ascii(v.trim(), 256))
+            .filter(|v| !v.is_empty())
+            .unwrap_or_else(|| "https://api.openai.com/v1/responses".to_string());
+        let api_key = env::var("OPENAI_API_KEY")
+            .ok()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+            .or_else(|| {
+                device_vault::resolve_secret(ProviderSecretId::OpenAIApiKey.as_str())
+                    .ok()
+                    .flatten()
+            })
+            .ok_or_else(|| "missing openai_api_key provider secret".to_string())?;
+        let timeout_ms = env::var("SELENE_PH1D_LIVE_TIMEOUT_MS")
+            .ok()
+            .and_then(|value| value.trim().parse::<u32>().ok())
+            .filter(|value| (100..=120_000).contains(value))
+            .unwrap_or(30_000);
         Ok(Self {
             provider_id,
             model_id,
+            endpoint,
+            api_key,
+            timeout_ms,
         })
+    }
+
+    fn build_llm_interpret_request(
+        &self,
+        correlation_id: CorrelationId,
+        turn_id: TurnId,
+        tenant_id: &str,
+        input: &str,
+    ) -> Result<Ph1dProviderCallRequest, String> {
+        let request_seed = format!(
+            "ph1d_llm_interpret:{}:{}:{}:{}",
+            correlation_id.0, turn_id.0, tenant_id, input
+        );
+        let request_id = RequestId(stable_hash_u64(&request_seed));
+        let idempotency_key = sanitize_idempotency_token(&format!(
+            "ph1d_llm_interpret_{}_{}",
+            correlation_id.0, turn_id.0
+        ));
+        Ph1dProviderCallRequest::v1(
+            correlation_id_to_u64(correlation_id),
+            turn_id.0.max(1),
+            truncate_ascii(tenant_id, 64),
+            request_id,
+            idempotency_key,
+            Ph1dProviderTask::LlmInterpret,
+            Ph1dProviderRouteClass::Primary,
+            self.provider_id.clone(),
+            self.model_id.clone(),
+            self.timeout_ms,
+            1,
+            Some("ph1d_public_chat_answer_v1".to_string()),
+            None,
+            selene_kernel_contracts::SchemaVersion(1),
+            PH1D_PROVIDER_NORMALIZED_OUTPUT_SCHEMA_HASH_V1,
+            SchemaHash(stable_hash_u64("ph1d_public_chat_tool_catalog_none")),
+            SchemaHash(stable_hash_u64("ph1d_public_chat_policy_context_standard")),
+            Some(TranscriptHash(stable_hash_u64(input))),
+            sanitize_idempotency_token(&format!(
+                "ph1d_public_chat_input_{}_{}",
+                correlation_id.0, turn_id.0
+            )),
+            Ph1dProviderInputPayloadKind::Text,
+            SchemaHash(stable_hash_u64(input)),
+            Some(truncate_ascii(input.trim(), 32_768)),
+            Some("text/plain".to_string()),
+            SafetyTier::Standard,
+            false,
+            false,
+        )
+        .map_err(|err| format!("ph1d provider request contract failed: {err:?}"))
     }
 }
 
 impl Ph1dProviderAdapter for EnvPh1dLiveAdapter {
     fn execute(
         &self,
-        _req: &Ph1dProviderCallRequest,
+        req: &Ph1dProviderCallRequest,
     ) -> Result<Ph1dProviderCallResponse, Ph1dProviderAdapterError> {
-        Err(Ph1dProviderAdapterError::terminal(format!(
-            "ph1d live provider adapter unavailable for provider={} model={}",
-            self.provider_id, self.model_id
-        )))
+        if req.provider_task != Ph1dProviderTask::LlmInterpret {
+            return Err(Ph1dProviderAdapterError::terminal(format!(
+                "ph1d live provider adapter does not support provider_task={}",
+                req.provider_task.as_str()
+            )));
+        }
+        let input = req
+            .input_payload_inline
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| {
+                Ph1dProviderAdapterError::terminal(
+                    "ph1d llm interpret request missing input_payload_inline".to_string(),
+                )
+            })?;
+        let payload = openai_llm_interpret_payload(&self.model_id, input);
+        let payload_text = serde_json::to_string(&payload).map_err(|_| {
+            Ph1dProviderAdapterError::terminal("ph1d openai payload encode failed".to_string())
+        })?;
+        let start = Instant::now();
+        let timeout_seconds = ((self.timeout_ms / 1000).max(1)).to_string();
+        let mut child = Command::new("sh")
+            .arg("-c")
+            .arg("curl -fsS --connect-timeout \"$SELENE_CURL_CONNECT_TIMEOUT\" --max-time \"$SELENE_CURL_MAX_TIME\" -H 'Content-Type: application/json' -H 'Accept: application/json' -H \"Authorization: Bearer $OPENAI_API_KEY\" --data-binary @- \"$OPENAI_RESPONSES_URL\"")
+            .env("OPENAI_API_KEY", &self.api_key)
+            .env("OPENAI_RESPONSES_URL", &self.endpoint)
+            .env("SELENE_CURL_CONNECT_TIMEOUT", &timeout_seconds)
+            .env("SELENE_CURL_MAX_TIME", &timeout_seconds)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|err| {
+                Ph1dProviderAdapterError::retryable(format!(
+                    "ph1d openai provider launch failed: {}",
+                    err.kind()
+                ))
+            })?;
+        if let Some(stdin) = child.stdin.as_mut() {
+            stdin.write_all(payload_text.as_bytes()).map_err(|err| {
+                Ph1dProviderAdapterError::retryable(format!(
+                    "ph1d openai provider payload write failed: {}",
+                    err.kind()
+                ))
+            })?;
+        }
+        let output = child.wait_with_output().map_err(|err| {
+            Ph1dProviderAdapterError::retryable(format!(
+                "ph1d openai provider wait failed: {}",
+                err.kind()
+            ))
+        })?;
+        let latency_ms = start.elapsed().as_millis().min(120_000) as u32;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(Ph1dProviderAdapterError::retryable(format!(
+                "ph1d openai provider failed status={} detail={}",
+                output.status.code().unwrap_or_default(),
+                safe_provider_error_detail(&stderr)
+            )));
+        }
+        let root: serde_json::Value = serde_json::from_slice(&output.stdout).map_err(|_| {
+            Ph1dProviderAdapterError::retryable("ph1d openai response json_parse".to_string())
+        })?;
+        let provider_call_id = root
+            .get("id")
+            .and_then(|value| value.as_str())
+            .map(|value| truncate_ascii(value.trim(), 128))
+            .filter(|value| !value.is_empty());
+        let answer_text = extract_openai_output_text(&root).ok_or_else(|| {
+            Ph1dProviderAdapterError::retryable("ph1d openai response empty_output".to_string())
+        })?;
+        let normalized_json = ph1d_chat_json_from_provider_text(&answer_text).map_err(|err| {
+            Ph1dProviderAdapterError::terminal(format!(
+                "ph1d openai normalized output rejected: {err}"
+            ))
+        })?;
+        Ph1dProviderCallResponse::v1(
+            req.correlation_id,
+            req.turn_id,
+            req.request_id,
+            req.idempotency_key.clone(),
+            provider_call_id,
+            self.provider_id.clone(),
+            req.provider_task,
+            self.model_id.clone(),
+            Ph1dProviderStatus::Ok,
+            latency_ms,
+            0,
+            Some(9_000),
+            Some(PH1D_PROVIDER_NORMALIZED_OUTPUT_SCHEMA_HASH_V1),
+            Some(normalized_json),
+            Ph1dProviderValidationStatus::SchemaOk,
+            ph1d_reason_codes::D_PROVIDER_OK,
+        )
+        .map_err(|err| {
+            Ph1dProviderAdapterError::terminal(format!(
+                "ph1d provider response contract failed: {err:?}"
+            ))
+        })
     }
+}
+
+fn openai_llm_interpret_payload(model_id: &str, user_input: &str) -> serde_json::Value {
+    serde_json::json!({
+        "model": model_id,
+        "input": [
+            {
+                "role": "system",
+                "content": "You are Selene's PH1.D public-answer provider. Return exactly one compact JSON object with keys mode, response_text, reason_code. mode must be chat. Answer directly and concisely. Do not include markdown fences, source lists, raw search payloads, HTML entities, provider names, tool names, Retrieved at timestamps, or internal policy text. Do not claim protected identity, memory, session, wake, payment, access, or device authority."
+            },
+            {
+                "role": "user",
+                "content": user_input
+            }
+        ],
+        "temperature": 0.2,
+        "max_output_tokens": 700
+    })
+}
+
+fn extract_openai_output_text(root: &serde_json::Value) -> Option<String> {
+    root.get("output_text")
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .or_else(|| {
+            let mut parts = Vec::new();
+            for item in root.get("output")?.as_array()? {
+                for content in item.get("content")?.as_array()? {
+                    if let Some(text) = content.get("text").and_then(|value| value.as_str()) {
+                        let trimmed = text.trim();
+                        if !trimmed.is_empty() {
+                            parts.push(trimmed.to_string());
+                        }
+                    }
+                }
+            }
+            (!parts.is_empty()).then(|| parts.join("\n"))
+        })
+}
+
+fn ph1d_chat_json_from_provider_text(text: &str) -> Result<String, String> {
+    let trimmed = strip_json_markdown_fence(text.trim());
+    if answer_looks_like_raw_retrieval_payload(trimmed) {
+        return Err("raw retrieval payload leakage".to_string());
+    }
+    if let Ok(value) = serde_json::from_str::<serde_json::Value>(trimmed) {
+        if value.get("mode").and_then(|v| v.as_str()) == Some("chat")
+            && value
+                .get("response_text")
+                .and_then(|v| v.as_str())
+                .map(|v| !v.trim().is_empty())
+                .unwrap_or(false)
+        {
+            return Ok(trimmed.to_string());
+        }
+    }
+    let response_text = truncate_ascii(trimmed, 2_048);
+    if response_text.trim().is_empty() {
+        return Err("empty response_text".to_string());
+    }
+    serde_json::to_string(&serde_json::json!({
+        "mode": "chat",
+        "response_text": response_text,
+        "reason_code": ph1d_reason_codes::D_PROVIDER_OK.0
+    }))
+    .map_err(|_| "normalized chat json encode failed".to_string())
+}
+
+fn strip_json_markdown_fence(value: &str) -> &str {
+    let trimmed = value.trim();
+    if let Some(rest) = trimmed.strip_prefix("```json") {
+        return rest.trim().trim_end_matches("```").trim();
+    }
+    if let Some(rest) = trimmed.strip_prefix("```") {
+        return rest.trim().trim_end_matches("```").trim();
+    }
+    trimmed
+}
+
+fn answer_looks_like_raw_retrieval_payload(value: &str) -> bool {
+    let lower = value.to_ascii_lowercase();
+    lower.contains("retrieved at (unix_ms)")
+        || lower.contains("&x27;")
+        || lower.contains("&#x27;")
+        || lower.contains("<html")
+        || lower.contains("\"web\"")
+        || lower.contains("\"results\"")
+        || lower.contains("\"output\"")
+}
+
+fn safe_provider_error_detail(value: &str) -> String {
+    truncate_ascii(
+        &value
+            .split_whitespace()
+            .filter(|token| !token.starts_with("sk-"))
+            .collect::<Vec<_>>()
+            .join(" "),
+        160,
+    )
 }
 
 #[derive(Debug, Clone)]
@@ -1766,7 +2062,9 @@ impl AdapterRuntime {
         evidence.session_attach_outcome = evidence
             .session_attach_outcome
             .or(persistence_evidence.session_attach_outcome);
-        evidence.recovery_mode = evidence.recovery_mode.or(persistence_evidence.recovery_mode);
+        evidence.recovery_mode = evidence
+            .recovery_mode
+            .or(persistence_evidence.recovery_mode);
         evidence.reconciliation_decision = evidence
             .reconciliation_decision
             .or(persistence_evidence.reconciliation_decision);
@@ -1790,7 +2088,9 @@ impl AdapterRuntime {
             resume_summary_bullets: evidence.resume_summary_bullets,
             archived_user_turn_text: evidence.archived_user_turn_text,
             archived_selene_turn_text: evidence.archived_selene_turn_text,
-            recovery_mode: evidence.recovery_mode.map(persistence_recovery_mode_to_api_value),
+            recovery_mode: evidence
+                .recovery_mode
+                .map(persistence_recovery_mode_to_api_value),
             reconciliation_decision: evidence
                 .reconciliation_decision
                 .map(reconciliation_decision_to_api_value),
@@ -1960,15 +2260,17 @@ impl AdapterRuntime {
                 )
             });
 
-        let session_attach_outcome = latest_authoritative.and_then(|outcome| match &outcome.result
-        {
-            AdapterPersistedAuthoritativeResult::Success(response) => response.session_attach_outcome,
-            AdapterPersistedAuthoritativeResult::Failure(_) => None,
-        });
+        let session_attach_outcome =
+            latest_authoritative.and_then(|outcome| match &outcome.result {
+                AdapterPersistedAuthoritativeResult::Success(response) => {
+                    response.session_attach_outcome
+                }
+                AdapterPersistedAuthoritativeResult::Failure(_) => None,
+            });
         let reconciliation_decision =
             latest_outbox.and_then(|record| record.last_reconciliation_decision);
-        let recovery_mode =
-            (latest_authoritative.is_some() || latest_outbox.is_some()).then_some(guard.recovery_mode);
+        let recovery_mode = (latest_authoritative.is_some() || latest_outbox.is_some())
+            .then_some(guard.recovery_mode);
 
         Ok(SessionPosturePersistenceEvidence {
             session_attach_outcome,
@@ -3651,6 +3953,111 @@ impl AdapterRuntime {
         Ok(())
     }
 
+    fn maybe_run_ph1d_public_answer(
+        &self,
+        correlation_id: CorrelationId,
+        turn_id: TurnId,
+        tenant_id: Option<&str>,
+        session_state: SessionState,
+        user_text: Option<&str>,
+        execution_outcome: &mut AppVoiceTurnExecutionOutcome,
+    ) -> Option<String> {
+        if !execution_outcome_is_public_no_intent(execution_outcome) {
+            return None;
+        }
+        let Some(user_text) = user_text.map(str::trim).filter(|value| !value.is_empty()) else {
+            return None;
+        };
+        let answer = match self.ph1d_live_adapter.as_ref() {
+            Some(adapter) => match self.run_ph1d_public_answer(
+                adapter,
+                correlation_id,
+                turn_id,
+                tenant_id.unwrap_or("tenant_default"),
+                session_state,
+                user_text,
+            ) {
+                Ok(answer) => answer,
+                Err(err) => {
+                    eprintln!("selene_adapter ph1d public answer failed: {err}");
+                    "I couldn't answer that just now. Please try again.".to_string()
+                }
+            },
+            None => "I couldn't answer that just now. Please try again.".to_string(),
+        };
+        execution_outcome.response_text = Some(answer.clone());
+        Some(answer)
+    }
+
+    fn run_ph1d_public_answer(
+        &self,
+        adapter: &EnvPh1dLiveAdapter,
+        correlation_id: CorrelationId,
+        turn_id: TurnId,
+        tenant_id: &str,
+        session_state: SessionState,
+        user_text: &str,
+    ) -> Result<String, String> {
+        let provider_request =
+            adapter.build_llm_interpret_request(correlation_id, turn_id, tenant_id, user_text)?;
+        let provider_response = adapter.execute(&provider_request).map_err(|err| {
+            format!(
+                "provider_call_failed retryable={} {}",
+                err.retryable, err.message
+            )
+        })?;
+        if provider_response.provider_status != Ph1dProviderStatus::Ok
+            || provider_response.validation_status != Ph1dProviderValidationStatus::SchemaOk
+        {
+            return Err("provider_call_not_schema_ok".to_string());
+        }
+        let raw_json = provider_response
+            .normalized_output_json
+            .clone()
+            .ok_or_else(|| "provider_call_missing_normalized_output".to_string())?;
+        let transcript_ok = Ph1cTranscriptOk::v1(
+            user_text.to_string(),
+            LanguageTag::new("en").map_err(|err| format!("invalid ph1d language tag: {err:?}"))?,
+            Ph1cConfidenceBucket::High,
+        )
+        .map_err(|err| format!("ph1d transcript envelope build failed: {err:?}"))?;
+        let nlp_output = Ph1nResponse::Chat(
+            Ph1nChat::v1(user_text.to_string(), ph1d_reason_codes::D_PROVIDER_OK)
+                .map_err(|err| format!("ph1d nlp envelope build failed: {err:?}"))?,
+        );
+        let ph1d_request = Ph1dRequest::v1(
+            transcript_ok,
+            nlp_output,
+            Ph1cSessionStateRef::v1(session_state, false),
+            PolicyContextRef::v1(false, false, SafetyTier::Standard),
+            ToolCatalogRef::v1(vec![
+                ToolName::Time,
+                ToolName::Weather,
+                ToolName::WebSearch,
+                ToolName::News,
+                ToolName::UrlFetchAndCite,
+                ToolName::DocumentUnderstand,
+                ToolName::PhotoUnderstand,
+                ToolName::DataAnalysis,
+                ToolName::DeepResearch,
+                ToolName::RecordMode,
+            ])
+            .map_err(|err| format!("ph1d tool catalog build failed: {err:?}"))?,
+        )
+        .map_err(|err| format!("ph1d request build failed: {err:?}"))?;
+        match self
+            .ph1d_runtime
+            .run(&ph1d_request, Ph1dModelCallOutcome::Ok { raw_json })
+        {
+            Ph1dResponse::Ok(Ph1dOk::Chat(chat)) => Ok(chat.response_text),
+            Ph1dResponse::Ok(_) => Err("ph1d provider returned non-chat mode".to_string()),
+            Ph1dResponse::Fail(fail) => Err(format!(
+                "ph1d runtime fail kind={:?} reason_code={}",
+                fail.kind, fail.reason_code.0
+            )),
+        }
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn emit_ph1d_gold_capture_and_learning(
         &self,
@@ -4818,7 +5225,7 @@ impl AdapterRuntime {
                 locale,
                 last_failure_reason_code: None,
             };
-            let execution_outcome = self
+            let mut execution_outcome = self
                 .ingress
                 .run_voice_turn_end_to_end(&mut store, ingress_request, x_build)
                 .map_err(|err| post_session_error(storage_error_to_string(err)))?;
@@ -4851,6 +5258,14 @@ impl AdapterRuntime {
                 &execution_outcome.voice_outcome,
             )
             .map_err(post_session_error)?;
+            let ph1d_public_answer_text = self.maybe_run_ph1d_public_answer(
+                correlation_id,
+                turn_id,
+                tenant_id_for_ph1c.as_deref(),
+                session_turn_state.session_snapshot.session_state,
+                user_text_final.as_deref(),
+                &mut execution_outcome,
+            );
             if let Err(err) = self.emit_read_only_lane_incidents_and_maybe_run_builder(
                 &mut store,
                 now,
@@ -4875,7 +5290,7 @@ impl AdapterRuntime {
                 user_text_partial,
                 user_text_final,
                 selene_text_partial,
-                selene_text_final,
+                selene_text_final.or(ph1d_public_answer_text),
             )
             .map_err(post_session_error)?;
             if let Some(ph1c) = ph1c_live_outcome.as_ref() {
@@ -7355,9 +7770,7 @@ fn persistence_recovery_mode_to_api_value(recovery_mode: PersistenceRecoveryMode
     recovery_mode.as_str().to_string()
 }
 
-fn reconciliation_decision_to_api_value(
-    reconciliation_decision: ReconciliationDecision,
-) -> String {
+fn reconciliation_decision_to_api_value(reconciliation_decision: ReconciliationDecision) -> String {
     reconciliation_decision.as_str().to_string()
 }
 
@@ -8184,6 +8597,22 @@ fn execution_outcome_to_adapter_response(
             .as_ref()
             .map(provenance_from_tool_response),
     }
+}
+
+fn execution_outcome_is_public_no_intent(execution: &AppVoiceTurnExecutionOutcome) -> bool {
+    if execution.tool_response.is_some() {
+        return false;
+    }
+    let response_is_no_intent = execution
+        .response_text
+        .as_deref()
+        .map(str::trim)
+        .is_some_and(|text| text == "Okay. What would you like to do?");
+    let directive_is_plain_response = execution
+        .ph1x_response
+        .as_ref()
+        .is_some_and(|response| matches!(response.directive, Ph1xDirective::Respond(_)));
+    response_is_no_intent && directive_is_plain_response
 }
 
 fn sanitize_transcript_text_option(value: Option<String>) -> Option<String> {
@@ -9486,6 +9915,12 @@ fn stable_hash_hex_16(value: &str) -> String {
     format!("{:016x}", hasher.finish())
 }
 
+fn stable_hash_u64(value: &str) -> u64 {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    value.hash(&mut hasher);
+    hasher.finish().max(1)
+}
+
 fn parse_bool_env(key: &str, default: bool) -> bool {
     match env::var(key) {
         Ok(v) => !matches!(
@@ -9513,14 +9948,8 @@ fn runtime_node_id_from_env() -> String {
 }
 
 fn build_ph1d_live_adapter_from_env() -> Option<EnvPh1dLiveAdapter> {
-    if !parse_bool_env("SELENE_PH1D_LIVE_ADAPTER_ENABLED", true) {
-        return None;
-    }
-    if env::var("SELENE_PH1D_LIVE_PROVIDER_ID")
-        .ok()
-        .map(|value| value.trim().is_empty())
-        .unwrap_or(true)
-    {
+    let default_enabled = !cfg!(test);
+    if !parse_bool_env("SELENE_PH1D_LIVE_ADAPTER_ENABLED", default_enabled) {
         return None;
     }
     match EnvPh1dLiveAdapter::from_env() {
@@ -9923,21 +10352,25 @@ fn build_live_voice_id_observation(
     let Some(device) = store.get_device(device_id) else {
         return empty_observation();
     };
-    let profile = store.ph1vid_voice_profile_rows().into_iter().find(|profile| {
-        if profile.device_id != *device_id {
-            return false;
-        }
-        if let Some(tenant_scope) = tenant_scope {
-            let Some((profile_tenant, _)) = device.user_id.as_str().split_once(':') else {
-                return false;
-            };
-            if profile_tenant != tenant_scope {
+    let profile = store
+        .ph1vid_voice_profile_rows()
+        .into_iter()
+        .find(|profile| {
+            if profile.device_id != *device_id {
                 return false;
             }
-        }
+            if let Some(tenant_scope) = tenant_scope {
+                let Some((profile_tenant, _)) = device.user_id.as_str().split_once(':') else {
+                    return false;
+                };
+                if profile_tenant != tenant_scope {
+                    return false;
+                }
+            }
 
-        device.user_id == *actor_user_id || !store.ph1vid_has_voice_profile_for_user(actor_user_id)
-    });
+            device.user_id == *actor_user_id
+                || !store.ph1vid_has_voice_profile_for_user(actor_user_id)
+        });
 
     let primary_fingerprint = profile.map(|profile| {
         let fingerprint_material = format!(
@@ -12175,7 +12608,10 @@ fn session_posture_evidence_response_returns_current_device_fields_for_session()
             acknowledged_at_ns: 932,
             runtime_node_id: runtime.runtime_node_id.clone(),
             governance_policy_version: Some(
-                runtime.ingress.runtime_governance_policy_version().to_string(),
+                runtime
+                    .ingress
+                    .runtime_governance_policy_version()
+                    .to_string(),
             ),
             conflict_severity: Some(PersistenceConflictSeverity::Info),
             result: AdapterPersistedAuthoritativeResult::Success(VoiceTurnAdapterResponse {
@@ -12243,8 +12679,7 @@ fn session_posture_evidence_response_returns_resume_selection_fields_when_lawful
     let runtime = AdapterRuntime::default();
     let current_device_id =
         DeviceId::new("adapter_session_posture_resume_selection_current_device").unwrap();
-    let user_id =
-        UserId::new("tenant_1:adapter_session_posture_resume_selection_actor").unwrap();
+    let user_id = UserId::new("tenant_1:adapter_session_posture_resume_selection_actor").unwrap();
     let session_id = SessionId(5_931);
 
     seed_adapter_recent_session_record_for_last_attached_device_test(
@@ -12278,8 +12713,14 @@ fn session_posture_evidence_response_returns_resume_selection_fields_when_lawful
     assert_eq!(response.status, "ok");
     assert_eq!(response.outcome, "SESSION_POSTURE_EVIDENCE_READ");
     assert_eq!(response.session_id.as_deref(), Some("5931"));
-    assert_eq!(response.selected_thread_id.as_deref(), Some("thread_resume_hot"));
-    assert_eq!(response.selected_thread_title.as_deref(), Some("Japan ski trip"));
+    assert_eq!(
+        response.selected_thread_id.as_deref(),
+        Some("thread_resume_hot")
+    );
+    assert_eq!(
+        response.selected_thread_title.as_deref(),
+        Some("Japan ski trip")
+    );
     assert_eq!(response.pending_work_order_id, None);
     assert_eq!(response.resume_tier.as_deref(), Some("HOT"));
     assert_eq!(
@@ -12354,8 +12795,8 @@ fn session_posture_evidence_response_keeps_archived_recent_slice_fields_absent_w
     let runtime = AdapterRuntime::default();
     let current_device_id =
         DeviceId::new("adapter_session_posture_archived_recent_slice_absent_device").unwrap();
-    let user_id = UserId::new("tenant_1:adapter_session_posture_archived_recent_slice_absent_actor")
-        .unwrap();
+    let user_id =
+        UserId::new("tenant_1:adapter_session_posture_archived_recent_slice_absent_actor").unwrap();
     let session_id = SessionId(5_933);
 
     seed_adapter_recent_session_record_for_last_attached_device_test(
@@ -19229,5 +19670,112 @@ mod tests {
         assert!(html.contains("id=\"chat-send-btn\""));
         assert!(app_ui_assets::APP_CSS.contains("#section-selene"));
         assert!(app_ui_assets::APP_CSS.contains("@media (max-width: 900px)"));
+    }
+
+    #[test]
+    fn at_adapter_36_ph1d_provider_normalizes_plain_public_answer() {
+        let raw = ph1d_chat_json_from_provider_text("It's 10:42 PM in New York.")
+            .expect("plain provider answer should normalize to PH1.D chat JSON");
+        let value: serde_json::Value =
+            serde_json::from_str(&raw).expect("normalized chat JSON should parse");
+        assert_eq!(
+            value.get("mode").and_then(|value| value.as_str()),
+            Some("chat")
+        );
+        assert_eq!(
+            value.get("response_text").and_then(|value| value.as_str()),
+            Some("It's 10:42 PM in New York.")
+        );
+        assert_eq!(
+            value.get("reason_code").and_then(|value| value.as_u64()),
+            Some(ph1d_reason_codes::D_PROVIDER_OK.0 as u64)
+        );
+    }
+
+    #[test]
+    fn at_adapter_37_ph1d_provider_rejects_raw_search_dump_as_public_answer() {
+        let raw = "Current local time in USA – New York – New York.\n\nSources:\n1. Current Local Time in New York (https://example.invalid)\nRetrieved at (unix_ms): 1777042094659";
+        assert!(ph1d_chat_json_from_provider_text(raw).is_err());
+    }
+
+    #[test]
+    fn at_adapter_38_ph1d_live_adapter_builds_llm_interpret_text_request() {
+        with_isolated_device_vault(
+            "ph1d-live-openai",
+            &[("openai_api_key", "test_openai_key")],
+            &[("SELENE_PH1D_LIVE_PROVIDER_ID", "openai")],
+            || {
+                let adapter =
+                    EnvPh1dLiveAdapter::from_env().expect("OpenAI PH1.D adapter should bootstrap");
+                let request = adapter
+                    .build_llm_interpret_request(
+                        CorrelationId(61_001),
+                        TurnId(71_001),
+                        "tenant_public",
+                        "What is honesty?",
+                    )
+                    .expect("LLM interpret provider request should be contract-valid");
+                assert_eq!(request.provider_task, Ph1dProviderTask::LlmInterpret);
+                assert_eq!(
+                    request.input_payload_kind,
+                    Ph1dProviderInputPayloadKind::Text
+                );
+                assert_eq!(request.provider_id, "openai");
+                assert_eq!(
+                    request.input_payload_inline.as_deref(),
+                    Some("What is honesty?")
+                );
+            },
+        );
+    }
+
+    fn ph1d_public_no_intent_test_outcome(response_text: &str) -> AppVoiceTurnExecutionOutcome {
+        let runtime_execution_envelope = RuntimeExecutionEnvelope::v1(
+            "ph1d_public_no_intent_request".to_string(),
+            "trace:ph1d_public_no_intent".to_string(),
+            "idem:ph1d_public_no_intent".to_string(),
+            UserId::new("tenant_1:ph1d_public_no_intent_actor").unwrap(),
+            DeviceId::new("ph1d_public_no_intent_device").unwrap(),
+            AppPlatform::Desktop,
+            None,
+            TurnId(1),
+            AdmissionState::IngressValidated,
+        )
+        .unwrap();
+        let ph1x_response = selene_kernel_contracts::ph1x::Ph1xResponse::v1(
+            1,
+            1,
+            Ph1xDirective::Respond(
+                selene_kernel_contracts::ph1x::RespondDirective::v1(response_text.to_string())
+                    .unwrap(),
+            ),
+            ThreadState::empty_v1(),
+            None,
+            selene_kernel_contracts::ph1x::DeliveryHint::AudibleAndText,
+            ReasonCodeId(1),
+            Some("ph1d_public_no_intent".to_string()),
+        )
+        .unwrap();
+        AppVoiceTurnExecutionOutcome {
+            runtime_execution_envelope,
+            voice_outcome: OsVoiceLiveTurnOutcome::NotInvokedDisabled,
+            session_state: SessionState::Active,
+            next_move: AppVoiceTurnNextMove::Respond,
+            ph1x_request: None,
+            ph1x_response: Some(ph1x_response),
+            dispatch_outcome: None,
+            tool_response: None,
+            response_text: Some(response_text.to_string()),
+            reason_code: Some(ReasonCodeId(1)),
+        }
+    }
+
+    #[test]
+    fn at_adapter_39_ph1d_public_answer_gate_only_intercepts_plain_no_intent() {
+        let no_intent = ph1d_public_no_intent_test_outcome("Okay. What would you like to do?");
+        assert!(execution_outcome_is_public_no_intent(&no_intent));
+
+        let normal_answer = ph1d_public_no_intent_test_outcome("The answer is 4.");
+        assert!(!execution_outcome_is_public_no_intent(&normal_answer));
     }
 }

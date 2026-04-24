@@ -12,7 +12,6 @@ use selene_kernel_contracts::ph1n::{
     AmbiguityFlag, FieldKey, FieldValue, IntentDraft, IntentField, IntentType, OverallConfidence,
     Ph1nResponse,
 };
-use selene_kernel_contracts::provider_secrets::ProviderSecretId;
 use selene_kernel_contracts::ph1tts::TtsControl;
 use selene_kernel_contracts::ph1x::{
     ClarifyDirective, ConfirmDirective, DeliveryHint, DispatchDirective, IdentityContext,
@@ -21,6 +20,7 @@ use selene_kernel_contracts::ph1x::{
     StepUpActionClass, StepUpCapabilities, StepUpChallengeMethod, StepUpOutcome, StepUpResult,
     ThreadState, WaitDirective,
 };
+use selene_kernel_contracts::provider_secrets::ProviderSecretId;
 use selene_kernel_contracts::{
     ContractViolation, MonotonicTimeNs, ReasonCodeId, SessionState, Validate,
 };
@@ -1833,7 +1833,7 @@ fn tool_ok_text(tr: &ToolResponse) -> String {
     if let Some(r) = &tr.tool_result {
         match r {
             ToolResult::Time { local_time_iso } => {
-                out.push_str("Local time: ");
+                out.push_str("It's ");
                 out.push_str(local_time_iso);
                 out.push('.');
             }
@@ -1841,9 +1841,16 @@ fn tool_ok_text(tr: &ToolResponse) -> String {
                 out.push_str(summary);
             }
             ToolResult::WebSearch { items } | ToolResult::News { items } => {
-                out.push_str("Here are the results:\n");
-                for (i, it) in items.iter().enumerate().take(5) {
-                    out.push_str(&format!("{}. {} ({})\n", i + 1, it.title, it.url));
+                if let Some(top) = items.first() {
+                    out.push_str("I found supporting web evidence. Top result: ");
+                    out.push_str(&top.title);
+                    if !top.snippet.trim().is_empty() {
+                        out.push_str(" — ");
+                        out.push_str(&top.snippet);
+                    }
+                    out.push('.');
+                } else {
+                    out.push_str("I did not find a usable web result.");
                 }
             }
             ToolResult::UrlFetchAndCite { citations } => {
@@ -1964,10 +1971,6 @@ fn tool_ok_text(tr: &ToolResponse) -> String {
         for (i, s) in meta.sources.iter().enumerate().take(5) {
             out.push_str(&format!("{}. {} ({})\n", i + 1, s.title, s.url));
         }
-        out.push_str(&format!(
-            "Retrieved at (unix_ms): {}",
-            meta.retrieved_at_unix_ms
-        ));
     }
     if out.trim().is_empty() {
         // Defensive fallback; shouldn't happen due to ToolResponse validation.
@@ -3690,7 +3693,7 @@ mod tests {
     }
 
     #[test]
-    fn at_x_tool_ok_web_search_includes_provenance_source_and_timestamp() {
+    fn at_x_tool_ok_web_search_renders_clean_answer_with_sources_without_raw_timestamp() {
         let rt = Ph1xRuntime::new(Ph1xConfig::mvp_v1());
 
         let first = Ph1xRequest::v1(
@@ -3761,15 +3764,17 @@ mod tests {
         let out2 = rt.decide(&second).unwrap();
         match out2.directive {
             Ph1xDirective::Respond(r) => {
+                assert!(r.response_text.contains("I found supporting web evidence"));
+                assert!(r.response_text.contains("Snippet"));
                 assert!(r.response_text.contains("https://example.invalid"));
-                assert!(r.response_text.contains("Retrieved at (unix_ms): 1"));
+                assert!(!r.response_text.contains("Retrieved at (unix_ms):"));
             }
             _ => panic!("expected Respond"),
         }
     }
 
     #[test]
-    fn at_x_tool_ok_news_includes_provenance_source_and_timestamp() {
+    fn at_x_tool_ok_news_renders_clean_answer_with_sources_without_raw_timestamp() {
         let rt = Ph1xRuntime::new(Ph1xConfig::mvp_v1());
 
         let first = Ph1xRequest::v1(
@@ -3840,8 +3845,10 @@ mod tests {
         let out2 = rt.decide(&second).unwrap();
         match out2.directive {
             Ph1xDirective::Respond(r) => {
+                assert!(r.response_text.contains("I found supporting web evidence"));
+                assert!(r.response_text.contains("Snippet"));
                 assert!(r.response_text.contains("https://example.invalid"));
-                assert!(r.response_text.contains("Retrieved at (unix_ms): 1"));
+                assert!(!r.response_text.contains("Retrieved at (unix_ms):"));
             }
             _ => panic!("expected Respond"),
         }
@@ -3921,7 +3928,7 @@ mod tests {
             Ph1xDirective::Respond(r) => {
                 assert!(r.response_text.contains("Citations:"));
                 assert!(r.response_text.contains("https://example.invalid"));
-                assert!(r.response_text.contains("Retrieved at (unix_ms): 1"));
+                assert!(!r.response_text.contains("Retrieved at (unix_ms):"));
             }
             _ => panic!("expected Respond"),
         }
@@ -4007,7 +4014,7 @@ mod tests {
                 assert!(r.response_text.contains("Summary:"));
                 assert!(r.response_text.contains("Extracted fields:"));
                 assert!(r.response_text.contains("Citations:"));
-                assert!(r.response_text.contains("Retrieved at (unix_ms): 1"));
+                assert!(!r.response_text.contains("Retrieved at (unix_ms):"));
             }
             _ => panic!("expected Respond"),
         }
@@ -4093,7 +4100,7 @@ mod tests {
                 assert!(r.response_text.contains("Summary:"));
                 assert!(r.response_text.contains("Extracted fields:"));
                 assert!(r.response_text.contains("Citations:"));
-                assert!(r.response_text.contains("Retrieved at (unix_ms): 1"));
+                assert!(!r.response_text.contains("Retrieved at (unix_ms):"));
             }
             _ => panic!("expected Respond"),
         }
@@ -4179,7 +4186,7 @@ mod tests {
                 assert!(r.response_text.contains("Summary:"));
                 assert!(r.response_text.contains("Extracted fields:"));
                 assert!(r.response_text.contains("Citations:"));
-                assert!(r.response_text.contains("Retrieved at (unix_ms): 1"));
+                assert!(!r.response_text.contains("Retrieved at (unix_ms):"));
             }
             _ => panic!("expected Respond"),
         }
@@ -4265,7 +4272,7 @@ mod tests {
                 assert!(r.response_text.contains("Summary:"));
                 assert!(r.response_text.contains("Extracted fields:"));
                 assert!(r.response_text.contains("Citations:"));
-                assert!(r.response_text.contains("Retrieved at (unix_ms): 1"));
+                assert!(!r.response_text.contains("Retrieved at (unix_ms):"));
             }
             _ => panic!("expected Respond"),
         }
@@ -4350,7 +4357,7 @@ mod tests {
                 assert!(r.response_text.contains("Summary:"));
                 assert!(r.response_text.contains("Action items:"));
                 assert!(r.response_text.contains("Recording evidence refs:"));
-                assert!(r.response_text.contains("Retrieved at (unix_ms): 1"));
+                assert!(!r.response_text.contains("Retrieved at (unix_ms):"));
             }
             _ => panic!("expected Respond"),
         }
@@ -4436,7 +4443,7 @@ mod tests {
                 assert!(r.response_text.contains("Summary:"));
                 assert!(r.response_text.contains("Extracted fields:"));
                 assert!(r.response_text.contains("Citations:"));
-                assert!(r.response_text.contains("Retrieved at (unix_ms): 1"));
+                assert!(!r.response_text.contains("Retrieved at (unix_ms):"));
             }
             _ => panic!("expected Respond"),
         }

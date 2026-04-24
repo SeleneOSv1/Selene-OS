@@ -102,6 +102,7 @@ pub fn decode_normalized_output_json(
             reason: "must be present",
         },
     )? {
+        "LLM_INTERPRET" => Ph1dProviderTask::LlmInterpret,
         "OCR_TEXT_EXTRACT" => Ph1dProviderTask::OcrTextExtract,
         "STT_TRANSCRIBE" => Ph1dProviderTask::SttTranscribe,
         _ => {
