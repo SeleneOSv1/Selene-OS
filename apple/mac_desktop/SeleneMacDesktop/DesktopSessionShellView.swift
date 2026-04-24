@@ -1540,13 +1540,15 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
     @Published private(set) var failedRequest: InterruptContinuityResponseFailureState?
 
     private let maxVoiceTurnBytes = 16_384
+    private let autoPrepareAfterSilenceDelay: TimeInterval = 1.1
     private let audioEngine = AVAudioEngine()
     private let speechRecognizer: SFSpeechRecognizer?
     private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
     private var recognitionTask: SFSpeechRecognitionTask?
     private var hasInputTap = false
-    private var requestSequence = 0
+    private var lastGeneratedDeviceTurnSequence: UInt64 = 0
     private var activeCaptureContext: CaptureSessionTransportContext?
+    private var autoPrepareAfterSilenceWorkItem: DispatchWorkItem?
 
     init(locale: Locale? = nil) {
         let resolvedLocale = locale ?? Self.preferredLocale()
@@ -1625,6 +1627,7 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
             return
         }
 
+        cancelAutoPrepareAfterSilence()
         let captureStopNS = Swift.max(DispatchTime.now().uptimeNanoseconds, 1)
         endCaptureInput()
 
@@ -1662,11 +1665,11 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
             return
         }
 
-        requestSequence += 1
+        let deviceTurnSequence = nextDeviceTurnSequence()
         transcriptPreview = trimmedTranscript
         pendingRequest = ExplicitVoiceTurnRequestState(
-            id: String(format: "desktop_voice_turn_request_%03d", requestSequence),
-            deviceTurnSequence: UInt64(requestSequence),
+            id: "desktop_voice_turn_request_\(deviceTurnSequence)",
+            deviceTurnSequence: deviceTurnSequence,
             transcript: trimmedTranscript,
             byteCount: trimmedTranscript.utf8.count,
             audioCaptureRefState: audioCaptureRefState
@@ -1679,6 +1682,7 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
             return
         }
 
+        cancelAutoPrepareAfterSilence()
         endCaptureInput()
         transcriptPreview = transcriptPreview.trimmingCharacters(in: .whitespacesAndNewlines)
         pendingRequest = nil
@@ -1687,10 +1691,12 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
     }
 
     func haltCaptureSession() {
+        cancelAutoPrepareAfterSilence()
         teardownRecognitionSession()
     }
 
     func discardCurrentVoiceTurn() {
+        cancelAutoPrepareAfterSilence()
         teardownRecognitionSession()
         pendingRequest = nil
         transcriptPreview = ""
@@ -1747,6 +1753,7 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
             activeCaptureContext = captureContext
             transcriptPreview = ""
             isListening = true
+            cancelAutoPrepareAfterSilence()
 
             recognitionTask = speechRecognizer.recognitionTask(with: request) { [weak self] result, error in
                 guard let self else {
@@ -1756,6 +1763,19 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
                 if let result {
                     DispatchQueue.main.async {
                         self.transcriptPreview = result.bestTranscription.formattedString
+
+                        let finalizedTranscript = result.bestTranscription.formattedString
+                            .trimmingCharacters(in: .whitespacesAndNewlines)
+                        if result.isFinal,
+                           self.isListening,
+                           self.pendingRequest == nil,
+                           !finalizedTranscript.isEmpty {
+                            self.stopCaptureAndPrepareVoiceTurn()
+                        } else {
+                            self.scheduleAutoPrepareAfterSilenceIfNeeded(
+                                using: finalizedTranscript
+                            )
+                        }
                     }
                 }
 
@@ -1787,6 +1807,7 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
     }
 
     private func endCaptureInput() {
+        cancelAutoPrepareAfterSilence()
         if audioEngine.isRunning {
             audioEngine.stop()
         }
@@ -1801,6 +1822,7 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
     }
 
     private func teardownRecognitionSession() {
+        cancelAutoPrepareAfterSilence()
         endCaptureInput()
         recognitionTask?.cancel()
         recognitionTask = nil
@@ -1809,10 +1831,50 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
     }
 
     private func completeStoppedCaptureSession() {
+        cancelAutoPrepareAfterSilence()
         recognitionTask?.cancel()
         recognitionTask = nil
         recognitionRequest = nil
         activeCaptureContext = nil
+    }
+
+    private func scheduleAutoPrepareAfterSilenceIfNeeded(using transcript: String) {
+        let trimmedTranscript = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard isListening,
+              pendingRequest == nil,
+              !trimmedTranscript.isEmpty else {
+            cancelAutoPrepareAfterSilence()
+            return
+        }
+
+        cancelAutoPrepareAfterSilence()
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self,
+                  self.isListening,
+                  self.pendingRequest == nil,
+                  self.transcriptPreview.trimmingCharacters(in: .whitespacesAndNewlines) == trimmedTranscript else {
+                return
+            }
+
+            self.stopCaptureAndPrepareVoiceTurn()
+        }
+        autoPrepareAfterSilenceWorkItem = workItem
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + autoPrepareAfterSilenceDelay,
+            execute: workItem
+        )
+    }
+
+    private func cancelAutoPrepareAfterSilence() {
+        autoPrepareAfterSilenceWorkItem?.cancel()
+        autoPrepareAfterSilenceWorkItem = nil
+    }
+
+    private func nextDeviceTurnSequence() -> UInt64 {
+        let monotonicNowNS = Swift.max(DispatchTime.now().uptimeNanoseconds, 1)
+        let nextSequence = Swift.max(monotonicNowNS, lastGeneratedDeviceTurnSequence &+ 1)
+        lastGeneratedDeviceTurnSequence = nextSequence
+        return nextSequence
     }
 
     private func recordFailure(id: String, title: String, summary: String, detail: String) {
@@ -2011,7 +2073,7 @@ private final class DesktopWakeListenerController: ObservableObject {
     private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
     private var recognitionTask: SFSpeechRecognitionTask?
     private var hasInputTap = false
-    private var requestSequence = 0
+    private var lastGeneratedDeviceTurnSequence: UInt64 = 0
     private var activeCaptureContext: CaptureSessionTransportContext?
 
     init(locale: Locale? = nil) {
@@ -2255,11 +2317,11 @@ private final class DesktopWakeListenerController: ObservableObject {
             return
         }
 
-        requestSequence += 1
+        let deviceTurnSequence = nextDeviceTurnSequence()
         transcriptPreview = boundedTranscript
         pendingRequest = WakeTriggeredVoiceTurnRequestState(
-            id: String(format: "desktop_wake_turn_request_%03d", requestSequence),
-            deviceTurnSequence: UInt64(requestSequence),
+            id: "desktop_wake_turn_request_\(deviceTurnSequence)",
+            deviceTurnSequence: deviceTurnSequence,
             transcript: boundedTranscript,
             byteCount: boundedTranscript.utf8.count,
             wakeTriggerPhrase: wakeTriggerPhrase,
@@ -2288,6 +2350,13 @@ private final class DesktopWakeListenerController: ObservableObject {
         recognitionTask = nil
         recognitionRequest = nil
         activeCaptureContext = nil
+    }
+
+    private func nextDeviceTurnSequence() -> UInt64 {
+        let monotonicNowNS = Swift.max(DispatchTime.now().uptimeNanoseconds, 1)
+        let nextSequence = Swift.max(monotonicNowNS, lastGeneratedDeviceTurnSequence &+ 1)
+        lastGeneratedDeviceTurnSequence = nextSequence
+        return nextSequence
     }
 
     private func completeStoppedCaptureSession() {
@@ -4919,18 +4988,23 @@ struct DesktopSessionShellView: View {
     @State private var desktopSidebarConversationMetadata: [String: DesktopSidebarConversationMetadata] = [:]
     @State private var desktopSidebarSearchQuery: String = ""
     @State private var desktopSidebarSearchIsVisible: Bool = false
+    @State private var desktopSidebarIsVisible: Bool = true
     @State private var desktopSidebarRenameConversationKey: String?
     @State private var desktopSidebarRenameDraft: String = ""
     @State private var desktopSelectedPersistedConversationKey: String?
+    @State private var desktopDraftConversationKey: String?
     @State private var desktopComposerAttachmentSelections: [DesktopComposerAttachmentSelection] = []
+    @State private var desktopComposerVoiceModeEnabled: Bool = false
+    @State private var desktopComposerVoiceModeAwaitingReplyPlaybackCompletion: Bool = false
     @State private var desktopSearchRequestFailedRequest: InterruptContinuityResponseFailureState?
     @State private var desktopToolRequestFailedRequest: InterruptContinuityResponseFailureState?
-    @State private var desktopTypedTurnRequestSequence: Int = 0
+    @State private var desktopLastGeneratedTypedTurnSequence: UInt64 = 0
     @State private var lastStagedWakeTriggeredVoiceTurnRequestState: WakeTriggeredVoiceTurnRequestState?
     @State private var desktopWakeAutoStartAttemptedPromptID: String?
     @State private var desktopWakeAutoStartSuppressedPromptID: String?
     @State private var desktopPresentedSecondaryPanel: DesktopShellSecondaryPanel?
     private let maxDesktopTypedTurnBytes = 16_384
+    private let desktopConversationBottomAnchorID = "desktop_conversation_bottom_anchor"
 
     var body: some View {
         Group {
@@ -5021,6 +5095,11 @@ struct DesktopSessionShellView: View {
         }
         .onReceive(desktopAuthoritativeReplyPlaybackController.$playbackState) { playbackState in
             desktopAuthoritativeReplyPlaybackState = playbackState
+            if playbackState.phase != .speaking,
+               desktopComposerVoiceModeAwaitingReplyPlaybackCompletion {
+                desktopComposerVoiceModeAwaitingReplyPlaybackCompletion = false
+                desktopAttemptResumeComposerVoiceMode()
+            }
         }
         .onDisappear {
             explicitVoiceController.haltCaptureSession()
@@ -5145,11 +5224,7 @@ struct DesktopSessionShellView: View {
         return surfaces
     }
 
-    private var desktopVisibleSidebarHistoryItems: [DesktopSidebarConversationItem] {
-        let trimmedQuery = desktopSidebarSearchQuery
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .localizedLowercase
-
+    private var desktopAllSidebarHistoryItems: [DesktopSidebarConversationItem] {
         var items: [DesktopSidebarConversationItem] = []
 
         for surface in desktopSidebarHistorySurfaces {
@@ -5175,24 +5250,18 @@ struct DesktopSessionShellView: View {
             }
         }
 
-        let filteredItems = items.filter { item in
+        let visibleItems = items.filter { item in
             let conversationKey = item.conversationKey
             let metadata = desktopSidebarConversationMetadata[conversationKey] ?? .init()
 
             guard !metadata.isArchived, !metadata.isDeleted else {
                 return false
             }
-
-            guard !trimmedQuery.isEmpty else {
-                return true
-            }
-
-            let title = desktopSidebarHistoryTitle(for: item).localizedLowercase
-            let preview = desktopSidebarHistoryPreview(for: item).localizedLowercase
-            return title.contains(trimmedQuery) || preview.contains(trimmedQuery)
+            
+            return true
         }
 
-        return filteredItems.sorted { lhs, rhs in
+        return visibleItems.sorted { lhs, rhs in
             let lhsKey = lhs.conversationKey
             let rhsKey = rhs.conversationKey
             let lhsMetadata = desktopSidebarConversationMetadata[lhsKey] ?? .init()
@@ -5205,6 +5274,33 @@ struct DesktopSessionShellView: View {
             return items.firstIndex(where: { $0.conversationKey == lhs.conversationKey }) ?? 0
                 < items.firstIndex(where: { $0.conversationKey == rhs.conversationKey }) ?? 0
         }
+    }
+
+    private var desktopVisibleSidebarHistoryItems: [DesktopSidebarConversationItem] {
+        let trimmedQuery = desktopSidebarSearchQuery
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .localizedLowercase
+
+        guard !trimmedQuery.isEmpty else {
+            return desktopAllSidebarHistoryItems
+        }
+
+        return desktopAllSidebarHistoryItems.filter { item in
+            let title = desktopSidebarHistoryTitle(for: item).localizedLowercase
+            let preview = desktopSidebarHistoryPreview(for: item).localizedLowercase
+            return title.contains(trimmedQuery) || preview.contains(trimmedQuery)
+        }
+    }
+
+    private var desktopSidebarSearchResults: [DesktopSidebarConversationItem] {
+        let trimmedQuery = desktopSidebarSearchQuery
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard !trimmedQuery.isEmpty else {
+            return []
+        }
+
+        return desktopVisibleSidebarHistoryItems
     }
 
     private func desktopConversationHistoryKey(for surface: DesktopObservedSessionSurface) -> String {
@@ -5289,6 +5385,10 @@ struct DesktopSessionShellView: View {
         if desktopSelectedPersistedConversationKey == conversationKey {
             desktopSelectedPersistedConversationKey = nil
         }
+
+        if desktopDraftConversationKey == conversationKey {
+            desktopDraftConversationKey = nil
+        }
     }
 
     private func desktopDeleteSidebarConversation(_ item: DesktopSidebarConversationItem) {
@@ -5305,36 +5405,45 @@ struct DesktopSessionShellView: View {
         if desktopSelectedPersistedConversationKey == conversationKey {
             desktopSelectedPersistedConversationKey = nil
         }
+
+        if desktopDraftConversationKey == conversationKey {
+            desktopDraftConversationKey = nil
+        }
     }
 
     private func desktopStartNewChatFromSidebar() {
         desktopTypedTurnDraft = ""
         desktopComposerAttachmentSelections = []
+        desktopDraftConversationKey = "conversation::draft::\(UUID().uuidString)"
         desktopSelectedPersistedConversationKey = nil
+        selectedObservedSessionSurfaceID = nil
+        desktopSelectedRecentSessionID = nil
+        desktopSidebarSearchQuery = ""
+        desktopSidebarSearchIsVisible = false
         explicitVoiceController.discardCurrentVoiceTurn()
-
-        if let latestSessionHeaderContext {
-            let headerSurface = DesktopObservedSessionSurface.sessionHeader(latestSessionHeaderContext)
-            recordObservedSessionSurface(headerSurface)
-            selectObservedSessionSurface(headerSurface)
-        } else if let currentDominantObservedSessionSurface {
-            selectObservedSessionSurface(currentDominantObservedSessionSurface)
-        } else {
-            selectedObservedSessionSurfaceID = nil
-        }
     }
 
     private func desktopChatShellLayout<MainContent: View>(
         @ViewBuilder mainContent: () -> MainContent
     ) -> some View {
-        HStack(spacing: 0) {
-            desktopVisibleConversationSidebar
+        ZStack(alignment: .topLeading) {
+            HStack(spacing: 0) {
+                if desktopSidebarIsVisible {
+                    desktopVisibleConversationSidebar
 
-            Divider()
-                .overlay(Color.primary.opacity(0.05))
+                    Divider()
+                        .overlay(Color.primary.opacity(0.05))
+                }
 
-            mainContent()
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                mainContent()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            }
+
+            if !desktopSidebarIsVisible {
+                desktopSidebarToggleButton
+                    .padding(.top, 18)
+                    .padding(.leading, 18)
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(Color(nsColor: .windowBackgroundColor))
@@ -5346,7 +5455,8 @@ struct DesktopSessionShellView: View {
     }
 
     private var desktopVisibleConversationSidebar: some View {
-        let historyItems = desktopVisibleSidebarHistoryItems
+        let historyItems = desktopAllSidebarHistoryItems
+        let searchResults = desktopSidebarSearchResults
         let sidebarBackground = Color(
             nsColor: NSColor(
                 srgbRed: 0.986,
@@ -5358,12 +5468,18 @@ struct DesktopSessionShellView: View {
 
         return VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 10) {
-                Image(systemName: "sparkles")
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(.primary)
+                HStack(spacing: 10) {
+                    Image(systemName: "sparkles")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(.primary)
 
-                Text("Selene")
-                    .font(.system(size: 20, weight: .semibold))
+                    Text("Selene")
+                        .font(.system(size: 20, weight: .semibold))
+                }
+
+                Spacer(minLength: 0)
+
+                desktopSidebarToggleButton
             }
             .padding(.horizontal, 20)
             .padding(.top, 18)
@@ -5399,6 +5515,29 @@ struct DesktopSessionShellView: View {
                                 RoundedRectangle(cornerRadius: 14, style: .continuous)
                                     .stroke(Color.primary.opacity(0.08), lineWidth: 1)
                             )
+
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Results")
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(.secondary)
+                                .padding(.horizontal, 10)
+                                .padding(.bottom, 4)
+
+                            if searchResults.isEmpty,
+                               !desktopSidebarSearchQuery
+                                .trimmingCharacters(in: .whitespacesAndNewlines)
+                                .isEmpty {
+                                Text("No matching chats")
+                                    .font(.system(size: 14, weight: .medium))
+                                    .foregroundStyle(.secondary)
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 6)
+                            } else {
+                                ForEach(searchResults) { item in
+                                    desktopSidebarHistoryRow(item)
+                                }
+                            }
+                        }
                     }
 
                     if !historyItems.isEmpty {
@@ -5422,6 +5561,27 @@ struct DesktopSessionShellView: View {
         }
         .frame(minWidth: 190, idealWidth: 250, maxWidth: 290, maxHeight: .infinity, alignment: .topLeading)
         .background(sidebarBackground)
+    }
+
+    private var desktopSidebarToggleButton: some View {
+        Button {
+            withAnimation(.easeInOut(duration: 0.18)) {
+                desktopSidebarIsVisible.toggle()
+            }
+        } label: {
+            Image(systemName: desktopSidebarIsVisible ? "sidebar.left" : "line.3.horizontal")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(.primary)
+                .frame(width: 32, height: 32)
+                .background(Color.white.opacity(0.92))
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+                )
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(desktopSidebarIsVisible ? "Hide sidebar" : "Show sidebar")
     }
 
     private func desktopSidebarActionRow(
@@ -5457,9 +5617,11 @@ struct DesktopSessionShellView: View {
         return HStack(spacing: 8) {
             Button {
                 if let surface = item.surface {
+                    desktopDraftConversationKey = nil
                     desktopSelectedPersistedConversationKey = nil
                     selectObservedSessionSurface(surface)
                 } else {
+                    desktopDraftConversationKey = nil
                     selectedObservedSessionSurfaceID = nil
                     desktopSelectedPersistedConversationKey = conversationKey
                 }
@@ -5969,7 +6131,7 @@ struct DesktopSessionShellView: View {
     }
 
     private var foregroundObservedSessionSurface: DesktopObservedSessionSurface? {
-        if desktopSelectedPersistedConversationKey != nil {
+        if desktopSelectedPersistedConversationKey != nil || desktopDraftConversationKey != nil {
             return nil
         }
 
@@ -5999,6 +6161,10 @@ struct DesktopSessionShellView: View {
     private var desktopForegroundSelectionShowsCurrentDominantSurface: Bool {
         if desktopSelectedPersistedConversationKey != nil {
             return false
+        }
+
+        if desktopDraftConversationKey != nil {
+            return true
         }
 
         guard let selectedObservedSessionSurface else {
@@ -6068,6 +6234,7 @@ struct DesktopSessionShellView: View {
     }
 
     private func selectObservedSessionSurface(_ surface: DesktopObservedSessionSurface) {
+        desktopDraftConversationKey = nil
         desktopSelectedPersistedConversationKey = nil
 
         if surface.id == currentDominantObservedSessionSurface?.id {
@@ -6594,6 +6761,10 @@ struct DesktopSessionShellView: View {
     }
 
     private var desktopForegroundConversationHistoryKey: String {
+        if let desktopDraftConversationKey {
+            return desktopDraftConversationKey
+        }
+
         if let desktopSelectedPersistedConversationKey {
             return desktopSelectedPersistedConversationKey
         }
@@ -6839,13 +7010,21 @@ struct DesktopSessionShellView: View {
                     explicitVoiceController.discardCurrentVoiceTurn()
                 }
 
+                if desktopComposerVoiceModeEnabled,
+                   !newValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                   newValue != explicitVoiceController.transcriptPreview {
+                    desktopDeactivateComposerVoiceMode(preserveTranscriptPreview: false)
+                }
+
                 desktopTypedTurnDraft = newValue
             }
         )
     }
 
     private var desktopComposerShouldShowWaveformActiveState: Bool {
-        explicitVoiceController.isListening || explicitVoiceController.pendingRequest != nil
+        desktopComposerVoiceModeEnabled
+            || explicitVoiceController.isListening
+            || explicitVoiceController.pendingRequest != nil
     }
 
     private func presentDesktopComposerAttachmentPicker() {
@@ -6870,6 +7049,47 @@ struct DesktopSessionShellView: View {
         desktopComposerAttachmentSelections.removeAll { $0 == attachment }
     }
 
+    private func desktopActivateComposerVoiceMode() {
+        desktopComposerVoiceModeEnabled = true
+        desktopComposerVoiceModeAwaitingReplyPlaybackCompletion = false
+        startDesktopComposerVoiceTurn()
+    }
+
+    private func desktopDeactivateComposerVoiceMode(preserveTranscriptPreview: Bool) {
+        desktopComposerVoiceModeEnabled = false
+        desktopComposerVoiceModeAwaitingReplyPlaybackCompletion = false
+
+        if explicitVoiceController.isListening {
+            if preserveTranscriptPreview {
+                explicitVoiceController.stopCaptureAndKeepTranscriptPreview()
+                let transcriptPreview = explicitVoiceController.transcriptPreview
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                if !transcriptPreview.isEmpty {
+                    desktopTypedTurnDraft = transcriptPreview
+                }
+            } else {
+                explicitVoiceController.discardCurrentVoiceTurn()
+            }
+        }
+    }
+
+    private func desktopAttemptResumeComposerVoiceMode() {
+        guard desktopComposerVoiceModeEnabled,
+              !explicitVoiceController.isListening,
+              explicitVoiceController.pendingRequest == nil,
+              desktopTypedTurnPendingRequest == nil,
+              !desktopWakeListenerController.listenerState.isActiveForMicrophone,
+              desktopWakeListenerController.listenerState != .dispatching,
+              desktopWakeListenerController.pendingRequest == nil,
+              lastStagedWakeTriggeredVoiceTurnRequestState == nil,
+              desktopTypedTurnDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              desktopAuthoritativeReplyPlaybackState.phase != .speaking else {
+            return
+        }
+
+        startDesktopComposerVoiceTurn()
+    }
+
     private func startDesktopComposerVoiceTurn() {
         let wakeDispatchInFlight = desktopWakeListenerController.listenerState == .dispatching
         desktopWakeListenerController.haltCaptureSession()
@@ -6887,6 +7107,14 @@ struct DesktopSessionShellView: View {
 
     private func stopDesktopComposerVoiceTurnAndSend() {
         explicitVoiceController.stopCaptureAndPrepareVoiceTurn()
+    }
+
+    private func toggleDesktopComposerVoiceMode() {
+        if desktopComposerVoiceModeEnabled {
+            desktopDeactivateComposerVoiceMode(preserveTranscriptPreview: true)
+        } else {
+            desktopActivateComposerVoiceMode()
+        }
     }
 
     private var desktopComposerHasLocalAttachments: Bool {
@@ -7081,15 +7309,10 @@ struct DesktopSessionShellView: View {
                                 .frame(width: 28, height: 28)
                         }
                         .buttonStyle(.plain)
-                        .disabled(explicitVoiceController.pendingRequest != nil)
                     }
 
                     Button {
-                        if explicitVoiceController.isListening {
-                            stopDesktopComposerVoiceTurnAndSend()
-                        } else {
-                            startDesktopComposerVoiceTurn()
-                        }
+                        toggleDesktopComposerVoiceMode()
                     } label: {
                         Image(systemName: "waveform")
                             .font(.system(size: 18, weight: .semibold))
@@ -7103,7 +7326,6 @@ struct DesktopSessionShellView: View {
                             .clipShape(Circle())
                     }
                     .buttonStyle(.plain)
-                    .disabled(explicitVoiceController.pendingRequest != nil)
 
                     if desktopComposerShouldShowSendButton {
                         Button {
@@ -11825,13 +12047,21 @@ struct DesktopSessionShellView: View {
             && desktopForegroundSelectionShowsCurrentDominantSurface
 
         return VStack(spacing: 0) {
-            ScrollView {
-                desktopConversationPrimaryPane(state)
-                    .padding(.horizontal, 36)
-                    .padding(.vertical, 28)
-                    .frame(maxWidth: .infinity, alignment: .topLeading)
+            ScrollViewReader { scrollProxy in
+                ScrollView {
+                    desktopConversationPrimaryPane(state)
+                        .padding(.horizontal, 36)
+                        .padding(.vertical, 28)
+                        .frame(maxWidth: .infinity, alignment: .topLeading)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .onAppear {
+                    desktopScrollConversationToBottom(scrollProxy)
+                }
+                .onChange(of: state.timelineEntries.map(\.id)) { _ in
+                    desktopScrollConversationToBottom(scrollProxy)
+                }
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
 
             Divider()
                 .overlay(Color.primary.opacity(0.05))
@@ -11904,8 +12134,20 @@ struct DesktopSessionShellView: View {
                     }
                 }
             }
+
+            Color.clear
+                .frame(height: 1)
+                .id(desktopConversationBottomAnchorID)
         }
         .frame(maxWidth: .infinity, minHeight: 520, alignment: .topLeading)
+    }
+
+    private func desktopScrollConversationToBottom(_ scrollProxy: ScrollViewProxy) {
+        DispatchQueue.main.async {
+            withAnimation(.easeOut(duration: 0.18)) {
+                scrollProxy.scrollTo(desktopConversationBottomAnchorID, anchor: .bottom)
+            }
+        }
     }
 
     @ViewBuilder
@@ -17744,6 +17986,7 @@ struct DesktopSessionShellView: View {
         }
 
         let conversationKey = desktopForegroundConversationHistoryKey
+        var shouldAwaitVoiceModeReplyPlaybackCompletion = false
 
         do {
             let ingressContext = try desktopCanonicalRuntimeBridge.desktopExplicitVoiceIngressRequestBuilder(
@@ -17813,6 +18056,9 @@ struct DesktopSessionShellView: View {
                 if outcomeState.authoritativeResponseText?
                     .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
                     playAuthoritativeReply()
+                    shouldAwaitVoiceModeReplyPlaybackCompletion =
+                        desktopComposerVoiceModeEnabled
+                        && desktopAuthoritativeReplyPlaybackState.phase == .speaking
                 } else {
                     desktopPersistMissingReplyMessageIfNeeded(
                         requestID: pendingRequest.id,
@@ -17832,6 +18078,11 @@ struct DesktopSessionShellView: View {
                 )
             }
             explicitVoiceController.clearPendingPreparedVoiceTurn()
+            if shouldAwaitVoiceModeReplyPlaybackCompletion {
+                desktopComposerVoiceModeAwaitingReplyPlaybackCompletion = true
+            } else {
+                desktopAttemptResumeComposerVoiceMode()
+            }
         } catch {
             desktopCanonicalRuntimeOutcomeState = .failed(
                 preparedRequestID: pendingRequest.id,
@@ -17865,6 +18116,7 @@ struct DesktopSessionShellView: View {
                 conversationKey: conversationKey
             )
             explicitVoiceController.clearPendingPreparedVoiceTurn()
+            desktopAttemptResumeComposerVoiceMode()
         }
     }
 
@@ -18110,7 +18362,7 @@ struct DesktopSessionShellView: View {
             return .otherForegroundRequestActive
         }
 
-        desktopTypedTurnRequestSequence += 1
+        let deviceTurnSequence = nextDesktopTypedTurnSequence()
         desktopTypedTurnFailedRequest = nil
         desktopSearchRequestFailedRequest = nil
         desktopToolRequestFailedRequest = nil
@@ -18120,9 +18372,9 @@ struct DesktopSessionShellView: View {
         desktopAuthoritativeReplyPlaybackController.reset()
         desktopAuthoritativeReplyPlaybackState = .idle
         desktopTypedTurnPendingRequest = DesktopTypedTurnRequestState(
-            id: "\(origin.requestIDPrefix)_\(String(format: "%03d", desktopTypedTurnRequestSequence))",
+            id: "\(origin.requestIDPrefix)_\(deviceTurnSequence)",
             origin: origin,
-            deviceTurnSequence: UInt64(desktopTypedTurnRequestSequence),
+            deviceTurnSequence: deviceTurnSequence,
             text: trimmedDraft,
             byteCount: trimmedDraft.utf8.count
         )
@@ -18140,6 +18392,13 @@ struct DesktopSessionShellView: View {
         desktopWakeListenerController.startListening(promptState: promptState)
     }
 
+    private func nextDesktopTypedTurnSequence() -> UInt64 {
+        let monotonicNowNS = Swift.max(DispatchTime.now().uptimeNanoseconds, 1)
+        let nextSequence = Swift.max(monotonicNowNS, desktopLastGeneratedTypedTurnSequence &+ 1)
+        desktopLastGeneratedTypedTurnSequence = nextSequence
+        return nextSequence
+    }
+
     private func stopDesktopWakeListenerAndSuppressAutoStart(
         promptState: DesktopWakeListenerPromptState?
     ) {
@@ -18152,6 +18411,10 @@ struct DesktopSessionShellView: View {
 
     private func submitDesktopTypedTurn() {
         let preservedVisibleDraft = desktopPreparedTypedComposerSubmissionText
+
+        if desktopComposerVoiceModeEnabled {
+            desktopDeactivateComposerVoiceMode(preserveTranscriptPreview: false)
+        }
 
         if explicitVoiceController.isListening {
             explicitVoiceController.discardCurrentVoiceTurn()

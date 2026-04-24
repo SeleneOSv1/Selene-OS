@@ -1500,6 +1500,8 @@ impl AdapterRuntime {
         &self,
         request: VoiceTurnAdapterRequest,
     ) -> Result<VoiceTurnAdapterResponse, VoiceTurnIngressError> {
+        let allow_identity_auto_provision =
+            request.app_platform.trim().eq_ignore_ascii_case("DESKTOP");
         let runtime_execution_envelope =
             fallback_runtime_execution_envelope_for_voice_turn_request(&request).map_err(
                 |err| {
@@ -1517,7 +1519,7 @@ impl AdapterRuntime {
             request,
             Some(runtime_execution_envelope),
             true,
-            false,
+            allow_identity_auto_provision,
             PersistenceInvocationMode::Standard,
         )
     }
@@ -1527,11 +1529,13 @@ impl AdapterRuntime {
         request: VoiceTurnAdapterRequest,
         runtime_execution_envelope: RuntimeExecutionEnvelope,
     ) -> Result<VoiceTurnAdapterResponse, VoiceTurnIngressError> {
+        let allow_identity_auto_provision =
+            request.app_platform.trim().eq_ignore_ascii_case("DESKTOP");
         self.run_voice_turn_internal(
             request,
             Some(runtime_execution_envelope),
             true,
-            false,
+            allow_identity_auto_provision,
             PersistenceInvocationMode::Standard,
         )
     }
@@ -4365,6 +4369,19 @@ impl AdapterRuntime {
                 pre_session_error(format!("invalid generated runtime device_id: {err:?}"))
             })?,
         };
+        let actor_user_id = {
+            let store = self
+                .store
+                .lock()
+                .map_err(|_| pre_session_error("adapter store lock poisoned".to_string()))?;
+            resolve_effective_desktop_actor_identity(
+                &store,
+                &actor_user_id,
+                &runtime_device_id,
+                app_platform,
+                trigger,
+            )
+        };
         let mut runtime_execution_envelope = match runtime_execution_envelope {
             Some(envelope) => {
                 RuntimeExecutionEnvelope::v1_with_platform_context_device_turn_sequence_and_attach_outcome(
@@ -4511,6 +4528,9 @@ impl AdapterRuntime {
                 Some(&runtime_device_id),
             )
             .map_err(pre_session_error)?;
+            let device_owner_user_id = store
+                .get_device(&runtime_device_id)
+                .map(|device| device.user_id.clone());
             let wake_evaluation = evaluate_wake_for_turn(
                 &store,
                 now,
@@ -4643,6 +4663,7 @@ impl AdapterRuntime {
                 &ph1k_bundle,
                 session_turn_state.session_snapshot,
                 session_turn_state.wake_event.clone(),
+                device_owner_user_id,
             )
             .map_err(|err| post_session_error(format!("voice request build failed: {err:?}")))?;
             let ph1c_live_outcome = if upstream_transcript_supplied {
@@ -4720,6 +4741,14 @@ impl AdapterRuntime {
                 eprintln!("selene_adapter ph1k live eval csv append failed: {err}");
             }
 
+            let observation = build_live_voice_id_observation(
+                &store,
+                tenant_id_for_ph1c.as_deref(),
+                &actor_user_id,
+                &runtime_device_id,
+                app_platform,
+                trigger,
+            );
             let ingress_request = AppVoiceIngressRequest::v1_with_runtime_execution_envelope(
                 correlation_id,
                 turn_id,
@@ -4731,7 +4760,7 @@ impl AdapterRuntime {
                 tenant_id_for_ph1c.clone(),
                 Some(runtime_device_id.clone()),
                 Vec::new(),
-                empty_observation(),
+                observation,
             )
             .map_err(|err| post_session_error(format!("invalid ingress request: {err:?}")))?;
             let nlp_output = build_nlp_output_for_voice_turn(
@@ -7928,6 +7957,33 @@ fn ensure_actor_identity_and_device(
     Ok(())
 }
 
+fn resolve_effective_desktop_actor_identity(
+    store: &Ph1fStore,
+    actor_user_id: &UserId,
+    device_id: &DeviceId,
+    app_platform: AppPlatform,
+    trigger: OsVoiceTrigger,
+) -> UserId {
+    if app_platform != AppPlatform::Desktop || trigger != OsVoiceTrigger::Explicit {
+        return actor_user_id.clone();
+    }
+
+    let Some(device) = store.get_device(device_id) else {
+        return actor_user_id.clone();
+    };
+    if device.user_id == *actor_user_id {
+        return actor_user_id.clone();
+    }
+
+    let actor_has_voice_profile = store.ph1vid_has_voice_profile_for_user(actor_user_id);
+    let owner_has_voice_profile = store.ph1vid_has_voice_profile_for_user(&device.user_id);
+    if owner_has_voice_profile && !actor_has_voice_profile {
+        return device.user_id.clone();
+    }
+
+    actor_user_id.clone()
+}
+
 fn default_device_type(app_platform: AppPlatform) -> &'static str {
     match app_platform {
         AppPlatform::Ios | AppPlatform::Android => "phone",
@@ -9573,10 +9629,15 @@ fn build_ph1k_live_signal_bundle(
     tenant_scope: Option<&str>,
     device_id: Option<&DeviceId>,
 ) -> Result<Ph1kLiveSignalBundle, String> {
-    let capture = request
-        .audio_capture_ref
-        .as_ref()
-        .ok_or_else(|| "ph1k live capture bundle is required for voice turns".to_string())?;
+    let synthesized_capture_ref;
+    let capture = if let Some(capture) = request.audio_capture_ref.as_ref() {
+        capture
+    } else {
+        synthesized_capture_ref = synthesized_desktop_explicit_capture_ref(request, now);
+        synthesized_capture_ref
+            .as_ref()
+            .ok_or_else(|| "ph1k live capture bundle is required for voice turns".to_string())?
+    };
 
     let locale_tag = resolve_interrupt_locale_tag_from_capture(capture)?;
     let (matcher, binding) =
@@ -9821,6 +9882,82 @@ fn build_ph1k_live_signal_bundle(
     })
 }
 
+fn synthesized_desktop_explicit_capture_ref(
+    request: &VoiceTurnAdapterRequest,
+    now: MonotonicTimeNs,
+) -> Option<VoiceTurnAudioCaptureRef> {
+    if request.audio_capture_ref.is_some() {
+        return None;
+    }
+    if !request.app_platform.trim().eq_ignore_ascii_case("DESKTOP") {
+        return None;
+    }
+    if !request.trigger.trim().eq_ignore_ascii_case("EXPLICIT") {
+        return None;
+    }
+    if request
+        .user_text_final
+        .as_deref()
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+        .is_none()
+    {
+        return None;
+    }
+
+    Some(crate::desktop_mic_producer::synthetic_capture_ref_for_tests(now.0))
+}
+
+fn build_live_voice_id_observation(
+    store: &Ph1fStore,
+    tenant_scope: Option<&str>,
+    actor_user_id: &UserId,
+    device_id: &DeviceId,
+    app_platform: AppPlatform,
+    trigger: OsVoiceTrigger,
+) -> EngineVoiceIdObservation {
+    if app_platform != AppPlatform::Desktop || trigger != OsVoiceTrigger::Explicit {
+        return empty_observation();
+    }
+
+    let Some(device) = store.get_device(device_id) else {
+        return empty_observation();
+    };
+    let profile = store.ph1vid_voice_profile_rows().into_iter().find(|profile| {
+        if profile.device_id != *device_id {
+            return false;
+        }
+        if let Some(tenant_scope) = tenant_scope {
+            let Some((profile_tenant, _)) = device.user_id.as_str().split_once(':') else {
+                return false;
+            };
+            if profile_tenant != tenant_scope {
+                return false;
+            }
+        }
+
+        device.user_id == *actor_user_id || !store.ph1vid_has_voice_profile_for_user(actor_user_id)
+    });
+
+    let primary_fingerprint = profile.map(|profile| {
+        let fingerprint_material = format!(
+            "{}:{}:{}",
+            profile.voice_profile_id.as_str(),
+            profile.device_id.as_str(),
+            device.user_id.as_str()
+        );
+        u64::from_str_radix(&stable_hash_hex_16(&fingerprint_material), 16)
+            .expect("stable 16-digit hex fingerprint must parse")
+    });
+    EngineVoiceIdObservation {
+        primary_fingerprint,
+        secondary_fingerprint: None,
+        primary_embedding: None,
+        secondary_embedding: None,
+        spoof_risk: false,
+    }
+}
+
 pub fn validate_voice_turn_capture_bundle_for_live_path(
     request: &VoiceTurnAdapterRequest,
 ) -> Result<(), String> {
@@ -9835,6 +9972,7 @@ fn build_voice_id_request_from_ph1k_bundle(
     ph1k: &Ph1kLiveSignalBundle,
     session_snapshot: SessionSnapshot,
     wake_event: Option<WakeDecision>,
+    device_owner_user_id: Option<UserId>,
 ) -> Result<Ph1VoiceIdRequest, selene_kernel_contracts::ContractViolation> {
     Ph1VoiceIdRequest::v1(
         now,
@@ -9845,7 +9983,7 @@ fn build_voice_id_request_from_ph1k_bundle(
         wake_event,
         ph1k.tts_playback.active,
         DeviceTrustLevel::Trusted,
-        None,
+        device_owner_user_id,
     )
 }
 
@@ -15782,6 +15920,9 @@ mod tests {
                 &ph1k_bundle,
                 session_snapshot,
                 wake_evaluation.as_ref().map(|wake| wake.decision.clone()),
+                store
+                    .get_device(&runtime_device_id)
+                    .map(|device| device.user_id.clone()),
             )
             .expect("voice id request must build");
             (
@@ -15882,6 +16023,8 @@ mod tests {
 
         assert!(wake_shape.wake_event_present);
         assert!(!explicit_shape.wake_event_present);
+        assert!(wake_shape.voice_id_owner_user_present);
+        assert!(explicit_shape.voice_id_owner_user_present);
         let mut wake_shape_without_wake_flag = wake_shape.clone();
         wake_shape_without_wake_flag.wake_event_present = explicit_shape.wake_event_present;
         assert_eq!(wake_shape_without_wake_flag, explicit_shape);
@@ -16924,6 +17067,18 @@ mod tests {
             .run_voice_turn(req)
             .expect_err("invalid trigger must fail");
         assert!(err.contains("invalid trigger"));
+    }
+
+    #[test]
+    fn at_adapter_04a_desktop_typed_turn_synthesizes_capture_bundle_for_live_path() {
+        let mut req = base_request();
+        req.app_platform = "DESKTOP".to_string();
+        req.trigger = "EXPLICIT".to_string();
+        req.audio_capture_ref = None;
+        req.user_text_final = Some("tell me what changed this morning".to_string());
+
+        validate_voice_turn_capture_bundle_for_live_path(&req)
+            .expect("desktop typed turn should reuse a bounded synthetic PH1.K capture bundle");
     }
 
     #[test]

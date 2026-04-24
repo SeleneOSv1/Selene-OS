@@ -6037,9 +6037,10 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
         let monotonicNowNS = Swift.max(DispatchTime.now().uptimeNanoseconds, 1)
         let correlationID = monotonicNowNS
         let turnID = monotonicNowNS &+ 1
-        let requestID = "desktop_runtime_request_\(preparedRequest.id)_\(UUID().uuidString.replacingOccurrences(of: "-", with: ""))"
-        let idempotencyKey = "desktop_runtime_idempotency_\(preparedRequest.id)"
-        let nonce = UUID().uuidString.replacingOccurrences(of: "-", with: "")
+        let ingressIdentity = Self.boundedRuntimeIngressIdentity(
+            prefix: "dvr",
+            monotonicNowNS: monotonicNowNS
+        )
         let audioCaptureRef = try desktopVoiceTurnAudioCaptureRefBuilder(preparedRequest.audioCaptureRefState)
         let threadPolicyFlags = Self.desktopVoiceTurnThreadPolicyFlagsPayloadBuilder(
             authorityStatePolicyContextRef
@@ -6085,10 +6086,10 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
         urlRequest.httpMethod = "POST"
         urlRequest.httpBody = body
         urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        urlRequest.setValue(requestID, forHTTPHeaderField: "x-request-id")
-        urlRequest.setValue(idempotencyKey, forHTTPHeaderField: "idempotency-key")
+        urlRequest.setValue(ingressIdentity.requestID, forHTTPHeaderField: "x-request-id")
+        urlRequest.setValue(ingressIdentity.idempotencyKey, forHTTPHeaderField: "idempotency-key")
         urlRequest.setValue(String(timestampMS), forHTTPHeaderField: "x-selene-timestamp-ms")
-        urlRequest.setValue(nonce, forHTTPHeaderField: "x-selene-nonce")
+        urlRequest.setValue(ingressIdentity.nonce, forHTTPHeaderField: "x-selene-nonce")
         urlRequest.setValue(
             Self.bearerToken(subject: actorUserID, device: deviceID),
             forHTTPHeaderField: "Authorization"
@@ -6096,7 +6097,7 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
 
         return DesktopExplicitVoiceIngressContext(
             preparedRequestID: preparedRequest.id,
-            requestID: requestID,
+            requestID: ingressIdentity.requestID,
             endpoint: endpointURL.absoluteString,
             urlRequest: urlRequest
         )
@@ -6120,9 +6121,10 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
         let monotonicNowNS = Swift.max(DispatchTime.now().uptimeNanoseconds, 1)
         let correlationID = monotonicNowNS
         let turnID = monotonicNowNS &+ 1
-        let requestID = "desktop_typed_runtime_request_\(preparedRequest.id)_\(UUID().uuidString.replacingOccurrences(of: "-", with: ""))"
-        let idempotencyKey = "desktop_typed_runtime_idempotency_\(preparedRequest.id)"
-        let nonce = UUID().uuidString.replacingOccurrences(of: "-", with: "")
+        let ingressIdentity = Self.boundedRuntimeIngressIdentity(
+            prefix: "dtt",
+            monotonicNowNS: monotonicNowNS
+        )
         let threadPolicyFlags = Self.desktopVoiceTurnThreadPolicyFlagsPayloadBuilder(
             authorityStatePolicyContextRef
         )
@@ -6167,10 +6169,10 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
         urlRequest.httpMethod = "POST"
         urlRequest.httpBody = body
         urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        urlRequest.setValue(requestID, forHTTPHeaderField: "x-request-id")
-        urlRequest.setValue(idempotencyKey, forHTTPHeaderField: "idempotency-key")
+        urlRequest.setValue(ingressIdentity.requestID, forHTTPHeaderField: "x-request-id")
+        urlRequest.setValue(ingressIdentity.idempotencyKey, forHTTPHeaderField: "idempotency-key")
         urlRequest.setValue(String(timestampMS), forHTTPHeaderField: "x-selene-timestamp-ms")
-        urlRequest.setValue(nonce, forHTTPHeaderField: "x-selene-nonce")
+        urlRequest.setValue(ingressIdentity.nonce, forHTTPHeaderField: "x-selene-nonce")
         urlRequest.setValue(
             Self.bearerToken(subject: actorUserID, device: deviceID),
             forHTTPHeaderField: "Authorization"
@@ -6178,7 +6180,7 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
 
         return DesktopTypedTurnIngressContext(
             preparedRequestID: preparedRequest.id,
-            requestID: requestID,
+            requestID: ingressIdentity.requestID,
             endpoint: endpointURL.absoluteString,
             urlRequest: urlRequest
         )
@@ -6215,9 +6217,10 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
         let monotonicNowNS = Swift.max(DispatchTime.now().uptimeNanoseconds, 1)
         let correlationID = monotonicNowNS
         let turnID = monotonicNowNS &+ 1
-        let requestID = "desktop_runtime_request_\(preparedRequest.id)_\(UUID().uuidString.replacingOccurrences(of: "-", with: ""))"
-        let idempotencyKey = "desktop_runtime_idempotency_\(preparedRequest.id)"
-        let nonce = UUID().uuidString.replacingOccurrences(of: "-", with: "")
+        let ingressIdentity = Self.boundedRuntimeIngressIdentity(
+            prefix: "dwr",
+            monotonicNowNS: monotonicNowNS
+        )
         let audioCaptureRef = try desktopVoiceTurnAudioCaptureRefBuilder(preparedRequest.audioCaptureRefState)
         let threadPolicyFlags = Self.desktopVoiceTurnThreadPolicyFlagsPayloadBuilder(
             authorityStatePolicyContextRef
@@ -6263,10 +6266,10 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
         urlRequest.httpMethod = "POST"
         urlRequest.httpBody = body
         urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        urlRequest.setValue(requestID, forHTTPHeaderField: "x-request-id")
-        urlRequest.setValue(idempotencyKey, forHTTPHeaderField: "idempotency-key")
+        urlRequest.setValue(ingressIdentity.requestID, forHTTPHeaderField: "x-request-id")
+        urlRequest.setValue(ingressIdentity.idempotencyKey, forHTTPHeaderField: "idempotency-key")
         urlRequest.setValue(String(timestampMS), forHTTPHeaderField: "x-selene-timestamp-ms")
-        urlRequest.setValue(nonce, forHTTPHeaderField: "x-selene-nonce")
+        urlRequest.setValue(ingressIdentity.nonce, forHTTPHeaderField: "x-selene-nonce")
         urlRequest.setValue(
             Self.bearerToken(subject: actorUserID, device: deviceID),
             forHTTPHeaderField: "Authorization"
@@ -6274,7 +6277,7 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
 
         return DesktopWakeTriggeredVoiceIngressContext(
             preparedRequestID: preparedRequest.id,
-            requestID: requestID,
+            requestID: ingressIdentity.requestID,
             endpoint: endpointURL.absoluteString,
             urlRequest: urlRequest
         )
@@ -8458,6 +8461,18 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
 
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : trimmed
+    }
+
+    private static func boundedRuntimeIngressIdentity(
+        prefix: String,
+        monotonicNowNS: UInt64
+    ) -> (requestID: String, idempotencyKey: String, nonce: String) {
+        let entropy = UUID().uuidString.replacingOccurrences(of: "-", with: "")
+        let shortEntropy = String(entropy.prefix(10))
+        let base36Now = String(monotonicNowNS, radix: 36)
+        let requestID = "\(prefix)_\(base36Now)_\(shortEntropy)"
+        let idempotencyKey = "idem_\(prefix)_\(base36Now)_\(shortEntropy)"
+        return (requestID, idempotencyKey, entropy)
     }
 
     fileprivate static func boundedSessionProjectID(_ value: String?) -> String? {
