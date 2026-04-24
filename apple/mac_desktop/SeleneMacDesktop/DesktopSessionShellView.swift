@@ -1392,6 +1392,135 @@ private enum VoicePermissionState: String {
     }
 }
 
+private struct DesktopChatComposerTextView: NSViewRepresentable {
+    @Binding var text: String
+    @Binding var measuredHeight: CGFloat
+
+    let isEditable: Bool
+    let onSubmit: () -> Void
+
+    private let minHeight: CGFloat = 32
+    private let maxHeight: CGFloat = 224
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(self)
+    }
+
+    func makeNSView(context: Context) -> NSScrollView {
+        let scrollView = NSScrollView()
+        scrollView.drawsBackground = false
+        scrollView.borderType = .noBorder
+        scrollView.hasHorizontalScroller = false
+        scrollView.hasVerticalScroller = false
+        scrollView.autohidesScrollers = true
+        scrollView.scrollerStyle = .overlay
+
+        let textView = DesktopChatComposerNativeTextView()
+        textView.delegate = context.coordinator
+        textView.onSubmit = onSubmit
+        textView.drawsBackground = false
+        textView.isRichText = false
+        textView.isAutomaticQuoteSubstitutionEnabled = false
+        textView.isAutomaticDashSubstitutionEnabled = false
+        textView.isAutomaticTextReplacementEnabled = false
+        textView.isContinuousSpellCheckingEnabled = false
+        textView.isGrammarCheckingEnabled = false
+        textView.isHorizontallyResizable = false
+        textView.isVerticallyResizable = true
+        textView.textContainerInset = NSSize(width: 0, height: 6)
+        textView.font = .systemFont(ofSize: 18)
+        textView.textContainer?.lineFragmentPadding = 0
+        textView.textContainer?.widthTracksTextView = true
+        textView.textContainer?.containerSize = NSSize(
+            width: 0,
+            height: CGFloat.greatestFiniteMagnitude
+        )
+        textView.string = text
+        textView.isEditable = isEditable
+        textView.isSelectable = true
+        scrollView.documentView = textView
+
+        DispatchQueue.main.async {
+            context.coordinator.updateMeasuredHeight(for: textView)
+        }
+
+        return scrollView
+    }
+
+    func updateNSView(_ scrollView: NSScrollView, context: Context) {
+        guard let textView = scrollView.documentView as? DesktopChatComposerNativeTextView else {
+            return
+        }
+
+        textView.onSubmit = onSubmit
+        textView.isEditable = isEditable
+
+        if textView.string != text {
+            textView.string = text
+        }
+
+        DispatchQueue.main.async {
+            context.coordinator.updateMeasuredHeight(for: textView)
+            scrollView.hasVerticalScroller = measuredHeight >= maxHeight - 1
+        }
+    }
+
+    final class Coordinator: NSObject, NSTextViewDelegate {
+        var parent: DesktopChatComposerTextView
+
+        init(_ parent: DesktopChatComposerTextView) {
+            self.parent = parent
+        }
+
+        func textDidChange(_ notification: Notification) {
+            guard let textView = notification.object as? NSTextView else {
+                return
+            }
+
+            parent.text = textView.string
+            updateMeasuredHeight(for: textView)
+        }
+
+        func updateMeasuredHeight(for textView: NSTextView) {
+            let fittingWidth = max(textView.enclosingScrollView?.contentSize.width ?? textView.bounds.width, 1)
+            textView.textContainer?.containerSize = NSSize(
+                width: fittingWidth,
+                height: CGFloat.greatestFiniteMagnitude
+            )
+            textView.layoutManager?.ensureLayout(for: textView.textContainer!)
+            let fittingSize = textView.layoutManager?.usedRect(for: textView.textContainer!).size ?? .zero
+            let clampedHeight = min(
+                parent.maxHeight,
+                max(parent.minHeight, ceil(fittingSize.height + textView.textContainerInset.height * 2))
+            )
+
+            if abs(parent.measuredHeight - clampedHeight) > 0.5 {
+                parent.measuredHeight = clampedHeight
+            }
+        }
+    }
+}
+
+private final class DesktopChatComposerNativeTextView: NSTextView {
+    var onSubmit: (() -> Void)?
+
+    override func keyDown(with event: NSEvent) {
+        let isReturnKey = event.keyCode == 36 || event.keyCode == 76
+        let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+
+        if isReturnKey,
+           !modifiers.contains(.shift),
+           !modifiers.contains(.option),
+           !modifiers.contains(.control),
+           !modifiers.contains(.command) {
+            onSubmit?()
+            return
+        }
+
+        super.keyDown(with: event)
+    }
+}
+
 private final class ExplicitVoiceCaptureController: ObservableObject {
     private struct CaptureSessionTransportContext {
         let streamID: UInt64
@@ -1542,6 +1671,18 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
             byteCount: trimmedTranscript.utf8.count,
             audioCaptureRefState: audioCaptureRefState
         )
+        completeStoppedCaptureSession()
+    }
+
+    func stopCaptureAndKeepTranscriptPreview() {
+        guard isListening else {
+            return
+        }
+
+        endCaptureInput()
+        transcriptPreview = transcriptPreview.trimmingCharacters(in: .whitespacesAndNewlines)
+        pendingRequest = nil
+        failedRequest = nil
         completeStoppedCaptureSession()
     }
 
@@ -4171,20 +4312,38 @@ struct DesktopConversationWakeTriggeredVoicePendingAttachmentState: Identifiable
 }
 
 struct DesktopConversationTimelineEntryState: Identifiable, Equatable {
+    let stableID: String
     let speaker: String
     let posture: String
     let body: String
     let detail: String
     let sourceSurface: String
 
+    init(
+        stableID: String? = nil,
+        speaker: String,
+        posture: String,
+        body: String,
+        detail: String,
+        sourceSurface: String
+    ) {
+        self.speaker = speaker
+        self.posture = posture
+        self.body = body
+        self.detail = detail
+        self.sourceSurface = sourceSurface
+        self.stableID = stableID
+            ?? [
+                speaker,
+                posture,
+                body,
+                detail,
+                sourceSurface,
+            ].joined(separator: "::")
+    }
+
     var id: String {
-        [
-            speaker,
-            posture,
-            body,
-            detail,
-            sourceSurface,
-        ].joined(separator: "::")
+        stableID
     }
 
     var isUserAuthored: Bool {
@@ -4235,6 +4394,7 @@ private struct DesktopSubmittedUserContinuityPreviewState: Identifiable, Equatab
 
     var timelineEntry: DesktopConversationTimelineEntryState {
         DesktopConversationTimelineEntryState(
+            stableID: id,
             speaker: "You",
             posture: inputMode.posture,
             body: text,
@@ -4242,6 +4402,12 @@ private struct DesktopSubmittedUserContinuityPreviewState: Identifiable, Equatab
             sourceSurface: inputMode.sourceSurface
         )
     }
+}
+
+private struct DesktopPersistedConversationTimelineHistoryEntry: Identifiable, Equatable {
+    let id: String
+    let conversationKey: String
+    let entry: DesktopConversationTimelineEntryState
 }
 
 struct DesktopConversationSupportRailState: Identifiable, Equatable {
@@ -4715,11 +4881,13 @@ struct DesktopSessionShellView: View {
     @State private var desktopAuthoritativeReplyProvenanceRenderState: DesktopAuthoritativeReplyProvenanceRenderState?
     @State private var desktopAuthoritativeReplyPlaybackState: DesktopAuthoritativeReplyPlaybackState = .idle
     @State private var desktopTypedTurnDraft: String = ""
+    @State private var desktopTypedTurnComposerMeasuredHeight: CGFloat = 34
     @State private var desktopSearchRequestDraft: String = ""
     @State private var desktopToolRequestDraft: String = ""
     @State private var desktopTypedTurnPendingRequest: DesktopTypedTurnRequestState?
     @State private var desktopTypedTurnFailedRequest: InterruptContinuityResponseFailureState?
     @State private var desktopSubmittedUserContinuityPreviewState: DesktopSubmittedUserContinuityPreviewState?
+    @State private var desktopPersistedConversationTimelineHistory: [DesktopPersistedConversationTimelineHistoryEntry] = []
     @State private var desktopSearchRequestFailedRequest: InterruptContinuityResponseFailureState?
     @State private var desktopToolRequestFailedRequest: InterruptContinuityResponseFailureState?
     @State private var desktopTypedTurnRequestSequence: Int = 0
@@ -4738,7 +4906,7 @@ struct DesktopSessionShellView: View {
             }
         }
         .padding(24)
-        .frame(minWidth: 1180, minHeight: 720, alignment: .topLeading)
+        .frame(minWidth: 680, minHeight: 520, alignment: .topLeading)
         .background(Color(nsColor: .windowBackgroundColor))
         .sheet(item: $desktopPresentedSecondaryPanel) { panel in
             if let operationalConversationShellState = desktopOperationalConversationShellState {
@@ -4981,24 +5149,7 @@ struct DesktopSessionShellView: View {
                         .foregroundStyle(.secondary)
                         .padding(.horizontal, 4)
 
-                    if historySurfaces.isEmpty {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("No conversations yet")
-                                .font(.subheadline.weight(.semibold))
-
-                            Text("Your conversation history will appear here as you talk with Selene.")
-                                .font(.footnote)
-                                .foregroundStyle(.secondary)
-                        }
-                        .padding(16)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(Color.white.opacity(0.72))
-                        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                                .stroke(Color.primary.opacity(0.06), lineWidth: 1)
-                        )
-                    } else {
+                    if !historySurfaces.isEmpty {
                         VStack(alignment: .leading, spacing: 8) {
                             ForEach(historySurfaces) { surface in
                                 desktopSidebarHistoryRow(surface)
@@ -5011,7 +5162,7 @@ struct DesktopSessionShellView: View {
                 .frame(maxWidth: .infinity, alignment: .topLeading)
             }
         }
-        .frame(minWidth: 280, idealWidth: 300, maxWidth: 320, maxHeight: .infinity, alignment: .topLeading)
+        .frame(minWidth: 190, idealWidth: 250, maxWidth: 290, maxHeight: .infinity, alignment: .topLeading)
         .background(sidebarBackground)
     }
 
@@ -6025,6 +6176,131 @@ struct DesktopSessionShellView: View {
         desktopToolRequestDraft.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    private var desktopForegroundConversationHistoryKey: String {
+        if let foregroundSessionActiveVisibleContext {
+            return "session::\(foregroundSessionActiveVisibleContext.sessionID)"
+        }
+
+        if let foregroundSessionSoftClosedVisibleContext {
+            return "session::\(foregroundSessionSoftClosedVisibleContext.sessionID)"
+        }
+
+        if let foregroundSessionSuspendedVisibleContext {
+            return "session::\(foregroundSessionSuspendedVisibleContext.sessionID)"
+        }
+
+        if let foregroundSessionHeaderContext {
+            return "session::\(foregroundSessionHeaderContext.sessionID)"
+        }
+
+        if let foregroundObservedSessionSurface {
+            return "surface::\(foregroundObservedSessionSurface.id)"
+        }
+
+        if let currentDominantObservedSessionSurface {
+            return "surface::\(currentDominantObservedSessionSurface.id)"
+        }
+
+        return "conversation::dominant"
+    }
+
+    private var desktopPersistedTimelineEntriesForForegroundConversation: [DesktopConversationTimelineEntryState] {
+        desktopPersistedConversationTimelineHistory
+            .filter { $0.conversationKey == desktopForegroundConversationHistoryKey }
+            .map(\.entry)
+    }
+
+    private func desktopPersistConversationTimelineEntry(
+        _ entry: DesktopConversationTimelineEntryState,
+        conversationKey: String? = nil
+    ) {
+        let resolvedConversationKey = conversationKey ?? desktopForegroundConversationHistoryKey
+        let historyEntry = DesktopPersistedConversationTimelineHistoryEntry(
+            id: "\(resolvedConversationKey)::\(entry.id)",
+            conversationKey: resolvedConversationKey,
+            entry: entry
+        )
+
+        guard desktopPersistedConversationTimelineHistory.last != historyEntry else {
+            return
+        }
+
+        desktopPersistedConversationTimelineHistory.append(historyEntry)
+
+        if desktopPersistedConversationTimelineHistory.count > 200 {
+            desktopPersistedConversationTimelineHistory.removeFirst(
+                desktopPersistedConversationTimelineHistory.count - 200
+            )
+        }
+    }
+
+    private func desktopTimelineEntriesIncludingPersistedHistory(
+        _ timelineEntries: [DesktopConversationTimelineEntryState]
+    ) -> [DesktopConversationTimelineEntryState] {
+        var mergedTimelineEntries = timelineEntries
+
+        for persistedEntry in desktopPersistedTimelineEntriesForForegroundConversation {
+            let normalizedPersistedBody = persistedEntry.body.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !normalizedPersistedBody.isEmpty else {
+                continue
+            }
+
+            let alreadyVisible = mergedTimelineEntries.contains { entry in
+                entry.speaker == persistedEntry.speaker
+                    && entry.body.trimmingCharacters(in: .whitespacesAndNewlines) == normalizedPersistedBody
+            }
+
+            if !alreadyVisible {
+                mergedTimelineEntries.append(persistedEntry)
+            }
+        }
+
+        return mergedTimelineEntries
+    }
+
+    private func desktopPersistSubmittedUserContinuityIfNeeded(
+        requestID: String,
+        inputMode: DesktopSubmittedUserContinuityPreviewState.InputMode,
+        text: String,
+        conversationKey: String
+    ) {
+        let normalizedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedText.isEmpty else {
+            return
+        }
+
+        let entry = DesktopConversationTimelineEntryState(
+            stableID: "user::\(requestID)",
+            speaker: "You",
+            posture: inputMode.posture,
+            body: normalizedText,
+            detail: inputMode.detail,
+            sourceSurface: inputMode.sourceSurface
+        )
+        desktopPersistConversationTimelineEntry(entry, conversationKey: conversationKey)
+    }
+
+    private func desktopPersistAuthoritativeReplyIfNeeded(
+        requestID: String,
+        text: String?,
+        conversationKey: String
+    ) {
+        let normalizedText = text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !normalizedText.isEmpty else {
+            return
+        }
+
+        let entry = DesktopConversationTimelineEntryState(
+            stableID: "selene::\(requestID)",
+            speaker: "Selene",
+            posture: "authoritative_reply_text",
+            body: normalizedText,
+            detail: "",
+            sourceSurface: "CANONICAL_RUNTIME_COMPLETED"
+        )
+        desktopPersistConversationTimelineEntry(entry, conversationKey: conversationKey)
+    }
+
     private var desktopTypedTurnSubmissionInterlocksActive: Bool {
         desktopTypedTurnPendingRequest != nil
             || explicitVoiceController.isListening
@@ -6063,17 +6339,8 @@ struct DesktopSessionShellView: View {
             || lastStagedWakeTriggeredVoiceTurnRequestState != nil
     }
 
-    private var desktopTypedTurnComposerLineCountEstimate: Int {
-        let draft = desktopVisibleTypedTurnDraft
-        let newlineLineCount = max(draft.components(separatedBy: .newlines).count, 1)
-        let wrappedLineEstimate = max(Int(ceil(Double(max(draft.count, 1)) / 64.0)), 1)
-        return min(10, max(newlineLineCount, wrappedLineEstimate))
-    }
-
     private var desktopTypedTurnComposerEditorHeight: CGFloat {
-        let lineHeight: CGFloat = 22
-        let visibleLineCount = CGFloat(min(10, desktopTypedTurnComposerLineCountEstimate))
-        return max(52, visibleLineCount * lineHeight + 8)
+        min(224, max(32, desktopTypedTurnComposerMeasuredHeight))
     }
 
     private var desktopTypedTurnComposerDraftBinding: Binding<String> {
@@ -6090,6 +6357,40 @@ struct DesktopSessionShellView: View {
                 desktopTypedTurnDraft = newValue
             }
         )
+    }
+
+    private var desktopComposerShouldShowWaveformActiveState: Bool {
+        explicitVoiceController.isListening || explicitVoiceController.pendingRequest != nil
+    }
+
+    private func startDesktopComposerDictation() {
+        let wakeDispatchInFlight = desktopWakeListenerController.listenerState == .dispatching
+        desktopWakeListenerController.haltCaptureSession()
+        if !wakeDispatchInFlight {
+            desktopWakeListenerController.clearPendingPreparedWakeTurn()
+            lastStagedWakeTriggeredVoiceTurnRequestState = nil
+        }
+        desktopCanonicalRuntimeOutcomeState = nil
+        desktopAuthoritativeReplyRenderState = nil
+        desktopAuthoritativeReplyProvenanceRenderState = nil
+        desktopAuthoritativeReplyPlaybackController.reset()
+        desktopAuthoritativeReplyPlaybackState = .idle
+        explicitVoiceController.startExplicitVoiceTurn()
+    }
+
+    private func stopDesktopComposerDictationAndKeepDraft() {
+        let transcriptPreview = explicitVoiceController.transcriptPreview
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        explicitVoiceController.stopCaptureAndKeepTranscriptPreview()
+
+        if !transcriptPreview.isEmpty {
+            if !desktopTypedTurnDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                desktopTypedTurnDraft += " " + transcriptPreview
+            } else {
+                desktopTypedTurnDraft = transcriptPreview
+            }
+        }
     }
 
     private var keyboardComposerPendingTypedTurnRequest: DesktopTypedTurnRequestState? {
@@ -6184,126 +6485,85 @@ struct DesktopSessionShellView: View {
     }
 
     private var desktopTypedTurnComposerCard: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            VStack(alignment: .leading, spacing: 14) {
-                ZStack(alignment: .topLeading) {
-                    if desktopVisibleTypedTurnDraft.isEmpty {
-                        Text("Message Selene")
-                            .foregroundStyle(.secondary)
-                            .padding(.top, 8)
-                            .padding(.leading, 4)
-                    }
-
-                    TextEditor(text: desktopTypedTurnComposerDraftBinding)
-                        .font(.system(size: 16))
-                        .scrollContentBackground(.hidden)
-                        .frame(height: desktopTypedTurnComposerEditorHeight)
-                        .disabled(desktopTypedTurnComposerEditingInterlocksActive)
-                }
-
-                if let failedRequest = desktopTypedTurnFailedRequest {
-                    Text(failedRequest.summary)
-                        .font(.footnote)
-                        .foregroundStyle(.red)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                } else if let failedRequest = explicitVoiceController.failedRequest {
-                    Text(failedRequest.summary)
-                        .font(.footnote)
-                        .foregroundStyle(.red)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-
-                HStack(spacing: 12) {
-                    Button {
-                        if explicitVoiceController.isListening {
-                            desktopCanonicalRuntimeOutcomeState = nil
-                            desktopAuthoritativeReplyRenderState = nil
-                            desktopAuthoritativeReplyProvenanceRenderState = nil
-                            desktopAuthoritativeReplyPlaybackController.reset()
-                            desktopAuthoritativeReplyPlaybackState = .idle
-                            explicitVoiceController.stopCaptureAndPrepareVoiceTurn()
-                        } else {
-                            let wakeDispatchInFlight =
-                                desktopWakeListenerController.listenerState == .dispatching
-                            desktopWakeListenerController.haltCaptureSession()
-                            if !wakeDispatchInFlight {
-                                desktopWakeListenerController.clearPendingPreparedWakeTurn()
-                                lastStagedWakeTriggeredVoiceTurnRequestState = nil
-                            }
-                            desktopCanonicalRuntimeOutcomeState = nil
-                            desktopAuthoritativeReplyRenderState = nil
-                            desktopAuthoritativeReplyProvenanceRenderState = nil
-                            desktopAuthoritativeReplyPlaybackController.reset()
-                            desktopAuthoritativeReplyPlaybackState = .idle
-                            explicitVoiceController.startExplicitVoiceTurn()
-                        }
-                    } label: {
-                        Image(systemName: explicitVoiceController.isListening ? "waveform" : "mic")
-                            .font(.system(size: 17, weight: .semibold))
-                            .frame(width: 34, height: 34)
-                            .background(
-                                explicitVoiceController.isListening
-                                    ? Color.accentColor.opacity(0.12)
-                                    : Color.primary.opacity(0.05)
-                            )
-                            .clipShape(Circle())
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(explicitVoiceController.pendingRequest != nil)
-
-                    if keyboardComposerPendingTypedTurnRequest != nil {
-                        Text("Sending")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(.secondary)
-                    } else if explicitVoiceController.isListening {
-                        Text("Listening")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(Color.accentColor)
-                    } else if explicitVoiceController.pendingRequest != nil {
-                        Text("Voice pending")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(.secondary)
-                    } else if desktopTypedTurnSubmissionInterlocksActive {
-                        Text("Busy")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(.secondary)
-                    }
-
-                    Spacer()
-
-                    Button {
-                        submitDesktopTypedTurnFromPrimaryControl()
-                    } label: {
-                        Image(systemName: "arrow.up")
-                            .font(.headline.weight(.semibold))
-                            .foregroundStyle(
-                                trimmedDesktopVisibleTypedTurnDraft.isEmpty ? Color.secondary : Color.white
-                            )
-                            .frame(width: 36, height: 36)
-                            .background(
-                                trimmedDesktopVisibleTypedTurnDraft.isEmpty || desktopTypedTurnComposerSubmissionInterlocksActive
-                                    ? Color.primary.opacity(0.08)
-                                    : Color.black.opacity(0.94)
-                            )
-                            .clipShape(Circle())
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(
-                        trimmedDesktopVisibleTypedTurnDraft.isEmpty
-                            || desktopTypedTurnComposerSubmissionInterlocksActive
-                    )
-                }
+        HStack(alignment: .bottom, spacing: 14) {
+            Button {
+                // The leading affordance is visual-only for this correction pass.
+            } label: {
+                Image(systemName: "plus")
+                    .font(.system(size: 24, weight: .light))
+                    .foregroundStyle(Color.primary.opacity(0.92))
+                    .frame(width: 40, height: 40)
             }
-            .padding(.horizontal, 18)
-            .padding(.vertical, 16)
+            .buttonStyle(.plain)
+
+            ZStack(alignment: .topLeading) {
+                if desktopVisibleTypedTurnDraft.isEmpty {
+                    Text("Ask anything")
+                        .font(.system(size: 18))
+                        .foregroundStyle(.secondary)
+                        .padding(.top, 7)
+                }
+
+                DesktopChatComposerTextView(
+                    text: desktopTypedTurnComposerDraftBinding,
+                    measuredHeight: $desktopTypedTurnComposerMeasuredHeight,
+                    isEditable: !desktopTypedTurnComposerEditingInterlocksActive
+                ) {
+                    submitDesktopTypedTurnFromPrimaryControl()
+                }
+                .frame(height: desktopTypedTurnComposerEditorHeight)
+            }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color(nsColor: .textBackgroundColor))
-            .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 28, style: .continuous)
-                    .stroke(Color.primary.opacity(0.08), lineWidth: 1)
-            )
+
+            HStack(spacing: 12) {
+                Button {
+                    if explicitVoiceController.isListening {
+                        stopDesktopComposerDictationAndKeepDraft()
+                    } else {
+                        startDesktopComposerDictation()
+                    }
+                } label: {
+                    Image(systemName: "mic")
+                        .font(.system(size: 18, weight: .medium))
+                        .foregroundStyle(Color.primary.opacity(0.92))
+                        .frame(width: 28, height: 28)
+                }
+                .buttonStyle(.plain)
+                .disabled(explicitVoiceController.pendingRequest != nil)
+
+                Button {
+                    if explicitVoiceController.isListening {
+                        stopDesktopComposerDictationAndKeepDraft()
+                    } else {
+                        startDesktopComposerDictation()
+                    }
+                } label: {
+                    Image(systemName: "waveform")
+                        .font(.system(size: 19, weight: .semibold))
+                        .foregroundStyle(desktopComposerShouldShowWaveformActiveState ? .primary : .secondary)
+                        .frame(width: 40, height: 40)
+                        .background(
+                            desktopComposerShouldShowWaveformActiveState
+                                ? Color.primary.opacity(0.10)
+                                : Color.primary.opacity(0.06)
+                        )
+                        .clipShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .disabled(explicitVoiceController.pendingRequest != nil)
+            }
+            .padding(.bottom, 4)
         }
+        .padding(.horizontal, 22)
+        .padding(.vertical, 18)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.white)
+        .clipShape(RoundedRectangle(cornerRadius: 38, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 38, style: .continuous)
+                .stroke(Color.primary.opacity(0.12), lineWidth: 1)
+        )
+        .shadow(color: Color.black.opacity(0.05), radius: 16, x: 0, y: 8)
     }
 
     private var desktopToolRequestAuthoringCard: some View {
@@ -7031,6 +7291,8 @@ struct DesktopSessionShellView: View {
             )
         }
 
+        timelineEntries = desktopTimelineEntriesIncludingPersistedHistory(timelineEntries)
+
         if isShowingCurrentDominantSurface {
             let trimmedExplicitVoiceTranscriptPreview = explicitVoiceController.transcriptPreview
                 .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -7060,20 +7322,6 @@ struct DesktopSessionShellView: View {
                 )
             }
 
-            if let failedRequest = explicitVoiceController.failedRequest,
-               !explicitVoiceController.isListening,
-               explicitVoiceController.pendingRequest == nil {
-                timelineEntries.append(
-                    DesktopConversationTimelineEntryState(
-                        speaker: "You",
-                        posture: "explicit_voice_failed_request_preview",
-                        body: failedRequest.summary,
-                        detail: "Bounded explicit local failure visibility only. Canonical runtime acceptance, transcript authority, and later cloud-visible response remain authoritative.",
-                        sourceSurface: "EXPLICIT_VOICE_FAILED_REQUEST"
-                    )
-                )
-            }
-
             if let pendingTypedTurnRequest = desktopTypedTurnPendingRequest {
                 timelineEntries.append(
                     DesktopConversationTimelineEntryState(
@@ -7085,40 +7333,6 @@ struct DesktopSessionShellView: View {
                     )
                 )
             }
-
-            if let submittedUserContinuityEntry = desktopSubmittedUserContinuityTimelineEntry(
-                isShowingCurrentDominantSurface: isShowingCurrentDominantSurface
-            ) {
-                timelineEntries.append(submittedUserContinuityEntry)
-            }
-
-            if let failedTypedTurnRequest = desktopTypedTurnFailedRequest,
-               desktopTypedTurnPendingRequest == nil {
-                timelineEntries.append(
-                    DesktopConversationTimelineEntryState(
-                        speaker: "You",
-                        posture: "typed_turn_failed_request_preview",
-                        body: failedTypedTurnRequest.summary,
-                        detail: DesktopTypedTurnRequestOrigin.keyboardComposer.timelineFailedDetail,
-                        sourceSurface: DesktopTypedTurnRequestOrigin.keyboardComposer.failedSourceSurface
-                    )
-                )
-            }
-        }
-
-        let runtimeDispatchFailureAttachmentState = isShowingCurrentDominantSurface
-            ? desktopConversationRuntimeDispatchFailureAttachmentState(requiresReadyTimeHandoff: false)
-            : nil
-        if let runtimeDispatchFailureAttachmentState {
-            timelineEntries.append(
-                DesktopConversationTimelineEntryState(
-                    speaker: "Selene",
-                    posture: "runtime_dispatch_failure_preview",
-                    body: runtimeDispatchFailureAttachmentState.summary,
-                    detail: "Bounded canonical runtime dispatch/failure visibility only. Already-live runtime carriers remain read-only, non-authoritative, and do not add local session or tool authority.",
-                    sourceSurface: "CANONICAL_RUNTIME_DISPATCH_FAILURE"
-                )
-            )
         }
 
         let authoritativeResponseText = isShowingCurrentDominantSurface
@@ -7162,7 +7376,7 @@ struct DesktopSessionShellView: View {
             readOnlyToolLaneState: nil,
             searchToolCompletionState: nil,
             authoritativeReplyCompletionState: nil,
-            runtimeDispatchFailureAttachmentState: runtimeDispatchFailureAttachmentState
+            runtimeDispatchFailureAttachmentState: nil
         )
     }
 
@@ -7256,6 +7470,8 @@ struct DesktopSessionShellView: View {
             )
         }
 
+        timelineEntries = desktopTimelineEntriesIncludingPersistedHistory(timelineEntries)
+
         if isShowingCurrentDominantSurface {
             let trimmedExplicitVoiceTranscriptPreview = explicitVoiceController.transcriptPreview
                 .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -7316,36 +7532,6 @@ struct DesktopSessionShellView: View {
                 )
             }
 
-            if let failedRequest = explicitVoiceController.failedRequest,
-               !explicitVoiceController.isListening,
-               explicitVoiceController.pendingRequest == nil {
-                timelineEntries.append(
-                    DesktopConversationTimelineEntryState(
-                        speaker: "You",
-                        posture: "explicit_voice_failed_request_preview",
-                        body: failedRequest.summary,
-                        detail: "Bounded explicit local failure visibility only. Canonical runtime acceptance, transcript authority, and later cloud-visible response remain authoritative.",
-                        sourceSurface: "EXPLICIT_VOICE_FAILED_REQUEST"
-                    )
-                )
-            }
-
-            if desktopWakeListenerPromptState != nil,
-               let failedWakeRequest = desktopWakeListenerController.failedRequest,
-               desktopWakeListenerController.listenerState == .failed,
-               desktopWakeListenerController.pendingRequest == nil,
-               lastStagedWakeTriggeredVoiceTurnRequestState == nil {
-                timelineEntries.append(
-                    DesktopConversationTimelineEntryState(
-                        speaker: "You",
-                        posture: "wake_voice_failed_request_preview",
-                        body: failedWakeRequest.summary,
-                        detail: "Bounded wake local failure visibility only. Wake authority, canonical runtime acceptance, and later cloud-visible response remain authoritative.",
-                        sourceSurface: "WAKE_TRIGGERED_VOICE_FAILED_REQUEST"
-                    )
-                )
-            }
-
             if let pendingTypedTurnRequest = desktopTypedTurnPendingRequest {
                 timelineEntries.append(
                     DesktopConversationTimelineEntryState(
@@ -7354,51 +7540,6 @@ struct DesktopSessionShellView: View {
                         body: pendingTypedTurnRequest.boundedPreview,
                         detail: pendingTypedTurnRequest.origin.timelinePendingDetail,
                         sourceSurface: pendingTypedTurnRequest.origin.pendingSourceSurface
-                    )
-                )
-            }
-
-            if let submittedUserContinuityEntry = desktopSubmittedUserContinuityTimelineEntry(
-                isShowingCurrentDominantSurface: isShowingCurrentDominantSurface
-            ) {
-                timelineEntries.append(submittedUserContinuityEntry)
-            }
-
-            if let failedTypedTurnRequest = desktopTypedTurnFailedRequest,
-               desktopTypedTurnPendingRequest == nil {
-                timelineEntries.append(
-                    DesktopConversationTimelineEntryState(
-                        speaker: "You",
-                        posture: "typed_turn_failed_request_preview",
-                        body: failedTypedTurnRequest.summary,
-                        detail: DesktopTypedTurnRequestOrigin.keyboardComposer.timelineFailedDetail,
-                        sourceSurface: DesktopTypedTurnRequestOrigin.keyboardComposer.failedSourceSurface
-                    )
-                )
-            }
-
-            if let failedSearchRequest = desktopSearchRequestFailedRequest,
-               desktopTypedTurnPendingRequest == nil {
-                timelineEntries.append(
-                    DesktopConversationTimelineEntryState(
-                        speaker: "You",
-                        posture: DesktopTypedTurnRequestOrigin.searchRequestCard.timelineFailedPosture,
-                        body: failedSearchRequest.summary,
-                        detail: DesktopTypedTurnRequestOrigin.searchRequestCard.timelineFailedDetail,
-                        sourceSurface: DesktopTypedTurnRequestOrigin.searchRequestCard.failedSourceSurface
-                    )
-                )
-            }
-
-            if let failedToolRequest = desktopToolRequestFailedRequest,
-               desktopTypedTurnPendingRequest == nil {
-                timelineEntries.append(
-                    DesktopConversationTimelineEntryState(
-                        speaker: "You",
-                        posture: DesktopTypedTurnRequestOrigin.toolRequestCard.timelineFailedPosture,
-                        body: failedToolRequest.summary,
-                        detail: DesktopTypedTurnRequestOrigin.toolRequestCard.timelineFailedDetail,
-                        sourceSurface: DesktopTypedTurnRequestOrigin.toolRequestCard.failedSourceSurface
                     )
                 )
             }
@@ -7415,23 +7556,6 @@ struct DesktopSessionShellView: View {
         let authoritativeReplyCompletionState = isShowingCurrentDominantSurface
             ? desktopConversationAuthoritativeReplyCompletionState
             : nil
-        let runtimeDispatchFailureAttachmentState = isShowingCurrentDominantSurface
-            ? desktopConversationRuntimeDispatchFailureAttachmentState(
-                requiresReadyTimeHandoff: requiresReadyTimeHandoff
-            )
-            : nil
-        if let runtimeDispatchFailureAttachmentState {
-            timelineEntries.append(
-                DesktopConversationTimelineEntryState(
-                    speaker: "Selene",
-                    posture: "runtime_dispatch_failure_preview",
-                    body: runtimeDispatchFailureAttachmentState.summary,
-                    detail: "Bounded canonical runtime dispatch/failure visibility only. Already-live runtime carriers remain read-only, non-authoritative, and do not add local session or tool authority.",
-                    sourceSurface: "CANONICAL_RUNTIME_DISPATCH_FAILURE"
-                )
-            )
-        }
-
         if !authoritativeResponseText.isEmpty,
            !desktopConversationShouldSuppressDedicatedAuthoritativeReplyTextEntry(
                timelineEntries,
@@ -7444,24 +7568,6 @@ struct DesktopSessionShellView: View {
                     body: authoritativeResponseText,
                     detail: "Cloud-authored authoritative reply text only. This shell does not fabricate local answer content.",
                     sourceSurface: "CANONICAL_RUNTIME_COMPLETED"
-                )
-            )
-        }
-
-        if isShowingCurrentDominantSurface,
-           desktopConversationShouldAttachRuntimeCompletedWithoutInlineReply(
-               desktopCanonicalRuntimeOutcomeState,
-               searchToolCompletionState: searchToolCompletionState,
-               authoritativeReplyCompletionState: authoritativeReplyCompletionState
-           ),
-           let outcomeState = desktopCanonicalRuntimeOutcomeState {
-            timelineEntries.append(
-                DesktopConversationTimelineEntryState(
-                    speaker: "Selene",
-                    posture: "runtime_completed_without_inline_reply_preview",
-                    body: outcomeState.summary,
-                    detail: "Bounded canonical runtime completed visibility only when no lawful inline reply attachment is present. Already-live runtime carriers remain read-only, non-authoritative, and do not add local session authority, local search input or execution, local tool invocation or provider selection, wake-listener authority, hidden/background wake behavior, or autonomous unlock.",
-                    sourceSurface: "CANONICAL_RUNTIME_COMPLETED_WITHOUT_INLINE_REPLY"
                 )
             )
         }
@@ -7494,7 +7600,7 @@ struct DesktopSessionShellView: View {
             readOnlyToolLaneState: readOnlyToolLaneState,
             searchToolCompletionState: searchToolCompletionState,
             authoritativeReplyCompletionState: authoritativeReplyCompletionState,
-            runtimeDispatchFailureAttachmentState: runtimeDispatchFailureAttachmentState
+            runtimeDispatchFailureAttachmentState: nil
         )
     }
 
@@ -11112,11 +11218,6 @@ struct DesktopSessionShellView: View {
 
     private var desktopEvidenceFirstConversationPane: some View {
         VStack(spacing: 0) {
-            desktopConversationTopBar(title: "Selene", voiceState: nil)
-
-            Divider()
-                .overlay(Color.primary.opacity(0.05))
-
             ScrollView {
                 desktopConversationReadyCanvas(
                     title: "Selene",
@@ -11145,22 +11246,11 @@ struct DesktopSessionShellView: View {
     private func desktopOperationalConversationMainPane(
         _ state: DesktopConversationPrimaryPaneState
     ) -> some View {
-        let title = foregroundObservedSessionSurface.map { surface in
-            desktopSidebarHistoryTitle(for: surface)
-        } ?? state.headerTitle
         let isWritable = state.dominantPosture != "SESSION_SUSPENDED_VISIBLE"
             && state.dominantPosture != "QUARANTINED_LOCAL_STATE"
             && desktopForegroundSelectionShowsCurrentDominantSurface
 
         return VStack(spacing: 0) {
-            desktopConversationTopBar(
-                title: title,
-                voiceState: state.voiceState
-            )
-
-            Divider()
-                .overlay(Color.primary.opacity(0.05))
-
             ScrollView {
                 desktopConversationPrimaryPane(state)
                     .padding(.horizontal, 36)
@@ -11206,8 +11296,6 @@ struct DesktopSessionShellView: View {
         _ state: DesktopConversationPrimaryPaneState
     ) -> some View {
         VStack(alignment: .leading, spacing: 18) {
-            desktopConversationInlineDominantSessionEntryCard()
-
             Group {
                 if state.dominantPosture == "SESSION_SUSPENDED_VISIBLE" {
                     desktopConversationStatusCanvas(
@@ -11220,12 +11308,8 @@ struct DesktopSessionShellView: View {
                         detail: "Selene is waiting for this conversation to become available again."
                     )
                 } else if state.timelineEntries.isEmpty {
-                    desktopConversationReadyCanvas(
-                        title: "Selene",
-                        detail: desktopForegroundSelectionShowsCurrentDominantSurface
-                            ? nil
-                            : "This conversation is open in read-only view."
-                    )
+                    Color.clear
+                        .frame(maxWidth: .infinity, minHeight: 520, alignment: .topLeading)
                 } else {
                     LazyVStack(alignment: .leading, spacing: 18) {
                         ForEach(state.timelineEntries) { entry in
@@ -11981,21 +12065,9 @@ struct DesktopSessionShellView: View {
         authoritativeReplyCompletionState: DesktopConversationAuthoritativeReplyCompletionState?,
         runtimeDispatchFailureAttachmentState: DesktopConversationRuntimeDispatchFailureAttachmentState?
     ) -> some View {
-        let bubbleColor = entry.isUserAuthored
-            ? Color.black.opacity(0.96)
-            : Color(nsColor: .textBackgroundColor)
-        let bubbleStroke = entry.isUserAuthored
-            ? Color.black.opacity(0.96)
-            : Color.primary.opacity(0.06)
-        let foregroundColor = entry.isUserAuthored ? Color.white : Color.primary
-        let showsSupplementaryDetail = !entry.detail.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            && ![
-                "current_user_turn_text",
-                "current_selene_turn_text",
-                "archived_user_turn_text",
-                "archived_selene_turn_text",
-                "authoritative_reply_text",
-            ].contains(entry.posture)
+        let bubbleColor = Color.white
+        let bubbleStroke = Color.primary.opacity(0.08)
+        let foregroundColor = Color.primary
 
         return HStack(alignment: .top, spacing: 0) {
             if entry.isUserAuthored {
@@ -12007,32 +12079,6 @@ struct DesktopSessionShellView: View {
                     .textSelection(.enabled)
                     .foregroundStyle(foregroundColor)
                     .frame(maxWidth: .infinity, alignment: .leading)
-
-                if showsSupplementaryDetail {
-                    Text(entry.detail)
-                        .font(.footnote)
-                        .foregroundStyle(entry.isUserAuthored ? Color.white.opacity(0.78) : .secondary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-
-                if entry.posture == "runtime_completed_without_inline_reply_preview",
-                   entry.sourceSurface == "CANONICAL_RUNTIME_COMPLETED_WITHOUT_INLINE_REPLY",
-                   desktopConversationShouldAttachRuntimeCompletedWithoutInlineReply(
-                       desktopCanonicalRuntimeOutcomeState,
-                       searchToolCompletionState: searchToolCompletionState,
-                       authoritativeReplyCompletionState: authoritativeReplyCompletionState
-                   ),
-                   let outcomeState = desktopCanonicalRuntimeOutcomeState {
-                    desktopCanonicalRuntimeOutcomeCard(outcomeState)
-                }
-
-                if desktopConversationShouldAttachAuthoritativeReplyArtifacts(to: entry) {
-                    desktopConversationAuthoritativeReplyAttachment(
-                        readOnlyToolLaneState: readOnlyToolLaneState,
-                        searchToolCompletionState: searchToolCompletionState,
-                        authoritativeReplyCompletionState: authoritativeReplyCompletionState
-                    )
-                }
             }
             .padding(.horizontal, 18)
             .padding(.vertical, 16)
@@ -12043,6 +12089,7 @@ struct DesktopSessionShellView: View {
                     .stroke(bubbleStroke, lineWidth: 1)
             )
             .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+            .shadow(color: Color.black.opacity(0.03), radius: 8, x: 0, y: 3)
 
             if !entry.isUserAuthored {
                 Spacer(minLength: 88)
@@ -17122,6 +17169,8 @@ struct DesktopSessionShellView: View {
             return
         }
 
+        let conversationKey = desktopForegroundConversationHistoryKey
+
         do {
             let ingressContext = try desktopCanonicalRuntimeBridge.desktopExplicitVoiceIngressRequestBuilder(
                 pendingRequest,
@@ -17151,6 +17200,12 @@ struct DesktopSessionShellView: View {
                 inputMode: .explicitVoice,
                 text: pendingRequest.transcript
             )
+            desktopPersistSubmittedUserContinuityIfNeeded(
+                requestID: pendingRequest.id,
+                inputMode: .explicitVoice,
+                text: pendingRequest.transcript,
+                conversationKey: conversationKey
+            )
             if outcomeState.phase == .completed {
                 desktopAuthoritativeReplyRenderState = DesktopAuthoritativeReplyRenderState(
                     title: "Cloud-authored authoritative reply",
@@ -17176,6 +17231,11 @@ struct DesktopSessionShellView: View {
                     ),
                     cacheStatusLabel: outcomeState.authoritativeResponseProvenance?.cacheStatus
                 )
+                desktopPersistAuthoritativeReplyIfNeeded(
+                    requestID: pendingRequest.id,
+                    text: outcomeState.authoritativeResponseText,
+                    conversationKey: conversationKey
+                )
             } else {
                 desktopAuthoritativeReplyRenderState = nil
                 desktopAuthoritativeReplyProvenanceRenderState = nil
@@ -17199,6 +17259,12 @@ struct DesktopSessionShellView: View {
                 requestID: pendingRequest.id,
                 inputMode: .explicitVoice,
                 text: pendingRequest.transcript
+            )
+            desktopPersistSubmittedUserContinuityIfNeeded(
+                requestID: pendingRequest.id,
+                inputMode: .explicitVoice,
+                text: pendingRequest.transcript,
+                conversationKey: conversationKey
             )
             explicitVoiceController.clearPendingPreparedVoiceTurn()
         }
@@ -17292,6 +17358,8 @@ struct DesktopSessionShellView: View {
             return
         }
 
+        let conversationKey = desktopForegroundConversationHistoryKey
+
         do {
             let ingressContext = try desktopCanonicalRuntimeBridge.desktopTypedTurnIngressRequestBuilder(
                 pendingRequest,
@@ -17324,6 +17392,12 @@ struct DesktopSessionShellView: View {
                     inputMode: .typed,
                     text: pendingRequest.text
                 )
+                desktopPersistSubmittedUserContinuityIfNeeded(
+                    requestID: pendingRequest.id,
+                    inputMode: .typed,
+                    text: pendingRequest.text,
+                    conversationKey: conversationKey
+                )
             }
             if outcomeState.phase == .completed {
                 desktopAuthoritativeReplyRenderState = DesktopAuthoritativeReplyRenderState(
@@ -17350,6 +17424,11 @@ struct DesktopSessionShellView: View {
                     ),
                     cacheStatusLabel: outcomeState.authoritativeResponseProvenance?.cacheStatus
                 )
+                desktopPersistAuthoritativeReplyIfNeeded(
+                    requestID: pendingRequest.id,
+                    text: outcomeState.authoritativeResponseText,
+                    conversationKey: conversationKey
+                )
             } else {
                 desktopAuthoritativeReplyRenderState = nil
                 desktopAuthoritativeReplyProvenanceRenderState = nil
@@ -17374,6 +17453,12 @@ struct DesktopSessionShellView: View {
                     requestID: pendingRequest.id,
                     inputMode: .typed,
                     text: pendingRequest.text
+                )
+                desktopPersistSubmittedUserContinuityIfNeeded(
+                    requestID: pendingRequest.id,
+                    inputMode: .typed,
+                    text: pendingRequest.text,
+                    conversationKey: conversationKey
                 )
             }
             desktopTypedTurnPendingRequest = nil
@@ -17488,7 +17573,6 @@ struct DesktopSessionShellView: View {
     }
 
     private func submitDesktopTypedTurnFromPrimaryControl() {
-        NSApp.keyWindow?.makeFirstResponder(nil)
         submitDesktopTypedTurn()
     }
 
