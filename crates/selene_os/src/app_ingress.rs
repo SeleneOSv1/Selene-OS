@@ -8354,7 +8354,7 @@ fn maybe_build_weather_tool_response(
         )?));
     }
 
-    if let Some(ambiguity) = weather_country_ambiguity(place.as_str()) {
+    if let Some(ambiguity) = weather_place_ambiguity(place.as_str()) {
         return Ok(Some(weather_ambiguity_response(tool_request, ambiguity)?));
     }
 
@@ -8496,23 +8496,118 @@ fn weather_place_from_query(query: &str) -> String {
         .to_string()
 }
 
+fn weather_place_ambiguity(place: &str) -> Option<StructuredAmbiguity> {
+    weather_country_ambiguity(place)
+        .or_else(|| weather_broad_region_ambiguity(place))
+        .or_else(|| weather_ambiguous_place_ambiguity(place))
+}
+
 fn weather_country_ambiguity(place: &str) -> Option<StructuredAmbiguity> {
     let country_name = canonical_weather_country_name(place)?;
-    let alternatives = weather_country_alternatives(country_name.as_str());
-    StructuredAmbiguity {
-        summary: format!(
+    weather_ambiguity(
+        format!(
             "Weather varies by city and place inside {country_name}, so I need a specific location."
         ),
+        weather_country_alternatives(country_name.as_str()),
+    )
+}
+
+fn weather_broad_region_ambiguity(place: &str) -> Option<StructuredAmbiguity> {
+    let normalized = normalize_place_key(place);
+    let (label, alternatives): (&str, Vec<&str>) = match normalized.as_str() {
+        "california" => (
+            "California",
+            vec![
+                "Los Angeles, California",
+                "San Francisco, California",
+                "Sacramento, California",
+            ],
+        ),
+        "texas" => (
+            "Texas",
+            vec!["Houston, Texas", "Austin, Texas", "Dallas, Texas"],
+        ),
+        "florida" => (
+            "Florida",
+            vec!["Miami, Florida", "Orlando, Florida", "Tampa, Florida"],
+        ),
+        "ontario" => (
+            "Ontario",
+            vec![
+                "Toronto, Ontario",
+                "Ottawa, Ontario",
+                "Thunder Bay, Ontario",
+            ],
+        ),
+        "queensland" => (
+            "Queensland",
+            vec![
+                "Brisbane, Queensland",
+                "Cairns, Queensland",
+                "Townsville, Queensland",
+            ],
+        ),
+        "new south wales" => (
+            "New South Wales",
+            vec![
+                "Sydney, New South Wales",
+                "Newcastle, New South Wales",
+                "Wollongong, New South Wales",
+            ],
+        ),
+        "scotland" => (
+            "Scotland",
+            vec![
+                "Edinburgh, Scotland",
+                "Glasgow, Scotland",
+                "Inverness, Scotland",
+            ],
+        ),
+        _ => return None,
+    };
+    weather_ambiguity(
+        format!("Weather varies across {label}, so I need a specific city or local place."),
+        alternatives.into_iter().map(str::to_string).collect(),
+    )
+}
+
+fn weather_ambiguous_place_ambiguity(place: &str) -> Option<StructuredAmbiguity> {
+    let normalized = normalize_place_key(place);
+    let (label, alternatives): (&str, Vec<&str>) = match normalized.as_str() {
+        "springfield" => (
+            "Springfield",
+            vec![
+                "Springfield, Illinois",
+                "Springfield, Missouri",
+                "Springfield, Massachusetts",
+            ],
+        ),
+        "paris" => (
+            "Paris",
+            vec!["Paris, France", "Paris, Texas", "Paris, Ontario"],
+        ),
+        "san jose" => (
+            "San Jose",
+            vec![
+                "San Jose, California",
+                "San Jose, Costa Rica",
+                "San Jose, Batangas",
+            ],
+        ),
+        _ => return None,
+    };
+    weather_ambiguity(
+        format!("I found more than one place named {label}."),
+        alternatives.into_iter().map(str::to_string).collect(),
+    )
+}
+
+fn weather_ambiguity(summary: String, alternatives: Vec<String>) -> Option<StructuredAmbiguity> {
+    let ambiguity = StructuredAmbiguity {
+        summary,
         alternatives,
-    }
-    .validate()
-    .ok()
-    .map(|_| StructuredAmbiguity {
-        summary: format!(
-            "Weather varies by city and place inside {country_name}, so I need a specific location."
-        ),
-        alternatives: weather_country_alternatives(country_name.as_str()),
-    })
+    };
+    ambiguity.validate().ok().map(|_| ambiguity)
 }
 
 fn canonical_weather_country_name(place: &str) -> Option<String> {
@@ -8574,6 +8669,16 @@ fn normalize_place_key(place: &str) -> String {
 
 fn weather_country_alternatives(country_name: &str) -> Vec<String> {
     match normalize_place_key(country_name).as_str() {
+        "portugal" => vec![
+            "Lisbon, Portugal".to_string(),
+            "Porto, Portugal".to_string(),
+            "Funchal, Madeira".to_string(),
+        ],
+        "spain" => vec![
+            "Madrid, Spain".to_string(),
+            "Barcelona, Spain".to_string(),
+            "Las Palmas, Canary Islands".to_string(),
+        ],
         "japan" => vec![
             "Tokyo, Japan".to_string(),
             "Osaka, Japan".to_string(),
@@ -25960,6 +26065,50 @@ mod tests {
                 assert!(!summary.contains("provider_payload"));
             }
             other => panic!("expected weather clarification result, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn h364_weather_country_and_ambiguous_place_queries_clarify_before_provider() {
+        for (query, expected) in [
+            ("what is the weather in Portugal", "Lisbon, Portugal"),
+            ("what is the weather in Spain", "Madrid, Spain"),
+            (
+                "what is the weather in United States",
+                "New York, United States",
+            ),
+            (
+                "what is the weather in Springfield",
+                "Springfield, Illinois",
+            ),
+            (
+                "what is the weather in California",
+                "Los Angeles, California",
+            ),
+        ] {
+            let request = h361_weather_tool_request(query);
+            let response = maybe_build_weather_tool_response(&request)
+                .expect("weather clarification response should build")
+                .expect("ambiguous weather place should clarify before provider");
+            assert_eq!(response.tool_status, ToolStatus::Ok, "{query}");
+            let ambiguity = response
+                .ambiguity
+                .as_ref()
+                .expect("ambiguous weather place should carry structured alternatives");
+            assert!(
+                ambiguity.alternatives.contains(&expected.to_string()),
+                "{query}: {:?}",
+                ambiguity.alternatives
+            );
+            match response.tool_result.as_ref() {
+                Some(ToolResult::Weather { summary }) => {
+                    assert!(summary.contains("specific") || summary.contains("more than one"));
+                    assert!(!summary.contains("provider_payload"));
+                    assert!(!summary.contains("Sources:"));
+                    assert!(!summary.contains("Retrieved at (unix_ms):"));
+                }
+                other => panic!("expected weather clarification result, got {other:?}"),
+            }
         }
     }
 }

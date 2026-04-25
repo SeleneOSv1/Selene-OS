@@ -191,6 +191,7 @@ pub mod reason_codes {
 }
 
 const DETERMINISTIC_TIME_CLARIFICATION_TOPIC: &str = "deterministic_time_clarification";
+const DETERMINISTIC_WEATHER_CLARIFICATION_TOPIC: &str = "deterministic_weather_clarification";
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default)]
 #[serde(default)]
@@ -5201,7 +5202,7 @@ impl AdapterRuntime {
                         post_session_error(format!("invalid thread policy flags: {err:?}"))
                     })?;
             }
-            let nlp_transcript_text = deterministic_time_clarification_followup_query(
+            let nlp_transcript_text = deterministic_public_clarification_followup_query(
                 &base_thread_state,
                 user_text_final.as_deref(),
             )
@@ -8267,7 +8268,7 @@ fn build_nlp_output_for_voice_turn(
         .map_err(|err| format!("ph1n runtime failed while building PH1.X input: {err:?}"))
 }
 
-fn deterministic_time_clarification_followup_query(
+fn deterministic_public_clarification_followup_query(
     thread_state: &ThreadState,
     transcript_text: Option<&str>,
 ) -> Option<String> {
@@ -8280,14 +8281,10 @@ fn deterministic_time_clarification_followup_query(
     ) {
         return None;
     }
-    let topic_matches = thread_state
+    let topic_hint = thread_state
         .resume_buffer
         .as_ref()
-        .and_then(|buffer| buffer.topic_hint.as_deref())
-        == Some(DETERMINISTIC_TIME_CLARIFICATION_TOPIC);
-    if !topic_matches {
-        return None;
-    }
+        .and_then(|buffer| buffer.topic_hint.as_deref())?;
     let text = transcript_text?.trim();
     if text.is_empty() || text.len() > 256 {
         return None;
@@ -8296,7 +8293,16 @@ fn deterministic_time_clarification_followup_query(
     if lowered.contains("time") || lowered.contains("weather") {
         return None;
     }
-    Some(format!("what is the time in {}", truncate_utf8(text, 128)))
+    match topic_hint {
+        DETERMINISTIC_TIME_CLARIFICATION_TOPIC => {
+            Some(format!("what is the time in {}", truncate_utf8(text, 128)))
+        }
+        DETERMINISTIC_WEATHER_CLARIFICATION_TOPIC => Some(format!(
+            "what is the weather in {}",
+            truncate_utf8(text, 128)
+        )),
+        _ => None,
+    }
 }
 
 fn build_vision_turn_input_from_adapter_request(
@@ -20448,6 +20454,211 @@ mod tests {
                 assert!(!out.response_text.contains("provider_payload"));
                 assert!(!out.response_text.contains("Sources:"));
                 assert!(!out.response_text.contains("Retrieved at (unix_ms):"));
+            },
+        );
+    }
+
+    fn h364_run_desktop_typed_weather_query_on_thread(
+        runtime: &AdapterRuntime,
+        thread_key: &str,
+        turn_id: u64,
+        query: &str,
+    ) -> VoiceTurnAdapterResponse {
+        let mut req = base_request();
+        req.correlation_id = 364_000;
+        req.turn_id = turn_id;
+        req.device_turn_sequence = Some(turn_id);
+        req.now_ns = Some(turn_id);
+        req.thread_key = Some(thread_key.to_string());
+        req.app_platform = "DESKTOP".to_string();
+        req.audio_capture_ref = None;
+        req.user_text_final = Some(query.to_string());
+        runtime
+            .run_voice_turn(req)
+            .expect("desktop deterministic weather request should complete or clarify cleanly")
+    }
+
+    fn assert_h364_clean_weather_clarification(out: &VoiceTurnAdapterResponse, expected: &str) {
+        assert_eq!(out.status, "ok");
+        assert_eq!(out.outcome, "FINAL_TOOL");
+        assert!(
+            out.response_text.contains("Which place should I use?"),
+            "{}",
+            out.response_text
+        );
+        assert!(
+            out.response_text.contains(expected),
+            "{}",
+            out.response_text
+        );
+        assert!(!out.response_text.contains("verify your identity"));
+        assert!(!out
+            .response_text
+            .contains("governance state is out of sync"));
+        assert!(!out.response_text.contains("provider_payload"));
+        assert!(!out.response_text.contains("Sources:"));
+        assert!(!out.response_text.contains("Retrieved at (unix_ms):"));
+    }
+
+    fn assert_h364_clean_weather_answer(out: &VoiceTurnAdapterResponse, place: &str) {
+        assert_eq!(out.status, "ok");
+        assert_eq!(out.outcome, "FINAL_TOOL");
+        assert!(
+            out.response_text.starts_with("It's "),
+            "{}",
+            out.response_text
+        );
+        assert!(out.response_text.contains(place), "{}", out.response_text);
+        assert!(out.response_text.contains("°C"), "{}", out.response_text);
+        assert!(!out.response_text.contains("verify your identity"));
+        assert!(!out
+            .response_text
+            .contains("governance state is out of sync"));
+        assert!(!out.response_text.contains("provider_payload"));
+        assert!(!out.response_text.contains("Sources:"));
+        assert!(!out.response_text.contains("Retrieved at (unix_ms):"));
+    }
+
+    #[test]
+    fn h364_portugal_lisbon_weather_followup_completes_same_thread() {
+        let endpoint = h361_spawn_tomorrow_weather_endpoint(
+            r#"{
+                "data": {
+                    "time": "2026-04-25T03:00:00Z",
+                    "values": {
+                        "temperature": 19.6,
+                        "humidity": 58,
+                        "windSpeed": 4.1,
+                        "weatherCode": 1000
+                    }
+                },
+                "location": {
+                    "name": "Lisbon, Portugal"
+                }
+            }"#,
+        );
+        with_isolated_device_vault(
+            "h364-weather-portugal-lisbon",
+            &[],
+            &[
+                ("SELENE_REALTIME_TOMORROW_IO_ENDPOINT", endpoint.as_str()),
+                ("SELENE_REALTIME_TOMORROW_IO_API_KEY", "h364-secret"),
+                ("SELENE_REALTIME_WEATHER_API_KEY", " "),
+                ("SELENE_REALTIME_PROXY_MODE", "off"),
+            ],
+            || {
+                let runtime = AdapterRuntime::default();
+                let clarify = h364_run_desktop_typed_weather_query_on_thread(
+                    &runtime,
+                    "h364-weather-portugal-lisbon",
+                    364_001,
+                    "what is the weather in Portugal",
+                );
+                assert_h364_clean_weather_clarification(&clarify, "Lisbon, Portugal");
+                let answer = h364_run_desktop_typed_weather_query_on_thread(
+                    &runtime,
+                    "h364-weather-portugal-lisbon",
+                    364_002,
+                    "Lisbon",
+                );
+                assert_h364_clean_weather_answer(&answer, "Lisbon, Portugal");
+                assert!(answer.response_text.contains("19.6°C"));
+            },
+        );
+    }
+
+    #[test]
+    fn h364_spain_madrid_weather_followup_completes_same_thread() {
+        let endpoint = h361_spawn_tomorrow_weather_endpoint(
+            r#"{
+                "data": {
+                    "time": "2026-04-25T03:00:00Z",
+                    "values": {
+                        "temperature": 24.2,
+                        "humidity": 42,
+                        "windSpeed": 2.8,
+                        "weatherCode": 1100
+                    }
+                },
+                "location": {
+                    "name": "Madrid, Spain"
+                }
+            }"#,
+        );
+        with_isolated_device_vault(
+            "h364-weather-spain-madrid",
+            &[],
+            &[
+                ("SELENE_REALTIME_TOMORROW_IO_ENDPOINT", endpoint.as_str()),
+                ("SELENE_REALTIME_TOMORROW_IO_API_KEY", "h364-secret"),
+                ("SELENE_REALTIME_WEATHER_API_KEY", " "),
+                ("SELENE_REALTIME_PROXY_MODE", "off"),
+            ],
+            || {
+                let runtime = AdapterRuntime::default();
+                let clarify = h364_run_desktop_typed_weather_query_on_thread(
+                    &runtime,
+                    "h364-weather-spain-madrid",
+                    364_011,
+                    "what is the weather in Spain",
+                );
+                assert_h364_clean_weather_clarification(&clarify, "Madrid, Spain");
+                let answer = h364_run_desktop_typed_weather_query_on_thread(
+                    &runtime,
+                    "h364-weather-spain-madrid",
+                    364_012,
+                    "Madrid",
+                );
+                assert_h364_clean_weather_answer(&answer, "Madrid, Spain");
+                assert!(answer.response_text.contains("24.2°C"));
+            },
+        );
+    }
+
+    #[test]
+    fn h364_springfield_weather_followup_completes_same_thread() {
+        let endpoint = h361_spawn_tomorrow_weather_endpoint(
+            r#"{
+                "data": {
+                    "time": "2026-04-25T03:00:00Z",
+                    "values": {
+                        "temperature": 16.8,
+                        "humidity": 73,
+                        "windSpeed": 5.4,
+                        "weatherCode": 4200
+                    }
+                },
+                "location": {
+                    "name": "Springfield, Illinois"
+                }
+            }"#,
+        );
+        with_isolated_device_vault(
+            "h364-weather-springfield-illinois",
+            &[],
+            &[
+                ("SELENE_REALTIME_TOMORROW_IO_ENDPOINT", endpoint.as_str()),
+                ("SELENE_REALTIME_TOMORROW_IO_API_KEY", "h364-secret"),
+                ("SELENE_REALTIME_WEATHER_API_KEY", " "),
+                ("SELENE_REALTIME_PROXY_MODE", "off"),
+            ],
+            || {
+                let runtime = AdapterRuntime::default();
+                let clarify = h364_run_desktop_typed_weather_query_on_thread(
+                    &runtime,
+                    "h364-weather-springfield-illinois",
+                    364_021,
+                    "what is the weather in Springfield",
+                );
+                assert_h364_clean_weather_clarification(&clarify, "Springfield, Illinois");
+                let answer = h364_run_desktop_typed_weather_query_on_thread(
+                    &runtime,
+                    "h364-weather-springfield-illinois",
+                    364_022,
+                    "Springfield, Illinois",
+                );
+                assert_h364_clean_weather_answer(&answer, "Springfield, Illinois");
+                assert!(answer.response_text.contains("16.8°C"));
             },
         );
     }

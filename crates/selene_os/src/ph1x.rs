@@ -68,6 +68,7 @@ const IDENTITY_PROMPT_COOLDOWN_NS: u64 = 600_000_000_000;
 const IDENTITY_PROMPT_RETRY_BUDGET: u8 = 1;
 const INTERRUPT_RELATION_CONFIDENCE_MIN: f32 = 0.70;
 pub const DETERMINISTIC_TIME_CLARIFICATION_TOPIC: &str = "deterministic_time_clarification";
+pub const DETERMINISTIC_WEATHER_CLARIFICATION_TOPIC: &str = "deterministic_weather_clarification";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Ph1xConfig {
@@ -966,6 +967,14 @@ impl Ph1xRuntime {
         }
 
         if let Some(a) = &tr.ambiguity {
+            if is_deterministic_weather_request(req) || is_deterministic_weather_tool_response(tr) {
+                return self.out_deterministic_weather_clarification(
+                    req,
+                    base_thread_state,
+                    a.clone(),
+                    delivery_base,
+                );
+            }
             return self.out_tool_ambiguity(req, base_thread_state, a.clone(), delivery_base);
         }
 
@@ -974,7 +983,9 @@ impl Ph1xRuntime {
                 let text = tool_ok_text(tr);
                 self.out_respond(
                     req,
-                    clear_completed_time_clarification(clear_pending(base_thread_state)),
+                    clear_completed_public_deterministic_clarification(clear_pending(
+                        base_thread_state,
+                    )),
                     reason_codes::X_TOOL_OK,
                     text,
                     delivery_base,
@@ -987,6 +998,14 @@ impl Ph1xRuntime {
                 );
                 if is_deterministic_time_clarification_fail_detail(tr.fail_detail.as_deref()) {
                     return self.out_deterministic_time_clarification(
+                        req,
+                        base_thread_state,
+                        text,
+                        delivery_base,
+                    );
+                }
+                if is_deterministic_weather_clarification_fail_detail(tr.fail_detail.as_deref()) {
+                    return self.out_deterministic_weather_missing_clarification(
                         req,
                         base_thread_state,
                         text,
@@ -1037,6 +1056,99 @@ impl Ph1xRuntime {
                 "A region, e.g. Canary Islands".to_string(),
                 "An IANA timezone, e.g. America/New_York".to_string(),
             ],
+            vec![FieldKey::Place],
+            delivery_base,
+        )
+    }
+
+    fn out_deterministic_weather_missing_clarification(
+        &self,
+        req: &Ph1xRequest,
+        mut thread_state: ThreadState,
+        question: String,
+        delivery_base: DeliveryHint,
+    ) -> Result<Ph1xResponse, ContractViolation> {
+        let attempts = bump_attempts(&thread_state.pending, PendingKind::Clarify(FieldKey::Place));
+        thread_state.pending = Some(PendingState::Clarify {
+            missing_field: FieldKey::Place,
+            attempts,
+        });
+        thread_state.resume_buffer = Some(ResumeBuffer::v1(
+            deterministic_weather_clarification_answer_id(req),
+            Some(DETERMINISTIC_WEATHER_CLARIFICATION_TOPIC.to_string()),
+            question.clone(),
+            "Awaiting a city or exact local place for the pending weather query.".to_string(),
+            MonotonicTimeNs(
+                req.now
+                    .0
+                    .saturating_add((self.config.resume_buffer_ttl_ms as u64) * 1_000_000),
+            ),
+        )?);
+        self.out_clarify(
+            req,
+            thread_state,
+            reason_codes::X_TOOL_FAIL,
+            question,
+            vec![
+                "A city, e.g. Lisbon".to_string(),
+                "A city and region, e.g. Springfield, Illinois".to_string(),
+                "A local place, e.g. Madrid".to_string(),
+            ],
+            vec![FieldKey::Place],
+            delivery_base,
+        )
+    }
+
+    fn out_deterministic_weather_clarification(
+        &self,
+        req: &Ph1xRequest,
+        mut thread_state: ThreadState,
+        amb: StructuredAmbiguity,
+        delivery_base: DeliveryHint,
+    ) -> Result<Ph1xResponse, ContractViolation> {
+        let attempts = bump_attempts(&thread_state.pending, PendingKind::Clarify(FieldKey::Place));
+        let formats: Vec<String> = amb
+            .alternatives
+            .iter()
+            .take(3)
+            .map(|a| a.to_string())
+            .collect();
+        let accepted = if formats.is_empty() {
+            vec![
+                "A city, e.g. Lisbon".to_string(),
+                "A city and region, e.g. Springfield, Illinois".to_string(),
+                "A local place, e.g. Madrid".to_string(),
+            ]
+        } else {
+            formats
+        };
+        let option_text = weather_clarification_options(&accepted);
+        let question = if option_text.is_empty() {
+            format!("{} Which place should I use?", amb.summary)
+        } else {
+            format!("{} Which place should I use? {}.", amb.summary, option_text)
+        };
+        thread_state.pending = Some(PendingState::Clarify {
+            missing_field: FieldKey::Place,
+            attempts,
+        });
+        thread_state.resume_buffer = Some(ResumeBuffer::v1(
+            deterministic_weather_clarification_answer_id(req),
+            Some(DETERMINISTIC_WEATHER_CLARIFICATION_TOPIC.to_string()),
+            question.clone(),
+            "Awaiting a city or exact local place for the pending weather query.".to_string(),
+            MonotonicTimeNs(
+                req.now
+                    .0
+                    .saturating_add((self.config.resume_buffer_ttl_ms as u64) * 1_000_000),
+            ),
+        )?);
+        self.out_clarify(
+            req,
+            thread_state,
+            reason_codes::X_TOOL_AMBIGUOUS,
+            question,
+            accepted,
             vec![FieldKey::Place],
             delivery_base,
         )
@@ -1500,12 +1612,36 @@ fn deterministic_time_clarification_answer_id(req: &Ph1xRequest) -> AnswerId {
     )
 }
 
+fn deterministic_weather_clarification_answer_id(req: &Ph1xRequest) -> AnswerId {
+    AnswerId(
+        req.correlation_id
+            .wrapping_add(u128::from(req.turn_id))
+            .wrapping_add(364)
+            .max(1),
+    )
+}
+
+fn is_deterministic_weather_request(req: &Ph1xRequest) -> bool {
+    matches!(
+        req.nlp_output.as_ref(),
+        Some(Ph1nResponse::IntentDraft(d)) if d.intent_type == IntentType::WeatherQuery
+    )
+}
+
+fn is_deterministic_weather_tool_response(tr: &ToolResponse) -> bool {
+    matches!(tr.tool_result.as_ref(), Some(ToolResult::Weather { .. }))
+}
+
 fn is_deterministic_time_clarification_fail_detail(fail_detail: Option<&str>) -> bool {
     fail_detail.is_some_and(|detail| {
         detail.contains("missing_time_location")
             || detail.contains("ambiguous_time_location")
             || detail.contains("unsupported_time_location")
     })
+}
+
+fn is_deterministic_weather_clarification_fail_detail(fail_detail: Option<&str>) -> bool {
+    fail_detail.is_some_and(|detail| detail.contains("weather_query_missing_place"))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1560,8 +1696,19 @@ fn clear_pending(mut s: ThreadState) -> ThreadState {
     s
 }
 
+fn clear_completed_public_deterministic_clarification(s: ThreadState) -> ThreadState {
+    clear_completed_weather_clarification(clear_completed_time_clarification(s))
+}
+
 fn clear_completed_time_clarification(mut s: ThreadState) -> ThreadState {
     if has_deterministic_time_clarification_resume(&s) {
+        s.resume_buffer = None;
+    }
+    s
+}
+
+fn clear_completed_weather_clarification(mut s: ThreadState) -> ThreadState {
+    if has_deterministic_weather_clarification_resume(&s) {
         s.resume_buffer = None;
     }
     s
@@ -1572,6 +1719,13 @@ fn has_deterministic_time_clarification_resume(s: &ThreadState) -> bool {
         .as_ref()
         .and_then(|buffer| buffer.topic_hint.as_deref())
         == Some(DETERMINISTIC_TIME_CLARIFICATION_TOPIC)
+}
+
+fn has_deterministic_weather_clarification_resume(s: &ThreadState) -> bool {
+    s.resume_buffer
+        .as_ref()
+        .and_then(|buffer| buffer.topic_hint.as_deref())
+        == Some(DETERMINISTIC_WEATHER_CLARIFICATION_TOPIC)
 }
 
 fn inherit_thread_scope(mut next: ThreadState, base: &ThreadState) -> ThreadState {
@@ -1882,6 +2036,9 @@ fn should_interrupt_relation_clarify(
         return false;
     }
     if has_deterministic_time_clarification_resume(thread_state) {
+        return false;
+    }
+    if has_deterministic_weather_clarification_resume(thread_state) {
         return false;
     }
     if matches!(
@@ -2313,6 +2470,9 @@ fn retry_message_for_failure(rc: ReasonCodeId, fail_detail: Option<&str>) -> Str
         if detail.contains("weather_provider_not_wired") {
             return "Weather is not available from this desktop runtime yet because no lawful live weather provider is wired.".to_string();
         }
+        if detail.contains("weather_query_missing_place") {
+            return "Which place do you mean?".to_string();
+        }
         if detail.contains("ambiguous_time_location") {
             if let Some(alternatives) = detail
                 .split_once("alternatives=")
@@ -2376,6 +2536,15 @@ fn time_clarification_options(raw: &str) -> String {
         .collect();
     options.dedup();
     match options.as_slice() {
+        [] => String::new(),
+        [one] => one.clone(),
+        [first, second] => format!("{first} or {second}"),
+        [first, second, third, ..] => format!("{first}, {second}, or {third}"),
+    }
+}
+
+fn weather_clarification_options(options: &[String]) -> String {
+    match options {
         [] => String::new(),
         [one] => one.clone(),
         [first, second] => format!("{first} or {second}"),
@@ -4216,6 +4385,89 @@ mod tests {
         assert_eq!(text, "It's 22°C in Tokyo, Japan, with partly cloudy skies.");
         assert!(!text.contains("Sources:"));
         assert!(!text.contains("Retrieved at (unix_ms):"));
+    }
+
+    #[test]
+    fn h364_weather_tool_ambiguity_sets_place_resume_topic() {
+        let rt = Ph1xRuntime::new(Ph1xConfig::mvp_v1());
+        let request_id = ToolRequestId(364);
+        let pending = ThreadState::v1(
+            Some(PendingState::Tool {
+                request_id,
+                attempts: 1,
+            }),
+            None,
+        );
+        let amb = StructuredAmbiguity {
+            summary:
+                "Weather varies by city and place inside Portugal, so I need a specific location."
+                    .to_string(),
+            alternatives: vec![
+                "Lisbon, Portugal".to_string(),
+                "Porto, Portugal".to_string(),
+                "Funchal, Madeira".to_string(),
+            ],
+        };
+        let tool = ToolResponse {
+            schema_version: SchemaVersion(1),
+            request_id,
+            query_hash: ToolQueryHash(364),
+            tool_status: ToolStatus::Ok,
+            tool_result: Some(ToolResult::Weather {
+                summary: amb.summary.clone(),
+            }),
+            source_metadata: Some(dummy_source_metadata()),
+            reason_code: ReasonCodeId(1),
+            fail_reason_code: None,
+            fail_detail: None,
+            ambiguity: Some(amb),
+            cache_status: CacheStatus::Bypassed,
+        };
+        let req = Ph1xRequest::v1(
+            364,
+            1,
+            now(1),
+            pending,
+            SessionState::Active,
+            id_text(),
+            policy_ok(),
+            vec![],
+            None,
+            Some(Ph1nResponse::IntentDraft(intent_draft(
+                IntentType::WeatherQuery,
+            ))),
+            Some(tool),
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+        let out = rt.decide(&req).unwrap();
+        match out.directive {
+            Ph1xDirective::Clarify(c) => {
+                assert!(c.question.contains("Which place should I use?"));
+                assert_eq!(c.what_is_missing, vec![FieldKey::Place]);
+                assert!(c
+                    .accepted_answer_formats
+                    .contains(&"Lisbon, Portugal".to_string()));
+                assert_eq!(
+                    out.thread_state
+                        .resume_buffer
+                        .as_ref()
+                        .and_then(|buffer| buffer.topic_hint.as_deref()),
+                    Some(DETERMINISTIC_WEATHER_CLARIFICATION_TOPIC)
+                );
+                assert!(matches!(
+                    out.thread_state.pending,
+                    Some(PendingState::Clarify {
+                        missing_field: FieldKey::Place,
+                        ..
+                    })
+                ));
+            }
+            _ => panic!("expected weather clarification"),
+        }
     }
 
     #[test]
