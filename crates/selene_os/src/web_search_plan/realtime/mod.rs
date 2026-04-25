@@ -87,6 +87,9 @@ pub struct RealtimeRuntimeConfig {
     pub weather_endpoint: String,
     pub weather_api_key_override: Option<String>,
     pub weather_vault_secret_id_override: Option<String>,
+    pub tomorrow_weather_endpoint: String,
+    pub tomorrow_weather_api_key_override: Option<String>,
+    pub tomorrow_weather_vault_secret_id_override: Option<String>,
 
     pub finance_endpoint: String,
     pub finance_api_key_override: Option<String>,
@@ -113,6 +116,13 @@ impl Default for RealtimeRuntimeConfig {
             weather_api_key_override: None,
             weather_vault_secret_id_override: std::env::var(
                 "SELENE_REALTIME_WEATHER_VAULT_SECRET_ID",
+            )
+            .ok(),
+            tomorrow_weather_endpoint: std::env::var("SELENE_REALTIME_TOMORROW_IO_ENDPOINT")
+                .unwrap_or_else(|_| "https://api.tomorrow.io/v4/weather/realtime".to_string()),
+            tomorrow_weather_api_key_override: None,
+            tomorrow_weather_vault_secret_id_override: std::env::var(
+                "SELENE_REALTIME_TOMORROW_IO_VAULT_SECRET_ID",
             )
             .ok(),
 

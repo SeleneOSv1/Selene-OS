@@ -11,6 +11,7 @@ pub enum ProviderSecretId {
     ElevenLabsApiKey,
     AnthropicApiKey,
     WeatherApiKey,
+    TomorrowIoApiKey,
 }
 
 impl ProviderSecretId {
@@ -25,6 +26,7 @@ impl ProviderSecretId {
             Self::ElevenLabsApiKey => "elevenlabs_api_key",
             Self::AnthropicApiKey => "anthropic_api_key",
             Self::WeatherApiKey => "weather_api_key",
+            Self::TomorrowIoApiKey => "tomorrow_io_api_key",
         }
     }
 
@@ -39,6 +41,7 @@ impl ProviderSecretId {
             Self::ElevenLabsApiKey,
             Self::AnthropicApiKey,
             Self::WeatherApiKey,
+            Self::TomorrowIoApiKey,
         ]
     }
 
@@ -54,6 +57,7 @@ impl ProviderSecretId {
             "elevenlabs_api_key" => Some(Self::ElevenLabsApiKey),
             "anthropic_api_key" => Some(Self::AnthropicApiKey),
             "weather_api_key" => Some(Self::WeatherApiKey),
+            "tomorrow_io_api_key" => Some(Self::TomorrowIoApiKey),
             _ => None,
         }
     }
