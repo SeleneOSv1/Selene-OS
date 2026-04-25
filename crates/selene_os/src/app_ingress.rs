@@ -8345,7 +8345,9 @@ fn maybe_build_weather_tool_response(
         return Ok(None);
     }
 
-    let place = weather_place_from_query(tool_request.query.as_str());
+    let place = weather_normalize_query_place(
+        weather_place_from_query(tool_request.query.as_str()).as_str(),
+    );
     if place.is_empty() {
         return Ok(Some(weather_fail_response(
             tool_request,
@@ -8480,8 +8482,19 @@ fn weather_place_from_query(query: &str) -> String {
     for marker in [
         "what is the weather in ",
         "what's the weather in ",
+        "what is the temperature in ",
+        "what's the temperature in ",
+        "what temperature is it in ",
+        "current temperature in ",
+        "current temperature for ",
         "weather in ",
         "weather for ",
+        "temperature in ",
+        "temperature for ",
+        "temp in ",
+        "temp for ",
+        "how hot is it in ",
+        "how cold is it in ",
         "forecast in ",
         "forecast for ",
     ] {
@@ -8494,6 +8507,26 @@ fn weather_place_from_query(query: &str) -> String {
         .trim_matches(|ch: char| ch == '?' || ch == '.' || ch == ',' || ch == ';')
         .trim()
         .to_string()
+}
+
+fn weather_normalize_query_place(place: &str) -> String {
+    let trimmed = place
+        .trim_matches(|ch: char| ch == '?' || ch == '.' || ch == ',' || ch == ';')
+        .trim();
+    let normalized = normalize_place_key(trimmed);
+    match normalized.as_str() {
+        "kunchan" | "kunchan china" | "kunshan" | "kunshan china" => "Kunshan, China".to_string(),
+        "new york" | "new york city" | "nyc" => "New York".to_string(),
+        "lisbon" | "lisbon portugal" => "Lisbon".to_string(),
+        "madrid" | "madrid spain" => "Madrid".to_string(),
+        "sydney" | "sydney australia" | "sydney new south wales australia" => "Sydney".to_string(),
+        "tokyo" | "tokyo japan" => "Tokyo".to_string(),
+        "council of the city of sydney"
+        | "council of the city of sydney new south wales australia"
+        | "city of sydney"
+        | "city of sydney new south wales australia" => "Sydney".to_string(),
+        _ => clean_weather_place_label(trimmed),
+    }
 }
 
 fn weather_place_ambiguity(place: &str) -> Option<StructuredAmbiguity> {
@@ -8751,8 +8784,9 @@ fn weather_summary_from_tomorrow_payload(
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .unwrap_or(requested_place);
+    let place = clean_weather_place_label(place);
     Ok(clean_weather_sentence(
-        place,
+        place.as_str(),
         temp,
         condition,
         humidity,
@@ -8792,6 +8826,7 @@ fn weather_summary_from_weatherapi_payload(
     let place = country
         .map(|country| format!("{city}, {country}"))
         .unwrap_or_else(|| city.to_string());
+    let place = clean_weather_place_label(place.as_str());
     Ok(clean_weather_sentence(
         place.as_str(),
         temp,
@@ -8808,19 +8843,66 @@ fn clean_weather_sentence(
     humidity: Option<f64>,
     wind: Option<(f64, &str)>,
 ) -> String {
-    let mut sentence = format!(
-        "It's {}°C in {}, with {}.",
-        format_weather_number(temperature_c),
+    let place = clean_weather_place_label(place);
+    let condition = clean_weather_condition_label(condition);
+    if condition.is_empty() {
+        return format!("{} is {}°C.", place, format_weather_number(temperature_c));
+    }
+    let _ = (humidity, wind);
+    format!(
+        "{} is {}°C and {}.",
         place,
+        format_weather_number(temperature_c),
         condition
-    );
-    if let Some(humidity) = humidity {
-        sentence.push_str(format!(" Humidity is {}%.", format_weather_number(humidity)).as_str());
+    )
+}
+
+fn clean_weather_condition_label(condition: &str) -> String {
+    let trimmed = condition.trim().trim_matches('.');
+    if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("current conditions") {
+        return String::new();
     }
-    if let Some((wind, unit)) = wind {
-        sentence.push_str(format!(" Wind is {} {unit}.", format_weather_number(wind)).as_str());
+    let mut out = trimmed.to_string();
+    if let Some(first) = out.get_mut(0..1) {
+        first.make_ascii_lowercase();
     }
-    sentence
+    out
+}
+
+fn clean_weather_place_label(place: &str) -> String {
+    let trimmed = place
+        .trim_matches(|ch: char| ch == '?' || ch == '.' || ch == ',' || ch == ';')
+        .trim();
+    if trimmed.is_empty() {
+        return "that place".to_string();
+    }
+    let normalized = normalize_place_key(trimmed);
+    if normalized.contains("council of the city of sydney")
+        || normalized == "city of sydney"
+        || normalized == "sydney new south wales australia"
+    {
+        return "Sydney".to_string();
+    }
+    if normalized == "kunshan china" || normalized == "kunchan china" {
+        return "Kunshan".to_string();
+    }
+    if normalized.starts_with("springfield ") {
+        if normalized.contains("illinois") {
+            return "Springfield, Illinois".to_string();
+        }
+        if normalized.contains("missouri") {
+            return "Springfield, Missouri".to_string();
+        }
+        if normalized.contains("massachusetts") {
+            return "Springfield, Massachusetts".to_string();
+        }
+    }
+    let first = trimmed.split(',').next().unwrap_or(trimmed).trim();
+    if first.is_empty() {
+        trimmed.to_string()
+    } else {
+        first.to_string()
+    }
 }
 
 fn format_weather_number(value: f64) -> String {
@@ -26021,9 +26103,11 @@ mod tests {
         assert_eq!(response.tool_status, ToolStatus::Ok);
         match response.tool_result.as_ref() {
             Some(ToolResult::Weather { summary }) => {
-                assert!(summary.contains("Tokyo, Japan"));
+                assert_eq!(summary, "Tokyo is 22.4°C and partly cloudy.");
                 assert!(summary.contains("22.4°C"));
                 assert!(summary.contains("partly cloudy"));
+                assert!(!summary.contains("Humidity"));
+                assert!(!summary.contains("Wind"));
                 assert!(!summary.contains("provider_payload"));
                 assert!(!summary.contains("Sources:"));
             }
@@ -26110,5 +26194,87 @@ mod tests {
                 other => panic!("expected weather clarification result, got {other:?}"),
             }
         }
+    }
+
+    #[test]
+    fn h365_temperature_query_and_verbose_provider_label_render_short_weather_answer() {
+        let _guard = h361_weather_env_lock();
+        let endpoint = h361_spawn_tomorrow_weather_endpoint(
+            r#"{
+                "data": {
+                    "time": "2026-04-25T03:00:00Z",
+                    "values": {
+                        "temperature": 23.0,
+                        "humidity": 52,
+                        "windSpeed": 5.1,
+                        "weatherCode": 1000
+                    }
+                },
+                "location": {
+                    "name": "Council of the City of Sydney, New South Wales, Australia"
+                }
+            }"#,
+        );
+        let _endpoint = H361ScopedEnvVar::set("SELENE_REALTIME_TOMORROW_IO_ENDPOINT", &endpoint);
+        let _api_key = H361ScopedEnvVar::set("SELENE_REALTIME_TOMORROW_IO_API_KEY", "h365-secret");
+        let _proxy = H361ScopedEnvVar::set("SELENE_REALTIME_PROXY_MODE", "off");
+
+        let request = h361_weather_tool_request("what is the temperature in Sydney");
+        let response = maybe_build_weather_tool_response(&request)
+            .expect("weather tool response should build")
+            .expect("temperature request should be intercepted as weather");
+        match response.tool_result.as_ref() {
+            Some(ToolResult::Weather { summary }) => {
+                assert_eq!(summary, "Sydney is 23°C and clear.");
+                assert!(!summary.contains("Council"));
+                assert!(!summary.contains("Humidity"));
+                assert!(!summary.contains("Wind"));
+                assert!(!summary.contains("provider_payload"));
+            }
+            other => panic!("expected weather tool result, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn h365_weather_kunchan_china_temperature_normalizes_to_kunshan() {
+        let _guard = h361_weather_env_lock();
+        let endpoint = h361_spawn_tomorrow_weather_endpoint(
+            r#"{
+                "data": {
+                    "time": "2026-04-25T03:00:00Z",
+                    "values": {
+                        "temperature": 21.5,
+                        "humidity": 67,
+                        "windSpeed": 4.0,
+                        "weatherCode": 1101
+                    }
+                },
+                "location": {
+                    "name": "Kunshan, China"
+                }
+            }"#,
+        );
+        let _endpoint = H361ScopedEnvVar::set("SELENE_REALTIME_TOMORROW_IO_ENDPOINT", &endpoint);
+        let _api_key = H361ScopedEnvVar::set("SELENE_REALTIME_TOMORROW_IO_API_KEY", "h365-secret");
+        let _proxy = H361ScopedEnvVar::set("SELENE_REALTIME_PROXY_MODE", "off");
+
+        let request = h361_weather_tool_request("What is the temperature in Kunchan China");
+        let response = maybe_build_weather_tool_response(&request)
+            .expect("weather tool response should build")
+            .expect("strong typo normalization should still use weather provider");
+        match response.tool_result.as_ref() {
+            Some(ToolResult::Weather { summary }) => {
+                assert_eq!(summary, "Kunshan is 21.5°C and partly cloudy.");
+                assert!(!summary.contains("governance state is out of sync"));
+            }
+            other => panic!("expected weather tool result, got {other:?}"),
+        }
+        let source_url = response
+            .source_metadata
+            .as_ref()
+            .and_then(|metadata| metadata.sources.first())
+            .map(|source| source.url.as_str())
+            .unwrap_or_default();
+        assert!(source_url.contains("location=Kunshan"));
     }
 }

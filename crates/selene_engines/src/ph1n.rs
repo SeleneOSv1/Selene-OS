@@ -415,7 +415,7 @@ fn detect_intents(lower: &str) -> Vec<IntentType> {
         return out;
     }
 
-    if s.contains("weather") {
+    if s.contains("weather") || s.contains("temperature") {
         push(IntentType::WeatherQuery);
     }
     if s.contains("forget")
@@ -4036,6 +4036,26 @@ mod tests {
                 assert!(!d.requires_confirmation);
             }
             _ => panic!("expected deterministic weather intent"),
+        }
+    }
+
+    #[test]
+    fn h365_temperature_in_new_york_is_weather_query() {
+        let rt = Ph1nRuntime::new(Ph1nConfig::mvp_v1());
+        for prompt in [
+            "Selene what is the temperature in New York",
+            "What is the temperature in Madrid",
+            "temperature in Lisbon",
+        ] {
+            let out = rt.run(&req(prompt, "en")).unwrap();
+            match out {
+                Ph1nResponse::IntentDraft(d) => {
+                    assert_eq!(d.intent_type, IntentType::WeatherQuery);
+                    assert_eq!(d.overall_confidence, OverallConfidence::High);
+                    assert!(!d.requires_confirmation);
+                }
+                _ => panic!("expected deterministic weather intent for {prompt}"),
+            }
         }
     }
 }

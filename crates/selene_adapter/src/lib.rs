@@ -20375,7 +20375,8 @@ mod tests {
                 assert_eq!(out.status, "ok");
                 assert_eq!(out.outcome, "FINAL_TOOL");
                 assert!(
-                    out.response_text.contains("Weather is not available")
+                    out.response_text
+                        .contains("I couldn't get the weather for that place right now.")
                         || out.response_text.contains("couldn't verify your identity"),
                     "unexpected weather fail-closed text: {}",
                     out.response_text
@@ -20448,9 +20449,11 @@ mod tests {
                     .expect("desktop weather request should complete through provider lane");
                 assert_eq!(out.status, "ok");
                 assert_eq!(out.outcome, "FINAL_TOOL");
-                assert!(out.response_text.contains("Tokyo, Japan"));
+                assert!(out.response_text.contains("Tokyo is"));
                 assert!(out.response_text.contains("22.4°C"));
                 assert!(out.response_text.contains("partly cloudy"));
+                assert!(!out.response_text.contains("Humidity"));
+                assert!(!out.response_text.contains("Wind"));
                 assert!(!out.response_text.contains("provider_payload"));
                 assert!(!out.response_text.contains("Sources:"));
                 assert!(!out.response_text.contains("Retrieved at (unix_ms):"));
@@ -20504,12 +20507,18 @@ mod tests {
         assert_eq!(out.status, "ok");
         assert_eq!(out.outcome, "FINAL_TOOL");
         assert!(
-            out.response_text.starts_with("It's "),
+            out.response_text.starts_with(place),
             "{}",
             out.response_text
         );
-        assert!(out.response_text.contains(place), "{}", out.response_text);
+        assert!(
+            out.response_text.contains(&format!("{place} is")),
+            "{}",
+            out.response_text
+        );
         assert!(out.response_text.contains("°C"), "{}", out.response_text);
+        assert!(!out.response_text.contains("Humidity"));
+        assert!(!out.response_text.contains("Wind"));
         assert!(!out.response_text.contains("verify your identity"));
         assert!(!out
             .response_text
@@ -20561,7 +20570,7 @@ mod tests {
                     364_002,
                     "Lisbon",
                 );
-                assert_h364_clean_weather_answer(&answer, "Lisbon, Portugal");
+                assert_h364_clean_weather_answer(&answer, "Lisbon");
                 assert!(answer.response_text.contains("19.6°C"));
             },
         );
@@ -20609,7 +20618,7 @@ mod tests {
                     364_012,
                     "Madrid",
                 );
-                assert_h364_clean_weather_answer(&answer, "Madrid, Spain");
+                assert_h364_clean_weather_answer(&answer, "Madrid");
                 assert!(answer.response_text.contains("24.2°C"));
             },
         );
@@ -20659,6 +20668,146 @@ mod tests {
                 );
                 assert_h364_clean_weather_answer(&answer, "Springfield, Illinois");
                 assert!(answer.response_text.contains("16.8°C"));
+            },
+        );
+    }
+
+    #[test]
+    fn h365_temperature_query_uses_weather_lane_and_short_answer() {
+        let endpoint = h361_spawn_tomorrow_weather_endpoint(
+            r#"{
+                "data": {
+                    "time": "2026-04-25T03:00:00Z",
+                    "values": {
+                        "temperature": 18.0,
+                        "humidity": 61,
+                        "windSpeed": 3.2,
+                        "weatherCode": 1000
+                    }
+                },
+                "location": {
+                    "name": "New York, United States"
+                }
+            }"#,
+        );
+        with_isolated_device_vault(
+            "h365-temperature-new-york",
+            &[],
+            &[
+                ("SELENE_REALTIME_TOMORROW_IO_ENDPOINT", endpoint.as_str()),
+                ("SELENE_REALTIME_TOMORROW_IO_API_KEY", "h365-secret"),
+                ("SELENE_REALTIME_WEATHER_API_KEY", " "),
+                ("SELENE_REALTIME_PROXY_MODE", "off"),
+            ],
+            || {
+                let runtime = AdapterRuntime::default();
+                let answer = h364_run_desktop_typed_weather_query_on_thread(
+                    &runtime,
+                    "h365-temperature-new-york",
+                    365_001,
+                    "What is the temperature in New York",
+                );
+                assert_eq!(answer.response_text, "New York is 18°C and clear.");
+                assert!(!answer.response_text.contains("Humidity"));
+                assert!(!answer.response_text.contains("Wind"));
+                assert!(!answer.response_text.contains("provider_payload"));
+                assert!(!answer
+                    .response_text
+                    .contains("governance state is out of sync"));
+            },
+        );
+    }
+
+    #[test]
+    fn h365_weather_answer_strips_verbose_sydney_provider_label() {
+        let endpoint = h361_spawn_tomorrow_weather_endpoint(
+            r#"{
+                "data": {
+                    "time": "2026-04-25T03:00:00Z",
+                    "values": {
+                        "temperature": 23.0,
+                        "humidity": 52,
+                        "windSpeed": 5.1,
+                        "weatherCode": 1000
+                    }
+                },
+                "location": {
+                    "name": "Council of the City of Sydney, New South Wales, Australia"
+                }
+            }"#,
+        );
+        with_isolated_device_vault(
+            "h365-weather-sydney-short-label",
+            &[],
+            &[
+                ("SELENE_REALTIME_TOMORROW_IO_ENDPOINT", endpoint.as_str()),
+                ("SELENE_REALTIME_TOMORROW_IO_API_KEY", "h365-secret"),
+                ("SELENE_REALTIME_WEATHER_API_KEY", " "),
+                ("SELENE_REALTIME_PROXY_MODE", "off"),
+            ],
+            || {
+                let runtime = AdapterRuntime::default();
+                let answer = h364_run_desktop_typed_weather_query_on_thread(
+                    &runtime,
+                    "h365-weather-sydney-short-label",
+                    365_011,
+                    "What is the weather in Sydney",
+                );
+                assert_eq!(answer.response_text, "Sydney is 23°C and clear.");
+                assert!(!answer.response_text.contains("Council"));
+                assert!(!answer.response_text.contains("New South Wales"));
+                assert!(!answer.response_text.contains("Humidity"));
+                assert!(!answer.response_text.contains("Wind"));
+            },
+        );
+    }
+
+    #[test]
+    fn h365_weather_temperature_typo_kunchan_resolves_to_kunshan_cleanly() {
+        let endpoint = h361_spawn_tomorrow_weather_endpoint(
+            r#"{
+                "data": {
+                    "time": "2026-04-25T03:00:00Z",
+                    "values": {
+                        "temperature": 21.5,
+                        "humidity": 67,
+                        "windSpeed": 4.0,
+                        "weatherCode": 1101
+                    }
+                },
+                "location": {
+                    "name": "Kunshan, China"
+                }
+            }"#,
+        );
+        with_isolated_device_vault(
+            "h365-temperature-kunchan",
+            &[],
+            &[
+                ("SELENE_REALTIME_TOMORROW_IO_ENDPOINT", endpoint.as_str()),
+                ("SELENE_REALTIME_TOMORROW_IO_API_KEY", "h365-secret"),
+                ("SELENE_REALTIME_WEATHER_API_KEY", " "),
+                ("SELENE_REALTIME_PROXY_MODE", "off"),
+            ],
+            || {
+                let runtime = AdapterRuntime::default();
+                let answer = h364_run_desktop_typed_weather_query_on_thread(
+                    &runtime,
+                    "h365-temperature-kunchan",
+                    365_021,
+                    "What is the temperature in Kunchan China",
+                );
+                assert_eq!(answer.response_text, "Kunshan is 21.5°C and partly cloudy.");
+                let source_url = answer
+                    .provenance
+                    .as_ref()
+                    .and_then(|p| p.sources.first())
+                    .map(|source| source.url.as_str())
+                    .unwrap_or_default();
+                assert!(source_url.contains("location=Kunshan"));
+                assert!(!answer
+                    .response_text
+                    .contains("governance state is out of sync"));
             },
         );
     }

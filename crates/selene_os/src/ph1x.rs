@@ -2465,10 +2465,10 @@ fn field_original<'a>(d: &'a IntentDraft, key: FieldKey) -> Option<&'a str> {
 fn retry_message_for_failure(rc: ReasonCodeId, fail_detail: Option<&str>) -> String {
     if let Some(detail) = fail_detail {
         if detail.contains("weather_realtime_provider_error") {
-            return "Weather is not available from this desktop runtime yet because no lawful live weather provider completed the request.".to_string();
+            return "I couldn't get the weather for that place right now.".to_string();
         }
         if detail.contains("weather_provider_not_wired") {
-            return "Weather is not available from this desktop runtime yet because no lawful live weather provider is wired.".to_string();
+            return "I couldn't get the weather for that place right now.".to_string();
         }
         if detail.contains("weather_query_missing_place") {
             return "Which place do you mean?".to_string();
