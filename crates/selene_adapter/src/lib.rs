@@ -8602,7 +8602,7 @@ fn recover_typed_public_deterministic_tool_answer(
             matches!(
                 nlp_output,
                 Ph1nResponse::IntentDraft(intent)
-                    if matches!(intent.intent_type, IntentType::TimeQuery)
+                    if matches!(intent.intent_type, IntentType::TimeQuery | IntentType::WeatherQuery)
             )
         });
     if !is_public_deterministic {
@@ -12992,7 +12992,7 @@ mod tests {
     fn with_isolated_device_vault<T>(
         label: &str,
         secrets: &[(&str, &str)],
-        env_overrides: &[(&'static str, &'static str)],
+        env_overrides: &[(&'static str, &str)],
         f: impl FnOnce() -> T,
     ) -> T {
         static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
@@ -19950,25 +19950,108 @@ mod tests {
 
     #[test]
     fn at_adapter_43_weather_without_lawful_provider_fails_cleanly() {
-        let runtime = AdapterRuntime::default();
-        let mut req = base_request();
-        req.app_platform = "DESKTOP".to_string();
-        req.audio_capture_ref = None;
-        req.user_text_final = Some("what is the weather in Tokyo".to_string());
+        with_isolated_device_vault(
+            "at_adapter_43_weather_empty_provider",
+            &[],
+            &[
+                ("SELENE_REALTIME_TOMORROW_IO_API_KEY", " "),
+                ("SELENE_REALTIME_WEATHER_API_KEY", " "),
+                ("SELENE_REALTIME_TOMORROW_IO_VAULT_SECRET_ID", "unknown"),
+                ("SELENE_REALTIME_WEATHER_VAULT_SECRET_ID", "unknown"),
+            ],
+            || {
+                let runtime = AdapterRuntime::default();
+                let mut req = base_request();
+                req.app_platform = "DESKTOP".to_string();
+                req.audio_capture_ref = None;
+                req.user_text_final = Some("what is the weather in Tokyo".to_string());
 
-        let out = runtime
-            .run_voice_turn(req)
-            .expect("desktop weather request should fail closed cleanly");
-        assert_eq!(out.status, "ok");
-        assert_eq!(out.outcome, "FINAL_TOOL");
-        assert!(
-            out.response_text.contains("Weather is not available")
-                || out.response_text.contains("couldn't verify your identity"),
-            "unexpected weather fail-closed text: {}",
-            out.response_text
+                let out = runtime
+                    .run_voice_turn(req)
+                    .expect("desktop weather request should fail closed cleanly");
+                assert_eq!(out.status, "ok");
+                assert_eq!(out.outcome, "FINAL_TOOL");
+                assert!(
+                    out.response_text.contains("Weather is not available")
+                        || out.response_text.contains("couldn't verify your identity"),
+                    "unexpected weather fail-closed text: {}",
+                    out.response_text
+                );
+                assert!(!out.response_text.contains("Weather snapshot for"));
+                assert!(!out.response_text.contains("Sources:"));
+                assert!(!out.response_text.contains("Retrieved at (unix_ms):"));
+            },
         );
-        assert!(!out.response_text.contains("Weather snapshot for"));
-        assert!(!out.response_text.contains("Sources:"));
-        assert!(!out.response_text.contains("Retrieved at (unix_ms):"));
+    }
+
+    fn h361_spawn_tomorrow_weather_endpoint(body: &'static str) -> String {
+        use std::io::{Read, Write};
+
+        let listener =
+            std::net::TcpListener::bind("127.0.0.1:0").expect("mock weather listener should bind");
+        let address = listener.local_addr().expect("mock weather address");
+        std::thread::spawn(move || {
+            let Ok((mut stream, _)) = listener.accept() else {
+                return;
+            };
+            let mut request_buffer = [0_u8; 4096];
+            let _ = stream.read(&mut request_buffer);
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            let _ = stream.write_all(response.as_bytes());
+        });
+        format!("http://{address}/v4/weather/realtime")
+    }
+
+    #[test]
+    fn at_adapter_44_weather_with_lawful_tomorrow_provider_returns_clean_answer() {
+        let endpoint = h361_spawn_tomorrow_weather_endpoint(
+            r#"{
+                "data": {
+                    "time": "2026-04-25T03:00:00Z",
+                    "values": {
+                        "temperature": 22.4,
+                        "humidity": 61,
+                        "windSpeed": 3.2,
+                        "weatherCode": 1101
+                    }
+                },
+                "location": {
+                    "name": "Tokyo, Japan"
+                }
+            }"#,
+        );
+        with_isolated_device_vault(
+            "at_adapter_44_weather_tomorrow_provider",
+            &[],
+            &[
+                ("SELENE_REALTIME_TOMORROW_IO_ENDPOINT", endpoint.as_str()),
+                ("SELENE_REALTIME_TOMORROW_IO_API_KEY", "h361-secret"),
+                ("SELENE_REALTIME_WEATHER_API_KEY", " "),
+                ("SELENE_REALTIME_PROXY_MODE", "off"),
+            ],
+            || {
+                let runtime = AdapterRuntime::default();
+                let mut req = base_request();
+                req.app_platform = "DESKTOP".to_string();
+                req.audio_capture_ref = None;
+                req.user_text_final = Some("what is the weather in Tokyo".to_string());
+
+                let out = runtime
+                    .run_voice_turn(req)
+                    .expect("desktop weather request should complete through provider lane");
+                assert_eq!(out.status, "ok");
+                assert_eq!(out.outcome, "FINAL_TOOL");
+                assert!(out.response_text.contains("Tokyo, Japan"));
+                assert!(out.response_text.contains("22.4°C"));
+                assert!(out.response_text.contains("partly cloudy"));
+                assert!(!out.response_text.contains("provider_payload"));
+                assert!(!out.response_text.contains("Sources:"));
+                assert!(!out.response_text.contains("Retrieved at (unix_ms):"));
+            },
+        );
     }
 }

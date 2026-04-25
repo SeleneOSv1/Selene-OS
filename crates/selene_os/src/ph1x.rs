@@ -1961,7 +1961,10 @@ fn tool_ok_text(tr: &ToolResponse) -> String {
             }
         }
     }
-    let should_append_sources = !matches!(tr.tool_result, Some(ToolResult::Time { .. }));
+    let should_append_sources = !matches!(
+        tr.tool_result,
+        Some(ToolResult::Time { .. } | ToolResult::Weather { .. })
+    );
     if should_append_sources {
         if let Some(meta) = &tr.source_metadata {
             if !out.ends_with('\n') && !out.is_empty() {
@@ -2210,6 +2213,9 @@ fn field_original<'a>(d: &'a IntentDraft, key: FieldKey) -> Option<&'a str> {
 
 fn retry_message_for_failure(rc: ReasonCodeId, fail_detail: Option<&str>) -> String {
     if let Some(detail) = fail_detail {
+        if detail.contains("weather_realtime_provider_error") {
+            return "Weather is not available from this desktop runtime yet because no lawful live weather provider completed the request.".to_string();
+        }
         if detail.contains("weather_provider_not_wired") {
             return "Weather is not available from this desktop runtime yet because no lawful live weather provider is wired.".to_string();
         }
@@ -3965,6 +3971,27 @@ mod tests {
             }
             _ => panic!("expected Respond"),
         }
+    }
+
+    #[test]
+    fn at_x_tool_ok_weather_renders_clean_final_answer_without_sources() {
+        let tool_ok = ToolResponse::ok_v1(
+            selene_kernel_contracts::ph1e::ToolRequestId(1),
+            selene_kernel_contracts::ph1e::ToolQueryHash(1),
+            ToolResult::Weather {
+                summary: "It's 22°C in Tokyo, Japan, with partly cloudy skies.".to_string(),
+            },
+            dummy_source_metadata(),
+            None,
+            ReasonCodeId(1),
+            CacheStatus::Bypassed,
+        )
+        .unwrap();
+
+        let text = tool_ok_text(&tool_ok);
+        assert_eq!(text, "It's 22°C in Tokyo, Japan, with partly cloudy skies.");
+        assert!(!text.contains("Sources:"));
+        assert!(!text.contains("Retrieved at (unix_ms):"));
     }
 
     #[test]

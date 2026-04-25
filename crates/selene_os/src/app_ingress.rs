@@ -2,8 +2,8 @@
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
+use std::time::{SystemTime, UNIX_EPOCH};
 
-use selene_engines::ph1m::{Ph1mConfig as EnginePh1mConfig, Ph1mRuntime as EnginePh1mRuntime};
 use selene_engines::ph1_voice_id::{
     reason_codes as voice_id_reason_codes, simulation_profile_embedding_from_seed,
     EnrolledSpeaker as EngineEnrolledSpeaker, VoiceIdObservation as EngineVoiceIdObservation,
@@ -15,6 +15,7 @@ use selene_engines::ph1emocore::{
 use selene_engines::ph1emoguide::{
     Ph1EmoGuideConfig as EnginePh1EmoGuideConfig, Ph1EmoGuideRuntime as EnginePh1EmoGuideRuntime,
 };
+use selene_engines::ph1m::{Ph1mConfig as EnginePh1mConfig, Ph1mRuntime as EnginePh1mRuntime};
 use selene_engines::ph1persona::{
     Ph1PersonaConfig as EnginePh1PersonaConfig, Ph1PersonaRuntime as EnginePh1PersonaRuntime,
 };
@@ -23,17 +24,16 @@ use selene_engines::ph1simfinder::{
     FinderSimulationCatalogEntry, Ph1SimFinderRuntime,
 };
 use selene_kernel_contracts::ph1_voice_id::{
-    DiarizationSegment, IdentityConfidence, IdentityTierV2, Ph1VoiceIdRequest,
-    Ph1VoiceIdResponse, SpeakerAssertionOk, SpeakerAssertionUnknown, SpeakerId, SpeakerLabel,
-    SpoofLivenessStatus, UserId, VoiceEmbeddingCaptureRef, VOICE_ID_ENROLL_COMPLETE_COMMIT,
+    DiarizationSegment, IdentityConfidence, IdentityTierV2, Ph1VoiceIdRequest, Ph1VoiceIdResponse,
+    SpeakerAssertionOk, SpeakerAssertionUnknown, SpeakerId, SpeakerLabel, SpoofLivenessStatus,
+    UserId, VoiceEmbeddingCaptureRef, VOICE_ID_ENROLL_COMPLETE_COMMIT,
     VOICE_ID_ENROLL_SAMPLE_COMMIT, VOICE_ID_ENROLL_START_DRAFT,
 };
-use selene_kernel_contracts::ph1f::{ConversationRole, ConversationSource};
 use selene_kernel_contracts::ph1agent::AgentInputPacket;
 use selene_kernel_contracts::ph1d::{PolicyContextRef, SafetyTier};
 use selene_kernel_contracts::ph1e::{
-    CacheStatus, SourceMetadata, SourceRef, ToolName, ToolRequest, ToolResponse, ToolResult,
-    ToolStatus, ToolStructuredField, ToolTextSnippet,
+    CacheStatus, SourceMetadata, SourceRef, StructuredAmbiguity, ToolName, ToolRequest,
+    ToolResponse, ToolResult, ToolStatus, ToolStructuredField, ToolTextSnippet,
 };
 use selene_kernel_contracts::ph1emocore::{
     EmoClassifyProfileCommitRequest, EmoCoreOutcome, EmoCoreRequest, EmoCoreSimulationType,
@@ -44,6 +44,7 @@ use selene_kernel_contracts::ph1emoguide::{
     EmoGuideInteractionSignals, EmoGuideProfileBuildRequest, EmoGuideProfileValidateRequest,
     EmoGuideRequestEnvelope, EmoGuideValidationStatus, Ph1EmoGuideRequest, Ph1EmoGuideResponse,
 };
+use selene_kernel_contracts::ph1f::{ConversationRole, ConversationSource};
 use selene_kernel_contracts::ph1j::{
     AuditEngine, AuditEventId, CorrelationId, DeviceId, PayloadKey, ProofFailureClass,
     ProofProtectedActionClass, ProofRetentionClass, TurnId,
@@ -55,8 +56,8 @@ use selene_kernel_contracts::ph1link::{
     LINK_INVITE_DRAFT_UPDATE_COMMIT, LINK_INVITE_OPEN_ACTIVATE_COMMIT,
 };
 use selene_kernel_contracts::ph1m::{
-    MemoryCandidate, MemoryConfidence, MemoryResumeAction, MemoryResumeTier,
-    MemoryRetentionMode, Ph1mResumeSelectRequest, Ph1mThreadDigestUpsertRequest,
+    MemoryCandidate, MemoryConfidence, MemoryResumeAction, MemoryResumeTier, MemoryRetentionMode,
+    Ph1mResumeSelectRequest, Ph1mThreadDigestUpsertRequest,
 };
 use selene_kernel_contracts::ph1n::{FieldKey, IntentDraft, IntentType, Ph1nResponse};
 use selene_kernel_contracts::ph1onb::{
@@ -96,9 +97,9 @@ use selene_kernel_contracts::runtime_execution::{
     AdmissionState, AuthorityExecutionState, AuthorityPolicyDecision, IdentityExecutionState,
     IdentityRecoveryState, IdentityTrustTier, IdentityVerificationConsistencyLevel,
     MemoryConsistencyLevel, MemoryEligibilityDecision, MemoryExecutionState, MemoryTrustLevel,
-    OnboardingReadinessState, PersistenceRecoveryMode, PlatformRuntimeContext,
-    ProofExecutionState, ReconciliationDecision, RuntimeEntryTrigger, RuntimeExecutionEnvelope,
-    SessionAttachOutcome, SimulationCertificationState,
+    OnboardingReadinessState, PersistenceRecoveryMode, PlatformRuntimeContext, ProofExecutionState,
+    ReconciliationDecision, RuntimeEntryTrigger, RuntimeExecutionEnvelope, SessionAttachOutcome,
+    SimulationCertificationState,
 };
 use selene_kernel_contracts::runtime_governance::{
     GovernanceClusterConsistency, GovernanceDecisionLogEntry, GovernanceDriftSignal,
@@ -135,6 +136,9 @@ use crate::runtime_session_foundation::{
 };
 use crate::simulation_executor::{
     simulation_id_for_intent_draft_v1, SimulationDispatchOutcome, SimulationExecutor,
+};
+use crate::web_search_plan::realtime::{
+    execute_realtime_from_tool_request, RealtimeErrorKind, RealtimeRuntimeConfig,
 };
 
 #[derive(Debug, Clone)]
@@ -5064,9 +5068,7 @@ impl AppServerIngressRuntime {
                 Some(archived_recent_slice.archived_selene_turn_text);
         }
 
-        Ok(AppSessionPostureEvidenceOutcome {
-            evidence,
-        })
+        Ok(AppSessionPostureEvidenceOutcome { evidence })
     }
 
     pub fn run_device_artifact_sync_worker_pass(
@@ -7606,7 +7608,8 @@ fn directive_is_public_deterministic_read_only_tool(directive: &Ph1xDirective) -
         Ph1xDirective::Dispatch(dispatch)
             if matches!(
                 &dispatch.dispatch_request,
-                DispatchRequest::Tool(tool) if tool.tool_name == ToolName::Time
+                DispatchRequest::Tool(tool)
+                    if matches!(tool.tool_name, ToolName::Time | ToolName::Weather)
             )
     )
 }
@@ -8277,12 +8280,495 @@ fn maybe_build_local_connector_query_tool_response(
     ph1x_request: &Ph1xRequest,
     tool_request: &ToolRequest,
 ) -> Result<Option<ToolResponse>, StorageError> {
+    if let Some(response) = maybe_build_weather_tool_response(tool_request)? {
+        return Ok(Some(response));
+    }
     if let Some(response) =
         maybe_build_list_reminders_tool_response(store, actor_user_id, ph1x_request, tool_request)?
     {
         return Ok(Some(response));
     }
     maybe_build_message_policy_tool_response(store, actor_user_id, tool_request)
+}
+
+fn maybe_build_weather_tool_response(
+    tool_request: &ToolRequest,
+) -> Result<Option<ToolResponse>, StorageError> {
+    if !matches!(tool_request.tool_name, ToolName::Weather) {
+        return Ok(None);
+    }
+
+    let place = weather_place_from_query(tool_request.query.as_str());
+    if place.is_empty() {
+        return Ok(Some(weather_fail_response(
+            tool_request,
+            selene_engines::ph1e::reason_codes::E_FAIL_QUERY_PARSE,
+            "weather_query_missing_place",
+        )?));
+    }
+
+    if let Some(ambiguity) = weather_country_ambiguity(place.as_str()) {
+        return Ok(Some(weather_ambiguity_response(tool_request, ambiguity)?));
+    }
+
+    let now_ms = app_ingress_unix_time_ms();
+    let packet = serde_json::json!({
+        "schema_version": "1.0.0",
+        "produced_by": "PH1.X",
+        "intended_consumers": ["PH1.E", "PH1.X", "PH1.J"],
+        "created_at_ms": now_ms,
+        "trace_id": format!("weather-{}", tool_request.request_id.0),
+        "mode": "real_time",
+        "query": place,
+        "importance_tier": "medium",
+        "budgets": {
+            "domain_hint": "weather"
+        }
+    });
+
+    match execute_realtime_from_tool_request(&packet, now_ms, &RealtimeRuntimeConfig::default()) {
+        Ok(result) => {
+            let payload = result
+                .evidence_packet
+                .pointer("/trust_metadata/realtime/payload")
+                .ok_or_else(weather_payload_contract_error)?;
+            let summary = weather_summary_from_payload(place.as_str(), payload)
+                .map_err(|_| weather_payload_contract_error())?;
+            let source_metadata = weather_source_metadata_from_evidence(&result.evidence_packet)
+                .map_err(|_| weather_payload_contract_error())?;
+            let response = ToolResponse::ok_v1(
+                tool_request.request_id,
+                tool_request.query_hash,
+                ToolResult::Weather { summary },
+                source_metadata,
+                None,
+                ReasonCodeId(0x4500_0003),
+                CacheStatus::Bypassed,
+            )
+            .map_err(StorageError::ContractViolation)?;
+            Ok(Some(response))
+        }
+        Err(error) => {
+            let fail_reason_code = match error.kind {
+                RealtimeErrorKind::ProviderUnconfigured => {
+                    selene_engines::ph1e::reason_codes::E_FAIL_PROVIDER_MISSING_CONFIG
+                }
+                RealtimeErrorKind::TimeoutExceeded => {
+                    selene_engines::ph1e::reason_codes::E_FAIL_TIMEOUT
+                }
+                _ => selene_engines::ph1e::reason_codes::E_FAIL_PROVIDER_UPSTREAM,
+            };
+            let detail = format!(
+                "weather_realtime_provider_error provider={} reason={} status={:?}",
+                error.adapter_id,
+                error.reason_code(),
+                error.status_code
+            );
+            Ok(Some(weather_fail_response(
+                tool_request,
+                fail_reason_code,
+                detail.as_str(),
+            )?))
+        }
+    }
+}
+
+fn weather_payload_contract_error() -> StorageError {
+    StorageError::ContractViolation(ContractViolation::InvalidValue {
+        field: "tool_response.weather.payload",
+        reason: "weather realtime provider payload could not be normalized into a clean answer",
+    })
+}
+
+fn weather_fail_response(
+    tool_request: &ToolRequest,
+    fail_reason_code: ReasonCodeId,
+    detail: &str,
+) -> Result<ToolResponse, StorageError> {
+    ToolResponse::fail_with_detail_v1(
+        tool_request.request_id,
+        tool_request.query_hash,
+        fail_reason_code,
+        Some(detail.to_string()),
+        CacheStatus::Bypassed,
+    )
+    .map_err(StorageError::ContractViolation)
+}
+
+fn weather_ambiguity_response(
+    tool_request: &ToolRequest,
+    ambiguity: StructuredAmbiguity,
+) -> Result<ToolResponse, StorageError> {
+    let summary = ambiguity.summary.clone();
+    let source_metadata = SourceMetadata {
+        schema_version: selene_kernel_contracts::ph1e::PH1E_CONTRACT_VERSION,
+        provider_hint: Some("weather_place_clarifier".to_string()),
+        retrieved_at_unix_ms: app_ingress_unix_time_ms() as u64,
+        sources: vec![SourceRef {
+            title: "Selene weather place clarification".to_string(),
+            url: "https://selene.local/weather/clarify".to_string(),
+        }],
+    };
+    ToolResponse::ok_v1(
+        tool_request.request_id,
+        tool_request.query_hash,
+        ToolResult::Weather { summary },
+        source_metadata,
+        Some(ambiguity),
+        ReasonCodeId(0x4500_0004),
+        CacheStatus::Bypassed,
+    )
+    .map_err(StorageError::ContractViolation)
+}
+
+fn weather_place_from_query(query: &str) -> String {
+    let mut cleaned = query
+        .split('|')
+        .next()
+        .unwrap_or(query)
+        .trim()
+        .trim_matches(|ch: char| ch == '?' || ch == '.')
+        .to_string();
+    let lower = cleaned.to_ascii_lowercase();
+    for marker in [
+        "what is the weather in ",
+        "what's the weather in ",
+        "weather in ",
+        "weather for ",
+        "forecast in ",
+        "forecast for ",
+    ] {
+        if let Some(index) = lower.find(marker) {
+            cleaned = cleaned[index + marker.len()..].trim().to_string();
+            break;
+        }
+    }
+    cleaned
+        .trim_matches(|ch: char| ch == '?' || ch == '.' || ch == ',' || ch == ';')
+        .trim()
+        .to_string()
+}
+
+fn weather_country_ambiguity(place: &str) -> Option<StructuredAmbiguity> {
+    let country_name = canonical_weather_country_name(place)?;
+    let alternatives = weather_country_alternatives(country_name.as_str());
+    StructuredAmbiguity {
+        summary: format!(
+            "Weather varies by city and place inside {country_name}, so I need a specific location."
+        ),
+        alternatives,
+    }
+    .validate()
+    .ok()
+    .map(|_| StructuredAmbiguity {
+        summary: format!(
+            "Weather varies by city and place inside {country_name}, so I need a specific location."
+        ),
+        alternatives: weather_country_alternatives(country_name.as_str()),
+    })
+}
+
+fn canonical_weather_country_name(place: &str) -> Option<String> {
+    let normalized = normalize_place_key(place);
+    if normalized.is_empty() {
+        return None;
+    }
+    let aliases = [
+        ("usa", "United States"),
+        ("us", "United States"),
+        ("u s", "United States"),
+        ("u s a", "United States"),
+        ("america", "United States"),
+        ("uk", "United Kingdom"),
+        ("u k", "United Kingdom"),
+        ("great britain", "United Kingdom"),
+    ];
+    if let Some((_, country)) = aliases.iter().find(|(alias, _)| *alias == normalized) {
+        return Some((*country).to_string());
+    }
+    for path in [
+        "/var/db/timezone/zoneinfo/iso3166.tab",
+        "/usr/share/zoneinfo/iso3166.tab",
+    ] {
+        let Ok(contents) = std::fs::read_to_string(path) else {
+            continue;
+        };
+        for line in contents.lines() {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            let Some((_, name)) = line.split_once('\t') else {
+                continue;
+            };
+            if normalize_place_key(name) == normalized {
+                return Some(name.to_string());
+            }
+        }
+    }
+    None
+}
+
+fn normalize_place_key(place: &str) -> String {
+    place
+        .chars()
+        .map(|ch| {
+            if ch.is_alphanumeric() || ch.is_whitespace() {
+                ch.to_ascii_lowercase()
+            } else {
+                ' '
+            }
+        })
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn weather_country_alternatives(country_name: &str) -> Vec<String> {
+    match normalize_place_key(country_name).as_str() {
+        "japan" => vec![
+            "Tokyo, Japan".to_string(),
+            "Osaka, Japan".to_string(),
+            "Sapporo, Japan".to_string(),
+        ],
+        "united states" => vec![
+            "New York, United States".to_string(),
+            "Los Angeles, United States".to_string(),
+            "Chicago, United States".to_string(),
+        ],
+        "australia" => vec![
+            "Sydney, Australia".to_string(),
+            "Melbourne, Australia".to_string(),
+            "Brisbane, Australia".to_string(),
+        ],
+        "china" => vec![
+            "Shanghai, China".to_string(),
+            "Beijing, China".to_string(),
+            "Shenzhen, China".to_string(),
+        ],
+        "italy" => vec![
+            "Rome, Italy".to_string(),
+            "Milan, Italy".to_string(),
+            "Naples, Italy".to_string(),
+        ],
+        "united kingdom" => vec![
+            "London, United Kingdom".to_string(),
+            "Manchester, United Kingdom".to_string(),
+            "Edinburgh, United Kingdom".to_string(),
+        ],
+        _ => vec![
+            format!("Capital city in {country_name}"),
+            format!("A specific city in {country_name}"),
+            "Use my current location".to_string(),
+        ],
+    }
+}
+
+fn weather_summary_from_payload(
+    requested_place: &str,
+    payload: &serde_json::Value,
+) -> Result<String, ()> {
+    match payload.get("provider").and_then(serde_json::Value::as_str) {
+        Some("tomorrow.io") => weather_summary_from_tomorrow_payload(requested_place, payload),
+        Some("weatherapi.com") => weather_summary_from_weatherapi_payload(requested_place, payload),
+        _ => Err(()),
+    }
+}
+
+fn weather_summary_from_tomorrow_payload(
+    requested_place: &str,
+    payload: &serde_json::Value,
+) -> Result<String, ()> {
+    let provider_payload = payload.get("provider_payload").ok_or(())?;
+    let values = provider_payload.pointer("/data/values").ok_or(())?;
+    let temp = values
+        .get("temperature")
+        .and_then(serde_json::Value::as_f64)
+        .ok_or(())?;
+    let humidity = values.get("humidity").and_then(serde_json::Value::as_f64);
+    let wind = values.get("windSpeed").and_then(serde_json::Value::as_f64);
+    let condition = values
+        .get("weatherCode")
+        .and_then(serde_json::Value::as_i64)
+        .map(tomorrow_weather_code_label)
+        .unwrap_or("current conditions");
+    let place = provider_payload
+        .pointer("/location/name")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(requested_place);
+    Ok(clean_weather_sentence(
+        place,
+        temp,
+        condition,
+        humidity,
+        wind.map(|value| (value, "m/s")),
+    ))
+}
+
+fn weather_summary_from_weatherapi_payload(
+    requested_place: &str,
+    payload: &serde_json::Value,
+) -> Result<String, ()> {
+    let provider_payload = payload.get("provider_payload").ok_or(())?;
+    let current = provider_payload.get("current").ok_or(())?;
+    let temp = current
+        .get("temp_c")
+        .and_then(serde_json::Value::as_f64)
+        .ok_or(())?;
+    let humidity = current.get("humidity").and_then(serde_json::Value::as_f64);
+    let wind = current.get("wind_kph").and_then(serde_json::Value::as_f64);
+    let condition = current
+        .pointer("/condition/text")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("current conditions");
+    let city = provider_payload
+        .pointer("/location/name")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(requested_place);
+    let country = provider_payload
+        .pointer("/location/country")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let place = country
+        .map(|country| format!("{city}, {country}"))
+        .unwrap_or_else(|| city.to_string());
+    Ok(clean_weather_sentence(
+        place.as_str(),
+        temp,
+        condition,
+        humidity,
+        wind.map(|value| (value, "km/h")),
+    ))
+}
+
+fn clean_weather_sentence(
+    place: &str,
+    temperature_c: f64,
+    condition: &str,
+    humidity: Option<f64>,
+    wind: Option<(f64, &str)>,
+) -> String {
+    let mut sentence = format!(
+        "It's {}°C in {}, with {}.",
+        format_weather_number(temperature_c),
+        place,
+        condition
+    );
+    if let Some(humidity) = humidity {
+        sentence.push_str(format!(" Humidity is {}%.", format_weather_number(humidity)).as_str());
+    }
+    if let Some((wind, unit)) = wind {
+        sentence.push_str(format!(" Wind is {} {unit}.", format_weather_number(wind)).as_str());
+    }
+    sentence
+}
+
+fn format_weather_number(value: f64) -> String {
+    if (value.fract()).abs() < 0.05 {
+        format!("{}", value.round() as i64)
+    } else {
+        format!("{value:.1}")
+    }
+}
+
+fn tomorrow_weather_code_label(code: i64) -> &'static str {
+    match code {
+        1000 => "clear",
+        1100 => "mostly clear",
+        1101 => "partly cloudy",
+        1102 => "mostly cloudy",
+        1001 => "cloudy",
+        2000 | 2100 => "foggy",
+        4000 => "drizzle",
+        4001 => "rain",
+        4200 => "light rain",
+        4201 => "heavy rain",
+        5000 => "snow",
+        5001 => "flurries",
+        5100 => "light snow",
+        5101 => "heavy snow",
+        6000 => "freezing drizzle",
+        6001 => "freezing rain",
+        6200 => "light freezing rain",
+        6201 => "heavy freezing rain",
+        7000 => "ice pellets",
+        7101 => "heavy ice pellets",
+        7102 => "light ice pellets",
+        8000 => "thunderstorms",
+        _ => "current conditions",
+    }
+}
+
+fn weather_source_metadata_from_evidence(
+    evidence_packet: &serde_json::Value,
+) -> Result<SourceMetadata, ()> {
+    let retrieved_at_unix_ms = evidence_packet
+        .get("retrieved_at_ms")
+        .and_then(serde_json::Value::as_i64)
+        .filter(|value| *value > 0)
+        .map(|value| value as u64)
+        .ok_or(())?;
+    let provider_hint = evidence_packet
+        .pointer("/trust_metadata/realtime/payload/provider")
+        .and_then(serde_json::Value::as_str)
+        .map(|provider| {
+            if provider == "tomorrow.io" {
+                "tomorrow_io_weather".to_string()
+            } else {
+                "weatherapi_weather".to_string()
+            }
+        });
+    let mut sources = Vec::new();
+    if let Some(array) = evidence_packet
+        .get("sources")
+        .and_then(serde_json::Value::as_array)
+    {
+        for item in array.iter().take(5) {
+            let title = item
+                .get("title")
+                .and_then(serde_json::Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .unwrap_or("Weather provider evidence");
+            let url = item
+                .get("url")
+                .and_then(serde_json::Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .unwrap_or("https://selene.local/weather/evidence");
+            sources.push(SourceRef {
+                title: title.to_string(),
+                url: url.to_string(),
+            });
+        }
+    }
+    if sources.is_empty() {
+        sources.push(SourceRef {
+            title: "Weather provider evidence".to_string(),
+            url: "https://selene.local/weather/evidence".to_string(),
+        });
+    }
+    Ok(SourceMetadata {
+        schema_version: selene_kernel_contracts::ph1e::PH1E_CONTRACT_VERSION,
+        provider_hint,
+        retrieved_at_unix_ms,
+        sources,
+    })
+}
+
+fn app_ingress_unix_time_ms() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as i64)
+        .unwrap_or(1)
 }
 
 fn maybe_build_list_reminders_tool_response(
@@ -9515,7 +10001,10 @@ fn seed_session_resume_selection_evidence_for_posture_test(
             digest,
             selene_storage::ph1f::MemoryThreadEventKind::ThreadDigestUpsert,
             ReasonCodeId(0x4D00_1001),
-            format!("seed_session_posture_resume_selection_digest_{}", session_id.0),
+            format!(
+                "seed_session_posture_resume_selection_digest_{}",
+                session_id.0
+            ),
         )
         .unwrap();
     store
@@ -9926,8 +10415,14 @@ fn session_posture_evidence_returns_resume_selection_fields_when_lawfully_availa
 
     let evidence = outcome.evidence;
     assert_eq!(evidence.session_id, "4931");
-    assert_eq!(evidence.selected_thread_id.as_deref(), Some("thread_resume_hot"));
-    assert_eq!(evidence.selected_thread_title.as_deref(), Some("Japan ski trip"));
+    assert_eq!(
+        evidence.selected_thread_id.as_deref(),
+        Some("thread_resume_hot")
+    );
+    assert_eq!(
+        evidence.selected_thread_title.as_deref(),
+        Some("Japan ski trip")
+    );
     assert_eq!(evidence.pending_work_order_id, None);
     assert_eq!(evidence.resume_tier, Some(MemoryResumeTier::Hot));
     assert_eq!(
@@ -9948,8 +10443,7 @@ fn session_posture_evidence_returns_archived_recent_slice_fields_when_lawfully_a
     let runtime = AppServerIngressRuntime::default();
     let current_device_id =
         DeviceId::new("session_posture_archived_recent_slice_current_device").unwrap();
-    let user_id =
-        UserId::new("tenant_1:session_posture_archived_recent_slice_actor").unwrap();
+    let user_id = UserId::new("tenant_1:session_posture_archived_recent_slice_actor").unwrap();
     let session_id = SessionId(4_932);
     let mut store = Ph1fStore::new_in_memory();
 
@@ -10004,8 +10498,8 @@ fn session_posture_evidence_keeps_archived_recent_slice_fields_absent_when_pair_
     let runtime = AppServerIngressRuntime::default();
     let current_device_id =
         DeviceId::new("session_posture_archived_recent_slice_absent_device").unwrap();
-    let user_id = UserId::new("tenant_1:session_posture_archived_recent_slice_absent_actor")
-        .unwrap();
+    let user_id =
+        UserId::new("tenant_1:session_posture_archived_recent_slice_absent_actor").unwrap();
     let session_id = SessionId(4_933);
     let mut store = Ph1fStore::new_in_memory();
 
@@ -25266,5 +25760,147 @@ mod tests {
             ),
         ));
         assert_eq!(response, "I canceled that reminder.");
+    }
+
+    struct H361ScopedEnvVar {
+        key: &'static str,
+        previous: Option<std::ffi::OsString>,
+    }
+
+    impl H361ScopedEnvVar {
+        fn set(key: &'static str, value: &str) -> Self {
+            let previous = std::env::var_os(key);
+            std::env::set_var(key, value);
+            Self { key, previous }
+        }
+    }
+
+    impl Drop for H361ScopedEnvVar {
+        fn drop(&mut self) {
+            if let Some(value) = self.previous.as_ref() {
+                std::env::set_var(self.key, value);
+            } else {
+                std::env::remove_var(self.key);
+            }
+        }
+    }
+
+    fn h361_weather_env_lock() -> std::sync::MutexGuard<'static, ()> {
+        static ENV_LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+        ENV_LOCK
+            .get_or_init(|| std::sync::Mutex::new(()))
+            .lock()
+            .expect("weather env lock poisoned")
+    }
+
+    fn h361_weather_tool_request(query: &str) -> ToolRequest {
+        ToolRequest::v1(
+            selene_kernel_contracts::ph1e::ToolRequestOrigin::Ph1X,
+            ToolName::Weather,
+            query.to_string(),
+            None,
+            selene_kernel_contracts::ph1e::StrictBudget::new(2_000, 3).unwrap(),
+            PolicyContextRef::v1(false, false, SafetyTier::Standard),
+        )
+        .unwrap()
+    }
+
+    fn h361_spawn_tomorrow_weather_endpoint(body: &'static str) -> String {
+        use std::io::{Read, Write};
+
+        let listener =
+            std::net::TcpListener::bind("127.0.0.1:0").expect("mock weather listener should bind");
+        let address = listener.local_addr().expect("mock weather address");
+        std::thread::spawn(move || {
+            let Ok((mut stream, _)) = listener.accept() else {
+                return;
+            };
+            let mut request_buffer = [0_u8; 4096];
+            let _ = stream.read(&mut request_buffer);
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            let _ = stream.write_all(response.as_bytes());
+        });
+        format!("http://{address}/v4/weather/realtime")
+    }
+
+    #[test]
+    fn h361_weather_tool_uses_tomorrow_provider_and_redacts_secret_source_url() {
+        let _guard = h361_weather_env_lock();
+        let endpoint = h361_spawn_tomorrow_weather_endpoint(
+            r#"{
+                "data": {
+                    "time": "2026-04-25T03:00:00Z",
+                    "values": {
+                        "temperature": 22.4,
+                        "humidity": 61,
+                        "windSpeed": 3.2,
+                        "weatherCode": 1101
+                    }
+                },
+                "location": {
+                    "name": "Tokyo, Japan"
+                }
+            }"#,
+        );
+        let _endpoint = H361ScopedEnvVar::set("SELENE_REALTIME_TOMORROW_IO_ENDPOINT", &endpoint);
+        let _api_key = H361ScopedEnvVar::set("SELENE_REALTIME_TOMORROW_IO_API_KEY", "h361-secret");
+        let _proxy = H361ScopedEnvVar::set("SELENE_REALTIME_PROXY_MODE", "off");
+
+        let request = h361_weather_tool_request("what is the weather in Tokyo");
+        let response = maybe_build_weather_tool_response(&request)
+            .expect("weather tool response should build")
+            .expect("weather request should be intercepted before PH1.E fail-closed");
+        assert_eq!(response.tool_status, ToolStatus::Ok);
+        match response.tool_result.as_ref() {
+            Some(ToolResult::Weather { summary }) => {
+                assert!(summary.contains("Tokyo, Japan"));
+                assert!(summary.contains("22.4°C"));
+                assert!(summary.contains("partly cloudy"));
+                assert!(!summary.contains("provider_payload"));
+                assert!(!summary.contains("Sources:"));
+            }
+            other => panic!("expected weather tool result, got {other:?}"),
+        }
+        let source_url = response
+            .source_metadata
+            .as_ref()
+            .and_then(|metadata| metadata.sources.first())
+            .map(|source| source.url.as_str())
+            .expect("weather source url should exist");
+        assert!(source_url.contains("apikey=REDACTED"));
+        assert!(!source_url.contains("h361-secret"));
+    }
+
+    #[test]
+    fn h361_weather_country_query_clarifies_instead_of_guessing() {
+        let request = h361_weather_tool_request("what is the weather in Japan");
+        let response = maybe_build_weather_tool_response(&request)
+            .expect("weather clarification response should build")
+            .expect("country-level weather should be handled before PH1.E fail-closed");
+        assert_eq!(response.tool_status, ToolStatus::Ok);
+        let ambiguity = response
+            .ambiguity
+            .as_ref()
+            .expect("country-level weather should clarify");
+        assert!(ambiguity.summary.contains("Japan"));
+        assert_eq!(
+            ambiguity.alternatives,
+            vec![
+                "Tokyo, Japan".to_string(),
+                "Osaka, Japan".to_string(),
+                "Sapporo, Japan".to_string()
+            ]
+        );
+        match response.tool_result.as_ref() {
+            Some(ToolResult::Weather { summary }) => {
+                assert!(summary.contains("specific location"));
+                assert!(!summary.contains("provider_payload"));
+            }
+            other => panic!("expected weather clarification result, got {other:?}"),
+        }
     }
 }

@@ -75,6 +75,7 @@ fn execute_tomorrow_io(
         query_pairs.append_pair("apikey", api_key.as_str());
     }
 
+    let endpoint_url = redacted_query_url(url.clone(), &["apikey"]);
     let (payload, latency_ms) =
         fetch_json_with_caps(TOMORROW_IO_PROVIDER_ID, request, config, url.as_str(), &[])?;
     let normalized_payload = normalize_provider_payload(
@@ -86,7 +87,7 @@ fn execute_tomorrow_io(
 
     Ok(RealtimeAdapterOutput {
         provider_id: TOMORROW_IO_PROVIDER_ID.to_string(),
-        endpoint_url: url.to_string(),
+        endpoint_url,
         title: "Tomorrow.io Realtime Weather".to_string(),
         trust_tier: "high".to_string(),
         retrieved_at_ms: request.now_ms,
@@ -130,6 +131,7 @@ fn execute_weather_api(
         query_pairs.append_pair("key", api_key.as_str());
     }
 
+    let endpoint_url = redacted_query_url(url.clone(), &["key"]);
     let (payload, latency_ms) =
         fetch_json_with_caps(WEATHER_API_PROVIDER_ID, request, config, url.as_str(), &[])?;
     let normalized_payload = normalize_provider_payload(
@@ -141,13 +143,36 @@ fn execute_weather_api(
 
     Ok(RealtimeAdapterOutput {
         provider_id: WEATHER_API_PROVIDER_ID.to_string(),
-        endpoint_url: url.to_string(),
+        endpoint_url,
         title: "WeatherAPI.com Realtime Weather".to_string(),
         trust_tier: "medium".to_string(),
         retrieved_at_ms: request.now_ms,
         latency_ms,
         payload: normalized_payload,
     })
+}
+
+fn redacted_query_url(mut url: Url, secret_query_keys: &[&str]) -> String {
+    let redacted_pairs = url
+        .query_pairs()
+        .map(|(key, value)| {
+            let value = if secret_query_keys
+                .iter()
+                .any(|secret_key| key.eq_ignore_ascii_case(secret_key))
+            {
+                "REDACTED".to_string()
+            } else {
+                value.into_owned()
+            };
+            (key.into_owned(), value)
+        })
+        .collect::<Vec<_>>();
+    url.query_pairs_mut().clear().extend_pairs(
+        redacted_pairs
+            .iter()
+            .map(|(key, value)| (key.as_str(), value.as_str())),
+    );
+    url.to_string()
 }
 
 fn normalize_provider_payload(
