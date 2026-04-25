@@ -7,6 +7,7 @@ pub enum ProviderSecretId {
     GoogleSttApiKey,
     GoogleTtsApiKey,
     GoogleTimeZoneApiKey,
+    TimeZoneDbApiKey,
     AzureSpeechKey,
     DeepgramApiKey,
     ElevenLabsApiKey,
@@ -23,6 +24,7 @@ impl ProviderSecretId {
             Self::GoogleSttApiKey => "google_stt_api_key",
             Self::GoogleTtsApiKey => "google_tts_api_key",
             Self::GoogleTimeZoneApiKey => "google_time_zone_api_key",
+            Self::TimeZoneDbApiKey => "timezonedb_api_key",
             Self::AzureSpeechKey => "azure_speech_key",
             Self::DeepgramApiKey => "deepgram_api_key",
             Self::ElevenLabsApiKey => "elevenlabs_api_key",
@@ -39,6 +41,7 @@ impl ProviderSecretId {
             Self::GoogleSttApiKey,
             Self::GoogleTtsApiKey,
             Self::GoogleTimeZoneApiKey,
+            Self::TimeZoneDbApiKey,
             Self::AzureSpeechKey,
             Self::DeepgramApiKey,
             Self::ElevenLabsApiKey,
@@ -58,6 +61,7 @@ impl ProviderSecretId {
             "google_time_zone_api_key" | "google_timezone_api_key" => {
                 Some(Self::GoogleTimeZoneApiKey)
             }
+            "timezonedb_api_key" | "timezone_db_api_key" => Some(Self::TimeZoneDbApiKey),
             "azure_speech_key" => Some(Self::AzureSpeechKey),
             "deepgram_api_key" => Some(Self::DeepgramApiKey),
             "elevenlabs_api_key" => Some(Self::ElevenLabsApiKey),
