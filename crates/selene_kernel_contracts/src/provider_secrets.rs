@@ -10,6 +10,7 @@ pub enum ProviderSecretId {
     DeepgramApiKey,
     ElevenLabsApiKey,
     AnthropicApiKey,
+    WeatherApiKey,
 }
 
 impl ProviderSecretId {
@@ -23,6 +24,7 @@ impl ProviderSecretId {
             Self::DeepgramApiKey => "deepgram_api_key",
             Self::ElevenLabsApiKey => "elevenlabs_api_key",
             Self::AnthropicApiKey => "anthropic_api_key",
+            Self::WeatherApiKey => "weather_api_key",
         }
     }
 
@@ -36,6 +38,7 @@ impl ProviderSecretId {
             Self::DeepgramApiKey,
             Self::ElevenLabsApiKey,
             Self::AnthropicApiKey,
+            Self::WeatherApiKey,
         ]
     }
 
@@ -50,6 +53,7 @@ impl ProviderSecretId {
             "deepgram_api_key" => Some(Self::DeepgramApiKey),
             "elevenlabs_api_key" => Some(Self::ElevenLabsApiKey),
             "anthropic_api_key" => Some(Self::AnthropicApiKey),
+            "weather_api_key" => Some(Self::WeatherApiKey),
             _ => None,
         }
     }

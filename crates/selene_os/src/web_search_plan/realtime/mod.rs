@@ -109,7 +109,7 @@ impl Default for RealtimeRuntimeConfig {
                 .ok(),
 
             weather_endpoint: std::env::var("SELENE_REALTIME_WEATHER_ENDPOINT")
-                .unwrap_or_else(|_| "https://api.weather.example.com/current".to_string()),
+                .unwrap_or_else(|_| "https://api.weatherapi.com/v1/current.json".to_string()),
             weather_api_key_override: None,
             weather_vault_secret_id_override: std::env::var(
                 "SELENE_REALTIME_WEATHER_VAULT_SECRET_ID",

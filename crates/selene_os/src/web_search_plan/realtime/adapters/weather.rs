@@ -7,6 +7,7 @@ use crate::web_search_plan::realtime::adapters::{
 use crate::web_search_plan::realtime::{
     ParsedRealtimeToolRequest, RealtimeError, RealtimeErrorKind, RealtimeRuntimeConfig,
 };
+use selene_kernel_contracts::provider_secrets::ProviderSecretId;
 use url::Url;
 
 const ADAPTER_ID: &str = "RealtimeWeather";
@@ -19,7 +20,7 @@ pub fn execute(
         "SELENE_REALTIME_WEATHER_API_KEY",
         &config.weather_api_key_override,
         &config.weather_vault_secret_id_override,
-        None,
+        Some(ProviderSecretId::WeatherApiKey),
     )
     .ok_or_else(|| {
         RealtimeError::new(
@@ -43,10 +44,11 @@ pub fn execute(
     {
         let mut query_pairs = url.query_pairs_mut();
         query_pairs.append_pair("q", request.query.as_str());
-        query_pairs.append_pair("apikey", api_key.as_str());
+        query_pairs.append_pair("key", api_key.as_str());
     }
 
-    let (payload, latency_ms) = fetch_json_with_caps(ADAPTER_ID, request, config, url.as_str(), &[])?;
+    let (payload, latency_ms) =
+        fetch_json_with_caps(ADAPTER_ID, request, config, url.as_str(), &[])?;
     let retrieved_at_ms = parse_retrieved_at_ms(ADAPTER_ID, &payload)?;
     let trust_tier = parse_trust_tier(&payload);
 
