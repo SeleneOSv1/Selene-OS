@@ -12,7 +12,7 @@ use selene_kernel_contracts::ph1n::{
     AmbiguityFlag, FieldKey, FieldValue, IntentDraft, IntentField, IntentType, OverallConfidence,
     Ph1nResponse,
 };
-use selene_kernel_contracts::ph1tts::TtsControl;
+use selene_kernel_contracts::ph1tts::{AnswerId, TtsControl};
 use selene_kernel_contracts::ph1x::{
     ClarifyDirective, ConfirmDirective, DeliveryHint, DispatchDirective, IdentityContext,
     IdentityPromptState, InterruptContinuityOutcome, InterruptResumePolicy,
@@ -67,6 +67,7 @@ pub mod reason_codes {
 const IDENTITY_PROMPT_COOLDOWN_NS: u64 = 600_000_000_000;
 const IDENTITY_PROMPT_RETRY_BUDGET: u8 = 1;
 const INTERRUPT_RELATION_CONFIDENCE_MIN: f32 = 0.70;
+pub const DETERMINISTIC_TIME_CLARIFICATION_TOPIC: &str = "deterministic_time_clarification";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Ph1xConfig {
@@ -973,23 +974,72 @@ impl Ph1xRuntime {
                 let text = tool_ok_text(tr);
                 self.out_respond(
                     req,
-                    clear_pending(base_thread_state),
+                    clear_completed_time_clarification(clear_pending(base_thread_state)),
                     reason_codes::X_TOOL_OK,
                     text,
                     delivery_base,
                 )
             }
-            ToolStatus::Fail => self.out_respond(
-                req,
-                clear_pending(base_thread_state),
-                reason_codes::X_TOOL_FAIL,
-                retry_message_for_failure(
+            ToolStatus::Fail => {
+                let text = retry_message_for_failure(
                     tr.fail_reason_code.unwrap_or(tr.reason_code),
                     tr.fail_detail.as_deref(),
-                ),
-                delivery_base,
-            ),
+                );
+                if is_deterministic_time_clarification_fail_detail(tr.fail_detail.as_deref()) {
+                    return self.out_deterministic_time_clarification(
+                        req,
+                        base_thread_state,
+                        text,
+                        delivery_base,
+                    );
+                }
+                self.out_respond(
+                    req,
+                    clear_pending(base_thread_state),
+                    reason_codes::X_TOOL_FAIL,
+                    text,
+                    delivery_base,
+                )
+            }
         }
+    }
+
+    fn out_deterministic_time_clarification(
+        &self,
+        req: &Ph1xRequest,
+        mut thread_state: ThreadState,
+        question: String,
+        delivery_base: DeliveryHint,
+    ) -> Result<Ph1xResponse, ContractViolation> {
+        let attempts = bump_attempts(&thread_state.pending, PendingKind::Clarify(FieldKey::Place));
+        thread_state.pending = Some(PendingState::Clarify {
+            missing_field: FieldKey::Place,
+            attempts,
+        });
+        thread_state.resume_buffer = Some(ResumeBuffer::v1(
+            deterministic_time_clarification_answer_id(req),
+            Some(DETERMINISTIC_TIME_CLARIFICATION_TOPIC.to_string()),
+            question.clone(),
+            "Awaiting a place, city, country, region, or IANA timezone for the pending deterministic time query.".to_string(),
+            MonotonicTimeNs(
+                req.now
+                    .0
+                    .saturating_add((self.config.resume_buffer_ttl_ms as u64) * 1_000_000),
+            ),
+        )?);
+        self.out_clarify(
+            req,
+            thread_state,
+            reason_codes::X_TOOL_FAIL,
+            question,
+            vec![
+                "A city, e.g. Madrid".to_string(),
+                "A region, e.g. Canary Islands".to_string(),
+                "An IANA timezone, e.g. America/New_York".to_string(),
+            ],
+            vec![FieldKey::Place],
+            delivery_base,
+        )
     }
 
     fn decide_from_step_up_result(
@@ -1442,6 +1492,22 @@ fn make_idempotency_key(req: &Ph1xRequest, kind: DirectiveKind) -> String {
     format!("x:{:032x}:{:016x}:{k}", req.correlation_id, req.turn_id)
 }
 
+fn deterministic_time_clarification_answer_id(req: &Ph1xRequest) -> AnswerId {
+    AnswerId(
+        req.correlation_id
+            .wrapping_add(u128::from(req.turn_id))
+            .max(1),
+    )
+}
+
+fn is_deterministic_time_clarification_fail_detail(fail_detail: Option<&str>) -> bool {
+    fail_detail.is_some_and(|detail| {
+        detail.contains("missing_time_location")
+            || detail.contains("ambiguous_time_location")
+            || detail.contains("unsupported_time_location")
+    })
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PendingKind {
     Clarify(FieldKey),
@@ -1492,6 +1558,20 @@ fn bump_attempts(prev: &Option<PendingState>, next: PendingKind) -> u8 {
 fn clear_pending(mut s: ThreadState) -> ThreadState {
     s.pending = None;
     s
+}
+
+fn clear_completed_time_clarification(mut s: ThreadState) -> ThreadState {
+    if has_deterministic_time_clarification_resume(&s) {
+        s.resume_buffer = None;
+    }
+    s
+}
+
+fn has_deterministic_time_clarification_resume(s: &ThreadState) -> bool {
+    s.resume_buffer
+        .as_ref()
+        .and_then(|buffer| buffer.topic_hint.as_deref())
+        == Some(DETERMINISTIC_TIME_CLARIFICATION_TOPIC)
 }
 
 fn inherit_thread_scope(mut next: ThreadState, base: &ThreadState) -> ThreadState {
@@ -1799,6 +1879,9 @@ fn should_interrupt_relation_clarify(
     intent_draft: Option<&IntentDraft>,
 ) -> bool {
     if thread_state.resume_buffer.is_none() {
+        return false;
+    }
+    if has_deterministic_time_clarification_resume(thread_state) {
         return false;
     }
     if matches!(
@@ -2243,6 +2326,9 @@ fn retry_message_for_failure(rc: ReasonCodeId, fail_detail: Option<&str>) -> Str
                 );
             }
             return "That location has more than one timezone. Please ask with a specific city or IANA timezone.".to_string();
+        }
+        if detail.contains("missing_time_location") {
+            return "Which place do you mean?".to_string();
         }
         if detail.contains("unsupported_time_location") {
             return "I can't resolve that location yet. Please ask with a supported city, country, or IANA timezone.".to_string();
@@ -4048,6 +4134,67 @@ mod tests {
         );
         assert!(!text.contains("raw"));
         assert!(!text.contains("Retrieved at"));
+    }
+
+    #[test]
+    fn h363_time_missing_place_renders_clean_clarification() {
+        let rt = Ph1xRuntime::new(Ph1xConfig::mvp_v1());
+        let request_id = ToolRequestId(363);
+        let thread_state = ThreadState::v1(
+            Some(PendingState::Tool {
+                request_id,
+                attempts: 1,
+            }),
+            None,
+        );
+        let tool_fail = ToolResponse::fail_with_detail_v1(
+            request_id,
+            ToolQueryHash(363),
+            selene_engines::ph1e::reason_codes::E_FAIL_QUERY_PARSE,
+            Some("missing_time_location".to_string()),
+            CacheStatus::Bypassed,
+        )
+        .unwrap();
+        let req = Ph1xRequest::v1(
+            363,
+            1,
+            now(1),
+            thread_state,
+            SessionState::Active,
+            id_text(),
+            policy_ok(),
+            vec![],
+            None,
+            None,
+            Some(tool_fail),
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+        let out = rt.decide(&req).unwrap();
+        match out.directive {
+            Ph1xDirective::Clarify(c) => {
+                assert_eq!(c.question, "Which place do you mean?");
+                assert!(c.what_is_missing.contains(&FieldKey::Place));
+                assert_eq!(
+                    out.thread_state
+                        .resume_buffer
+                        .as_ref()
+                        .and_then(|buffer| buffer.topic_hint.as_deref()),
+                    Some(DETERMINISTIC_TIME_CLARIFICATION_TOPIC)
+                );
+                assert!(matches!(
+                    out.thread_state.pending,
+                    Some(PendingState::Clarify {
+                        missing_field: FieldKey::Place,
+                        ..
+                    })
+                ));
+            }
+            _ => panic!("expected deterministic time clarification"),
+        }
     }
 
     #[test]

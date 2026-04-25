@@ -89,7 +89,7 @@ use selene_kernel_contracts::ph1learn::{LearnSignalType, WakeLearnSignalV1, Wake
 use selene_kernel_contracts::ph1link::{AppPlatform, TokenId};
 use selene_kernel_contracts::ph1m::MemoryResumeTier;
 use selene_kernel_contracts::ph1n::{
-    Chat as Ph1nChat, IntentType, Ph1nRequest, Ph1nResponse, TranscriptHash,
+    Chat as Ph1nChat, FieldKey, IntentType, Ph1nRequest, Ph1nResponse, TranscriptHash,
 };
 use selene_kernel_contracts::ph1onb::{
     OnboardingNextStep, OnboardingSessionId, SenderVerifyDecision,
@@ -189,6 +189,8 @@ pub mod reason_codes {
     pub const ADAPTER_READ_ONLY_CLARIFY_LOOP_INCIDENT: ReasonCodeId = ReasonCodeId(0xAD70_0012);
     pub const ADAPTER_READ_ONLY_USER_CORRECTION_INCIDENT: ReasonCodeId = ReasonCodeId(0xAD70_0013);
 }
+
+const DETERMINISTIC_TIME_CLARIFICATION_TOPIC: &str = "deterministic_time_clarification";
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default)]
 #[serde(default)]
@@ -5172,12 +5174,6 @@ impl AdapterRuntime {
                 observation,
             )
             .map_err(|err| post_session_error(format!("invalid ingress request: {err:?}")))?;
-            let nlp_output = build_nlp_output_for_voice_turn(
-                &request,
-                user_text_final.as_deref(),
-                tenant_id_for_ph1c.as_deref(),
-            )
-            .map_err(post_session_error)?;
             let thread_key = resolve_adapter_thread_key(request.thread_key.as_deref());
             let mut base_thread_state = load_ph1x_thread_state(&store, &actor_user_id, &thread_key);
             if request.project_id.is_some() || request.pinned_context_refs.is_some() {
@@ -5205,6 +5201,17 @@ impl AdapterRuntime {
                         post_session_error(format!("invalid thread policy flags: {err:?}"))
                     })?;
             }
+            let nlp_transcript_text = deterministic_time_clarification_followup_query(
+                &base_thread_state,
+                user_text_final.as_deref(),
+            )
+            .or_else(|| user_text_final.clone());
+            let nlp_output = build_nlp_output_for_voice_turn(
+                &request,
+                nlp_transcript_text.as_deref(),
+                tenant_id_for_ph1c.as_deref(),
+            )
+            .map_err(post_session_error)?;
             let confirm_answer =
                 infer_confirm_answer_from_user_text(&base_thread_state, user_text_final.as_deref());
             let locale = request
@@ -8258,6 +8265,38 @@ fn build_nlp_output_for_voice_turn(
     AdapterNlpEngineRuntime::new()
         .run(&nlp_request)
         .map_err(|err| format!("ph1n runtime failed while building PH1.X input: {err:?}"))
+}
+
+fn deterministic_time_clarification_followup_query(
+    thread_state: &ThreadState,
+    transcript_text: Option<&str>,
+) -> Option<String> {
+    if !matches!(
+        &thread_state.pending,
+        Some(PendingState::Clarify {
+            missing_field: FieldKey::Place,
+            ..
+        })
+    ) {
+        return None;
+    }
+    let topic_matches = thread_state
+        .resume_buffer
+        .as_ref()
+        .and_then(|buffer| buffer.topic_hint.as_deref())
+        == Some(DETERMINISTIC_TIME_CLARIFICATION_TOPIC);
+    if !topic_matches {
+        return None;
+    }
+    let text = transcript_text?.trim();
+    if text.is_empty() || text.len() > 256 {
+        return None;
+    }
+    let lowered = text.to_ascii_lowercase();
+    if lowered.contains("time") || lowered.contains("weather") {
+        return None;
+    }
+    Some(format!("what is the time in {}", truncate_utf8(text, 128)))
 }
 
 fn build_vision_turn_input_from_adapter_request(
@@ -20026,6 +20065,284 @@ mod tests {
             assert!(!out.response_text.contains("Retrieved at (unix_ms):"));
             assert!(!out.response_text.contains("Current local time in"));
         }
+    }
+
+    fn h363_run_desktop_typed_time_query_on_thread(
+        runtime: &AdapterRuntime,
+        thread_key: &str,
+        turn_id: u64,
+        query: &str,
+    ) -> VoiceTurnAdapterResponse {
+        let mut req = base_request();
+        req.correlation_id = 363_000;
+        req.turn_id = turn_id;
+        req.device_turn_sequence = Some(turn_id);
+        req.now_ns = Some(turn_id);
+        req.thread_key = Some(thread_key.to_string());
+        req.app_platform = "DESKTOP".to_string();
+        req.audio_capture_ref = None;
+        req.user_text_final = Some(query.to_string());
+        runtime
+            .run_voice_turn(req)
+            .expect("desktop deterministic time request should complete or clarify cleanly")
+    }
+
+    fn assert_h363_clean_time_answer(out: &VoiceTurnAdapterResponse, place: &str) {
+        assert_eq!(out.status, "ok");
+        assert!(
+            out.response_text.starts_with("It's "),
+            "{}",
+            out.response_text
+        );
+        assert!(
+            out.response_text.ends_with(&format!(" in {place}.")),
+            "{}",
+            out.response_text
+        );
+        assert!(!out.response_text.contains("verify your identity"));
+        assert!(!out
+            .response_text
+            .contains("governance state is out of sync"));
+        assert!(!out.response_text.contains("Sources:"));
+        assert!(!out.response_text.contains("Retrieved at (unix_ms):"));
+        assert!(!out.response_text.contains('['));
+        assert!(
+            matches!(out.outcome.as_str(), "FINAL" | "FINAL_TOOL"),
+            "unexpected outcome {} for clean deterministic answer {}",
+            out.outcome,
+            out.response_text
+        );
+    }
+
+    fn assert_h363_clean_time_clarification(out: &VoiceTurnAdapterResponse, expected: &str) {
+        assert_eq!(out.status, "ok");
+        assert_eq!(out.outcome, "FINAL_TOOL");
+        assert!(
+            out.response_text.contains("Do you mean")
+                || out.response_text.contains("Which place do you mean?"),
+            "{}",
+            out.response_text
+        );
+        assert!(
+            out.response_text.contains(expected),
+            "{}",
+            out.response_text
+        );
+        assert!(!out.response_text.contains("verify your identity"));
+        assert!(!out
+            .response_text
+            .contains("governance state is out of sync"));
+        assert!(!out.response_text.contains("Sources:"));
+        assert!(!out.response_text.contains("Retrieved at (unix_ms):"));
+    }
+
+    #[test]
+    fn h363_single_timezone_city_time_answers_directly() {
+        let out = h362_run_desktop_typed_time_query("what is the time in New York");
+        assert_h363_clean_time_answer(&out, "New York");
+    }
+
+    #[test]
+    fn h363_single_timezone_country_time_answers_directly() {
+        for (query, place) in [
+            ("what is the time in Italy", "Italy"),
+            ("what is the time in Germany", "Germany"),
+            ("what is the time in Japan", "Japan"),
+        ] {
+            let out = h362_run_desktop_typed_time_query(query);
+            assert_h363_clean_time_answer(&out, place);
+        }
+    }
+
+    #[test]
+    fn h363_spain_madrid_clarification_followup_completes_same_thread() {
+        let runtime = AdapterRuntime::default();
+        let clarify = h363_run_desktop_typed_time_query_on_thread(
+            &runtime,
+            "h363-spain-madrid",
+            363_001,
+            "what is the time in Spain",
+        );
+        assert_h363_clean_time_clarification(&clarify, "Europe/Madrid");
+        let answer = h363_run_desktop_typed_time_query_on_thread(
+            &runtime,
+            "h363-spain-madrid",
+            363_002,
+            "Madrid",
+        );
+        assert_h363_clean_time_answer(&answer, "Madrid");
+    }
+
+    #[test]
+    fn h363_spain_canary_islands_clarification_followup_completes_same_thread() {
+        let runtime = AdapterRuntime::default();
+        let clarify = h363_run_desktop_typed_time_query_on_thread(
+            &runtime,
+            "h363-spain-canary",
+            363_011,
+            "what is the time in Spain",
+        );
+        assert_h363_clean_time_clarification(&clarify, "Atlantic/Canary");
+        let answer = h363_run_desktop_typed_time_query_on_thread(
+            &runtime,
+            "h363-spain-canary",
+            363_012,
+            "Canary Islands",
+        );
+        assert_h363_clean_time_answer(&answer, "Canary Islands");
+    }
+
+    #[test]
+    fn h363_portugal_lisbon_clarification_followup_completes_same_thread() {
+        let runtime = AdapterRuntime::default();
+        let clarify = h363_run_desktop_typed_time_query_on_thread(
+            &runtime,
+            "h363-portugal-lisbon",
+            363_021,
+            "what is the time in Portugal",
+        );
+        assert_h363_clean_time_clarification(&clarify, "mainland Portugal/Lisbon");
+        let answer = h363_run_desktop_typed_time_query_on_thread(
+            &runtime,
+            "h363-portugal-lisbon",
+            363_022,
+            "Lisbon",
+        );
+        assert_h363_clean_time_answer(&answer, "Lisbon");
+    }
+
+    #[test]
+    fn h363_portugal_azores_clarification_followup_completes_same_thread() {
+        let runtime = AdapterRuntime::default();
+        let clarify = h363_run_desktop_typed_time_query_on_thread(
+            &runtime,
+            "h363-portugal-azores",
+            363_031,
+            "what is the time in Portugal",
+        );
+        assert_h363_clean_time_clarification(&clarify, "the Azores");
+        let answer = h363_run_desktop_typed_time_query_on_thread(
+            &runtime,
+            "h363-portugal-azores",
+            363_032,
+            "Azores",
+        );
+        assert_h363_clean_time_answer(&answer, "Azores");
+    }
+
+    #[test]
+    fn h363_united_states_new_york_or_los_angeles_followup_completes_same_thread() {
+        for (thread_key, turn_id, followup, place) in [
+            ("h363-us-new-york", 363_041, "New York", "New York"),
+            ("h363-us-los-angeles", 363_051, "Los Angeles", "Los Angeles"),
+        ] {
+            let runtime = AdapterRuntime::default();
+            let clarify = h363_run_desktop_typed_time_query_on_thread(
+                &runtime,
+                thread_key,
+                turn_id,
+                "what is the time in United States",
+            );
+            assert_h363_clean_time_clarification(&clarify, "America/");
+            let answer = h363_run_desktop_typed_time_query_on_thread(
+                &runtime,
+                thread_key,
+                turn_id + 1,
+                followup,
+            );
+            assert_h363_clean_time_answer(&answer, place);
+        }
+    }
+
+    #[test]
+    fn h363_australia_sydney_or_perth_followup_completes_same_thread() {
+        for (thread_key, turn_id, followup, place) in [
+            ("h363-au-sydney", 363_061, "Sydney", "Sydney"),
+            ("h363-au-perth", 363_071, "Perth", "Perth"),
+        ] {
+            let runtime = AdapterRuntime::default();
+            let clarify = h363_run_desktop_typed_time_query_on_thread(
+                &runtime,
+                thread_key,
+                turn_id,
+                "what is the time in Australia",
+            );
+            assert_h363_clean_time_clarification(&clarify, "Australia/");
+            let answer = h363_run_desktop_typed_time_query_on_thread(
+                &runtime,
+                thread_key,
+                turn_id + 1,
+                followup,
+            );
+            assert_h363_clean_time_answer(&answer, place);
+        }
+    }
+
+    #[test]
+    fn h363_springfield_disambiguated_followup_completes_same_thread() {
+        for (thread_key, turn_id, followup, place) in [
+            (
+                "h363-springfield-illinois",
+                363_081,
+                "Springfield, Illinois",
+                "Springfield, Illinois",
+            ),
+            (
+                "h363-springfield-missouri",
+                363_091,
+                "Springfield, Missouri",
+                "Springfield, Missouri",
+            ),
+        ] {
+            let runtime = AdapterRuntime::default();
+            let clarify = h363_run_desktop_typed_time_query_on_thread(
+                &runtime,
+                thread_key,
+                turn_id,
+                "what is the time in Springfield",
+            );
+            assert_h363_clean_time_clarification(&clarify, "Springfield, Illinois");
+            let answer = h363_run_desktop_typed_time_query_on_thread(
+                &runtime,
+                thread_key,
+                turn_id + 1,
+                followup,
+            );
+            assert_h363_clean_time_answer(&answer, place);
+        }
+    }
+
+    #[test]
+    fn h363_iana_timezone_input_answers_directly() {
+        let out = h362_run_desktop_typed_time_query("what is the time in America/New_York");
+        assert_h363_clean_time_answer(&out, "New York");
+    }
+
+    #[test]
+    fn h363_invalid_time_clarification_followup_does_not_governance_out_of_sync() {
+        let runtime = AdapterRuntime::default();
+        let clarify = h363_run_desktop_typed_time_query_on_thread(
+            &runtime,
+            "h363-invalid-followup",
+            363_101,
+            "what is the time in Portugal",
+        );
+        assert_h363_clean_time_clarification(&clarify, "mainland Portugal/Lisbon");
+        let answer = h363_run_desktop_typed_time_query_on_thread(
+            &runtime,
+            "h363-invalid-followup",
+            363_102,
+            "Exotic",
+        );
+        assert_eq!(answer.status, "ok");
+        assert!(matches!(answer.outcome.as_str(), "FINAL" | "FINAL_TOOL"));
+        assert!(answer
+            .response_text
+            .contains("I can't resolve that location yet"));
+        assert!(!answer
+            .response_text
+            .contains("governance state is out of sync"));
+        assert!(!answer.response_text.contains("verify your identity"));
     }
 
     #[test]

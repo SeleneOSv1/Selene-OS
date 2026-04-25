@@ -1531,6 +1531,7 @@ struct TimeLocation {
 enum TimeLocationResolution {
     Resolved(TimeLocation),
     DefaultUtc,
+    MissingLocation,
     Ambiguous(Vec<String>),
     Unsupported,
 }
@@ -1578,6 +1579,10 @@ fn current_time_result_for_query_with_provider_config(
             local_time_iso: current_utc_time_iso(SystemTime::now()),
             provider_hint: "system_utc".to_string(),
         }),
+        TimeLocationResolution::MissingLocation => Err(ToolFailPayload::with_detail(
+            reason_codes::E_FAIL_QUERY_PARSE,
+            "missing_time_location".to_string(),
+        )),
         TimeLocationResolution::Ambiguous(alternatives) => Err(ToolFailPayload::with_detail(
             reason_codes::E_FAIL_QUERY_PARSE,
             format!(
@@ -1743,6 +1748,9 @@ fn run_timezonedb_lookup(
 
 fn resolve_time_location_for_query(query: &str) -> TimeLocationResolution {
     let normalized = normalize_location_text(query);
+    if is_missing_time_location_query(query) {
+        return TimeLocationResolution::MissingLocation;
+    }
     if normalized.trim().is_empty() {
         return TimeLocationResolution::DefaultUtc;
     }
@@ -1754,6 +1762,10 @@ fn resolve_time_location_for_query(query: &str) -> TimeLocationResolution {
             display_label: "UTC".to_string(),
             geo: None,
         });
+    }
+
+    if let Some(location) = explicit_time_location_alias(&normalized) {
+        return TimeLocationResolution::Resolved(location);
     }
 
     let zones = zone_tab_entries();
@@ -2034,6 +2046,20 @@ fn fallback_zone_tab_entries() -> Vec<TimeZoneEntry> {
             -33_868_889,
             151_209_444,
         ),
+        (
+            "AU",
+            "Australia/Perth",
+            "Western Australia (most areas)",
+            -31_952_222,
+            115_858_889,
+        ),
+        (
+            "AU",
+            "Australia/Adelaide",
+            "South Australia",
+            -34_928_889,
+            138_601_111,
+        ),
         ("DE", "Europe/Berlin", "", 52_516_667, 13_400_000),
         ("DE", "Europe/Busingen", "Busingen", 47_696_389, 8_690_000),
         ("IT", "Europe/Rome", "", 41_900_000, 12_483_333),
@@ -2051,6 +2077,27 @@ fn fallback_zone_tab_entries() -> Vec<TimeZoneEntry> {
             "the Azores",
             37_733_333,
             -25_666_667,
+        ),
+        (
+            "ES",
+            "Europe/Madrid",
+            "Spain mainland",
+            40_416_667,
+            -3_703_889,
+        ),
+        (
+            "ES",
+            "Africa/Ceuta",
+            "Ceuta and Melilla",
+            35_889_000,
+            -5_316_000,
+        ),
+        (
+            "ES",
+            "Atlantic/Canary",
+            "Canary Islands",
+            28_100_000,
+            -15_400_000,
         ),
     ]
     .into_iter()
@@ -2076,6 +2123,7 @@ fn fallback_country_code_names() -> Vec<(String, String)> {
         ("DE".to_string(), "Germany".to_string()),
         ("IT".to_string(), "Italy".to_string()),
         ("PT".to_string(), "Portugal".to_string()),
+        ("ES".to_string(), "Spain".to_string()),
     ]
 }
 
@@ -2099,6 +2147,13 @@ fn alternatives_for_country_entries(
             "mainland Portugal/Lisbon".to_string(),
             "Madeira".to_string(),
             "the Azores".to_string(),
+        ];
+    }
+    if normalize_location_text(country_name).trim() == "spain" {
+        return vec![
+            "Europe/Madrid (Spain mainland)".to_string(),
+            "Africa/Ceuta (Ceuta and Melilla)".to_string(),
+            "Atlantic/Canary (Canary Islands)".to_string(),
         ];
     }
     alternatives_for_entries(entries)
@@ -2153,14 +2208,70 @@ fn ambiguous_place_alternatives(normalized_query: &str) -> Option<Vec<String>> {
     None
 }
 
+fn explicit_time_location_alias(normalized_query: &str) -> Option<TimeLocation> {
+    for (phrase, zone, display_label, lat_micro, lon_micro) in [
+        (
+            "springfield illinois",
+            "America/Chicago",
+            "Springfield, Illinois",
+            39_781_667,
+            -89_650_000,
+        ),
+        (
+            "springfield missouri",
+            "America/Chicago",
+            "Springfield, Missouri",
+            37_215_278,
+            -93_298_333,
+        ),
+        (
+            "springfield massachusetts",
+            "America/New_York",
+            "Springfield, Massachusetts",
+            42_101_389,
+            -72_590_278,
+        ),
+        (
+            "canary islands",
+            "Atlantic/Canary",
+            "Canary Islands",
+            28_100_000,
+            -15_400_000,
+        ),
+        (
+            "the azores",
+            "Atlantic/Azores",
+            "Azores",
+            37_733_333,
+            -25_666_667,
+        ),
+    ] {
+        if contains_location_phrase(normalized_query, phrase) {
+            return Some(TimeLocation {
+                zone: zone.to_string(),
+                display_label: display_label.to_string(),
+                geo: Some(GeoPoint {
+                    lat_micro,
+                    lon_micro,
+                }),
+            });
+        }
+    }
+    None
+}
+
 fn time_zone_display_label(zone: &str) -> String {
     match zone {
         "America/New_York" => "New York".to_string(),
+        "America/Los_Angeles" => "Los Angeles".to_string(),
         "Asia/Tokyo" => "Japan".to_string(),
         "Australia/Sydney" => "Sydney".to_string(),
+        "Australia/Perth" => "Perth".to_string(),
         "Europe/Lisbon" => "Lisbon".to_string(),
         "Europe/Berlin" => "Germany".to_string(),
         "Europe/Rome" => "Italy".to_string(),
+        "Atlantic/Azores" => "Azores".to_string(),
+        "Atlantic/Canary" => "Canary Islands".to_string(),
         "UTC" => "UTC".to_string(),
         other => zone_terminal_component(other),
     }
@@ -2220,6 +2331,14 @@ fn normalize_location_text(raw: &str) -> String {
     }
     out.push(' ');
     collapse_ws(&out)
+}
+
+fn is_missing_time_location_query(query: &str) -> bool {
+    let normalized = normalize_location_text(query);
+    matches!(
+        normalized.trim(),
+        "what time is it in" | "what is the time in" | "time in" | "current time in"
+    ) || normalized.trim().ends_with(" time in")
 }
 
 fn contains_location_phrase(normalized_haystack: &str, normalized_needle: &str) -> bool {
@@ -2914,7 +3033,9 @@ mod tests {
         let rt = Ph1eRuntime::new(Ph1eConfig::mvp_v1());
         for (query, expected) in [
             ("what is the time in Portugal", "mainland Portugal/Lisbon"),
+            ("what is the time in Spain", "Europe/Madrid"),
             ("what is the time in United States", "America/"),
+            ("what is the time in Australia", "Australia/"),
             ("what is the time in Springfield", "Springfield, Illinois"),
         ] {
             let out = rt.run(&req(ToolName::Time, query, false, false));
@@ -2927,6 +3048,20 @@ mod tests {
             assert!(detail.contains("ambiguous_time_location"), "{detail}");
             assert!(detail.contains(expected), "{detail}");
         }
+    }
+
+    #[test]
+    fn h363_time_query_missing_place_clarifies() {
+        let rt = Ph1eRuntime::new(Ph1eConfig::mvp_v1());
+        let out = rt.run(&req(ToolName::Time, "what time is it in", false, false));
+        assert_eq!(out.tool_status, ToolStatus::Fail);
+        assert_eq!(out.reason_code, reason_codes::E_FAIL_QUERY_PARSE);
+        assert!(out.tool_result.is_none());
+        assert!(out
+            .fail_detail
+            .as_deref()
+            .unwrap_or_default()
+            .contains("missing_time_location"));
     }
 
     #[test]
