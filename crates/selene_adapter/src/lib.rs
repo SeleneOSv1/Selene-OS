@@ -19948,6 +19948,86 @@ mod tests {
         assert!(!out.response_text.contains("Retrieved at (unix_ms):"));
     }
 
+    fn h362_run_desktop_typed_time_query(query: &str) -> VoiceTurnAdapterResponse {
+        let runtime = AdapterRuntime::default();
+        let mut req = base_request();
+        req.app_platform = "DESKTOP".to_string();
+        req.audio_capture_ref = None;
+        req.user_text_final = Some(query.to_string());
+        runtime
+            .run_voice_turn(req)
+            .expect("desktop deterministic time request should complete or clarify cleanly")
+    }
+
+    #[test]
+    fn h362_time_in_germany_returns_clean_public_answer_without_identity_gate() {
+        let out = h362_run_desktop_typed_time_query("what is the time in Germany");
+        assert_eq!(out.status, "ok");
+        assert_eq!(out.outcome, "FINAL_TOOL");
+        assert!(out.response_text.starts_with("It's "));
+        assert!(out.response_text.ends_with(" in Germany."));
+        assert!(!out.response_text.contains("verify your identity"));
+        assert!(!out.response_text.contains("Europe/Berlin"));
+        assert!(!out.response_text.contains("Sources:"));
+        assert!(!out.response_text.contains("Retrieved at (unix_ms):"));
+
+        let italy = h362_run_desktop_typed_time_query("what is the time in Italy");
+        assert_eq!(italy.status, "ok");
+        assert_eq!(italy.outcome, "FINAL_TOOL");
+        assert!(italy.response_text.starts_with("It's "));
+        assert!(italy.response_text.ends_with(" in Italy."));
+        assert!(!italy.response_text.contains("verify your identity"));
+        assert!(!italy.response_text.contains("Europe/Rome"));
+        assert!(!italy.response_text.contains("Sources:"));
+        assert!(!italy.response_text.contains("Retrieved at (unix_ms):"));
+    }
+
+    #[test]
+    fn h362_time_in_lisbon_and_iana_zone_return_clean_public_answers() {
+        let lisbon = h362_run_desktop_typed_time_query("what is the time in Lisbon");
+        assert_eq!(lisbon.status, "ok");
+        assert_eq!(lisbon.outcome, "FINAL_TOOL");
+        assert!(lisbon.response_text.starts_with("It's "));
+        assert!(lisbon.response_text.ends_with(" in Lisbon."));
+        assert!(!lisbon.response_text.contains("Europe/Lisbon"));
+        assert!(!lisbon.response_text.contains("Sources:"));
+
+        let iana = h362_run_desktop_typed_time_query("what is the time in America/New_York");
+        assert_eq!(iana.status, "ok");
+        assert_eq!(iana.outcome, "FINAL_TOOL");
+        assert!(iana.response_text.starts_with("It's "));
+        assert!(iana.response_text.ends_with(" in New York."));
+        assert!(!iana.response_text.contains("America/New_York"));
+        assert!(!iana.response_text.contains("Sources:"));
+    }
+
+    #[test]
+    fn h362_ambiguous_time_queries_clarify_without_identity_gate_or_web_dump() {
+        for (query, expected) in [
+            ("what is the time in Portugal", "mainland Portugal/Lisbon"),
+            ("what is the time in United States", "Do you mean"),
+            ("what is the time in Springfield", "Springfield, Illinois"),
+        ] {
+            let out = h362_run_desktop_typed_time_query(query);
+            assert_eq!(out.status, "ok", "{query}");
+            assert_eq!(out.outcome, "FINAL_TOOL", "{query}");
+            assert!(
+                out.response_text.contains(expected),
+                "{}",
+                out.response_text
+            );
+            assert!(
+                out.response_text.contains("Do you mean"),
+                "{}",
+                out.response_text
+            );
+            assert!(!out.response_text.contains("verify your identity"));
+            assert!(!out.response_text.contains("Sources:"));
+            assert!(!out.response_text.contains("Retrieved at (unix_ms):"));
+            assert!(!out.response_text.contains("Current local time in"));
+        }
+    }
+
     #[test]
     fn at_adapter_43_weather_without_lawful_provider_fails_cleanly() {
         with_isolated_device_vault(

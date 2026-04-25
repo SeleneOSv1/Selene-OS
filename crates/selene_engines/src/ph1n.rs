@@ -4002,6 +4002,28 @@ mod tests {
     }
 
     #[test]
+    fn h362_global_time_places_are_deterministic_time_queries() {
+        let rt = Ph1nRuntime::new(Ph1nConfig::mvp_v1());
+        for prompt in [
+            "Selene what is the time in Germany",
+            "Selene what is the time in Portugal",
+            "Selene what is the time in Lisbon",
+            "Selene what is the time in United States",
+            "Selene what is the time in America/New_York",
+        ] {
+            let out = rt.run(&req(prompt, "en")).unwrap();
+            match out {
+                Ph1nResponse::IntentDraft(d) => {
+                    assert_eq!(d.intent_type, IntentType::TimeQuery);
+                    assert_eq!(d.overall_confidence, OverallConfidence::High);
+                    assert!(!d.requires_confirmation);
+                }
+                _ => panic!("expected deterministic time intent for {prompt}"),
+            }
+        }
+    }
+
+    #[test]
     fn at_n_40_weather_in_tokyo_is_weather_query() {
         let rt = Ph1nRuntime::new(Ph1nConfig::mvp_v1());
         let out = rt

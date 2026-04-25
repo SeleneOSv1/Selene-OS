@@ -59,7 +59,9 @@ use selene_kernel_contracts::ph1m::{
     MemoryCandidate, MemoryConfidence, MemoryResumeAction, MemoryResumeTier, MemoryRetentionMode,
     Ph1mResumeSelectRequest, Ph1mThreadDigestUpsertRequest,
 };
-use selene_kernel_contracts::ph1n::{FieldKey, IntentDraft, IntentType, Ph1nResponse};
+use selene_kernel_contracts::ph1n::{
+    FieldKey, IntentDraft, IntentType, Ph1nResponse, SensitivityLevel,
+};
 use selene_kernel_contracts::ph1onb::{
     OnbAccessInstanceCreateCommitRequest, OnbCompleteCommitRequest,
     OnbEmployeePhotoCaptureSendCommitRequest, OnbEmployeeSenderVerifyCommitRequest,
@@ -7460,9 +7462,42 @@ fn classify_governance_quarantine_identity_recovery_fail_closed_outcome(
     })
 }
 
+fn low_risk_public_deterministic_time_answer(out: &AppVoiceTurnExecutionOutcome) -> bool {
+    let Some(tool_response) = out.tool_response.as_ref() else {
+        return false;
+    };
+    let tool_response_is_time = matches!(tool_response.tool_result, Some(ToolResult::Time { .. }))
+        || tool_response.fail_detail.as_deref().is_some_and(|detail| {
+            detail.contains("ambiguous_time_location")
+                || detail.contains("unsupported_time_location")
+        });
+    if !tool_response_is_time {
+        return false;
+    }
+    out.ph1x_request
+        .as_ref()
+        .and_then(|request| request.nlp_output.as_ref())
+        .is_some_and(|nlp_output| {
+            matches!(
+                nlp_output,
+                Ph1nResponse::IntentDraft(intent)
+                    if intent.intent_type == IntentType::TimeQuery
+                        && intent.sensitivity_level == SensitivityLevel::Public
+                        && !intent.requires_confirmation
+            )
+        })
+        || tool_response.fail_detail.as_deref().is_some_and(|detail| {
+            detail.contains("ambiguous_time_location")
+                || detail.contains("unsupported_time_location")
+        })
+}
+
 fn classify_low_confidence_identity_posture_fail_closed_outcome(
     out: &AppVoiceTurnExecutionOutcome,
 ) -> Result<Option<IdentityPostureFailClosedBehavior>, StorageError> {
+    if low_risk_public_deterministic_time_answer(out) {
+        return Ok(None);
+    }
     let Some(identity_state) = canonical_posture_fail_closed_identity_state(out)? else {
         return Ok(None);
     };
@@ -7483,6 +7518,9 @@ fn classify_low_confidence_identity_posture_fail_closed_outcome(
 fn classify_gray_zone_margin_identity_posture_fail_closed_outcome(
     out: &AppVoiceTurnExecutionOutcome,
 ) -> Result<Option<IdentityPostureFailClosedBehavior>, StorageError> {
+    if low_risk_public_deterministic_time_answer(out) {
+        return Ok(None);
+    }
     let Some(identity_state) = canonical_posture_fail_closed_identity_state(out)? else {
         return Ok(None);
     };
@@ -7504,6 +7542,9 @@ fn classify_gray_zone_margin_identity_posture_fail_closed_outcome(
 fn classify_echo_unsafe_identity_posture_fail_closed_outcome(
     out: &AppVoiceTurnExecutionOutcome,
 ) -> Result<Option<IdentityPostureFailClosedBehavior>, StorageError> {
+    if low_risk_public_deterministic_time_answer(out) {
+        return Ok(None);
+    }
     let Some(identity_state) = canonical_posture_fail_closed_identity_state(out)? else {
         return Ok(None);
     };
@@ -7523,6 +7564,9 @@ fn classify_echo_unsafe_identity_posture_fail_closed_outcome(
 fn classify_no_speech_identity_posture_fail_closed_outcome(
     out: &AppVoiceTurnExecutionOutcome,
 ) -> Result<Option<IdentityPostureFailClosedBehavior>, StorageError> {
+    if low_risk_public_deterministic_time_answer(out) {
+        return Ok(None);
+    }
     let Some(identity_state) = canonical_posture_fail_closed_identity_state(out)? else {
         return Ok(None);
     };
@@ -7542,6 +7586,9 @@ fn classify_no_speech_identity_posture_fail_closed_outcome(
 fn classify_multi_speaker_identity_posture_fail_closed_outcome(
     out: &AppVoiceTurnExecutionOutcome,
 ) -> Result<Option<IdentityPostureFailClosedBehavior>, StorageError> {
+    if low_risk_public_deterministic_time_answer(out) {
+        return Ok(None);
+    }
     let Some(identity_state) = canonical_posture_fail_closed_identity_state(out)? else {
         return Ok(None);
     };
@@ -12119,6 +12166,12 @@ mod tests {
                     openai_api_key: None,
                     openai_responses_url: "https://api.openai.com/v1/responses".to_string(),
                     openai_model: "gpt-4o-mini".to_string(),
+                    google_time_zone_api_key: None,
+                    google_time_zone_url: "https://maps.googleapis.com/maps/api/timezone/json".to_string(),
+                    google_time_zone_fixture_json: None,
+                    timezonedb_api_key: None,
+                    timezonedb_url: "https://api.timezonedb.com/v2.1/get-time-zone".to_string(),
+                    timezonedb_fixture_json: None,
                     user_agent: "selene-os-app-ingress-test/1.0".to_string(),
                     proxy_config: Ph1eProxyConfig {
                         mode: Ph1eProxyMode::Off,
@@ -12156,6 +12209,12 @@ mod tests {
                     openai_api_key: None,
                     openai_responses_url: "https://api.openai.com/v1/responses".to_string(),
                     openai_model: "gpt-4o-mini".to_string(),
+                    google_time_zone_api_key: None,
+                    google_time_zone_url: "https://maps.googleapis.com/maps/api/timezone/json".to_string(),
+                    google_time_zone_fixture_json: None,
+                    timezonedb_api_key: None,
+                    timezonedb_url: "https://api.timezonedb.com/v2.1/get-time-zone".to_string(),
+                    timezonedb_fixture_json: None,
                     user_agent: "selene-os-app-ingress-test/1.0".to_string(),
                     proxy_config: Ph1eProxyConfig {
                         mode: Ph1eProxyMode::Off,

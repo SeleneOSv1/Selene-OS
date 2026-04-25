@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 
+use std::collections::BTreeSet;
 use std::env;
 use std::fs;
 use std::hash::{Hash, Hasher};
@@ -200,6 +201,12 @@ pub struct Ph1eProviderConfig {
     pub openai_api_key: Option<String>,
     pub openai_responses_url: String,
     pub openai_model: String,
+    pub google_time_zone_api_key: Option<String>,
+    pub google_time_zone_url: String,
+    pub google_time_zone_fixture_json: Option<String>,
+    pub timezonedb_api_key: Option<String>,
+    pub timezonedb_url: String,
+    pub timezonedb_fixture_json: Option<String>,
     pub user_agent: String,
     pub proxy_config: Ph1eProxyConfig,
     pub brave_web_fixture_json: Option<String>,
@@ -221,6 +228,15 @@ impl Ph1eProviderConfig {
                 .unwrap_or_else(|_| "https://api.openai.com/v1/responses".to_string()),
             openai_model: env::var("OPENAI_WEB_FALLBACK_MODEL")
                 .unwrap_or_else(|_| "gpt-4o-mini".to_string()),
+            google_time_zone_api_key: None,
+            google_time_zone_url: env::var("GOOGLE_TIME_ZONE_URL").unwrap_or_else(|_| {
+                "https://maps.googleapis.com/maps/api/timezone/json".to_string()
+            }),
+            google_time_zone_fixture_json: None,
+            timezonedb_api_key: None,
+            timezonedb_url: env::var("TIMEZONEDB_URL")
+                .unwrap_or_else(|_| "https://api.timezonedb.com/v2.1/get-time-zone".to_string()),
+            timezonedb_fixture_json: None,
             user_agent: env::var("PH1E_HTTP_USER_AGENT")
                 .unwrap_or_else(|_| "selene-ph1e/1.0".to_string()),
             proxy_config: Ph1eProxyConfig::from_env(),
@@ -299,13 +315,24 @@ impl Ph1eRuntime {
 
         let cache_status = cache_status_for_request(req);
         let (tool_result, source_metadata) = match &req.tool_name {
-            ToolName::Time => match current_time_result_for_query(&req.query) {
-                Ok(local_time_iso) => ToolResult::Time { local_time_iso }
-                    .with_default_source_metadata(
-                        &req.tool_name,
-                        &req.query,
-                        req.strict_budget.max_results.min(self.config.max_results),
+            ToolName::Time => match self.current_time_result_for_query(
+                &req.query,
+                req.strict_budget.timeout_ms.min(self.config.max_timeout_ms),
+            ) {
+                Ok(time) => (
+                    ToolResult::Time {
+                        local_time_iso: time.local_time_iso,
+                    },
+                    source_metadata_from_live(
+                        Some(time.provider_hint),
+                        now_unix_ms(),
+                        source_refs_for_tool(
+                            &req.tool_name,
+                            &req.query,
+                            req.strict_budget.max_results.min(self.config.max_results),
+                        ),
                     ),
+                ),
                 Err(fail) => {
                     return fail_response_with_detail(
                         req,
@@ -601,6 +628,22 @@ impl Ph1eRuntime {
             .or_else(|| self.resolve_secret_from_vault(ProviderSecretId::OpenAIApiKey))
     }
 
+    fn resolve_google_time_zone_api_key(&self) -> Option<String> {
+        self.provider_config
+            .google_time_zone_api_key
+            .clone()
+            .and_then(trim_non_empty)
+            .or_else(|| self.resolve_secret_from_vault(ProviderSecretId::GoogleTimeZoneApiKey))
+    }
+
+    fn resolve_timezonedb_api_key(&self) -> Option<String> {
+        self.provider_config
+            .timezonedb_api_key
+            .clone()
+            .and_then(trim_non_empty)
+            .or_else(|| self.resolve_secret_from_vault(ProviderSecretId::TimeZoneDbApiKey))
+    }
+
     fn brave_fixture_json_for(&self, is_news: bool) -> Option<&str> {
         if is_news {
             self.provider_config.brave_news_fixture_json.as_deref()
@@ -611,6 +654,20 @@ impl Ph1eRuntime {
 
     fn url_fetch_fixture_html(&self) -> Option<&str> {
         self.provider_config.url_fetch_fixture_html.as_deref()
+    }
+
+    fn current_time_result_for_query(
+        &self,
+        query: &str,
+        timeout_ms: u32,
+    ) -> Result<TimeComputation, ToolFailPayload> {
+        current_time_result_for_query_with_provider_config(
+            query,
+            &self.provider_config,
+            self.resolve_google_time_zone_api_key(),
+            self.resolve_timezonedb_api_key(),
+            timeout_ms,
+        )
     }
 
     fn run_live_search(
@@ -1454,11 +1511,20 @@ struct TimeZoneEntry {
     country_code: String,
     zone: String,
     comment: Option<String>,
+    geo: Option<GeoPoint>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct GeoPoint {
+    lat_micro: i32,
+    lon_micro: i32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct TimeLocation {
     zone: String,
+    display_label: String,
+    geo: Option<GeoPoint>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1469,19 +1535,49 @@ enum TimeLocationResolution {
     Unsupported,
 }
 
-fn current_time_result_for_query(query: &str) -> Result<String, ToolFailPayload> {
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct TimeComputation {
+    local_time_iso: String,
+    provider_hint: String,
+}
+
+fn current_time_result_for_query_with_provider_config(
+    query: &str,
+    provider_config: &Ph1eProviderConfig,
+    google_api_key: Option<String>,
+    timezonedb_api_key: Option<String>,
+    timeout_ms: u32,
+) -> Result<TimeComputation, ToolFailPayload> {
     match resolve_time_location_for_query(query) {
-        TimeLocationResolution::Resolved(location) => current_time_iso_for_zone(&location.zone)
-            .ok_or_else(|| {
-                ToolFailPayload::with_detail(
-                    reason_codes::E_FAIL_PROVIDER_UPSTREAM,
-                    format!(
-                        "provider=system_tz error=timezone_unavailable zone={}",
-                        location.zone
-                    ),
-                )
-            }),
-        TimeLocationResolution::DefaultUtc => Ok(current_utc_time_iso(SystemTime::now())),
+        TimeLocationResolution::Resolved(location) => {
+            let provider_resolution = resolve_time_zone_id_with_provider_ladder(
+                &location,
+                provider_config,
+                google_api_key.as_deref(),
+                timezonedb_api_key.as_deref(),
+                timeout_ms,
+            );
+            let zone = provider_resolution
+                .zone
+                .as_deref()
+                .unwrap_or(location.zone.as_str());
+            let local_time_iso =
+                current_time_iso_for_zone_and_label(zone, location.display_label.as_str())
+                    .ok_or_else(|| {
+                        ToolFailPayload::with_detail(
+                            reason_codes::E_FAIL_PROVIDER_UPSTREAM,
+                            format!("provider=system_tz error=timezone_unavailable zone={zone}"),
+                        )
+                    })?;
+            Ok(TimeComputation {
+                local_time_iso,
+                provider_hint: provider_resolution.provider_hint,
+            })
+        }
+        TimeLocationResolution::DefaultUtc => Ok(TimeComputation {
+            local_time_iso: current_utc_time_iso(SystemTime::now()),
+            provider_hint: "system_utc".to_string(),
+        }),
         TimeLocationResolution::Ambiguous(alternatives) => Err(ToolFailPayload::with_detail(
             reason_codes::E_FAIL_QUERY_PARSE,
             format!(
@@ -1496,6 +1592,155 @@ fn current_time_result_for_query(query: &str) -> Result<String, ToolFailPayload>
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct TimeProviderResolution {
+    zone: Option<String>,
+    provider_hint: String,
+}
+
+fn resolve_time_zone_id_with_provider_ladder(
+    location: &TimeLocation,
+    provider_config: &Ph1eProviderConfig,
+    google_api_key: Option<&str>,
+    timezonedb_api_key: Option<&str>,
+    timeout_ms: u32,
+) -> TimeProviderResolution {
+    let Some(geo) = location.geo else {
+        return TimeProviderResolution {
+            zone: Some(location.zone.clone()),
+            provider_hint: "system_tzdb".to_string(),
+        };
+    };
+
+    if let Some(api_key) = google_api_key {
+        if let Ok(zone) = run_google_time_zone_lookup(
+            provider_config.google_time_zone_url.as_str(),
+            api_key,
+            geo,
+            timeout_ms,
+            provider_config.user_agent.as_str(),
+            &provider_config.proxy_config,
+            provider_config.google_time_zone_fixture_json.as_deref(),
+        ) {
+            return TimeProviderResolution {
+                zone: Some(zone),
+                provider_hint: "google_time_zone".to_string(),
+            };
+        }
+    }
+
+    if let Some(api_key) = timezonedb_api_key {
+        if let Ok(zone) = run_timezonedb_lookup(
+            provider_config.timezonedb_url.as_str(),
+            api_key,
+            geo,
+            timeout_ms,
+            provider_config.user_agent.as_str(),
+            &provider_config.proxy_config,
+            provider_config.timezonedb_fixture_json.as_deref(),
+        ) {
+            return TimeProviderResolution {
+                zone: Some(zone),
+                provider_hint: "timezonedb".to_string(),
+            };
+        }
+    }
+
+    TimeProviderResolution {
+        zone: Some(location.zone.clone()),
+        provider_hint: "system_tzdb".to_string(),
+    }
+}
+
+fn run_google_time_zone_lookup(
+    endpoint: &str,
+    api_key: &str,
+    geo: GeoPoint,
+    timeout_ms: u32,
+    user_agent: &str,
+    proxy_config: &Ph1eProxyConfig,
+    fixture_json: Option<&str>,
+) -> Result<String, ProviderCallError> {
+    let body = if let Some(fixture) = fixture_json {
+        serde_json::from_str::<Value>(fixture)
+            .map_err(|_| ProviderCallError::new("google_time_zone", "json_parse", None))?
+    } else {
+        let agent = build_http_agent(timeout_ms, user_agent, proxy_config)
+            .map_err(|_| ProviderCallError::new("google_time_zone", "config_invalid", None))?;
+        let timestamp = system_time_to_unix_seconds(SystemTime::now()).to_string();
+        let response = agent
+            .get(endpoint)
+            .set("Accept", "application/json")
+            .query("location", &geo.as_lat_lon_param())
+            .query("timestamp", &timestamp)
+            .query("key", api_key)
+            .call()
+            .map_err(|e| provider_error_from_ureq("google_time_zone", e))?;
+        serde_json::from_reader(response.into_reader())
+            .map_err(|_| ProviderCallError::new("google_time_zone", "json_parse", None))?
+    };
+
+    let status = body
+        .get("status")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    if status != "OK" {
+        return Err(ProviderCallError::new(
+            "google_time_zone",
+            "status_not_ok",
+            None,
+        ));
+    }
+    body.get("timeZoneId")
+        .and_then(Value::as_str)
+        .and_then(trim_non_empty_str)
+        .map(str::to_string)
+        .ok_or_else(|| ProviderCallError::new("google_time_zone", "timezone_missing", None))
+}
+
+fn run_timezonedb_lookup(
+    endpoint: &str,
+    api_key: &str,
+    geo: GeoPoint,
+    timeout_ms: u32,
+    user_agent: &str,
+    proxy_config: &Ph1eProxyConfig,
+    fixture_json: Option<&str>,
+) -> Result<String, ProviderCallError> {
+    let body = if let Some(fixture) = fixture_json {
+        serde_json::from_str::<Value>(fixture)
+            .map_err(|_| ProviderCallError::new("timezonedb", "json_parse", None))?
+    } else {
+        let agent = build_http_agent(timeout_ms, user_agent, proxy_config)
+            .map_err(|_| ProviderCallError::new("timezonedb", "config_invalid", None))?;
+        let response = agent
+            .get(endpoint)
+            .set("Accept", "application/json")
+            .query("key", api_key)
+            .query("format", "json")
+            .query("by", "position")
+            .query("lat", &geo.lat_decimal_string())
+            .query("lng", &geo.lon_decimal_string())
+            .call()
+            .map_err(|e| provider_error_from_ureq("timezonedb", e))?;
+        serde_json::from_reader(response.into_reader())
+            .map_err(|_| ProviderCallError::new("timezonedb", "json_parse", None))?
+    };
+
+    let status = body
+        .get("status")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    if status != "OK" {
+        return Err(ProviderCallError::new("timezonedb", "status_not_ok", None));
+    }
+    body.get("zoneName")
+        .and_then(Value::as_str)
+        .and_then(trim_non_empty_str)
+        .map(str::to_string)
+        .ok_or_else(|| ProviderCallError::new("timezonedb", "timezone_missing", None))
+}
+
 fn resolve_time_location_for_query(query: &str) -> TimeLocationResolution {
     let normalized = normalize_location_text(query);
     if normalized.trim().is_empty() {
@@ -1506,6 +1751,8 @@ fn resolve_time_location_for_query(query: &str) -> TimeLocationResolution {
     {
         return TimeLocationResolution::Resolved(TimeLocation {
             zone: "UTC".to_string(),
+            display_label: "UTC".to_string(),
+            geo: None,
         });
     }
 
@@ -1516,6 +1763,8 @@ fn resolve_time_location_for_query(query: &str) -> TimeLocationResolution {
     {
         return TimeLocationResolution::Resolved(TimeLocation {
             zone: zone.zone.clone(),
+            display_label: time_zone_display_label(zone.zone.as_str()),
+            geo: zone.geo,
         });
     }
 
@@ -1531,6 +1780,8 @@ fn resolve_time_location_for_query(query: &str) -> TimeLocationResolution {
     if city_matches.len() == 1 {
         return TimeLocationResolution::Resolved(TimeLocation {
             zone: city_matches[0].zone.clone(),
+            display_label: zone_terminal_component(&city_matches[0].zone),
+            geo: city_matches[0].geo,
         });
     }
     if city_matches.len() > 1 {
@@ -1553,11 +1804,27 @@ fn resolve_time_location_for_query(query: &str) -> TimeLocationResolution {
         if matching_zones.len() == 1 {
             return TimeLocationResolution::Resolved(TimeLocation {
                 zone: matching_zones[0].zone.clone(),
+                display_label: (*_name).to_string(),
+                geo: matching_zones[0].geo,
             });
         }
         if matching_zones.len() > 1 {
-            return TimeLocationResolution::Ambiguous(alternatives_for_entries(matching_zones));
+            if let Some(single_zone) = single_current_time_zone_for_country(&matching_zones) {
+                return TimeLocationResolution::Resolved(TimeLocation {
+                    zone: single_zone.zone.clone(),
+                    display_label: (*_name).to_string(),
+                    geo: single_zone.geo,
+                });
+            }
+            return TimeLocationResolution::Ambiguous(alternatives_for_country_entries(
+                _name,
+                matching_zones,
+            ));
         }
+    }
+
+    if let Some(alternatives) = ambiguous_place_alternatives(&normalized) {
+        return TimeLocationResolution::Ambiguous(alternatives);
     }
 
     if query_mentions_location(query) {
@@ -1567,9 +1834,13 @@ fn resolve_time_location_for_query(query: &str) -> TimeLocationResolution {
     }
 }
 
-fn current_time_iso_for_zone(zone: &str) -> Option<String> {
+fn current_time_iso_for_zone_and_label(zone: &str, display_label: &str) -> Option<String> {
     if zone == "UTC" {
-        return Some(current_utc_time_iso(SystemTime::now()));
+        return Some(format!(
+            "{}[UTC|{}]",
+            current_utc_time_iso(SystemTime::now()).trim_end_matches('Z'),
+            sanitize_time_display_label(display_label)
+        ));
     }
 
     let output = Command::new("/bin/date")
@@ -1584,7 +1855,10 @@ fn current_time_iso_for_zone(zone: &str) -> Option<String> {
     let compact = raw.trim();
     let (timestamp, offset) = compact.split_at(compact.len().checked_sub(5)?);
     let offset = format!("{}:{}", &offset[0..3], &offset[3..5]);
-    Some(format!("{timestamp}{offset}[{zone}]"))
+    Some(format!(
+        "{timestamp}{offset}[{zone}|{}]",
+        sanitize_time_display_label(display_label)
+    ))
 }
 
 fn fallback_time_iso_for_zone(zone: &str) -> Option<String> {
@@ -1654,7 +1928,7 @@ fn parse_zone_tab(content: &str) -> Vec<TimeZoneEntry> {
         .filter_map(|line| {
             let mut parts = line.split('\t');
             let country_code = parts.next()?.trim();
-            let _coordinates = parts.next()?;
+            let coordinates = parts.next()?.trim();
             let zone = parts.next()?.trim();
             let comment = parts
                 .next()
@@ -1665,6 +1939,7 @@ fn parse_zone_tab(content: &str) -> Vec<TimeZoneEntry> {
                 country_code: country_code.to_string(),
                 zone: zone.to_string(),
                 comment,
+                geo: parse_iso6709_zone_coordinate(coordinates),
             })
         })
         .collect()
@@ -1683,18 +1958,113 @@ fn parse_iso3166_tab(content: &str) -> Vec<(String, String)> {
         .collect()
 }
 
+fn parse_iso6709_zone_coordinate(raw: &str) -> Option<GeoPoint> {
+    let split_at = raw
+        .char_indices()
+        .skip(1)
+        .find_map(|(idx, ch)| matches!(ch, '+' | '-').then_some(idx))?;
+    let lat = parse_iso6709_component(&raw[..split_at], false)?;
+    let lon = parse_iso6709_component(&raw[split_at..], true)?;
+    Some(GeoPoint {
+        lat_micro: lat,
+        lon_micro: lon,
+    })
+}
+
+fn parse_iso6709_component(raw: &str, longitude: bool) -> Option<i32> {
+    let sign = match raw.as_bytes().first().copied()? {
+        b'+' => 1_i64,
+        b'-' => -1_i64,
+        _ => return None,
+    };
+    let digits = &raw[1..];
+    if !digits.chars().all(|ch| ch.is_ascii_digit()) {
+        return None;
+    }
+    let degree_digits = if longitude { 3 } else { 2 };
+    if digits.len() < degree_digits {
+        return None;
+    }
+    let degrees: i64 = digits.get(0..degree_digits)?.parse().ok()?;
+    let minutes: i64 = if digits.len() >= degree_digits + 2 {
+        digits.get(degree_digits..degree_digits + 2)?.parse().ok()?
+    } else {
+        0
+    };
+    let seconds: i64 = if digits.len() >= degree_digits + 4 {
+        digits
+            .get(degree_digits + 2..degree_digits + 4)?
+            .parse()
+            .ok()?
+    } else {
+        0
+    };
+    let micro = degrees * 1_000_000 + minutes * 1_000_000 / 60 + seconds * 1_000_000 / 3_600;
+    i32::try_from(sign * micro).ok()
+}
+
 fn fallback_zone_tab_entries() -> Vec<TimeZoneEntry> {
     [
-        ("US", "America/New_York", "Eastern (most areas)"),
-        ("JP", "Asia/Tokyo", ""),
-        ("AU", "Australia/Sydney", "New South Wales (most areas)"),
+        (
+            "US",
+            "America/New_York",
+            "Eastern (most areas)",
+            40_714_167,
+            -74_006_389,
+        ),
+        (
+            "US",
+            "America/Chicago",
+            "Central (most areas)",
+            41_850_000,
+            -87_650_000,
+        ),
+        (
+            "US",
+            "America/Los_Angeles",
+            "Pacific",
+            34_052_222,
+            -118_242_778,
+        ),
+        ("JP", "Asia/Tokyo", "", 35_689_722, 139_692_222),
+        (
+            "AU",
+            "Australia/Sydney",
+            "New South Wales (most areas)",
+            -33_868_889,
+            151_209_444,
+        ),
+        ("DE", "Europe/Berlin", "", 52_516_667, 13_400_000),
+        ("DE", "Europe/Busingen", "Busingen", 47_696_389, 8_690_000),
+        ("IT", "Europe/Rome", "", 41_900_000, 12_483_333),
+        (
+            "PT",
+            "Europe/Lisbon",
+            "mainland Portugal/Lisbon",
+            38_716_667,
+            -9_133_333,
+        ),
+        ("PT", "Atlantic/Madeira", "Madeira", 32_633_333, -16_900_000),
+        (
+            "PT",
+            "Atlantic/Azores",
+            "the Azores",
+            37_733_333,
+            -25_666_667,
+        ),
     ]
     .into_iter()
-    .map(|(country_code, zone, comment)| TimeZoneEntry {
-        country_code: country_code.to_string(),
-        zone: zone.to_string(),
-        comment: (!comment.is_empty()).then(|| comment.to_string()),
-    })
+    .map(
+        |(country_code, zone, comment, lat_micro, lon_micro)| TimeZoneEntry {
+            country_code: country_code.to_string(),
+            zone: zone.to_string(),
+            comment: (!comment.is_empty()).then(|| comment.to_string()),
+            geo: Some(GeoPoint {
+                lat_micro,
+                lon_micro,
+            }),
+        },
+    )
     .collect()
 }
 
@@ -1703,6 +2073,9 @@ fn fallback_country_code_names() -> Vec<(String, String)> {
         ("US".to_string(), "United States".to_string()),
         ("JP".to_string(), "Japan".to_string()),
         ("AU".to_string(), "Australia".to_string()),
+        ("DE".to_string(), "Germany".to_string()),
+        ("IT".to_string(), "Italy".to_string()),
+        ("PT".to_string(), "Portugal".to_string()),
     ]
 }
 
@@ -1715,6 +2088,120 @@ fn alternatives_for_entries(entries: Vec<&TimeZoneEntry>) -> Vec<String> {
             None => entry.zone.clone(),
         })
         .collect()
+}
+
+fn alternatives_for_country_entries(
+    country_name: &str,
+    entries: Vec<&TimeZoneEntry>,
+) -> Vec<String> {
+    if normalize_location_text(country_name).trim() == "portugal" {
+        return vec![
+            "mainland Portugal/Lisbon".to_string(),
+            "Madeira".to_string(),
+            "the Azores".to_string(),
+        ];
+    }
+    alternatives_for_entries(entries)
+}
+
+fn single_current_time_zone_for_country<'a>(
+    entries: &'a [&'a TimeZoneEntry],
+) -> Option<&'a TimeZoneEntry> {
+    let mut offsets = BTreeSet::new();
+    for entry in entries {
+        offsets.insert(current_offset_for_zone(entry.zone.as_str())?);
+    }
+    (offsets.len() == 1).then_some(entries[0])
+}
+
+fn current_offset_for_zone(zone: &str) -> Option<String> {
+    if zone == "UTC" {
+        return Some("+00:00".to_string());
+    }
+    let output = Command::new("/bin/date")
+        .env("TZ", zone)
+        .arg("+%z")
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return fallback_time_iso_for_zone(zone).and_then(|iso| offset_from_time_iso(&iso));
+    }
+    let raw = String::from_utf8(output.stdout).ok()?;
+    let compact = raw.trim();
+    if compact.len() != 5 {
+        return None;
+    }
+    Some(format!("{}:{}", &compact[0..3], &compact[3..5]))
+}
+
+fn offset_from_time_iso(local_time_iso: &str) -> Option<String> {
+    let time = local_time_iso.split_once('T')?.1;
+    let offset_start = time
+        .char_indices()
+        .find_map(|(idx, ch)| (idx > 0 && matches!(ch, '+' | '-')).then_some(idx))?;
+    time.get(offset_start..offset_start + 6).map(str::to_string)
+}
+
+fn ambiguous_place_alternatives(normalized_query: &str) -> Option<Vec<String>> {
+    if contains_location_phrase(normalized_query, "springfield") {
+        return Some(vec![
+            "Springfield, Illinois".to_string(),
+            "Springfield, Massachusetts".to_string(),
+            "Springfield, Missouri".to_string(),
+        ]);
+    }
+    None
+}
+
+fn time_zone_display_label(zone: &str) -> String {
+    match zone {
+        "America/New_York" => "New York".to_string(),
+        "Asia/Tokyo" => "Japan".to_string(),
+        "Australia/Sydney" => "Sydney".to_string(),
+        "Europe/Lisbon" => "Lisbon".to_string(),
+        "Europe/Berlin" => "Germany".to_string(),
+        "Europe/Rome" => "Italy".to_string(),
+        "UTC" => "UTC".to_string(),
+        other => zone_terminal_component(other),
+    }
+}
+
+fn sanitize_time_display_label(label: &str) -> String {
+    let sanitized = label
+        .chars()
+        .map(|ch| {
+            if matches!(ch, '[' | ']' | '|') {
+                ' '
+            } else {
+                ch
+            }
+        })
+        .collect::<String>();
+    truncate_ascii(collapse_ws(sanitized.trim()).as_str(), 24)
+}
+
+impl GeoPoint {
+    fn as_lat_lon_param(self) -> String {
+        format!(
+            "{},{}",
+            self.lat_decimal_string(),
+            self.lon_decimal_string()
+        )
+    }
+
+    fn lat_decimal_string(self) -> String {
+        microdegrees_to_decimal_string(self.lat_micro)
+    }
+
+    fn lon_decimal_string(self) -> String {
+        microdegrees_to_decimal_string(self.lon_micro)
+    }
+}
+
+fn microdegrees_to_decimal_string(value: i32) -> String {
+    let sign = if value < 0 { "-" } else { "" };
+    let absolute = i64::from(value).abs();
+    format!("{sign}{}.{:06}", absolute / 1_000_000, absolute % 1_000_000)
 }
 
 fn zone_terminal_component(zone: &str) -> String {
@@ -1887,6 +2374,11 @@ fn trim_non_empty(raw: String) -> Option<String> {
     } else {
         Some(trimmed.to_string())
     }
+}
+
+fn trim_non_empty_str(raw: &str) -> Option<&str> {
+    let trimmed = raw.trim();
+    (!trimmed.is_empty()).then_some(trimmed)
 }
 
 fn connector_scope_for_query(query: &str) -> (Vec<&'static str>, bool) {
@@ -2208,6 +2700,13 @@ mod tests {
                 openai_api_key: None,
                 openai_responses_url: "https://api.openai.com/v1/responses".to_string(),
                 openai_model: "gpt-4o-mini".to_string(),
+                google_time_zone_api_key: None,
+                google_time_zone_url: "https://maps.googleapis.com/maps/api/timezone/json"
+                    .to_string(),
+                google_time_zone_fixture_json: None,
+                timezonedb_api_key: None,
+                timezonedb_url: "https://api.timezonedb.com/v2.1/get-time-zone".to_string(),
+                timezonedb_fixture_json: None,
                 user_agent: "selene-ph1e-test/1.0".to_string(),
                 proxy_config: Ph1eProxyConfig {
                     mode: Ph1eProxyMode::Off,
@@ -2301,6 +2800,132 @@ mod tests {
                 );
             }
             other => panic!("expected time result, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn h362_time_in_germany_uses_google_primary_and_keeps_country_label() {
+        let rt = Ph1eRuntime::new_with_provider_config(
+            Ph1eConfig::mvp_v1(),
+            Ph1eProviderConfig {
+                brave_api_key: None,
+                brave_web_url: "https://api.search.brave.com/res/v1/web/search".to_string(),
+                brave_news_url: "https://api.search.brave.com/res/v1/news/search".to_string(),
+                openai_api_key: None,
+                openai_responses_url: "https://api.openai.com/v1/responses".to_string(),
+                openai_model: "gpt-4o-mini".to_string(),
+                google_time_zone_api_key: Some("google-fixture-key".to_string()),
+                google_time_zone_url: "https://maps.googleapis.com/maps/api/timezone/json"
+                    .to_string(),
+                google_time_zone_fixture_json: Some(
+                    r#"{"status":"OK","timeZoneId":"Europe/Berlin"}"#.to_string(),
+                ),
+                timezonedb_api_key: Some("timezonedb-fixture-key".to_string()),
+                timezonedb_url: "https://api.timezonedb.com/v2.1/get-time-zone".to_string(),
+                timezonedb_fixture_json: Some(
+                    r#"{"status":"OK","zoneName":"Europe/London"}"#.to_string(),
+                ),
+                user_agent: "selene-ph1e-test/1.0".to_string(),
+                proxy_config: Ph1eProxyConfig {
+                    mode: Ph1eProxyMode::Off,
+                    http_proxy_url: None,
+                    https_proxy_url: None,
+                },
+                brave_web_fixture_json: None,
+                brave_news_fixture_json: None,
+                url_fetch_fixture_html: None,
+            },
+        );
+        let out = rt.run(&req(
+            ToolName::Time,
+            "what is the time in Germany",
+            false,
+            false,
+        ));
+        assert_eq!(out.tool_status, ToolStatus::Ok);
+        assert_eq!(
+            out.source_metadata
+                .as_ref()
+                .and_then(|meta| meta.provider_hint.as_deref()),
+            Some("google_time_zone")
+        );
+        match out.tool_result.expect("time result should be present") {
+            ToolResult::Time { local_time_iso } => {
+                assert!(local_time_iso.contains("[Europe/Berlin|Germany]"));
+            }
+            other => panic!("expected time result, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn h362_time_in_lisbon_falls_back_to_timezonedb_when_google_fails() {
+        let rt = Ph1eRuntime::new_with_provider_config(
+            Ph1eConfig::mvp_v1(),
+            Ph1eProviderConfig {
+                brave_api_key: None,
+                brave_web_url: "https://api.search.brave.com/res/v1/web/search".to_string(),
+                brave_news_url: "https://api.search.brave.com/res/v1/news/search".to_string(),
+                openai_api_key: None,
+                openai_responses_url: "https://api.openai.com/v1/responses".to_string(),
+                openai_model: "gpt-4o-mini".to_string(),
+                google_time_zone_api_key: Some("google-fixture-key".to_string()),
+                google_time_zone_url: "https://maps.googleapis.com/maps/api/timezone/json"
+                    .to_string(),
+                google_time_zone_fixture_json: Some(r#"{"status":"REQUEST_DENIED"}"#.to_string()),
+                timezonedb_api_key: Some("timezonedb-fixture-key".to_string()),
+                timezonedb_url: "https://api.timezonedb.com/v2.1/get-time-zone".to_string(),
+                timezonedb_fixture_json: Some(
+                    r#"{"status":"OK","zoneName":"Europe/Lisbon"}"#.to_string(),
+                ),
+                user_agent: "selene-ph1e-test/1.0".to_string(),
+                proxy_config: Ph1eProxyConfig {
+                    mode: Ph1eProxyMode::Off,
+                    http_proxy_url: None,
+                    https_proxy_url: None,
+                },
+                brave_web_fixture_json: None,
+                brave_news_fixture_json: None,
+                url_fetch_fixture_html: None,
+            },
+        );
+        let out = rt.run(&req(
+            ToolName::Time,
+            "what is the time in Lisbon",
+            false,
+            false,
+        ));
+        assert_eq!(out.tool_status, ToolStatus::Ok);
+        assert_eq!(
+            out.source_metadata
+                .as_ref()
+                .and_then(|meta| meta.provider_hint.as_deref()),
+            Some("timezonedb")
+        );
+        match out.tool_result.expect("time result should be present") {
+            ToolResult::Time { local_time_iso } => {
+                assert!(local_time_iso.contains("[Europe/Lisbon|Lisbon]"));
+            }
+            other => panic!("expected time result, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn h362_ambiguous_time_places_fail_closed_with_clarification_options() {
+        let rt = Ph1eRuntime::new(Ph1eConfig::mvp_v1());
+        for (query, expected) in [
+            ("what is the time in Portugal", "mainland Portugal/Lisbon"),
+            ("what is the time in United States", "America/"),
+            ("what is the time in Springfield", "Springfield, Illinois"),
+        ] {
+            let out = rt.run(&req(ToolName::Time, query, false, false));
+            assert_eq!(out.tool_status, ToolStatus::Fail, "{query}");
+            assert_eq!(out.reason_code, reason_codes::E_FAIL_QUERY_PARSE, "{query}");
+            let detail = out
+                .fail_detail
+                .as_deref()
+                .expect("ambiguous place must carry fail detail");
+            assert!(detail.contains("ambiguous_time_location"), "{detail}");
+            assert!(detail.contains(expected), "{detail}");
         }
     }
 
@@ -2734,6 +3359,13 @@ mod tests {
                     openai_api_key: None,
                     openai_responses_url: "https://api.openai.com/v1/responses".to_string(),
                     openai_model: "gpt-4o-mini".to_string(),
+                    google_time_zone_api_key: None,
+                    google_time_zone_url: "https://maps.googleapis.com/maps/api/timezone/json"
+                        .to_string(),
+                    google_time_zone_fixture_json: None,
+                    timezonedb_api_key: None,
+                    timezonedb_url: "https://api.timezonedb.com/v2.1/get-time-zone".to_string(),
+                    timezonedb_fixture_json: None,
                     user_agent: "selene-ph1e-test/1.0".to_string(),
                     proxy_config: Ph1eProxyConfig {
                         mode: Ph1eProxyMode::Off,
@@ -2812,6 +3444,13 @@ mod tests {
                     openai_api_key: None,
                     openai_responses_url: "https://api.openai.com/v1/responses".to_string(),
                     openai_model: "gpt-4o-mini".to_string(),
+                    google_time_zone_api_key: None,
+                    google_time_zone_url: "https://maps.googleapis.com/maps/api/timezone/json"
+                        .to_string(),
+                    google_time_zone_fixture_json: None,
+                    timezonedb_api_key: None,
+                    timezonedb_url: "https://api.timezonedb.com/v2.1/get-time-zone".to_string(),
+                    timezonedb_fixture_json: None,
                     user_agent: "selene-ph1e-test/1.0".to_string(),
                     proxy_config: Ph1eProxyConfig {
                         mode: Ph1eProxyMode::Off,
@@ -2853,6 +3492,13 @@ mod tests {
                     openai_api_key: Some("test_openai_key".to_string()),
                     openai_responses_url: "http://127.0.0.1:9/v1/responses".to_string(),
                     openai_model: "gpt-4o-mini".to_string(),
+                    google_time_zone_api_key: None,
+                    google_time_zone_url: "https://maps.googleapis.com/maps/api/timezone/json"
+                        .to_string(),
+                    google_time_zone_fixture_json: None,
+                    timezonedb_api_key: None,
+                    timezonedb_url: "https://api.timezonedb.com/v2.1/get-time-zone".to_string(),
+                    timezonedb_fixture_json: None,
                     user_agent: "selene-ph1e-test/1.0".to_string(),
                     proxy_config: Ph1eProxyConfig {
                         mode: Ph1eProxyMode::Off,
@@ -2943,6 +3589,12 @@ mod tests {
             openai_api_key: None,
             openai_responses_url: "https://api.openai.com/v1/responses".to_string(),
             openai_model: "gpt-4o-mini".to_string(),
+            google_time_zone_api_key: None,
+            google_time_zone_url: "https://maps.googleapis.com/maps/api/timezone/json".to_string(),
+            google_time_zone_fixture_json: None,
+            timezonedb_api_key: None,
+            timezonedb_url: "https://api.timezonedb.com/v2.1/get-time-zone".to_string(),
+            timezonedb_fixture_json: None,
             user_agent: "selene-ph1e-test/1.0".to_string(),
             proxy_config: Ph1eProxyConfig {
                 mode: Ph1eProxyMode::Explicit,

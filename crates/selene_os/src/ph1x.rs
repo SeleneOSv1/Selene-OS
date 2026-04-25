@@ -1994,7 +1994,11 @@ fn time_tool_answer_text(local_time_iso: &str) -> String {
 
 fn local_time_display_and_label(local_time_iso: &str) -> Option<(String, String)> {
     let (timestamp, zone_part) = local_time_iso.rsplit_once('[')?;
-    let zone = zone_part.strip_suffix(']')?;
+    let zone_and_label = zone_part.strip_suffix(']')?;
+    let (zone, explicit_label) = zone_and_label
+        .split_once('|')
+        .map(|(zone, label)| (zone, Some(label)))
+        .unwrap_or((zone_and_label, None));
     let time = timestamp.split_once('T')?.1;
     let hour: u32 = time.get(0..2)?.parse().ok()?;
     let minute = time.get(3..5)?;
@@ -2005,7 +2009,11 @@ fn local_time_display_and_label(local_time_iso: &str) -> Option<(String, String)
     };
     Some((
         format!("{display_hour}:{minute} {suffix}"),
-        time_zone_display_label(zone),
+        explicit_label
+            .map(str::trim)
+            .filter(|label| !label.is_empty())
+            .map(str::to_string)
+            .unwrap_or_else(|| time_zone_display_label(zone)),
     ))
 }
 
@@ -2014,6 +2022,9 @@ fn time_zone_display_label(zone: &str) -> String {
         "America/New_York" => "New York".to_string(),
         "Asia/Tokyo" => "Japan".to_string(),
         "Australia/Sydney" => "Sydney".to_string(),
+        "Europe/Berlin" => "Germany".to_string(),
+        "Europe/Lisbon" => "Lisbon".to_string(),
+        "Europe/Rome" => "Italy".to_string(),
         "UTC" => "UTC".to_string(),
         other => other.rsplit('/').next().unwrap_or(other).replace('_', " "),
     }
@@ -2220,6 +2231,17 @@ fn retry_message_for_failure(rc: ReasonCodeId, fail_detail: Option<&str>) -> Str
             return "Weather is not available from this desktop runtime yet because no lawful live weather provider is wired.".to_string();
         }
         if detail.contains("ambiguous_time_location") {
+            if let Some(alternatives) = detail
+                .split_once("alternatives=")
+                .map(|(_, alternatives)| alternatives)
+                .map(time_clarification_options)
+                .filter(|options| !options.is_empty())
+            {
+                return format!(
+                    "That place has more than one timezone. Do you mean {}?",
+                    alternatives
+                );
+            }
             return "That location has more than one timezone. Please ask with a specific city or IANA timezone.".to_string();
         }
         if detail.contains("unsupported_time_location") {
@@ -2256,6 +2278,23 @@ fn safe_tool_fail_detail(raw: Option<&str>) -> Option<String> {
     }
     let bounded: String = collapsed.chars().take(180).collect();
     Some(bounded)
+}
+
+fn time_clarification_options(raw: &str) -> String {
+    let mut options: Vec<String> = raw
+        .split('|')
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .take(3)
+        .map(|value| value.trim_matches('.').to_string())
+        .collect();
+    options.dedup();
+    match options.as_slice() {
+        [] => String::new(),
+        [one] => one.clone(),
+        [first, second] => format!("{first} or {second}"),
+        [first, second, third, ..] => format!("{first}, {second}, or {third}"),
+    }
 }
 
 fn clarify_for_invite_link_recipient_resolution(
@@ -3971,6 +4010,44 @@ mod tests {
             }
             _ => panic!("expected Respond"),
         }
+    }
+
+    #[test]
+    fn h362_tool_ok_time_uses_explicit_place_label_without_raw_iso() {
+        let tool_ok = ToolResponse::ok_v1(
+            selene_kernel_contracts::ph1e::ToolRequestId(1),
+            selene_kernel_contracts::ph1e::ToolQueryHash(1),
+            ToolResult::Time {
+                local_time_iso: "2026-04-25T14:42:00+02:00[Europe/Berlin|Germany]".to_string(),
+            },
+            dummy_source_metadata(),
+            None,
+            ReasonCodeId(1),
+            CacheStatus::Bypassed,
+        )
+        .unwrap();
+
+        let text = tool_ok_text(&tool_ok);
+        assert_eq!(text, "It's 2:42 PM in Germany.");
+        assert!(!text.contains("Europe/Berlin"));
+        assert!(!text.contains("2026-04-25"));
+        assert!(!text.contains("Sources:"));
+    }
+
+    #[test]
+    fn h362_time_ambiguity_renders_clean_clarification_options() {
+        let text = retry_message_for_failure(
+            selene_engines::ph1e::reason_codes::E_FAIL_QUERY_PARSE,
+            Some(
+                "ambiguous_time_location alternatives=mainland Portugal/Lisbon|Madeira|the Azores",
+            ),
+        );
+        assert_eq!(
+            text,
+            "That place has more than one timezone. Do you mean mainland Portugal/Lisbon, Madeira, or the Azores?"
+        );
+        assert!(!text.contains("raw"));
+        assert!(!text.contains("Retrieved at"));
     }
 
     #[test]
