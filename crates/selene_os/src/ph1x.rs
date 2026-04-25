@@ -1982,15 +1982,16 @@ fn tool_ok_text(tr: &ToolResponse) -> String {
 }
 
 fn time_tool_answer_text(local_time_iso: &str) -> String {
-    if let Some(display) = new_york_display_time(local_time_iso) {
-        return format!("It's {display} in New York.");
+    if let Some((display, label)) = local_time_display_and_label(local_time_iso) {
+        return format!("It's {display} in {label}.");
     }
 
     format!("It's {local_time_iso}.")
 }
 
-fn new_york_display_time(local_time_iso: &str) -> Option<String> {
-    let timestamp = local_time_iso.strip_suffix("[America/New_York]")?;
+fn local_time_display_and_label(local_time_iso: &str) -> Option<(String, String)> {
+    let (timestamp, zone_part) = local_time_iso.rsplit_once('[')?;
+    let zone = zone_part.strip_suffix(']')?;
     let time = timestamp.split_once('T')?.1;
     let hour: u32 = time.get(0..2)?.parse().ok()?;
     let minute = time.get(3..5)?;
@@ -1999,7 +2000,20 @@ fn new_york_display_time(local_time_iso: &str) -> Option<String> {
         0 => 12,
         value => value,
     };
-    Some(format!("{display_hour}:{minute} {suffix}"))
+    Some((
+        format!("{display_hour}:{minute} {suffix}"),
+        time_zone_display_label(zone),
+    ))
+}
+
+fn time_zone_display_label(zone: &str) -> String {
+    match zone {
+        "America/New_York" => "New York".to_string(),
+        "Asia/Tokyo" => "Japan".to_string(),
+        "Australia/Sydney" => "Sydney".to_string(),
+        "UTC" => "UTC".to_string(),
+        other => other.rsplit('/').next().unwrap_or(other).replace('_', " "),
+    }
 }
 
 fn intent_query_text(d: &IntentDraft) -> String {
@@ -2195,6 +2209,17 @@ fn field_original<'a>(d: &'a IntentDraft, key: FieldKey) -> Option<&'a str> {
 }
 
 fn retry_message_for_failure(rc: ReasonCodeId, fail_detail: Option<&str>) -> String {
+    if let Some(detail) = fail_detail {
+        if detail.contains("weather_provider_not_wired") {
+            return "Weather is not available from this desktop runtime yet because no lawful live weather provider is wired.".to_string();
+        }
+        if detail.contains("ambiguous_time_location") {
+            return "That location has more than one timezone. Please ask with a specific city or IANA timezone.".to_string();
+        }
+        if detail.contains("unsupported_time_location") {
+            return "I can't resolve that location yet. Please ask with a supported city, country, or IANA timezone.".to_string();
+        }
+    }
     if rc == selene_engines::ph1e::reason_codes::E_FAIL_PROVIDER_MISSING_CONFIG {
         return format!(
             "Brave API key not configured. Run: selene vault set {}",
@@ -3785,6 +3810,158 @@ mod tests {
                 assert_eq!(r.response_text, "It's 10:42 PM in New York.");
                 assert!(!r.response_text.contains("Sources:"));
                 assert!(!r.response_text.contains("Retrieved at (unix_ms):"));
+            }
+            _ => panic!("expected Respond"),
+        }
+    }
+
+    #[test]
+    fn at_x_tool_ok_time_japan_renders_clean_final_answer_without_raw_iso() {
+        let rt = Ph1xRuntime::new(Ph1xConfig::mvp_v1());
+
+        let first = Ph1xRequest::v1(
+            7,
+            21,
+            now(1),
+            base_thread(),
+            SessionState::Active,
+            id_text(),
+            policy_ok(),
+            vec![],
+            None,
+            Some(Ph1nResponse::IntentDraft(intent_draft(
+                IntentType::TimeQuery,
+            ))),
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+        let out1 = rt.decide(&first).unwrap();
+        let (request_id, query_hash) = match &out1.directive {
+            Ph1xDirective::Dispatch(d) => match &d.dispatch_request {
+                DispatchRequest::Tool(t) => (t.request_id, t.query_hash),
+                DispatchRequest::SimulationCandidate(_) => panic!("expected Tool dispatch"),
+                DispatchRequest::AccessStepUp(_) => panic!("expected Tool dispatch"),
+            },
+            _ => panic!("expected Dispatch"),
+        };
+
+        let tool_ok = ToolResponse::ok_v1(
+            request_id,
+            query_hash,
+            ToolResult::Time {
+                local_time_iso: "2026-04-25T09:42:00+09:00[Asia/Tokyo]".to_string(),
+            },
+            dummy_source_metadata(),
+            None,
+            ReasonCodeId(1),
+            CacheStatus::Bypassed,
+        )
+        .unwrap();
+
+        let second = Ph1xRequest::v1(
+            7,
+            22,
+            now(2),
+            out1.thread_state.clone(),
+            SessionState::Active,
+            id_text(),
+            policy_ok(),
+            vec![],
+            None,
+            None,
+            Some(tool_ok),
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+        let out2 = rt.decide(&second).unwrap();
+        match out2.directive {
+            Ph1xDirective::Respond(r) => {
+                assert_eq!(r.response_text, "It's 9:42 AM in Japan.");
+                assert!(!r.response_text.contains("[Asia/Tokyo]"));
+                assert!(!r.response_text.contains("Sources:"));
+            }
+            _ => panic!("expected Respond"),
+        }
+    }
+
+    #[test]
+    fn at_x_tool_ok_time_sydney_renders_clean_final_answer_without_raw_iso() {
+        let rt = Ph1xRuntime::new(Ph1xConfig::mvp_v1());
+
+        let first = Ph1xRequest::v1(
+            7,
+            31,
+            now(1),
+            base_thread(),
+            SessionState::Active,
+            id_text(),
+            policy_ok(),
+            vec![],
+            None,
+            Some(Ph1nResponse::IntentDraft(intent_draft(
+                IntentType::TimeQuery,
+            ))),
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+        let out1 = rt.decide(&first).unwrap();
+        let (request_id, query_hash) = match &out1.directive {
+            Ph1xDirective::Dispatch(d) => match &d.dispatch_request {
+                DispatchRequest::Tool(t) => (t.request_id, t.query_hash),
+                DispatchRequest::SimulationCandidate(_) => panic!("expected Tool dispatch"),
+                DispatchRequest::AccessStepUp(_) => panic!("expected Tool dispatch"),
+            },
+            _ => panic!("expected Dispatch"),
+        };
+
+        let tool_ok = ToolResponse::ok_v1(
+            request_id,
+            query_hash,
+            ToolResult::Time {
+                local_time_iso: "2026-04-25T10:42:00+10:00[Australia/Sydney]".to_string(),
+            },
+            dummy_source_metadata(),
+            None,
+            ReasonCodeId(1),
+            CacheStatus::Bypassed,
+        )
+        .unwrap();
+
+        let second = Ph1xRequest::v1(
+            7,
+            32,
+            now(2),
+            out1.thread_state.clone(),
+            SessionState::Active,
+            id_text(),
+            policy_ok(),
+            vec![],
+            None,
+            None,
+            Some(tool_ok),
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+        let out2 = rt.decide(&second).unwrap();
+        match out2.directive {
+            Ph1xDirective::Respond(r) => {
+                assert_eq!(r.response_text, "It's 10:42 AM in Sydney.");
+                assert!(!r.response_text.contains("[Australia/Sydney]"));
+                assert!(!r.response_text.contains("Sources:"));
             }
             _ => panic!("expected Respond"),
         }

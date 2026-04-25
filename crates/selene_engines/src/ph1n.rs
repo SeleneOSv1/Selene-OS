@@ -3981,4 +3981,39 @@ mod tests {
             _ => panic!("expected deterministic time intent"),
         }
     }
+
+    #[test]
+    fn at_n_39_time_in_japan_and_sydney_are_deterministic_time_queries() {
+        let rt = Ph1nRuntime::new(Ph1nConfig::mvp_v1());
+        for prompt in [
+            "Selene what is the time in Japan",
+            "Selene what is the time in Sydney",
+        ] {
+            let out = rt.run(&req(prompt, "en")).unwrap();
+            match out {
+                Ph1nResponse::IntentDraft(d) => {
+                    assert_eq!(d.intent_type, IntentType::TimeQuery);
+                    assert_eq!(d.overall_confidence, OverallConfidence::High);
+                    assert!(!d.requires_confirmation);
+                }
+                _ => panic!("expected deterministic time intent for {prompt}"),
+            }
+        }
+    }
+
+    #[test]
+    fn at_n_40_weather_in_tokyo_is_weather_query() {
+        let rt = Ph1nRuntime::new(Ph1nConfig::mvp_v1());
+        let out = rt
+            .run(&req("Selene what is the weather in Tokyo", "en"))
+            .unwrap();
+        match out {
+            Ph1nResponse::IntentDraft(d) => {
+                assert_eq!(d.intent_type, IntentType::WeatherQuery);
+                assert_eq!(d.overall_confidence, OverallConfidence::High);
+                assert!(!d.requires_confirmation);
+            }
+            _ => panic!("expected deterministic weather intent"),
+        }
+    }
 }

@@ -19907,4 +19907,68 @@ mod tests {
         assert!(!out.response_text.contains("Current local time in USA"));
         assert!(!out.response_text.contains("&#x27;"));
     }
+
+    #[test]
+    fn at_adapter_41_time_in_japan_returns_clean_current_time_answer() {
+        let runtime = AdapterRuntime::default();
+        let mut req = base_request();
+        req.app_platform = "DESKTOP".to_string();
+        req.audio_capture_ref = None;
+        req.user_text_final = Some("what is the time in Japan".to_string());
+
+        let out = runtime
+            .run_voice_turn(req)
+            .expect("desktop deterministic Japan time request should complete");
+        assert_eq!(out.status, "ok");
+        assert_eq!(out.outcome, "FINAL_TOOL");
+        assert!(out.response_text.starts_with("It's "));
+        assert!(out.response_text.ends_with(" in Japan."));
+        assert!(!out.response_text.contains("[Asia/Tokyo]"));
+        assert!(!out.response_text.contains("Sources:"));
+        assert!(!out.response_text.contains("Retrieved at (unix_ms):"));
+    }
+
+    #[test]
+    fn at_adapter_42_time_in_sydney_returns_clean_current_time_answer() {
+        let runtime = AdapterRuntime::default();
+        let mut req = base_request();
+        req.app_platform = "DESKTOP".to_string();
+        req.audio_capture_ref = None;
+        req.user_text_final = Some("what is the time in Sydney".to_string());
+
+        let out = runtime
+            .run_voice_turn(req)
+            .expect("desktop deterministic Sydney time request should complete");
+        assert_eq!(out.status, "ok");
+        assert_eq!(out.outcome, "FINAL_TOOL");
+        assert!(out.response_text.starts_with("It's "));
+        assert!(out.response_text.ends_with(" in Sydney."));
+        assert!(!out.response_text.contains("[Australia/Sydney]"));
+        assert!(!out.response_text.contains("Sources:"));
+        assert!(!out.response_text.contains("Retrieved at (unix_ms):"));
+    }
+
+    #[test]
+    fn at_adapter_43_weather_without_lawful_provider_fails_cleanly() {
+        let runtime = AdapterRuntime::default();
+        let mut req = base_request();
+        req.app_platform = "DESKTOP".to_string();
+        req.audio_capture_ref = None;
+        req.user_text_final = Some("what is the weather in Tokyo".to_string());
+
+        let out = runtime
+            .run_voice_turn(req)
+            .expect("desktop weather request should fail closed cleanly");
+        assert_eq!(out.status, "ok");
+        assert_eq!(out.outcome, "FINAL_TOOL");
+        assert!(
+            out.response_text.contains("Weather is not available")
+                || out.response_text.contains("couldn't verify your identity"),
+            "unexpected weather fail-closed text: {}",
+            out.response_text
+        );
+        assert!(!out.response_text.contains("Weather snapshot for"));
+        assert!(!out.response_text.contains("Sources:"));
+        assert!(!out.response_text.contains("Retrieved at (unix_ms):"));
+    }
 }

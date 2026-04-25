@@ -1,8 +1,10 @@
 #![forbid(unsafe_code)]
 
 use std::env;
+use std::fs;
 use std::hash::{Hash, Hasher};
 use std::io::Read;
+use std::process::Command;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::device_vault;
@@ -297,22 +299,30 @@ impl Ph1eRuntime {
 
         let cache_status = cache_status_for_request(req);
         let (tool_result, source_metadata) = match &req.tool_name {
-            ToolName::Time => ToolResult::Time {
-                local_time_iso: current_time_result_for_query(&req.query),
+            ToolName::Time => match current_time_result_for_query(&req.query) {
+                Ok(local_time_iso) => ToolResult::Time { local_time_iso }
+                    .with_default_source_metadata(
+                        &req.tool_name,
+                        &req.query,
+                        req.strict_budget.max_results.min(self.config.max_results),
+                    ),
+                Err(fail) => {
+                    return fail_response_with_detail(
+                        req,
+                        fail.reason_code,
+                        CacheStatus::Bypassed,
+                        fail.fail_detail.as_deref(),
+                    )
+                }
+            },
+            ToolName::Weather => {
+                return fail_response_with_detail(
+                    req,
+                    reason_codes::E_FAIL_PROVIDER_UPSTREAM,
+                    CacheStatus::Bypassed,
+                    Some("provider=openmeteo error=weather_provider_not_wired"),
+                )
             }
-            .with_default_source_metadata(
-                &req.tool_name,
-                &req.query,
-                req.strict_budget.max_results.min(self.config.max_results),
-            ),
-            ToolName::Weather => ToolResult::Weather {
-                summary: format!("Weather snapshot for {}", req.query),
-            }
-            .with_default_source_metadata(
-                &req.tool_name,
-                &req.query,
-                req.strict_budget.max_results.min(self.config.max_results),
-            ),
             ToolName::WebSearch => match self.run_web_search(req) {
                 Ok(ok) => ok,
                 Err(fail) => {
@@ -1439,13 +1449,310 @@ fn now_unix_ms() -> u64 {
         .max(1)
 }
 
-fn current_time_result_for_query(query: &str) -> String {
-    let normalized = query.to_ascii_lowercase();
-    if normalized.contains("new york") || normalized.contains("nyc") {
-        return current_new_york_time_iso(SystemTime::now());
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct TimeZoneEntry {
+    country_code: String,
+    zone: String,
+    comment: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct TimeLocation {
+    zone: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum TimeLocationResolution {
+    Resolved(TimeLocation),
+    DefaultUtc,
+    Ambiguous(Vec<String>),
+    Unsupported,
+}
+
+fn current_time_result_for_query(query: &str) -> Result<String, ToolFailPayload> {
+    match resolve_time_location_for_query(query) {
+        TimeLocationResolution::Resolved(location) => current_time_iso_for_zone(&location.zone)
+            .ok_or_else(|| {
+                ToolFailPayload::with_detail(
+                    reason_codes::E_FAIL_PROVIDER_UPSTREAM,
+                    format!(
+                        "provider=system_tz error=timezone_unavailable zone={}",
+                        location.zone
+                    ),
+                )
+            }),
+        TimeLocationResolution::DefaultUtc => Ok(current_utc_time_iso(SystemTime::now())),
+        TimeLocationResolution::Ambiguous(alternatives) => Err(ToolFailPayload::with_detail(
+            reason_codes::E_FAIL_QUERY_PARSE,
+            format!(
+                "ambiguous_time_location alternatives={}",
+                alternatives.join("|")
+            ),
+        )),
+        TimeLocationResolution::Unsupported => Err(ToolFailPayload::with_detail(
+            reason_codes::E_FAIL_QUERY_PARSE,
+            "unsupported_time_location".to_string(),
+        )),
+    }
+}
+
+fn resolve_time_location_for_query(query: &str) -> TimeLocationResolution {
+    let normalized = normalize_location_text(query);
+    if normalized.trim().is_empty() {
+        return TimeLocationResolution::DefaultUtc;
     }
 
-    current_utc_time_iso(SystemTime::now())
+    if contains_location_phrase(&normalized, "utc") || contains_location_phrase(&normalized, "gmt")
+    {
+        return TimeLocationResolution::Resolved(TimeLocation {
+            zone: "UTC".to_string(),
+        });
+    }
+
+    let zones = zone_tab_entries();
+    if let Some(zone) = zones
+        .iter()
+        .find(|entry| contains_location_phrase(&normalized, &normalize_location_text(&entry.zone)))
+    {
+        return TimeLocationResolution::Resolved(TimeLocation {
+            zone: zone.zone.clone(),
+        });
+    }
+
+    let city_matches: Vec<&TimeZoneEntry> = zones
+        .iter()
+        .filter(|entry| {
+            contains_location_phrase(
+                &normalized,
+                &normalize_location_text(&zone_terminal_component(&entry.zone)),
+            )
+        })
+        .collect();
+    if city_matches.len() == 1 {
+        return TimeLocationResolution::Resolved(TimeLocation {
+            zone: city_matches[0].zone.clone(),
+        });
+    }
+    if city_matches.len() > 1 {
+        return TimeLocationResolution::Ambiguous(alternatives_for_entries(city_matches));
+    }
+
+    let countries = country_code_names();
+    let mut country_matches: Vec<(&str, &str)> = countries
+        .iter()
+        .filter(|(_, name)| contains_location_phrase(&normalized, &normalize_location_text(name)))
+        .map(|(code, name)| (code.as_str(), name.as_str()))
+        .collect();
+    country_matches.sort_by(|a, b| b.1.len().cmp(&a.1.len()));
+
+    if let Some((code, _name)) = country_matches.first().copied() {
+        let matching_zones: Vec<&TimeZoneEntry> = zones
+            .iter()
+            .filter(|entry| entry.country_code == code)
+            .collect();
+        if matching_zones.len() == 1 {
+            return TimeLocationResolution::Resolved(TimeLocation {
+                zone: matching_zones[0].zone.clone(),
+            });
+        }
+        if matching_zones.len() > 1 {
+            return TimeLocationResolution::Ambiguous(alternatives_for_entries(matching_zones));
+        }
+    }
+
+    if query_mentions_location(query) {
+        TimeLocationResolution::Unsupported
+    } else {
+        TimeLocationResolution::DefaultUtc
+    }
+}
+
+fn current_time_iso_for_zone(zone: &str) -> Option<String> {
+    if zone == "UTC" {
+        return Some(current_utc_time_iso(SystemTime::now()));
+    }
+
+    let output = Command::new("/bin/date")
+        .env("TZ", zone)
+        .arg("+%Y-%m-%dT%H:%M:%S%z")
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return fallback_time_iso_for_zone(zone);
+    }
+    let raw = String::from_utf8(output.stdout).ok()?;
+    let compact = raw.trim();
+    let (timestamp, offset) = compact.split_at(compact.len().checked_sub(5)?);
+    let offset = format!("{}:{}", &offset[0..3], &offset[3..5]);
+    Some(format!("{timestamp}{offset}[{zone}]"))
+}
+
+fn fallback_time_iso_for_zone(zone: &str) -> Option<String> {
+    match zone {
+        "America/New_York" => Some(current_new_york_time_iso(SystemTime::now())),
+        "Asia/Tokyo" => Some(current_fixed_offset_time_iso(
+            SystemTime::now(),
+            9,
+            "Asia/Tokyo",
+        )),
+        "Australia/Sydney" => Some(current_sydney_time_iso(SystemTime::now())),
+        _ => None,
+    }
+}
+
+fn current_fixed_offset_time_iso(now: SystemTime, offset_hours: i32, zone: &str) -> String {
+    let utc_seconds = system_time_to_unix_seconds(now);
+    let local_seconds = utc_seconds + i64::from(offset_hours) * 3_600;
+    let parts = unix_seconds_to_utc_parts(local_seconds);
+    format!(
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}{}[{}]",
+        parts.year,
+        parts.month,
+        parts.day,
+        parts.hour,
+        parts.minute,
+        parts.second,
+        format_utc_offset(offset_hours),
+        zone
+    )
+}
+
+fn current_sydney_time_iso(now: SystemTime) -> String {
+    let utc_seconds = system_time_to_unix_seconds(now);
+    let offset_hours = sydney_utc_offset_hours(utc_seconds);
+    current_fixed_offset_time_iso(now, offset_hours, "Australia/Sydney")
+}
+
+fn zone_tab_entries() -> Vec<TimeZoneEntry> {
+    let parsed = read_zoneinfo_file("zone.tab")
+        .map(|content| parse_zone_tab(&content))
+        .filter(|entries| !entries.is_empty());
+    parsed.unwrap_or_else(fallback_zone_tab_entries)
+}
+
+fn country_code_names() -> Vec<(String, String)> {
+    let parsed = read_zoneinfo_file("iso3166.tab")
+        .map(|content| parse_iso3166_tab(&content))
+        .filter(|countries| !countries.is_empty());
+    parsed.unwrap_or_else(fallback_country_code_names)
+}
+
+fn read_zoneinfo_file(filename: &str) -> Option<String> {
+    for root in ["/usr/share/zoneinfo", "/var/db/timezone/zoneinfo"] {
+        let path = format!("{root}/{filename}");
+        if let Ok(content) = fs::read_to_string(path) {
+            return Some(content);
+        }
+    }
+    None
+}
+
+fn parse_zone_tab(content: &str) -> Vec<TimeZoneEntry> {
+    content
+        .lines()
+        .filter(|line| !line.trim().is_empty() && !line.starts_with('#'))
+        .filter_map(|line| {
+            let mut parts = line.split('\t');
+            let country_code = parts.next()?.trim();
+            let _coordinates = parts.next()?;
+            let zone = parts.next()?.trim();
+            let comment = parts
+                .next()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string);
+            Some(TimeZoneEntry {
+                country_code: country_code.to_string(),
+                zone: zone.to_string(),
+                comment,
+            })
+        })
+        .collect()
+}
+
+fn parse_iso3166_tab(content: &str) -> Vec<(String, String)> {
+    content
+        .lines()
+        .filter(|line| !line.trim().is_empty() && !line.starts_with('#'))
+        .filter_map(|line| {
+            let mut parts = line.split('\t');
+            let code = parts.next()?.trim();
+            let name = parts.next()?.trim();
+            Some((code.to_string(), name.to_string()))
+        })
+        .collect()
+}
+
+fn fallback_zone_tab_entries() -> Vec<TimeZoneEntry> {
+    [
+        ("US", "America/New_York", "Eastern (most areas)"),
+        ("JP", "Asia/Tokyo", ""),
+        ("AU", "Australia/Sydney", "New South Wales (most areas)"),
+    ]
+    .into_iter()
+    .map(|(country_code, zone, comment)| TimeZoneEntry {
+        country_code: country_code.to_string(),
+        zone: zone.to_string(),
+        comment: (!comment.is_empty()).then(|| comment.to_string()),
+    })
+    .collect()
+}
+
+fn fallback_country_code_names() -> Vec<(String, String)> {
+    vec![
+        ("US".to_string(), "United States".to_string()),
+        ("JP".to_string(), "Japan".to_string()),
+        ("AU".to_string(), "Australia".to_string()),
+    ]
+}
+
+fn alternatives_for_entries(entries: Vec<&TimeZoneEntry>) -> Vec<String> {
+    entries
+        .into_iter()
+        .take(3)
+        .map(|entry| match entry.comment.as_deref() {
+            Some(comment) => format!("{} ({comment})", entry.zone),
+            None => entry.zone.clone(),
+        })
+        .collect()
+}
+
+fn zone_terminal_component(zone: &str) -> String {
+    zone.rsplit('/').next().unwrap_or(zone).replace('_', " ")
+}
+
+fn normalize_location_text(raw: &str) -> String {
+    let mut out = String::with_capacity(raw.len() + 2);
+    out.push(' ');
+    for ch in raw.chars().flat_map(char::to_lowercase) {
+        if ch.is_ascii_alphanumeric() {
+            out.push(ch);
+        } else {
+            out.push(' ');
+        }
+    }
+    out.push(' ');
+    collapse_ws(&out)
+}
+
+fn contains_location_phrase(normalized_haystack: &str, normalized_needle: &str) -> bool {
+    let needle = normalized_needle.trim();
+    !needle.is_empty()
+        && format!(" {} ", normalized_haystack.trim()).contains(&format!(" {needle} "))
+}
+
+fn query_mentions_location(query: &str) -> bool {
+    let normalized = normalize_location_text(query);
+    [
+        " in ",
+        " at ",
+        " for ",
+        " near ",
+        " timezone ",
+        " time zone ",
+    ]
+    .iter()
+    .any(|marker| normalized.contains(marker))
 }
 
 fn current_utc_time_iso(now: SystemTime) -> String {
@@ -1515,6 +1822,21 @@ fn new_york_utc_offset_hours(utc_seconds: i64) -> i32 {
         -4
     } else {
         -5
+    }
+}
+
+fn sydney_utc_offset_hours(utc_seconds: i64) -> i32 {
+    let utc_parts = unix_seconds_to_utc_parts(utc_seconds);
+    let year = utc_parts.year;
+    let dst_start_day = nth_weekday_of_month_day(year, 10, 0, 1);
+    let dst_end_day = nth_weekday_of_month_day(year, 4, 0, 1);
+    let dst_start_utc = days_from_civil(year, 10, dst_start_day) * 86_400 - 8 * 3_600;
+    let dst_end_utc = days_from_civil(year, 4, dst_end_day) * 86_400 - 8 * 3_600;
+
+    if utc_seconds >= dst_start_utc || utc_seconds < dst_end_utc {
+        11
+    } else {
+        10
     }
 }
 
@@ -1936,6 +2258,87 @@ mod tests {
             }
             other => panic!("expected time result, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn at_e_time_query_returns_current_japan_time() {
+        let rt = Ph1eRuntime::new(Ph1eConfig::mvp_v1());
+        let out = rt.run(&req(
+            ToolName::Time,
+            "what is the time in Japan",
+            false,
+            false,
+        ));
+        assert_eq!(out.tool_status, ToolStatus::Ok);
+        match out.tool_result.expect("time result should be present") {
+            ToolResult::Time { local_time_iso } => {
+                assert!(local_time_iso.contains("[Asia/Tokyo]"));
+                assert!(
+                    local_time_iso.contains("+09:00"),
+                    "Japan time must carry JST offset: {local_time_iso}"
+                );
+            }
+            other => panic!("expected time result, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn at_e_time_query_returns_current_sydney_time() {
+        let rt = Ph1eRuntime::new(Ph1eConfig::mvp_v1());
+        let out = rt.run(&req(
+            ToolName::Time,
+            "what is the time in Sydney",
+            false,
+            false,
+        ));
+        assert_eq!(out.tool_status, ToolStatus::Ok);
+        match out.tool_result.expect("time result should be present") {
+            ToolResult::Time { local_time_iso } => {
+                assert!(local_time_iso.contains("[Australia/Sydney]"));
+                assert!(
+                    local_time_iso.contains("+10:00") || local_time_iso.contains("+11:00"),
+                    "Sydney time must carry an Australian Eastern offset: {local_time_iso}"
+                );
+            }
+            other => panic!("expected time result, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn at_e_time_query_ambiguous_country_fails_closed() {
+        let rt = Ph1eRuntime::new(Ph1eConfig::mvp_v1());
+        let out = rt.run(&req(
+            ToolName::Time,
+            "what is the time in Australia",
+            false,
+            false,
+        ));
+        assert_eq!(out.tool_status, ToolStatus::Fail);
+        assert_eq!(out.reason_code, reason_codes::E_FAIL_QUERY_PARSE);
+        assert!(out
+            .fail_detail
+            .as_deref()
+            .unwrap_or_default()
+            .contains("ambiguous_time_location"));
+    }
+
+    #[test]
+    fn at_e_weather_provider_not_wired_fails_closed_without_placeholder() {
+        let rt = Ph1eRuntime::new(Ph1eConfig::mvp_v1());
+        let out = rt.run(&req(
+            ToolName::Weather,
+            "what is the weather in Tokyo",
+            false,
+            false,
+        ));
+        assert_eq!(out.tool_status, ToolStatus::Fail);
+        assert_eq!(out.reason_code, reason_codes::E_FAIL_PROVIDER_UPSTREAM);
+        assert!(out.tool_result.is_none());
+        assert!(out
+            .fail_detail
+            .as_deref()
+            .unwrap_or_default()
+            .contains("weather_provider_not_wired"));
     }
 
     #[test]
