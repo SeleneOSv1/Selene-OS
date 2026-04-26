@@ -13,8 +13,10 @@ selene_os = { path = "../selene_os" }
 selene_storage = { path = "../selene_storage" }
 selene_engines = { path = "../selene_engines" }
 axum = "0.7"
+base64 = "0.22"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+sha2 = "0.10"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "signal", "time"] }
 tonic = { version = "0.12", features = ["transport"] }
 prost = "0.13"

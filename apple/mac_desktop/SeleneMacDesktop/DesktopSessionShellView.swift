@@ -1,6 +1,7 @@
 import AppKit
 import Foundation
 import AVFoundation
+import CryptoKit
 import Speech
 import SwiftUI
 
@@ -111,6 +112,10 @@ private func boundedFailureLogToken(_ rawValue: String) -> String {
     return String(sanitized.prefix(64))
 }
 
+private func desktopSessionSHA256Hex(_ data: Data) -> String {
+    SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+}
+
 private enum DesktopRealtimeTranscriptionFeatureFlag {
     static let name = "SELENE_DESKTOP_OPENAI_REALTIME_TRANSCRIPTION_ENABLED"
 
@@ -122,6 +127,22 @@ private enum DesktopRealtimeTranscriptionFeatureFlag {
     }
 
     private static func matchesEnabled(_ rawValue: String?) -> Bool {
+        switch rawValue {
+        case "1", "true", "yes", "on", "enabled":
+            return true
+        default:
+            return false
+        }
+    }
+}
+
+private enum DesktopOpenAITtsFeatureFlag {
+    static let name = "SELENE_DESKTOP_OPENAI_TTS_ENABLED"
+
+    static var isEnabled: Bool {
+        let rawValue = ProcessInfo.processInfo.environment[name]?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
         switch rawValue {
         case "1", "true", "yes", "on", "enabled":
             return true
@@ -1281,6 +1302,7 @@ private struct DesktopAuthoritativeReplyProvenanceRenderState: Equatable {
 private struct DesktopAuthoritativeReplyPlaybackState: Equatable {
     enum Phase: String, Equatable {
         case idle = "idle"
+        case requesting = "requesting"
         case speaking = "speaking"
         case failed = "failed"
     }
@@ -1304,6 +1326,33 @@ private struct DesktopAuthoritativeReplyPlaybackState: Equatable {
             title: "Authoritative reply playback active",
             summary: boundedPreview,
             detail: "This shell is speaking only the already-rendered cloud-authored authoritative reply text. No local reply synthesis, transcript mutation, wake behavior, or autonomous-unlock capability is introduced here."
+        )
+    }
+
+    static func requestingOpenAITTS(answerTextSHA256: String) -> DesktopAuthoritativeReplyPlaybackState {
+        DesktopAuthoritativeReplyPlaybackState(
+            phase: .requesting,
+            title: "OpenAI TTS reply playback requesting",
+            summary: "Requesting AI-generated speech for the already-rendered Selene runtime answer.",
+            detail: "OpenAI TTS receives only the final Selene answer text for speech synthesis. The transcript text is already visible and does not depend on TTS success. answer_text_sha256=\(answerTextSHA256)"
+        )
+    }
+
+    static func playingOpenAITTS(audioSHA256: String, audioByteLen: UInt64, voice: String) -> DesktopAuthoritativeReplyPlaybackState {
+        DesktopAuthoritativeReplyPlaybackState(
+            phase: .speaking,
+            title: "OpenAI TTS reply playback active",
+            summary: "Playing AI-generated speech synthesized from the already-rendered Selene runtime answer.",
+            detail: "PLAYING_OPENAI voice=\(voice) audio_sha256=\(audioSHA256) audio_byte_len=\(audioByteLen). NSSpeechSynthesizer is not primary for this turn."
+        )
+    }
+
+    static func nativeFallback(reason: String) -> DesktopAuthoritativeReplyPlaybackState {
+        DesktopAuthoritativeReplyPlaybackState(
+            phase: .requesting,
+            title: "Native reply playback fallback active",
+            summary: "OpenAI TTS fallback path is explicit and will not count as Build 1B success.",
+            detail: "FALLBACK_ALLOWED reason=\(boundedFailureLogToken(reason))"
         )
     }
 
@@ -1335,11 +1384,21 @@ private struct DesktopAuthoritativeReplyPlaybackState: Equatable {
     }
 }
 
+private struct DesktopOpenAITtsPlaybackToken: Equatable {
+    let ttsRequestID: String?
+    let sessionID: String?
+    let turnID: String?
+    let runtimeRequestID: String?
+    let answerTextSHA256: String
+}
+
 @MainActor
-private final class DesktopAuthoritativeReplyPlaybackController: NSObject, ObservableObject, NSSpeechSynthesizerDelegate {
+private final class DesktopAuthoritativeReplyPlaybackController: NSObject, ObservableObject, NSSpeechSynthesizerDelegate, AVAudioPlayerDelegate {
     @Published private(set) var playbackState: DesktopAuthoritativeReplyPlaybackState = .idle
 
     private let speechSynthesizer = NSSpeechSynthesizer()
+    private var openAIAudioPlayer: AVAudioPlayer?
+    private var activeOpenAITtsToken: DesktopOpenAITtsPlaybackToken?
     private var stopWasRequested = false
 
     override init() {
@@ -1349,6 +1408,14 @@ private final class DesktopAuthoritativeReplyPlaybackController: NSObject, Obser
 
     @discardableResult
     func play(authoritativeResponseText: String?) -> DesktopAuthoritativeReplyPlaybackState {
+        playNativeFallback(authoritativeResponseText: authoritativeResponseText, fallbackReason: nil)
+    }
+
+    @discardableResult
+    func prepareOpenAITTS(
+        authoritativeResponseText: String?,
+        token: DesktopOpenAITtsPlaybackToken
+    ) -> DesktopAuthoritativeReplyPlaybackState {
         guard let authoritativeResponseText else {
             let failedState = DesktopAuthoritativeReplyPlaybackState.failed(
                 summary: "Playback is unavailable because no cloud-authored reply text is present.",
@@ -1368,9 +1435,111 @@ private final class DesktopAuthoritativeReplyPlaybackController: NSObject, Obser
             return failedState
         }
 
+        stopAnyPlayback()
+        stopWasRequested = false
+        activeOpenAITtsToken = token
+        let requestingState = DesktopAuthoritativeReplyPlaybackState
+            .requestingOpenAITTS(answerTextSHA256: token.answerTextSHA256)
+        playbackState = requestingState
+        return requestingState
+    }
+
+    @discardableResult
+    func playOpenAITTS(
+        _ speechState: DesktopOpenAITtsSpeechState,
+        expectedToken: DesktopOpenAITtsPlaybackToken
+    ) -> DesktopAuthoritativeReplyPlaybackState {
+        guard activeOpenAITtsToken == expectedToken,
+              speechState.sessionID == expectedToken.sessionID,
+              speechState.turnID == expectedToken.turnID,
+              speechState.runtimeRequestID == expectedToken.runtimeRequestID,
+              speechState.answerTextSHA256 == expectedToken.answerTextSHA256 else {
+            let failedState = DesktopAuthoritativeReplyPlaybackState.failed(
+                summary: "Stale OpenAI TTS audio was discarded.",
+                detail: "stale_audio_rejected=true fallback_counted_as_success=false"
+            )
+            playbackState = failedState
+            return failedState
+        }
+        if let expectedTtsRequestID = expectedToken.ttsRequestID,
+           speechState.requestID != expectedTtsRequestID {
+            let failedState = DesktopAuthoritativeReplyPlaybackState.failed(
+                summary: "Stale OpenAI TTS audio was discarded.",
+                detail: "stale_audio_rejected=true fallback_counted_as_success=false"
+            )
+            playbackState = failedState
+            return failedState
+        }
+
+        do {
+            stopAnyPlayback()
+            stopWasRequested = false
+            activeOpenAITtsToken = expectedToken
+            let player = try AVAudioPlayer(data: speechState.audioData)
+            player.delegate = self
+            player.prepareToPlay()
+            guard player.play() else {
+                let failedState = DesktopAuthoritativeReplyPlaybackState.failed(
+                    summary: "OpenAI TTS audio playback could not start.",
+                    detail: "PLAYBACK_FAILED fallback_counted_as_success=false"
+                )
+                playbackState = failedState
+                return failedState
+            }
+            openAIAudioPlayer = player
+            let playingState = DesktopAuthoritativeReplyPlaybackState.playingOpenAITTS(
+                audioSHA256: speechState.audioSHA256,
+                audioByteLen: speechState.audioByteLen,
+                voice: speechState.voice
+            )
+            playbackState = playingState
+            return playingState
+        } catch {
+            let failedState = DesktopAuthoritativeReplyPlaybackState.failed(
+                summary: "OpenAI TTS audio playback failed.",
+                detail: "PLAYBACK_FAILED fallback_counted_as_success=false"
+            )
+            playbackState = failedState
+            return failedState
+        }
+    }
+
+    @discardableResult
+    func playNativeFallback(
+        authoritativeResponseText: String?,
+        fallbackReason: String?
+    ) -> DesktopAuthoritativeReplyPlaybackState {
+        guard let authoritativeResponseText else {
+            let failedState = DesktopAuthoritativeReplyPlaybackState.failed(
+                summary: "Playback is unavailable because no cloud-authored reply text is present.",
+                detail: "This shell fails closed when canonical runtime reply text is missing and does not fabricate local speech content."
+            )
+            playbackState = failedState
+            return failedState
+        }
+
+        let trimmed = authoritativeResponseText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            let failedState = DesktopAuthoritativeReplyPlaybackState.failed(
+                summary: "Playback is unavailable because the reply text is empty.",
+                detail: "This shell fails closed when canonical runtime reply text is empty and does not synthesize substitute content."
+            )
+            playbackState = failedState
+            return failedState
+        }
+
+        if let fallbackReason {
+            playbackState = .nativeFallback(reason: fallbackReason)
+        }
+
         if speechSynthesizer.isSpeaking {
             speechSynthesizer.stopSpeaking()
         }
+        if let openAIAudioPlayer, openAIAudioPlayer.isPlaying {
+            openAIAudioPlayer.stop()
+        }
+        openAIAudioPlayer = nil
+        activeOpenAITtsToken = nil
 
         stopWasRequested = false
 
@@ -1391,9 +1560,8 @@ private final class DesktopAuthoritativeReplyPlaybackController: NSObject, Obser
     @discardableResult
     func stop() -> DesktopAuthoritativeReplyPlaybackState {
         stopWasRequested = true
-        if speechSynthesizer.isSpeaking {
-            speechSynthesizer.stopSpeaking()
-        }
+        stopAnyPlayback()
+        activeOpenAITtsToken = nil
         let stoppedState = DesktopAuthoritativeReplyPlaybackState.stopped()
         playbackState = stoppedState
         return stoppedState
@@ -1401,10 +1569,19 @@ private final class DesktopAuthoritativeReplyPlaybackController: NSObject, Obser
 
     func reset() {
         stopWasRequested = false
+        stopAnyPlayback()
+        activeOpenAITtsToken = nil
+        playbackState = .idle
+    }
+
+    private func stopAnyPlayback() {
         if speechSynthesizer.isSpeaking {
             speechSynthesizer.stopSpeaking()
         }
-        playbackState = .idle
+        if let openAIAudioPlayer, openAIAudioPlayer.isPlaying {
+            openAIAudioPlayer.stop()
+        }
+        openAIAudioPlayer = nil
     }
 
     nonisolated func speechSynthesizer(_ sender: NSSpeechSynthesizer, didFinishSpeaking finishedSpeaking: Bool) {
@@ -1420,6 +1597,35 @@ private final class DesktopAuthoritativeReplyPlaybackController: NSObject, Obser
                     detail: "The shell remains explicitly non-authoritative and does not retry or fabricate substitute playback output."
                 )
             }
+        }
+    }
+
+    nonisolated func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
+        Task { @MainActor in
+            openAIAudioPlayer = nil
+            activeOpenAITtsToken = nil
+            if stopWasRequested {
+                stopWasRequested = false
+                playbackState = .stopped()
+            } else if flag {
+                playbackState = .completed()
+            } else {
+                playbackState = .failed(
+                    summary: "OpenAI TTS reply playback ended before completion.",
+                    detail: "PLAYBACK_FAILED fallback_counted_as_success=false"
+                )
+            }
+        }
+    }
+
+    nonisolated func audioPlayerDecodeErrorDidOccur(_ player: AVAudioPlayer, error: Error?) {
+        Task { @MainActor in
+            openAIAudioPlayer = nil
+            activeOpenAITtsToken = nil
+            playbackState = .failed(
+                summary: "OpenAI TTS reply playback could not decode the returned audio.",
+                detail: "PLAYBACK_FAILED fallback_counted_as_success=false"
+            )
         }
     }
 }
@@ -5498,6 +5704,7 @@ struct DesktopSessionShellView: View {
     @StateObject private var desktopAuthoritativeReplyPlaybackController = DesktopAuthoritativeReplyPlaybackController()
     @State private var desktopRealtimeTranscriptionStartInFlight = false
     @State private var desktopRealtimeTranscriptionStartGeneration: UInt64 = 0
+    @State private var desktopOpenAITtsPlaybackGeneration: UInt64 = 0
     @State private var desktopCanonicalRuntimeOutcomeState: DesktopCanonicalRuntimeOutcomeState?
     @State private var desktopInviteOpenRuntimeOutcomeState: DesktopInviteOpenRuntimeOutcomeState?
     @State private var desktopOnboardingContinueRuntimeOutcomeState: DesktopOnboardingContinueRuntimeOutcomeState?
@@ -7688,7 +7895,8 @@ struct DesktopSessionShellView: View {
               desktopWakeListenerController.pendingRequest == nil,
               lastStagedWakeTriggeredVoiceTurnRequestState == nil,
               desktopTypedTurnDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-              desktopAuthoritativeReplyPlaybackState.phase != .speaking else {
+              desktopAuthoritativeReplyPlaybackState.phase != .speaking,
+              desktopAuthoritativeReplyPlaybackState.phase != .requesting else {
             return
         }
 
@@ -7705,8 +7913,7 @@ struct DesktopSessionShellView: View {
         desktopCanonicalRuntimeOutcomeState = nil
         desktopAuthoritativeReplyRenderState = nil
         desktopAuthoritativeReplyProvenanceRenderState = nil
-        desktopAuthoritativeReplyPlaybackController.reset()
-        desktopAuthoritativeReplyPlaybackState = .idle
+        cancelOpenAITtsPlaybackForNewTurn(reason: "new_explicit_voice_turn_started")
         startDesktopExplicitVoiceTurn()
     }
 
@@ -17553,13 +17760,17 @@ struct DesktopSessionShellView: View {
                     .disabled(
                         desktopAuthoritativeReplyRenderState?.authoritativeResponseText?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false
                         || desktopAuthoritativeReplyPlaybackState.phase == .speaking
+                        || desktopAuthoritativeReplyPlaybackState.phase == .requesting
                     )
 
                     Button("Stop reply playback") {
                         stopAuthoritativeReplyPlayback()
                     }
                     .buttonStyle(.bordered)
-                    .disabled(desktopAuthoritativeReplyPlaybackState.phase != .speaking)
+                    .disabled(
+                        desktopAuthoritativeReplyPlaybackState.phase != .speaking
+                        && desktopAuthoritativeReplyPlaybackState.phase != .requesting
+                    )
                 }
 
                 Text("User-triggered bounded reply playback only. No transcript mutation, no conversation-history mutation, no wake parity claim, no proven native macOS wake-listener integration claim, and no autonomous-unlock claim are introduced by this surface.")
@@ -17574,12 +17785,108 @@ struct DesktopSessionShellView: View {
     }
 
     private func playAuthoritativeReply() {
-        desktopAuthoritativeReplyPlaybackState = desktopAuthoritativeReplyPlaybackController.play(
-            authoritativeResponseText: desktopAuthoritativeReplyRenderState?.authoritativeResponseText
+        desktopAuthoritativeReplyPlaybackState = desktopAuthoritativeReplyPlaybackController
+            .playNativeFallback(
+                authoritativeResponseText: desktopAuthoritativeReplyRenderState?.authoritativeResponseText,
+                fallbackReason: nil
+            )
+    }
+
+    @MainActor
+    private func playExplicitVoiceAuthoritativeReply(
+        outcomeState: DesktopCanonicalRuntimeOutcomeState
+    ) async -> Bool {
+        guard let authoritativeResponseText = outcomeState.authoritativeResponseText?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+              !authoritativeResponseText.isEmpty else {
+            return false
+        }
+
+        guard DesktopOpenAITtsFeatureFlag.isEnabled else {
+            desktopAppendRuntimeBridgeDebugLog(
+                "desktop openai tts rollback path=native_speech reason=feature_flag_off"
+            )
+            desktopAuthoritativeReplyPlaybackState = desktopAuthoritativeReplyPlaybackController
+                .playNativeFallback(
+                    authoritativeResponseText: authoritativeResponseText,
+                    fallbackReason: nil
+                )
+            return desktopAuthoritativeReplyPlaybackState.phase == .speaking
+        }
+
+        desktopOpenAITtsPlaybackGeneration &+= 1
+        let playbackGeneration = desktopOpenAITtsPlaybackGeneration
+        let answerTextSHA256 = desktopSessionSHA256Hex(Data(authoritativeResponseText.utf8))
+        let token = DesktopOpenAITtsPlaybackToken(
+            ttsRequestID: nil,
+            sessionID: outcomeState.sessionID,
+            turnID: outcomeState.turnID,
+            runtimeRequestID: outcomeState.requestID,
+            answerTextSHA256: answerTextSHA256
         )
+        desktopAuthoritativeReplyPlaybackState = desktopAuthoritativeReplyPlaybackController
+            .prepareOpenAITTS(authoritativeResponseText: authoritativeResponseText, token: token)
+        desktopAppendRuntimeBridgeDebugLog(
+            "desktop openai tts state=TTS_REQUESTING endpoint=\(desktopCanonicalRuntimeBridge.desktopOpenAITtsSpeechEndpoint) answer_text_sha256=\(answerTextSHA256)"
+        )
+
+        do {
+            let speechState = try await desktopCanonicalRuntimeBridge.createDesktopOpenAITtsSpeech(
+                responseText: authoritativeResponseText,
+                sessionID: outcomeState.sessionID,
+                turnID: outcomeState.turnID,
+                runtimeRequestID: outcomeState.requestID,
+                featureFlagName: DesktopOpenAITtsFeatureFlag.name,
+                featureFlagEnabled: true,
+                voice: nil,
+                format: "mp3"
+            )
+            guard desktopOpenAITtsPlaybackGeneration == playbackGeneration else {
+                desktopAppendRuntimeBridgeDebugLog(
+                    "desktop openai tts stale audio discarded reason=newer_turn_started audio_sha256=\(speechState.audioSHA256)"
+                )
+                return false
+            }
+            desktopAppendRuntimeBridgeDebugLog(
+                "desktop openai tts state=TTS_READY model=\(speechState.model) voice=\(speechState.voice) answer_text_sha256=\(speechState.answerTextSHA256) audio_sha256=\(speechState.audioSHA256) audio_byte_len=\(speechState.audioByteLen) ai_voice_disclosure=\(speechState.aiVoiceDisclosure)"
+            )
+            desktopAuthoritativeReplyPlaybackState = desktopAuthoritativeReplyPlaybackController
+                .playOpenAITTS(speechState, expectedToken: token)
+            desktopAppendRuntimeBridgeDebugLog(
+                "desktop openai tts state=PLAYING_OPENAI fallback_used=false request=\(speechState.requestID)"
+            )
+            return desktopAuthoritativeReplyPlaybackState.phase == .speaking
+        } catch {
+            guard desktopOpenAITtsPlaybackGeneration == playbackGeneration else {
+                desktopAppendRuntimeBridgeDebugLog(
+                    "desktop openai tts request failure absorbed reason=newer_turn_started"
+                )
+                return false
+            }
+            let fallbackReason = boundedFailureLogToken(error.localizedDescription)
+            desktopAppendRuntimeBridgeDebugLog(
+                "desktop openai tts fallback path=native_speech reason=\(fallbackReason) fallback_counted_as_success=false"
+            )
+            desktopAuthoritativeReplyPlaybackState = desktopAuthoritativeReplyPlaybackController
+                .playNativeFallback(
+                    authoritativeResponseText: authoritativeResponseText,
+                    fallbackReason: fallbackReason
+                )
+            return false
+        }
+    }
+
+    private func cancelOpenAITtsPlaybackForNewTurn(reason: String) {
+        desktopOpenAITtsPlaybackGeneration &+= 1
+        desktopAppendRuntimeBridgeDebugLog(
+            "desktop openai tts playback cancelled reason=\(boundedFailureLogToken(reason))"
+        )
+        desktopAuthoritativeReplyPlaybackController.reset()
+        desktopAuthoritativeReplyPlaybackState = .idle
     }
 
     private func stopAuthoritativeReplyPlayback() {
+        desktopOpenAITtsPlaybackGeneration &+= 1
         desktopAuthoritativeReplyPlaybackState = desktopAuthoritativeReplyPlaybackController.stop()
     }
 
@@ -18704,8 +19011,7 @@ struct DesktopSessionShellView: View {
             )
             desktopAuthoritativeReplyRenderState = nil
             desktopAuthoritativeReplyProvenanceRenderState = nil
-            desktopAuthoritativeReplyPlaybackController.reset()
-            desktopAuthoritativeReplyPlaybackState = .idle
+            cancelOpenAITtsPlaybackForNewTurn(reason: "explicit_voice_runtime_dispatch_started")
 
             let outcomeState = await desktopCanonicalRuntimeBridge.dispatchPreparedExplicitVoiceRequest(ingressContext)
             guard explicitVoiceController.pendingRequest?.id == pendingRequest.id else {
@@ -18757,7 +19063,7 @@ struct DesktopSessionShellView: View {
                 )
                 if outcomeState.authoritativeResponseText?
                     .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
-                    playAuthoritativeReply()
+                    _ = await playExplicitVoiceAuthoritativeReply(outcomeState: outcomeState)
                     shouldAwaitVoiceModeReplyPlaybackCompletion =
                         desktopComposerVoiceModeEnabled
                         && desktopAuthoritativeReplyPlaybackState.phase == .speaking
@@ -18799,8 +19105,7 @@ struct DesktopSessionShellView: View {
             )
             desktopAuthoritativeReplyRenderState = nil
             desktopAuthoritativeReplyProvenanceRenderState = nil
-            desktopAuthoritativeReplyPlaybackController.reset()
-            desktopAuthoritativeReplyPlaybackState = .idle
+            cancelOpenAITtsPlaybackForNewTurn(reason: "typed_runtime_dispatch_started")
             desktopSubmittedUserContinuityPreviewState = DesktopSubmittedUserContinuityPreviewState(
                 requestID: pendingRequest.id,
                 inputMode: .explicitVoice,
@@ -19140,6 +19445,7 @@ struct DesktopSessionShellView: View {
 
     private func submitDesktopTypedTurn() {
         let preservedVisibleDraft = desktopPreparedTypedComposerSubmissionText
+        cancelOpenAITtsPlaybackForNewTurn(reason: "typed_turn_submitted")
 
         if desktopComposerVoiceModeEnabled {
             desktopDeactivateComposerVoiceMode(preserveTranscriptPreview: false)

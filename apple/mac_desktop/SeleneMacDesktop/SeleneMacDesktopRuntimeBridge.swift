@@ -32,6 +32,23 @@ struct DesktopRealtimeTranscriptionSessionState: Equatable {
     let maxReconnectAttempts: UInt8
 }
 
+struct DesktopOpenAITtsSpeechState: Equatable {
+    let id: String
+    let endpoint: String
+    let requestID: String
+    let sessionID: String?
+    let turnID: String?
+    let runtimeRequestID: String?
+    let answerTextSHA256: String
+    let audioSHA256: String
+    let audioByteLen: UInt64
+    let audioMimeType: String
+    let model: String
+    let voice: String
+    let aiVoiceDisclosure: String
+    let audioData: Data
+}
+
 struct DesktopCanonicalRuntimeOutcomeState: Identifiable, Equatable {
     enum Phase: String, Equatable {
         case dispatching = "dispatching"
@@ -3468,6 +3485,10 @@ private func desktopPlatformSetupReceiptPayloadHash(_ seed: String) -> String {
     SHA256.hash(data: Data(seed.utf8)).map { String(format: "%02x", $0) }.joined()
 }
 
+private func desktopSHA256Hex(_ data: Data) -> String {
+    SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+}
+
 private func desktopPlatformSetupReceiptRef(receiptKind: String, payloadHash: String) -> String {
     "receipt:desktop-local:\(receiptKind):\(payloadHash.prefix(16))"
 }
@@ -4014,6 +4035,58 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
             case maxSessionDurationMS = "max_session_duration_ms"
             case maxSilenceDurationMS = "max_silence_duration_ms"
             case maxReconnectAttempts = "max_reconnect_attempts"
+        }
+    }
+
+    private struct DesktopOpenAITtsSpeechRequestPayload: Encodable {
+        let correlationID: UInt64
+        let actorUserID: String
+        let deviceID: String
+        let responseText: String
+        let sessionID: String?
+        let turnID: String?
+        let requestID: String?
+        let featureFlagName: String
+        let featureFlagEnabled: Bool
+        let voice: String?
+        let format: String?
+    }
+
+    private struct DesktopOpenAITtsSpeechResponsePayload: Decodable {
+        let status: String
+        let outcome: String
+        let ok: Bool
+        let safeFailureReason: String?
+        let audioBase64: String?
+        let audioMimeType: String?
+        let audioByteLen: UInt64
+        let audioSHA256: String?
+        let model: String
+        let voice: String
+        let answerTextSHA256: String?
+        let sessionID: String?
+        let turnID: String?
+        let requestID: String?
+        let fallbackAllowed: Bool
+        let aiVoiceDisclosure: String
+
+        enum CodingKeys: String, CodingKey {
+            case status
+            case outcome
+            case ok
+            case safeFailureReason = "safe_failure_reason"
+            case audioBase64 = "audio_base64"
+            case audioMimeType = "audio_mime_type"
+            case audioByteLen = "audio_byte_len"
+            case audioSHA256 = "audio_sha256"
+            case model
+            case voice
+            case answerTextSHA256 = "answer_text_sha256"
+            case sessionID = "session_id"
+            case turnID = "turn_id"
+            case requestID = "request_id"
+            case fallbackAllowed = "fallback_allowed"
+            case aiVoiceDisclosure = "ai_voice_disclosure"
         }
     }
 
@@ -4915,6 +4988,116 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
             maxSessionDurationMS: payloadResponse.maxSessionDurationMS,
             maxSilenceDurationMS: payloadResponse.maxSilenceDurationMS,
             maxReconnectAttempts: payloadResponse.maxReconnectAttempts
+        )
+    }
+
+    func createDesktopOpenAITtsSpeech(
+        responseText: String,
+        sessionID: String?,
+        turnID: String?,
+        runtimeRequestID: String?,
+        featureFlagName: String,
+        featureFlagEnabled: Bool,
+        voice: String? = nil,
+        format: String? = "mp3"
+    ) async throws -> DesktopOpenAITtsSpeechState {
+        try await ensureAdapterAvailable()
+
+        let trimmedResponseText = responseText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedResponseText.isEmpty else {
+            throw BridgeError.transportFailed("OpenAI TTS speech request requires final Selene runtime answer text.")
+        }
+
+        let timestampMS = Self.systemTimeNowMS()
+        let epochNowNS = timestampMS &* 1_000_000
+        let monotonicNowNS = Swift.max(DispatchTime.now().uptimeNanoseconds, 1)
+        let ingressIdentity = Self.boundedRuntimeIngressIdentity(
+            prefix: "tts",
+            monotonicNowNS: monotonicNowNS
+        )
+        let payload = DesktopOpenAITtsSpeechRequestPayload(
+            correlationID: epochNowNS,
+            actorUserID: actorUserID,
+            deviceID: deviceID,
+            responseText: trimmedResponseText,
+            sessionID: sessionID,
+            turnID: turnID,
+            requestID: runtimeRequestID,
+            featureFlagName: featureFlagName,
+            featureFlagEnabled: featureFlagEnabled,
+            voice: voice,
+            format: format
+        )
+        let encoder = JSONEncoder()
+        encoder.keyEncodingStrategy = .convertToSnakeCase
+        let body = try encoder.encode(payload)
+        let endpointURL = adapterBaseURL
+            .appendingPathComponent("v1/desktop/openai-tts/speech")
+        var urlRequest = URLRequest(url: endpointURL)
+        urlRequest.httpMethod = "POST"
+        urlRequest.httpBody = body
+        urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        urlRequest.setValue(ingressIdentity.requestID, forHTTPHeaderField: "x-request-id")
+        urlRequest.setValue(ingressIdentity.idempotencyKey, forHTTPHeaderField: "idempotency-key")
+        urlRequest.setValue(String(timestampMS), forHTTPHeaderField: "x-selene-timestamp-ms")
+        urlRequest.setValue(ingressIdentity.nonce, forHTTPHeaderField: "x-selene-nonce")
+        urlRequest.setValue(
+            Self.bearerToken(subject: actorUserID, device: deviceID),
+            forHTTPHeaderField: "Authorization"
+        )
+
+        let (data, response) = try await urlSession.data(for: urlRequest)
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .useDefaultKeys
+        let httpResponse = response as? HTTPURLResponse
+        let statusCode = httpResponse?.statusCode ?? 0
+        let payloadResponse = try decoder.decode(
+            DesktopOpenAITtsSpeechResponsePayload.self,
+            from: data
+        )
+
+        guard statusCode == 200,
+              payloadResponse.status == "ok",
+              payloadResponse.outcome == "OPENAI_TTS_SPEECH_CREATED",
+              payloadResponse.ok,
+              let audioBase64 = payloadResponse.audioBase64,
+              let audioData = Data(base64Encoded: audioBase64),
+              let audioMimeType = payloadResponse.audioMimeType,
+              let audioSHA256 = payloadResponse.audioSHA256,
+              let answerTextSHA256 = payloadResponse.answerTextSHA256 else {
+            let reason = payloadResponse.safeFailureReason ?? "openai_tts_speech_failed"
+            throw BridgeError.transportFailed(
+                "OpenAI TTS speech request failed closed with reason `\(reason)`"
+            )
+        }
+
+        guard desktopSHA256Hex(Data(trimmedResponseText.utf8)) == answerTextSHA256 else {
+            throw BridgeError.transportFailed(
+                "OpenAI TTS speech response did not match the final Selene runtime answer hash."
+            )
+        }
+        guard desktopSHA256Hex(audioData) == audioSHA256,
+              UInt64(audioData.count) == payloadResponse.audioByteLen else {
+            throw BridgeError.transportFailed(
+                "OpenAI TTS speech response audio digest or byte count did not match the returned audio bytes."
+            )
+        }
+
+        return DesktopOpenAITtsSpeechState(
+            id: "desktop_openai_tts_speech_\(epochNowNS)",
+            endpoint: endpointURL.absoluteString,
+            requestID: ingressIdentity.requestID,
+            sessionID: payloadResponse.sessionID,
+            turnID: payloadResponse.turnID,
+            runtimeRequestID: payloadResponse.requestID,
+            answerTextSHA256: answerTextSHA256,
+            audioSHA256: audioSHA256,
+            audioByteLen: payloadResponse.audioByteLen,
+            audioMimeType: audioMimeType,
+            model: payloadResponse.model,
+            voice: payloadResponse.voice,
+            aiVoiceDisclosure: payloadResponse.aiVoiceDisclosure,
+            audioData: audioData
         )
     }
 
@@ -8491,6 +8674,12 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
     var desktopRealtimeTranscriptionSessionEndpoint: String {
         adapterBaseURL
             .appendingPathComponent("v1/desktop/realtime-transcription/session")
+            .absoluteString
+    }
+
+    var desktopOpenAITtsSpeechEndpoint: String {
+        adapterBaseURL
+            .appendingPathComponent("v1/desktop/openai-tts/speech")
             .absoluteString
     }
 
