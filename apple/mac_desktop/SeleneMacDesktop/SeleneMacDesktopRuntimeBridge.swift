@@ -17,6 +17,21 @@ struct AuthoritativeResponseProvenance: Equatable {
     let cacheStatus: String?
 }
 
+struct DesktopRealtimeTranscriptionSessionState: Equatable {
+    let id: String
+    let endpoint: String
+    let requestID: String
+    let sessionID: String?
+    let clientSecret: String
+    let expiresAt: UInt64?
+    let websocketURL: String
+    let transcriptionModel: String
+    let inputAudioFormat: String
+    let maxSessionDurationMS: UInt64
+    let maxSilenceDurationMS: UInt64
+    let maxReconnectAttempts: UInt8
+}
+
 struct DesktopCanonicalRuntimeOutcomeState: Identifiable, Equatable {
     enum Phase: String, Equatable {
         case dispatching = "dispatching"
@@ -3963,6 +3978,45 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
         let sessionState: String?
     }
 
+    private struct DesktopRealtimeTranscriptionSessionRequestPayload: Encodable {
+        let correlationID: UInt64
+        let actorUserID: String
+        let deviceID: String
+        let requestedModel: String?
+        let featureFlagName: String
+        let featureFlagEnabled: Bool
+    }
+
+    private struct DesktopRealtimeTranscriptionSessionResponsePayload: Decodable {
+        let status: String
+        let outcome: String
+        let reason: String?
+        let sessionID: String?
+        let clientSecret: String?
+        let expiresAt: UInt64?
+        let websocketURL: String
+        let transcriptionModel: String
+        let inputAudioFormat: String
+        let maxSessionDurationMS: UInt64
+        let maxSilenceDurationMS: UInt64
+        let maxReconnectAttempts: UInt8
+
+        enum CodingKeys: String, CodingKey {
+            case status
+            case outcome
+            case reason
+            case sessionID = "session_id"
+            case clientSecret = "client_secret"
+            case expiresAt = "expires_at"
+            case websocketURL = "websocket_url"
+            case transcriptionModel = "transcription_model"
+            case inputAudioFormat = "input_audio_format"
+            case maxSessionDurationMS = "max_session_duration_ms"
+            case maxSilenceDurationMS = "max_silence_duration_ms"
+            case maxReconnectAttempts = "max_reconnect_attempts"
+        }
+    }
+
     private struct VoiceTurnAdapterRequestPayload: Encodable {
         let correlationID: UInt64
         let turnID: UInt64
@@ -4784,6 +4838,84 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
                 failureClass: "RetryableRuntime"
             )
         }
+    }
+
+    func createDesktopRealtimeTranscriptionSession(
+        featureFlagName: String,
+        featureFlagEnabled: Bool,
+        requestedModel: String = "gpt-4o-transcribe"
+    ) async throws -> DesktopRealtimeTranscriptionSessionState {
+        try await ensureAdapterAvailable()
+
+        let timestampMS = Self.systemTimeNowMS()
+        let epochNowNS = timestampMS &* 1_000_000
+        let monotonicNowNS = Swift.max(DispatchTime.now().uptimeNanoseconds, 1)
+        let ingressIdentity = Self.boundedRuntimeIngressIdentity(
+            prefix: "drt",
+            monotonicNowNS: monotonicNowNS
+        )
+        let payload = DesktopRealtimeTranscriptionSessionRequestPayload(
+            correlationID: epochNowNS,
+            actorUserID: actorUserID,
+            deviceID: deviceID,
+            requestedModel: requestedModel,
+            featureFlagName: featureFlagName,
+            featureFlagEnabled: featureFlagEnabled
+        )
+        let encoder = JSONEncoder()
+        encoder.keyEncodingStrategy = .convertToSnakeCase
+        let body = try encoder.encode(payload)
+        let endpointURL = adapterBaseURL
+            .appendingPathComponent("v1/desktop/realtime-transcription/session")
+        var urlRequest = URLRequest(url: endpointURL)
+        urlRequest.httpMethod = "POST"
+        urlRequest.httpBody = body
+        urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        urlRequest.setValue(ingressIdentity.requestID, forHTTPHeaderField: "x-request-id")
+        urlRequest.setValue(ingressIdentity.idempotencyKey, forHTTPHeaderField: "idempotency-key")
+        urlRequest.setValue(String(timestampMS), forHTTPHeaderField: "x-selene-timestamp-ms")
+        urlRequest.setValue(ingressIdentity.nonce, forHTTPHeaderField: "x-selene-nonce")
+        urlRequest.setValue(
+            Self.bearerToken(subject: actorUserID, device: deviceID),
+            forHTTPHeaderField: "Authorization"
+        )
+
+        let (data, response) = try await urlSession.data(for: urlRequest)
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .useDefaultKeys
+        let httpResponse = response as? HTTPURLResponse
+        let statusCode = httpResponse?.statusCode ?? 0
+        let payloadResponse = try decoder.decode(
+            DesktopRealtimeTranscriptionSessionResponsePayload.self,
+            from: data
+        )
+
+        guard statusCode == 200,
+              payloadResponse.status == "ok",
+              payloadResponse.outcome == "REALTIME_TRANSCRIPTION_SESSION_CREATED",
+              let clientSecret = payloadResponse.clientSecret,
+              !clientSecret.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              !payloadResponse.websocketURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            let reason = payloadResponse.reason ?? "realtime_transcription_session_failed"
+            throw BridgeError.transportFailed(
+                "realtime transcription session mint failed closed with reason `\(reason)`"
+            )
+        }
+
+        return DesktopRealtimeTranscriptionSessionState(
+            id: "desktop_realtime_transcription_session_\(epochNowNS)",
+            endpoint: endpointURL.absoluteString,
+            requestID: ingressIdentity.requestID,
+            sessionID: payloadResponse.sessionID,
+            clientSecret: clientSecret,
+            expiresAt: payloadResponse.expiresAt,
+            websocketURL: payloadResponse.websocketURL,
+            transcriptionModel: payloadResponse.transcriptionModel,
+            inputAudioFormat: payloadResponse.inputAudioFormat,
+            maxSessionDurationMS: payloadResponse.maxSessionDurationMS,
+            maxSilenceDurationMS: payloadResponse.maxSilenceDurationMS,
+            maxReconnectAttempts: payloadResponse.maxReconnectAttempts
+        )
     }
 
     func dispatchPreparedTypedTurnRequest(
@@ -8354,6 +8486,12 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
 
     var voiceTurnEndpoint: String {
         adapterBaseURL.appendingPathComponent("v1/voice/turn").absoluteString
+    }
+
+    var desktopRealtimeTranscriptionSessionEndpoint: String {
+        adapterBaseURL
+            .appendingPathComponent("v1/desktop/realtime-transcription/session")
+            .absoluteString
     }
 
     var inviteClickEndpoint: String {

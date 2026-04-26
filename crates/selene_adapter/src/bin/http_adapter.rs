@@ -4,6 +4,7 @@ use std::{
     collections::BTreeMap,
     env,
     net::SocketAddr,
+    process::{Command, Stdio},
     sync::{Arc, Mutex},
     time::Duration,
 };
@@ -25,11 +26,13 @@ use selene_adapter::{
     SessionRecoverAdapterRequest, SessionRecoverAdapterResponse, SessionResumeAdapterRequest,
     SessionResumeAdapterResponse, UiChatTranscriptResponse, UiHealthChecksResponse,
     UiHealthDetailFilter, UiHealthDetailResponse, UiHealthReportQueryRequest,
-    UiHealthReportQueryResponse, UiHealthSummary, UiHealthTimelinePaging,
-    VoiceTurnAdapterRequest, VoiceTurnAdapterResponse, VoiceTurnIngressError,
-    WakeProfileAvailabilityRefreshAdapterRequest, WakeProfileAvailabilityRefreshAdapterResponse,
+    UiHealthReportQueryResponse, UiHealthSummary, UiHealthTimelinePaging, VoiceTurnAdapterRequest,
+    VoiceTurnAdapterResponse, VoiceTurnIngressError, WakeProfileAvailabilityRefreshAdapterRequest,
+    WakeProfileAvailabilityRefreshAdapterResponse,
 };
+use selene_engines::device_vault;
 use selene_engines::ph1e::startup_outbound_self_check_logs;
+use selene_kernel_contracts::provider_secrets::ProviderSecretId;
 use selene_kernel_contracts::runtime_execution::{FailureClass, RuntimeExecutionEnvelope};
 
 #[derive(Debug, Clone, serde::Deserialize, Default)]
@@ -51,6 +54,33 @@ struct HttpAdapterState {
     runtime: Arc<Mutex<AdapterRuntime>>,
     ingress_security: Arc<Mutex<IngressSecurityState>>,
     ingress_security_config: IngressSecurityConfig,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct DesktopRealtimeTranscriptionSessionRequest {
+    correlation_id: u64,
+    actor_user_id: String,
+    device_id: String,
+    requested_model: Option<String>,
+    feature_flag_name: String,
+    feature_flag_enabled: bool,
+}
+
+#[derive(Debug, serde::Deserialize, serde::Serialize)]
+struct DesktopRealtimeTranscriptionSessionResponse {
+    status: String,
+    outcome: String,
+    reason: Option<String>,
+    session_id: Option<String>,
+    client_secret: Option<String>,
+    expires_at: Option<u64>,
+    websocket_url: String,
+    transcription_model: String,
+    input_audio_format: String,
+    max_session_duration_ms: u64,
+    max_silence_duration_ms: u64,
+    max_reconnect_attempts: u8,
+    retry_count: u8,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -222,6 +252,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/v1/ui/health/report/query", post(ui_health_report_query))
         .route("/v1/ui/chat/transcript", get(ui_chat_transcript))
         .route("/v1/voice/turn", post(run_voice_turn))
+        .route(
+            "/v1/desktop/realtime-transcription/session",
+            post(run_desktop_realtime_transcription_session),
+        )
         .route("/v1/invite/click", post(run_invite_click))
         .route("/v1/onboarding/continue", post(run_onboarding_continue))
         .route("/v1/session/attach", post(run_session_attach))
@@ -607,6 +641,120 @@ async fn run_voice_turn(
             let status = status_for_failure_class(error.failure_class);
             voice_turn_ingress_error_response(status, error)
         }
+    }
+}
+
+async fn run_desktop_realtime_transcription_session(
+    State(state): State<HttpAdapterState>,
+    headers: HeaderMap,
+    Json(request): Json<DesktopRealtimeTranscriptionSessionRequest>,
+) -> Response {
+    let request_id = match required_header_token(&headers, "x-request-id", "missing_request_id") {
+        Ok(v) => v,
+        Err(reject) => return desktop_realtime_transcription_security_reject_response(reject),
+    };
+    let idempotency_key =
+        match required_header_token(&headers, "idempotency-key", "missing_idempotency_key") {
+            Ok(v) => v,
+            Err(reject) => return desktop_realtime_transcription_security_reject_response(reject),
+        };
+    let timestamp_ms = match required_header_u64(
+        &headers,
+        "x-selene-timestamp-ms",
+        "missing_timestamp_ms",
+        "invalid_timestamp_ms",
+    ) {
+        Ok(v) => v,
+        Err(reject) => return desktop_realtime_transcription_security_reject_response(reject),
+    };
+    let nonce = match required_header_token(&headers, "x-selene-nonce", "missing_nonce") {
+        Ok(v) => v,
+        Err(reject) => return desktop_realtime_transcription_security_reject_response(reject),
+    };
+    if request.correlation_id == 0
+        || request.actor_user_id.trim().is_empty()
+        || request.device_id.trim().is_empty()
+    {
+        return desktop_realtime_transcription_error_response(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "invalid_realtime_transcription_identity",
+        );
+    }
+    if request.feature_flag_name.trim() != "SELENE_DESKTOP_OPENAI_REALTIME_TRANSCRIPTION_ENABLED"
+        || !request.feature_flag_enabled
+    {
+        return desktop_realtime_transcription_error_response(
+            StatusCode::PRECONDITION_FAILED,
+            "desktop_realtime_transcription_feature_flag_disabled",
+        );
+    }
+
+    let security_input = EndpointSecurityInput {
+        endpoint: "/v1/desktop/realtime-transcription/session",
+        expected_subject: request.actor_user_id.clone(),
+        expected_device: request.device_id.clone(),
+        request_id,
+        idempotency_key,
+        timestamp_ms,
+        nonce,
+    };
+    if let Err(reject) = enforce_ingress_security(
+        &headers,
+        &state.ingress_security,
+        state.ingress_security_config,
+        security_input,
+    ) {
+        return desktop_realtime_transcription_security_reject_response(reject);
+    }
+
+    let model = bounded_realtime_transcription_model(request.requested_model.as_deref());
+    let websocket_url = env::var("OPENAI_REALTIME_TRANSCRIPTION_WS_URL")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "wss://api.openai.com/v1/realtime?intent=transcription".to_string());
+    let max_session_duration_ms = parse_u64_env(
+        "SELENE_DESKTOP_REALTIME_TRANSCRIPTION_MAX_SESSION_MS",
+        90_000,
+        5_000,
+        300_000,
+    );
+    let max_silence_duration_ms = parse_u64_env(
+        "SELENE_DESKTOP_REALTIME_TRANSCRIPTION_MAX_SILENCE_MS",
+        1_200,
+        300,
+        10_000,
+    );
+    let max_reconnect_attempts = parse_u32_env(
+        "SELENE_DESKTOP_REALTIME_TRANSCRIPTION_MAX_RECONNECTS",
+        1,
+        0,
+        5,
+    ) as u8;
+
+    match mint_openai_realtime_transcription_session(&model, max_silence_duration_ms) {
+        Ok(minted) => {
+            let response = DesktopRealtimeTranscriptionSessionResponse {
+                status: "ok".to_string(),
+                outcome: "REALTIME_TRANSCRIPTION_SESSION_CREATED".to_string(),
+                reason: None,
+                session_id: minted.session_id,
+                client_secret: Some(minted.client_secret),
+                expires_at: minted.expires_at,
+                websocket_url,
+                transcription_model: model,
+                input_audio_format: "pcm16_24000_mono".to_string(),
+                max_session_duration_ms,
+                max_silence_duration_ms,
+                max_reconnect_attempts,
+                retry_count: 0,
+            };
+            (StatusCode::OK, Json(response)).into_response()
+        }
+        Err(reason) => desktop_realtime_transcription_error_response(
+            StatusCode::SERVICE_UNAVAILABLE,
+            reason.as_str(),
+        ),
     }
 }
 
@@ -1363,6 +1511,123 @@ fn status_for_failure_class(failure_class: FailureClass) -> StatusCode {
     }
 }
 
+#[derive(Debug)]
+struct MintedRealtimeTranscriptionSession {
+    session_id: Option<String>,
+    client_secret: String,
+    expires_at: Option<u64>,
+}
+
+fn bounded_realtime_transcription_model(value: Option<&str>) -> String {
+    let trimmed = value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("gpt-4o-transcribe");
+    match trimmed {
+        "gpt-4o-transcribe" | "gpt-4o-transcribe-latest" | "gpt-4o-mini-transcribe" => {
+            trimmed.to_string()
+        }
+        _ => "gpt-4o-transcribe".to_string(),
+    }
+}
+
+fn openai_api_key_for_realtime_transcription() -> Result<String, String> {
+    env::var("OPENAI_API_KEY")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .or_else(|| {
+            device_vault::resolve_secret(ProviderSecretId::OpenAIApiKey.as_str())
+                .ok()
+                .flatten()
+        })
+        .ok_or_else(|| "missing_openai_api_key".to_string())
+}
+
+fn mint_openai_realtime_transcription_session(
+    model: &str,
+    silence_duration_ms: u64,
+) -> Result<MintedRealtimeTranscriptionSession, String> {
+    let api_key = openai_api_key_for_realtime_transcription()?;
+    let endpoint = env::var("OPENAI_REALTIME_TRANSCRIPTION_SESSION_URL")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "https://api.openai.com/v1/realtime/transcription_sessions".to_string());
+    let timeout_secs = parse_u64_env(
+        "SELENE_DESKTOP_REALTIME_TRANSCRIPTION_TOKEN_TIMEOUT_SECS",
+        8,
+        1,
+        30,
+    );
+    let body = serde_json::json!({
+        "input_audio_format": "pcm16",
+        "input_audio_transcription": {
+            "model": model,
+            "prompt": ""
+        },
+        "turn_detection": {
+            "type": "server_vad",
+            "threshold": 0.5,
+            "prefix_padding_ms": 300,
+            "silence_duration_ms": silence_duration_ms.min(10_000).max(300)
+        },
+        "input_audio_noise_reduction": {
+            "type": "near_field"
+        },
+        "include": []
+    });
+    let body = serde_json::to_string(&body)
+        .map_err(|_| "realtime_transcription_token_payload_encoding_failed".to_string())?;
+    let output = Command::new("curl")
+        .arg("-sS")
+        .arg("--fail-with-body")
+        .arg("--max-time")
+        .arg(timeout_secs.to_string())
+        .arg("-X")
+        .arg("POST")
+        .arg(&endpoint)
+        .arg("-H")
+        .arg(format!("Authorization: Bearer {api_key}"))
+        .arg("-H")
+        .arg("Content-Type: application/json")
+        .arg("-H")
+        .arg("OpenAI-Beta: realtime=v1")
+        .arg("--data")
+        .arg(body)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .map_err(|_| "realtime_transcription_token_request_spawn_failed".to_string())?;
+    if !output.status.success() {
+        return Err("realtime_transcription_token_request_failed".to_string());
+    }
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .map_err(|_| "realtime_transcription_token_response_decode_failed".to_string())?;
+    let client_secret = value
+        .get("client_secret")
+        .and_then(|secret| secret.get("value"))
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+        .ok_or_else(|| "realtime_transcription_token_missing_client_secret".to_string())?;
+    let session_id = value
+        .get("id")
+        .and_then(|value| value.as_str())
+        .map(ToString::to_string);
+    let expires_at = value
+        .get("client_secret")
+        .and_then(|secret| secret.get("expires_at"))
+        .and_then(|value| value.as_u64())
+        .or_else(|| value.get("expires_at").and_then(|value| value.as_u64()));
+    Ok(MintedRealtimeTranscriptionSession {
+        session_id,
+        client_secret,
+        expires_at,
+    })
+}
+
 fn runtime_execution_envelope_from_voice_turn_request(
     request: &VoiceTurnAdapterRequest,
     request_id: &str,
@@ -1429,6 +1694,48 @@ fn voice_turn_security_reject_response(reject: SecurityReject, turn_id: Option<u
         provenance: None,
     };
     json_response_with_optional_retry_after(status, response, reject.retry_after_secs)
+}
+
+fn desktop_realtime_transcription_security_reject_response(reject: SecurityReject) -> Response {
+    let status = status_for_security_reject(reject.kind);
+    let response = DesktopRealtimeTranscriptionSessionResponse {
+        status: "error".to_string(),
+        outcome: "REJECTED".to_string(),
+        reason: Some(reject.reason),
+        session_id: None,
+        client_secret: None,
+        expires_at: None,
+        websocket_url: String::new(),
+        transcription_model: "gpt-4o-transcribe".to_string(),
+        input_audio_format: "pcm16_24000_mono".to_string(),
+        max_session_duration_ms: 0,
+        max_silence_duration_ms: 0,
+        max_reconnect_attempts: 0,
+        retry_count: 0,
+    };
+    json_response_with_optional_retry_after(status, response, reject.retry_after_secs)
+}
+
+fn desktop_realtime_transcription_error_response(status: StatusCode, reason: &str) -> Response {
+    (
+        status,
+        Json(DesktopRealtimeTranscriptionSessionResponse {
+            status: "error".to_string(),
+            outcome: "FAILED_CLOSED".to_string(),
+            reason: Some(reason.to_string()),
+            session_id: None,
+            client_secret: None,
+            expires_at: None,
+            websocket_url: String::new(),
+            transcription_model: "gpt-4o-transcribe".to_string(),
+            input_audio_format: "pcm16_24000_mono".to_string(),
+            max_session_duration_ms: 0,
+            max_silence_duration_ms: 0,
+            max_reconnect_attempts: 0,
+            retry_count: 0,
+        }),
+    )
+        .into_response()
 }
 
 fn invite_click_security_reject_response(reject: SecurityReject) -> Response {
@@ -1759,14 +2066,23 @@ mod tests {
     use super::*;
 
     use std::{
+        ffi::OsString,
+        fs,
+        io::{Read, Write},
+        net::TcpListener,
         path::PathBuf,
-        sync::atomic::{AtomicU64, Ordering},
-        time::{SystemTime, UNIX_EPOCH},
+        sync::{
+            atomic::{AtomicU64, Ordering},
+            mpsc, Mutex, OnceLock,
+        },
+        thread,
+        time::{Duration, SystemTime, UNIX_EPOCH},
     };
 
     use axum::body::to_bytes;
     use axum::http::header::AUTHORIZATION;
     use selene_adapter::VoiceTurnAudioCaptureRef;
+    use selene_engines::device_vault::DeviceVault;
     use selene_kernel_contracts::common::SessionState;
     use selene_kernel_contracts::ph1_voice_id::{
         UserId, VoiceEmbeddingCaptureRef, VOICE_ID_ENROLL_COMPLETE_COMMIT,
@@ -1795,6 +2111,99 @@ mod tests {
         DeviceRecord, IdentityRecord, IdentityStatus, Ph1fStore, TenantCompanyLifecycleState,
         TenantCompanyRecord, WakeSampleResult,
     };
+
+    struct ScopedEnvVar {
+        key: &'static str,
+        previous: Option<OsString>,
+    }
+
+    impl ScopedEnvVar {
+        fn set(key: &'static str, value: &str) -> Self {
+            let previous = std::env::var_os(key);
+            std::env::set_var(key, value);
+            Self { key, previous }
+        }
+
+        fn unset(key: &'static str) -> Self {
+            let previous = std::env::var_os(key);
+            std::env::remove_var(key);
+            Self { key, previous }
+        }
+    }
+
+    impl Drop for ScopedEnvVar {
+        fn drop(&mut self) {
+            if let Some(value) = self.previous.as_ref() {
+                std::env::set_var(self.key, value);
+            } else {
+                std::env::remove_var(self.key);
+            }
+        }
+    }
+
+    struct MockRealtimeSessionServer {
+        url: String,
+        request_rx: mpsc::Receiver<String>,
+        join: thread::JoinHandle<()>,
+    }
+
+    fn spawn_mock_realtime_session_server(
+        status: u16,
+        body: serde_json::Value,
+    ) -> MockRealtimeSessionServer {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .expect("mock realtime transcription listener should bind");
+        let address = listener.local_addr().expect("mock realtime address");
+        let (request_tx, request_rx) = mpsc::channel();
+        let body = body.to_string();
+        let join = thread::spawn(move || {
+            let Ok((mut stream, _)) = listener.accept() else {
+                return;
+            };
+            let mut buffer = [0_u8; 8192];
+            let request_len = stream.read(&mut buffer).unwrap_or(0);
+            let request_text = String::from_utf8_lossy(&buffer[..request_len]).to_string();
+            let _ = request_tx.send(request_text);
+            let response = format!(
+                "HTTP/1.1 {status} OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            let _ = stream.write_all(response.as_bytes());
+        });
+        MockRealtimeSessionServer {
+            url: format!("http://{address}/v1/realtime/transcription_sessions"),
+            request_rx,
+            join,
+        }
+    }
+
+    fn isolated_realtime_vault_path(label: &str, secrets: &[(&str, &str)]) -> (PathBuf, PathBuf) {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time must be monotonic for tests")
+            .as_nanos();
+        let path =
+            std::env::temp_dir().join(format!("selene-http-realtime-vault-{label}-{nanos}.json"));
+        let key_path = path.with_extension("master.key");
+        let _ = fs::remove_file(&path);
+        let _ = fs::remove_file(&key_path);
+        let vault = DeviceVault::for_paths(path.clone(), key_path.clone());
+        for (key, value) in secrets {
+            vault
+                .set_secret(key, value)
+                .expect("test vault secret seed should succeed");
+        }
+        (path, key_path)
+    }
+
+    fn realtime_env_lock() -> std::sync::MutexGuard<'static, ()> {
+        static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        ENV_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .expect("realtime transcription env lock poisoned")
+    }
 
     fn test_runtime() -> AdapterRuntime {
         test_runtime_with_store().0
@@ -2540,7 +2949,10 @@ mod tests {
                 digest,
                 selene_storage::ph1f::MemoryThreadEventKind::ThreadDigestUpsert,
                 ReasonCodeId(0x4D00_1003),
-                format!("seed_http_session_posture_resume_selection_digest_{}", session_id.0),
+                format!(
+                    "seed_http_session_posture_resume_selection_digest_{}",
+                    session_id.0
+                ),
             )
             .unwrap();
         store
@@ -2757,6 +3169,244 @@ mod tests {
             HeaderValue::from_str(nonce).expect("nonce header must parse"),
         );
         headers
+    }
+
+    fn base_realtime_transcription_session_request() -> DesktopRealtimeTranscriptionSessionRequest {
+        DesktopRealtimeTranscriptionSessionRequest {
+            correlation_id: 44_001,
+            actor_user_id: "tenant_a:user_realtime_test".to_string(),
+            device_id: "desktop_realtime_device_1".to_string(),
+            requested_model: Some("gpt-4o-transcribe".to_string()),
+            feature_flag_name: "SELENE_DESKTOP_OPENAI_REALTIME_TRANSCRIPTION_ENABLED".to_string(),
+            feature_flag_enabled: true,
+        }
+    }
+
+    #[tokio::test]
+    async fn ingress_realtime_transcription_session_without_bearer_returns_401() {
+        let state = test_state_with_config(IngressSecurityConfig::from_env());
+        let request = base_realtime_transcription_session_request();
+        let now_ms = system_time_now_ms();
+        let headers = security_headers(None, "req-rt-1", "idem-rt-1", now_ms, "nonce-rt-1");
+        let response =
+            run_desktop_realtime_transcription_session(State(state), headers, Json(request)).await;
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn ingress_realtime_transcription_session_flag_off_fails_closed() {
+        let state = test_state_with_config(IngressSecurityConfig::from_env());
+        let mut request = base_realtime_transcription_session_request();
+        request.feature_flag_enabled = false;
+        let now_ms = system_time_now_ms();
+        let headers = security_headers(
+            Some(bearer_for(&request.actor_user_id, &request.device_id)),
+            "req-rt-2",
+            "idem-rt-2",
+            now_ms,
+            "nonce-rt-2",
+        );
+        let response =
+            run_desktop_realtime_transcription_session(State(state), headers, Json(request)).await;
+        assert_eq!(response.status(), StatusCode::PRECONDITION_FAILED);
+        let body: DesktopRealtimeTranscriptionSessionResponse =
+            decode_json_response(response).await;
+        assert_eq!(body.status, "error");
+        assert_eq!(body.outcome, "FAILED_CLOSED");
+        assert_eq!(
+            body.reason.as_deref(),
+            Some("desktop_realtime_transcription_feature_flag_disabled")
+        );
+        assert!(body.client_secret.is_none());
+    }
+
+    #[tokio::test]
+    async fn ingress_realtime_transcription_session_missing_openai_key_fails_closed() {
+        let _guard = realtime_env_lock();
+        let (vault_path, key_path) = isolated_realtime_vault_path("missing-openai-key", &[]);
+        let vault_path_text = vault_path
+            .to_str()
+            .expect("test vault path should be valid UTF-8")
+            .to_string();
+        let _unset_openai = ScopedEnvVar::unset("OPENAI_API_KEY");
+        let _vault_scope = ScopedEnvVar::set("SELENE_DEVICE_VAULT_PATH", &vault_path_text);
+
+        let state = test_state_with_config(IngressSecurityConfig::from_env());
+        let request = base_realtime_transcription_session_request();
+        let now_ms = system_time_now_ms();
+        let headers = security_headers(
+            Some(bearer_for(&request.actor_user_id, &request.device_id)),
+            "req-rt-missing-key",
+            "idem-rt-missing-key",
+            now_ms,
+            "nonce-rt-missing-key",
+        );
+        let response =
+            run_desktop_realtime_transcription_session(State(state), headers, Json(request)).await;
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let body: DesktopRealtimeTranscriptionSessionResponse =
+            decode_json_response(response).await;
+        assert_eq!(body.status, "error");
+        assert_eq!(body.outcome, "FAILED_CLOSED");
+        assert_eq!(body.reason.as_deref(), Some("missing_openai_api_key"));
+        assert!(body.client_secret.is_none());
+        let serialized = serde_json::to_string(&body).expect("response should serialize");
+        assert!(!serialized.contains("sk-"));
+        let _ = fs::remove_file(vault_path);
+        let _ = fs::remove_file(key_path);
+    }
+
+    #[tokio::test]
+    async fn ingress_realtime_transcription_session_provider_failure_is_redacted() {
+        let _guard = realtime_env_lock();
+        let permanent_key = "sk-test-permanent-key-never-exposed";
+        let mock = spawn_mock_realtime_session_server(
+            400,
+            serde_json::json!({
+                "error": {
+                    "message": "Invalid value: ''. Supported values are language codes.",
+                    "type": "invalid_request_error",
+                    "code": "invalid_value",
+                    "param": "input_audio_transcription.language"
+                }
+            }),
+        );
+        let (vault_path, key_path) =
+            isolated_realtime_vault_path("provider-failure", &[("openai_api_key", permanent_key)]);
+        let vault_path_text = vault_path
+            .to_str()
+            .expect("test vault path should be valid UTF-8")
+            .to_string();
+        let _unset_openai = ScopedEnvVar::unset("OPENAI_API_KEY");
+        let _vault_scope = ScopedEnvVar::set("SELENE_DEVICE_VAULT_PATH", &vault_path_text);
+        let _endpoint_scope =
+            ScopedEnvVar::set("OPENAI_REALTIME_TRANSCRIPTION_SESSION_URL", &mock.url);
+
+        let state = test_state_with_config(IngressSecurityConfig::from_env());
+        let request = base_realtime_transcription_session_request();
+        let now_ms = system_time_now_ms();
+        let headers = security_headers(
+            Some(bearer_for(&request.actor_user_id, &request.device_id)),
+            "req-rt-provider-failure",
+            "idem-rt-provider-failure",
+            now_ms,
+            "nonce-rt-provider-failure",
+        );
+        let response =
+            run_desktop_realtime_transcription_session(State(state), headers, Json(request)).await;
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let body: DesktopRealtimeTranscriptionSessionResponse =
+            decode_json_response(response).await;
+        assert_eq!(body.status, "error");
+        assert_eq!(body.outcome, "FAILED_CLOSED");
+        assert_eq!(
+            body.reason.as_deref(),
+            Some("realtime_transcription_token_request_failed")
+        );
+        assert!(body.client_secret.is_none());
+        let serialized = serde_json::to_string(&body).expect("response should serialize");
+        for forbidden in [
+            permanent_key,
+            "Invalid value",
+            "input_audio_transcription.language",
+            "invalid_request_error",
+        ] {
+            assert!(
+                !serialized.contains(forbidden),
+                "desktop response leaked provider/key detail: {serialized}"
+            );
+        }
+        let request_text = mock
+            .request_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("mock provider should receive request");
+        assert!(request_text.contains("Authorization: Bearer "));
+        mock.join.join().expect("mock provider thread should join");
+        let _ = fs::remove_file(vault_path);
+        let _ = fs::remove_file(key_path);
+    }
+
+    #[tokio::test]
+    async fn ingress_realtime_transcription_session_success_maps_client_secret() {
+        let _guard = realtime_env_lock();
+        let permanent_key = "sk-test-permanent-key-never-exposed";
+        let mock = spawn_mock_realtime_session_server(
+            200,
+            serde_json::json!({
+                "id": "sess_realtime_transcription_test",
+                "object": "realtime.transcription_session",
+                "type": "transcription",
+                "input_audio_format": "pcm16",
+                "input_audio_transcription": {
+                    "model": "gpt-4o-transcribe"
+                },
+                "turn_detection": {
+                    "type": "server_vad",
+                    "threshold": 0.5,
+                    "prefix_padding_ms": 300,
+                    "silence_duration_ms": 1200
+                },
+                "client_secret": {
+                    "value": "ek_test_realtime_transcription_client_secret",
+                    "expires_at": 1770000000
+                },
+                "expires_at": 1770000000
+            }),
+        );
+        let (vault_path, key_path) =
+            isolated_realtime_vault_path("success", &[("openai_api_key", permanent_key)]);
+        let vault_path_text = vault_path
+            .to_str()
+            .expect("test vault path should be valid UTF-8")
+            .to_string();
+        let _unset_openai = ScopedEnvVar::unset("OPENAI_API_KEY");
+        let _vault_scope = ScopedEnvVar::set("SELENE_DEVICE_VAULT_PATH", &vault_path_text);
+        let _endpoint_scope =
+            ScopedEnvVar::set("OPENAI_REALTIME_TRANSCRIPTION_SESSION_URL", &mock.url);
+
+        let state = test_state_with_config(IngressSecurityConfig::from_env());
+        let request = base_realtime_transcription_session_request();
+        let now_ms = system_time_now_ms();
+        let headers = security_headers(
+            Some(bearer_for(&request.actor_user_id, &request.device_id)),
+            "req-rt-success",
+            "idem-rt-success",
+            now_ms,
+            "nonce-rt-success",
+        );
+        let response =
+            run_desktop_realtime_transcription_session(State(state), headers, Json(request)).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let body: DesktopRealtimeTranscriptionSessionResponse =
+            decode_json_response(response).await;
+        assert_eq!(body.status, "ok");
+        assert_eq!(body.outcome, "REALTIME_TRANSCRIPTION_SESSION_CREATED");
+        assert_eq!(
+            body.client_secret.as_deref(),
+            Some("ek_test_realtime_transcription_client_secret")
+        );
+        assert_eq!(
+            body.session_id.as_deref(),
+            Some("sess_realtime_transcription_test")
+        );
+        assert_eq!(body.expires_at, Some(1770000000));
+        assert_eq!(body.transcription_model, "gpt-4o-transcribe");
+        assert_eq!(body.input_audio_format, "pcm16_24000_mono");
+        let serialized = serde_json::to_string(&body).expect("response should serialize");
+        assert!(!serialized.contains(permanent_key));
+
+        let request_text = mock
+            .request_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("mock provider should receive request");
+        assert!(request_text.contains("POST /v1/realtime/transcription_sessions"));
+        assert!(request_text.contains("\"input_audio_format\":\"pcm16\""));
+        assert!(request_text.contains("\"model\":\"gpt-4o-transcribe\""));
+        assert!(request_text.contains("\"input_audio_noise_reduction\":{\"type\":\"near_field\"}"));
+        assert!(!request_text.contains("\"language\""));
+        mock.join.join().expect("mock provider thread should join");
+        let _ = fs::remove_file(vault_path);
+        let _ = fs::remove_file(key_path);
     }
 
     #[tokio::test]
@@ -3449,8 +4099,14 @@ mod tests {
         assert_eq!(body.status, "ok");
         assert_eq!(body.outcome, "SESSION_POSTURE_EVIDENCE_READ");
         assert_eq!(body.session_id.as_deref(), Some("4932"));
-        assert_eq!(body.selected_thread_id.as_deref(), Some("thread_resume_hot"));
-        assert_eq!(body.selected_thread_title.as_deref(), Some("Japan ski trip"));
+        assert_eq!(
+            body.selected_thread_id.as_deref(),
+            Some("thread_resume_hot")
+        );
+        assert_eq!(
+            body.selected_thread_title.as_deref(),
+            Some("Japan ski trip")
+        );
         assert_eq!(body.pending_work_order_id, None);
         assert_eq!(body.resume_tier.as_deref(), Some("HOT"));
         assert_eq!(
@@ -3564,7 +4220,9 @@ mod tests {
                         "only the archived user side exists".to_string(),
                         "hash_http_archived_recent_slice_user_only".to_string(),
                         selene_kernel_contracts::ph1f::PrivacyScope::PublicChat,
-                        Some("seed_http_session_posture_archived_recent_slice_user_only".to_string()),
+                        Some(
+                            "seed_http_session_posture_archived_recent_slice_user_only".to_string(),
+                        ),
                         None,
                         None,
                     )

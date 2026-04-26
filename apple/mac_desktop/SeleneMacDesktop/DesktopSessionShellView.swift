@@ -99,6 +99,38 @@ private func boundedSummary(_ rawValue: String?) -> String? {
     return "\(trimmed.prefix(217))..."
 }
 
+private func boundedFailureLogToken(_ rawValue: String) -> String {
+    let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+    let allowed = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-")
+    let scalars = trimmed.unicodeScalars.filter { allowed.contains($0) }
+    let sanitized = String(String.UnicodeScalarView(scalars))
+    guard !sanitized.isEmpty else {
+        return "redacted"
+    }
+
+    return String(sanitized.prefix(64))
+}
+
+private enum DesktopRealtimeTranscriptionFeatureFlag {
+    static let name = "SELENE_DESKTOP_OPENAI_REALTIME_TRANSCRIPTION_ENABLED"
+
+    static var isEnabled: Bool {
+        let rawValue = ProcessInfo.processInfo.environment[name]?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        return matchesEnabled(rawValue)
+    }
+
+    private static func matchesEnabled(_ rawValue: String?) -> Bool {
+        switch rawValue {
+        case "1", "true", "yes", "on", "enabled":
+            return true
+        default:
+            return false
+        }
+    }
+}
+
 private func boundedAudioCaptureToken(
     _ rawValue: String?,
     fallback: String,
@@ -1565,6 +1597,8 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
     private let maxVoiceTurnBytes = 16_384
     private let autoPrepareAfterSilenceDelay: TimeInterval = 1.1
     private let audioEngine = AVAudioEngine()
+    private let realtimeAudioQueue = DispatchQueue(label: "selene.desktop.realtime-transcription.audio")
+    private let realtimeURLSession = URLSession(configuration: .ephemeral)
     private let speechRecognizer: SFSpeechRecognizer?
     private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
     private var recognitionTask: SFSpeechRecognitionTask?
@@ -1572,11 +1606,64 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
     private var lastGeneratedDeviceTurnSequence: UInt64 = 0
     private var activeCaptureContext: CaptureSessionTransportContext?
     private var autoPrepareAfterSilenceWorkItem: DispatchWorkItem?
+    private var realtimeSession: DesktopRealtimeTranscriptionSessionState?
+    private var realtimeWebSocketTask: URLSessionWebSocketTask?
+    private var realtimeOutputFormat: AVAudioFormat?
+    private var realtimeAudioConverter: AVAudioConverter?
+    private var realtimePartialTranscript = ""
+    private var realtimeCommittedTranscript = ""
+    private var realtimeCaptureStopNS: UInt64?
+    private var realtimeCompletionTimeoutWorkItem: DispatchWorkItem?
+    private var realtimeMaxSessionDurationWorkItem: DispatchWorkItem?
+    private var realtimeFirstDeltaNS: UInt64?
 
     init(locale: Locale? = nil) {
         let resolvedLocale = locale ?? Self.preferredLocale()
         speechRecognizer = SFSpeechRecognizer(locale: resolvedLocale) ?? SFSpeechRecognizer()
         refreshPermissionState()
+    }
+
+    func startRealtimeTranscriptionVoiceTurn(
+        session: DesktopRealtimeTranscriptionSessionState
+    ) {
+        failedRequest = nil
+
+        guard !isListening else {
+            return
+        }
+
+        guard pendingRequest == nil else {
+            recordFailure(
+                id: "failed_realtime_transcription_pending_request_active",
+                title: "Failed explicit voice request",
+                summary: "The realtime transcription path could not start while a prepared explicit voice request is already pending.",
+                detail: "Fallback/rollback visibility only; no parallel local answer lane or hidden capture session was created."
+            )
+            return
+        }
+
+        transcriptPreview = ""
+        refreshPermissionState()
+        requestMicrophonePermissionIfNeeded { [weak self] granted in
+            guard let self else {
+                return
+            }
+
+            DispatchQueue.main.async {
+                self.refreshPermissionState()
+                guard granted else {
+                    self.recordFailure(
+                        id: "failed_realtime_transcription_microphone_permission",
+                        title: "Failed explicit voice request",
+                        summary: "Microphone permission is required before realtime transcription capture can begin.",
+                        detail: "Permission visibility only; no wake behavior, background capture, or local transcript authority was introduced."
+                    )
+                    return
+                }
+
+                self.beginRealtimeTranscriptionCapture(session: session)
+            }
+        }
     }
 
     func startExplicitVoiceTurn() {
@@ -1640,6 +1727,11 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
     }
 
     func stopCaptureAndPrepareVoiceTurn() {
+        if realtimeWebSocketTask != nil {
+            stopRealtimeTranscriptionCaptureAndCommit()
+            return
+        }
+
         guard isListening else {
             recordFailure(
                 id: "failed_explicit_voice_not_listening",
@@ -1829,6 +1921,420 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
         }
     }
 
+    private func beginRealtimeTranscriptionCapture(
+        session: DesktopRealtimeTranscriptionSessionState
+    ) {
+        failedRequest = nil
+        teardownRecognitionSession()
+        refreshPermissionState()
+        realtimeSession = session
+        realtimePartialTranscript = ""
+        realtimeCommittedTranscript = ""
+        realtimeCaptureStopNS = nil
+        realtimeFirstDeltaNS = nil
+        transcriptPreview = ""
+
+        guard let websocketURL = URL(string: session.websocketURL) else {
+            teardownRealtimeTranscriptionSession()
+            recordFailure(
+                id: "failed_realtime_transcription_websocket_url",
+                title: "Failed explicit voice request",
+                summary: "The realtime transcription WebSocket URL was not valid.",
+                detail: "Token/session failure visibility only; the shell did not expose provider payloads, retain audio, or fabricate local output."
+            )
+            return
+        }
+
+        do {
+            let captureContext = Self.makeCaptureSessionTransportContext(speechRecognizer: speechRecognizer)
+            let inputNode = audioEngine.inputNode
+            let inputFormat = inputNode.outputFormat(forBus: 0)
+            guard let outputFormat = AVAudioFormat(
+                commonFormat: .pcmFormatInt16,
+                sampleRate: 24_000,
+                channels: 1,
+                interleaved: false
+            ),
+            let converter = AVAudioConverter(from: inputFormat, to: outputFormat) else {
+                teardownRealtimeTranscriptionSession()
+                recordFailure(
+                    id: "failed_realtime_transcription_audio_format",
+                    title: "Failed explicit voice request",
+                    summary: "The microphone audio format could not be converted into the required realtime transcription PCM16 stream.",
+                    detail: "Failure visibility only; no raw audio was retained and no fallback success is counted as realtime success."
+                )
+                return
+            }
+
+            var request = URLRequest(url: websocketURL)
+            request.setValue("Bearer \(session.clientSecret)", forHTTPHeaderField: "Authorization")
+            request.setValue("realtime=v1", forHTTPHeaderField: "OpenAI-Beta")
+            let websocketTask = realtimeURLSession.webSocketTask(with: request)
+            realtimeWebSocketTask = websocketTask
+            realtimeOutputFormat = outputFormat
+            realtimeAudioConverter = converter
+            activeCaptureContext = captureContext
+
+            websocketTask.resume()
+            receiveRealtimeTranscriptionEvents()
+
+            inputNode.installTap(onBus: 0, bufferSize: 2_048, format: inputFormat) { [weak self] buffer, _ in
+                self?.appendRealtimeAudioBuffer(buffer, inputFormat: inputFormat)
+            }
+            hasInputTap = true
+
+            audioEngine.prepare()
+            try audioEngine.start()
+            isListening = true
+            desktopAppendRuntimeBridgeDebugLog(
+                "openai realtime transcription start flag=\(DesktopRealtimeTranscriptionFeatureFlag.name) model=\(session.transcriptionModel) request=\(session.requestID)"
+            )
+            scheduleRealtimeMaxSessionDuration(session.maxSessionDurationMS)
+        } catch {
+            teardownRecognitionSession()
+            recordFailure(
+                id: "failed_realtime_transcription_capture_start",
+                title: "Failed explicit voice request",
+                summary: "The realtime transcription capture session could not start from this foreground surface.",
+                detail: "Capture start failed without exposing provider payloads or retaining audio. Detail: \(error.localizedDescription)"
+            )
+        }
+    }
+
+    private func appendRealtimeAudioBuffer(
+        _ buffer: AVAudioPCMBuffer,
+        inputFormat: AVAudioFormat
+    ) {
+        realtimeAudioQueue.async { [weak self] in
+            guard let self,
+                  let converter = self.realtimeAudioConverter,
+                  let outputFormat = self.realtimeOutputFormat,
+                  self.realtimeWebSocketTask != nil else {
+                return
+            }
+
+            let ratio = outputFormat.sampleRate / Swift.max(inputFormat.sampleRate, 1)
+            let frameCapacity = AVAudioFrameCount(
+                Swift.max(1, Double(buffer.frameLength) * ratio + 128)
+            )
+            guard let outputBuffer = AVAudioPCMBuffer(
+                pcmFormat: outputFormat,
+                frameCapacity: frameCapacity
+            ) else {
+                return
+            }
+
+            var conversionError: NSError?
+            var suppliedInput = false
+            let status = converter.convert(to: outputBuffer, error: &conversionError) { _, outStatus in
+                if suppliedInput {
+                    outStatus.pointee = .noDataNow
+                    return nil
+                }
+
+                suppliedInput = true
+                outStatus.pointee = .haveData
+                return buffer
+            }
+
+            guard status != .error,
+                  outputBuffer.frameLength > 0,
+                  let channelData = outputBuffer.int16ChannelData else {
+                return
+            }
+
+            let byteCount = Int(outputBuffer.frameLength) * MemoryLayout<Int16>.size
+            let audioData = Data(bytes: channelData[0], count: byteCount)
+            self.sendRealtimeTranscriptionEvent([
+                "type": "input_audio_buffer.append",
+                "audio": audioData.base64EncodedString()
+            ])
+        }
+    }
+
+    private func sendRealtimeTranscriptionEvent(_ event: [String: Any]) {
+        guard let websocketTask = realtimeWebSocketTask,
+              JSONSerialization.isValidJSONObject(event),
+              let data = try? JSONSerialization.data(withJSONObject: event),
+              let message = String(data: data, encoding: .utf8) else {
+            return
+        }
+
+        websocketTask.send(.string(message)) { error in
+            if error != nil {
+                desktopAppendRuntimeBridgeDebugLog(
+                    "openai realtime transcription send failure redacted=true"
+                )
+            }
+        }
+    }
+
+    private func receiveRealtimeTranscriptionEvents() {
+        guard let websocketTask = realtimeWebSocketTask else {
+            return
+        }
+
+        websocketTask.receive { [weak self] result in
+            guard let self else {
+                return
+            }
+
+            switch result {
+            case .success(let message):
+                switch message {
+                case .string(let text):
+                    self.handleRealtimeTranscriptionEvent(text)
+                case .data(let data):
+                    if let text = String(data: data, encoding: .utf8) {
+                        self.handleRealtimeTranscriptionEvent(text)
+                    }
+                @unknown default:
+                    break
+                }
+                if self.realtimeWebSocketTask === websocketTask {
+                    self.receiveRealtimeTranscriptionEvents()
+                }
+            case .failure:
+                DispatchQueue.main.async {
+                    guard self.realtimeWebSocketTask === websocketTask,
+                          self.pendingRequest == nil else {
+                        return
+                    }
+
+                    desktopAppendRuntimeBridgeDebugLog(
+                        "openai realtime transcription receive failure redacted=true"
+                    )
+                    self.recordFailure(
+                        id: "failed_realtime_transcription_connection",
+                        title: "Failed explicit voice request",
+                        summary: "Realtime transcription connection failed before a committed transcript was available.",
+                        detail: "Failure visibility only; provider internals were redacted and no fallback answer was counted as realtime success."
+                    )
+                    self.teardownRecognitionSession()
+                }
+            }
+        }
+    }
+
+    private func handleRealtimeTranscriptionEvent(_ text: String) {
+        guard let data = text.data(using: .utf8),
+              let rawObject = try? JSONSerialization.jsonObject(with: data),
+              let object = rawObject as? [String: Any],
+              let eventType = object["type"] as? String else {
+            return
+        }
+
+        if eventType == "transcription_session.created" || eventType == "session.created" {
+            desktopAppendRuntimeBridgeDebugLog(
+                "openai realtime transcription session created observed=true"
+            )
+            return
+        }
+
+        if eventType == "transcription_session.updated" || eventType == "session.updated" {
+            desktopAppendRuntimeBridgeDebugLog(
+                "openai realtime transcription session updated observed=true"
+            )
+            return
+        }
+
+        if eventType == "conversation.item.input_audio_transcription.delta",
+           let delta = object["delta"] as? String,
+           !delta.isEmpty {
+            DispatchQueue.main.async {
+                if self.realtimeFirstDeltaNS == nil {
+                    self.realtimeFirstDeltaNS = DispatchTime.now().uptimeNanoseconds
+                    desktopAppendRuntimeBridgeDebugLog(
+                        "openai realtime transcription first_delta observed=true"
+                    )
+                }
+                self.realtimePartialTranscript += delta
+                self.transcriptPreview = self.realtimePartialTranscript
+            }
+            return
+        }
+
+        if eventType == "conversation.item.input_audio_transcription.completed",
+           let transcript = object["transcript"] as? String {
+            DispatchQueue.main.async {
+                self.completeRealtimeTranscription(with: transcript)
+            }
+            return
+        }
+
+        if eventType == "conversation.item.input_audio_transcription.failed" {
+            let error = object["error"] as? [String: Any]
+            let code = (error?["code"] as? String)
+                .map { boundedFailureLogToken($0) } ?? "unavailable"
+            let param = (error?["param"] as? String)
+                .map { boundedFailureLogToken($0) } ?? "unavailable"
+            desktopAppendRuntimeBridgeDebugLog(
+                "openai realtime transcription failed event observed=true code=\(code) param=\(param) redacted=true"
+            )
+            DispatchQueue.main.async {
+                self.recordFailure(
+                    id: "failed_realtime_transcription_provider_transcription",
+                    title: "Failed explicit voice request",
+                    summary: "Realtime transcription failed closed before a committed transcript was available.",
+                    detail: "Transcription failure details were redacted. No runtime execution, local answer, or raw provider payload was exposed."
+                )
+                self.teardownRecognitionSession()
+            }
+            return
+        }
+
+        if eventType == "error" {
+            let error = object["error"] as? [String: Any]
+            let code = (error?["code"] as? String)
+                .map { boundedFailureLogToken($0) } ?? "unavailable"
+            let param = (error?["param"] as? String)
+                .map { boundedFailureLogToken($0) } ?? "unavailable"
+            desktopAppendRuntimeBridgeDebugLog(
+                "openai realtime transcription error event observed=true code=\(code) param=\(param) redacted=true"
+            )
+            DispatchQueue.main.async {
+                self.recordFailure(
+                    id: "failed_realtime_transcription_provider_error",
+                    title: "Failed explicit voice request",
+                    summary: "Realtime transcription failed closed before a committed transcript was available.",
+                    detail: "Provider error details were redacted. No raw provider payload, audio archive, or local answer lane was exposed."
+                )
+                self.teardownRecognitionSession()
+            }
+            return
+        }
+
+        if eventType == "input_audio_buffer.committed" {
+            desktopAppendRuntimeBridgeDebugLog(
+                "openai realtime transcription audio_committed observed=true"
+            )
+        }
+    }
+
+    private func stopRealtimeTranscriptionCaptureAndCommit() {
+        guard isListening else {
+            recordFailure(
+                id: "failed_realtime_transcription_not_listening",
+                title: "Failed explicit voice request",
+                summary: "Realtime transcription was not actively listening when commit was requested.",
+                detail: "Explicit voice-turn production remains foreground-only and user-visible."
+            )
+            return
+        }
+
+        realtimeCaptureStopNS = Swift.max(DispatchTime.now().uptimeNanoseconds, 1)
+        endCaptureInput()
+        sendRealtimeTranscriptionEvent(["type": "input_audio_buffer.commit"])
+        scheduleRealtimeCompletionTimeout()
+        desktopAppendRuntimeBridgeDebugLog(
+            "openai realtime transcription commit sent=true partial_chars=\(realtimePartialTranscript.count)"
+        )
+    }
+
+    private func completeRealtimeTranscription(with transcript: String) {
+        cancelRealtimeCompletionTimeout()
+        let trimmedTranscript = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedTranscript.isEmpty else {
+            recordFailure(
+                id: "failed_realtime_transcription_empty_transcript",
+                title: "Failed explicit voice request",
+                summary: "OpenAI realtime transcription completed without usable transcript text.",
+                detail: "Failure visibility only; no runtime execution, tool call, or local answer was triggered."
+            )
+            teardownRecognitionSession()
+            return
+        }
+
+        guard trimmedTranscript.utf8.count <= maxVoiceTurnBytes else {
+            recordFailure(
+                id: "failed_realtime_transcription_transcript_validation",
+                title: "Failed explicit voice request",
+                summary: "The realtime transcription result exceeded the bounded explicit voice transcript limit.",
+                detail: "Failure visibility only; retry a shorter utterance. No final runtime dispatch was triggered."
+            )
+            teardownRecognitionSession()
+            return
+        }
+
+        let captureStopNS = realtimeCaptureStopNS ?? Swift.max(DispatchTime.now().uptimeNanoseconds, 1)
+        realtimeCaptureStopNS = captureStopNS
+        endCaptureInput()
+
+        guard let audioCaptureRefState = preparedAudioCaptureRefState(captureStopNS: captureStopNS) else {
+            recordFailure(
+                id: "failed_realtime_transcription_audio_capture_ref_unavailable",
+                title: "Failed explicit voice request",
+                summary: "The realtime transcription session could not preserve the existing explicit voice audio-capture-ref bundle.",
+                detail: "Failure visibility only; no final runtime dispatch or local answer was produced."
+            )
+            teardownRecognitionSession()
+            return
+        }
+
+        let deviceTurnSequence = nextDeviceTurnSequence()
+        realtimeCommittedTranscript = trimmedTranscript
+        transcriptPreview = trimmedTranscript
+        pendingRequest = ExplicitVoiceTurnRequestState(
+            id: "desktop_realtime_voice_turn_request_\(deviceTurnSequence)",
+            deviceTurnSequence: deviceTurnSequence,
+            transcript: trimmedTranscript,
+            byteCount: trimmedTranscript.utf8.count,
+            audioCaptureRefState: audioCaptureRefState
+        )
+        desktopAppendRuntimeBridgeDebugLog(
+            "openai realtime transcription completed final_chars=\(trimmedTranscript.count) runtime_handoff=/v1/voice/turn"
+        )
+        completeStoppedCaptureSession()
+    }
+
+    private func scheduleRealtimeCompletionTimeout() {
+        cancelRealtimeCompletionTimeout()
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self,
+                  self.pendingRequest == nil,
+                  self.realtimeWebSocketTask != nil else {
+                return
+            }
+
+            self.recordFailure(
+                id: "failed_realtime_transcription_timeout",
+                title: "Failed explicit voice request",
+                summary: "Realtime transcription timed out before a committed transcript was available.",
+                detail: "Timeout handling is bounded and deterministic. No raw audio was retained and no local answer lane was used."
+            )
+            self.teardownRecognitionSession()
+        }
+        realtimeCompletionTimeoutWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 6.0, execute: workItem)
+    }
+
+    private func cancelRealtimeCompletionTimeout() {
+        realtimeCompletionTimeoutWorkItem?.cancel()
+        realtimeCompletionTimeoutWorkItem = nil
+    }
+
+    private func scheduleRealtimeMaxSessionDuration(_ durationMS: UInt64) {
+        realtimeMaxSessionDurationWorkItem?.cancel()
+        let boundedDelay = TimeInterval(Swift.max(5_000, Swift.min(durationMS, 300_000))) / 1_000
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self,
+                  self.isListening,
+                  self.realtimeWebSocketTask != nil else {
+                return
+            }
+
+            self.recordFailure(
+                id: "failed_realtime_transcription_session_duration",
+                title: "Failed explicit voice request",
+                summary: "Realtime transcription reached its bounded session duration before commit.",
+                detail: "The session was closed deterministically to prevent runaway cost or stuck capture."
+            )
+            self.teardownRecognitionSession()
+        }
+        realtimeMaxSessionDurationWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + boundedDelay, execute: workItem)
+    }
+
     private func endCaptureInput() {
         cancelAutoPrepareAfterSilence()
         if audioEngine.isRunning {
@@ -1851,6 +2357,7 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
         recognitionTask = nil
         recognitionRequest = nil
         activeCaptureContext = nil
+        teardownRealtimeTranscriptionSession()
     }
 
     private func completeStoppedCaptureSession() {
@@ -1859,6 +2366,22 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
         recognitionTask = nil
         recognitionRequest = nil
         activeCaptureContext = nil
+        teardownRealtimeTranscriptionSession()
+    }
+
+    private func teardownRealtimeTranscriptionSession() {
+        cancelRealtimeCompletionTimeout()
+        realtimeMaxSessionDurationWorkItem?.cancel()
+        realtimeMaxSessionDurationWorkItem = nil
+        realtimeWebSocketTask?.cancel(with: .normalClosure, reason: nil)
+        realtimeWebSocketTask = nil
+        realtimeSession = nil
+        realtimeAudioConverter = nil
+        realtimeOutputFormat = nil
+        realtimePartialTranscript = ""
+        realtimeCommittedTranscript = ""
+        realtimeCaptureStopNS = nil
+        realtimeFirstDeltaNS = nil
     }
 
     private func scheduleAutoPrepareAfterSilenceIfNeeded(using transcript: String) {
@@ -4969,6 +5492,7 @@ struct DesktopSessionShellView: View {
     @StateObject private var desktopWakeListenerController = DesktopWakeListenerController()
     @StateObject private var desktopCanonicalRuntimeBridge = DesktopCanonicalRuntimeBridge()
     @StateObject private var desktopAuthoritativeReplyPlaybackController = DesktopAuthoritativeReplyPlaybackController()
+    @State private var desktopRealtimeTranscriptionStartInFlight = false
     @State private var desktopCanonicalRuntimeOutcomeState: DesktopCanonicalRuntimeOutcomeState?
     @State private var desktopInviteOpenRuntimeOutcomeState: DesktopInviteOpenRuntimeOutcomeState?
     @State private var desktopOnboardingContinueRuntimeOutcomeState: DesktopOnboardingContinueRuntimeOutcomeState?
@@ -6661,10 +7185,14 @@ struct DesktopSessionShellView: View {
                         desktopAuthoritativeReplyProvenanceRenderState = nil
                         desktopAuthoritativeReplyPlaybackController.reset()
                         desktopAuthoritativeReplyPlaybackState = .idle
-                        explicitVoiceController.startExplicitVoiceTurn()
+                        startDesktopExplicitVoiceTurn()
                     }
                     .buttonStyle(.borderedProminent)
-                    .disabled(explicitVoiceController.isListening || explicitVoiceController.pendingRequest != nil)
+                    .disabled(
+                        desktopRealtimeTranscriptionStartInFlight
+                            || explicitVoiceController.isListening
+                            || explicitVoiceController.pendingRequest != nil
+                    )
 
                     Button("Stop capture and prepare voice request") {
                         desktopCanonicalRuntimeOutcomeState = nil
@@ -7159,11 +7687,53 @@ struct DesktopSessionShellView: View {
         desktopAuthoritativeReplyProvenanceRenderState = nil
         desktopAuthoritativeReplyPlaybackController.reset()
         desktopAuthoritativeReplyPlaybackState = .idle
-        explicitVoiceController.startExplicitVoiceTurn()
+        startDesktopExplicitVoiceTurn()
     }
 
     private func stopDesktopComposerVoiceTurnAndSend() {
         explicitVoiceController.stopCaptureAndPrepareVoiceTurn()
+    }
+
+    private func startDesktopExplicitVoiceTurn() {
+        let featureFlagEnabled = DesktopRealtimeTranscriptionFeatureFlag.isEnabled
+        desktopAppendRuntimeBridgeDebugLog(
+            "desktop realtime transcription flag name=\(DesktopRealtimeTranscriptionFeatureFlag.name) enabled=\(featureFlagEnabled)"
+        )
+        guard featureFlagEnabled else {
+            desktopAppendRuntimeBridgeDebugLog(
+                "desktop realtime transcription rollback path=old_bounded reason=feature_flag_off"
+            )
+            explicitVoiceController.startExplicitVoiceTurn()
+            return
+        }
+
+        guard !desktopRealtimeTranscriptionStartInFlight else {
+            return
+        }
+
+        desktopRealtimeTranscriptionStartInFlight = true
+        Task { @MainActor in
+            defer {
+                desktopRealtimeTranscriptionStartInFlight = false
+            }
+
+            do {
+                let session = try await desktopCanonicalRuntimeBridge
+                    .createDesktopRealtimeTranscriptionSession(
+                        featureFlagName: DesktopRealtimeTranscriptionFeatureFlag.name,
+                        featureFlagEnabled: true
+                    )
+                desktopAppendRuntimeBridgeDebugLog(
+                    "desktop realtime transcription token mint ok request=\(session.requestID) endpoint=\(session.endpoint) model=\(session.transcriptionModel)"
+                )
+                explicitVoiceController.startRealtimeTranscriptionVoiceTurn(session: session)
+            } catch {
+                desktopAppendRuntimeBridgeDebugLog(
+                    "desktop realtime transcription fallback path=old_bounded reason=token_mint_failure redacted=true"
+                )
+                explicitVoiceController.startExplicitVoiceTurn()
+            }
+        }
     }
 
     private func toggleDesktopComposerVoiceMode() {
@@ -18070,21 +18640,22 @@ struct DesktopSessionShellView: View {
             }
 
             desktopCanonicalRuntimeOutcomeState = outcomeState
-            desktopSubmittedUserContinuityPreviewState = DesktopSubmittedUserContinuityPreviewState(
-                requestID: pendingRequest.id,
-                inputMode: .explicitVoice,
-                text: pendingRequest.transcript
-            )
-            desktopPersistSubmittedUserContinuityIfNeeded(
-                requestID: pendingRequest.id,
-                inputMode: .explicitVoice,
-                text: pendingRequest.transcript,
-                conversationKey: conversationKey
-            )
-            if outcomeState.phase == .completed {
-                desktopAuthoritativeReplyRenderState = DesktopAuthoritativeReplyRenderState(
-                    title: "Cloud-authored authoritative reply",
-                    summary: outcomeState.authoritativeResponseText == nil
+        desktopSubmittedUserContinuityPreviewState = DesktopSubmittedUserContinuityPreviewState(
+            requestID: pendingRequest.id,
+            inputMode: .explicitVoice,
+            text: pendingRequest.transcript
+        )
+        desktopPersistSubmittedUserContinuityIfNeeded(
+            requestID: pendingRequest.id,
+            inputMode: .explicitVoice,
+            text: pendingRequest.transcript,
+            conversationKey: conversationKey
+        )
+        desktopSubmittedUserContinuityPreviewState = nil
+        if outcomeState.phase == .completed {
+            desktopAuthoritativeReplyRenderState = DesktopAuthoritativeReplyRenderState(
+                title: "Cloud-authored authoritative reply",
+                summary: outcomeState.authoritativeResponseText == nil
                         ? "The canonical runtime completed without reply text for this bounded explicit voice turn."
                         : "Read-only canonical reply text from the completed runtime dispatch is now visible here while the shell remains explicitly non-authoritative.",
                     authoritativeResponseText: outcomeState.authoritativeResponseText
@@ -18167,6 +18738,7 @@ struct DesktopSessionShellView: View {
                 text: pendingRequest.transcript,
                 conversationKey: conversationKey
             )
+            desktopSubmittedUserContinuityPreviewState = nil
             desktopPersistRuntimeFailureReplyIfNeeded(
                 requestID: pendingRequest.id,
                 summary: "The canonical runtime bridge could not deliver the bounded explicit voice request.",
