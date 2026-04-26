@@ -52,6 +52,7 @@ use selene_kernel_contracts::ph1j::{
 };
 use selene_kernel_contracts::ph1k::InterruptCandidate;
 use selene_kernel_contracts::ph1l::SessionId;
+use selene_kernel_contracts::ph1lang::{LanguagePacket, LanguageSwitchScope};
 use selene_kernel_contracts::ph1link::{
     AppPlatform, InviteeType, LinkStatus, Ph1LinkRequest, Ph1LinkResponse, TokenId,
     LINK_INVITE_DRAFT_UPDATE_COMMIT, LINK_INVITE_OPEN_ACTIVATE_COMMIT,
@@ -5314,6 +5315,10 @@ impl AppServerIngressRuntime {
         let (sim_catalog_snapshot_hash, sim_catalog_snapshot_version) =
             simulation_catalog_snapshot_for_agent_input(store, tenant_id);
         let transcript_text = transcript_text_from_nlp_output(x_build.nlp_output.as_ref());
+        let language_packet = build_language_packet_from_agent_fields(
+            transcript_text.as_deref(),
+            x_build.locale.as_deref(),
+        )?;
         let trace_id = runtime_execution_envelope.trace_id.clone();
         let packet_hash = agent_input_packet_hash_hex(
             correlation_id,
@@ -5330,6 +5335,7 @@ impl AppServerIngressRuntime {
             sim_catalog_snapshot_version,
             &sim_catalog_snapshot_hash,
             forwarded.identity_prompt_scope_key.as_deref(),
+            language_packet.as_ref(),
         );
         AgentInputPacket::v1_with_runtime_execution_envelope(
             correlation_id.0,
@@ -5359,6 +5365,7 @@ impl AppServerIngressRuntime {
             sim_catalog_snapshot_hash,
             sim_catalog_snapshot_version,
         )
+        .and_then(|packet| packet.with_language_packet(language_packet))
         .map_err(StorageError::ContractViolation)
     }
 }
@@ -10277,6 +10284,9 @@ fn build_ph1x_request_from_agent_input_packet(
         packet.last_failure_reason_code,
     )
     .map_err(StorageError::ContractViolation)?;
+    req = req
+        .with_language_packet(packet.language_packet.clone())
+        .map_err(StorageError::ContractViolation)?;
     let step_up_capabilities = match app_platform {
         AppPlatform::Ios | AppPlatform::Android | AppPlatform::Tablet => {
             StepUpCapabilities::v1(true, true)
@@ -10387,6 +10397,7 @@ fn agent_input_packet_hash_hex(
     sim_catalog_snapshot_version: u64,
     sim_catalog_snapshot_hash: &str,
     identity_prompt_scope_key: Option<&str>,
+    language_packet: Option<&LanguagePacket>,
 ) -> String {
     let mut lines = vec![
         format!("corr={}", correlation_id.0),
@@ -10416,6 +10427,12 @@ fn agent_input_packet_hash_hex(
                 .unwrap_or_default()
         ),
         format!("lang={}", language_hint.unwrap_or("none")),
+        format!(
+            "language_packet={}",
+            language_packet
+                .map(language_packet_hash_component)
+                .unwrap_or_else(|| "none".to_string())
+        ),
     ];
     lines.extend(memory_candidates.iter().map(|candidate| {
         format!(
@@ -10427,6 +10444,188 @@ fn agent_input_packet_hash_hex(
     }));
     lines.sort();
     agent_hash_hex(&lines.join("\n"))
+}
+
+fn language_packet_hash_component(packet: &LanguagePacket) -> String {
+    format!(
+        "{}>{};conf={};mixed={};clarify={};scope={:?}",
+        packet.input_language_primary,
+        packet.output_language_selected,
+        packet.input_language_confidence,
+        packet.mixed_language_detected,
+        packet.clarification_required,
+        packet.language_switch_scope
+    )
+}
+
+fn build_language_packet_from_agent_fields(
+    transcript_text: Option<&str>,
+    language_hint: Option<&str>,
+) -> Result<Option<LanguagePacket>, StorageError> {
+    let Some(text) = transcript_text
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+    else {
+        return Ok(None);
+    };
+    let detected = detect_language_packet_languages(text, language_hint);
+    let switch_requested = detects_language_switch_request(text);
+    let output_language = explicit_output_language(text)
+        .map(str::to_string)
+        .unwrap_or_else(|| detected.primary.clone());
+    let packet = LanguagePacket::v1(
+        detected.primary,
+        detected.candidates,
+        detected.confidence_bps,
+        output_language,
+        if switch_requested {
+            "explicit_user_language_instruction".to_string()
+        } else {
+            "same_language_continuity".to_string()
+        },
+        detected.script,
+        detected.mixed,
+        switch_requested,
+        LanguageSwitchScope::ThisTurn,
+        "not_measured".to_string(),
+        broken_language_risk(text).to_string(),
+        detected.confidence_bps < 5_000,
+        vec!["text_detector".to_string(), "locale_hint".to_string()],
+    )
+    .map_err(StorageError::ContractViolation)?;
+    Ok(Some(packet))
+}
+
+struct DetectedLanguagePacket {
+    primary: String,
+    candidates: Vec<String>,
+    confidence_bps: u16,
+    script: String,
+    mixed: bool,
+}
+
+fn detect_language_packet_languages(
+    text: &str,
+    language_hint: Option<&str>,
+) -> DetectedLanguagePacket {
+    let has_cjk = text.chars().any(is_cjk_char);
+    let has_ascii_alpha = text.chars().any(|ch| ch.is_ascii_alphabetic());
+    let hint = language_hint.unwrap_or_default().to_ascii_lowercase();
+    let mixed = has_cjk && has_ascii_alpha;
+    let mut candidates = Vec::new();
+    if has_cjk {
+        candidates.push("zh".to_string());
+    }
+    if has_ascii_alpha {
+        candidates.push("en".to_string());
+    }
+    if candidates.is_empty() {
+        if hint.starts_with("zh") {
+            candidates.push("zh".to_string());
+        } else {
+            candidates.push("en".to_string());
+        }
+    }
+    candidates.sort();
+    candidates.dedup();
+    let primary = if explicit_output_language(text).is_some() {
+        explicit_output_language(text).unwrap_or("en").to_string()
+    } else if has_cjk {
+        "zh".to_string()
+    } else if hint.starts_with("zh") {
+        "zh".to_string()
+    } else {
+        "en".to_string()
+    };
+    let confidence_bps = if text.contains("???") || text.trim().len() <= 1 {
+        4_000
+    } else if mixed {
+        8_500
+    } else if has_cjk || has_ascii_alpha {
+        9_000
+    } else {
+        6_000
+    };
+    DetectedLanguagePacket {
+        primary,
+        candidates,
+        confidence_bps,
+        script: detect_language_script(text).to_string(),
+        mixed,
+    }
+}
+
+fn is_cjk_char(ch: char) -> bool {
+    ('\u{4e00}'..='\u{9fff}').contains(&ch)
+        || ('\u{3400}'..='\u{4dbf}').contains(&ch)
+        || ('\u{f900}'..='\u{faff}').contains(&ch)
+}
+
+fn detect_language_script(text: &str) -> &'static str {
+    let has_cjk = text.chars().any(is_cjk_char);
+    let has_ascii = text.chars().any(|ch| ch.is_ascii_alphabetic());
+    let has_traditional_markers = text.chars().any(|ch| {
+        matches!(
+            ch,
+            '現' | '幾' | '點' | '這' | '個' | '後' | '氣' | '麼' | '簡' | '體' | '請'
+        )
+    });
+    let has_simplified_markers = text.chars().any(|ch| {
+        matches!(
+            ch,
+            '现' | '几' | '点' | '这' | '个' | '后' | '气' | '么' | '简' | '体' | '请'
+        )
+    });
+    match (
+        has_cjk,
+        has_ascii,
+        has_traditional_markers,
+        has_simplified_markers,
+    ) {
+        (true, true, true, _) => "mixed-han-traditional-latin",
+        (true, true, _, true) => "mixed-han-simplified-latin",
+        (true, true, _, _) => "mixed-han-latin",
+        (true, false, true, _) => "han-traditional",
+        (true, false, _, true) => "han-simplified",
+        (true, false, _, _) => "han",
+        (false, true, _, _) => "latin",
+        _ => "unknown",
+    }
+}
+
+fn explicit_output_language(text: &str) -> Option<&'static str> {
+    let lower = text.to_ascii_lowercase();
+    if lower.contains("answer in chinese")
+        || lower.contains("speak chinese")
+        || lower.contains("use chinese")
+        || text.contains("用中文")
+        || text.contains("中文回答")
+    {
+        Some("zh")
+    } else if lower.contains("answer in english")
+        || lower.contains("speak english")
+        || lower.contains("use english")
+        || lower.contains("in simple english")
+        || text.contains("用英文")
+        || text.contains("英文回答")
+    {
+        Some("en")
+    } else {
+        None
+    }
+}
+
+fn detects_language_switch_request(text: &str) -> bool {
+    explicit_output_language(text).is_some()
+}
+
+fn broken_language_risk(text: &str) -> &'static str {
+    let lower = text.to_ascii_lowercase();
+    if lower.contains("what now") || lower.split_whitespace().count() <= 3 {
+        "possible"
+    } else {
+        "not_measured"
+    }
 }
 
 fn truncate_for_packet_hash(text: &str) -> String {
@@ -10476,6 +10675,9 @@ fn build_tool_followup_ph1x_request(
         .map_err(StorageError::ContractViolation)?;
     req = req
         .with_identity_prompt_scope_key(base_request.identity_prompt_scope_key.clone())
+        .map_err(StorageError::ContractViolation)?;
+    req = req
+        .with_language_packet(base_request.language_packet.clone())
         .map_err(StorageError::ContractViolation)?;
     Ok(req)
 }

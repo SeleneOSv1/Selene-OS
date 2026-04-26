@@ -41,6 +41,151 @@ pub enum LangPlanScope {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum LanguageSwitchScope {
+    ThisTurn,
+    ThisSession,
+    PersistentPreference,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LanguagePacket {
+    pub input_language_primary: String,
+    pub input_language_candidates: Vec<String>,
+    /// Deterministic confidence in basis points: 0..=10000.
+    pub input_language_confidence: u16,
+    pub output_language_selected: String,
+    pub output_language_reason: String,
+    pub script_detected: String,
+    pub mixed_language_detected: bool,
+    pub language_switch_requested: bool,
+    pub language_switch_scope: LanguageSwitchScope,
+    pub accent_or_pronunciation_risk: String,
+    pub broken_language_risk: String,
+    pub clarification_required: bool,
+    pub source: Vec<String>,
+}
+
+impl LanguagePacket {
+    #[allow(clippy::too_many_arguments)]
+    pub fn v1(
+        input_language_primary: String,
+        input_language_candidates: Vec<String>,
+        input_language_confidence: u16,
+        output_language_selected: String,
+        output_language_reason: String,
+        script_detected: String,
+        mixed_language_detected: bool,
+        language_switch_requested: bool,
+        language_switch_scope: LanguageSwitchScope,
+        accent_or_pronunciation_risk: String,
+        broken_language_risk: String,
+        clarification_required: bool,
+        source: Vec<String>,
+    ) -> Result<Self, ContractViolation> {
+        let packet = Self {
+            input_language_primary,
+            input_language_candidates,
+            input_language_confidence,
+            output_language_selected,
+            output_language_reason,
+            script_detected,
+            mixed_language_detected,
+            language_switch_requested,
+            language_switch_scope,
+            accent_or_pronunciation_risk,
+            broken_language_risk,
+            clarification_required,
+            source,
+        };
+        packet.validate()?;
+        Ok(packet)
+    }
+
+    pub fn output_language_is_chinese(&self) -> bool {
+        self.output_language_selected == "zh" || self.output_language_selected.starts_with("zh-")
+    }
+
+    pub fn input_language_is_chinese(&self) -> bool {
+        self.input_language_primary == "zh" || self.input_language_primary.starts_with("zh-")
+    }
+}
+
+impl Validate for LanguagePacket {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        validate_language_tag(
+            "language_packet.input_language_primary",
+            &self.input_language_primary,
+        )?;
+        validate_language_tag(
+            "language_packet.output_language_selected",
+            &self.output_language_selected,
+        )?;
+        if self.input_language_candidates.is_empty() {
+            return Err(ContractViolation::InvalidValue {
+                field: "language_packet.input_language_candidates",
+                reason: "must not be empty",
+            });
+        }
+        if self.input_language_candidates.len() > 8 {
+            return Err(ContractViolation::InvalidValue {
+                field: "language_packet.input_language_candidates",
+                reason: "must be <= 8 entries",
+            });
+        }
+        let mut candidates = BTreeSet::new();
+        for candidate in &self.input_language_candidates {
+            validate_language_tag("language_packet.input_language_candidates", candidate)?;
+            if !candidates.insert(candidate.as_str()) {
+                return Err(ContractViolation::InvalidValue {
+                    field: "language_packet.input_language_candidates",
+                    reason: "language tags must be unique",
+                });
+            }
+        }
+        if self.input_language_confidence > 10_000 {
+            return Err(ContractViolation::InvalidRange {
+                field: "language_packet.input_language_confidence",
+                min: 0.0,
+                max: 10_000.0,
+                got: f64::from(self.input_language_confidence),
+            });
+        }
+        validate_text(
+            "language_packet.output_language_reason",
+            &self.output_language_reason,
+            128,
+        )?;
+        validate_text("language_packet.script_detected", &self.script_detected, 64)?;
+        validate_text(
+            "language_packet.accent_or_pronunciation_risk",
+            &self.accent_or_pronunciation_risk,
+            64,
+        )?;
+        validate_text(
+            "language_packet.broken_language_risk",
+            &self.broken_language_risk,
+            64,
+        )?;
+        if self.source.is_empty() {
+            return Err(ContractViolation::InvalidValue {
+                field: "language_packet.source",
+                reason: "must not be empty",
+            });
+        }
+        if self.source.len() > 8 {
+            return Err(ContractViolation::InvalidValue {
+                field: "language_packet.source",
+                reason: "must be <= 8 entries",
+            });
+        }
+        for source in &self.source {
+            validate_text("language_packet.source", source, 64)?;
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum LangValidationStatus {
     Ok,
     Fail,
@@ -824,5 +969,82 @@ mod tests {
             false,
         );
         assert!(out.is_err());
+    }
+
+    #[test]
+    fn language_packet_validates_english_chinese_and_mixed() {
+        let english = LanguagePacket::v1(
+            "en".to_string(),
+            vec!["en".to_string()],
+            9_000,
+            "en".to_string(),
+            "same_language_continuity".to_string(),
+            "latin".to_string(),
+            false,
+            false,
+            LanguageSwitchScope::ThisTurn,
+            "typed_input".to_string(),
+            "not_measured".to_string(),
+            false,
+            vec!["text_detector".to_string()],
+        );
+        assert!(english.is_ok());
+
+        let chinese = LanguagePacket::v1(
+            "zh".to_string(),
+            vec!["zh".to_string()],
+            9_000,
+            "zh".to_string(),
+            "same_language_continuity".to_string(),
+            "han-simplified".to_string(),
+            false,
+            false,
+            LanguageSwitchScope::ThisTurn,
+            "stt_confidence_not_exposed".to_string(),
+            "not_measured".to_string(),
+            false,
+            vec!["ph1lang_detect_and_response_map".to_string()],
+        );
+        assert!(chinese.is_ok());
+
+        let mixed = LanguagePacket::v1(
+            "zh".to_string(),
+            vec!["en".to_string(), "zh".to_string()],
+            8_500,
+            "en".to_string(),
+            "explicit_user_language_instruction".to_string(),
+            "mixed-han-simplified-latin".to_string(),
+            true,
+            true,
+            LanguageSwitchScope::ThisTurn,
+            "typed_input".to_string(),
+            "not_measured".to_string(),
+            false,
+            vec![
+                "text_detector".to_string(),
+                "runtime_classifier".to_string(),
+            ],
+        );
+        assert!(mixed.is_ok());
+    }
+
+    #[test]
+    fn language_packet_rejects_invalid_confidence() {
+        let packet = LanguagePacket::v1(
+            "en".to_string(),
+            vec!["en".to_string()],
+            10_001,
+            "en".to_string(),
+            "same_language_continuity".to_string(),
+            "latin".to_string(),
+            false,
+            false,
+            LanguageSwitchScope::ThisTurn,
+            "typed_input".to_string(),
+            "not_measured".to_string(),
+            false,
+            vec!["text_detector".to_string()],
+        );
+        assert!(packet.is_err());
     }
 }

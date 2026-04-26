@@ -5,10 +5,11 @@ use crate::ph1d::PolicyContextRef;
 use crate::ph1e::ToolResponse;
 use crate::ph1k::InterruptCandidate;
 use crate::ph1l::SessionId;
+use crate::ph1lang::LanguagePacket;
 use crate::ph1m::MemoryCandidate;
 use crate::ph1n::Ph1nResponse;
-use crate::runtime_execution::RuntimeExecutionEnvelope;
 use crate::ph1x::{ConfirmAnswer, ThreadState};
+use crate::runtime_execution::RuntimeExecutionEnvelope;
 use crate::{
     ContractViolation, MonotonicTimeNs, ReasonCodeId, SchemaVersion, SessionState, Validate,
 };
@@ -26,6 +27,7 @@ pub struct AgentInputPacket {
     pub packet_hash: String,
     pub transcript_text: Option<String>,
     pub language_hint: Option<String>,
+    pub language_packet: Option<LanguagePacket>,
     pub srl_repaired_transcript: Option<String>,
     pub voice_identity_assertion: Ph1VoiceIdResponse,
     pub identity_prompt_scope_key: Option<String>,
@@ -144,6 +146,7 @@ impl AgentInputPacket {
             packet_hash,
             transcript_text,
             language_hint,
+            language_packet: None,
             srl_repaired_transcript,
             voice_identity_assertion,
             identity_prompt_scope_key,
@@ -165,6 +168,15 @@ impl AgentInputPacket {
         };
         packet.validate()?;
         Ok(packet)
+    }
+
+    pub fn with_language_packet(
+        mut self,
+        language_packet: Option<LanguagePacket>,
+    ) -> Result<Self, ContractViolation> {
+        self.language_packet = language_packet;
+        self.validate()?;
+        Ok(self)
     }
 }
 
@@ -265,6 +277,9 @@ impl Validate for AgentInputPacket {
             32_768,
         )?;
         validate_optional_text("agent_input_packet.language_hint", &self.language_hint, 64)?;
+        if let Some(packet) = &self.language_packet {
+            packet.validate()?;
+        }
         validate_optional_text(
             "agent_input_packet.srl_repaired_transcript",
             &self.srl_repaired_transcript,

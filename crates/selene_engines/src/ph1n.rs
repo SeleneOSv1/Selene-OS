@@ -219,12 +219,36 @@ fn looks_like_bcast_urgent_followup_policy_update(lower: &str) -> bool {
 fn looks_like_time_query(lower: &str) -> bool {
     lower == "time"
         || lower.starts_with("time ")
+        || lower.contains("time what now")
         || lower.contains("what time")
         || lower.contains("current time")
         || lower.contains("local time")
         || lower.contains("what is the time")
         || lower.contains("what's the time")
         || lower.contains("tell me the time")
+        || lower.contains("几点")
+        || lower.contains("幾點")
+        || (lower.contains("东京") && (lower.contains("时间") || lower.contains("现在")))
+        || (lower.contains("東京") && (lower.contains("時間") || lower.contains("現在")))
+}
+
+fn canonical_time_tool_query(transcript: &str) -> Option<String> {
+    let lower = transcript.to_ascii_lowercase();
+    let place =
+        if lower.contains("tokyo") || transcript.contains("东京") || transcript.contains("東京")
+        {
+            Some("Tokyo")
+        } else if lower.contains("new york")
+            || transcript.contains("纽约")
+            || transcript.contains("紐約")
+        {
+            Some("New York")
+        } else if lower.contains("sydney") || transcript.contains("悉尼") {
+            Some("Sydney")
+        } else {
+            None
+        }?;
+    Some(format!("what time is it in {place}"))
 }
 
 fn looks_like_weather_query(lower: &str) -> bool {
@@ -610,10 +634,24 @@ fn normalize_intent(
         | IntentType::RecordModeQuery
         | IntentType::ConnectorQuery => {
             let (sens, confirm) = meta_for_intent(intent_type);
+            let fields = if intent_type == IntentType::TimeQuery {
+                canonical_time_tool_query(t)
+                    .map(|canonical| {
+                        Ok(vec![IntentField {
+                            key: FieldKey::Task,
+                            value: FieldValue::normalized(t.to_string(), canonical)?,
+                            confidence: OverallConfidence::High,
+                        }])
+                    })
+                    .transpose()?
+                    .unwrap_or_default()
+            } else {
+                Vec::new()
+            };
             Ok(Ph1nResponse::IntentDraft(IntentDraft::v1(
                 intent_type,
                 INTENT_SCHEMA_VERSION_V1,
-                vec![],
+                fields,
                 vec![],
                 OverallConfidence::High,
                 vec![evidence_span(FieldKey::Task, t, t)?],
@@ -4093,6 +4131,30 @@ mod tests {
                     assert!(!d.requires_confirmation);
                 }
                 _ => panic!("expected deterministic weather intent for {prompt}"),
+            }
+        }
+    }
+
+    #[test]
+    fn h375_chinese_and_broken_english_time_prompts_route_to_time() {
+        let rt = Ph1nRuntime::new(Ph1nConfig::mvp_v1());
+        for (prompt, expected_query) in [
+            ("现在东京几点？", "what time is it in Tokyo"),
+            ("東京現在幾點？", "what time is it in Tokyo"),
+            ("Tokyo time what now?", "what time is it in Tokyo"),
+        ] {
+            let out = rt.run(&req(prompt, "zh")).unwrap();
+            match out {
+                Ph1nResponse::IntentDraft(d) => {
+                    assert_eq!(d.intent_type, IntentType::TimeQuery);
+                    let task = d
+                        .fields
+                        .iter()
+                        .find(|field| field.key == FieldKey::Task)
+                        .and_then(|field| field.value.normalized_value.as_deref());
+                    assert_eq!(task, Some(expected_query));
+                }
+                _ => panic!("expected deterministic time intent for {prompt}"),
             }
         }
     }

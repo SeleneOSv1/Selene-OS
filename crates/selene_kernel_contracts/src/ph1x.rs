@@ -8,6 +8,7 @@ use crate::ph1k::{
     InterruptDegradationContext, InterruptGateConfidences, InterruptRiskContextClass,
     NetworkStabilityClass, PH1K_CONTRACT_VERSION,
 };
+use crate::ph1lang::LanguagePacket;
 use crate::ph1m::MemoryCandidate;
 use crate::ph1n::{FieldKey, IntentDraft, OverallConfidence, Ph1nResponse};
 use crate::ph1tts::{AnswerId, TtsControl};
@@ -1114,6 +1115,7 @@ pub struct Ph1xRequest {
     /// Optional deterministic step-up outcome from PH1.ACCESS/CAPREQ.
     pub step_up_result: Option<StepUpResult>,
     pub locale: Option<String>,
+    pub language_packet: Option<LanguagePacket>,
     pub last_failure_reason_code: Option<ReasonCodeId>,
 }
 
@@ -1167,6 +1169,7 @@ impl Ph1xRequest {
             tts_resume_snapshot: None,
             step_up_result: None,
             locale,
+            language_packet: None,
             last_failure_reason_code,
         };
         r.validate()?;
@@ -1218,6 +1221,15 @@ impl Ph1xRequest {
         step_up_capabilities: Option<StepUpCapabilities>,
     ) -> Result<Self, ContractViolation> {
         self.step_up_capabilities = step_up_capabilities;
+        self.validate()?;
+        Ok(self)
+    }
+
+    pub fn with_language_packet(
+        mut self,
+        language_packet: Option<LanguagePacket>,
+    ) -> Result<Self, ContractViolation> {
+        self.language_packet = language_packet;
         self.validate()?;
         Ok(self)
     }
@@ -1452,6 +1464,9 @@ impl Validate for Ph1xRequest {
                     reason: "must be <= 32 chars",
                 });
             }
+        }
+        if let Some(packet) = &self.language_packet {
+            packet.validate()?;
         }
         Ok(())
     }

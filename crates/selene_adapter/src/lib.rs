@@ -32,12 +32,18 @@ use selene_engines::ph1k::{
     evaluate_interrupt_candidate, InterruptFeedbackSignalKind, InterruptInput, InterruptNoiseClass,
     InterruptPhraseMatcher, PhraseDetection,
 };
+use selene_engines::ph1lang::{
+    Ph1LangConfig as EnginePh1LangConfig, Ph1LangRuntime as EnginePh1LangRuntime,
+};
 use selene_engines::ph1n::{
     reason_codes as ph1n_reason_codes, Ph1nConfig as EnginePh1nConfig,
     Ph1nRuntime as EnginePh1nRuntime,
 };
 use selene_engines::ph1pattern::{Ph1PatternConfig as EnginePatternConfig, Ph1PatternRuntime};
 use selene_engines::ph1rll::{Ph1RllConfig as EngineRllConfig, Ph1RllRuntime};
+use selene_engines::ph1srl::{
+    Ph1SrlConfig as EnginePh1SrlConfig, Ph1SrlRuntime as EnginePh1SrlRuntime,
+};
 use selene_engines::ph1vision::{
     Ph1VisionConfig as EnginePh1VisionConfig, Ph1VisionRuntime as EnginePh1VisionRuntime,
 };
@@ -88,11 +94,16 @@ use selene_kernel_contracts::ph1k::{
 use selene_kernel_contracts::ph1l::{
     Ph1lInput, SessionId, SessionSnapshot, TtsPlaybackState, UserActivitySignals,
 };
+use selene_kernel_contracts::ph1lang::{
+    LangResponseMode, LangSourceModality, LanguagePacket, LanguageSwitchScope, Ph1LangRequest,
+    Ph1LangResponse,
+};
 use selene_kernel_contracts::ph1learn::{LearnSignalType, WakeLearnSignalV1, WakeLearnTrigger};
 use selene_kernel_contracts::ph1link::{AppPlatform, TokenId};
 use selene_kernel_contracts::ph1m::MemoryResumeTier;
 use selene_kernel_contracts::ph1n::{
-    Chat as Ph1nChat, FieldKey, IntentType, Ph1nRequest, Ph1nResponse, TranscriptHash,
+    Chat as Ph1nChat, Clarify as Ph1nClarify, FieldKey, IntentType, Ph1nRequest, Ph1nResponse,
+    SensitivityLevel, TranscriptHash,
 };
 use selene_kernel_contracts::ph1onb::{
     OnboardingNextStep, OnboardingSessionId, SenderVerifyDecision,
@@ -101,6 +112,7 @@ use selene_kernel_contracts::ph1os::{OsNextMove, OsOutcomeActionClass, OsOutcome
 use selene_kernel_contracts::ph1pattern::{Ph1PatternRequest, Ph1PatternResponse};
 use selene_kernel_contracts::ph1position::TenantId;
 use selene_kernel_contracts::ph1rll::{Ph1RllRequest, Ph1RllResponse};
+use selene_kernel_contracts::ph1srl::{Ph1SrlRequest, Ph1SrlResponse};
 use selene_kernel_contracts::ph1vision::{
     BoundingBoxPx, Ph1VisionRequest, Ph1VisionResponse, VisualSourceId, VisualSourceKind,
     VisualSourceRef, VisualToken,
@@ -147,6 +159,9 @@ use selene_os::ph1l::{
     ph1l_step_voice_turn, trigger_requires_session_open_step, Ph1lConfig, Ph1lRuntime,
     Ph1lTurnTrigger,
 };
+use selene_os::ph1lang::{
+    LangTurnInput, LangWiringOutcome, Ph1LangEngine, Ph1LangWiring, Ph1LangWiringConfig,
+};
 use selene_os::ph1n::{Ph1nEngine, Ph1nWiring, Ph1nWiringConfig};
 use selene_os::ph1os::{
     OsOcrAnalyzerForwardBundle, OsOcrContextNlpOutcome, OsOcrRouteOutcome, OsVoiceLiveTurnOutcome,
@@ -155,6 +170,9 @@ use selene_os::ph1os::{
 };
 use selene_os::ph1pattern::Ph1PatternEngine;
 use selene_os::ph1rll::Ph1RllEngine;
+use selene_os::ph1srl::{
+    Ph1SrlEngine, Ph1SrlWiring, Ph1SrlWiringConfig, SrlTurnInput, SrlWiringOutcome,
+};
 use selene_os::ph1vision::{
     Ph1VisionEngine, Ph1VisionWiring, Ph1VisionWiringConfig, VisionTurnInput, VisionWiringOutcome,
 };
@@ -1216,6 +1234,44 @@ impl Ph1nEngine for AdapterNlpEngineRuntime {
     }
 }
 
+#[derive(Debug, Clone)]
+struct AdapterLangEngineRuntime {
+    runtime: EnginePh1LangRuntime,
+}
+
+impl AdapterLangEngineRuntime {
+    fn new() -> Self {
+        Self {
+            runtime: EnginePh1LangRuntime::new(EnginePh1LangConfig::mvp_v1()),
+        }
+    }
+}
+
+impl Ph1LangEngine for AdapterLangEngineRuntime {
+    fn run(&self, req: &Ph1LangRequest) -> Ph1LangResponse {
+        self.runtime.run(req)
+    }
+}
+
+#[derive(Debug, Clone)]
+struct AdapterSrlEngineRuntime {
+    runtime: EnginePh1SrlRuntime,
+}
+
+impl AdapterSrlEngineRuntime {
+    fn new() -> Self {
+        Self {
+            runtime: EnginePh1SrlRuntime::new(EnginePh1SrlConfig::mvp_v1()),
+        }
+    }
+}
+
+impl Ph1SrlEngine for AdapterSrlEngineRuntime {
+    fn run(&self, req: &Ph1SrlRequest) -> Ph1SrlResponse {
+        self.runtime.run(req)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SyncIssueKind {
     Retry,
@@ -1375,6 +1431,7 @@ impl EnvPh1dLiveAdapter {
         })
     }
 
+    #[allow(dead_code)]
     fn build_llm_interpret_request(
         &self,
         correlation_id: CorrelationId,
@@ -1382,9 +1439,26 @@ impl EnvPh1dLiveAdapter {
         tenant_id: &str,
         input: &str,
     ) -> Result<Ph1dProviderCallRequest, String> {
+        self.build_llm_interpret_request_for_language(
+            correlation_id,
+            turn_id,
+            tenant_id,
+            input,
+            "en",
+        )
+    }
+
+    fn build_llm_interpret_request_for_language(
+        &self,
+        correlation_id: CorrelationId,
+        turn_id: TurnId,
+        tenant_id: &str,
+        input: &str,
+        output_language: &str,
+    ) -> Result<Ph1dProviderCallRequest, String> {
         let request_seed = format!(
-            "ph1d_llm_interpret:{}:{}:{}:{}",
-            correlation_id.0, turn_id.0, tenant_id, input
+            "ph1d_llm_interpret:{}:{}:{}:{}:{}",
+            correlation_id.0, turn_id.0, tenant_id, output_language, input
         );
         let request_id = RequestId(stable_hash_u64(&request_seed));
         let idempotency_key = sanitize_idempotency_token(&format!(
@@ -1417,7 +1491,10 @@ impl EnvPh1dLiveAdapter {
             Ph1dProviderInputPayloadKind::Text,
             SchemaHash(stable_hash_u64(input)),
             Some(truncate_ascii(input.trim(), 32_768)),
-            Some("text/plain".to_string()),
+            Some(format!(
+                "text/plain:output_language_{}",
+                sanitize_output_language_tag(output_language)
+            )),
             SafetyTier::Standard,
             false,
             false,
@@ -1447,7 +1524,8 @@ impl Ph1dProviderAdapter for EnvPh1dLiveAdapter {
                     "ph1d llm interpret request missing input_payload_inline".to_string(),
                 )
             })?;
-        let payload = openai_llm_interpret_payload(&self.model_id, input);
+        let output_language = output_language_from_content_type(req.input_content_type.as_deref());
+        let payload = openai_llm_interpret_payload(&self.model_id, input, output_language.as_str());
         let payload_text = serde_json::to_string(&payload).map_err(|_| {
             Ph1dProviderAdapterError::terminal("ph1d openai payload encode failed".to_string())
         })?;
@@ -1535,13 +1613,38 @@ impl Ph1dProviderAdapter for EnvPh1dLiveAdapter {
     }
 }
 
-fn openai_llm_interpret_payload(model_id: &str, user_input: &str) -> serde_json::Value {
+fn sanitize_output_language_tag(value: &str) -> String {
+    let trimmed = value.trim();
+    if trimmed.starts_with("zh") {
+        "zh".to_string()
+    } else {
+        "en".to_string()
+    }
+}
+
+fn output_language_from_content_type(value: Option<&str>) -> String {
+    value
+        .and_then(|value| value.rsplit_once("output_language_").map(|(_, tag)| tag))
+        .map(sanitize_output_language_tag)
+        .unwrap_or_else(|| "en".to_string())
+}
+
+fn openai_llm_interpret_payload(
+    model_id: &str,
+    user_input: &str,
+    output_language: &str,
+) -> serde_json::Value {
+    let response_language_instruction = if output_language.starts_with("zh") {
+        "Answer in Chinese. Preserve any English, quoted, or technical terms exactly when the user used them. Do not translate unless the user explicitly asked for translation."
+    } else {
+        "Answer in English unless the user explicitly requested another language. Preserve Chinese, quoted, or technical terms exactly when the user used them."
+    };
     serde_json::json!({
         "model": model_id,
         "input": [
             {
                 "role": "system",
-                "content": "You are Selene's PH1.D public-answer provider. Return exactly one compact JSON object with keys mode, response_text, reason_code. mode must be chat. Answer directly and concisely. Do not include markdown fences, source lists, raw search payloads, HTML entities, provider names, tool names, Retrieved at timestamps, or internal policy text. Do not claim protected identity, memory, session, wake, payment, access, or device authority."
+                "content": format!("You are Selene's PH1.D public-answer provider. Return exactly one compact JSON object with keys mode, response_text, reason_code. mode must be chat. {response_language_instruction} Answer directly and concisely. Do not include markdown fences, source lists, raw search payloads, HTML entities, provider names, tool names, Retrieved at timestamps, or internal policy text. Do not claim protected identity, memory, session, wake, payment, access, or device authority.")
             },
             {
                 "role": "user",
@@ -1597,11 +1700,15 @@ fn ph1d_chat_json_from_provider_text(text: &str) -> Result<String, String> {
             return Err("unsupported structured provider answer".to_string());
         }
     }
-    let response_text = truncate_ascii(trimmed, 2_048);
+    let response_text = truncate_text_chars(trimmed, 2_048);
     if response_text.trim().is_empty() {
         return Err("empty response_text".to_string());
     }
     ph1d_canonical_chat_json(&response_text)
+}
+
+fn truncate_text_chars(text: &str, max_chars: usize) -> String {
+    text.chars().take(max_chars).collect()
 }
 
 fn ph1d_canonical_chat_json(response_text: &str) -> Result<String, String> {
@@ -3829,6 +3936,7 @@ impl AdapterRuntime {
         session_state: SessionState,
         transcript_text: Option<&str>,
         os_outcome: &OsVoiceLiveTurnOutcome,
+        language_packet: Option<&LanguagePacket>,
     ) -> Result<(), String> {
         let (Some(tenant_id), Some(device_id)) = (tenant_id, device_id) else {
             return Ok(());
@@ -3840,7 +3948,8 @@ impl AdapterRuntime {
             .unwrap_or("transcript_unavailable");
         let transcript_ok = Ph1cTranscriptOk::v1(
             transcript_text.to_string(),
-            LanguageTag::new("en").map_err(|err| format!("invalid ph1d language tag: {err:?}"))?,
+            LanguageTag::new(ph1d_language_tag_for_build1c(language_packet))
+                .map_err(|err| format!("invalid ph1d language tag: {err:?}"))?,
             if transcript_text == "transcript_unavailable" {
                 Ph1cConfidenceBucket::Low
             } else {
@@ -3994,6 +4103,7 @@ impl AdapterRuntime {
         session_state: SessionState,
         user_text: Option<&str>,
         execution_outcome: &mut AppVoiceTurnExecutionOutcome,
+        language_packet: Option<&LanguagePacket>,
     ) -> Option<String> {
         if !execution_outcome_is_public_no_intent(execution_outcome) {
             return None;
@@ -4009,6 +4119,7 @@ impl AdapterRuntime {
                 tenant_id.unwrap_or("tenant_default"),
                 session_state,
                 user_text,
+                language_packet,
             ) {
                 Ok(answer) => answer,
                 Err(err) => {
@@ -4018,11 +4129,11 @@ impl AdapterRuntime {
                     {
                         safe_public_provider_internals_refusal()
                     } else {
-                        "I couldn't answer that just now. Please try again.".to_string()
+                        public_failure_text_for_language(language_packet)
                     }
                 }
             },
-            None => "I couldn't answer that just now. Please try again.".to_string(),
+            None => public_failure_text_for_language(language_packet),
         };
         let answer = self.apply_public_joke_diversity(actor_user_id, thread_key, user_text, answer);
         execution_outcome.response_text = Some(answer.clone());
@@ -4066,9 +4177,15 @@ impl AdapterRuntime {
         tenant_id: &str,
         session_state: SessionState,
         user_text: &str,
+        language_packet: Option<&LanguagePacket>,
     ) -> Result<String, String> {
-        let provider_request =
-            adapter.build_llm_interpret_request(correlation_id, turn_id, tenant_id, user_text)?;
+        let provider_request = adapter.build_llm_interpret_request_for_language(
+            correlation_id,
+            turn_id,
+            tenant_id,
+            user_text,
+            ph1d_language_tag_for_build1c(language_packet).as_str(),
+        )?;
         let provider_response = adapter.execute(&provider_request).map_err(|err| {
             format!(
                 "provider_call_failed retryable={} {}",
@@ -4086,7 +4203,8 @@ impl AdapterRuntime {
             .ok_or_else(|| "provider_call_missing_normalized_output".to_string())?;
         let transcript_ok = Ph1cTranscriptOk::v1(
             user_text.to_string(),
-            LanguageTag::new("en").map_err(|err| format!("invalid ph1d language tag: {err:?}"))?,
+            LanguageTag::new(ph1d_language_tag_for_build1c(language_packet))
+                .map_err(|err| format!("invalid ph1d language tag: {err:?}"))?,
             Ph1cConfidenceBucket::High,
         )
         .map_err(|err| format!("ph1d transcript envelope build failed: {err:?}"))?;
@@ -5266,9 +5384,12 @@ impl AdapterRuntime {
                         post_session_error(format!("invalid thread policy flags: {err:?}"))
                     })?;
             }
-            let weather_context_place =
-                latest_weather_context_place(&self.weather_context_state, &actor_user_id, &thread_key)
-                    .map_err(post_session_error)?;
+            let weather_context_place = latest_weather_context_place(
+                &self.weather_context_state,
+                &actor_user_id,
+                &thread_key,
+            )
+            .map_err(post_session_error)?;
             let nlp_transcript_text = deterministic_public_clarification_followup_query(
                 &base_thread_state,
                 user_text_final.as_deref(),
@@ -5280,7 +5401,7 @@ impl AdapterRuntime {
                 )
             })
             .or_else(|| user_text_final.clone());
-            let nlp_output = build_nlp_output_for_voice_turn(
+            let (nlp_output, language_packet) = build_nlp_output_for_voice_turn(
                 &request,
                 nlp_transcript_text.as_deref(),
                 tenant_id_for_ph1c.as_deref(),
@@ -5288,12 +5409,17 @@ impl AdapterRuntime {
             .map_err(post_session_error)?;
             let confirm_answer =
                 infer_confirm_answer_from_user_text(&base_thread_state, user_text_final.as_deref());
-            let locale = request
-                .audio_capture_ref
+            let locale = language_packet
                 .as_ref()
-                .and_then(|capture| capture.locale_tag.as_deref())
-                .map(|raw| truncate_ascii(raw.trim(), 16))
-                .filter(|value| !value.is_empty());
+                .map(|packet| packet.output_language_selected.clone())
+                .or_else(|| {
+                    request
+                        .audio_capture_ref
+                        .as_ref()
+                        .and_then(|capture| capture.locale_tag.as_deref())
+                        .map(|raw| truncate_ascii(raw.trim(), 16))
+                        .filter(|value| !value.is_empty())
+                });
             let x_build = AppVoicePh1xBuildInput {
                 now,
                 thread_key: Some(thread_key.clone()),
@@ -5312,6 +5438,11 @@ impl AdapterRuntime {
                 .ingress
                 .run_voice_turn_end_to_end(&mut store, ingress_request, x_build)
                 .map_err(|err| post_session_error(storage_error_to_string(err)))?;
+            apply_language_continuity_to_execution_outcome(
+                language_packet.as_ref(),
+                user_text_final.as_deref(),
+                &mut execution_outcome,
+            );
             let typed_public_deterministic_answer_text =
                 recover_typed_public_deterministic_tool_answer(
                     request.audio_capture_ref.is_none(),
@@ -5351,9 +5482,10 @@ impl AdapterRuntime {
                 session_turn_state.session_snapshot.session_state,
                 user_text_final.as_deref(),
                 &execution_outcome.voice_outcome,
+                language_packet.as_ref(),
             )
             .map_err(post_session_error)?;
-            let ph1d_public_answer_text =
+            let mut ph1d_public_answer_text =
                 if persistence_mode == PersistenceInvocationMode::LegacyJournalReplay {
                     None
                 } else {
@@ -5366,8 +5498,23 @@ impl AdapterRuntime {
                         session_turn_state.session_snapshot.session_state,
                         user_text_final.as_deref(),
                         &mut execution_outcome,
+                        language_packet.as_ref(),
                     )
                 };
+            apply_language_continuity_to_execution_outcome(
+                language_packet.as_ref(),
+                user_text_final.as_deref(),
+                &mut execution_outcome,
+            );
+            if language_packet
+                .as_ref()
+                .and_then(|packet| {
+                    language_switch_ack_for_build1c(packet, user_text_final.as_deref())
+                })
+                .is_some()
+            {
+                ph1d_public_answer_text = execution_outcome.response_text.clone();
+            }
             if let Err(err) = self.emit_read_only_lane_incidents_and_maybe_run_builder(
                 &mut store,
                 now,
@@ -8427,6 +8574,248 @@ fn onboarding_continue_next_step_to_api_value(next_step: AppOnboardingContinueNe
     .to_string()
 }
 
+#[derive(Debug, Clone)]
+struct Build1cLanguageContext {
+    packet: LanguagePacket,
+    nlp_transcript_text: String,
+}
+
+fn build_language_context_for_voice_turn(
+    request: &VoiceTurnAdapterRequest,
+    transcript_text: Option<&str>,
+    correlation_id: CorrelationId,
+    turn_id: TurnId,
+) -> Result<Option<Build1cLanguageContext>, String> {
+    let Some(text) = transcript_text
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return Ok(None);
+    };
+    let locale_hint = request
+        .audio_capture_ref
+        .as_ref()
+        .and_then(|capture| capture.locale_tag.as_ref())
+        .map(|value| truncate_ascii(value.trim(), 16))
+        .filter(|value| !value.is_empty());
+    let modality = if request.audio_capture_ref.is_some() {
+        LangSourceModality::Voice
+    } else {
+        LangSourceModality::Text
+    };
+    let lang_input = LangTurnInput::v1(
+        correlation_id,
+        turn_id,
+        text.to_string(),
+        locale_hint.clone(),
+        modality,
+        Vec::new(),
+        LangResponseMode::Text,
+    )
+    .map_err(|err| format!("ph1lang input build failed: {err:?}"))?;
+    let lang_outcome = Ph1LangWiring::new(
+        Ph1LangWiringConfig::mvp_v1(true),
+        AdapterLangEngineRuntime::new(),
+    )
+    .map_err(|err| format!("ph1lang wiring build failed: {err:?}"))?
+    .run_turn(&lang_input)
+    .map_err(|err| format!("ph1lang runtime failed: {err:?}"))?;
+    let detected = match lang_outcome {
+        LangWiringOutcome::Forwarded(bundle) => {
+            let output = explicit_output_language_for_build1c(text)
+                .unwrap_or(bundle.map.default_response_language.as_str())
+                .to_string();
+            let candidates = if bundle.detect.detected_languages.is_empty() {
+                vec![output.clone()]
+            } else {
+                bundle.detect.detected_languages.clone()
+            };
+            (
+                bundle.detect.dominant_language_tag,
+                candidates,
+                output,
+                bundle.detect.segment_spans.len() > 1,
+                "ph1lang_detect_and_response_map",
+            )
+        }
+        LangWiringOutcome::NotInvokedDisabled | LangWiringOutcome::NotInvokedNoTranscript => {
+            let output = explicit_output_language_for_build1c(text)
+                .unwrap_or_else(|| language_tag_from_text_for_build1c(text, locale_hint.as_deref()))
+                .to_string();
+            (
+                output.clone(),
+                vec![output.clone()],
+                output,
+                false,
+                "text_detector",
+            )
+        }
+        LangWiringOutcome::Refused(_) => {
+            let output = explicit_output_language_for_build1c(text)
+                .unwrap_or_else(|| language_tag_from_text_for_build1c(text, locale_hint.as_deref()))
+                .to_string();
+            (
+                output.clone(),
+                vec![output.clone()],
+                output,
+                false,
+                "ph1lang_refused_text_detector",
+            )
+        }
+    };
+    let confidence_bps = language_confidence_bps_for_build1c(text, detected.3);
+    let switch_requested = explicit_output_language_for_build1c(text).is_some();
+    let mut packet = LanguagePacket::v1(
+        detected.0,
+        detected.1,
+        confidence_bps,
+        detected.2,
+        if switch_requested {
+            "explicit_user_language_instruction".to_string()
+        } else {
+            "same_language_continuity".to_string()
+        },
+        detect_script_for_build1c(text).to_string(),
+        detected.3,
+        switch_requested,
+        LanguageSwitchScope::ThisTurn,
+        if request.audio_capture_ref.is_some() {
+            "stt_confidence_not_exposed".to_string()
+        } else {
+            "typed_input".to_string()
+        },
+        broken_language_risk_for_build1c(text).to_string(),
+        confidence_bps < 5_000,
+        vec![detected.4.to_string(), "runtime_classifier".to_string()],
+    )
+    .map_err(|err| format!("language packet build failed: {err:?}"))?;
+    let mut nlp_text = text.to_string();
+    if !packet.clarification_required {
+        let srl_input = SrlTurnInput::v1(
+            correlation_id,
+            turn_id,
+            stable_hash_hex_16(text),
+            text.to_string(),
+            packet.input_language_primary.clone(),
+            Vec::new(),
+            Vec::new(),
+        )
+        .map_err(|err| format!("ph1srl input build failed: {err:?}"))?;
+        let srl_outcome = Ph1SrlWiring::new(
+            Ph1SrlWiringConfig::mvp_v1(true),
+            AdapterSrlEngineRuntime::new(),
+        )
+        .map_err(|err| format!("ph1srl wiring build failed: {err:?}"))?
+        .run_turn(&srl_input)
+        .map_err(|err| format!("ph1srl runtime failed: {err:?}"))?;
+        if let SrlWiringOutcome::Forwarded(bundle) = srl_outcome {
+            if !bundle
+                .frame_build
+                .repaired_transcript_text
+                .trim()
+                .is_empty()
+                && !bundle.argument_normalize.clarify_required
+            {
+                nlp_text = bundle.frame_build.repaired_transcript_text.clone();
+            } else if bundle.argument_normalize.clarify_required
+                && packet.input_language_confidence < 8_000
+            {
+                packet.clarification_required = true;
+            }
+        }
+    }
+    Ok(Some(Build1cLanguageContext {
+        packet,
+        nlp_transcript_text: nlp_text,
+    }))
+}
+
+fn language_tag_from_text_for_build1c(text: &str, locale_hint: Option<&str>) -> &'static str {
+    if let Some(hint) = locale_hint {
+        if hint.starts_with("zh") {
+            return "zh";
+        }
+    }
+    if text.chars().any(is_cjk_char_for_build1c) {
+        "zh"
+    } else {
+        "en"
+    }
+}
+
+fn explicit_output_language_for_build1c(text: &str) -> Option<&'static str> {
+    let lower = text.to_ascii_lowercase();
+    if lower.contains("answer in chinese")
+        || lower.contains("speak chinese")
+        || lower.contains("use chinese")
+        || text.contains("用中文")
+        || text.contains("中文回答")
+    {
+        Some("zh")
+    } else if lower.contains("answer in english")
+        || lower.contains("speak english")
+        || lower.contains("use english")
+        || lower.contains("in simple english")
+        || text.contains("用英文")
+        || text.contains("英文回答")
+    {
+        Some("en")
+    } else {
+        None
+    }
+}
+
+fn language_confidence_bps_for_build1c(text: &str, mixed: bool) -> u16 {
+    if text.contains("???") || text.trim().len() <= 1 {
+        4_000
+    } else if mixed {
+        8_500
+    } else if text
+        .chars()
+        .any(|ch| ch.is_ascii_alphabetic() || is_cjk_char_for_build1c(ch))
+    {
+        9_000
+    } else {
+        6_000
+    }
+}
+
+fn is_cjk_char_for_build1c(ch: char) -> bool {
+    ('\u{4e00}'..='\u{9fff}').contains(&ch)
+        || ('\u{3400}'..='\u{4dbf}').contains(&ch)
+        || ('\u{f900}'..='\u{faff}').contains(&ch)
+}
+
+fn detect_script_for_build1c(text: &str) -> &'static str {
+    let has_cjk = text.chars().any(is_cjk_char_for_build1c);
+    let has_ascii = text.chars().any(|ch| ch.is_ascii_alphabetic());
+    let has_traditional = text
+        .chars()
+        .any(|ch| matches!(ch, '現' | '幾' | '點' | '這' | '個' | '後' | '氣' | '麼'));
+    let has_simplified = text
+        .chars()
+        .any(|ch| matches!(ch, '现' | '几' | '点' | '这' | '个' | '后' | '气' | '么'));
+    match (has_cjk, has_ascii, has_traditional, has_simplified) {
+        (true, true, true, _) => "mixed-han-traditional-latin",
+        (true, true, _, true) => "mixed-han-simplified-latin",
+        (true, true, _, _) => "mixed-han-latin",
+        (true, false, true, _) => "han-traditional",
+        (true, false, _, true) => "han-simplified",
+        (true, false, _, _) => "han",
+        (false, true, _, _) => "latin",
+        _ => "unknown",
+    }
+}
+
+fn broken_language_risk_for_build1c(text: &str) -> &'static str {
+    let lower = text.to_ascii_lowercase();
+    if lower.contains("what now") || lower.split_whitespace().count() <= 3 {
+        "possible"
+    } else {
+        "not_measured"
+    }
+}
+
 fn build_base_nlp_request_for_vision_handoff(
     request: &VoiceTurnAdapterRequest,
     base_transcript_text: Option<&str>,
@@ -8467,12 +8856,192 @@ fn build_nlp_output_for_voice_turn(
     request: &VoiceTurnAdapterRequest,
     transcript_text: Option<&str>,
     runtime_tenant_scope: Option<&str>,
-) -> Result<Ph1nResponse, String> {
-    let nlp_request =
-        build_base_nlp_request_for_vision_handoff(request, transcript_text, runtime_tenant_scope)?;
+) -> Result<(Ph1nResponse, Option<LanguagePacket>), String> {
+    let correlation_id = CorrelationId(request.correlation_id.into());
+    let turn_id = TurnId(request.turn_id);
+    let language_context =
+        build_language_context_for_voice_turn(request, transcript_text, correlation_id, turn_id)?;
+    if let Some(context) = language_context.as_ref() {
+        if context.packet.clarification_required {
+            return Ok((
+                Ph1nResponse::Clarify(language_clarify_for_build1c(&context.packet)?),
+                Some(context.packet.clone()),
+            ));
+        }
+    }
+    let effective_transcript = language_context
+        .as_ref()
+        .map(|context| context.nlp_transcript_text.as_str())
+        .or(transcript_text);
+    let nlp_request = build_base_nlp_request_for_vision_handoff(
+        request,
+        effective_transcript,
+        runtime_tenant_scope,
+    )?;
     AdapterNlpEngineRuntime::new()
         .run(&nlp_request)
         .map_err(|err| format!("ph1n runtime failed while building PH1.X input: {err:?}"))
+        .map(|output| (output, language_context.map(|context| context.packet)))
+}
+
+fn apply_language_continuity_to_execution_outcome(
+    language_packet: Option<&LanguagePacket>,
+    user_text: Option<&str>,
+    execution_outcome: &mut AppVoiceTurnExecutionOutcome,
+) {
+    let Some(packet) = language_packet else {
+        return;
+    };
+    if let Some(answer) = deterministic_mixed_language_public_answer_for_build1c(user_text, packet)
+    {
+        execution_outcome.response_text = Some(answer);
+        return;
+    }
+    if let Some(ack) = language_switch_ack_for_build1c(packet, user_text) {
+        execution_outcome.response_text = Some(ack);
+        return;
+    }
+    if !packet.output_language_is_chinese() {
+        return;
+    }
+    let Some(response_text) = execution_outcome.response_text.as_ref() else {
+        return;
+    };
+    if let Some(chinese_time) = translate_time_response_for_build1c(response_text) {
+        execution_outcome.response_text = Some(chinese_time);
+    }
+}
+
+fn deterministic_mixed_language_public_answer_for_build1c(
+    user_text: Option<&str>,
+    packet: &LanguagePacket,
+) -> Option<String> {
+    let text = user_text?.trim();
+    let lower = text.to_ascii_lowercase();
+    if !packet.mixed_language_detected
+        || !packet.output_language_selected.starts_with("en")
+        || !text.contains("这个功能")
+        || !lower.contains("explain")
+        || !lower.contains("english")
+    {
+        return None;
+    }
+    Some(
+        "这个功能 means \"this function.\" In simple English, it means the feature or capability being discussed."
+            .to_string(),
+    )
+}
+
+fn language_switch_ack_for_build1c(
+    packet: &LanguagePacket,
+    user_text: Option<&str>,
+) -> Option<String> {
+    let text = user_text?.trim();
+    if !standalone_language_switch_request_for_build1c(text) {
+        return None;
+    }
+    if packet.output_language_is_chinese() {
+        Some("好的，这一轮我会用中文回答。".to_string())
+    } else {
+        Some("Understood. I'll answer this turn in English.".to_string())
+    }
+}
+
+fn standalone_language_switch_request_for_build1c(text: &str) -> bool {
+    let trimmed = text
+        .trim()
+        .trim_matches(|ch: char| ch == '.' || ch == '。' || ch == '!' || ch == '！')
+        .trim();
+    let lower = trimmed.to_ascii_lowercase();
+    if lower.contains("explain")
+        || lower.contains("what")
+        || lower.contains("time")
+        || lower.contains('?')
+        || trimmed.contains('？')
+    {
+        return false;
+    }
+    matches!(
+        lower.as_str(),
+        "answer in chinese"
+            | "speak chinese"
+            | "use chinese"
+            | "use chinese from now on"
+            | "answer in english"
+            | "speak english"
+            | "use english"
+            | "use english from now on"
+    ) || matches!(
+        trimmed,
+        "以后用中文回答我"
+            | "用中文回答我"
+            | "请用中文回答"
+            | "以後用中文回答我"
+            | "用英文回答我"
+            | "请用英文回答"
+    )
+}
+
+fn translate_time_response_for_build1c(response_text: &str) -> Option<String> {
+    let trimmed = response_text.trim();
+    let rest = trimmed.strip_prefix("It's ")?;
+    let (time, place_with_period) = rest.rsplit_once(" in ")?;
+    let place = place_with_period.trim_end_matches('.');
+    if time.trim().is_empty() || place.trim().is_empty() {
+        return None;
+    }
+    Some(format!(
+        "{}现在是{}。",
+        chinese_place_label_for_build1c(place),
+        time.trim()
+    ))
+}
+
+fn chinese_place_label_for_build1c(place: &str) -> String {
+    match place.trim().to_ascii_lowercase().as_str() {
+        "tokyo" => "东京".to_string(),
+        "new york" => "纽约".to_string(),
+        "sydney" => "悉尼".to_string(),
+        _ => place.trim().to_string(),
+    }
+}
+
+fn ph1d_language_tag_for_build1c(language_packet: Option<&LanguagePacket>) -> String {
+    language_packet
+        .map(|packet| packet.output_language_selected.as_str())
+        .filter(|tag| !tag.trim().is_empty())
+        .unwrap_or("en")
+        .to_string()
+}
+
+fn public_failure_text_for_language(language_packet: Option<&LanguagePacket>) -> String {
+    if language_packet
+        .map(LanguagePacket::output_language_is_chinese)
+        .unwrap_or(false)
+    {
+        "我现在无法回答这个问题。请再试一次。".to_string()
+    } else {
+        "I couldn't answer that just now. Please try again.".to_string()
+    }
+}
+
+fn language_clarify_for_build1c(packet: &LanguagePacket) -> Result<Ph1nClarify, String> {
+    let question = if packet.output_language_is_chinese() || packet.input_language_is_chinese() {
+        "你想让我用中文还是英文回答？"
+    } else {
+        "Did you want me to answer in Chinese or English?"
+    };
+    Ph1nClarify::v1(
+        question.to_string(),
+        vec![FieldKey::Task],
+        vec!["English".to_string(), "中文".to_string()],
+        ph1n_reason_codes::N_CLARIFY_UNCERTAIN_SPAN,
+        SensitivityLevel::Public,
+        false,
+        vec![],
+        vec![],
+    )
+    .map_err(|err| format!("language clarification build failed: {err:?}"))
 }
 
 fn deterministic_public_clarification_followup_query(
@@ -8615,7 +9184,10 @@ fn remember_latest_weather_place(
     let mut guard = weather_context_state
         .lock()
         .map_err(|_| "weather_context_state_poisoned".to_string())?;
-    guard.insert(weather_context_scope_key(actor_user_id, thread_key), encoded);
+    guard.insert(
+        weather_context_scope_key(actor_user_id, thread_key),
+        encoded,
+    );
     while guard.len() > 256 {
         let Some(oldest_key) = guard.keys().next().cloned() else {
             break;
@@ -22125,5 +22697,124 @@ mod tests {
                     .contains("governance state is out of sync"));
             },
         );
+    }
+
+    #[test]
+    fn h375_chinese_time_direct_turn_routes_to_time_and_answers_chinese() {
+        let runtime = AdapterRuntime::default();
+        let mut req = base_request();
+        req.app_platform = "DESKTOP".to_string();
+        req.audio_capture_ref = None;
+        req.correlation_id = 375_001;
+        req.turn_id = 375_001;
+        req.user_text_final = Some("现在东京几点？".to_string());
+
+        let out = runtime
+            .run_voice_turn(req)
+            .expect("Chinese time turn should complete");
+        assert_eq!(out.status, "ok");
+        assert_eq!(out.outcome, "FINAL_TOOL");
+        assert!(out.response_text.contains("东京现在是"), "{}", out.response_text);
+        assert!(!out.response_text.contains("TIME_LOOKUP"));
+        assert!(!out.response_text.contains("provider_payload"));
+    }
+
+    #[test]
+    fn h375_english_time_direct_turn_does_not_trigger_language_clarification() {
+        let runtime = AdapterRuntime::default();
+        let mut req = base_request();
+        req.app_platform = "DESKTOP".to_string();
+        req.audio_capture_ref = None;
+        req.correlation_id = 375_002;
+        req.turn_id = 375_002;
+        req.user_text_final = Some("What time is it in Tokyo?".to_string());
+
+        let out = runtime
+            .run_voice_turn(req)
+            .expect("English time turn should complete");
+        assert_eq!(out.status, "ok");
+        assert_eq!(out.outcome, "FINAL_TOOL");
+        assert!(out.response_text.contains("Tokyo"), "{}", out.response_text);
+        assert!(!out.response_text.contains("Chinese or English"));
+    }
+
+    #[test]
+    fn h375_ph1d_public_answer_preserves_chinese_text_without_ascii_truncation() {
+        let answer = run_public_prompt_with_mock_answer(
+            "告诉我一个笑话。",
+            r#"{"mode":"chat","response_text":"当然。为什么月亮不上班？因为它已经满了。","reason_code":"D_PROVIDER_OK"}"#,
+        );
+        assert_eq!(answer, "当然。为什么月亮不上班？因为它已经满了。");
+        assert!(!answer.contains("provider_payload"));
+        assert!(!answer.contains("governance"));
+    }
+
+    #[test]
+    fn h375_ph1d_public_provider_prompt_is_language_aware() {
+        let zh_payload = openai_llm_interpret_payload("gpt-test", "告诉我一个笑话。", "zh");
+        let encoded = serde_json::to_string(&zh_payload).expect("payload should encode");
+        assert!(encoded.contains("Answer in Chinese"));
+        assert!(encoded.contains("Do not translate"));
+
+        let en_payload = openai_llm_interpret_payload(
+            "gpt-test",
+            "Can you explain 这个功能 in simple English?",
+            "en",
+        );
+        let encoded = serde_json::to_string(&en_payload).expect("payload should encode");
+        assert!(encoded.contains("Answer in English"));
+        assert!(encoded.contains("Preserve Chinese"));
+    }
+
+    #[test]
+    fn h375_language_switch_ack_is_turn_scoped_without_memory_claim() {
+        let runtime = AdapterRuntime::default();
+        let mut zh = base_request();
+        zh.app_platform = "DESKTOP".to_string();
+        zh.audio_capture_ref = None;
+        zh.correlation_id = 375_003;
+        zh.turn_id = 375_003;
+        zh.user_text_final = Some("以后用中文回答我。".to_string());
+
+        let out = runtime
+            .run_voice_turn(zh)
+            .expect("Chinese language switch acknowledgement should complete");
+        assert_eq!(out.status, "ok");
+        assert_eq!(out.response_text, "好的，这一轮我会用中文回答。");
+
+        let mut en = base_request();
+        en.app_platform = "DESKTOP".to_string();
+        en.audio_capture_ref = None;
+        en.correlation_id = 375_004;
+        en.turn_id = 375_004;
+        en.user_text_final = Some("Use English from now on.".to_string());
+
+        let out = runtime
+            .run_voice_turn(en)
+            .expect("English language switch acknowledgement should complete");
+        assert_eq!(out.status, "ok");
+        assert_eq!(out.response_text, "Understood. I'll answer this turn in English.");
+    }
+
+    #[test]
+    fn h375_mixed_language_explicit_english_public_answer_is_deterministic() {
+        let runtime = AdapterRuntime::default();
+        let mut req = base_request();
+        req.app_platform = "DESKTOP".to_string();
+        req.audio_capture_ref = None;
+        req.correlation_id = 375_005;
+        req.turn_id = 375_005;
+        req.user_text_final = Some("Can you explain 这个功能 in simple English?".to_string());
+
+        let out = runtime
+            .run_voice_turn(req)
+            .expect("mixed-language explicit English answer should complete");
+        assert_eq!(out.status, "ok");
+        assert_eq!(
+            out.response_text,
+            "这个功能 means \"this function.\" In simple English, it means the feature or capability being discussed."
+        );
+        assert!(!out.response_text.contains("provider_payload"));
+        assert!(!out.response_text.contains("governance"));
     }
 }

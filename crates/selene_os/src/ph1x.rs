@@ -2272,6 +2272,11 @@ fn time_zone_display_label(zone: &str) -> String {
 
 fn intent_query_text(d: &IntentDraft) -> String {
     // Deterministic: prefer a task evidence excerpt if present, else use a stable fallback token.
+    if let Some(field) = d.fields.iter().find(|field| field.key == FieldKey::Task) {
+        if let Some(normalized) = field.value.normalized_value.as_ref() {
+            return normalized.clone();
+        }
+    }
     d.evidence_spans
         .iter()
         .find(|e| e.field == FieldKey::Task)
