@@ -1966,10 +1966,14 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
                 return
             }
 
-            var request = URLRequest(url: websocketURL)
-            request.setValue("Bearer \(session.clientSecret)", forHTTPHeaderField: "Authorization")
-            request.setValue("realtime=v1", forHTTPHeaderField: "OpenAI-Beta")
-            let websocketTask = realtimeURLSession.webSocketTask(with: request)
+            let websocketTask = realtimeURLSession.webSocketTask(
+                with: websocketURL,
+                protocols: [
+                    "realtime",
+                    "openai-insecure-api-key.\(session.clientSecret)",
+                    "openai-beta.realtime-v1",
+                ]
+            )
             realtimeWebSocketTask = websocketTask
             realtimeOutputFormat = outputFormat
             realtimeAudioConverter = converter

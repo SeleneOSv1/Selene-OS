@@ -1003,6 +1003,7 @@ pub struct AdapterRuntime {
     sync_worker_counters: Arc<Mutex<AdapterSyncWorkerCounters>>,
     improvement_counters: Arc<Mutex<AdapterImprovementCounters>>,
     transcript_state: Arc<Mutex<AdapterTranscriptState>>,
+    public_answer_state: Arc<Mutex<AdapterPublicAnswerState>>,
     report_display_target_defaults: Arc<Mutex<BTreeMap<String, String>>>,
     auto_builder_enabled: bool,
     ph1c_live_enabled: bool,
@@ -1112,6 +1113,11 @@ impl Default for AdapterTranscriptState {
             events: Vec::new(),
         }
     }
+}
+
+#[derive(Debug, Clone, Default)]
+struct AdapterPublicAnswerState {
+    recent_jokes_by_scope: BTreeMap<String, Vec<String>>,
 }
 
 #[derive(Debug, Clone)]
@@ -1711,6 +1717,7 @@ impl Default for AdapterRuntime {
             sync_worker_counters: Arc::new(Mutex::new(AdapterSyncWorkerCounters::default())),
             improvement_counters: Arc::new(Mutex::new(AdapterImprovementCounters::default())),
             transcript_state: Arc::new(Mutex::new(AdapterTranscriptState::default())),
+            public_answer_state: Arc::new(Mutex::new(AdapterPublicAnswerState::default())),
             report_display_target_defaults: Arc::new(Mutex::new(BTreeMap::new())),
             auto_builder_enabled: true,
             ph1c_live_enabled: parse_bool_env("SELENE_PH1C_LIVE_ENABLED", true),
@@ -1748,6 +1755,7 @@ impl AdapterRuntime {
             sync_worker_counters: Arc::new(Mutex::new(AdapterSyncWorkerCounters::default())),
             improvement_counters: Arc::new(Mutex::new(AdapterImprovementCounters::default())),
             transcript_state: Arc::new(Mutex::new(AdapterTranscriptState::default())),
+            public_answer_state: Arc::new(Mutex::new(AdapterPublicAnswerState::default())),
             report_display_target_defaults: Arc::new(Mutex::new(BTreeMap::new())),
             auto_builder_enabled: true,
             ph1c_live_enabled: parse_bool_env("SELENE_PH1C_LIVE_ENABLED", true),
@@ -1780,6 +1788,7 @@ impl AdapterRuntime {
             sync_worker_counters: Arc::new(Mutex::new(AdapterSyncWorkerCounters::default())),
             improvement_counters: Arc::new(Mutex::new(AdapterImprovementCounters::default())),
             transcript_state: Arc::new(Mutex::new(AdapterTranscriptState::default())),
+            public_answer_state: Arc::new(Mutex::new(AdapterPublicAnswerState::default())),
             report_display_target_defaults: Arc::new(Mutex::new(BTreeMap::new())),
             auto_builder_enabled,
             ph1c_live_enabled: parse_bool_env("SELENE_PH1C_LIVE_ENABLED", true),
@@ -3975,6 +3984,8 @@ impl AdapterRuntime {
         &self,
         correlation_id: CorrelationId,
         turn_id: TurnId,
+        actor_user_id: &UserId,
+        thread_key: &str,
         tenant_id: Option<&str>,
         session_state: SessionState,
         user_text: Option<&str>,
@@ -4009,8 +4020,38 @@ impl AdapterRuntime {
             },
             None => "I couldn't answer that just now. Please try again.".to_string(),
         };
+        let answer = self.apply_public_joke_diversity(actor_user_id, thread_key, user_text, answer);
         execution_outcome.response_text = Some(answer.clone());
         Some(answer)
+    }
+
+    fn apply_public_joke_diversity(
+        &self,
+        actor_user_id: &UserId,
+        thread_key: &str,
+        user_text: &str,
+        answer: String,
+    ) -> String {
+        let Some(joke_request) = classify_public_joke_request(user_text) else {
+            return answer;
+        };
+        let scope_key = public_joke_scope_key(actor_user_id.as_str(), thread_key);
+        let mut state = match self.public_answer_state.lock() {
+            Ok(state) => state,
+            Err(_) => return answer,
+        };
+        let recent = state
+            .recent_jokes_by_scope
+            .entry(scope_key.clone())
+            .or_insert_with(Vec::new);
+        let selected =
+            if joke_request.requires_distinct() && recent_public_jokes_contain(recent, &answer) {
+                select_distinct_public_joke(&scope_key, user_text, recent, &answer)
+            } else {
+                answer
+            };
+        remember_recent_public_joke(recent, &selected);
+        selected
     }
 
     fn run_ph1d_public_answer(
@@ -5292,14 +5333,21 @@ impl AdapterRuntime {
                 &execution_outcome.voice_outcome,
             )
             .map_err(post_session_error)?;
-            let ph1d_public_answer_text = self.maybe_run_ph1d_public_answer(
-                correlation_id,
-                turn_id,
-                tenant_id_for_ph1c.as_deref(),
-                session_turn_state.session_snapshot.session_state,
-                user_text_final.as_deref(),
-                &mut execution_outcome,
-            );
+            let ph1d_public_answer_text =
+                if persistence_mode == PersistenceInvocationMode::LegacyJournalReplay {
+                    None
+                } else {
+                    self.maybe_run_ph1d_public_answer(
+                        correlation_id,
+                        turn_id,
+                        &actor_user_id,
+                        &thread_key,
+                        tenant_id_for_ph1c.as_deref(),
+                        session_turn_state.session_snapshot.session_state,
+                        user_text_final.as_deref(),
+                        &mut execution_outcome,
+                    )
+                };
             if let Err(err) = self.emit_read_only_lane_incidents_and_maybe_run_builder(
                 &mut store,
                 now,
@@ -6375,7 +6423,9 @@ impl AdapterRuntime {
                 Some("persistence bootstrap entered quarantined local state".to_string()),
             );
         }
-        self.replay_legacy_journal_into_store(&mut state)?;
+        if parse_bool_env("SELENE_ADAPTER_LEGACY_JOURNAL_REPLAY_ENABLED", true) {
+            self.replay_legacy_journal_into_store(&mut state)?;
+        }
         {
             let mut guard = persistence
                 .state
@@ -7892,6 +7942,106 @@ fn public_provider_internals_question(user_text: &str) -> bool {
         || lower.contains("run on")
         || lower.contains("running on");
     names_provider && asks_usage
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PublicJokeRequestKind {
+    General,
+    Distinct,
+}
+
+impl PublicJokeRequestKind {
+    fn requires_distinct(self) -> bool {
+        matches!(self, PublicJokeRequestKind::Distinct)
+    }
+}
+
+fn classify_public_joke_request(user_text: &str) -> Option<PublicJokeRequestKind> {
+    let lower = user_text.to_ascii_lowercase();
+    if !lower.contains("joke") {
+        return None;
+    }
+    if lower.contains("another")
+        || lower.contains("different")
+        || lower.contains("new joke")
+        || lower.contains("not the same")
+        || lower.contains("else")
+    {
+        Some(PublicJokeRequestKind::Distinct)
+    } else {
+        Some(PublicJokeRequestKind::General)
+    }
+}
+
+fn public_joke_scope_key(actor_user_id: &str, thread_key: &str) -> String {
+    truncate_ascii(&format!("{actor_user_id}::{thread_key}"), 192)
+}
+
+fn normalize_public_joke_for_repeat_check(text: &str) -> String {
+    let mut normalized = String::with_capacity(text.len());
+    let mut prev_space = true;
+    for ch in text.chars().flat_map(char::to_lowercase) {
+        if ch.is_ascii_alphanumeric() {
+            normalized.push(ch);
+            prev_space = false;
+        } else if !prev_space {
+            normalized.push(' ');
+            prev_space = true;
+        }
+    }
+    normalized.trim().to_string()
+}
+
+fn recent_public_jokes_contain(recent: &[String], answer: &str) -> bool {
+    let normalized_answer = normalize_public_joke_for_repeat_check(answer);
+    !normalized_answer.is_empty()
+        && recent
+            .iter()
+            .any(|item| normalize_public_joke_for_repeat_check(item) == normalized_answer)
+}
+
+fn remember_recent_public_joke(recent: &mut Vec<String>, answer: &str) {
+    let normalized_answer = normalize_public_joke_for_repeat_check(answer);
+    if normalized_answer.is_empty() {
+        return;
+    }
+    recent.retain(|item| normalize_public_joke_for_repeat_check(item) != normalized_answer);
+    recent.push(answer.to_string());
+    const MAX_RECENT_PUBLIC_JOKES: usize = 6;
+    while recent.len() > MAX_RECENT_PUBLIC_JOKES {
+        recent.remove(0);
+    }
+}
+
+fn select_distinct_public_joke(
+    scope_key: &str,
+    user_text: &str,
+    recent: &[String],
+    rejected_answer: &str,
+) -> String {
+    const FALLBACK_JOKES: [&str; 6] = [
+        "Why did the bicycle fall over? Because it was two-tired.",
+        "Why did the calendar apply for a job? It wanted more dates.",
+        "Why did the computer get cold? It left its Windows open.",
+        "Why did the tomato blush? It saw the salad dressing.",
+        "Why did the book join the police? It wanted to go undercover.",
+        "Why did the cookie go to the doctor? It felt crummy.",
+    ];
+    let rejected_normalized = normalize_public_joke_for_repeat_check(rejected_answer);
+    let start = (stable_hash_u64(&format!("{scope_key}::{user_text}::{rejected_normalized}"))
+        as usize)
+        % FALLBACK_JOKES.len();
+    for offset in 0..FALLBACK_JOKES.len() {
+        let candidate = FALLBACK_JOKES[(start + offset) % FALLBACK_JOKES.len()];
+        let candidate_normalized = normalize_public_joke_for_repeat_check(candidate);
+        let used_recently = recent
+            .iter()
+            .any(|item| normalize_public_joke_for_repeat_check(item) == candidate_normalized);
+        if !used_recently && candidate_normalized != rejected_normalized {
+            return candidate.to_string();
+        }
+    }
+    FALLBACK_JOKES[start].to_string()
 }
 
 fn safe_public_provider_internals_refusal() -> String {
@@ -20136,24 +20286,32 @@ mod tests {
     }
 
     fn spawn_openai_responses_endpoint_for_public_answer_test(output_text: &'static str) -> String {
+        spawn_openai_responses_endpoint_for_public_answer_sequence(vec![output_text])
+    }
+
+    fn spawn_openai_responses_endpoint_for_public_answer_sequence(
+        output_texts: Vec<&'static str>,
+    ) -> String {
         use std::io::{Read, Write};
 
         let listener = std::net::TcpListener::bind("127.0.0.1:0")
             .expect("mock OpenAI responses listener should bind");
         let address = listener.local_addr().expect("mock OpenAI address");
         std::thread::spawn(move || {
-            let Ok((mut stream, _)) = listener.accept() else {
-                return;
-            };
-            let mut request_buffer = [0_u8; 4096];
-            let _ = stream.read(&mut request_buffer);
-            let body = serde_json::json!({ "output_text": output_text }).to_string();
-            let response = format!(
-                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-                body.len(),
-                body
-            );
-            let _ = stream.write_all(response.as_bytes());
+            for output_text in output_texts {
+                let Ok((mut stream, _)) = listener.accept() else {
+                    return;
+                };
+                let mut request_buffer = [0_u8; 4096];
+                let _ = stream.read(&mut request_buffer);
+                let body = serde_json::json!({ "output_text": output_text }).to_string();
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                let _ = stream.write_all(response.as_bytes());
+            }
         });
         format!("http://{address}/v1/responses")
     }
@@ -20200,7 +20358,16 @@ mod tests {
     }
 
     fn run_public_prompt_with_mock_answer(prompt: &str, output_text: &'static str) -> String {
-        let endpoint = spawn_openai_responses_endpoint_for_public_answer_test(output_text);
+        run_public_prompt_sequence_with_mock_answers(&[(prompt, output_text)])
+            .into_iter()
+            .next()
+            .expect("single public answer should be returned")
+    }
+
+    fn run_public_prompt_sequence_with_mock_answers(cases: &[(&str, &'static str)]) -> Vec<String> {
+        let endpoint = spawn_openai_responses_endpoint_for_public_answer_sequence(
+            cases.iter().map(|(_, output_text)| *output_text).collect(),
+        );
         with_isolated_device_vault(
             "ph1d-public-model-json",
             &[("openai_api_key", "test_openai_key")],
@@ -20219,17 +20386,24 @@ mod tests {
                         "node_public_answer",
                         Some("2026.04.01.v1"),
                     );
-                let mut req = base_request();
-                req.app_platform = "DESKTOP".to_string();
-                req.audio_capture_ref = None;
-                req.user_text_final = Some(prompt.to_string());
+                let mut answers = Vec::new();
+                for (idx, (prompt, _)) in cases.iter().enumerate() {
+                    let mut req = base_request();
+                    req.correlation_id = 202_000 + idx as u64;
+                    req.turn_id = 203_000 + idx as u64;
+                    req.app_platform = "DESKTOP".to_string();
+                    req.audio_capture_ref = None;
+                    req.thread_key = Some("ph1d_public_joke_diversity".to_string());
+                    req.user_text_final = Some((*prompt).to_string());
 
-                let out = runtime
-                    .run_voice_turn(req)
-                    .expect("public prompt should complete through PH1.D");
-                assert_eq!(out.status, "ok");
-                assert_eq!(out.outcome, "FINAL");
-                out.response_text
+                    let out = runtime
+                        .run_voice_turn(req)
+                        .expect("public prompt should complete through PH1.D");
+                    assert_eq!(out.status, "ok");
+                    assert_eq!(out.outcome, "FINAL");
+                    answers.push(out.response_text);
+                }
+                answers
             },
         )
     }
@@ -21221,6 +21395,54 @@ mod tests {
                 !lowered.contains(forbidden),
                 "public answer leaked forbidden text `{forbidden}`: {answer}"
             );
+        }
+    }
+
+    #[test]
+    fn h372_public_joke_another_and_different_do_not_reuse_previous_joke() {
+        let scarecrow = r#"{"mode":"chat","response_text":"Why did the scarecrow win an award? Because he was outstanding in his field!","reason_code":"D_PROVIDER_OK"}"#;
+        let answers = run_public_prompt_sequence_with_mock_answers(&[
+            ("Tell me a joke.", scarecrow),
+            ("Tell me another joke.", scarecrow),
+            ("Tell me a different joke.", scarecrow),
+        ]);
+
+        assert_eq!(answers.len(), 3);
+        assert_eq!(
+            answers[0],
+            "Why did the scarecrow win an award? Because he was outstanding in his field!"
+        );
+        assert_ne!(
+            normalize_public_joke_for_repeat_check(&answers[1]),
+            normalize_public_joke_for_repeat_check(&answers[0]),
+            "another joke reused the immediately previous answer"
+        );
+        assert_ne!(
+            normalize_public_joke_for_repeat_check(&answers[2]),
+            normalize_public_joke_for_repeat_check(&answers[1]),
+            "different joke reused the immediately previous answer"
+        );
+        assert!(
+            !recent_public_jokes_contain(&answers[..2], &answers[2]),
+            "different joke reused one of the recent public joke answers"
+        );
+
+        for answer in answers {
+            assert_ne!(answer, "I couldn't answer that just now. Please try again.");
+            let lowered = answer.to_ascii_lowercase();
+            for forbidden in [
+                "ph1d",
+                "invalidschema",
+                "reason_code",
+                "governance",
+                "provider payload",
+                "desktop runtime bridge",
+            ] {
+                assert!(
+                    !lowered.contains(forbidden),
+                    "public answer leaked forbidden text `{forbidden}`: {answer}"
+                );
+            }
         }
     }
 

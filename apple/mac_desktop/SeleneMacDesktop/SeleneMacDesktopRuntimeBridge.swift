@@ -8535,6 +8535,15 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
             return
         }
 
+        if let managedAdapterProcess, managedAdapterProcess.isRunning {
+            Self.appendManagedAdapterStatusLog(
+                managedAdapterLogHandle,
+                message: "managed adapter unhealthy during health check; restarting before bounded wait"
+            )
+            stopManagedAdapter()
+            try await Task.sleep(nanoseconds: 300_000_000)
+        }
+
         try startManagedAdapterIfNeeded()
 
         for _ in 0..<120 {
@@ -8578,6 +8587,7 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
         let bindValue = Self.bindValue(for: adapterBaseURL)
         environment["SELENE_HTTP_BIND"] = bindValue
         environment["SELENE_ADAPTER_SYNC_WORKER_ENABLED"] = "true"
+        environment["SELENE_ADAPTER_LEGACY_JOURNAL_REPLAY_ENABLED"] = "false"
         environment["PATH"] = Self.managedAdapterLaunchPath(environment["PATH"])
         process.environment = environment
         let logHandle = Self.openManagedAdapterLogHandle()
@@ -8641,6 +8651,20 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
         bind=\(bindValue)
 
         """
+        if let data = line.data(using: .utf8) {
+            try? handle.write(contentsOf: data)
+        }
+    }
+
+    private static func appendManagedAdapterStatusLog(
+        _ handle: FileHandle?,
+        message: String
+    ) {
+        guard let handle else {
+            return
+        }
+
+        let line = "[SeleneMacDesktop] \(message)\n"
         if let data = line.data(using: .utf8) {
             try? handle.write(contentsOf: data)
         }

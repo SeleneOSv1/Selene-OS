@@ -214,10 +214,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let sync_worker_enabled = parse_sync_worker_enabled_from_env();
     let sync_worker_interval_ms = parse_sync_worker_interval_ms_from_env();
 
-    for line in startup_outbound_self_check_logs() {
-        eprintln!("{line}");
-    }
-
     let runtime = Arc::new(Mutex::new(AdapterRuntime::default_from_env()?));
     let state = HttpAdapterState {
         runtime: runtime.clone(),
@@ -269,10 +265,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .with_state(state);
 
+    let listener = tokio::net::TcpListener::bind(addr).await?;
+    tokio::task::spawn_blocking(|| {
+        for line in startup_outbound_self_check_logs() {
+            eprintln!("{line}");
+        }
+    });
     println!(
         "selene_adapter_http listening on http://{addr} (sync_worker_enabled={sync_worker_enabled} interval_ms={sync_worker_interval_ms})"
     );
-    let listener = tokio::net::TcpListener::bind(addr).await?;
     axum::serve(listener, app).await?;
     Ok(())
 }
