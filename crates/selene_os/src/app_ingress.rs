@@ -4344,7 +4344,16 @@ impl AppServerIngressRuntime {
                         }
                         Ph1xDirective::Respond(respond) => {
                             out.next_move = AppVoiceTurnNextMove::Respond;
-                            out.response_text = Some(respond.response_text);
+                            let response_text =
+                                if let Some(tool_response) = out.tool_response.as_ref() {
+                                    append_app_ingress_tool_provenance(
+                                        respond.response_text,
+                                        tool_response,
+                                    )
+                                } else {
+                                    respond.response_text
+                                };
+                            out.response_text = Some(response_text);
                         }
                         Ph1xDirective::Wait(wait) => {
                             out.next_move = AppVoiceTurnNextMove::Wait;
@@ -9992,6 +10001,34 @@ fn build_tool_followup_ph1x_request(
         .with_identity_prompt_scope_key(base_request.identity_prompt_scope_key.clone())
         .map_err(StorageError::ContractViolation)?;
     Ok(req)
+}
+
+fn append_app_ingress_tool_provenance(
+    response_text: String,
+    tool_response: &ToolResponse,
+) -> String {
+    let should_append = tool_response.tool_status == ToolStatus::Ok
+        && !matches!(
+            tool_response.tool_result.as_ref(),
+            Some(ToolResult::Time { .. } | ToolResult::Weather { .. }) | None
+        );
+    if !should_append || response_text.contains("Retrieved at (unix_ms):") {
+        return response_text;
+    }
+
+    let Some(source_metadata) = tool_response.source_metadata.as_ref() else {
+        return response_text;
+    };
+
+    let mut text = response_text.trim_end().to_string();
+    if !text.is_empty() {
+        text.push('\n');
+    }
+    text.push_str(&format!(
+        "Retrieved at (unix_ms): {}",
+        source_metadata.retrieved_at_unix_ms
+    ));
+    text
 }
 
 fn merge_thread_policy_context(
@@ -16300,29 +16337,26 @@ mod tests {
         let voice_identity_assertion = envelope
             .voice_identity_assertion
             .expect("voice identity assertion should be attached");
-        let Ph1VoiceIdResponse::SpeakerAssertionUnknown(unknown_voice_identity_assertion) =
+        let Ph1VoiceIdResponse::SpeakerAssertionOk(ok_voice_identity_assertion) =
             voice_identity_assertion
         else {
-            panic!("low-confidence harmonize path should keep the Unknown carrier family");
+            panic!("confirmed harmonize path should keep the Ok carrier family");
         };
-        assert!(
-            unknown_voice_identity_assertion
-                .identity_v2
-                .may_prompt_identity
+        assert_eq!(
+            ok_voice_identity_assertion.confidence,
+            IdentityConfidence::High
         );
         assert_eq!(
-            unknown_voice_identity_assertion.confidence,
-            IdentityConfidence::Medium
+            ok_voice_identity_assertion.identity_v2.identity_tier_v2,
+            IdentityTierV2::Confirmed
         );
         assert_eq!(
-            unknown_voice_identity_assertion
-                .identity_v2
-                .identity_tier_v2,
-            IdentityTierV2::Unknown
-        );
-        assert_eq!(
-            unknown_voice_identity_assertion.spoof_liveness_status,
+            ok_voice_identity_assertion.spoof_liveness_status,
             SpoofLivenessStatus::Unknown
+        );
+        assert_eq!(
+            ok_voice_identity_assertion.user_id.as_ref(),
+            Some(&actor_user_id)
         );
         let identity_state = envelope
             .identity_state
@@ -22243,9 +22277,10 @@ mod tests {
             last_failure_reason_code: None,
         };
 
-        let err = runtime
-            .run_desktop_voice_turn_end_to_end(&mut store, request_2, x_build_2)
-            .expect_err("proof failure must block protected voice completion");
+        let err = run_desktop_voice_turn_end_to_end_with_confirmed_voice_assertion(
+            &runtime, &mut store, request_2, x_build_2,
+        )
+        .expect_err("proof failure must block protected voice completion");
         match err {
             StorageError::ContractViolation(ContractViolation::InvalidValue { field, reason }) => {
                 assert_eq!(

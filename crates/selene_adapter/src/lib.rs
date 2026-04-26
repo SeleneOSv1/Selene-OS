@@ -10026,6 +10026,21 @@ fn stable_hash_hex_16(value: &str) -> String {
     format!("{:016x}", hasher.finish())
 }
 
+fn stable_voice_profile_seed_u64(parts: &[&str]) -> u64 {
+    const OFFSET: u64 = 0xcbf29ce484222325;
+    const PRIME: u64 = 0x100000001b3;
+    let mut hash = OFFSET;
+    for part in parts {
+        for byte in part.as_bytes() {
+            hash ^= *byte as u64;
+            hash = hash.wrapping_mul(PRIME);
+        }
+        hash ^= b'|' as u64;
+        hash = hash.wrapping_mul(PRIME);
+    }
+    hash
+}
+
 fn stable_hash_u64(value: &str) -> u64 {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     value.hash(&mut hasher);
@@ -10484,14 +10499,11 @@ fn build_live_voice_id_observation(
         });
 
     let primary_fingerprint = profile.map(|profile| {
-        let fingerprint_material = format!(
-            "{}:{}:{}",
+        stable_voice_profile_seed_u64(&[
             profile.voice_profile_id.as_str(),
             profile.device_id.as_str(),
-            device.user_id.as_str()
-        );
-        u64::from_str_radix(&stable_hash_hex_16(&fingerprint_material), 16)
-            .expect("stable 16-digit hex fingerprint must parse")
+            device.user_id.as_str(),
+        ])
     });
     EngineVoiceIdObservation {
         primary_fingerprint,
@@ -12982,7 +12994,7 @@ mod tests {
     };
     use selene_kernel_contracts::ph1n::FieldKey;
     use selene_kernel_contracts::ph1onb::{
-        ONB_ACCESS_INSTANCE_CREATE_COMMIT, ONB_COMPLETE_COMMIT,
+        OnboardingSessionId, ONB_ACCESS_INSTANCE_CREATE_COMMIT, ONB_COMPLETE_COMMIT,
         ONB_EMPLOYEE_PHOTO_CAPTURE_SEND_COMMIT, ONB_EMPLOYEE_SENDER_VERIFY_COMMIT,
         ONB_PRIMARY_DEVICE_CONFIRM_COMMIT, ONB_SESSION_START_DRAFT, ONB_TERMS_ACCEPT_COMMIT,
     };
@@ -13145,6 +13157,24 @@ mod tests {
             }),
             visual_input_ref: None,
         }
+    }
+
+    fn mark_request_as_echo_safe_for_tests(request: &mut VoiceTurnAdapterRequest) {
+        if let Some(capture) = request.audio_capture_ref.as_mut() {
+            capture.tts_playback_active = Some(false);
+            capture.detection_text = None;
+            capture.echo_safe_confidence_bp = Some(9_800);
+            capture.double_talk_bp = Some(0);
+            capture.aec_unstable = Some(false);
+            capture.capture_degraded = Some(false);
+            capture.stream_gap_detected = Some(false);
+        }
+    }
+
+    fn mark_request_as_desktop_voice_for_tests(request: &mut VoiceTurnAdapterRequest) {
+        request.app_platform = "DESKTOP".to_string();
+        request.trigger = "EXPLICIT".to_string();
+        mark_request_as_echo_safe_for_tests(request);
     }
 
     fn base_tablet_request() -> VoiceTurnAdapterRequest {
@@ -13489,13 +13519,21 @@ mod tests {
         store: &mut Ph1fStore,
         inviter_user_id: &UserId,
     ) -> (String, String) {
+        seed_invite_link_for_click_with_tenant(store, inviter_user_id, "tenant_1")
+    }
+
+    fn seed_invite_link_for_click_with_tenant(
+        store: &mut Ph1fStore,
+        inviter_user_id: &UserId,
+        tenant_id: &str,
+    ) -> (String, String) {
         let now = MonotonicTimeNs(system_time_now_ns().max(1));
         let (link, _) = store
             .ph1link_invite_generate_draft(
                 now,
                 inviter_user_id.clone(),
                 InviteeType::Employee,
-                Some("tenant_1".to_string()),
+                Some(tenant_id.to_string()),
                 None,
                 None,
                 None,
@@ -13505,6 +13543,128 @@ mod tests {
             link.token_id.as_str().to_string(),
             link.token_signature.clone(),
         )
+    }
+
+    fn seed_desktop_voice_profile_for_request(
+        runtime: &AdapterRuntime,
+        request: &mut VoiceTurnAdapterRequest,
+        label: &str,
+    ) {
+        mark_request_as_desktop_voice_for_tests(request);
+        let actor_user_id =
+            UserId::new(request.actor_user_id.clone()).expect("actor_user_id must parse");
+        let device_id = DeviceId::new(
+            request
+                .device_id
+                .clone()
+                .expect("device_id must be present for voice profile seed"),
+        )
+        .expect("device_id must parse");
+        let tenant_id = request
+            .tenant_id
+            .clone()
+            .or_else(|| {
+                actor_user_id
+                    .as_str()
+                    .split_once(':')
+                    .map(|(tenant, _)| tenant.to_string())
+            })
+            .unwrap_or_else(|| "tenant_a".to_string());
+        let inviter_user_id =
+            UserId::new(format!("{tenant_id}:{label}_voice_seed_inviter")).unwrap();
+        let inviter_device_id =
+            DeviceId::new(format!("{label}_voice_seed_inviter_device")).unwrap();
+
+        let (token_id, token_signature) = {
+            let mut store = runtime.store.lock().expect("adapter store lock");
+            ensure_actor_identity_and_device(
+                &mut store,
+                &actor_user_id,
+                Some(&device_id),
+                AppPlatform::Desktop,
+                MonotonicTimeNs(1),
+                true,
+            )
+            .expect("actor identity/device seed must succeed");
+            seed_identity_and_device(&mut store, &inviter_user_id, &inviter_device_id);
+            seed_simulation_catalog_status(
+                &mut store,
+                &tenant_id,
+                LINK_INVITE_OPEN_ACTIVATE_COMMIT,
+                SimulationType::Commit,
+                SimulationStatus::Active,
+            );
+            seed_simulation_catalog_status(
+                &mut store,
+                &tenant_id,
+                ONB_SESSION_START_DRAFT,
+                SimulationType::Draft,
+                SimulationStatus::Active,
+            );
+            seed_invite_link_for_click_with_tenant(&mut store, &inviter_user_id, &tenant_id)
+        };
+
+        let start = runtime
+            .run_invite_link_open_and_start_onboarding(InviteLinkOpenAdapterRequest {
+                correlation_id: request.correlation_id.saturating_add(700_000),
+                idempotency_key: format!("{label}_voice_seed_invite_open"),
+                token_id,
+                token_signature,
+                tenant_id: Some(tenant_id.clone()),
+                app_platform: "DESKTOP".to_string(),
+                device_fingerprint: format!("{label}_voice_seed_fingerprint"),
+                app_instance_id: format!("{label}_voice_seed_instance"),
+                deep_link_nonce: format!("{label}_voice_seed_nonce"),
+            })
+            .expect("voice profile seed invite click should start onboarding");
+        let onboarding_session_id = OnboardingSessionId::new(
+            start
+                .onboarding_session_id
+                .expect("voice profile seed onboarding id must be present"),
+        )
+        .expect("voice profile seed onboarding id must validate");
+
+        let mut store = runtime.store.lock().expect("adapter store lock");
+        let voice_started = store
+            .ph1vid_enroll_start_draft(
+                MonotonicTimeNs(request.now_ns.unwrap_or(1).saturating_add(1_000)),
+                onboarding_session_id,
+                device_id,
+                true,
+                8,
+                120_000,
+                3,
+            )
+            .expect("voice profile seed start should succeed");
+        for seq in 1_u16..=3_u16 {
+            store
+                .ph1vid_enroll_sample_commit(
+                    MonotonicTimeNs(
+                        request
+                            .now_ns
+                            .unwrap_or(1)
+                            .saturating_add(1_000 + seq as u64),
+                    ),
+                    voice_started.voice_enrollment_session_id.clone(),
+                    format!("{label}_voice_seed_sample_{seq}"),
+                    seq,
+                    1_350,
+                    0.92,
+                    17.0,
+                    0.3,
+                    0.0,
+                    None,
+                    format!("{label}_voice_seed_sample_commit_{seq}"),
+                )
+                .expect("voice profile seed sample should succeed");
+        }
+        store
+            .ph1vid_enroll_complete_commit(
+                MonotonicTimeNs(request.now_ns.unwrap_or(1).saturating_add(2_000)),
+                voice_started.voice_enrollment_session_id,
+                format!("{label}_voice_seed_complete"),
+            )
+            .expect("voice profile seed complete should succeed");
     }
 
     fn seed_invite_link_for_click_with_employee_prefilled_context(
@@ -16653,15 +16813,22 @@ mod tests {
             let runtime = AdapterRuntime::default();
             let mut req = base_request();
             req.user_text_final = Some("Selene search the web for H100 pricing".to_string());
+            seed_desktop_voice_profile_for_request(&runtime, &mut req, "at_adapter_03b");
             let out = runtime
                 .run_voice_turn(req)
                 .expect("voice turn with explicit web query must succeed");
             assert_eq!(out.status, "ok");
             assert_eq!(out.outcome, "FINAL_TOOL");
             assert_eq!(out.next_move, "dispatch_tool");
-            assert_eq!(out.reason_code, "1476395017");
+            assert_eq!(
+                out.reason_code,
+                selene_os::ph1x::reason_codes::X_TOOL_FAIL.0.to_string()
+            );
             let response_text = out.response_text.as_str();
-            assert!(response_text.contains("selene vault set brave_search_api_key"));
+            assert!(
+                response_text.contains("selene vault set brave_search_api_key"),
+                "unexpected response_text: {response_text}"
+            );
         });
     }
 
@@ -16684,6 +16851,7 @@ mod tests {
                 let runtime = AdapterRuntime::default();
                 let mut req = base_request();
                 req.user_text_final = Some("Selene search the web for H100 pricing".to_string());
+                seed_desktop_voice_profile_for_request(&runtime, &mut req, "at_adapter_03bb");
                 let out = runtime
                     .run_voice_turn(req)
                     .expect("voice turn with forced brave failure must return adapter response");
@@ -16706,6 +16874,7 @@ mod tests {
                 let runtime = AdapterRuntime::default();
                 let mut req = base_request();
                 req.user_text_final = Some("Selene search the web for H100 pricing".to_string());
+                seed_desktop_voice_profile_for_request(&runtime, &mut req, "at_adapter_03bc");
                 let out = runtime
                     .run_voice_turn(req)
                     .expect("voice turn with forced openai failure must return adapter response");
@@ -16753,6 +16922,8 @@ mod tests {
         first.now_ns = Some(21);
         first.user_text_final =
             Some("Selene create a calendar event tomorrow 3pm called demo".to_string());
+        mark_request_as_echo_safe_for_tests(&mut first);
+        seed_desktop_voice_profile_for_request(&runtime, &mut first, "at_adapter_03ba_calendar");
 
         let out_first = runtime
             .run_voice_turn(first)
@@ -16769,6 +16940,7 @@ mod tests {
         second.turn_id = 20_202;
         second.now_ns = Some(22);
         second.user_text_final = Some("yes".to_string());
+        mark_request_as_echo_safe_for_tests(&mut second);
 
         let out_second = runtime
             .run_voice_turn(second)
@@ -16853,6 +17025,8 @@ mod tests {
         first.turn_id = 20_301;
         first.now_ns = Some(31);
         first.user_text_final = Some(format!("Selene cancel reminder {}", reminder_id.as_str()));
+        mark_request_as_echo_safe_for_tests(&mut first);
+        seed_desktop_voice_profile_for_request(&runtime, &mut first, "at_adapter_03bb_cancel");
 
         let out_first = runtime
             .run_voice_turn(first)
@@ -16869,6 +17043,7 @@ mod tests {
         second.turn_id = 20_302;
         second.now_ns = Some(32);
         second.user_text_final = Some("yes".to_string());
+        mark_request_as_echo_safe_for_tests(&mut second);
 
         let out_second = runtime
             .run_voice_turn(second)
