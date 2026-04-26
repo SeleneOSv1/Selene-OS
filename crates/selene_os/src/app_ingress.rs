@@ -8,7 +8,6 @@ use selene_engines::ph1_voice_id::{
     reason_codes as voice_id_reason_codes, simulation_profile_embedding_from_seed,
     EnrolledSpeaker as EngineEnrolledSpeaker, VoiceIdObservation as EngineVoiceIdObservation,
 };
-use selene_engines::ph1n::reason_codes as ph1n_reason_codes;
 use selene_engines::ph1e::{Ph1eConfig, Ph1eRuntime};
 use selene_engines::ph1emocore::{
     Ph1EmoCoreConfig as EnginePh1EmoCoreConfig, Ph1EmoCoreRuntime as EnginePh1EmoCoreRuntime,
@@ -17,6 +16,7 @@ use selene_engines::ph1emoguide::{
     Ph1EmoGuideConfig as EnginePh1EmoGuideConfig, Ph1EmoGuideRuntime as EnginePh1EmoGuideRuntime,
 };
 use selene_engines::ph1m::{Ph1mConfig as EnginePh1mConfig, Ph1mRuntime as EnginePh1mRuntime};
+use selene_engines::ph1n::reason_codes as ph1n_reason_codes;
 use selene_engines::ph1persona::{
     Ph1PersonaConfig as EnginePh1PersonaConfig, Ph1PersonaRuntime as EnginePh1PersonaRuntime,
 };
@@ -8394,6 +8394,13 @@ fn maybe_build_weather_tool_response(
         return Ok(Some(weather_ambiguity_response(tool_request, ambiguity)?));
     }
 
+    if weather_query_requests_multi_day_forecast(tool_request.query.as_str()) {
+        return Ok(Some(weather_forecast_not_wired_response(
+            tool_request,
+            place.as_str(),
+        )?));
+    }
+
     let now_ms = app_ingress_unix_time_ms();
     let packet = serde_json::json!({
         "schema_version": "1.0.0",
@@ -8415,8 +8422,13 @@ fn maybe_build_weather_tool_response(
                 .evidence_packet
                 .pointer("/trust_metadata/realtime/payload")
                 .ok_or_else(weather_payload_contract_error)?;
-            let summary = weather_summary_from_payload(place.as_str(), payload)
-                .map_err(|_| weather_payload_contract_error())?;
+            let summary = if weather_query_asks_rain(tool_request.query.as_str()) {
+                weather_rain_summary_from_payload(place.as_str(), payload)
+                    .or_else(|_| weather_summary_from_payload(place.as_str(), payload))
+            } else {
+                weather_summary_from_payload(place.as_str(), payload)
+            }
+            .map_err(|_| weather_payload_contract_error())?;
             let source_metadata = weather_source_metadata_from_evidence(&result.evidence_packet)
                 .map_err(|_| weather_payload_contract_error())?;
             let response = ToolResponse::ok_v1(
@@ -8504,6 +8516,35 @@ fn weather_ambiguity_response(
     .map_err(StorageError::ContractViolation)
 }
 
+fn weather_forecast_not_wired_response(
+    tool_request: &ToolRequest,
+    place: &str,
+) -> Result<ToolResponse, StorageError> {
+    let place = clean_weather_place_label(place);
+    let summary = format!(
+        "I can check current weather for {place}, but the multi-day forecast lane is not wired yet."
+    );
+    let source_metadata = SourceMetadata {
+        schema_version: selene_kernel_contracts::ph1e::PH1E_CONTRACT_VERSION,
+        provider_hint: Some("weather_forecast_capability".to_string()),
+        retrieved_at_unix_ms: app_ingress_unix_time_ms() as u64,
+        sources: vec![SourceRef {
+            title: "Selene weather forecast capability".to_string(),
+            url: "https://selene.local/weather/forecast-capability".to_string(),
+        }],
+    };
+    ToolResponse::ok_v1(
+        tool_request.request_id,
+        tool_request.query_hash,
+        ToolResult::Weather { summary },
+        source_metadata,
+        None,
+        ReasonCodeId(0x4500_0005),
+        CacheStatus::Bypassed,
+    )
+    .map_err(StorageError::ContractViolation)
+}
+
 fn weather_place_from_query(query: &str) -> String {
     let mut cleaned = query
         .split('|')
@@ -8514,6 +8555,10 @@ fn weather_place_from_query(query: &str) -> String {
         .to_string();
     let lower = cleaned.to_ascii_lowercase();
     for marker in [
+        "what is the weather like in ",
+        "what's the weather like in ",
+        "how is the weather in ",
+        "how's the weather in ",
         "what is the weather in ",
         "what's the weather in ",
         "what is the temperature in ",
@@ -8521,6 +8566,21 @@ fn weather_place_from_query(query: &str) -> String {
         "what temperature is it in ",
         "current temperature in ",
         "current temperature for ",
+        "is it raining in ",
+        "is it raining for ",
+        "will it rain in ",
+        "will it rain for ",
+        "is rain expected in ",
+        "is rain expected for ",
+        "any rain forecast for ",
+        "any rain forecast in ",
+        "rain forecast for ",
+        "rain forecast in ",
+        "what is the forecast for ",
+        "what's the forecast for ",
+        "what is the forecast in ",
+        "what's the forecast in ",
+        "weather like in ",
         "weather in ",
         "weather for ",
         "temperature in ",
@@ -8537,10 +8597,60 @@ fn weather_place_from_query(query: &str) -> String {
             break;
         }
     }
-    cleaned
+    weather_strip_place_suffixes(cleaned.as_str())
         .trim_matches(|ch: char| ch == '?' || ch == '.' || ch == ',' || ch == ';')
         .trim()
         .to_string()
+}
+
+fn weather_strip_place_suffixes(place: &str) -> String {
+    let mut cleaned = place.trim().to_string();
+    loop {
+        let lower = cleaned.to_ascii_lowercase();
+        if lower == "the next four days"
+            || lower == "next four days"
+            || lower == "the next 4 days"
+            || lower == "next 4 days"
+        {
+            return String::new();
+        }
+        let Some(cut_index) = [
+            " weather for ",
+            " weather over ",
+            " forecast for ",
+            " forecast over ",
+            " for the next ",
+            " over the next ",
+            " next ",
+            " tomorrow",
+            " today",
+            " this week",
+        ]
+        .iter()
+        .filter_map(|marker| lower.find(marker))
+        .min() else {
+            break;
+        };
+        cleaned = cleaned[..cut_index].trim().to_string();
+    }
+    cleaned
+}
+
+fn weather_query_requests_multi_day_forecast(query: &str) -> bool {
+    let normalized = normalize_place_key(query);
+    normalized.contains("forecast")
+        || normalized.contains("next four days")
+        || normalized.contains("next 4 days")
+        || normalized.contains("multi day")
+        || normalized.contains("multiday")
+}
+
+fn weather_query_asks_rain(query: &str) -> bool {
+    let normalized = normalize_place_key(query);
+    normalized.contains("rain")
+        || normalized.contains("raining")
+        || normalized.contains("drizzle")
+        || normalized.contains("precipitation")
 }
 
 fn weather_normalize_query_place(place: &str) -> String {
@@ -8795,6 +8905,19 @@ fn weather_summary_from_payload(
     }
 }
 
+fn weather_rain_summary_from_payload(
+    requested_place: &str,
+    payload: &serde_json::Value,
+) -> Result<String, ()> {
+    match payload.get("provider").and_then(serde_json::Value::as_str) {
+        Some("tomorrow.io") => weather_rain_summary_from_tomorrow_payload(requested_place, payload),
+        Some("weatherapi.com") => {
+            weather_rain_summary_from_weatherapi_payload(requested_place, payload)
+        }
+        _ => Err(()),
+    }
+}
+
 fn weather_summary_from_tomorrow_payload(
     requested_place: &str,
     payload: &serde_json::Value,
@@ -8826,6 +8949,30 @@ fn weather_summary_from_tomorrow_payload(
         humidity,
         wind.map(|value| (value, "m/s")),
     ))
+}
+
+fn weather_rain_summary_from_tomorrow_payload(
+    requested_place: &str,
+    payload: &serde_json::Value,
+) -> Result<String, ()> {
+    let provider_payload = payload.get("provider_payload").ok_or(())?;
+    let values = provider_payload.pointer("/data/values").ok_or(())?;
+    let temp = values
+        .get("temperature")
+        .and_then(serde_json::Value::as_f64)
+        .ok_or(())?;
+    let condition = values
+        .get("weatherCode")
+        .and_then(serde_json::Value::as_i64)
+        .map(tomorrow_weather_code_label)
+        .unwrap_or("current conditions");
+    let place = provider_payload
+        .pointer("/location/name")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(requested_place);
+    Ok(clean_weather_rain_sentence(place, temp, condition))
 }
 
 fn weather_summary_from_weatherapi_payload(
@@ -8870,6 +9017,39 @@ fn weather_summary_from_weatherapi_payload(
     ))
 }
 
+fn weather_rain_summary_from_weatherapi_payload(
+    requested_place: &str,
+    payload: &serde_json::Value,
+) -> Result<String, ()> {
+    let provider_payload = payload.get("provider_payload").ok_or(())?;
+    let current = provider_payload.get("current").ok_or(())?;
+    let temp = current
+        .get("temp_c")
+        .and_then(serde_json::Value::as_f64)
+        .ok_or(())?;
+    let condition = current
+        .pointer("/condition/text")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("current conditions");
+    let city = provider_payload
+        .pointer("/location/name")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(requested_place);
+    let country = provider_payload
+        .pointer("/location/country")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let place = country
+        .map(|country| format!("{city}, {country}"))
+        .unwrap_or_else(|| city.to_string());
+    Ok(clean_weather_rain_sentence(place.as_str(), temp, condition))
+}
+
 fn clean_weather_sentence(
     place: &str,
     temperature_c: f64,
@@ -8889,6 +9069,43 @@ fn clean_weather_sentence(
         format_weather_number(temperature_c),
         condition
     )
+}
+
+fn clean_weather_rain_sentence(place: &str, temperature_c: f64, condition: &str) -> String {
+    let place = clean_weather_place_label(place);
+    let condition = clean_weather_condition_label(condition);
+    if condition.is_empty() {
+        return format!(
+            "{} is {}°C right now; I do not have a rain signal in the current conditions.",
+            place,
+            format_weather_number(temperature_c)
+        );
+    }
+    if weather_condition_indicates_rain(condition.as_str()) {
+        format!(
+            "{} is {}°C with {} right now.",
+            place,
+            format_weather_number(temperature_c),
+            condition
+        )
+    } else {
+        format!(
+            "{} is {}°C and {} right now, so current conditions do not indicate rain.",
+            place,
+            format_weather_number(temperature_c),
+            condition
+        )
+    }
+}
+
+fn weather_condition_indicates_rain(condition: &str) -> bool {
+    let normalized = normalize_place_key(condition);
+    normalized.contains("rain")
+        || normalized.contains("drizzle")
+        || normalized.contains("shower")
+        || normalized.contains("thunderstorm")
+        || normalized.contains("sleet")
+        || normalized.contains("hail")
 }
 
 fn clean_weather_condition_label(condition: &str) -> String {
@@ -19709,8 +19926,7 @@ mod tests {
     fn at_identity_drift_01b_public_no_intent_answer_handoff_skips_governance_drift_without_weakening_protected_fail_closed(
     ) {
         let runtime = runtime_with_search_tool_fixtures();
-        let actor_user_id =
-            UserId::new("tenant_1:identity_public_no_intent_runtime_user").unwrap();
+        let actor_user_id = UserId::new("tenant_1:identity_public_no_intent_runtime_user").unwrap();
         let device_id = DeviceId::new("identity_public_no_intent_runtime_device_1").unwrap();
         let mut store = Ph1fStore::new_in_memory();
         seed_actor(&mut store, &actor_user_id, &device_id);
@@ -19728,8 +19944,9 @@ mod tests {
             "Okay. What would you like to do?".to_string(),
             ph1n_reason_codes::N_CHAT_NO_INTENT,
         );
-        let public_out = finalize_pending_protected_chat_response_turn(&runtime, &mut store, pending)
-            .expect("public no-intent answer handoff must remain lawful under drift");
+        let public_out =
+            finalize_pending_protected_chat_response_turn(&runtime, &mut store, pending)
+                .expect("public no-intent answer handoff must remain lawful under drift");
 
         assert_eq!(public_out.next_move, AppVoiceTurnNextMove::Respond);
         let public_text = public_out

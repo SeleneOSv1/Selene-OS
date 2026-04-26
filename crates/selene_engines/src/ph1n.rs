@@ -227,6 +227,20 @@ fn looks_like_time_query(lower: &str) -> bool {
         || lower.contains("tell me the time")
 }
 
+fn looks_like_weather_query(lower: &str) -> bool {
+    lower.contains("weather")
+        || lower.contains("temperature")
+        || lower.contains("is it raining")
+        || lower.contains("will it rain")
+        || lower.contains("rain forecast")
+        || lower.contains("precipitation")
+        || (lower.contains("forecast")
+            && (lower.contains(" rain")
+                || lower.contains("weather")
+                || lower.contains(" in ")
+                || lower.contains(" for ")))
+}
+
 fn looks_like_web_search(lower: &str) -> bool {
     (contains_word(lower, "search")
         && (contains_word(lower, "web")
@@ -415,7 +429,7 @@ fn detect_intents(lower: &str) -> Vec<IntentType> {
         return out;
     }
 
-    if s.contains("weather") || s.contains("temperature") {
+    if looks_like_weather_query(s) {
         push(IntentType::WeatherQuery);
     }
     if s.contains("forget")
@@ -4046,6 +4060,27 @@ mod tests {
             "Selene what is the temperature in New York",
             "What is the temperature in Madrid",
             "temperature in Lisbon",
+        ] {
+            let out = rt.run(&req(prompt, "en")).unwrap();
+            match out {
+                Ph1nResponse::IntentDraft(d) => {
+                    assert_eq!(d.intent_type, IntentType::WeatherQuery);
+                    assert_eq!(d.overall_confidence, OverallConfidence::High);
+                    assert!(!d.requires_confirmation);
+                }
+                _ => panic!("expected deterministic weather intent for {prompt}"),
+            }
+        }
+    }
+
+    #[test]
+    fn h370_rain_and_forecast_weather_phrases_are_weather_queries() {
+        let rt = Ph1nRuntime::new(Ph1nConfig::mvp_v1());
+        for prompt in [
+            "Is it raining in Barcelona?",
+            "Any rain forecast for Barcelona for the next four days?",
+            "What is the forecast for Barcelona for the next four days?",
+            "What's the weather like in Sydney?",
         ] {
             let out = rt.run(&req(prompt, "en")).unwrap();
             match out {

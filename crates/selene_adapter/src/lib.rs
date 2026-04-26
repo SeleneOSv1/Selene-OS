@@ -21201,6 +21201,210 @@ mod tests {
     }
 
     #[test]
+    fn h370_public_joke_does_not_return_generic_failure() {
+        let answer = run_public_prompt_with_mock_answer(
+            "Tell me a joke",
+            r#"{"mode":"chat","response_text":"Why did the moon skip dinner? It was full.","reason_code":"D_PROVIDER_OK"}"#,
+        );
+        assert_eq!(answer, "Why did the moon skip dinner? It was full.");
+        assert_ne!(answer, "I couldn't answer that just now. Please try again.");
+        let lowered = answer.to_ascii_lowercase();
+        for forbidden in [
+            "ph1d",
+            "invalidschema",
+            "reason_code",
+            "governance",
+            "provider payload",
+            "desktop runtime bridge",
+        ] {
+            assert!(
+                !lowered.contains(forbidden),
+                "public answer leaked forbidden text `{forbidden}`: {answer}"
+            );
+        }
+    }
+
+    #[test]
+    fn h370_weather_like_question_uses_city_not_like_prefix() {
+        let endpoint = h361_spawn_tomorrow_weather_endpoint(
+            r#"{
+                "data": {
+                    "time": "2026-04-25T03:00:00Z",
+                    "values": {
+                        "temperature": 20.8,
+                        "humidity": 64,
+                        "windSpeed": 6.0,
+                        "weatherCode": 1001
+                    }
+                },
+                "location": {
+                    "name": "Sydney, Australia"
+                }
+            }"#,
+        );
+        with_isolated_device_vault(
+            "h370-weather-like-sydney",
+            &[],
+            &[
+                ("SELENE_REALTIME_TOMORROW_IO_ENDPOINT", endpoint.as_str()),
+                ("SELENE_REALTIME_TOMORROW_IO_API_KEY", "h370-secret"),
+                ("SELENE_REALTIME_WEATHER_API_KEY", " "),
+                ("SELENE_REALTIME_PROXY_MODE", "off"),
+            ],
+            || {
+                let runtime = AdapterRuntime::default();
+                let answer = h364_run_desktop_typed_weather_query_on_thread(
+                    &runtime,
+                    "h370-weather-like-sydney",
+                    370_001,
+                    "What's the weather like in Sydney?",
+                );
+                assert_eq!(answer.response_text, "Sydney is 20.8°C and cloudy.");
+                assert!(!answer.response_text.starts_with("Like is"));
+                assert!(!answer.response_text.contains("Cley Next The Sea"));
+                assert!(!answer.response_text.contains("provider_payload"));
+            },
+        );
+    }
+
+    #[test]
+    fn h370_rain_question_routes_to_weather_current_conditions() {
+        let endpoint = h361_spawn_tomorrow_weather_endpoint(
+            r#"{
+                "data": {
+                    "time": "2026-04-25T03:00:00Z",
+                    "values": {
+                        "temperature": 12.9,
+                        "humidity": 59,
+                        "windSpeed": 3.6,
+                        "weatherCode": 1001
+                    }
+                },
+                "location": {
+                    "name": "Barcelona, Spain"
+                }
+            }"#,
+        );
+        with_isolated_device_vault(
+            "h370-rain-barcelona",
+            &[],
+            &[
+                ("SELENE_REALTIME_TOMORROW_IO_ENDPOINT", endpoint.as_str()),
+                ("SELENE_REALTIME_TOMORROW_IO_API_KEY", "h370-secret"),
+                ("SELENE_REALTIME_WEATHER_API_KEY", " "),
+                ("SELENE_REALTIME_PROXY_MODE", "off"),
+            ],
+            || {
+                let runtime = AdapterRuntime::default();
+                let answer = h364_run_desktop_typed_weather_query_on_thread(
+                    &runtime,
+                    "h370-rain-barcelona",
+                    370_011,
+                    "Is it raining in Barcelona?",
+                );
+                assert_eq!(answer.status, "ok");
+                assert_eq!(answer.outcome, "FINAL_TOOL");
+                assert!(answer.response_text.contains("Barcelona is 12.9°C"));
+                assert!(answer
+                    .response_text
+                    .contains("current conditions do not indicate rain"));
+                assert_ne!(
+                    answer.response_text,
+                    "I couldn't answer that just now. Please try again."
+                );
+                assert!(!answer.response_text.contains("provider_payload"));
+                assert!(!answer
+                    .response_text
+                    .contains("governance state is out of sync"));
+            },
+        );
+    }
+
+    #[test]
+    fn h370_forecast_question_returns_safe_capability_not_bad_geocode() {
+        with_isolated_device_vault(
+            "h370-forecast-barcelona-no-provider",
+            &[],
+            &[
+                ("SELENE_REALTIME_TOMORROW_IO_API_KEY", " "),
+                ("SELENE_REALTIME_WEATHER_API_KEY", " "),
+                ("SELENE_REALTIME_PROXY_MODE", "off"),
+            ],
+            || {
+                let runtime = AdapterRuntime::default();
+                let answer = h364_run_desktop_typed_weather_query_on_thread(
+                    &runtime,
+                    "h370-forecast-barcelona",
+                    370_021,
+                    "What's the forecast for Barcelona weather for the next four days?",
+                );
+                assert_eq!(answer.status, "ok");
+                assert_eq!(answer.outcome, "FINAL_TOOL");
+                assert!(answer
+                    .response_text
+                    .contains("current weather for Barcelona"));
+                assert!(answer.response_text.contains("multi-day forecast lane"));
+                assert!(!answer.response_text.contains("Cley Next The Sea"));
+                assert!(!answer.response_text.starts_with("Like is"));
+                assert_ne!(
+                    answer.response_text,
+                    "I couldn't answer that just now. Please try again."
+                );
+                assert!(!answer.response_text.contains("provider_payload"));
+            },
+        );
+    }
+
+    #[test]
+    fn h370_spain_barcelona_followup_resolves_to_barcelona_weather() {
+        let endpoint = h361_spawn_tomorrow_weather_endpoint(
+            r#"{
+                "data": {
+                    "time": "2026-04-25T03:00:00Z",
+                    "values": {
+                        "temperature": 12.9,
+                        "humidity": 59,
+                        "windSpeed": 3.6,
+                        "weatherCode": 1001
+                    }
+                },
+                "location": {
+                    "name": "Barcelona, Spain"
+                }
+            }"#,
+        );
+        with_isolated_device_vault(
+            "h370-weather-spain-barcelona",
+            &[],
+            &[
+                ("SELENE_REALTIME_TOMORROW_IO_ENDPOINT", endpoint.as_str()),
+                ("SELENE_REALTIME_TOMORROW_IO_API_KEY", "h370-secret"),
+                ("SELENE_REALTIME_WEATHER_API_KEY", " "),
+                ("SELENE_REALTIME_PROXY_MODE", "off"),
+            ],
+            || {
+                let runtime = AdapterRuntime::default();
+                let clarify = h364_run_desktop_typed_weather_query_on_thread(
+                    &runtime,
+                    "h370-weather-spain-barcelona",
+                    370_031,
+                    "What is the weather in Spain?",
+                );
+                assert_h364_clean_weather_clarification(&clarify, "Barcelona, Spain");
+                let answer = h364_run_desktop_typed_weather_query_on_thread(
+                    &runtime,
+                    "h370-weather-spain-barcelona",
+                    370_032,
+                    "Barcelona",
+                );
+                assert_h364_clean_weather_answer(&answer, "Barcelona");
+                assert!(answer.response_text.contains("12.9°C"));
+                assert!(!answer.response_text.contains("Cley Next The Sea"));
+            },
+        );
+    }
+
+    #[test]
     fn h365_weather_temperature_typo_kunchan_resolves_to_kunshan_cleanly() {
         let endpoint = h361_spawn_tomorrow_weather_endpoint(
             r#"{
