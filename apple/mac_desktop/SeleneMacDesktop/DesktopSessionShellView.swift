@@ -5493,6 +5493,7 @@ struct DesktopSessionShellView: View {
     @StateObject private var desktopCanonicalRuntimeBridge = DesktopCanonicalRuntimeBridge()
     @StateObject private var desktopAuthoritativeReplyPlaybackController = DesktopAuthoritativeReplyPlaybackController()
     @State private var desktopRealtimeTranscriptionStartInFlight = false
+    @State private var desktopRealtimeTranscriptionStartGeneration: UInt64 = 0
     @State private var desktopCanonicalRuntimeOutcomeState: DesktopCanonicalRuntimeOutcomeState?
     @State private var desktopInviteOpenRuntimeOutcomeState: DesktopInviteOpenRuntimeOutcomeState?
     @State private var desktopOnboardingContinueRuntimeOutcomeState: DesktopOnboardingContinueRuntimeOutcomeState?
@@ -7095,12 +7096,12 @@ struct DesktopSessionShellView: View {
 
                     Spacer()
 
-                    Text(explicitVoiceController.isListening ? "Live now" : "Bounded only")
+                    Text(desktopExplicitVoiceCaptureControlActive ? "Live now" : "Bounded only")
                         .font(.caption.weight(.semibold))
                         .padding(.horizontal, 10)
                         .padding(.vertical, 6)
                         .background(
-                            explicitVoiceController.isListening
+                            desktopExplicitVoiceCaptureControlActive
                                 ? Color.accentColor.opacity(0.16)
                                 : Color.secondary.opacity(0.12)
                         )
@@ -7200,10 +7201,10 @@ struct DesktopSessionShellView: View {
                         desktopAuthoritativeReplyProvenanceRenderState = nil
                         desktopAuthoritativeReplyPlaybackController.reset()
                         desktopAuthoritativeReplyPlaybackState = .idle
-                        explicitVoiceController.stopCaptureAndPrepareVoiceTurn()
+                        stopDesktopComposerVoiceTurnAndSend()
                     }
                     .buttonStyle(.bordered)
-                    .disabled(!explicitVoiceController.isListening)
+                    .disabled(!desktopExplicitVoiceCaptureControlActive)
                 }
 
                 if explicitVoiceController.isListening {
@@ -7544,6 +7545,7 @@ struct DesktopSessionShellView: View {
 
     private var desktopTypedTurnSubmissionInterlocksActive: Bool {
         desktopTypedTurnPendingRequest != nil
+            || desktopRealtimeTranscriptionStartInFlight
             || explicitVoiceController.isListening
             || explicitVoiceController.pendingRequest != nil
             || desktopWakeListenerController.listenerState.isActiveForMicrophone
@@ -7564,6 +7566,8 @@ struct DesktopSessionShellView: View {
 
     private var desktopTypedTurnComposerEditingInterlocksActive: Bool {
         keyboardComposerPendingTypedTurnRequest != nil
+            || desktopRealtimeTranscriptionStartInFlight
+            || explicitVoiceController.isListening
             || explicitVoiceController.pendingRequest != nil
             || desktopWakeListenerController.listenerState.isActiveForMicrophone
             || desktopWakeListenerController.listenerState == .dispatching
@@ -7573,6 +7577,8 @@ struct DesktopSessionShellView: View {
 
     private var desktopTypedTurnComposerSubmissionInterlocksActive: Bool {
         keyboardComposerPendingTypedTurnRequest != nil
+            || desktopRealtimeTranscriptionStartInFlight
+            || explicitVoiceController.isListening
             || explicitVoiceController.pendingRequest != nil
             || desktopWakeListenerController.listenerState.isActiveForMicrophone
             || desktopWakeListenerController.listenerState == .dispatching
@@ -7590,8 +7596,11 @@ struct DesktopSessionShellView: View {
                 desktopVisibleTypedTurnDraft
             },
             set: { newValue in
-                if explicitVoiceController.isListening,
-                   newValue != explicitVoiceController.transcriptPreview {
+                if explicitVoiceController.isListening {
+                    if newValue == explicitVoiceController.transcriptPreview {
+                        return
+                    }
+
                     explicitVoiceController.discardCurrentVoiceTurn()
                 }
 
@@ -7608,8 +7617,13 @@ struct DesktopSessionShellView: View {
 
     private var desktopComposerShouldShowWaveformActiveState: Bool {
         desktopComposerVoiceModeEnabled
+            || desktopRealtimeTranscriptionStartInFlight
             || explicitVoiceController.isListening
             || explicitVoiceController.pendingRequest != nil
+    }
+
+    private var desktopExplicitVoiceCaptureControlActive: Bool {
+        desktopRealtimeTranscriptionStartInFlight || explicitVoiceController.isListening
     }
 
     private func presentDesktopComposerAttachmentPicker() {
@@ -7643,6 +7657,7 @@ struct DesktopSessionShellView: View {
     private func desktopDeactivateComposerVoiceMode(preserveTranscriptPreview: Bool) {
         desktopComposerVoiceModeEnabled = false
         desktopComposerVoiceModeAwaitingReplyPlaybackCompletion = false
+        cancelDesktopRealtimeTranscriptionStartIfNeeded()
 
         if explicitVoiceController.isListening {
             if preserveTranscriptPreview {
@@ -7663,6 +7678,7 @@ struct DesktopSessionShellView: View {
               !explicitVoiceController.isListening,
               explicitVoiceController.pendingRequest == nil,
               desktopTypedTurnPendingRequest == nil,
+              !desktopRealtimeTranscriptionStartInFlight,
               !desktopWakeListenerController.listenerState.isActiveForMicrophone,
               desktopWakeListenerController.listenerState != .dispatching,
               desktopWakeListenerController.pendingRequest == nil,
@@ -7691,7 +7707,15 @@ struct DesktopSessionShellView: View {
     }
 
     private func stopDesktopComposerVoiceTurnAndSend() {
+        guard !desktopRealtimeTranscriptionStartInFlight else {
+            cancelDesktopRealtimeTranscriptionStartIfNeeded()
+            return
+        }
+
+        let visibleVoiceTranscript = explicitVoiceController.transcriptPreview
+            .trimmingCharacters(in: .whitespacesAndNewlines)
         explicitVoiceController.stopCaptureAndPrepareVoiceTurn()
+        clearComposerDraftIfItOnlyMirrorsVoiceTranscript(visibleVoiceTranscript)
     }
 
     private func startDesktopExplicitVoiceTurn() {
@@ -7708,13 +7732,20 @@ struct DesktopSessionShellView: View {
         }
 
         guard !desktopRealtimeTranscriptionStartInFlight else {
+            desktopAppendRuntimeBridgeDebugLog(
+                "desktop realtime transcription start skipped reason=start_in_flight"
+            )
             return
         }
 
+        desktopRealtimeTranscriptionStartGeneration &+= 1
+        let startGeneration = desktopRealtimeTranscriptionStartGeneration
         desktopRealtimeTranscriptionStartInFlight = true
         Task { @MainActor in
             defer {
-                desktopRealtimeTranscriptionStartInFlight = false
+                if desktopRealtimeTranscriptionStartGeneration == startGeneration {
+                    desktopRealtimeTranscriptionStartInFlight = false
+                }
             }
 
             do {
@@ -7726,14 +7757,50 @@ struct DesktopSessionShellView: View {
                 desktopAppendRuntimeBridgeDebugLog(
                     "desktop realtime transcription token mint ok request=\(session.requestID) endpoint=\(session.endpoint) model=\(session.transcriptionModel)"
                 )
+                guard desktopRealtimeTranscriptionStartGeneration == startGeneration,
+                      desktopRealtimeTranscriptionStartInFlight else {
+                    desktopAppendRuntimeBridgeDebugLog(
+                        "desktop realtime transcription start cancelled before capture"
+                    )
+                    return
+                }
                 explicitVoiceController.startRealtimeTranscriptionVoiceTurn(session: session)
             } catch {
+                guard desktopRealtimeTranscriptionStartGeneration == startGeneration,
+                      desktopRealtimeTranscriptionStartInFlight else {
+                    desktopAppendRuntimeBridgeDebugLog(
+                        "desktop realtime transcription start cancellation absorbed token_mint_failure"
+                    )
+                    return
+                }
                 desktopAppendRuntimeBridgeDebugLog(
                     "desktop realtime transcription fallback path=old_bounded reason=token_mint_failure redacted=true"
                 )
                 explicitVoiceController.startExplicitVoiceTurn()
             }
         }
+    }
+
+    private func cancelDesktopRealtimeTranscriptionStartIfNeeded() {
+        guard desktopRealtimeTranscriptionStartInFlight else {
+            return
+        }
+
+        desktopRealtimeTranscriptionStartGeneration &+= 1
+        desktopRealtimeTranscriptionStartInFlight = false
+        desktopAppendRuntimeBridgeDebugLog(
+            "desktop realtime transcription start cancelled by user before capture"
+        )
+    }
+
+    private func clearComposerDraftIfItOnlyMirrorsVoiceTranscript(_ transcript: String) {
+        let normalizedTranscript = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedTranscript.isEmpty,
+              desktopTypedTurnDraft.trimmingCharacters(in: .whitespacesAndNewlines) == normalizedTranscript else {
+            return
+        }
+
+        desktopTypedTurnDraft = ""
     }
 
     private func toggleDesktopComposerVoiceMode() {
@@ -7755,7 +7822,9 @@ struct DesktopSessionShellView: View {
     }
 
     private var desktopComposerShouldShowSendButton: Bool {
-        desktopComposerHasSubmissionContent && !explicitVoiceController.isListening
+        desktopComposerHasSubmissionContent
+            && !desktopRealtimeTranscriptionStartInFlight
+            && !explicitVoiceController.isListening
     }
 
     private var desktopVisibleComposerPlaceholder: String {
@@ -7922,15 +7991,15 @@ struct DesktopSessionShellView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
 
                 HStack(spacing: 10) {
-                    if explicitVoiceController.isListening || !desktopComposerShouldShowSendButton {
+                    if desktopExplicitVoiceCaptureControlActive || !desktopComposerShouldShowSendButton {
                         Button {
-                            if explicitVoiceController.isListening {
+                            if desktopExplicitVoiceCaptureControlActive {
                                 stopDesktopComposerVoiceTurnAndSend()
                             } else {
                                 startDesktopComposerVoiceTurn()
                             }
                         } label: {
-                            Image(systemName: explicitVoiceController.isListening ? "stop.fill" : "mic")
+                            Image(systemName: desktopExplicitVoiceCaptureControlActive ? "stop.fill" : "mic")
                                 .font(.system(size: 17, weight: .medium))
                                 .foregroundStyle(Color.primary.opacity(0.92))
                                 .frame(width: 28, height: 28)
@@ -18707,6 +18776,7 @@ struct DesktopSessionShellView: View {
                     conversationKey: conversationKey
                 )
             }
+            clearComposerDraftIfItOnlyMirrorsVoiceTranscript(pendingRequest.transcript)
             explicitVoiceController.clearPendingPreparedVoiceTurn()
             if shouldAwaitVoiceModeReplyPlaybackCompletion {
                 desktopComposerVoiceModeAwaitingReplyPlaybackCompletion = true
@@ -18747,6 +18817,7 @@ struct DesktopSessionShellView: View {
                 detail: error.localizedDescription,
                 conversationKey: conversationKey
             )
+            clearComposerDraftIfItOnlyMirrorsVoiceTranscript(pendingRequest.transcript)
             explicitVoiceController.clearPendingPreparedVoiceTurn()
             desktopAttemptResumeComposerVoiceMode()
         }
