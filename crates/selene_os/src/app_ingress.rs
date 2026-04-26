@@ -8,6 +8,7 @@ use selene_engines::ph1_voice_id::{
     reason_codes as voice_id_reason_codes, simulation_profile_embedding_from_seed,
     EnrolledSpeaker as EngineEnrolledSpeaker, VoiceIdObservation as EngineVoiceIdObservation,
 };
+use selene_engines::ph1n::reason_codes as ph1n_reason_codes;
 use selene_engines::ph1e::{Ph1eConfig, Ph1eRuntime};
 use selene_engines::ph1emocore::{
     Ph1EmoCoreConfig as EnginePh1EmoCoreConfig, Ph1EmoCoreRuntime as EnginePh1EmoCoreRuntime,
@@ -4409,6 +4410,7 @@ impl AppServerIngressRuntime {
             .map_err(StorageError::ContractViolation)?;
         if let Some(drift_fail_closed) = classify_governance_drift_fail_closed_for_directive(
             &runtime_execution_envelope,
+            &ph1x_request,
             &ph1x_response.directive,
             ph1x_response.reason_code,
         ) {
@@ -7621,6 +7623,7 @@ fn classify_multi_speaker_identity_posture_fail_closed_outcome(
 // governance posture that runtime law would otherwise surface as drift visibility.
 fn classify_governance_drift_fail_closed_for_directive(
     runtime_execution_envelope: &RuntimeExecutionEnvelope,
+    ph1x_request: &Ph1xRequest,
     directive: &Ph1xDirective,
     reason_code: ReasonCodeId,
 ) -> Option<GovernanceDriftFailClosedBehavior> {
@@ -7638,7 +7641,9 @@ fn classify_governance_drift_fail_closed_for_directive(
     {
         return None;
     }
-    if directive_is_public_deterministic_read_only_tool(directive) {
+    if directive_is_public_deterministic_read_only_tool(directive)
+        || directive_is_public_no_intent_answer_handoff(ph1x_request, directive)
+    {
         return None;
     }
     if governance_state
@@ -7667,6 +7672,26 @@ fn directive_is_public_deterministic_read_only_tool(directive: &Ph1xDirective) -
                 DispatchRequest::Tool(tool)
                     if matches!(tool.tool_name, ToolName::Time | ToolName::Weather)
             )
+    )
+}
+
+fn directive_is_public_no_intent_answer_handoff(
+    ph1x_request: &Ph1xRequest,
+    directive: &Ph1xDirective,
+) -> bool {
+    if !matches!(directive, Ph1xDirective::Respond(_)) {
+        return false;
+    }
+    if ph1x_request.policy_context_ref.privacy_mode
+        || ph1x_request.policy_context_ref.do_not_disturb
+        || ph1x_request.policy_context_ref.safety_tier != SafetyTier::Standard
+    {
+        return false;
+    }
+    matches!(
+        ph1x_request.nlp_output.as_ref(),
+        Some(Ph1nResponse::Chat(chat))
+            if chat.reason_code == ph1n_reason_codes::N_CHAT_NO_INTENT
     )
 }
 
@@ -13441,6 +13466,31 @@ mod tests {
         correlation_id: CorrelationId,
         turn_id: TurnId,
     ) -> PendingProtectedChatResponseTurn {
+        prepare_chat_response_turn_with_identity_assertion(
+            runtime,
+            store,
+            actor_user_id,
+            device_id,
+            assertion,
+            correlation_id,
+            turn_id,
+            "give me a direct answer".to_string(),
+            ReasonCodeId(1),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn prepare_chat_response_turn_with_identity_assertion(
+        runtime: &AppServerIngressRuntime,
+        store: &mut Ph1fStore,
+        actor_user_id: UserId,
+        device_id: DeviceId,
+        assertion: Ph1VoiceIdResponse,
+        correlation_id: CorrelationId,
+        turn_id: TurnId,
+        chat_response_text: String,
+        chat_reason_code: ReasonCodeId,
+    ) -> PendingProtectedChatResponseTurn {
         let request = AppVoiceIngressRequest::v1(
             correlation_id,
             turn_id,
@@ -13474,7 +13524,7 @@ mod tests {
             memory_candidates: vec![],
             confirm_answer: None,
             nlp_output: Some(
-                Chat::v1("give me a direct answer".to_string(), ReasonCodeId(1))
+                Chat::v1(chat_response_text, chat_reason_code)
                     .map(Ph1nResponse::Chat)
                     .unwrap(),
             ),
@@ -19652,6 +19702,60 @@ mod tests {
         assert_eq!(
             ph1x_payload_value(row, "identity_cluster_drift_detected"),
             Some("true")
+        );
+    }
+
+    #[test]
+    fn at_identity_drift_01b_public_no_intent_answer_handoff_skips_governance_drift_without_weakening_protected_fail_closed(
+    ) {
+        let runtime = runtime_with_search_tool_fixtures();
+        let actor_user_id =
+            UserId::new("tenant_1:identity_public_no_intent_runtime_user").unwrap();
+        let device_id = DeviceId::new("identity_public_no_intent_runtime_device_1").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &actor_user_id, &device_id);
+        let _ = runtime
+            .observe_runtime_governance_node_policy_version("node_public", Some("2026.04.01.v1"));
+
+        let pending = prepare_chat_response_turn_with_identity_assertion(
+            &runtime,
+            &mut store,
+            actor_user_id.clone(),
+            device_id.clone(),
+            confirmed_voice_assertion(actor_user_id.clone()),
+            CorrelationId(98241),
+            TurnId(99241),
+            "Okay. What would you like to do?".to_string(),
+            ph1n_reason_codes::N_CHAT_NO_INTENT,
+        );
+        let public_out = finalize_pending_protected_chat_response_turn(&runtime, &mut store, pending)
+            .expect("public no-intent answer handoff must remain lawful under drift");
+
+        assert_eq!(public_out.next_move, AppVoiceTurnNextMove::Respond);
+        let public_text = public_out
+            .response_text
+            .as_deref()
+            .expect("public no-intent handoff should keep response text");
+        assert!(!public_text.contains("governance state is out of sync"));
+        assert!(!public_text.contains("policy versions are out of sync"));
+
+        let protected_out = run_protected_chat_response_turn_with_identity_assertion(
+            &runtime,
+            &mut store,
+            actor_user_id.clone(),
+            device_id,
+            confirmed_voice_assertion(actor_user_id),
+            CorrelationId(98242),
+            TurnId(99242),
+        );
+        assert_eq!(protected_out.next_move, AppVoiceTurnNextMove::Refused);
+        assert!(
+            protected_out
+                .response_text
+                .as_deref()
+                .is_some_and(|text| text.contains("out of sync right now")),
+            "protected drift path must still fail closed, got {:?}",
+            protected_out.response_text
         );
     }
 

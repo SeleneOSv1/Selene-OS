@@ -32,7 +32,10 @@ use selene_engines::ph1k::{
     evaluate_interrupt_candidate, InterruptFeedbackSignalKind, InterruptInput, InterruptNoiseClass,
     InterruptPhraseMatcher, PhraseDetection,
 };
-use selene_engines::ph1n::{Ph1nConfig as EnginePh1nConfig, Ph1nRuntime as EnginePh1nRuntime};
+use selene_engines::ph1n::{
+    reason_codes as ph1n_reason_codes, Ph1nConfig as EnginePh1nConfig,
+    Ph1nRuntime as EnginePh1nRuntime,
+};
 use selene_engines::ph1pattern::{Ph1PatternConfig as EnginePatternConfig, Ph1PatternRuntime};
 use selene_engines::ph1rll::{Ph1RllConfig as EngineRllConfig, Ph1RllRuntime};
 use selene_engines::ph1vision::{
@@ -8714,16 +8717,36 @@ fn execution_outcome_is_public_no_intent(execution: &AppVoiceTurnExecutionOutcom
     if execution.tool_response.is_some() {
         return false;
     }
-    let response_is_no_intent = execution
+    let response_text_is_no_intent = execution
         .response_text
         .as_deref()
         .map(str::trim)
         .is_some_and(|text| text == "Okay. What would you like to do?");
+    let ph1x_request_is_no_intent = execution
+        .ph1x_request
+        .as_ref()
+        .is_some_and(ph1x_request_is_public_no_intent_chat);
     let directive_is_plain_response = execution
         .ph1x_response
         .as_ref()
         .is_some_and(|response| matches!(response.directive, Ph1xDirective::Respond(_)));
-    response_is_no_intent && directive_is_plain_response
+    directive_is_plain_response && (response_text_is_no_intent || ph1x_request_is_no_intent)
+}
+
+fn ph1x_request_is_public_no_intent_chat(
+    request: &selene_kernel_contracts::ph1x::Ph1xRequest,
+) -> bool {
+    if request.policy_context_ref.privacy_mode
+        || request.policy_context_ref.do_not_disturb
+        || request.policy_context_ref.safety_tier != SafetyTier::Standard
+    {
+        return false;
+    }
+    matches!(
+        request.nlp_output.as_ref(),
+        Some(Ph1nResponse::Chat(chat))
+            if chat.reason_code == ph1n_reason_codes::N_CHAT_NO_INTENT
+    )
 }
 
 fn sanitize_transcript_text_option(value: Option<String>) -> Option<String> {
@@ -20056,6 +20079,29 @@ mod tests {
         );
     }
 
+    fn spawn_openai_responses_endpoint_for_public_answer_test(output_text: &'static str) -> String {
+        use std::io::{Read, Write};
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0")
+            .expect("mock OpenAI responses listener should bind");
+        let address = listener.local_addr().expect("mock OpenAI address");
+        std::thread::spawn(move || {
+            let Ok((mut stream, _)) = listener.accept() else {
+                return;
+            };
+            let mut request_buffer = [0_u8; 4096];
+            let _ = stream.read(&mut request_buffer);
+            let body = serde_json::json!({ "output_text": output_text }).to_string();
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            let _ = stream.write_all(response.as_bytes());
+        });
+        format!("http://{address}/v1/responses")
+    }
+
     fn ph1d_public_no_intent_test_outcome(response_text: &str) -> AppVoiceTurnExecutionOutcome {
         let runtime_execution_envelope = RuntimeExecutionEnvelope::v1(
             "ph1d_public_no_intent_request".to_string(),
@@ -20104,6 +20150,62 @@ mod tests {
 
         let normal_answer = ph1d_public_no_intent_test_outcome("The answer is 4.");
         assert!(!execution_outcome_is_public_no_intent(&normal_answer));
+    }
+
+    #[test]
+    fn at_adapter_39b_public_general_prompt_uses_ph1d_without_governance_drift_leak() {
+        let endpoint = spawn_openai_responses_endpoint_for_public_answer_test(
+            "Why did the robot bring a ladder? To reach the cloud.",
+        );
+        with_isolated_device_vault(
+            "ph1d-public-no-intent-governance-drift",
+            &[("openai_api_key", "test_openai_key")],
+            &[
+                ("SELENE_PH1D_LIVE_ADAPTER_ENABLED", "true"),
+                ("SELENE_PH1D_LIVE_PROVIDER_ID", "openai"),
+                ("OPENAI_RESPONSES_URL", endpoint.as_str()),
+                ("SELENE_CURL_CONNECT_TIMEOUT", "1"),
+                ("SELENE_CURL_MAX_TIME", "5"),
+            ],
+            || {
+                let runtime = AdapterRuntime::default();
+                let _ = runtime
+                    .ingress
+                    .observe_runtime_governance_node_policy_version(
+                        "node_public_answer",
+                        Some("2026.04.01.v1"),
+                    );
+                let mut req = base_request();
+                req.app_platform = "DESKTOP".to_string();
+                req.audio_capture_ref = None;
+                req.user_text_final = Some("Tell me a joke.".to_string());
+
+                let out = runtime
+                    .run_voice_turn(req)
+                    .expect("public general prompt should complete through PH1.D");
+                assert_eq!(out.status, "ok");
+                assert_eq!(out.outcome, "FINAL");
+                assert_eq!(
+                    out.response_text,
+                    "Why did the robot bring a ladder? To reach the cloud."
+                );
+                let lowered = out.response_text.to_ascii_lowercase();
+                for forbidden in [
+                    "governance state is out of sync",
+                    "policy versions are out of sync",
+                    "internal runtime",
+                    "provider payload",
+                    "policy internals",
+                    "debug/governance",
+                ] {
+                    assert!(
+                        !lowered.contains(forbidden),
+                        "public answer leaked forbidden text `{forbidden}`: {}",
+                        out.response_text
+                    );
+                }
+            },
+        );
     }
 
     #[test]
