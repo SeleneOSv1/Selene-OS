@@ -1574,20 +1574,30 @@ fn ph1d_chat_json_from_provider_text(text: &str) -> Result<String, String> {
         return Err("raw retrieval payload leakage".to_string());
     }
     if let Ok(value) = serde_json::from_str::<serde_json::Value>(trimmed) {
-        if value.get("mode").and_then(|v| v.as_str()) == Some("chat")
-            && value
-                .get("response_text")
-                .and_then(|v| v.as_str())
-                .map(|v| !v.trim().is_empty())
-                .unwrap_or(false)
-        {
-            return Ok(trimmed.to_string());
+        if let Some(obj) = value.as_object() {
+            if obj.get("mode").and_then(|v| v.as_str()) == Some("chat") {
+                let response_text = obj
+                    .get("response_text")
+                    .and_then(|v| v.as_str())
+                    .map(str::trim)
+                    .filter(|v| !v.is_empty())
+                    .ok_or_else(|| "chat response_text missing".to_string())?;
+                if answer_looks_like_raw_retrieval_payload(response_text) {
+                    return Err("raw retrieval payload leakage".to_string());
+                }
+                return ph1d_canonical_chat_json(response_text);
+            }
+            return Err("unsupported structured provider answer".to_string());
         }
     }
     let response_text = truncate_ascii(trimmed, 2_048);
     if response_text.trim().is_empty() {
         return Err("empty response_text".to_string());
     }
+    ph1d_canonical_chat_json(&response_text)
+}
+
+fn ph1d_canonical_chat_json(response_text: &str) -> Result<String, String> {
     serde_json::to_string(&serde_json::json!({
         "mode": "chat",
         "response_text": response_text,
@@ -3988,7 +3998,13 @@ impl AdapterRuntime {
                 Ok(answer) => answer,
                 Err(err) => {
                     eprintln!("selene_adapter ph1d public answer failed: {err}");
-                    "I couldn't answer that just now. Please try again.".to_string()
+                    if public_provider_internals_question(user_text)
+                        && err.contains("ForbiddenOutput")
+                    {
+                        safe_public_provider_internals_refusal()
+                    } else {
+                        "I couldn't answer that just now. Please try again.".to_string()
+                    }
                 }
             },
             None => "I couldn't answer that just now. Please try again.".to_string(),
@@ -7862,6 +7878,24 @@ fn voice_turn_ingress_error_from_governance_decision(
         decision.turn_id,
         governance_reason_to_session_state(decision.response_class),
     )
+}
+
+fn public_provider_internals_question(user_text: &str) -> bool {
+    let lower = user_text.to_ascii_lowercase();
+    let names_provider = lower.contains("openai")
+        || lower.contains("open ai")
+        || lower.contains("provider")
+        || lower.contains("model");
+    let asks_usage = lower.contains("using")
+        || lower.contains("use ")
+        || lower.contains("powered by")
+        || lower.contains("run on")
+        || lower.contains("running on");
+    names_provider && asks_usage
+}
+
+fn safe_public_provider_internals_refusal() -> String {
+    "I can't confirm internal service details from this chat, but I can still help.".to_string()
 }
 
 fn classify_voice_turn_runtime_error(
@@ -20043,6 +20077,28 @@ mod tests {
     }
 
     #[test]
+    fn at_adapter_36b_ph1d_provider_canonicalizes_model_chat_json() {
+        let raw = ph1d_chat_json_from_provider_text(
+            r#"{"mode":"chat","response_text":"Here is a safe public answer.","reason_code":"D_PROVIDER_OK"}"#,
+        )
+        .expect("model chat JSON should canonicalize to PH1.D chat JSON");
+        let value: serde_json::Value =
+            serde_json::from_str(&raw).expect("canonical chat JSON should parse");
+        assert_eq!(
+            value.get("mode").and_then(|value| value.as_str()),
+            Some("chat")
+        );
+        assert_eq!(
+            value.get("response_text").and_then(|value| value.as_str()),
+            Some("Here is a safe public answer.")
+        );
+        assert_eq!(
+            value.get("reason_code").and_then(|value| value.as_u64()),
+            Some(ph1d_reason_codes::D_PROVIDER_OK.0 as u64)
+        );
+    }
+
+    #[test]
     fn at_adapter_37_ph1d_provider_rejects_raw_search_dump_as_public_answer() {
         let raw = "Current local time in USA – New York – New York.\n\nSources:\n1. Current Local Time in New York (https://example.invalid)\nRetrieved at (unix_ms): 1777042094659";
         assert!(ph1d_chat_json_from_provider_text(raw).is_err());
@@ -20143,6 +20199,41 @@ mod tests {
         }
     }
 
+    fn run_public_prompt_with_mock_answer(prompt: &str, output_text: &'static str) -> String {
+        let endpoint = spawn_openai_responses_endpoint_for_public_answer_test(output_text);
+        with_isolated_device_vault(
+            "ph1d-public-model-json",
+            &[("openai_api_key", "test_openai_key")],
+            &[
+                ("SELENE_PH1D_LIVE_ADAPTER_ENABLED", "true"),
+                ("SELENE_PH1D_LIVE_PROVIDER_ID", "openai"),
+                ("OPENAI_RESPONSES_URL", endpoint.as_str()),
+                ("SELENE_CURL_CONNECT_TIMEOUT", "1"),
+                ("SELENE_CURL_MAX_TIME", "5"),
+            ],
+            || {
+                let runtime = AdapterRuntime::default();
+                let _ = runtime
+                    .ingress
+                    .observe_runtime_governance_node_policy_version(
+                        "node_public_answer",
+                        Some("2026.04.01.v1"),
+                    );
+                let mut req = base_request();
+                req.app_platform = "DESKTOP".to_string();
+                req.audio_capture_ref = None;
+                req.user_text_final = Some(prompt.to_string());
+
+                let out = runtime
+                    .run_voice_turn(req)
+                    .expect("public prompt should complete through PH1.D");
+                assert_eq!(out.status, "ok");
+                assert_eq!(out.outcome, "FINAL");
+                out.response_text
+            },
+        )
+    }
+
     #[test]
     fn at_adapter_39_ph1d_public_answer_gate_only_intercepts_plain_no_intent() {
         let no_intent = ph1d_public_no_intent_test_outcome("Okay. What would you like to do?");
@@ -20206,6 +20297,76 @@ mod tests {
                 }
             },
         );
+    }
+
+    #[test]
+    fn at_adapter_39c_public_general_prompts_accept_model_chat_json_without_schema_leak() {
+        let cases = [
+            (
+                "Tell me a joke.",
+                r#"{"mode":"chat","response_text":"Why did the comet bring a map? It wanted to find its orbit.","reason_code":"D_PROVIDER_OK"}"#,
+                "Why did the comet bring a map? It wanted to find its orbit.",
+            ),
+            (
+                "Tell me about space.",
+                r#"{"mode":"chat","response_text":"Space is vast, cold, and full of stars, planets, dust, and mysteries we are still learning to understand.","reason_code":"D_PROVIDER_OK"}"#,
+                "Space is vast, cold, and full of stars, planets, dust, and mysteries we are still learning to understand.",
+            ),
+            (
+                "Are you currently using OpenAI?",
+                r#"{"mode":"chat","response_text":"I can't confirm internal service details from this chat, but I can still help.","reason_code":"D_PROVIDER_OK"}"#,
+                "I can't confirm internal service details from this chat, but I can still help.",
+            ),
+        ];
+
+        for (prompt, output_text, expected_answer) in cases {
+            let answer = run_public_prompt_with_mock_answer(prompt, output_text);
+            assert_eq!(answer, expected_answer);
+            assert_ne!(answer, "I couldn't answer that just now. Please try again.");
+            let lowered = answer.to_ascii_lowercase();
+            for forbidden in [
+                "ph1d",
+                "invalidschema",
+                "reason_code",
+                "governance",
+                "provider payload",
+                "desktop runtime bridge",
+            ] {
+                assert!(
+                    !lowered.contains(forbidden),
+                    "public answer leaked forbidden text `{forbidden}` for `{prompt}`: {answer}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn at_adapter_39d_provider_internal_question_gets_safe_refusal_on_forbidden_output() {
+        let answer = run_public_prompt_with_mock_answer(
+            "Are you currently using OpenAI?",
+            r#"{"mode":"chat","response_text":"Yes, I use OpenAI.","reason_code":"D_PROVIDER_OK"}"#,
+        );
+        assert_eq!(
+            answer,
+            "I can't confirm internal service details from this chat, but I can still help."
+        );
+        assert_ne!(answer, "I couldn't answer that just now. Please try again.");
+        let lowered = answer.to_ascii_lowercase();
+        for forbidden in [
+            "openai",
+            "open ai",
+            "ph1d",
+            "invalidschema",
+            "reason_code",
+            "governance",
+            "provider payload",
+            "desktop runtime bridge",
+        ] {
+            assert!(
+                !lowered.contains(forbidden),
+                "safe refusal leaked forbidden text `{forbidden}`: {answer}"
+            );
+        }
     }
 
     #[test]
