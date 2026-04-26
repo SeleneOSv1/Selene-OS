@@ -8394,14 +8394,8 @@ fn maybe_build_weather_tool_response(
         return Ok(Some(weather_ambiguity_response(tool_request, ambiguity)?));
     }
 
-    if weather_query_requests_multi_day_forecast(tool_request.query.as_str()) {
-        return Ok(Some(weather_forecast_not_wired_response(
-            tool_request,
-            place.as_str(),
-        )?));
-    }
-
     let now_ms = app_ingress_unix_time_ms();
+    let forecast_requested = weather_query_requests_multi_day_forecast(tool_request.query.as_str());
     let packet = serde_json::json!({
         "schema_version": "1.0.0",
         "produced_by": "PH1.X",
@@ -8412,7 +8406,8 @@ fn maybe_build_weather_tool_response(
         "query": place,
         "importance_tier": "medium",
         "budgets": {
-            "domain_hint": "weather"
+            "domain_hint": "weather",
+            "weather_request_kind": if forecast_requested { "forecast" } else { "current" }
         }
     });
 
@@ -8422,7 +8417,13 @@ fn maybe_build_weather_tool_response(
                 .evidence_packet
                 .pointer("/trust_metadata/realtime/payload")
                 .ok_or_else(weather_payload_contract_error)?;
-            let summary = if weather_query_asks_rain(tool_request.query.as_str()) {
+            let summary = if forecast_requested {
+                weather_forecast_summary_from_payload(
+                    place.as_str(),
+                    tool_request.query.as_str(),
+                    payload,
+                )
+            } else if weather_query_asks_rain(tool_request.query.as_str()) {
                 weather_rain_summary_from_payload(place.as_str(), payload)
                     .or_else(|_| weather_summary_from_payload(place.as_str(), payload))
             } else {
@@ -8516,35 +8517,6 @@ fn weather_ambiguity_response(
     .map_err(StorageError::ContractViolation)
 }
 
-fn weather_forecast_not_wired_response(
-    tool_request: &ToolRequest,
-    place: &str,
-) -> Result<ToolResponse, StorageError> {
-    let place = clean_weather_place_label(place);
-    let summary = format!(
-        "I can check current weather for {place}, but the multi-day forecast lane is not wired yet."
-    );
-    let source_metadata = SourceMetadata {
-        schema_version: selene_kernel_contracts::ph1e::PH1E_CONTRACT_VERSION,
-        provider_hint: Some("weather_forecast_capability".to_string()),
-        retrieved_at_unix_ms: app_ingress_unix_time_ms() as u64,
-        sources: vec![SourceRef {
-            title: "Selene weather forecast capability".to_string(),
-            url: "https://selene.local/weather/forecast-capability".to_string(),
-        }],
-    };
-    ToolResponse::ok_v1(
-        tool_request.request_id,
-        tool_request.query_hash,
-        ToolResult::Weather { summary },
-        source_metadata,
-        None,
-        ReasonCodeId(0x4500_0005),
-        CacheStatus::Bypassed,
-    )
-    .map_err(StorageError::ContractViolation)
-}
-
 fn weather_place_from_query(query: &str) -> String {
     let mut cleaned = query
         .split('|')
@@ -8555,6 +8527,12 @@ fn weather_place_from_query(query: &str) -> String {
         .to_string();
     let lower = cleaned.to_ascii_lowercase();
     for marker in [
+        "for the next four days in ",
+        "for the next 4 days in ",
+        "over the next four days in ",
+        "over the next 4 days in ",
+        "next four days in ",
+        "next 4 days in ",
         "what is the weather like in ",
         "what's the weather like in ",
         "how is the weather in ",
@@ -8574,6 +8552,8 @@ fn weather_place_from_query(query: &str) -> String {
         "is rain expected for ",
         "any rain forecast for ",
         "any rain forecast in ",
+        "forecast for rain in ",
+        "forecast of rain in ",
         "rain forecast for ",
         "rain forecast in ",
         "what is the forecast for ",
@@ -8622,6 +8602,7 @@ fn weather_strip_place_suffixes(place: &str) -> String {
             " for the next ",
             " over the next ",
             " next ",
+            " now",
             " tomorrow",
             " today",
             " this week",
@@ -8650,6 +8631,8 @@ fn weather_query_asks_rain(query: &str) -> bool {
     normalized.contains("rain")
         || normalized.contains("raining")
         || normalized.contains("drizzle")
+        || normalized.contains("snow")
+        || normalized.contains("snowing")
         || normalized.contains("precipitation")
 }
 
@@ -8659,6 +8642,10 @@ fn weather_normalize_query_place(place: &str) -> String {
         .trim();
     let normalized = normalize_place_key(trimmed);
     match normalized.as_str() {
+        "" | "rain" | "raining" | "the rain" | "precipitation" | "snow" | "snowing"
+        | "forecast" | "weather" | "there" | "there now" | "here" | "that place"
+        | "that location" => String::new(),
+        "barcelona" | "barcelona spain" => "Barcelona".to_string(),
         "kunchan" | "kunchan china" | "kunshan" | "kunshan china" => "Kunshan, China".to_string(),
         "new york" | "new york city" | "nyc" => "New York".to_string(),
         "lisbon" | "lisbon portugal" => "Lisbon".to_string(),
@@ -8918,6 +8905,159 @@ fn weather_rain_summary_from_payload(
     }
 }
 
+fn weather_forecast_summary_from_payload(
+    requested_place: &str,
+    query: &str,
+    payload: &serde_json::Value,
+) -> Result<String, ()> {
+    match payload.get("provider").and_then(serde_json::Value::as_str) {
+        Some("tomorrow.io") => {
+            weather_forecast_summary_from_tomorrow_payload(requested_place, query, payload)
+        }
+        Some("weatherapi.com") => {
+            weather_forecast_summary_from_weatherapi_payload(requested_place, query, payload)
+        }
+        _ => Err(()),
+    }
+}
+
+fn weather_forecast_summary_from_tomorrow_payload(
+    requested_place: &str,
+    query: &str,
+    payload: &serde_json::Value,
+) -> Result<String, ()> {
+    let provider_payload = payload.get("provider_payload").ok_or(())?;
+    let provider_place = provider_payload
+        .pointer("/location/name")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(requested_place);
+    let place = clean_weather_display_place(requested_place, provider_place);
+    let days = provider_payload
+        .pointer("/timelines/daily")
+        .and_then(serde_json::Value::as_array)
+        .or_else(|| {
+            provider_payload
+                .pointer("/data/timelines/0/intervals")
+                .and_then(serde_json::Value::as_array)
+        })
+        .ok_or(())?;
+    let entries =
+        days.iter()
+            .take(4)
+            .filter_map(|day| {
+                let values = day.get("values")?;
+                let date = weather_forecast_day_label(day);
+                let temperature =
+                    json_number(values, &["temperatureAvg", "temperature", "temperatureMax"])
+                        .or_else(|| {
+                            let min = json_number(values, &["temperatureMin"])?;
+                            let max = json_number(values, &["temperatureMax"])?;
+                            Some((min + max) / 2.0)
+                        })?;
+                let condition = json_i64(
+                    values,
+                    &[
+                        "weatherCodeMax",
+                        "weatherCode",
+                        "weatherCodeFullDay",
+                        "weatherCodeDay",
+                    ],
+                )
+                .map(tomorrow_weather_code_label)
+                .unwrap_or("current conditions");
+                let rain_chance = json_number(
+                    values,
+                    &[
+                        "precipitationProbabilityAvg",
+                        "precipitationProbabilityMax",
+                        "precipitationProbability",
+                        "probabilityOfPrecipitation",
+                    ],
+                );
+                Some(format_weather_forecast_entry(
+                    date.as_str(),
+                    temperature,
+                    condition,
+                    rain_chance,
+                    weather_query_asks_rain(query),
+                ))
+            })
+            .collect::<Vec<_>>();
+    if entries.is_empty() {
+        return Err(());
+    }
+    Ok(format_weather_forecast_summary(
+        place.as_str(),
+        query,
+        entries,
+    ))
+}
+
+fn weather_forecast_summary_from_weatherapi_payload(
+    requested_place: &str,
+    query: &str,
+    payload: &serde_json::Value,
+) -> Result<String, ()> {
+    let provider_payload = payload.get("provider_payload").ok_or(())?;
+    let city = provider_payload
+        .pointer("/location/name")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(requested_place);
+    let country = provider_payload
+        .pointer("/location/country")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let provider_place = country
+        .map(|country| format!("{city}, {country}"))
+        .unwrap_or_else(|| city.to_string());
+    let place = clean_weather_display_place(requested_place, provider_place.as_str());
+    let days = provider_payload
+        .pointer("/forecast/forecastday")
+        .and_then(serde_json::Value::as_array)
+        .ok_or(())?;
+    let entries = days
+        .iter()
+        .take(4)
+        .filter_map(|day| {
+            let date = weather_forecast_day_label(day);
+            let day_values = day.get("day")?;
+            let temperature = json_number(day_values, &["avgtemp_c"]).or_else(|| {
+                let min = json_number(day_values, &["mintemp_c"])?;
+                let max = json_number(day_values, &["maxtemp_c"])?;
+                Some((min + max) / 2.0)
+            })?;
+            let condition = day_values
+                .pointer("/condition/text")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("current conditions");
+            let rain_chance = json_number(
+                day_values,
+                &["daily_chance_of_rain", "daily_chance_of_snow"],
+            );
+            Some(format_weather_forecast_entry(
+                date.as_str(),
+                temperature,
+                condition,
+                rain_chance,
+                weather_query_asks_rain(query),
+            ))
+        })
+        .collect::<Vec<_>>();
+    if entries.is_empty() {
+        return Err(());
+    }
+    Ok(format_weather_forecast_summary(
+        place.as_str(),
+        query,
+        entries,
+    ))
+}
+
 fn weather_summary_from_tomorrow_payload(
     requested_place: &str,
     payload: &serde_json::Value,
@@ -8935,13 +9075,13 @@ fn weather_summary_from_tomorrow_payload(
         .and_then(serde_json::Value::as_i64)
         .map(tomorrow_weather_code_label)
         .unwrap_or("current conditions");
-    let place = provider_payload
+    let provider_place = provider_payload
         .pointer("/location/name")
         .and_then(serde_json::Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .unwrap_or(requested_place);
-    let place = clean_weather_place_label(place);
+    let place = clean_weather_display_place(requested_place, provider_place);
     Ok(clean_weather_sentence(
         place.as_str(),
         temp,
@@ -8966,13 +9106,14 @@ fn weather_rain_summary_from_tomorrow_payload(
         .and_then(serde_json::Value::as_i64)
         .map(tomorrow_weather_code_label)
         .unwrap_or("current conditions");
-    let place = provider_payload
+    let provider_place = provider_payload
         .pointer("/location/name")
         .and_then(serde_json::Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .unwrap_or(requested_place);
-    Ok(clean_weather_rain_sentence(place, temp, condition))
+    let place = clean_weather_display_place(requested_place, provider_place);
+    Ok(clean_weather_rain_sentence(place.as_str(), temp, condition))
 }
 
 fn weather_summary_from_weatherapi_payload(
@@ -9004,10 +9145,10 @@ fn weather_summary_from_weatherapi_payload(
         .and_then(serde_json::Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty());
-    let place = country
+    let provider_place = country
         .map(|country| format!("{city}, {country}"))
         .unwrap_or_else(|| city.to_string());
-    let place = clean_weather_place_label(place.as_str());
+    let place = clean_weather_display_place(requested_place, provider_place.as_str());
     Ok(clean_weather_sentence(
         place.as_str(),
         temp,
@@ -9044,10 +9185,100 @@ fn weather_rain_summary_from_weatherapi_payload(
         .and_then(serde_json::Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty());
-    let place = country
+    let provider_place = country
         .map(|country| format!("{city}, {country}"))
         .unwrap_or_else(|| city.to_string());
+    let place = clean_weather_display_place(requested_place, provider_place.as_str());
     Ok(clean_weather_rain_sentence(place.as_str(), temp, condition))
+}
+
+fn clean_weather_display_place(requested_place: &str, provider_place: &str) -> String {
+    let requested = clean_weather_place_label(requested_place);
+    let provider = clean_weather_place_label(provider_place);
+    if weather_requested_place_is_specific(requested.as_str()) {
+        requested
+    } else {
+        provider
+    }
+}
+
+fn weather_requested_place_is_specific(place: &str) -> bool {
+    let normalized = normalize_place_key(place);
+    !matches!(
+        normalized.as_str(),
+        "" | "that place"
+            | "there"
+            | "there now"
+            | "here"
+            | "rain"
+            | "raining"
+            | "precipitation"
+            | "snow"
+            | "snowing"
+            | "weather"
+            | "forecast"
+    ) && weather_country_ambiguity(place).is_none()
+        && weather_broad_region_ambiguity(place).is_none()
+}
+
+fn json_number(values: &serde_json::Value, keys: &[&str]) -> Option<f64> {
+    keys.iter()
+        .find_map(|key| values.get(*key).and_then(serde_json::Value::as_f64))
+}
+
+fn json_i64(values: &serde_json::Value, keys: &[&str]) -> Option<i64> {
+    keys.iter()
+        .find_map(|key| values.get(*key).and_then(serde_json::Value::as_i64))
+}
+
+fn weather_forecast_day_label(day: &serde_json::Value) -> String {
+    day.get("date")
+        .and_then(serde_json::Value::as_str)
+        .or_else(|| day.get("time").and_then(serde_json::Value::as_str))
+        .or_else(|| day.get("startTime").and_then(serde_json::Value::as_str))
+        .map(|value| value.chars().take(10).collect::<String>())
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| "next day".to_string())
+}
+
+fn format_weather_forecast_entry(
+    date: &str,
+    temperature_c: f64,
+    condition: &str,
+    rain_chance: Option<f64>,
+    rain_requested: bool,
+) -> String {
+    let condition = clean_weather_condition_label(condition);
+    let condition = if condition.is_empty() {
+        "conditions available".to_string()
+    } else {
+        condition
+    };
+    match rain_chance {
+        Some(chance) if rain_requested || chance > 0.0 => format!(
+            "{}: {}°C, {}, {}% rain chance",
+            date,
+            format_weather_number(temperature_c),
+            condition,
+            format_weather_number(chance)
+        ),
+        _ => format!(
+            "{}: {}°C and {}",
+            date,
+            format_weather_number(temperature_c),
+            condition
+        ),
+    }
+}
+
+fn format_weather_forecast_summary(place: &str, query: &str, entries: Vec<String>) -> String {
+    let place = clean_weather_place_label(place);
+    let label = if weather_query_asks_rain(query) {
+        "rain forecast"
+    } else {
+        "forecast"
+    };
+    format!("{} {}: {}.", place, label, entries.join("; "))
 }
 
 fn clean_weather_sentence(
@@ -9103,6 +9334,7 @@ fn weather_condition_indicates_rain(condition: &str) -> bool {
     normalized.contains("rain")
         || normalized.contains("drizzle")
         || normalized.contains("shower")
+        || normalized.contains("snow")
         || normalized.contains("thunderstorm")
         || normalized.contains("sleet")
         || normalized.contains("hail")
@@ -9136,6 +9368,9 @@ fn clean_weather_place_label(place: &str) -> String {
     }
     if normalized == "kunshan china" || normalized == "kunchan china" {
         return "Kunshan".to_string();
+    }
+    if normalized == "comunidad de madrid" || normalized == "community of madrid" {
+        return "Madrid".to_string();
     }
     if normalized.starts_with("springfield ") {
         if normalized.contains("illinois") {

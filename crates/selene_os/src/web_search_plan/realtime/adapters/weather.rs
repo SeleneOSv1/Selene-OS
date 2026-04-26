@@ -68,9 +68,16 @@ fn execute_tomorrow_io(
             0,
         )
     })?;
+    let forecast = weather_request_uses_forecast(request);
+    if forecast {
+        url.set_path("/v4/weather/forecast");
+    }
     {
         let mut query_pairs = url.query_pairs_mut();
         query_pairs.append_pair("location", request.query.as_str());
+        if forecast {
+            query_pairs.append_pair("timesteps", "1d");
+        }
         query_pairs.append_pair("units", "metric");
         query_pairs.append_pair("apikey", api_key.as_str());
     }
@@ -88,7 +95,11 @@ fn execute_tomorrow_io(
     Ok(RealtimeAdapterOutput {
         provider_id: TOMORROW_IO_PROVIDER_ID.to_string(),
         endpoint_url,
-        title: "Tomorrow.io Realtime Weather".to_string(),
+        title: if forecast {
+            "Tomorrow.io Weather Forecast".to_string()
+        } else {
+            "Tomorrow.io Realtime Weather".to_string()
+        },
         trust_tier: "high".to_string(),
         retrieved_at_ms: request.now_ms,
         latency_ms,
@@ -125,9 +136,18 @@ fn execute_weather_api(
             0,
         )
     })?;
+    let forecast = weather_request_uses_forecast(request);
+    if forecast {
+        url.set_path("/v1/forecast.json");
+    }
     {
         let mut query_pairs = url.query_pairs_mut();
         query_pairs.append_pair("q", request.query.as_str());
+        if forecast {
+            query_pairs.append_pair("days", "4");
+            query_pairs.append_pair("aqi", "no");
+            query_pairs.append_pair("alerts", "no");
+        }
         query_pairs.append_pair("key", api_key.as_str());
     }
 
@@ -144,12 +164,46 @@ fn execute_weather_api(
     Ok(RealtimeAdapterOutput {
         provider_id: WEATHER_API_PROVIDER_ID.to_string(),
         endpoint_url,
-        title: "WeatherAPI.com Realtime Weather".to_string(),
+        title: if forecast {
+            "WeatherAPI.com Weather Forecast".to_string()
+        } else {
+            "WeatherAPI.com Realtime Weather".to_string()
+        },
         trust_tier: "medium".to_string(),
         retrieved_at_ms: request.now_ms,
         latency_ms,
         payload: normalized_payload,
     })
+}
+
+fn weather_query_requests_forecast(query: &str) -> bool {
+    let normalized = query
+        .chars()
+        .map(|ch| {
+            if ch.is_alphanumeric() || ch.is_whitespace() {
+                ch.to_ascii_lowercase()
+            } else {
+                ' '
+            }
+        })
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    normalized.contains("forecast")
+        || normalized.contains("next four days")
+        || normalized.contains("next 4 days")
+        || normalized.contains("multi day")
+        || normalized.contains("multiday")
+}
+
+fn weather_request_uses_forecast(request: &ParsedRealtimeToolRequest) -> bool {
+    request
+        .budgets
+        .get("weather_request_kind")
+        .and_then(Value::as_str)
+        .is_some_and(|kind| kind.eq_ignore_ascii_case("forecast"))
+        || weather_query_requests_forecast(request.query.as_str())
 }
 
 fn redacted_query_url(mut url: Url, secret_query_keys: &[&str]) -> String {

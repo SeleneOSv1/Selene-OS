@@ -65,7 +65,7 @@ use selene_kernel_contracts::ph1d::{
     SafetyTier, SchemaHash, PH1D_PROVIDER_NORMALIZED_OUTPUT_SCHEMA_HASH_V1,
 };
 use selene_kernel_contracts::ph1e::{
-    CacheStatus, ToolCatalogRef, ToolName, ToolResponse, ToolStatus,
+    CacheStatus, ToolCatalogRef, ToolName, ToolResponse, ToolResult, ToolStatus,
 };
 use selene_kernel_contracts::ph1f::{
     ConversationRole, ConversationSource, ConversationTurnInput, PrivacyScope,
@@ -1004,6 +1004,7 @@ pub struct AdapterRuntime {
     improvement_counters: Arc<Mutex<AdapterImprovementCounters>>,
     transcript_state: Arc<Mutex<AdapterTranscriptState>>,
     public_answer_state: Arc<Mutex<AdapterPublicAnswerState>>,
+    weather_context_state: Arc<Mutex<BTreeMap<String, String>>>,
     report_display_target_defaults: Arc<Mutex<BTreeMap<String, String>>>,
     auto_builder_enabled: bool,
     ph1c_live_enabled: bool,
@@ -1718,6 +1719,7 @@ impl Default for AdapterRuntime {
             improvement_counters: Arc::new(Mutex::new(AdapterImprovementCounters::default())),
             transcript_state: Arc::new(Mutex::new(AdapterTranscriptState::default())),
             public_answer_state: Arc::new(Mutex::new(AdapterPublicAnswerState::default())),
+            weather_context_state: Arc::new(Mutex::new(BTreeMap::new())),
             report_display_target_defaults: Arc::new(Mutex::new(BTreeMap::new())),
             auto_builder_enabled: true,
             ph1c_live_enabled: parse_bool_env("SELENE_PH1C_LIVE_ENABLED", true),
@@ -1756,6 +1758,7 @@ impl AdapterRuntime {
             improvement_counters: Arc::new(Mutex::new(AdapterImprovementCounters::default())),
             transcript_state: Arc::new(Mutex::new(AdapterTranscriptState::default())),
             public_answer_state: Arc::new(Mutex::new(AdapterPublicAnswerState::default())),
+            weather_context_state: Arc::new(Mutex::new(BTreeMap::new())),
             report_display_target_defaults: Arc::new(Mutex::new(BTreeMap::new())),
             auto_builder_enabled: true,
             ph1c_live_enabled: parse_bool_env("SELENE_PH1C_LIVE_ENABLED", true),
@@ -1789,6 +1792,7 @@ impl AdapterRuntime {
             improvement_counters: Arc::new(Mutex::new(AdapterImprovementCounters::default())),
             transcript_state: Arc::new(Mutex::new(AdapterTranscriptState::default())),
             public_answer_state: Arc::new(Mutex::new(AdapterPublicAnswerState::default())),
+            weather_context_state: Arc::new(Mutex::new(BTreeMap::new())),
             report_display_target_defaults: Arc::new(Mutex::new(BTreeMap::new())),
             auto_builder_enabled,
             ph1c_live_enabled: parse_bool_env("SELENE_PH1C_LIVE_ENABLED", true),
@@ -5262,10 +5266,19 @@ impl AdapterRuntime {
                         post_session_error(format!("invalid thread policy flags: {err:?}"))
                     })?;
             }
+            let weather_context_place =
+                latest_weather_context_place(&self.weather_context_state, &actor_user_id, &thread_key)
+                    .map_err(post_session_error)?;
             let nlp_transcript_text = deterministic_public_clarification_followup_query(
                 &base_thread_state,
                 user_text_final.as_deref(),
             )
+            .or_else(|| {
+                deterministic_weather_context_followup_query(
+                    weather_context_place.as_deref(),
+                    user_text_final.as_deref(),
+                )
+            })
             .or_else(|| user_text_final.clone());
             let nlp_output = build_nlp_output_for_voice_turn(
                 &request,
@@ -5316,6 +5329,13 @@ impl AdapterRuntime {
                         correlation_id,
                         turn_id,
                     },
+                )
+                .map_err(post_session_error)?;
+                remember_latest_weather_place(
+                    &self.weather_context_state,
+                    &actor_user_id,
+                    &thread_key,
+                    execution_outcome.tool_response.as_ref(),
                 )
                 .map_err(post_session_error)?;
             }
@@ -8490,6 +8510,179 @@ fn deterministic_public_clarification_followup_query(
         )),
         _ => None,
     }
+}
+
+fn deterministic_weather_context_followup_query(
+    context_place: Option<&str>,
+    transcript_text: Option<&str>,
+) -> Option<String> {
+    let text = transcript_text?.trim();
+    if text.is_empty() || text.len() > 256 {
+        return None;
+    }
+    let place = context_place?.trim();
+    if place.is_empty() {
+        return None;
+    }
+    let normalized = normalize_weather_context_text(text);
+    let mentions_weather = normalized.contains("weather")
+        || normalized.contains("temperature")
+        || normalized.contains("forecast")
+        || normalized.contains("rain")
+        || normalized.contains("raining")
+        || normalized.contains("snow")
+        || normalized.contains("snowing")
+        || normalized.contains("precipitation");
+    if !mentions_weather {
+        return None;
+    }
+    let has_explicit_place = normalized.contains(" in ")
+        || normalized.contains(" for ")
+        || normalized.ends_with(" in")
+        || normalized.ends_with(" for");
+    let has_followup_reference = normalized.contains("there")
+        || normalized.contains("that place")
+        || normalized.contains("that location")
+        || normalized == "is it raining now"
+        || normalized == "is it snowing now"
+        || normalized == "is there any forecast for rain"
+        || normalized == "any rain forecast"
+        || normalized == "rain forecast"
+        || normalized == "forecast for rain";
+    if has_explicit_place && !has_followup_reference {
+        return None;
+    }
+    if normalized.contains("forecast") {
+        if normalized.contains("rain") || normalized.contains("raining") {
+            return Some(format!(
+                "is there any rain forecast for {place} for the next four days"
+            ));
+        }
+        return Some(format!(
+            "what is the forecast for {place} for the next four days"
+        ));
+    }
+    if normalized.contains("rain") || normalized.contains("raining") {
+        return Some(format!("is it raining in {place} now"));
+    }
+    if normalized.contains("snow") || normalized.contains("snowing") {
+        return Some(format!("is it snowing in {place} now"));
+    }
+    Some(format!("what is the weather in {place}"))
+}
+
+fn weather_context_scope_key(actor_user_id: &UserId, thread_key: &str) -> String {
+    format!("{}::{}", actor_user_id.as_str(), thread_key)
+}
+
+fn latest_weather_context_place(
+    weather_context_state: &Arc<Mutex<BTreeMap<String, String>>>,
+    actor_user_id: &UserId,
+    thread_key: &str,
+) -> Result<Option<String>, String> {
+    let scope_key = weather_context_scope_key(actor_user_id, thread_key);
+    let guard = weather_context_state
+        .lock()
+        .map_err(|_| "weather_context_state_poisoned".to_string())?;
+    Ok(guard
+        .get(&scope_key)
+        .map(|place| decode_weather_context_place(place))
+        .filter(|place| !place.trim().is_empty()))
+}
+
+fn remember_latest_weather_place(
+    weather_context_state: &Arc<Mutex<BTreeMap<String, String>>>,
+    actor_user_id: &UserId,
+    thread_key: &str,
+    tool_response: Option<&ToolResponse>,
+) -> Result<(), String> {
+    let Some(tool_response) = tool_response else {
+        return Ok(());
+    };
+    if tool_response.tool_status != ToolStatus::Ok || tool_response.ambiguity.is_some() {
+        return Ok(());
+    }
+    let Some(ToolResult::Weather { summary }) = tool_response.tool_result.as_ref() else {
+        return Ok(());
+    };
+    let Some(place) = weather_place_from_response_summary(summary) else {
+        return Ok(());
+    };
+    let encoded = encode_weather_context_place(place.as_str());
+    if encoded.is_empty() {
+        return Ok(());
+    }
+    let mut guard = weather_context_state
+        .lock()
+        .map_err(|_| "weather_context_state_poisoned".to_string())?;
+    guard.insert(weather_context_scope_key(actor_user_id, thread_key), encoded);
+    while guard.len() > 256 {
+        let Some(oldest_key) = guard.keys().next().cloned() else {
+            break;
+        };
+        guard.remove(&oldest_key);
+    }
+    Ok(())
+}
+
+fn weather_place_from_response_summary(summary: &str) -> Option<String> {
+    let trimmed = summary.trim();
+    if trimmed.is_empty() || trimmed.starts_with("Weather varies") || trimmed.starts_with("I found")
+    {
+        return None;
+    }
+    let place = trimmed
+        .split_once(" rain forecast:")
+        .map(|(place, _)| place)
+        .or_else(|| trimmed.split_once(" forecast:").map(|(place, _)| place))
+        .or_else(|| trimmed.split_once(" is ").map(|(place, _)| place))
+        .map(str::trim)
+        .unwrap_or_default();
+    if place.is_empty()
+        || place.eq_ignore_ascii_case("there")
+        || place.eq_ignore_ascii_case("that place")
+    {
+        None
+    } else {
+        Some(place.to_string())
+    }
+}
+
+fn encode_weather_context_place(place: &str) -> String {
+    place
+        .trim()
+        .chars()
+        .filter_map(|ch| {
+            if ch.is_control() {
+                None
+            } else if ch.is_whitespace() {
+                Some('_')
+            } else {
+                Some(ch)
+            }
+        })
+        .collect::<String>()
+        .trim_matches('_')
+        .to_string()
+}
+
+fn decode_weather_context_place(value: &str) -> String {
+    value.replace('_', " ").trim().to_string()
+}
+
+fn normalize_weather_context_text(text: &str) -> String {
+    text.chars()
+        .map(|ch| {
+            if ch.is_alphanumeric() || ch.is_whitespace() {
+                ch.to_ascii_lowercase()
+            } else {
+                ' '
+            }
+        })
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn build_vision_turn_input_from_adapter_request(
@@ -21022,6 +21215,30 @@ mod tests {
         format!("http://{address}/v4/weather/realtime")
     }
 
+    fn h373_spawn_tomorrow_weather_endpoint_sequence(bodies: Vec<&'static str>) -> String {
+        use std::io::{Read, Write};
+
+        let listener =
+            std::net::TcpListener::bind("127.0.0.1:0").expect("mock weather listener should bind");
+        let address = listener.local_addr().expect("mock weather address");
+        std::thread::spawn(move || {
+            for body in bodies {
+                let Ok((mut stream, _)) = listener.accept() else {
+                    return;
+                };
+                let mut request_buffer = [0_u8; 4096];
+                let _ = stream.read(&mut request_buffer);
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                let _ = stream.write_all(response.as_bytes());
+            }
+        });
+        format!("http://{address}/v4/weather/realtime")
+    }
+
     #[test]
     fn at_adapter_44_weather_with_lawful_tomorrow_provider_returns_clean_answer() {
         let endpoint = h361_spawn_tomorrow_weather_endpoint(
@@ -21543,7 +21760,7 @@ mod tests {
     }
 
     #[test]
-    fn h370_forecast_question_returns_safe_capability_not_bad_geocode() {
+    fn h370_forecast_question_fails_safely_without_provider_not_bad_geocode() {
         with_isolated_device_vault(
             "h370-forecast-barcelona-no-provider",
             &[],
@@ -21562,10 +21779,17 @@ mod tests {
                 );
                 assert_eq!(answer.status, "ok");
                 assert_eq!(answer.outcome, "FINAL_TOOL");
-                assert!(answer
-                    .response_text
-                    .contains("current weather for Barcelona"));
-                assert!(answer.response_text.contains("multi-day forecast lane"));
+                assert!(
+                    answer
+                        .response_text
+                        .contains("I couldn't get the weather for that place right now.")
+                        || answer
+                            .response_text
+                            .contains("couldn't verify your identity"),
+                    "{}",
+                    answer.response_text
+                );
+                assert!(!answer.response_text.contains("multi-day forecast lane"));
                 assert!(!answer.response_text.contains("Cley Next The Sea"));
                 assert!(!answer.response_text.starts_with("Like is"));
                 assert_ne!(
@@ -21573,6 +21797,233 @@ mod tests {
                     "I couldn't answer that just now. Please try again."
                 );
                 assert!(!answer.response_text.contains("provider_payload"));
+            },
+        );
+    }
+
+    #[test]
+    fn h373_spain_madrid_rain_followup_and_forecast_use_prior_location_cleanly() {
+        let endpoint = h373_spawn_tomorrow_weather_endpoint_sequence(vec![
+            r#"{
+                "data": {
+                    "time": "2026-04-25T03:00:00Z",
+                    "values": {
+                        "temperature": 16.6,
+                        "humidity": 42,
+                        "windSpeed": 2.8,
+                        "weatherCode": 1000
+                    }
+                },
+                "location": {
+                    "name": "Comunidad de Madrid"
+                }
+            }"#,
+            r#"{
+                "data": {
+                    "time": "2026-04-25T03:00:00Z",
+                    "values": {
+                        "temperature": 29.9,
+                        "humidity": 28,
+                        "windSpeed": 3.1,
+                        "weatherCode": 1000
+                    }
+                },
+                "location": {
+                    "name": "Comunidad de Madrid"
+                }
+            }"#,
+            r#"{
+                "timelines": {
+                    "daily": [
+                        {
+                            "time": "2026-04-26T00:00:00Z",
+                            "values": {
+                                "temperatureAvg": 18.1,
+                                "weatherCodeMax": 1000,
+                                "precipitationProbabilityAvg": 5
+                            }
+                        },
+                        {
+                            "time": "2026-04-27T00:00:00Z",
+                            "values": {
+                                "temperatureAvg": 17.4,
+                                "weatherCodeMax": 4001,
+                                "precipitationProbabilityAvg": 70
+                            }
+                        },
+                        {
+                            "time": "2026-04-28T00:00:00Z",
+                            "values": {
+                                "temperatureAvg": 16.9,
+                                "weatherCodeMax": 4200,
+                                "precipitationProbabilityAvg": 80
+                            }
+                        },
+                        {
+                            "time": "2026-04-29T00:00:00Z",
+                            "values": {
+                                "temperatureAvg": 19.2,
+                                "weatherCodeMax": 1100,
+                                "precipitationProbabilityAvg": 15
+                            }
+                        }
+                    ]
+                },
+                "location": {
+                    "name": "Comunidad de Madrid"
+                }
+            }"#,
+        ]);
+        with_isolated_device_vault(
+            "h373-weather-spain-madrid-rain-context",
+            &[],
+            &[
+                ("SELENE_REALTIME_TOMORROW_IO_ENDPOINT", endpoint.as_str()),
+                ("SELENE_REALTIME_TOMORROW_IO_API_KEY", "h373-secret"),
+                ("SELENE_REALTIME_WEATHER_API_KEY", " "),
+                ("SELENE_REALTIME_PROXY_MODE", "off"),
+            ],
+            || {
+                let runtime = AdapterRuntime::default();
+                let clarify = h364_run_desktop_typed_weather_query_on_thread(
+                    &runtime,
+                    "h373-weather-spain-madrid-rain-context",
+                    373_001,
+                    "What is the weather in Spain?",
+                );
+                assert_h364_clean_weather_clarification(&clarify, "Madrid, Spain");
+
+                let madrid = h364_run_desktop_typed_weather_query_on_thread(
+                    &runtime,
+                    "h373-weather-spain-madrid-rain-context",
+                    373_002,
+                    "Madrid.",
+                );
+                assert_eq!(madrid.response_text, "Madrid is 16.6°C and clear.");
+                assert!(!madrid.response_text.contains("Comunidad de Madrid"));
+
+                let rain_now = h364_run_desktop_typed_weather_query_on_thread(
+                    &runtime,
+                    "h373-weather-spain-madrid-rain-context",
+                    373_003,
+                    "Is it raining there now?",
+                );
+                assert!(rain_now.response_text.contains("Madrid is 29.9°C"));
+                assert!(rain_now
+                    .response_text
+                    .contains("current conditions do not indicate rain"));
+                assert!(!rain_now.response_text.starts_with("There is"));
+                assert!(!rain_now.response_text.contains("provider_payload"));
+
+                let rain_forecast = h364_run_desktop_typed_weather_query_on_thread(
+                    &runtime,
+                    "h373-weather-spain-madrid-rain-context",
+                    373_004,
+                    "Is there any forecast for rain?",
+                );
+                assert!(rain_forecast
+                    .response_text
+                    .starts_with("Madrid rain forecast:"));
+                assert!(rain_forecast.response_text.contains("2026-04-27"));
+                assert!(rain_forecast.response_text.contains("70% rain chance"));
+                assert!(!rain_forecast
+                    .response_text
+                    .contains("multi-day forecast lane"));
+                assert!(!rain_forecast.response_text.contains("Comunidad de Madrid"));
+                assert!(!rain_forecast.response_text.contains("provider_payload"));
+            },
+        );
+    }
+
+    #[test]
+    fn h373_barcelona_forecast_uses_provider_and_keeps_clean_location() {
+        let endpoint = h361_spawn_tomorrow_weather_endpoint(
+            r#"{
+                "timelines": {
+                    "daily": [
+                        {
+                            "time": "2026-04-26T00:00:00Z",
+                            "values": {
+                                "temperatureAvg": 12.9,
+                                "weatherCodeMax": 1001,
+                                "precipitationProbabilityAvg": 20
+                            }
+                        },
+                        {
+                            "time": "2026-04-27T00:00:00Z",
+                            "values": {
+                                "temperatureAvg": 14.1,
+                                "weatherCodeMax": 4000,
+                                "precipitationProbabilityAvg": 55
+                            }
+                        }
+                    ]
+                },
+                "location": {
+                    "name": "Barcelona, Spain"
+                }
+            }"#,
+        );
+        with_isolated_device_vault(
+            "h373-weather-barcelona-forecast",
+            &[],
+            &[
+                ("SELENE_REALTIME_TOMORROW_IO_ENDPOINT", endpoint.as_str()),
+                ("SELENE_REALTIME_TOMORROW_IO_API_KEY", "h373-secret"),
+                ("SELENE_REALTIME_WEATHER_API_KEY", " "),
+                ("SELENE_REALTIME_PROXY_MODE", "off"),
+            ],
+            || {
+                let runtime = AdapterRuntime::default();
+                let answer = h364_run_desktop_typed_weather_query_on_thread(
+                    &runtime,
+                    "h373-weather-barcelona-forecast",
+                    373_011,
+                    "What is the forecast for Barcelona for the next four days?",
+                );
+                assert_eq!(answer.status, "ok");
+                assert_eq!(answer.outcome, "FINAL_TOOL");
+                assert!(answer.response_text.starts_with("Barcelona forecast:"));
+                assert!(answer.response_text.contains("2026-04-26"));
+                assert!(!answer.response_text.contains("multi-day forecast lane"));
+                assert!(!answer.response_text.contains("Cley Next The Sea"));
+                assert!(!answer.response_text.starts_with("Like is"));
+                assert!(!answer.response_text.contains("provider_payload"));
+            },
+        );
+    }
+
+    #[test]
+    fn h373_rain_forecast_without_prior_location_asks_for_city() {
+        with_isolated_device_vault(
+            "h373-rain-forecast-no-prior-location",
+            &[],
+            &[
+                ("SELENE_REALTIME_TOMORROW_IO_API_KEY", " "),
+                ("SELENE_REALTIME_WEATHER_API_KEY", " "),
+                ("SELENE_REALTIME_PROXY_MODE", "off"),
+            ],
+            || {
+                let runtime = AdapterRuntime::default();
+                let answer = h364_run_desktop_typed_weather_query_on_thread(
+                    &runtime,
+                    "h373-rain-forecast-no-prior-location",
+                    373_021,
+                    "Is there any forecast for rain?",
+                );
+                assert_eq!(answer.status, "ok");
+                assert!(matches!(answer.outcome.as_str(), "FINAL" | "FINAL_TOOL"));
+                assert!(
+                    answer.response_text.contains("Which place should I use?")
+                        || answer.response_text.contains("Which place do you mean?")
+                        || answer.response_text.contains("I need a location"),
+                    "{}",
+                    answer.response_text
+                );
+                assert!(!answer.response_text.contains("provider_payload"));
+                assert!(!answer
+                    .response_text
+                    .contains("governance state is out of sync"));
             },
         );
     }
