@@ -7480,9 +7480,19 @@ fn classify_governance_quarantine_identity_recovery_fail_closed_outcome(
     })
 }
 
-fn low_risk_public_deterministic_time_answer(out: &AppVoiceTurnExecutionOutcome) -> bool {
+fn low_risk_public_deterministic_turn_answer(out: &AppVoiceTurnExecutionOutcome) -> bool {
     let Some(tool_response) = out.tool_response.as_ref() else {
-        return false;
+        return out
+            .ph1x_request
+            .as_ref()
+            .is_some_and(|request| {
+                request.thread_state.last_turn_context.is_some()
+                    && matches!(
+                        request.nlp_output.as_ref(),
+                        Some(Ph1nResponse::Chat(chat))
+                            if chat.reason_code == ph1n_reason_codes::N_CHAT_TURN_FOLLOWUP_REPAIR
+                    )
+            });
     };
     let tool_response_is_time = matches!(tool_response.tool_result, Some(ToolResult::Time { .. }))
         || tool_response.fail_detail.as_deref().is_some_and(|detail| {
@@ -7513,7 +7523,7 @@ fn low_risk_public_deterministic_time_answer(out: &AppVoiceTurnExecutionOutcome)
 fn classify_low_confidence_identity_posture_fail_closed_outcome(
     out: &AppVoiceTurnExecutionOutcome,
 ) -> Result<Option<IdentityPostureFailClosedBehavior>, StorageError> {
-    if low_risk_public_deterministic_time_answer(out) {
+    if low_risk_public_deterministic_turn_answer(out) {
         return Ok(None);
     }
     let Some(identity_state) = canonical_posture_fail_closed_identity_state(out)? else {
@@ -7536,7 +7546,7 @@ fn classify_low_confidence_identity_posture_fail_closed_outcome(
 fn classify_gray_zone_margin_identity_posture_fail_closed_outcome(
     out: &AppVoiceTurnExecutionOutcome,
 ) -> Result<Option<IdentityPostureFailClosedBehavior>, StorageError> {
-    if low_risk_public_deterministic_time_answer(out) {
+    if low_risk_public_deterministic_turn_answer(out) {
         return Ok(None);
     }
     let Some(identity_state) = canonical_posture_fail_closed_identity_state(out)? else {
@@ -7560,7 +7570,7 @@ fn classify_gray_zone_margin_identity_posture_fail_closed_outcome(
 fn classify_echo_unsafe_identity_posture_fail_closed_outcome(
     out: &AppVoiceTurnExecutionOutcome,
 ) -> Result<Option<IdentityPostureFailClosedBehavior>, StorageError> {
-    if low_risk_public_deterministic_time_answer(out) {
+    if low_risk_public_deterministic_turn_answer(out) {
         return Ok(None);
     }
     let Some(identity_state) = canonical_posture_fail_closed_identity_state(out)? else {
@@ -7582,7 +7592,7 @@ fn classify_echo_unsafe_identity_posture_fail_closed_outcome(
 fn classify_no_speech_identity_posture_fail_closed_outcome(
     out: &AppVoiceTurnExecutionOutcome,
 ) -> Result<Option<IdentityPostureFailClosedBehavior>, StorageError> {
-    if low_risk_public_deterministic_time_answer(out) {
+    if low_risk_public_deterministic_turn_answer(out) {
         return Ok(None);
     }
     let Some(identity_state) = canonical_posture_fail_closed_identity_state(out)? else {
@@ -7604,7 +7614,7 @@ fn classify_no_speech_identity_posture_fail_closed_outcome(
 fn classify_multi_speaker_identity_posture_fail_closed_outcome(
     out: &AppVoiceTurnExecutionOutcome,
 ) -> Result<Option<IdentityPostureFailClosedBehavior>, StorageError> {
-    if low_risk_public_deterministic_time_answer(out) {
+    if low_risk_public_deterministic_turn_answer(out) {
         return Ok(None);
     }
     let Some(identity_state) = canonical_posture_fail_closed_identity_state(out)? else {
@@ -10676,7 +10686,11 @@ fn truncate_for_packet_hash(text: &str) -> String {
     if text.len() <= MAX {
         return text.to_string();
     }
-    text[..MAX].to_string()
+    let mut end = MAX;
+    while end > 0 && !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    text[..end].to_string()
 }
 
 fn agent_hash_hex(value: &str) -> String {

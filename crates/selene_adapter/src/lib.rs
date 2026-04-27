@@ -122,7 +122,8 @@ use selene_kernel_contracts::ph1w::{
     WakePolicyContext, PH1W_IMPLEMENTATION_ID,
 };
 use selene_kernel_contracts::ph1x::{
-    ConfirmAnswer, PendingState, Ph1xDirective, ThreadPolicyFlags, ThreadState,
+    ConfirmAnswer, LastTurnContext, LastTurnRouteClass, PendingState, Ph1xDirective,
+    ThreadPolicyFlags, ThreadState,
 };
 use selene_kernel_contracts::provider_secrets::ProviderSecretId;
 use selene_kernel_contracts::runtime_execution::{
@@ -1303,6 +1304,20 @@ enum ReadOnlyIncidentKind {
     ToolFail,
     ClarifyLoop,
     UserCorrection,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum H379FollowupClass {
+    ToolProvenanceQuestion,
+    MeaningOrRephraseRequest,
+    ClarificationRequest,
+    RepeatRequest,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct H379FollowupDecision {
+    primary: H379FollowupClass,
+    correction_detected: bool,
 }
 
 impl ReadOnlyIncidentKind {
@@ -5391,11 +5406,16 @@ impl AdapterRuntime {
                 &thread_key,
             )
             .map_err(post_session_error)?;
+            let committed_turn_followup =
+                classify_h379_committed_turn_followup(&base_thread_state, user_text_final.as_deref());
             let nlp_transcript_text = deterministic_public_clarification_followup_query(
                 &base_thread_state,
                 user_text_final.as_deref(),
             )
             .or_else(|| {
+                if committed_turn_followup.is_some() {
+                    return None;
+                }
                 deterministic_weather_context_followup_query(
                     weather_context_place.as_deref(),
                     user_text_final.as_deref(),
@@ -5406,6 +5426,8 @@ impl AdapterRuntime {
                 &request,
                 nlp_transcript_text.as_deref(),
                 tenant_id_for_ph1c.as_deref(),
+                &base_thread_state,
+                committed_turn_followup.as_ref(),
             )
             .map_err(post_session_error)?;
             let confirm_answer =
@@ -5450,13 +5472,17 @@ impl AdapterRuntime {
                     &mut execution_outcome,
                 );
             if let Some(ph1x_response) = execution_outcome.ph1x_response.as_ref() {
+                let persisted_thread_state = decorate_thread_state_with_last_turn_context(
+                    ph1x_response.thread_state.clone(),
+                    &execution_outcome,
+                );
                 persist_ph1x_thread_state(
                     &mut store,
                     now,
                     PersistPh1xThreadStateInput {
                         actor_user_id: &actor_user_id,
                         thread_key: &thread_key,
-                        thread_state: ph1x_response.thread_state.clone(),
+                        thread_state: persisted_thread_state,
                         reason_code: ph1x_response.reason_code,
                         correlation_id,
                         turn_id,
@@ -8902,6 +8928,8 @@ fn build_nlp_output_for_voice_turn(
     request: &VoiceTurnAdapterRequest,
     transcript_text: Option<&str>,
     runtime_tenant_scope: Option<&str>,
+    thread_state: &ThreadState,
+    committed_turn_followup: Option<&H379FollowupDecision>,
 ) -> Result<(Ph1nResponse, Option<LanguagePacket>), String> {
     let correlation_id = CorrelationId(request.correlation_id.into());
     let turn_id = TurnId(request.turn_id);
@@ -8919,6 +8947,25 @@ fn build_nlp_output_for_voice_turn(
         .as_ref()
         .map(|context| context.nlp_transcript_text.as_str())
         .or(transcript_text);
+    if let Some(decision) = committed_turn_followup {
+        if let Some(last_turn_context) = thread_state.last_turn_context.as_ref() {
+            let response_text = h379_followup_response_text(
+                decision,
+                last_turn_context,
+                language_context.as_ref().map(|context| &context.packet),
+            );
+            return Ok((
+                Ph1nResponse::Chat(
+                    Ph1nChat::v1(
+                        response_text,
+                        ph1n_reason_codes::N_CHAT_TURN_FOLLOWUP_REPAIR,
+                    )
+                        .map_err(|err| format!("invalid H379 follow-up chat response: {err:?}"))?,
+                ),
+                language_context.map(|context| context.packet),
+            ));
+        }
+    }
     let nlp_request = build_base_nlp_request_for_vision_handoff(
         request,
         effective_transcript,
@@ -9420,6 +9467,357 @@ fn normalize_weather_context_text(text: &str) -> String {
         .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+fn classify_h379_committed_turn_followup(
+    thread_state: &ThreadState,
+    user_text: Option<&str>,
+) -> Option<H379FollowupDecision> {
+    let _ = thread_state.last_turn_context.as_ref()?;
+    let text = user_text?.trim();
+    if text.is_empty() {
+        return None;
+    }
+    let normalized = normalize_h379_followup_text(text);
+    if normalized.is_empty() {
+        return None;
+    }
+    let correction_detected = user_text_looks_like_correction(text);
+    let provenance = looks_like_h379_tool_provenance_question(text, normalized.as_str());
+    let meaning = looks_like_h379_meaning_or_rephrase_request(text, normalized.as_str());
+    let repeat = looks_like_h379_repeat_request(normalized.as_str());
+    let clarification = looks_like_h379_clarification_request(normalized.as_str());
+
+    let primary = if provenance {
+        H379FollowupClass::ToolProvenanceQuestion
+    } else if meaning {
+        H379FollowupClass::MeaningOrRephraseRequest
+    } else if repeat {
+        H379FollowupClass::RepeatRequest
+    } else if clarification {
+        H379FollowupClass::ClarificationRequest
+    } else {
+        return None;
+    };
+
+    Some(H379FollowupDecision {
+        primary,
+        correction_detected,
+    })
+}
+
+fn normalize_h379_followup_text(text: &str) -> String {
+    text.chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch.is_ascii_whitespace() {
+                ch.to_ascii_lowercase()
+            } else if ch.is_ascii() {
+                ' '
+            } else {
+                ch
+            }
+        })
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn looks_like_h379_tool_provenance_question(original: &str, normalized: &str) -> bool {
+    normalized.contains("do you do a weather check")
+        || normalized.contains("did you do a proper weather check")
+        || normalized.contains("did you actually check")
+        || normalized.contains("weather check")
+        || normalized.contains("proper weather check")
+        || normalized.contains("what did you check")
+        || normalized.contains("show me the weather check proof")
+        || normalized.contains("show me the proof")
+        || normalized.contains("are you guessing or checking")
+        || normalized.contains("did you check")
+        || original.contains("你真的查过天气吗")
+        || original.contains("你刚才是在真正查询")
+        || original.contains("还是在猜")
+        || original.contains("查过天气")
+        || original.contains("真正查询")
+        || original.contains("在猜")
+}
+
+fn looks_like_h379_meaning_or_rephrase_request(original: &str, normalized: &str) -> bool {
+    normalized.contains("what do you mean")
+        || normalized.contains("what do you mean by that")
+        || normalized.contains("meaning behind")
+        || normalized.contains("different way to explain")
+        || normalized.contains("different way for you to answer")
+        || normalized.contains("explain what you mean")
+        || normalized.contains("why did you answer that")
+        || normalized.contains("explain the same point")
+        || original.contains("你这是什么意思")
+}
+
+fn looks_like_h379_repeat_request(normalized: &str) -> bool {
+    normalized == "repeat that"
+        || normalized == "say that again"
+        || normalized == "repeat the answer"
+        || normalized == "repeat"
+}
+
+fn looks_like_h379_clarification_request(normalized: &str) -> bool {
+    normalized == "what"
+        || normalized == "which provider"
+        || normalized == "which tool"
+        || normalized == "which route"
+}
+
+fn h379_followup_response_text(
+    decision: &H379FollowupDecision,
+    last_turn_context: &LastTurnContext,
+    language_packet: Option<&LanguagePacket>,
+) -> String {
+    let use_chinese = language_packet.is_some_and(LanguagePacket::output_language_is_chinese);
+    match decision.primary {
+        H379FollowupClass::ToolProvenanceQuestion => {
+            h379_tool_provenance_response_text(
+                decision,
+                last_turn_context,
+                use_chinese,
+            )
+        }
+        H379FollowupClass::MeaningOrRephraseRequest => {
+            h379_meaning_or_rephrase_response_text(last_turn_context, use_chinese)
+        }
+        H379FollowupClass::RepeatRequest => {
+            h379_repeat_response_text(last_turn_context, use_chinese)
+        }
+        H379FollowupClass::ClarificationRequest => {
+            h379_clarification_response_text(last_turn_context, use_chinese)
+        }
+    }
+}
+
+fn h379_tool_provenance_response_text(
+    decision: &H379FollowupDecision,
+    last_turn_context: &LastTurnContext,
+    use_chinese: bool,
+) -> String {
+    if !last_turn_context.tool_used {
+        return if use_chinese {
+            "没有。那一轮我是直接回答的，没有使用工具或外部提供方查询。".to_string()
+        } else {
+            "No. I answered that one directly and did not use a tool or provider check."
+                .to_string()
+        };
+    }
+    if !last_turn_context.proof_available {
+        return if use_chinese {
+            "我无法从那一轮证明这次是有提供方支撑的正式查询，所以我不应该声称自己查过。".to_string()
+        } else {
+            "I cannot prove a proper provider-backed check from that turn, so I should not claim one."
+                .to_string()
+        };
+    }
+
+    let route_label = h379_route_label(last_turn_context.route_class, use_chinese);
+    let supporting = h379_supporting_answer_clause(last_turn_context, use_chinese);
+    match h379_user_safe_provider_name(last_turn_context.provider_hint.as_deref()) {
+        Some(provider_name) => {
+            if use_chinese {
+                format!(
+                    "{}。我用了{}，提供方是{}。{}",
+                    if decision.correction_detected {
+                        "你问的是我有没有真正查过"
+                    } else {
+                        "有"
+                    },
+                    route_label,
+                    provider_name,
+                    supporting
+                )
+            } else {
+                format!(
+                    "{}. I used the {} with {}. {}",
+                    if decision.correction_detected {
+                        "You were asking whether I actually checked"
+                    } else {
+                        "Yes"
+                    },
+                    route_label,
+                    provider_name,
+                    supporting
+                )
+            }
+        }
+        None => {
+            if use_chinese {
+                format!(
+                    "{}。我用了{}，但这一轮没有暴露具体的提供方名字。{}",
+                    if decision.correction_detected {
+                        "你问的是我有没有真正查过"
+                    } else {
+                        "有"
+                    },
+                    route_label,
+                    supporting
+                )
+            } else {
+                format!(
+                    "{}. I used the {}, but this turn does not expose the specific provider name. {}",
+                    if decision.correction_detected {
+                        "You were asking whether I actually checked"
+                    } else {
+                        "Yes"
+                    },
+                    route_label,
+                    supporting
+                )
+            }
+        }
+    }
+}
+
+fn h379_meaning_or_rephrase_response_text(
+    last_turn_context: &LastTurnContext,
+    use_chinese: bool,
+) -> String {
+    match last_turn_context.route_class {
+        LastTurnRouteClass::PublicChat => {
+            if use_chinese {
+                format!("换一种更直白的说法：{}", last_turn_context.answer_text)
+            } else {
+                format!(
+                    "In plainer words, I meant this: {}",
+                    last_turn_context.answer_text
+                )
+            }
+        }
+        _ => {
+            if use_chinese {
+                format!("更直白地说，我的意思是：{}", last_turn_context.answer_text)
+            } else {
+                format!(
+                    "I meant this more plainly: {}",
+                    last_turn_context.answer_text
+                )
+            }
+        }
+    }
+}
+
+fn h379_repeat_response_text(last_turn_context: &LastTurnContext, use_chinese: bool) -> String {
+    if use_chinese {
+        format!("我再说一遍：{}", last_turn_context.answer_text)
+    } else {
+        format!("I'll repeat it once: {}", last_turn_context.answer_text)
+    }
+}
+
+fn h379_clarification_response_text(
+    last_turn_context: &LastTurnContext,
+    use_chinese: bool,
+) -> String {
+    if use_chinese {
+        format!("如果你是在问上一轮的意思，我的回答是：{}", last_turn_context.answer_text)
+    } else {
+        format!(
+            "If you're asking about the previous answer, this is what I meant: {}",
+            last_turn_context.answer_text
+        )
+    }
+}
+
+fn h379_route_label(route_class: LastTurnRouteClass, use_chinese: bool) -> &'static str {
+    match (route_class, use_chinese) {
+        (LastTurnRouteClass::ToolWeather, false) => "weather route",
+        (LastTurnRouteClass::ToolTime, false) => "time route",
+        (LastTurnRouteClass::ToolOther, false) => "tool route",
+        (LastTurnRouteClass::ToolWeather, true) => "天气查询路线",
+        (LastTurnRouteClass::ToolTime, true) => "时间查询路线",
+        (LastTurnRouteClass::ToolOther, true) => "工具路线",
+        (_, false) => "route for that answer",
+        (_, true) => "那一轮的处理路线",
+    }
+}
+
+fn h379_user_safe_provider_name(provider_hint: Option<&str>) -> Option<&'static str> {
+    match provider_hint {
+        Some("tomorrow_io_weather") => Some("Tomorrow.io"),
+        Some("weatherapi_weather") => Some("WeatherAPI"),
+        Some("google_time_zone") => Some("Google Time Zone"),
+        Some("timezonedb") => Some("TimeZoneDB"),
+        Some("system_tzdb") => Some("system time zone data"),
+        Some("system_utc") => Some("system UTC data"),
+        _ => None,
+    }
+}
+
+fn h379_supporting_answer_clause(last_turn_context: &LastTurnContext, use_chinese: bool) -> String {
+    if use_chinese {
+        format!("我当时给出的结果是：{}", last_turn_context.answer_text)
+    } else {
+        format!("The answer I gave was: {}", last_turn_context.answer_text)
+    }
+}
+
+fn decorate_thread_state_with_last_turn_context(
+    mut thread_state: ThreadState,
+    execution: &AppVoiceTurnExecutionOutcome,
+) -> ThreadState {
+    if let Some(last_turn_context) = build_last_turn_context_from_execution(execution) {
+        thread_state.last_turn_context = Some(last_turn_context);
+    }
+    thread_state
+}
+
+fn build_last_turn_context_from_execution(
+    execution: &AppVoiceTurnExecutionOutcome,
+) -> Option<LastTurnContext> {
+    let answer_text = execution.response_text.as_ref()?.trim().to_string();
+    if answer_text.is_empty() {
+        return None;
+    }
+    let tool_used = execution.tool_response.is_some();
+    let proof_available = execution
+        .tool_response
+        .as_ref()
+        .and_then(|response| response.source_metadata.as_ref())
+        .is_some();
+    let provider_hint = execution
+        .tool_response
+        .as_ref()
+        .and_then(|response| response.source_metadata.as_ref())
+        .and_then(|metadata| metadata.provider_hint.clone());
+    let route_class = last_turn_route_class_for_execution(execution);
+    LastTurnContext::v1(
+        route_class,
+        tool_used,
+        proof_available,
+        if tool_used { provider_hint } else { None },
+        answer_text.clone(),
+        sha256_hex_for_build1c(answer_text.as_str()),
+    )
+    .ok()
+}
+
+fn last_turn_route_class_for_execution(
+    execution: &AppVoiceTurnExecutionOutcome,
+) -> LastTurnRouteClass {
+    if let Some(tool_response) = execution.tool_response.as_ref() {
+        return match tool_response.tool_result.as_ref() {
+            Some(ToolResult::Time { .. }) => LastTurnRouteClass::ToolTime,
+            Some(ToolResult::Weather { .. }) => LastTurnRouteClass::ToolWeather,
+            _ => LastTurnRouteClass::ToolOther,
+        };
+    }
+    if execution.dispatch_outcome.is_some() {
+        return LastTurnRouteClass::ProtectedOrSimulation;
+    }
+    if execution
+        .ph1x_response
+        .as_ref()
+        .is_some_and(|response| matches!(response.directive, Ph1xDirective::Clarify(_)))
+    {
+        return LastTurnRouteClass::Clarify;
+    }
+    LastTurnRouteClass::PublicChat
 }
 
 fn build_vision_turn_input_from_adapter_request(
@@ -23450,5 +23848,315 @@ mod tests {
                 out.response_text
             );
         }
+    }
+
+    fn h379_test_last_turn_context(
+        route_class: LastTurnRouteClass,
+        tool_used: bool,
+        proof_available: bool,
+        provider_hint: Option<&str>,
+        answer_text: &str,
+    ) -> LastTurnContext {
+        LastTurnContext::v1(
+            route_class,
+            tool_used,
+            proof_available,
+            provider_hint.map(|value| value.to_string()),
+            answer_text.to_string(),
+            sha256_hex_for_build1c(answer_text),
+        )
+        .expect("test last turn context should validate")
+    }
+
+    #[test]
+    fn h379_weather_provenance_followup_does_not_replay_stale_weather_answer() {
+        let endpoint = h361_spawn_tomorrow_weather_endpoint(
+            r#"{
+                "data": {
+                    "time": "2026-04-27T03:00:00Z",
+                    "values": {
+                        "temperature": 10.0,
+                        "weatherCode": 1001
+                    }
+                },
+                "location": {
+                    "name": "Barcelona"
+                }
+            }"#,
+        );
+        with_isolated_device_vault(
+            "h379-weather-provenance",
+            &[],
+            &[
+                ("SELENE_REALTIME_TOMORROW_IO_ENDPOINT", endpoint.as_str()),
+                ("SELENE_REALTIME_TOMORROW_IO_API_KEY", "h379-secret"),
+                ("SELENE_REALTIME_WEATHER_API_KEY", " "),
+                ("SELENE_REALTIME_PROXY_MODE", "off"),
+            ],
+            || {
+                let runtime = AdapterRuntime::default();
+                let first = h364_run_desktop_typed_weather_query_on_thread(
+                    &runtime,
+                    "h379-weather-provenance",
+                    379_001,
+                    "Is it raining right now in Barcelona?",
+                );
+                assert!(first.response_text.contains("10°C"), "{}", first.response_text);
+                assert!(
+                    first.response_text.contains("rain"),
+                    "{}",
+                    first.response_text
+                );
+
+                let followup = h364_run_desktop_typed_weather_query_on_thread(
+                    &runtime,
+                    "h379-weather-provenance",
+                    379_002,
+                    "Do you do a weather check?",
+                );
+                assert_ne!(followup.response_text, first.response_text);
+                assert!(followup.response_text.contains("weather route"));
+                assert!(followup.response_text.contains("Tomorrow.io"));
+                assert!(followup.response_text.contains("The answer I gave was:"));
+                assert_ne!(
+                    sha256_hex_for_build1c(&followup.response_text),
+                    sha256_hex_for_build1c(&first.response_text)
+                );
+            },
+        );
+    }
+
+    #[test]
+    fn h379_weather_correction_and_rephrase_followups_reclassify_cleanly() {
+        let endpoint = h361_spawn_tomorrow_weather_endpoint(
+            r#"{
+                "data": {
+                    "time": "2026-04-27T03:00:00Z",
+                    "values": {
+                        "temperature": 10.0,
+                        "weatherCode": 1001
+                    }
+                },
+                "location": {
+                    "name": "Barcelona"
+                }
+            }"#,
+        );
+        with_isolated_device_vault(
+            "h379-weather-correction-rephrase",
+            &[],
+            &[
+                ("SELENE_REALTIME_TOMORROW_IO_ENDPOINT", endpoint.as_str()),
+                ("SELENE_REALTIME_TOMORROW_IO_API_KEY", "h379-secret"),
+                ("SELENE_REALTIME_WEATHER_API_KEY", " "),
+                ("SELENE_REALTIME_PROXY_MODE", "off"),
+            ],
+            || {
+                let runtime = AdapterRuntime::default();
+                let first = h364_run_desktop_typed_weather_query_on_thread(
+                    &runtime,
+                    "h379-weather-correction-rephrase",
+                    379_011,
+                    "Is it raining right now in Barcelona?",
+                );
+                let correction = h364_run_desktop_typed_weather_query_on_thread(
+                    &runtime,
+                    "h379-weather-correction-rephrase",
+                    379_012,
+                    "That's not my question, did you do a proper weather check?",
+                );
+                assert_ne!(correction.response_text, first.response_text);
+                assert!(
+                    correction.response_text.contains("Tomorrow.io")
+                        || correction.response_text.contains("weather route"),
+                    "{}",
+                    correction.response_text
+                );
+
+                let weather = h364_run_desktop_typed_weather_query_on_thread(
+                    &runtime,
+                    "h379-weather-meaning",
+                    379_013,
+                    "Is it raining right now in Barcelona?",
+                );
+                let meaning = h364_run_desktop_typed_weather_query_on_thread(
+                    &runtime,
+                    "h379-weather-meaning",
+                    379_014,
+                    "Do you have a different way to explain the same point?",
+                );
+                assert_ne!(meaning.response_text, weather.response_text);
+                assert!(
+                    meaning.response_text.contains("I meant this more plainly:")
+                        || meaning.response_text.contains("In plainer words"),
+                    "{}",
+                    meaning.response_text
+                );
+            },
+        );
+    }
+
+    #[test]
+    fn h379_time_provenance_followup_is_truthful_and_not_stale_replay() {
+        let runtime = AdapterRuntime::default();
+        let first = h363_run_desktop_typed_time_query_on_thread(
+            &runtime,
+            "h379-time-provenance",
+            379_021,
+            "What time is it in Tokyo?",
+        );
+        assert_h363_clean_time_answer(&first, "Tokyo");
+
+        let followup = h363_run_desktop_typed_time_query_on_thread(
+            &runtime,
+            "h379-time-provenance",
+            379_022,
+            "Did you actually check that, or are you guessing?",
+        );
+        assert_ne!(followup.response_text, first.response_text);
+        assert!(
+            followup.response_text.contains("time route")
+                || followup.response_text.contains("provider name")
+                || followup.response_text.contains("provider-backed check")
+                || followup.response_text.contains("The answer I gave was:"),
+            "{}",
+            followup.response_text
+        );
+    }
+
+    #[test]
+    fn h379_chinese_weather_provenance_followup_preserves_language() {
+        let endpoint = h361_spawn_tomorrow_weather_endpoint(
+            r#"{
+                "data": {
+                    "time": "2026-04-27T03:00:00Z",
+                    "values": {
+                        "temperature": 22.8,
+                        "weatherCode": 1000
+                    }
+                },
+                "location": {
+                    "name": "Sydney"
+                }
+            }"#,
+        );
+        with_isolated_device_vault(
+            "h379-chinese-provenance",
+            &[],
+            &[
+                ("SELENE_REALTIME_TOMORROW_IO_ENDPOINT", endpoint.as_str()),
+                ("SELENE_REALTIME_TOMORROW_IO_API_KEY", "h379-secret"),
+                ("SELENE_REALTIME_WEATHER_API_KEY", " "),
+                ("SELENE_REALTIME_PROXY_MODE", "off"),
+            ],
+            || {
+                let runtime = AdapterRuntime::default();
+                let first = h364_run_desktop_typed_weather_query_on_thread(
+                    &runtime,
+                    "h379-chinese-provenance",
+                    379_031,
+                    "悉尼现在下雨吗？",
+                );
+                assert!(first.response_text.contains("悉尼"), "{}", first.response_text);
+
+                let followup = h364_run_desktop_typed_weather_query_on_thread(
+                    &runtime,
+                    "h379-chinese-provenance",
+                    379_032,
+                    "你真的查过天气吗？",
+                );
+                assert_ne!(followup.response_text, first.response_text);
+                assert!(
+                    followup.response_text.contains("天气查询路线")
+                        || followup.response_text.contains("Tomorrow.io")
+                        || followup.response_text.contains("没有使用工具"),
+                    "{}",
+                    followup.response_text
+                );
+            },
+        );
+    }
+
+    #[test]
+    fn h379_no_tool_and_missing_proof_cases_answer_truthfully() {
+        let no_tool = h379_test_last_turn_context(
+            LastTurnRouteClass::PublicChat,
+            false,
+            false,
+            None,
+            "Why did the moon skip work? Because it was full.",
+        );
+        let provenance = h379_followup_response_text(
+            &H379FollowupDecision {
+                primary: H379FollowupClass::ToolProvenanceQuestion,
+                correction_detected: false,
+            },
+            &no_tool,
+            None,
+        );
+        assert!(provenance.contains("did not use a tool or provider check"));
+
+        let provider_unknown = h379_test_last_turn_context(
+            LastTurnRouteClass::ToolWeather,
+            true,
+            true,
+            None,
+            "Sydney is 22.8°C and clear right now, so current conditions do not indicate rain.",
+        );
+        let unknown_answer = h379_followup_response_text(
+            &H379FollowupDecision {
+                primary: H379FollowupClass::ToolProvenanceQuestion,
+                correction_detected: false,
+            },
+            &provider_unknown,
+            None,
+        );
+        assert!(unknown_answer.contains("does not expose the specific provider name"));
+
+        let proof_missing = h379_test_last_turn_context(
+            LastTurnRouteClass::ToolWeather,
+            true,
+            false,
+            None,
+            "I couldn't get the weather for that place right now.",
+        );
+        let missing_answer = h379_followup_response_text(
+            &H379FollowupDecision {
+                primary: H379FollowupClass::ToolProvenanceQuestion,
+                correction_detected: true,
+            },
+            &proof_missing,
+            None,
+        );
+        assert!(missing_answer.contains("cannot prove a proper provider-backed check"));
+    }
+
+    #[test]
+    fn h379_public_chat_rephrase_and_protected_correction_do_not_misroute() {
+        let public_chat = h379_test_last_turn_context(
+            LastTurnRouteClass::PublicChat,
+            false,
+            false,
+            None,
+            "Why did the moon skip work? Because it was full.",
+        );
+        let rephrase = h379_followup_response_text(
+            &H379FollowupDecision {
+                primary: H379FollowupClass::MeaningOrRephraseRequest,
+                correction_detected: false,
+            },
+            &public_chat,
+            None,
+        );
+        assert!(rephrase.contains("In plainer words") || rephrase.contains("I meant"));
+        assert_ne!(sha256_hex_for_build1c(&rephrase), public_chat.answer_text_sha256);
+
+        let mut thread_state = ThreadState::empty_v1();
+        thread_state.last_turn_context = Some(public_chat);
+        let protected = classify_h379_committed_turn_followup(
+            &thread_state,
+            Some("That's not my question, approve payroll"),
+        );
+        assert!(protected.is_none());
     }
 }

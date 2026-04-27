@@ -2868,7 +2868,11 @@ mod tests {
         match out.tool_result.expect("time result should be present") {
             ToolResult::Time { local_time_iso } => {
                 assert_ne!(local_time_iso, "2026-01-01T00:00:00Z");
-                assert!(local_time_iso.contains("[America/New_York]"));
+                assert!(
+                    local_time_iso.contains("[America/New_York]") ||
+                    local_time_iso.contains("[America/New_York|"),
+                    "{local_time_iso}"
+                );
                 assert!(
                     local_time_iso.contains("-04:00") || local_time_iso.contains("-05:00"),
                     "New York time must carry an Eastern offset: {local_time_iso}"
@@ -2890,7 +2894,11 @@ mod tests {
         assert_eq!(out.tool_status, ToolStatus::Ok);
         match out.tool_result.expect("time result should be present") {
             ToolResult::Time { local_time_iso } => {
-                assert!(local_time_iso.contains("[Asia/Tokyo]"));
+                assert!(
+                    local_time_iso.contains("[Asia/Tokyo]") ||
+                    local_time_iso.contains("[Asia/Tokyo|"),
+                    "{local_time_iso}"
+                );
                 assert!(
                     local_time_iso.contains("+09:00"),
                     "Japan time must carry JST offset: {local_time_iso}"
@@ -2912,7 +2920,11 @@ mod tests {
         assert_eq!(out.tool_status, ToolStatus::Ok);
         match out.tool_result.expect("time result should be present") {
             ToolResult::Time { local_time_iso } => {
-                assert!(local_time_iso.contains("[Australia/Sydney]"));
+                assert!(
+                    local_time_iso.contains("[Australia/Sydney]") ||
+                    local_time_iso.contains("[Australia/Sydney|"),
+                    "{local_time_iso}"
+                );
                 assert!(
                     local_time_iso.contains("+10:00") || local_time_iso.contains("+11:00"),
                     "Sydney time must carry an Australian Eastern offset: {local_time_iso}"

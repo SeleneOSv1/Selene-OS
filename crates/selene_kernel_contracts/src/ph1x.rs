@@ -462,6 +462,8 @@ pub struct ThreadState {
     pub schema_version: SchemaVersion,
     pub pending: Option<PendingState>,
     pub resume_buffer: Option<ResumeBuffer>,
+    /// Narrow H379 carrier for truthful committed-turn follow-ups.
+    pub last_turn_context: Option<LastTurnContext>,
     /// Deterministic ask-once identity prompt tracking for voice confidence ladders.
     pub identity_prompt_state: Option<IdentityPromptState>,
     /// Optional continuity topic carried across turns in one correlation chain.
@@ -488,6 +490,111 @@ pub struct ThreadPolicyFlags {
     pub force_privacy_mode: bool,
     pub force_do_not_disturb: bool,
     pub force_strict_safety: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum LastTurnRouteClass {
+    PublicChat,
+    ToolTime,
+    ToolWeather,
+    ToolOther,
+    Clarify,
+    ProtectedOrSimulation,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LastTurnContext {
+    pub schema_version: SchemaVersion,
+    pub route_class: LastTurnRouteClass,
+    pub tool_used: bool,
+    pub proof_available: bool,
+    pub provider_hint: Option<String>,
+    pub answer_text: String,
+    pub answer_text_sha256: String,
+}
+
+impl LastTurnContext {
+    pub fn v1(
+        route_class: LastTurnRouteClass,
+        tool_used: bool,
+        proof_available: bool,
+        provider_hint: Option<String>,
+        answer_text: String,
+        answer_text_sha256: String,
+    ) -> Result<Self, ContractViolation> {
+        let out = Self {
+            schema_version: PH1X_CONTRACT_VERSION,
+            route_class,
+            tool_used,
+            proof_available,
+            provider_hint,
+            answer_text,
+            answer_text_sha256,
+        };
+        out.validate()?;
+        Ok(out)
+    }
+}
+
+impl Validate for LastTurnContext {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        if self.schema_version != PH1X_CONTRACT_VERSION {
+            return Err(ContractViolation::InvalidValue {
+                field: "last_turn_context.schema_version",
+                reason: "must match PH1X_CONTRACT_VERSION",
+            });
+        }
+        if let Some(provider_hint) = &self.provider_hint {
+            if provider_hint.trim().is_empty() {
+                return Err(ContractViolation::InvalidValue {
+                    field: "last_turn_context.provider_hint",
+                    reason: "must not be empty when provided",
+                });
+            }
+            if provider_hint.len() > 64 {
+                return Err(ContractViolation::InvalidValue {
+                    field: "last_turn_context.provider_hint",
+                    reason: "must be <= 64 chars",
+                });
+            }
+        }
+        if self.answer_text.trim().is_empty() {
+            return Err(ContractViolation::InvalidValue {
+                field: "last_turn_context.answer_text",
+                reason: "must not be empty",
+            });
+        }
+        if self.answer_text.len() > 32_768 {
+            return Err(ContractViolation::InvalidValue {
+                field: "last_turn_context.answer_text",
+                reason: "must be <= 32768 chars",
+            });
+        }
+        if self.answer_text_sha256.len() != 64
+            || !self
+                .answer_text_sha256
+                .chars()
+                .all(|ch| ch.is_ascii_hexdigit())
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "last_turn_context.answer_text_sha256",
+                reason: "must be a 64-char hex digest",
+            });
+        }
+        if !self.tool_used && self.provider_hint.is_some() {
+            return Err(ContractViolation::InvalidValue {
+                field: "last_turn_context.provider_hint",
+                reason: "must be None when tool_used=false",
+            });
+        }
+        if !self.tool_used && self.proof_available {
+            return Err(ContractViolation::InvalidValue {
+                field: "last_turn_context.proof_available",
+                reason: "must be false when tool_used=false",
+            });
+        }
+        Ok(())
+    }
 }
 
 impl ThreadPolicyFlags {
@@ -525,6 +632,7 @@ impl ThreadState {
             schema_version: PH1X_CONTRACT_VERSION,
             pending: None,
             resume_buffer: None,
+            last_turn_context: None,
             identity_prompt_state: None,
             active_subject_ref: None,
             interrupted_subject_ref: None,
@@ -542,6 +650,7 @@ impl ThreadState {
             schema_version: PH1X_CONTRACT_VERSION,
             pending,
             resume_buffer,
+            last_turn_context: None,
             identity_prompt_state: None,
             active_subject_ref: None,
             interrupted_subject_ref: None,
@@ -612,6 +721,9 @@ impl Validate for ThreadState {
         }
         if let Some(b) = &self.resume_buffer {
             b.validate()?;
+        }
+        if let Some(last_turn_context) = &self.last_turn_context {
+            last_turn_context.validate()?;
         }
         if let Some(p) = &self.identity_prompt_state {
             p.validate()?;

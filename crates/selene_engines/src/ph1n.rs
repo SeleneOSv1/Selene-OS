@@ -14,6 +14,7 @@ pub mod reason_codes {
     pub const N_INTENT_OK: ReasonCodeId = ReasonCodeId(0x4E00_0001);
     pub const N_CHAT_GREETING: ReasonCodeId = ReasonCodeId(0x4E00_0002);
     pub const N_CHAT_NO_INTENT: ReasonCodeId = ReasonCodeId(0x4E00_0003);
+    pub const N_CHAT_TURN_FOLLOWUP_REPAIR: ReasonCodeId = ReasonCodeId(0x4E00_0004);
     pub const N_CLARIFY_TOO_LONG: ReasonCodeId = ReasonCodeId(0x4E00_0010);
     pub const N_CLARIFY_MISSING_FIELD: ReasonCodeId = ReasonCodeId(0x4E00_0011);
     pub const N_CLARIFY_AMBIGUOUS: ReasonCodeId = ReasonCodeId(0x4E00_0012);
