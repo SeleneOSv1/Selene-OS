@@ -9259,6 +9259,7 @@ fn deterministic_weather_context_followup_query(
         || normalized.contains("forecast")
         || normalized.contains("rain")
         || normalized.contains("raining")
+        || normalized.contains("rainy")
         || normalized.contains("snow")
         || normalized.contains("snowing")
         || normalized.contains("precipitation");
@@ -9282,7 +9283,10 @@ fn deterministic_weather_context_followup_query(
         return None;
     }
     if normalized.contains("forecast") {
-        if normalized.contains("rain") || normalized.contains("raining") {
+        if normalized.contains("rain")
+            || normalized.contains("raining")
+            || normalized.contains("rainy")
+        {
             return Some(format!(
                 "is there any rain forecast for {place} for the next four days"
             ));
@@ -9291,7 +9295,8 @@ fn deterministic_weather_context_followup_query(
             "what is the forecast for {place} for the next four days"
         ));
     }
-    if normalized.contains("rain") || normalized.contains("raining") {
+    if normalized.contains("rain") || normalized.contains("raining") || normalized.contains("rainy")
+    {
         return Some(format!("is it raining in {place} now"));
     }
     if normalized.contains("snow") || normalized.contains("snowing") {
@@ -23299,6 +23304,55 @@ mod tests {
                 assert_eq!(answer.outcome, "FINAL_TOOL");
                 assert!(answer.response_text.contains("Barcelona is 12.9°C"));
                 assert!(!answer.response_text.contains("rain Barcelona"));
+                assert!(!answer.response_text.contains("provider_payload"));
+                assert!(!answer.response_text.contains("governance"));
+            },
+        );
+    }
+
+    #[test]
+    fn h378_clipped_rainy_phrase_routes_to_weather_place() {
+        let endpoint = h361_spawn_tomorrow_weather_endpoint(
+            r#"{
+                "data": {
+                    "time": "2026-04-25T03:00:00Z",
+                    "values": {
+                        "temperature": 12.9,
+                        "humidity": 63,
+                        "windSpeed": 4.1,
+                        "weatherCode": 1101
+                    }
+                },
+                "location": {
+                    "name": "Barcelona, Spain"
+                }
+            }"#,
+        );
+        with_isolated_device_vault(
+            "h378-rainy-barcelona-place",
+            &[],
+            &[
+                ("SELENE_REALTIME_TOMORROW_IO_ENDPOINT", endpoint.as_str()),
+                ("SELENE_REALTIME_TOMORROW_IO_API_KEY", "h378-secret"),
+                ("SELENE_REALTIME_WEATHER_API_KEY", " "),
+                ("SELENE_REALTIME_PROXY_MODE", "off"),
+            ],
+            || {
+                let runtime = AdapterRuntime::default();
+                let answer = h364_run_desktop_typed_weather_query_on_thread(
+                    &runtime,
+                    "h378-rainy-barcelona-place",
+                    378_001,
+                    "Rainy in Barcelona?",
+                );
+                assert_eq!(answer.status, "ok");
+                assert_eq!(answer.outcome, "FINAL_TOOL");
+                assert!(answer.response_text.contains("Barcelona is 12.9°C"));
+                assert!(answer
+                    .response_text
+                    .contains("current conditions do not indicate rain"));
+                assert!(!answer.response_text.contains("Rainy in Barcelona"));
+                assert!(!answer.response_text.starts_with("There is"));
                 assert!(!answer.response_text.contains("provider_payload"));
                 assert!(!answer.response_text.contains("governance"));
             },

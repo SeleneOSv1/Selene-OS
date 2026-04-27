@@ -8559,6 +8559,8 @@ fn weather_place_from_query(query: &str) -> String {
         "current temperature for ",
         "is it raining in ",
         "is it raining for ",
+        "rainy in ",
+        "rainy for ",
         "will it rain in ",
         "will it rain for ",
         "is rain expected in ",
@@ -8661,6 +8663,7 @@ fn weather_query_asks_rain(query: &str) -> bool {
     let normalized = normalize_place_key(query);
     normalized.contains("rain")
         || normalized.contains("raining")
+        || normalized.contains("rainy")
         || normalized.contains("drizzle")
         || normalized.contains("snow")
         || normalized.contains("snowing")
@@ -8676,7 +8679,7 @@ fn weather_normalize_query_place(place: &str) -> String {
         .trim();
     let normalized = normalize_place_key(trimmed);
     match normalized.as_str() {
-        "" | "rain" | "raining" | "the rain" | "precipitation" | "snow" | "snowing"
+        "" | "rain" | "raining" | "rainy" | "the rain" | "precipitation" | "snow" | "snowing"
         | "forecast" | "weather" | "there" | "there now" | "here" | "that place"
         | "that location" => String::new(),
         "barcelona" | "barcelona spain" => "Barcelona".to_string(),
@@ -9249,6 +9252,7 @@ fn weather_requested_place_is_specific(place: &str) -> bool {
             | "here"
             | "rain"
             | "raining"
+            | "rainy"
             | "precipitation"
             | "snow"
             | "snowing"
@@ -27186,6 +27190,55 @@ mod tests {
             Some(ToolResult::Weather { summary }) => {
                 assert!(summary.contains("Barcelona is 12.9°C"), "{summary}");
                 assert!(!summary.contains("rain Barcelona"));
+                assert!(!summary.contains("provider_payload"));
+            }
+            other => panic!("expected weather tool result, got {other:?}"),
+        }
+        let source_url = response
+            .source_metadata
+            .as_ref()
+            .and_then(|metadata| metadata.sources.first())
+            .map(|source| source.url.as_str())
+            .unwrap_or_default();
+        assert!(source_url.contains("location=Barcelona"), "{source_url}");
+    }
+
+    #[test]
+    fn h378_weather_tool_clipped_rainy_phrase_uses_city_place() {
+        let _guard = h361_weather_env_lock();
+        let endpoint = h361_spawn_tomorrow_weather_endpoint(
+            r#"{
+                "data": {
+                    "time": "2026-04-25T03:00:00Z",
+                    "values": {
+                        "temperature": 12.9,
+                        "humidity": 63,
+                        "windSpeed": 4.1,
+                        "weatherCode": 1101
+                    }
+                },
+                "location": {
+                    "name": "Barcelona, Spain"
+                }
+            }"#,
+        );
+        let _endpoint = H361ScopedEnvVar::set("SELENE_REALTIME_TOMORROW_IO_ENDPOINT", &endpoint);
+        let _api_key = H361ScopedEnvVar::set("SELENE_REALTIME_TOMORROW_IO_API_KEY", "h378-secret");
+        let _proxy = H361ScopedEnvVar::set("SELENE_REALTIME_PROXY_MODE", "off");
+
+        let request = h361_weather_tool_request("Rainy in Barcelona?");
+        let response = maybe_build_weather_tool_response(&request)
+            .expect("weather tool response should build")
+            .expect("clipped rainy phrase should use weather provider");
+        match response.tool_result.as_ref() {
+            Some(ToolResult::Weather { summary }) => {
+                assert!(summary.contains("Barcelona is 12.9°C"), "{summary}");
+                assert!(
+                    summary.contains("current conditions do not indicate rain"),
+                    "{summary}"
+                );
+                assert!(!summary.contains("Rainy in Barcelona"));
+                assert!(!summary.starts_with("There is"));
                 assert!(!summary.contains("provider_payload"));
             }
             other => panic!("expected weather tool result, got {other:?}"),

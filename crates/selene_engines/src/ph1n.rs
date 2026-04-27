@@ -261,6 +261,7 @@ fn looks_like_weather_query(lower: &str) -> bool {
         || lower.contains("is it snowing")
         || lower.contains("will it rain")
         || lower.contains("will it snow")
+        || lower.contains("rainy")
         || (contains_word(lower, "rain")
             && (contains_word(lower, "tomorrow") || contains_word(lower, "maybe")))
         || lower.contains("rain forecast")
@@ -4219,6 +4220,7 @@ mod tests {
             "悉尼现在下雨吗？",
             "悉尼未来四天天气预报？",
             "Is it raining in 悉尼?",
+            "Rainy in Barcelona?",
         ] {
             let out = rt.run(&req(prompt, "zh")).unwrap();
             match out {
