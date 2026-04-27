@@ -219,7 +219,10 @@ fn looks_like_bcast_urgent_followup_policy_update(lower: &str) -> bool {
 fn looks_like_time_query(lower: &str) -> bool {
     lower == "time"
         || lower.starts_with("time ")
+        || lower.contains("time rn")
+        || lower.contains("time now")
         || lower.contains("time what now")
+        || lower.contains("time please")
         || lower.contains("what time")
         || lower.contains("current time")
         || lower.contains("local time")
@@ -258,6 +261,8 @@ fn looks_like_weather_query(lower: &str) -> bool {
         || lower.contains("is it snowing")
         || lower.contains("will it rain")
         || lower.contains("will it snow")
+        || (contains_word(lower, "rain")
+            && (contains_word(lower, "tomorrow") || contains_word(lower, "maybe")))
         || lower.contains("rain forecast")
         || lower.contains("snow forecast")
         || lower.contains("precipitation")
@@ -4156,6 +4161,46 @@ mod tests {
                 }
                 _ => panic!("expected deterministic time intent for {prompt}"),
             }
+        }
+    }
+
+    #[test]
+    fn h376_bounded_slang_puzzle_and_confusing_time_phrases_route_to_time() {
+        let rt = Ph1nRuntime::new(Ph1nConfig::mvp_v1());
+        for prompt in [
+            "Tokyo time rn?",
+            "time Tokyo now what?",
+            "For Tokyo, the time now please?",
+        ] {
+            let out = rt.run(&req(prompt, "en")).unwrap();
+            match out {
+                Ph1nResponse::IntentDraft(d) => {
+                    assert_eq!(d.intent_type, IntentType::TimeQuery);
+                    let task = d
+                        .fields
+                        .iter()
+                        .find(|field| field.key == FieldKey::Task)
+                        .and_then(|field| field.value.normalized_value.as_deref());
+                    assert_eq!(task, Some("what time is it in Tokyo"));
+                }
+                _ => panic!("expected deterministic time intent for {prompt}"),
+            }
+        }
+    }
+
+    #[test]
+    fn h376_bounded_rain_maybe_phrase_routes_to_weather_without_faking_forecast_data() {
+        let rt = Ph1nRuntime::new(Ph1nConfig::mvp_v1());
+        let out = rt
+            .run(&req("rain Barcelona tomorrow maybe?", "en"))
+            .unwrap();
+        match out {
+            Ph1nResponse::IntentDraft(d) => {
+                assert_eq!(d.intent_type, IntentType::WeatherQuery);
+                assert_eq!(d.overall_confidence, OverallConfidence::High);
+                assert!(!d.requires_confirmation);
+            }
+            _ => panic!("expected deterministic weather intent for bounded rain phrase"),
         }
     }
 }

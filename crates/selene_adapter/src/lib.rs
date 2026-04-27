@@ -188,6 +188,7 @@ use selene_storage::ph1f::{
     Ph1kFeedbackIssueKind, Ph1kInterruptCandidateExtendedFields, Ph1kRuntimeEventKind,
     Ph1kRuntimeEventRecord, SessionRecord, StorageError,
 };
+use sha2::{Digest, Sha256};
 pub mod grpc_api {
     tonic::include_proto!("selene.adapter.v1");
 }
@@ -5604,6 +5605,14 @@ impl AdapterRuntime {
             )
             .map_err(post_session_error)?;
             let response = execution_outcome_to_adapter_response(execution_outcome);
+            if let Some(proof_log) = build1c_language_audit_proof_log(
+                language_packet.as_ref(),
+                response.response_text.as_str(),
+                Some(response.response_text.as_str()),
+                false,
+            ) {
+                eprintln!("selene_adapter build1c_language_audit_proof {proof_log}");
+            }
             cache_authoritative_turn_response(
                 &self.session_retry_cache,
                 &actor_user_id,
@@ -8578,6 +8587,43 @@ fn onboarding_continue_next_step_to_api_value(next_step: AppOnboardingContinueNe
 struct Build1cLanguageContext {
     packet: LanguagePacket,
     nlp_transcript_text: String,
+}
+
+fn build1c_language_audit_proof_log(
+    language_packet: Option<&LanguagePacket>,
+    displayed_response_text: &str,
+    tts_input_text: Option<&str>,
+    protected_uncertainty_fail_closed: bool,
+) -> Option<String> {
+    let packet = language_packet?;
+    let displayed_hash = sha256_hex_for_build1c(displayed_response_text);
+    let tts_hash = tts_input_text
+        .map(sha256_hex_for_build1c)
+        .unwrap_or_else(|| "none".to_string());
+    let displayed_tts_text_hash_match = tts_input_text
+        .map(|tts_text| tts_text == displayed_response_text)
+        .unwrap_or(false);
+
+    Some(format!(
+        "input_language={} output_language={} confidence={} language_switch_requested={} language_switch_reason={} language_switch_scope={} clarification_required={} mixed_language_detected={} displayed_response_text_sha256={} tts_input_text_sha256={} displayed_tts_text_hash_match={} protected_uncertainty_fail_closed={}",
+        truncate_ascii(packet.input_language_primary.as_str(), 32),
+        truncate_ascii(packet.output_language_selected.as_str(), 32),
+        packet.input_language_confidence,
+        packet.language_switch_requested,
+        truncate_ascii(packet.output_language_reason.as_str(), 64),
+        truncate_ascii(format!("{:?}", packet.language_switch_scope).as_str(), 32),
+        packet.clarification_required,
+        packet.mixed_language_detected,
+        displayed_hash,
+        tts_hash,
+        displayed_tts_text_hash_match,
+        protected_uncertainty_fail_closed
+    ))
+}
+
+fn sha256_hex_for_build1c(value: &str) -> String {
+    let digest = Sha256::digest(value.as_bytes());
+    digest.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 fn build_language_context_for_voice_turn(
@@ -22714,7 +22760,11 @@ mod tests {
             .expect("Chinese time turn should complete");
         assert_eq!(out.status, "ok");
         assert_eq!(out.outcome, "FINAL_TOOL");
-        assert!(out.response_text.contains("东京现在是"), "{}", out.response_text);
+        assert!(
+            out.response_text.contains("东京现在是"),
+            "{}",
+            out.response_text
+        );
         assert!(!out.response_text.contains("TIME_LOOKUP"));
         assert!(!out.response_text.contains("provider_payload"));
     }
@@ -22793,7 +22843,10 @@ mod tests {
             .run_voice_turn(en)
             .expect("English language switch acknowledgement should complete");
         assert_eq!(out.status, "ok");
-        assert_eq!(out.response_text, "Understood. I'll answer this turn in English.");
+        assert_eq!(
+            out.response_text,
+            "Understood. I'll answer this turn in English."
+        );
     }
 
     #[test]
@@ -22816,5 +22869,246 @@ mod tests {
         );
         assert!(!out.response_text.contains("provider_payload"));
         assert!(!out.response_text.contains("governance"));
+    }
+
+    #[test]
+    fn h376_automatic_same_language_response_requires_no_manual_language_selection() {
+        let runtime = AdapterRuntime::default();
+
+        let mut english = base_request();
+        english.app_platform = "DESKTOP".to_string();
+        english.audio_capture_ref = None;
+        english.correlation_id = 376_001;
+        english.turn_id = 376_001;
+        english.user_text_final = Some("What time is it in Tokyo?".to_string());
+        let out = runtime
+            .run_voice_turn(english)
+            .expect("English turn should complete");
+        assert_eq!(out.status, "ok");
+        assert_eq!(out.outcome, "FINAL_TOOL");
+        assert!(out.response_text.contains("Tokyo"), "{}", out.response_text);
+        assert!(!out.response_text.contains("Chinese or English"));
+
+        let mut chinese = base_request();
+        chinese.app_platform = "DESKTOP".to_string();
+        chinese.audio_capture_ref = None;
+        chinese.correlation_id = 376_002;
+        chinese.turn_id = 376_002;
+        chinese.user_text_final = Some("现在东京几点？".to_string());
+        let out = runtime
+            .run_voice_turn(chinese)
+            .expect("Chinese turn should complete");
+        assert_eq!(out.status, "ok");
+        assert_eq!(out.outcome, "FINAL_TOOL");
+        assert!(
+            out.response_text.contains("东京现在是"),
+            "{}",
+            out.response_text
+        );
+        assert!(!out.response_text.contains("Chinese or English"));
+
+        let mut mixed = base_request();
+        mixed.app_platform = "DESKTOP".to_string();
+        mixed.audio_capture_ref = None;
+        mixed.correlation_id = 376_003;
+        mixed.turn_id = 376_003;
+        mixed.user_text_final = Some("Can you explain 这个功能 in simple English?".to_string());
+        let out = runtime
+            .run_voice_turn(mixed)
+            .expect("mixed explicit-English turn should complete");
+        assert_eq!(out.status, "ok");
+        assert_eq!(
+            out.response_text,
+            "这个功能 means \"this function.\" In simple English, it means the feature or capability being discussed."
+        );
+        assert!(!out.response_text.contains("Chinese or English"));
+    }
+
+    #[test]
+    fn h376_bounded_slang_puzzle_and_confusing_direct_turns_are_safe() {
+        let runtime = AdapterRuntime::default();
+        for (idx, prompt) in [
+            "Tokyo time rn?",
+            "time Tokyo now what?",
+            "For Tokyo, the time now please?",
+        ]
+        .iter()
+        .enumerate()
+        {
+            let mut req = base_request();
+            req.app_platform = "DESKTOP".to_string();
+            req.audio_capture_ref = None;
+            req.correlation_id = 376_010 + idx as u64;
+            req.turn_id = 376_010 + idx as u64;
+            req.user_text_final = Some((*prompt).to_string());
+            let out = runtime
+                .run_voice_turn(req)
+                .expect("bounded time phrase should complete");
+            assert_eq!(out.status, "ok");
+            assert_eq!(out.outcome, "FINAL_TOOL");
+            assert!(out.response_text.contains("Tokyo"), "{}", out.response_text);
+            assert!(!out.response_text.contains("TIME_LOOKUP"));
+            assert!(!out.response_text.contains("provider_payload"));
+        }
+    }
+
+    #[test]
+    fn h376_rain_barcelona_tomorrow_maybe_routes_or_fails_safely_without_fake_data() {
+        let endpoint = h361_spawn_tomorrow_weather_endpoint(
+            r#"{
+                "data": {
+                    "time": "2026-04-25T03:00:00Z",
+                    "values": {
+                        "temperature": 12.9,
+                        "humidity": 63,
+                        "windSpeed": 4.1,
+                        "weatherCode": 1101
+                    }
+                },
+                "location": {
+                    "name": "Barcelona, Spain"
+                }
+            }"#,
+        );
+        with_isolated_device_vault(
+            "h376-rain-barcelona-safe-gap",
+            &[],
+            &[
+                ("SELENE_REALTIME_TOMORROW_IO_ENDPOINT", endpoint.as_str()),
+                ("SELENE_REALTIME_TOMORROW_IO_API_KEY", "h376-secret"),
+                ("SELENE_REALTIME_WEATHER_API_KEY", " "),
+                ("SELENE_REALTIME_PROXY_MODE", "off"),
+            ],
+            || {
+                let runtime = AdapterRuntime::default();
+                let mut req = base_request();
+                req.app_platform = "DESKTOP".to_string();
+                req.audio_capture_ref = None;
+                req.correlation_id = 376_020;
+                req.turn_id = 376_020;
+                req.user_text_final = Some("rain Barcelona tomorrow maybe?".to_string());
+
+                let out = runtime
+                    .run_voice_turn(req)
+                    .expect("bounded rain phrase should complete or fail safely");
+                assert_eq!(out.status, "ok");
+                assert!(
+                    out.response_text.contains("Barcelona")
+                        || out
+                            .response_text
+                            .contains("I couldn't get the weather for that place right now.")
+                        || out.response_text.contains("Which place")
+                        || out.response_text.contains("forecast"),
+                    "unexpected weather-safe response: {}",
+                    out.response_text
+                );
+                for forbidden in [
+                    "provider_payload",
+                    "governance",
+                    "runtime",
+                    "Tomorrow API",
+                    "verify your identity",
+                ] {
+                    assert!(
+                        !out.response_text.contains(forbidden),
+                        "weather-safe response leaked `{forbidden}`: {}",
+                        out.response_text
+                    );
+                }
+            },
+        );
+    }
+
+    #[test]
+    fn h376_low_confidence_and_protected_like_ambiguity_clarify_without_guessing() {
+        let runtime = AdapterRuntime::default();
+        for (idx, prompt) in ["???", "??? approve payroll for Alex"].iter().enumerate() {
+            let mut req = base_request();
+            req.app_platform = "DESKTOP".to_string();
+            req.audio_capture_ref = None;
+            req.correlation_id = 376_030 + idx as u64;
+            req.turn_id = 376_030 + idx as u64;
+            req.user_text_final = Some((*prompt).to_string());
+
+            let out = runtime
+                .run_voice_turn(req)
+                .expect("low-confidence phrase should clarify");
+            assert_eq!(out.status, "ok");
+            assert!(
+                out.response_text.contains("Chinese or English")
+                    || out.response_text.contains("Did you want"),
+                "expected short clarification, got {}",
+                out.response_text
+            );
+            for forbidden in ["approved", "paid", "executed", "payroll updated"] {
+                assert!(
+                    !out.response_text.to_ascii_lowercase().contains(forbidden),
+                    "low-confidence protected-like phrase guessed execution: {}",
+                    out.response_text
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn h376_language_audit_proof_log_covers_required_fields_without_full_ph1j_redesign() {
+        let packet = LanguagePacket::v1(
+            "zh".to_string(),
+            vec!["zh".to_string(), "en".to_string()],
+            8_500,
+            "en".to_string(),
+            "explicit_user_language_instruction".to_string(),
+            "mixed-han-simplified-latin".to_string(),
+            true,
+            true,
+            LanguageSwitchScope::ThisTurn,
+            "typed_input".to_string(),
+            "possible".to_string(),
+            false,
+            vec!["ph1lang_detect_and_response_map".to_string()],
+        )
+        .expect("language packet should be valid");
+        let displayed = "这个功能 means \"this function.\"";
+        let proof =
+            build1c_language_audit_proof_log(Some(&packet), displayed, Some(displayed), true)
+                .expect("audit proof log should build");
+
+        assert!(proof.contains("input_language=zh"));
+        assert!(proof.contains("output_language=en"));
+        assert!(proof.contains("confidence=8500"));
+        assert!(proof.contains("language_switch_requested=true"));
+        assert!(proof.contains("language_switch_reason=explicit_user_language_instruction"));
+        assert!(proof.contains("language_switch_scope=ThisTurn"));
+        assert!(proof.contains("clarification_required=false"));
+        assert!(proof.contains("mixed_language_detected=true"));
+        assert!(proof.contains("displayed_tts_text_hash_match=true"));
+        assert!(proof.contains("protected_uncertainty_fail_closed=true"));
+        let expected_hash = sha256_hex_for_build1c(displayed);
+        assert!(proof.contains(&format!("displayed_response_text_sha256={expected_hash}")));
+        assert!(proof.contains(&format!("tts_input_text_sha256={expected_hash}")));
+    }
+
+    #[test]
+    fn h376_persistent_language_memory_remains_deferred() {
+        let runtime = AdapterRuntime::default();
+        let mut req = base_request();
+        req.app_platform = "DESKTOP".to_string();
+        req.audio_capture_ref = None;
+        req.correlation_id = 376_040;
+        req.turn_id = 376_040;
+        req.user_text_final = Some("以后用中文回答我。".to_string());
+
+        let out = runtime
+            .run_voice_turn(req)
+            .expect("language switch acknowledgement should complete");
+        assert_eq!(out.status, "ok");
+        assert_eq!(out.response_text, "好的，这一轮我会用中文回答。");
+        for forbidden in ["always", "remember", "memory", "permanent", "persistent"] {
+            assert!(
+                !out.response_text.to_ascii_lowercase().contains(forbidden),
+                "language switch claimed persistent memory: {}",
+                out.response_text
+            );
+        }
     }
 }
