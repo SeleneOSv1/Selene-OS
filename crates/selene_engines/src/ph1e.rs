@@ -14,7 +14,7 @@ use selene_kernel_contracts::ph1e::{
     ToolResult, ToolStructuredField, ToolTextSnippet,
 };
 use selene_kernel_contracts::provider_secrets::ProviderSecretId;
-use selene_kernel_contracts::{ReasonCodeId, Validate};
+use selene_kernel_contracts::{ContractViolation, ReasonCodeId, Validate};
 use serde_json::Value;
 
 const BUILD_1D_MAX_FETCH_BYTES_PER_URL: u64 = 256 * 1024;
@@ -87,7 +87,7 @@ impl ProviderCallError {
 }
 
 const STARTUP_CONNECTIVITY_TIMEOUT_MS: u32 = 2_000;
-const BRAVE_CONNECTIVITY_PROBE_URL: &str = "https://api.search.brave.com/";
+const BRAVE_CONNECTIVITY_PROBE_URL: &str = "https://api.search.brave.com/res/v1/web/search";
 const OPENAI_CONNECTIVITY_PROBE_URL: &str = "https://api.openai.com/";
 const CLASH_EXPLICIT_HINT: &str =
     "If using Clash, set SELENE_PROXY_MODE=explicit and SELENE_HTTP_PROXY_URL=http://127.0.0.1:<port>";
@@ -593,10 +593,11 @@ impl Ph1eRuntime {
             cache_status,
         ) {
             Ok(r) => r,
-            Err(_) => fail_response(
+            Err(err) => fail_response_with_detail(
                 req,
                 reason_codes::E_FAIL_INTERNAL_PIPELINE_ERROR,
                 CacheStatus::Bypassed,
+                Some(contract_violation_safe_detail(err).as_str()),
             ),
         }
     }
@@ -735,7 +736,40 @@ impl Ph1eRuntime {
                     ));
                 }
                 Err(err) => {
-                    brave_failure = Some(err);
+                    if matches!(kind, ToolName::News) {
+                        match run_brave_search(
+                            &self.provider_config.brave_web_url,
+                            brave_key,
+                            &req.query,
+                            max_results,
+                            req.strict_budget.timeout_ms,
+                            &self.provider_config.user_agent,
+                            &self.provider_config.proxy_config,
+                            false,
+                            self.brave_fixture_json_for(false),
+                        ) {
+                            Ok((items, sources)) => {
+                                return Ok((
+                                    ToolResult::News { items },
+                                    source_metadata_from_live(
+                                        Some("ph1search_brave_news_web_fallback".to_string()),
+                                        now_unix_ms(),
+                                        sources,
+                                    ),
+                                ));
+                            }
+                            Err(web_err) => {
+                                brave_failure = Some(ProviderCallError::new(
+                                    "brave",
+                                    "news_and_web_fallback_failed",
+                                    web_err.http_status.or(err.http_status),
+                                ));
+                            }
+                        }
+                    }
+                    if brave_failure.is_none() {
+                        brave_failure = Some(err);
+                    }
                 }
             }
         }
@@ -1072,6 +1106,25 @@ fn source_metadata_from_live(
         provider_hint,
         retrieved_at_unix_ms,
         sources,
+    }
+}
+
+fn contract_violation_safe_detail(err: ContractViolation) -> String {
+    match err {
+        ContractViolation::InvalidValue { field, reason } => {
+            format!("contract_validation_error field={field} reason={reason}")
+        }
+        ContractViolation::InvalidRange {
+            field,
+            min,
+            max,
+            got,
+        } => format!(
+            "contract_validation_error field={field} reason=invalid_range min={min} max={max} got={got}"
+        ),
+        ContractViolation::NotFinite { field } => {
+            format!("contract_validation_error field={field} reason=not_finite")
+        }
     }
 }
 
@@ -2972,7 +3025,18 @@ fn connector_citation(connector: &'static str, query: &str, idx: usize) -> ToolT
 }
 
 fn truncate_ascii(input: &str, max_len: usize) -> String {
-    input.chars().take(max_len).collect()
+    if input.len() <= max_len {
+        return input.to_string();
+    }
+    let mut end = 0;
+    for (idx, ch) in input.char_indices() {
+        let next = idx + ch.len_utf8();
+        if next > max_len {
+            break;
+        }
+        end = next;
+    }
+    input[..end].to_string()
 }
 
 fn collapse_ws(input: &str) -> String {
@@ -4234,5 +4298,144 @@ mod tests {
             assert!(line.contains("provider="));
             assert!(!line.contains("user:password"));
         }
+    }
+
+    #[test]
+    fn h383_startup_self_check_uses_brave_search_endpoint_not_redirect_root() {
+        let provider_config = Ph1eProviderConfig {
+            brave_api_key: Some("fixture_brave_key".to_string()),
+            brave_web_url: "https://api.search.brave.com/res/v1/web/search".to_string(),
+            brave_news_url: "https://api.search.brave.com/res/v1/news/search".to_string(),
+            openai_api_key: None,
+            openai_responses_url: "https://api.openai.com/v1/responses".to_string(),
+            openai_model: "gpt-4o-mini".to_string(),
+            google_time_zone_api_key: None,
+            google_time_zone_url: "https://maps.googleapis.com/maps/api/timezone/json".to_string(),
+            google_time_zone_fixture_json: None,
+            timezonedb_api_key: None,
+            timezonedb_url: "https://api.timezonedb.com/v2.1/get-time-zone".to_string(),
+            timezonedb_fixture_json: None,
+            user_agent: "selene-ph1e-test/1.0".to_string(),
+            proxy_config: Ph1eProxyConfig {
+                mode: Ph1eProxyMode::Off,
+                http_proxy_url: None,
+                https_proxy_url: None,
+            },
+            brave_web_fixture_json: None,
+            brave_news_fixture_json: None,
+            url_fetch_fixture_html: None,
+        };
+
+        let failures = run_startup_outbound_self_check_with_probe(
+            &provider_config,
+            |provider, endpoint, _, _, _| {
+                if provider == "brave" {
+                    assert_eq!(endpoint, "https://api.search.brave.com/res/v1/web/search");
+                    assert_ne!(endpoint, "https://api.search.brave.com/");
+                }
+                Ok(())
+            },
+        );
+        assert!(failures.is_empty());
+    }
+
+    #[test]
+    fn h383_provider_failure_detail_classifies_auth_rate_limit_and_malformed_without_citation() {
+        let auth = ProviderCallError::new("brave", "http_non_200", Some(401));
+        let rate = ProviderCallError::new("brave", "http_non_200", Some(429));
+        let malformed = ProviderCallError::new("brave", "json_parse", None);
+
+        assert_eq!(
+            auth.safe_detail(),
+            "provider=brave error=http_non_200 status=401"
+        );
+        assert_eq!(
+            rate.safe_detail(),
+            "provider=brave error=http_non_200 status=429"
+        );
+        assert_eq!(malformed.safe_detail(), "provider=brave error=json_parse");
+
+        let combined = combine_live_search_failure_detail(
+            Some(&auth),
+            Some(&malformed),
+            &Ph1eProxyConfig {
+                mode: Ph1eProxyMode::Off,
+                http_proxy_url: None,
+                https_proxy_url: None,
+            },
+        );
+        assert!(combined.contains("primary(provider=brave error=http_non_200 status=401)"));
+        assert!(combined.contains("fallback(provider=brave error=json_parse)"));
+        assert!(!combined.contains("http://example.com/citation"));
+        assert!(!combined.contains("https://example.com/citation"));
+    }
+
+    #[test]
+    fn h383_news_query_uses_brave_web_fallback_when_news_endpoint_fails() {
+        let fixture = spawn_test_http_fixture();
+        let rt = Ph1eRuntime::new_with_provider_config(
+            Ph1eConfig::mvp_v1(),
+            Ph1eProviderConfig {
+                brave_news_fixture_json: Some("{malformed".to_string()),
+                ..provider_config_for_fixture(&fixture)
+            },
+        );
+
+        let out = rt.run(&req(
+            ToolName::News,
+            "latest openai news today",
+            false,
+            false,
+        ));
+
+        assert_eq!(out.tool_status, ToolStatus::Ok);
+        match out.tool_result.as_ref().expect("tool result") {
+            ToolResult::News { items } => {
+                assert_eq!(items.len(), 1);
+                assert_eq!(items[0].url, "https://docs.selene.ai/search/1");
+            }
+            other => panic!("expected news result, got {other:?}"),
+        }
+        let metadata = out.source_metadata.as_ref().expect("source metadata");
+        assert_eq!(
+            metadata.provider_hint.as_deref(),
+            Some("ph1search_brave_news_web_fallback")
+        );
+        assert!(metadata
+            .sources
+            .iter()
+            .all(|source| citation_url_allowed(&source.url)));
+    }
+
+    #[test]
+    #[ignore = "requires a real Brave Search secret in the local Selene vault and live network access"]
+    fn h383_live_brave_news_query_returns_verified_sources() {
+        assert!(
+            device_vault::resolve_secret(ProviderSecretId::BraveSearchApiKey.as_str())
+                .ok()
+                .flatten()
+                .map(|secret| !secret.trim().is_empty())
+                .unwrap_or(false),
+            "brave_search_api_key must be present in the local Selene vault for live proof"
+        );
+        let rt = Ph1eRuntime::new(Ph1eConfig::mvp_v1());
+        let out = rt.run(&req(
+            ToolName::News,
+            "What is the latest OpenAI news today?",
+            false,
+            false,
+        ));
+        assert_eq!(
+            out.tool_status,
+            ToolStatus::Ok,
+            "reason={:?} fail_reason={:?} detail={:?}",
+            out.reason_code,
+            out.fail_reason_code,
+            out.fail_detail
+        );
+        assert!(out
+            .source_metadata
+            .as_ref()
+            .is_some_and(|meta| !meta.sources.is_empty()));
     }
 }

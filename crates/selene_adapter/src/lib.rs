@@ -19979,6 +19979,107 @@ mod tests {
     }
 
     #[test]
+    fn h383_protected_web_authority_phrase_fails_closed_before_public_search() {
+        let runtime = AdapterRuntime::default();
+        let mut req = base_request();
+        req.user_text_final = Some("Search the web and approve payroll".to_string());
+        seed_desktop_voice_profile_for_request(&runtime, &mut req, "h383_protected_web");
+        let out = runtime
+            .run_voice_turn(req)
+            .expect("protected web authority phrase must return fail-closed response");
+        assert_eq!(out.status, "ok");
+        assert_eq!(out.outcome, "FINAL");
+        assert!(out
+            .response_text
+            .contains("NO_SIMULATION_NO_AUTHORITY_NO_PROTECTED_EXECUTION"));
+        assert!(!out
+            .response_text
+            .contains("I found supporting web evidence"));
+        assert!(out.provenance.is_none());
+    }
+
+    #[test]
+    #[ignore = "requires a real Brave Search secret in the local Selene vault and live network access"]
+    fn h383_live_brave_provider_desktop_route_returns_real_citation_metadata() {
+        assert!(
+            device_vault::resolve_secret(ProviderSecretId::BraveSearchApiKey.as_str())
+                .ok()
+                .flatten()
+                .map(|secret| !secret.trim().is_empty())
+                .unwrap_or(false),
+            "brave_search_api_key must be present in the local Selene vault for live proof"
+        );
+        let runtime = AdapterRuntime::default();
+        for (idx, (query, expected_language)) in [
+            ("What is the latest OpenAI news today?", "en"),
+            ("Who is the current CEO of OpenAI?", "en"),
+            ("今天 OpenAI 有什么最新消息？", "zh"),
+            ("Search the web for OpenAI 最新 news today.", "mixed"),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let mut req = base_request();
+            req.turn_id = 910_000 + idx as u64;
+            req.correlation_id = 920_000 + idx as u64;
+            req.thread_key = Some(format!("h383_live_brave_thread_{idx}"));
+            req.user_text_final = Some(query.to_string());
+            seed_desktop_voice_profile_for_request(
+                &runtime,
+                &mut req,
+                &format!("h383_live_brave_{idx}"),
+            );
+            let out = runtime
+                .run_voice_turn(req)
+                .expect("live Brave Desktop route must return an adapter response");
+            assert_eq!(out.status, "ok", "{query}");
+            assert_eq!(out.outcome, "FINAL_TOOL", "{query}");
+            assert_eq!(out.next_move, "dispatch_tool", "{query}");
+            assert!(
+                out.response_text
+                    .contains("I found supporting web evidence")
+                    || out.response_text.contains("可引用的网页证据")
+                    || out.response_text.contains("找到网页证据"),
+                "{query}: status={} outcome={} next_move={} reason_code={} text={}",
+                out.status,
+                out.outcome,
+                out.next_move,
+                out.reason_code,
+                out.response_text
+            );
+            assert!(
+                !out.response_text.contains("Brave API key not configured"),
+                "{query}"
+            );
+            assert!(
+                !out.response_text
+                    .contains("governance state is out of sync"),
+                "{query}"
+            );
+            if expected_language == "zh" {
+                assert!(
+                    out.response_text.contains("可引用的网页证据")
+                        || out.response_text.contains("找到网页证据")
+                        || out.response_text.contains("引用"),
+                    "{query}: {}",
+                    out.response_text
+                );
+            }
+            let provenance = out
+                .provenance
+                .expect("live Brave route must expose citation metadata");
+            assert!(!provenance.sources.is_empty(), "{query}");
+            assert!(provenance.sources.iter().all(|source| {
+                source.url.starts_with("https://") || source.url.starts_with("http://")
+            }));
+            assert!(provenance
+                .sources
+                .iter()
+                .all(|source| !source.url.contains("example.com")));
+        }
+    }
+
+    #[test]
     fn at_adapter_03ba_calendar_event_confirm_yes_dispatches_sim_and_persists_meeting_reminder() {
         let runtime = AdapterRuntime::default();
         let actor_user_id = UserId::new("tenant_a:user_adapter_test").unwrap();
