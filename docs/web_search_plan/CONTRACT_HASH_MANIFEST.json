@@ -2,7 +2,7 @@
   "manifest_version": "1.0.0",
   "hash_algorithm": "sha256",
   "hashes": {
-    "packet_schema_hash": "e674522c7c32b5b9b187db7d358f6cf31595d6b21f61504d2aecba549ed6d200",
+    "packet_schema_hash": "57f84dd2a567981324fdd4e62b45081977e51d190e482b64664093b85d7fccc8",
     "reason_code_registry_hash": "25a0f83923a381ef6668843c4a68bcda822d048fb3b0b0f52bbf58be3055fec8",
     "idempotency_registry_hash": "5dbeb88408a46e11ad831117a76cda304cd837cb5608ac77c61d10d750ffb2fa",
     "turn_state_machine_hash": "0a9c474a9cf16f5632b98c3f1f66774390cecfc5341d0eb98a61290727c2ab4d",

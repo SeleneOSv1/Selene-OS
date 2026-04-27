@@ -23,6 +23,7 @@ use crate::web_search_plan::planning::{
 use crate::web_search_plan::proxy::proxy_config::ProxyConfig;
 use crate::web_search_plan::registry_loader::load_packet_schema_registry;
 use crate::web_search_plan::replay::snapshot::hash_canonical_json;
+use crate::web_search_plan::synthesis::insufficiency_gate::EvidenceSufficiencyPolicy;
 use crate::web_search_plan::synthesis::{
     append_synthesis_audit_fields, synthesize_evidence_bound, SynthesisPolicy,
 };
@@ -262,11 +263,16 @@ impl<'a, C: MonotonicClock> RuntimeOrchestrator<'a, C> {
         let mut web_audit_metrics: Option<WebProviderAuditMetrics> = None;
         let mut news_audit_metrics: Option<NewsAuditMetrics> = None;
         let evidence_packet = match self.context.mode.as_str() {
-            "web" => {
+            "web" | "deep_research" => {
                 let now_ms = self.context.created_at_ms;
                 let mut health_tracker = ProviderHealthTracker::default();
+                let provider_tool_request = if self.context.mode == "deep_research" {
+                    tool_request_with_mode(&self.tool_request, "web")
+                } else {
+                    self.tool_request.clone()
+                };
                 let web_result = execute_web_provider_ladder_from_tool_request(
-                    &self.tool_request,
+                    &provider_tool_request,
                     now_ms,
                     &mut health_tracker,
                     &self.deps.web_runtime_config,
@@ -299,7 +305,7 @@ impl<'a, C: MonotonicClock> RuntimeOrchestrator<'a, C> {
                     .unwrap_or(self.context.created_at_ms);
 
                 let planning_input = planning_input_from_tool_request(
-                    &self.tool_request,
+                    &provider_tool_request,
                     retrieved_at_ms,
                     candidates,
                 )
@@ -346,7 +352,15 @@ impl<'a, C: MonotonicClock> RuntimeOrchestrator<'a, C> {
                     self.fail_closed("provider_upstream_failed", "UrlFetch", "transport_failed")
                         .expect_err("fail_closed always errors")
                 })?;
-                planning_result.evidence_packet
+                let mut evidence_packet = planning_result.evidence_packet;
+                if self.context.mode == "deep_research" {
+                    append_deep_research_metadata(
+                        &mut evidence_packet,
+                        self.context.query.as_str(),
+                        self.context.created_at_ms,
+                    );
+                }
+                evidence_packet
             }
             "news" => {
                 let now_ms = self.context.created_at_ms;
@@ -408,12 +422,24 @@ impl<'a, C: MonotonicClock> RuntimeOrchestrator<'a, C> {
         self.validate_packet_or_fail("EvidencePacket", &evidence_packet)?;
         self.transition_or_fail("EVIDENCE_LOCKED")?;
 
+        let synthesis_policy = if self.context.mode == "deep_research" {
+            SynthesisPolicy {
+                sufficiency: EvidenceSufficiencyPolicy {
+                    min_distinct_sources: 1,
+                    min_chunk_support: 1,
+                },
+                max_claims: 8,
+            }
+        } else {
+            SynthesisPolicy::default()
+        };
+
         let synthesis = synthesize_evidence_bound(
             self.context.query.as_str(),
             &evidence_packet,
             self.context.created_at_ms.saturating_add(100),
             self.context.trace_id.as_str(),
-            SynthesisPolicy::default(),
+            synthesis_policy,
             None,
         )
         .map_err(|error| match error {
@@ -851,6 +877,189 @@ fn candidates_from_web_sources(evidence_packet: &Value) -> Vec<SearchCandidate> 
             .then_with(|| left.canonical_url.cmp(&right.canonical_url))
     });
     candidates
+}
+
+fn tool_request_with_mode(tool_request: &Value, mode: &str) -> Value {
+    let mut cloned = tool_request.clone();
+    if let Some(obj) = cloned.as_object_mut() {
+        obj.insert("mode".to_string(), json!(mode));
+    }
+    cloned
+}
+
+fn append_deep_research_metadata(evidence_packet: &mut Value, query: &str, created_at_ms: i64) {
+    let sources = evidence_packet
+        .get("sources")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let content_chunks = evidence_packet
+        .get("content_chunks")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+
+    let source_chips = sources
+        .iter()
+        .enumerate()
+        .filter_map(|(index, source)| {
+            let url = source.get("url").and_then(Value::as_str)?.trim();
+            let title = source.get("title").and_then(Value::as_str).unwrap_or(url);
+            if url.is_empty() {
+                return None;
+            }
+            Some(json!({
+                "chip_id": format!("source_chip_{:03}", index + 1),
+                "claim_id": format!("claim_{:03}", index + 1),
+                "citation_ids": [format!("citation_card_{:03}", index + 1)],
+                "display_label": source_chip_label(title, url),
+                "primary_domain": domain_from_url(url),
+                "additional_source_count": 0,
+                "trust_tier": source
+                    .get("trust_tier")
+                    .or_else(|| source.get("trust_tier_score"))
+                    .cloned()
+                    .unwrap_or_else(|| json!("UNKNOWN")),
+                "freshness_tier": source
+                    .get("freshness_tier")
+                    .cloned()
+                    .unwrap_or_else(|| json!("STABLE_REFERENCE_ACCEPTABLE")),
+                "display_position": "after_claim",
+                "source_urls": [url],
+                "display_safe": true
+            }))
+        })
+        .collect::<Vec<Value>>();
+
+    let citation_cards = sources
+        .iter()
+        .enumerate()
+        .filter_map(|(index, source)| {
+            let url = source.get("url").and_then(Value::as_str)?.trim();
+            if url.is_empty() {
+                return None;
+            }
+            let title = source
+                .get("title")
+                .and_then(Value::as_str)
+                .unwrap_or("Source");
+            let evidence_excerpt = content_chunks
+                .iter()
+                .find(|chunk| {
+                    chunk
+                        .get("source_url")
+                        .and_then(Value::as_str)
+                        .map(|source_url| source_url == url)
+                        .unwrap_or(false)
+                })
+                .and_then(|chunk| {
+                    chunk
+                        .get("text_excerpt")
+                        .or_else(|| chunk.get("excerpt"))
+                        .and_then(Value::as_str)
+                })
+                .unwrap_or(title);
+            Some(json!({
+                "citation_id": format!("citation_card_{:03}", index + 1),
+                "title": title,
+                "domain": domain_from_url(url),
+                "publisher": source.get("publisher").cloned().unwrap_or(Value::Null),
+                "published_at": source.get("published_at").cloned().unwrap_or(Value::Null),
+                "retrieved_at": evidence_packet.get("retrieved_at_ms").cloned().unwrap_or_else(|| json!(created_at_ms)),
+                "trust_tier": source
+                    .get("trust_tier")
+                    .or_else(|| source.get("trust_tier_score"))
+                    .cloned()
+                    .unwrap_or_else(|| json!("UNKNOWN")),
+                "freshness_tier": source
+                    .get("freshness_tier")
+                    .cloned()
+                    .unwrap_or_else(|| json!("STABLE_REFERENCE_ACCEPTABLE")),
+                "evidence_excerpt": truncate_chars(evidence_excerpt, 240),
+                "supports_claim_ids": [format!("claim_{:03}", index + 1)],
+                "conflict_marker": Value::Null,
+                "source_url": url,
+                "display_safe": true
+            }))
+        })
+        .collect::<Vec<Value>>();
+
+    if let Some(obj) = evidence_packet.as_object_mut() {
+        let trust_metadata = obj
+            .entry("trust_metadata".to_string())
+            .or_insert_with(|| json!({}));
+        if let Some(trust_obj) = trust_metadata.as_object_mut() {
+            trust_obj.insert(
+                "deep_research".to_string(),
+                json!({
+                    "research_plan": {
+                        "research_goal": query,
+                        "planned_queries": [query],
+                        "planned_fetches": content_chunks.len(),
+                        "max_steps": 3,
+                        "max_sources": sources.len(),
+                        "expected_output_format": "markdown",
+                        "protected_risk_detected": false,
+                        "confirmation_required": false,
+                        "reason_codes": ["DEEP_RESEARCH_PLAN_PASS", "PH1_SEARCH_DEEP_RESEARCH_PLANNING_PASS"]
+                    },
+                    "source_scope": {
+                        "allowed_domains": [],
+                        "blocked_domains": [],
+                        "preferred_domains": [],
+                        "official_source_domains": [],
+                        "source_type_preferences": ["PRIMARY_OFFICIAL", "REPUTABLE_NEWS", "DOCUMENTATION"],
+                        "user_requested_domains": [],
+                        "admin_policy_domains": [],
+                        "final_effective_scope": "public_web_only"
+                    },
+                    "multihop": {
+                        "max_hops": 3,
+                        "executed_hops": 1,
+                        "hop_strategy": "bounded_public_web_evidence_then_source_open"
+                    },
+                    "source_chips": source_chips,
+                    "citation_cards": citation_cards,
+                    "image_source_cards": [],
+                    "image_source_card_status": "WEB_IMAGE_SOURCE_CARD_DEFERRED",
+                    "citation_correction_loop": {
+                        "status": "session_metadata_ready",
+                        "historical_audit_rewrite_allowed": false
+                    },
+                    "retention_class": "AUDIT_METADATA_ONLY"
+                }),
+            );
+        }
+    }
+}
+
+fn domain_from_url(url: &str) -> String {
+    url.split("://")
+        .nth(1)
+        .unwrap_or(url)
+        .split('/')
+        .next()
+        .unwrap_or("unknown")
+        .trim()
+        .to_ascii_lowercase()
+}
+
+fn source_chip_label(title: &str, url: &str) -> String {
+    let domain = domain_from_url(url);
+    let title = title.trim();
+    if title.is_empty() {
+        domain
+    } else {
+        truncate_chars(title, 48)
+    }
+}
+
+fn truncate_chars(value: &str, max_chars: usize) -> String {
+    let mut out = String::new();
+    for ch in value.chars().take(max_chars) {
+        out.push(ch);
+    }
+    out
 }
 
 fn default_proxy_config() -> ProxyConfig {

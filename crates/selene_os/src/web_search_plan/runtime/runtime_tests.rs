@@ -616,12 +616,12 @@ fn test_all_modes_route_through_orchestrator() {
                 MockResponse::json(500, json!({"error": "unexpected path"}))
             }
         },
-        16,
+        64,
     );
 
     let mut deps = runtime_deps_for_base(&base);
 
-    for mode in ["web", "news"] {
+    for mode in ["web", "news", "deep_research"] {
         let query = "runtime orchestrator route check".to_string();
         let result = execute_web_search_turn_with_dependencies(
             make_turn_input(trace_id, created_at_ms, query.as_str()),
@@ -643,6 +643,40 @@ fn test_all_modes_route_through_orchestrator() {
             )
         });
         assert_success_state_path(&result.audit_packet);
+        if mode == "deep_research" {
+            assert_eq!(
+                result
+                    .evidence_packet
+                    .pointer("/trust_metadata/deep_research/research_plan/expected_output_format")
+                    .and_then(Value::as_str),
+                Some("markdown")
+            );
+            assert!(result
+                .evidence_packet
+                .pointer("/trust_metadata/deep_research/source_chips")
+                .and_then(Value::as_array)
+                .map(|chips| !chips.is_empty())
+                .unwrap_or(false));
+            assert!(result
+                .evidence_packet
+                .pointer("/trust_metadata/deep_research/citation_cards")
+                .and_then(Value::as_array)
+                .map(|cards| !cards.is_empty())
+                .unwrap_or(false));
+            assert_eq!(
+                result
+                    .evidence_packet
+                    .pointer("/trust_metadata/deep_research/image_source_card_status")
+                    .and_then(Value::as_str),
+                Some("WEB_IMAGE_SOURCE_CARD_DEFERRED")
+            );
+            assert!(result
+                .write_packet
+                .get("formatted_text")
+                .and_then(Value::as_str)
+                .map(|text| text.contains("Citations"))
+                .unwrap_or(false));
+        }
     }
 
     let url_fetch_query = format!("{}/page/url-fetch", base);

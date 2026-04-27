@@ -458,39 +458,17 @@ impl Ph1eRuntime {
                 &req.query,
                 req.strict_budget.max_results.min(self.config.max_results),
             ),
-            ToolName::DeepResearch => ToolResult::DeepResearch {
-                summary: format!(
-                    "Deep research synthesis for '{}'",
-                    truncate_ascii(&req.query, 80)
-                ),
-                extracted_fields: vec![
-                    ToolStructuredField {
-                        key: "scope".to_string(),
-                        value: "multi-source synthesis".to_string(),
-                    },
-                    ToolStructuredField {
-                        key: "confidence".to_string(),
-                        value: "high".to_string(),
-                    },
-                ],
-                citations: vec![
-                    ToolTextSnippet {
-                        title: "Primary source A".to_string(),
-                        snippet: "Key finding from source A".to_string(),
-                        url: "https://research.selene.ai/source-a".to_string(),
-                    },
-                    ToolTextSnippet {
-                        title: "Primary source B".to_string(),
-                        snippet: "Cross-check finding from source B".to_string(),
-                        url: "https://research.selene.ai/source-b".to_string(),
-                    },
-                ],
-            }
-            .with_default_source_metadata(
-                &req.tool_name,
-                &req.query,
-                req.strict_budget.max_results.min(self.config.max_results),
-            ),
+            ToolName::DeepResearch => match self.run_deep_research(req) {
+                Ok(result) => result,
+                Err(fail) => {
+                    return fail_response_with_detail(
+                        req,
+                        fail.reason_code,
+                        CacheStatus::Miss,
+                        fail.fail_detail.as_deref(),
+                    );
+                }
+            },
             ToolName::RecordMode => ToolResult::RecordMode {
                 summary: format!("Recording summary for '{}'", truncate_ascii(&req.query, 80)),
                 action_items: vec![
@@ -614,6 +592,67 @@ impl Ph1eRuntime {
         req: &ToolRequest,
     ) -> Result<(ToolResult, SourceMetadata), ToolFailPayload> {
         self.run_live_search(req, ToolName::News)
+    }
+
+    fn run_deep_research(
+        &self,
+        req: &ToolRequest,
+    ) -> Result<(ToolResult, SourceMetadata), ToolFailPayload> {
+        let (tool_result, source_metadata) = self.run_live_search(req, ToolName::WebSearch)?;
+        let items = match tool_result {
+            ToolResult::WebSearch { items } => items,
+            _ => {
+                return Err(ToolFailPayload::with_detail(
+                    reason_codes::E_FAIL_INTERNAL_PIPELINE_ERROR,
+                    "deep_research_provider_returned_non_web_result".to_string(),
+                ));
+            }
+        };
+        if items.is_empty() {
+            return Err(ToolFailPayload::with_detail(
+                reason_codes::E_FAIL_PROVIDER_UPSTREAM,
+                "deep_research_provider_returned_no_evidence".to_string(),
+            ));
+        }
+
+        let count = items.len().to_string();
+        let result = ToolResult::DeepResearch {
+            summary: format!(
+                "Deep research evidence summary for '{}': {} verified source{} available.",
+                truncate_ascii(&req.query, 80),
+                items.len(),
+                if items.len() == 1 { "" } else { "s" }
+            ),
+            extracted_fields: vec![
+                ToolStructuredField {
+                    key: "research_plan".to_string(),
+                    value: "bounded_public_web_evidence_review".to_string(),
+                },
+                ToolStructuredField {
+                    key: "source_scope".to_string(),
+                    value: "public_web_only".to_string(),
+                },
+                ToolStructuredField {
+                    key: "evidence_count".to_string(),
+                    value: count.clone(),
+                },
+                ToolStructuredField {
+                    key: "source_chip_count".to_string(),
+                    value: count.clone(),
+                },
+                ToolStructuredField {
+                    key: "citation_card_count".to_string(),
+                    value: count,
+                },
+                ToolStructuredField {
+                    key: "retention_class".to_string(),
+                    value: WEB_RETENTION_CLASS.to_string(),
+                },
+            ],
+            citations: items,
+        };
+
+        Ok((result, source_metadata))
     }
 
     fn resolve_secret_from_vault(&self, secret_id: ProviderSecretId) -> Option<String> {
@@ -3685,7 +3724,8 @@ mod tests {
 
     #[test]
     fn at_e_10_deep_research_returns_structured_fields_with_provenance() {
-        let rt = Ph1eRuntime::new(Ph1eConfig::mvp_v1());
+        let fixture = spawn_test_http_fixture();
+        let rt = runtime_with_live_fixture(&fixture);
         let out = rt.run(&req(
             ToolName::DeepResearch,
             "deep research AI chip policy changes with citations",
@@ -3706,6 +3746,9 @@ mod tests {
                 assert!(!summary.trim().is_empty());
                 assert!(!extracted_fields.is_empty());
                 assert!(!citations.is_empty());
+                assert!(extracted_fields
+                    .iter()
+                    .any(|field| field.key == "source_chip_count"));
             }
             other => panic!("expected DeepResearch result, got {other:?}"),
         }
@@ -3715,6 +3758,7 @@ mod tests {
             .expect("source metadata required");
         assert!(!meta.sources.is_empty());
         assert!(!meta.sources[0].url.contains("example.invalid"));
+        assert!(!meta.sources[0].url.contains("research.selene.ai"));
     }
 
     #[test]

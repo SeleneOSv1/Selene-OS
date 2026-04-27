@@ -106,6 +106,7 @@
               "images",
               "video",
               "structured",
+              "deep_research",
               "url_fetch"
             ],
             "importance_tier": [

@@ -528,10 +528,10 @@ fn detect_intents(lower: &str) -> Vec<IntentType> {
     if looks_like_time_query(s) {
         push(IntentType::TimeQuery);
     }
-    if web_search && !news_query {
+    if web_search && !news_query && !deep_research {
         push(IntentType::WebSearchQuery);
     }
-    if news_query {
+    if news_query && !deep_research {
         push(IntentType::NewsQuery);
     }
     if looks_like_url_fetch_and_cite(s) {
@@ -3787,6 +3787,24 @@ mod tests {
                     assert_eq!(d.required_fields_missing, Vec::<FieldKey>::new());
                 }
                 other => panic!("expected web/news intent for {text}, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn h384_deep_research_current_source_wording_prefers_deep_research_over_adjacent_web_news() {
+        let rt = Ph1nRuntime::new(Ph1nConfig::mvp_v1());
+        for text in [
+            "Do deep research on the latest OpenAI news today and compare sources.",
+            "Create a research report on the current OpenAI news with sources.",
+        ] {
+            let out = rt.run(&req(text, "en")).unwrap();
+            match out {
+                Ph1nResponse::IntentDraft(d) => {
+                    assert_eq!(d.intent_type, IntentType::DeepResearchQuery, "{text}");
+                    assert_eq!(d.required_fields_missing, Vec::<FieldKey>::new());
+                }
+                other => panic!("expected deep research intent for {text}, got {other:?}"),
             }
         }
     }

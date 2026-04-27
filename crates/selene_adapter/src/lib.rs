@@ -2004,6 +2004,22 @@ fn h380_understand_committed_turn(
     }
 }
 
+fn h384_explicit_deep_research_request(raw_user_text: &str) -> bool {
+    let normalized = h380_normalize_committed_text(raw_user_text);
+    let lower = normalized.as_str();
+    if lower.contains("deep research") || lower.contains("research report") {
+        return true;
+    }
+    lower.contains("research")
+        && (lower.contains("latest")
+            || lower.contains("current")
+            || lower.contains("today")
+            || lower.contains("compare source")
+            || lower.contains("compare the source")
+            || lower.contains("source comparison")
+            || lower.contains("sources"))
+}
+
 fn h380_normalize_committed_text(text: &str) -> String {
     let mut normalized = normalize_h379_followup_text(text);
     for (from, to) in [
@@ -2583,7 +2599,8 @@ fn h381_h380_live_response_text(
             H380Route::FollowupProvenance => Some(if use_chinese {
                 "我没有可证明的上一轮工具或提供方查询可以引用。".to_string()
             } else {
-                "I don't have a previous provider-backed result in this thread to prove.".to_string()
+                "I don't have a previous provider-backed result in this thread to prove."
+                    .to_string()
             }),
             H380Route::FollowupMeaning => Some(if use_chinese {
                 "你想让我解释哪一句或哪一个结果的意思？".to_string()
@@ -6815,11 +6832,18 @@ impl AdapterRuntime {
             let h380_understanding = user_text_final.as_deref().map(|text| {
                 h380_understand_committed_turn(text, base_thread_state.last_turn_context.as_ref())
             });
-            let h380_nlp_rewrite = h381_h380_live_nlp_rewrite(
-                h380_understanding.as_ref(),
-                base_thread_state.last_turn_context.as_ref(),
-            );
-            if h380_nlp_rewrite.is_none() {
+            let h384_explicit_deep_research = user_text_final
+                .as_deref()
+                .is_some_and(h384_explicit_deep_research_request);
+            let h380_nlp_rewrite = if h384_explicit_deep_research {
+                None
+            } else {
+                h381_h380_live_nlp_rewrite(
+                    h380_understanding.as_ref(),
+                    base_thread_state.last_turn_context.as_ref(),
+                )
+            };
+            if h380_nlp_rewrite.is_none() && !h384_explicit_deep_research {
                 if let Some(response_text) = h380_understanding.as_ref().and_then(|packet| {
                     h381_h380_live_response_text(
                         packet,
@@ -6852,8 +6876,7 @@ impl AdapterRuntime {
                         session_state: Some(session_state_to_api_value(
                             session_turn_state.session_snapshot.session_state,
                         )),
-                        session_attach_outcome: runtime_execution_envelope
-                            .session_attach_outcome,
+                        session_attach_outcome: runtime_execution_envelope.session_attach_outcome,
                         failure_class: None,
                         reason: None,
                         next_move: "respond".to_string(),
@@ -6867,29 +6890,34 @@ impl AdapterRuntime {
                 &base_thread_state,
                 user_text_final.as_deref(),
             );
-            let nlp_transcript_text = h380_nlp_rewrite.or_else(|| {
-                deterministic_public_clarification_followup_query(
-                    &base_thread_state,
-                    user_text_final.as_deref(),
-                )
+            let nlp_transcript_text = h380_nlp_rewrite
                 .or_else(|| {
-                    if committed_turn_followup.is_some() {
-                        return None;
-                    }
-                    deterministic_weather_context_followup_query(
-                        weather_context_place.as_deref(),
+                    deterministic_public_clarification_followup_query(
+                        &base_thread_state,
                         user_text_final.as_deref(),
                     )
+                    .or_else(|| {
+                        if committed_turn_followup.is_some() {
+                            return None;
+                        }
+                        deterministic_weather_context_followup_query(
+                            weather_context_place.as_deref(),
+                            user_text_final.as_deref(),
+                        )
+                    })
                 })
-            })
-            .or_else(|| user_text_final.clone());
+                .or_else(|| user_text_final.clone());
             let (nlp_output, language_packet) = build_nlp_output_for_voice_turn(
                 &request,
                 nlp_transcript_text.as_deref(),
                 tenant_id_for_ph1c.as_deref(),
                 &base_thread_state,
                 committed_turn_followup.as_ref(),
-                h380_understanding.as_ref(),
+                if h384_explicit_deep_research {
+                    None
+                } else {
+                    h380_understanding.as_ref()
+                },
             )
             .map_err(post_session_error)?;
             let confirm_answer =
@@ -10418,11 +10446,8 @@ fn build_nlp_output_for_voice_turn(
         ) {
             return Ok((
                 Ph1nResponse::Chat(
-                    Ph1nChat::v1(
-                        response_text,
-                        ph1n_reason_codes::N_CHAT_NO_INTENT,
-                    )
-                    .map_err(|err| format!("invalid H380 live chat response: {err:?}"))?,
+                    Ph1nChat::v1(response_text, ph1n_reason_codes::N_CHAT_NO_INTENT)
+                        .map_err(|err| format!("invalid H380 live chat response: {err:?}"))?,
                 ),
                 language_context.map(|context| context.packet),
             ));
@@ -10641,12 +10666,17 @@ fn translate_web_response_for_build1d(response_text: &str) -> Option<String> {
     if response_text.starts_with("Upstream provider error")
         || response_text.starts_with("Upstream provider failed")
     {
-        return Some("实时网页搜索提供方暂时失败，所以我不能核验当前网页证据或给出引用。".to_string());
+        return Some(
+            "实时网页搜索提供方暂时失败，所以我不能核验当前网页证据或给出引用。".to_string(),
+        );
     }
     if response_text.starts_with("I found supporting web evidence.") {
         return Some(
             response_text
-                .replace("I found supporting web evidence. Top result: ", "我找到了可引用的网页证据。首个结果：")
+                .replace(
+                    "I found supporting web evidence. Top result: ",
+                    "我找到了可引用的网页证据。首个结果：",
+                )
                 .replace("\nSources:\n", "\n来源：\n"),
         );
     }
@@ -19979,6 +20009,37 @@ mod tests {
     }
 
     #[test]
+    fn h384_explicit_deep_research_bypasses_h380_provenance_short_circuit() {
+        with_isolated_empty_device_vault("h384_deep_research_provider_missing", || {
+            let runtime = AdapterRuntime::default();
+            let mut req = base_request();
+            req.user_text_final = Some(
+                "Do deep research on the latest OpenAI news today and compare sources.".to_string(),
+            );
+            seed_desktop_voice_profile_for_request(&runtime, &mut req, "h384_deep_research");
+            let out = runtime
+                .run_voice_turn(req)
+                .expect("explicit deep research must reach the tool lane");
+            assert_eq!(out.status, "ok", "{out:?}");
+            assert_eq!(out.outcome, "FINAL_TOOL", "{out:?}");
+            assert_eq!(out.next_move, "dispatch_tool", "{out:?}");
+            assert_ne!(out.reason_code, "H381_H380_LIVE_RESPONSE");
+            assert!(!out
+                .response_text
+                .contains("previous provider-backed result"));
+            assert!(out
+                .response_text
+                .contains("selene vault set brave_search_api_key"));
+            if let Some(provenance) = out.provenance {
+                assert!(provenance.sources.iter().all(|source| {
+                    !source.url.contains("research.selene.ai")
+                        && !source.url.contains("example.com")
+                }));
+            }
+        });
+    }
+
+    #[test]
     fn h383_protected_web_authority_phrase_fails_closed_before_public_search() {
         let runtime = AdapterRuntime::default();
         let mut req = base_request();
@@ -20077,6 +20138,55 @@ mod tests {
                 .iter()
                 .all(|source| !source.url.contains("example.com")));
         }
+    }
+
+    #[test]
+    #[ignore = "requires a real Brave Search secret in the local Selene vault and live network access"]
+    fn h384_live_brave_deep_research_desktop_route_returns_real_citation_metadata() {
+        assert!(
+            device_vault::resolve_secret(ProviderSecretId::BraveSearchApiKey.as_str())
+                .ok()
+                .flatten()
+                .map(|secret| !secret.trim().is_empty())
+                .unwrap_or(false),
+            "brave_search_api_key must be present in the local Selene vault for live proof"
+        );
+        let runtime = AdapterRuntime::default();
+        let mut req = base_request();
+        req.turn_id = 930_384;
+        req.correlation_id = 940_384;
+        req.thread_key = Some("h384_live_deep_research_thread".to_string());
+        req.user_text_final = Some(
+            "Do deep research on the latest OpenAI news today and compare sources.".to_string(),
+        );
+        seed_desktop_voice_profile_for_request(&runtime, &mut req, "h384_live_deep_research");
+        let out = runtime
+            .run_voice_turn(req)
+            .expect("live Brave deep research Desktop route must return an adapter response");
+        assert_eq!(out.status, "ok", "{out:?}");
+        assert_eq!(out.outcome, "FINAL_TOOL", "{out:?}");
+        assert_eq!(out.next_move, "dispatch_tool", "{out:?}");
+        assert_ne!(out.reason_code, "H381_H380_LIVE_RESPONSE");
+        assert!(
+            out.response_text
+                .contains("I found supporting web evidence")
+                || out.response_text.contains("Sources:"),
+            "{}",
+            out.response_text
+        );
+        assert!(!out
+            .response_text
+            .contains("previous provider-backed result"));
+        assert!(!out.response_text.contains("research.selene.ai"));
+        let provenance = out
+            .provenance
+            .expect("live deep research route must expose citation metadata");
+        assert!(!provenance.sources.is_empty());
+        assert!(provenance.sources.iter().all(|source| {
+            (source.url.starts_with("https://") || source.url.starts_with("http://"))
+                && !source.url.contains("research.selene.ai")
+                && !source.url.contains("example.com")
+        }));
     }
 
     #[test]
@@ -27224,7 +27334,11 @@ mod tests {
         assert!(!proof
             .response_text
             .contains("governance state is out of sync"));
-        assert!(proof.response_text.contains("time route"), "{}", proof.response_text);
+        assert!(
+            proof.response_text.contains("time route"),
+            "{}",
+            proof.response_text
+        );
         assert!(
             proof.response_text.contains("system time zone data")
                 || proof.response_text.contains("system UTC data")
@@ -27258,7 +27372,9 @@ mod tests {
             "{}",
             meaning.response_text
         );
-        assert!(!meaning.response_text.contains("clarify what you would like"));
+        assert!(!meaning
+            .response_text
+            .contains("clarify what you would like"));
 
         let rephrase_seed = h363_run_desktop_typed_time_query_on_thread(
             &runtime,
@@ -27376,7 +27492,10 @@ mod tests {
             "h381_live_h380_weather_proof",
             &[],
             &[
-                ("SELENE_REALTIME_TOMORROW_IO_ENDPOINT", proof_endpoint.as_str()),
+                (
+                    "SELENE_REALTIME_TOMORROW_IO_ENDPOINT",
+                    proof_endpoint.as_str(),
+                ),
                 ("SELENE_REALTIME_TOMORROW_IO_API_KEY", "h381-secret"),
                 ("SELENE_REALTIME_WEATHER_API_KEY", " "),
                 ("SELENE_REALTIME_PROXY_MODE", "off"),
@@ -27399,8 +27518,12 @@ mod tests {
                 assert_eq!(proof.status, "ok");
                 assert!(matches!(proof.outcome.as_str(), "FINAL" | "FINAL_TOOL"));
                 assert!(
-                    proof.response_text.starts_with("You were asking whether I actually checked")
-                        || proof.response_text.starts_with("Yes. I used the weather route"),
+                    proof
+                        .response_text
+                        .starts_with("You were asking whether I actually checked")
+                        || proof
+                            .response_text
+                            .starts_with("Yes. I used the weather route"),
                     "{}",
                     proof.response_text
                 );

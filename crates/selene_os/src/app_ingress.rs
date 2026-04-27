@@ -24364,7 +24364,7 @@ mod tests {
 
     #[test]
     fn run_dr_desktop_voice_turn_end_to_end_dispatches_deep_research_and_returns_provenance() {
-        let runtime = AppServerIngressRuntime::default();
+        let runtime = runtime_with_search_tool_fixtures();
         let actor_user_id = UserId::new("tenant_1:rundr_research_user").unwrap();
         let device_id = DeviceId::new("rundr_research_device_1").unwrap();
         let mut store = Ph1fStore::new_in_memory();
