@@ -10487,6 +10487,10 @@ fn apply_language_continuity_to_execution_outcome(
     }
     if let Some(chinese_weather) = translate_weather_response_for_build1c(response_text) {
         execution_outcome.response_text = Some(chinese_weather);
+        return;
+    }
+    if let Some(chinese_web) = translate_web_response_for_build1d(response_text) {
+        execution_outcome.response_text = Some(chinese_web);
     }
 }
 
@@ -10625,6 +10629,31 @@ fn translate_weather_response_for_build1c(response_text: &str) -> Option<String>
         temp.trim(),
         chinese_weather_condition_label_for_build1c(condition)
     ))
+}
+
+fn translate_web_response_for_build1d(response_text: &str) -> Option<String> {
+    if response_text.contains("Brave API key not configured") {
+        return Some(
+            "实时网页搜索还没有配置 Brave Search 密钥（brave_search_api_key），所以我不能核验当前网页证据或给出引用。"
+                .to_string(),
+        );
+    }
+    if response_text.starts_with("Upstream provider error")
+        || response_text.starts_with("Upstream provider failed")
+    {
+        return Some("实时网页搜索提供方暂时失败，所以我不能核验当前网页证据或给出引用。".to_string());
+    }
+    if response_text.starts_with("I found supporting web evidence.") {
+        return Some(
+            response_text
+                .replace("I found supporting web evidence. Top result: ", "我找到了可引用的网页证据。首个结果：")
+                .replace("\nSources:\n", "\n来源：\n"),
+        );
+    }
+    if response_text.starts_with("Citations:\n") {
+        return Some(response_text.replace("Citations:\n", "引用：\n"));
+    }
+    None
 }
 
 fn weather_place_temp_condition_for_build1c<'a>(
@@ -19899,6 +19928,54 @@ mod tests {
                 assert!(text.contains("error="));
             },
         );
+    }
+
+    #[test]
+    fn at_adapter_build_1d_current_web_query_uses_live_tool_lane_and_fails_safely_without_secret() {
+        with_isolated_empty_device_vault("at_adapter_build_1d_web_missing", || {
+            let runtime = AdapterRuntime::default();
+            let mut req = base_request();
+            req.user_text_final = Some("Who is the current CEO of OpenAI?".to_string());
+            seed_desktop_voice_profile_for_request(&runtime, &mut req, "at_adapter_build_1d_web");
+            let out = runtime
+                .run_voice_turn(req)
+                .expect("current web-needed query must return a final safe answer");
+            assert_eq!(out.status, "ok");
+            assert_eq!(out.outcome, "FINAL_TOOL");
+            assert_eq!(out.next_move, "dispatch_tool");
+            assert_eq!(
+                out.reason_code,
+                selene_os::ph1x::reason_codes::X_TOOL_FAIL.0.to_string()
+            );
+            assert!(out
+                .response_text
+                .contains("selene vault set brave_search_api_key"));
+            assert!(!out.response_text.contains("Sources:"));
+            assert!(!out.response_text.contains("Sam Altman"));
+        });
+    }
+
+    #[test]
+    fn at_adapter_build_1d_chinese_web_query_preserves_language_on_safe_provider_missing() {
+        with_isolated_empty_device_vault("at_adapter_build_1d_chinese_web_missing", || {
+            let runtime = AdapterRuntime::default();
+            let mut req = base_request();
+            req.user_text_final = Some("当前 OpenAI CEO 是谁？".to_string());
+            seed_desktop_voice_profile_for_request(
+                &runtime,
+                &mut req,
+                "at_adapter_build_1d_chinese_web",
+            );
+            let out = runtime
+                .run_voice_turn(req)
+                .expect("Chinese current web-needed query must return a safe answer");
+            assert_eq!(out.status, "ok");
+            assert_eq!(out.outcome, "FINAL_TOOL");
+            assert!(out.response_text.contains("实时网页搜索"));
+            assert!(out.response_text.contains("brave_search_api_key"));
+            assert!(!out.response_text.contains("Brave API key not configured"));
+            assert!(!out.response_text.contains("Sources:"));
+        });
     }
 
     #[test]

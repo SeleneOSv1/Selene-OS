@@ -293,6 +293,30 @@ fn looks_like_web_search(lower: &str) -> bool {
         || lower.starts_with("find ")
         || lower.contains(" find ")
         || lower.starts_with("google ")
+        || lower.contains("search the web for")
+        || lower.contains("find sources for")
+        || lower.contains("source this")
+        || lower.contains("cite this")
+        || lower.contains("look this up")
+        || lower.contains("find online")
+        || lower.contains("current ceo")
+        || lower.contains("current president")
+        || lower.contains("current price")
+        || lower.contains("current law")
+        || lower.contains("current release")
+        || lower.contains("latest openai")
+        || lower.contains("latest release")
+        || lower.contains("recent release")
+        || lower.contains("this week")
+        || lower.contains("最近")
+        || lower.contains("最新")
+        || lower.contains("当前")
+        || lower.contains("現任")
+        || lower.contains("查一下")
+        || lower.contains("网上")
+        || lower.contains("網上")
+        || lower.contains("来源")
+        || lower.contains("來源")
 }
 
 fn looks_like_news_query(lower: &str) -> bool {
@@ -304,6 +328,11 @@ fn looks_like_news_query(lower: &str) -> bool {
         || lower.starts_with("news about ")
         || lower.starts_with("latest news")
         || lower.starts_with("headlines")
+        || lower.contains("latest openai news")
+        || lower.contains("current news")
+        || lower.contains("recent news")
+        || lower.contains("新闻")
+        || lower.contains("新聞")
 }
 
 fn looks_like_url_fetch_and_cite(lower: &str) -> bool {
@@ -439,6 +468,8 @@ fn detect_intents(lower: &str) -> Vec<IntentType> {
     let deep_research = looks_like_deep_research(s);
     let record_mode = looks_like_record_mode(s);
     let connector_query = looks_like_connector_query(s);
+    let web_search = looks_like_web_search(s);
+    let news_query = looks_like_news_query(s);
     let mut out: Vec<IntentType> = Vec::new();
 
     let mut push = |t: IntentType| {
@@ -497,10 +528,10 @@ fn detect_intents(lower: &str) -> Vec<IntentType> {
     if looks_like_time_query(s) {
         push(IntentType::TimeQuery);
     }
-    if looks_like_web_search(s) {
+    if web_search && !news_query {
         push(IntentType::WebSearchQuery);
     }
-    if looks_like_news_query(s) {
+    if news_query {
         push(IntentType::NewsQuery);
     }
     if looks_like_url_fetch_and_cite(s) {
@@ -3729,6 +3760,56 @@ mod tests {
                 assert_eq!(d.required_fields_missing, Vec::<FieldKey>::new());
             }
             _ => panic!("expected intent_draft"),
+        }
+    }
+
+    #[test]
+    fn at_n_build_1d_web_needed_classification_covers_current_source_and_chinese_queries() {
+        let rt = Ph1nRuntime::new(Ph1nConfig::mvp_v1());
+        for text in [
+            "Who is the current CEO of OpenAI?",
+            "Find sources for the latest OpenAI release",
+            "Search the web for OpenAI news this week",
+            "OpenAI 最新新闻是什么",
+            "Did OpenAI have recent news? source this",
+        ] {
+            let out = rt.run(&req(text, "en")).unwrap();
+            match out {
+                Ph1nResponse::IntentDraft(d) => {
+                    assert!(
+                        matches!(
+                            d.intent_type,
+                            IntentType::WebSearchQuery | IntentType::NewsQuery
+                        ),
+                        "expected web/news route for {text}, got {:?}",
+                        d.intent_type
+                    );
+                    assert_eq!(d.required_fields_missing, Vec::<FieldKey>::new());
+                }
+                other => panic!("expected web/news intent for {text}, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn at_n_build_1d_no_web_needed_bypass_preserves_time_weather_and_chat() {
+        let rt = Ph1nRuntime::new(Ph1nConfig::mvp_v1());
+        let time = rt.run(&req("What time is it in Tokyo?", "en")).unwrap();
+        match time {
+            Ph1nResponse::IntentDraft(d) => assert_eq!(d.intent_type, IntentType::TimeQuery),
+            other => panic!("expected time query, got {other:?}"),
+        }
+
+        let weather = rt.run(&req("Is it raining in Barcelona?", "en")).unwrap();
+        match weather {
+            Ph1nResponse::IntentDraft(d) => assert_eq!(d.intent_type, IntentType::WeatherQuery),
+            other => panic!("expected weather query, got {other:?}"),
+        }
+
+        let chat = rt.run(&req("Tell me a joke.", "en")).unwrap();
+        match chat {
+            Ph1nResponse::Chat(_) => {}
+            other => panic!("expected public chat bypass, got {other:?}"),
         }
     }
 
