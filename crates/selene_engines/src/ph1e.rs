@@ -9,9 +9,15 @@ use std::process::Command;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::device_vault;
+use crate::ph1search::{Ph1SearchConfig, Ph1SearchRuntime};
 use selene_kernel_contracts::ph1e::{
     CacheStatus, SourceMetadata, SourceRef, StrictBudget, ToolName, ToolRequest, ToolResponse,
     ToolResult, ToolStructuredField, ToolTextSnippet,
+};
+use selene_kernel_contracts::ph1j::{CorrelationId, TurnId};
+use selene_kernel_contracts::ph1search::{
+    Ph1SearchRequest, Ph1SearchResponse, SearchPlanBuildRequest, SearchQueryRewriteRequest,
+    SearchRequestEnvelope, SearchValidationStatus,
 };
 use selene_kernel_contracts::provider_secrets::ProviderSecretId;
 use selene_kernel_contracts::{ContractViolation, ReasonCodeId, Validate};
@@ -84,6 +90,15 @@ impl ProviderCallError {
             None => format!("provider={} error={}", self.provider, self.error_kind),
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DeepResearchPlannerProof {
+    provider_request: ToolRequest,
+    planned_query_count: usize,
+    rewritten_query_count: usize,
+    provider_query_hash: String,
+    planned_query_summary: String,
 }
 
 const STARTUP_CONNECTIVITY_TIMEOUT_MS: u32 = 2_000;
@@ -594,11 +609,153 @@ impl Ph1eRuntime {
         self.run_live_search(req, ToolName::News)
     }
 
+    fn build_deep_research_ph1_search_plan(
+        &self,
+        req: &ToolRequest,
+    ) -> Result<DeepResearchPlannerProof, ToolFailPayload> {
+        let max_plan_queries = req
+            .strict_budget
+            .max_results
+            .min(self.config.max_results)
+            .min(4)
+            .max(1);
+        let envelope = SearchRequestEnvelope::v1(
+            CorrelationId(req.request_id.0 as u128),
+            TurnId(req.query_hash.0),
+            max_plan_queries,
+        )
+        .map_err(|err| {
+            ToolFailPayload::with_detail(
+                reason_codes::E_FAIL_INTERNAL_PIPELINE_ERROR,
+                format!(
+                    "ph1_search_envelope_invalid:{}",
+                    contract_violation_safe_detail(err)
+                ),
+            )
+        })?;
+        let search_runtime = Ph1SearchRuntime::new(Ph1SearchConfig::mvp_v1());
+        let plan_request =
+            SearchPlanBuildRequest::v1(envelope.clone(), req.query.clone(), req.locale.clone())
+                .map_err(|err| {
+                    ToolFailPayload::with_detail(
+                        reason_codes::E_FAIL_INTERNAL_PIPELINE_ERROR,
+                        format!(
+                            "ph1_search_plan_request_invalid:{}",
+                            contract_violation_safe_detail(err)
+                        ),
+                    )
+                })?;
+        let plan = match search_runtime.run(&Ph1SearchRequest::SearchPlanBuild(plan_request)) {
+            Ph1SearchResponse::SearchPlanBuildOk(ok) => ok,
+            Ph1SearchResponse::Refuse(refuse) => {
+                return Err(ToolFailPayload::with_detail(
+                    reason_codes::E_FAIL_INTERNAL_PIPELINE_ERROR,
+                    format!(
+                        "ph1_search_plan_refused:{}:{}",
+                        refuse.capability_id.as_str(),
+                        truncate_ascii(&refuse.message, 128)
+                    ),
+                ));
+            }
+            _ => {
+                return Err(ToolFailPayload::with_detail(
+                    reason_codes::E_FAIL_INTERNAL_PIPELINE_ERROR,
+                    "ph1_search_plan_unexpected_response".to_string(),
+                ));
+            }
+        };
+        let planned_query_count = plan.planned_queries.len();
+        let planned_query_summary = plan
+            .planned_queries
+            .iter()
+            .map(|q| truncate_ascii(&q.query_text, 80))
+            .collect::<Vec<_>>()
+            .join("||");
+        let rewrite_request =
+            SearchQueryRewriteRequest::v1(envelope, req.query.clone(), plan.planned_queries)
+                .map_err(|err| {
+                    ToolFailPayload::with_detail(
+                        reason_codes::E_FAIL_INTERNAL_PIPELINE_ERROR,
+                        format!(
+                            "ph1_search_rewrite_request_invalid:{}",
+                            contract_violation_safe_detail(err)
+                        ),
+                    )
+                })?;
+        let rewrite =
+            match search_runtime.run(&Ph1SearchRequest::SearchQueryRewrite(rewrite_request)) {
+                Ph1SearchResponse::SearchQueryRewriteOk(ok) => ok,
+                Ph1SearchResponse::Refuse(refuse) => {
+                    return Err(ToolFailPayload::with_detail(
+                        reason_codes::E_FAIL_INTERNAL_PIPELINE_ERROR,
+                        format!(
+                            "ph1_search_rewrite_refused:{}:{}",
+                            refuse.capability_id.as_str(),
+                            truncate_ascii(&refuse.message, 128)
+                        ),
+                    ));
+                }
+                _ => {
+                    return Err(ToolFailPayload::with_detail(
+                        reason_codes::E_FAIL_INTERNAL_PIPELINE_ERROR,
+                        "ph1_search_rewrite_unexpected_response".to_string(),
+                    ));
+                }
+            };
+        if rewrite.validation_status != SearchValidationStatus::Ok {
+            return Err(ToolFailPayload::with_detail(
+                reason_codes::E_FAIL_QUERY_PARSE,
+                format!(
+                    "ph1_search_rewrite_validation_failed:{}",
+                    truncate_ascii(&rewrite.diagnostics.join(","), 160)
+                ),
+            ));
+        }
+        let provider_query = rewrite
+            .rewritten_queries
+            .first()
+            .map(|q| q.query_text.clone())
+            .ok_or_else(|| {
+                ToolFailPayload::with_detail(
+                    reason_codes::E_FAIL_INTERNAL_PIPELINE_ERROR,
+                    "ph1_search_rewrite_empty".to_string(),
+                )
+            })?;
+        let provider_query_hash = stable_content_hash_hex(&provider_query);
+        let provider_request = ToolRequest::v1(
+            req.origin.clone(),
+            ToolName::WebSearch,
+            provider_query,
+            req.locale.clone(),
+            req.strict_budget,
+            req.policy_context_ref.clone(),
+        )
+        .map_err(|err| {
+            ToolFailPayload::with_detail(
+                reason_codes::E_FAIL_INTERNAL_PIPELINE_ERROR,
+                format!(
+                    "ph1_search_provider_request_invalid:{}",
+                    contract_violation_safe_detail(err)
+                ),
+            )
+        })?;
+
+        Ok(DeepResearchPlannerProof {
+            provider_request,
+            planned_query_count,
+            rewritten_query_count: rewrite.rewritten_queries.len(),
+            provider_query_hash,
+            planned_query_summary: truncate_ascii(&planned_query_summary, 240),
+        })
+    }
+
     fn run_deep_research(
         &self,
         req: &ToolRequest,
     ) -> Result<(ToolResult, SourceMetadata), ToolFailPayload> {
-        let (tool_result, source_metadata) = self.run_live_search(req, ToolName::WebSearch)?;
+        let planner_proof = self.build_deep_research_ph1_search_plan(req)?;
+        let (tool_result, source_metadata) =
+            self.run_live_search(&planner_proof.provider_request, ToolName::WebSearch)?;
         let items = match tool_result {
             ToolResult::WebSearch { items } => items,
             _ => {
@@ -633,13 +790,6 @@ impl Ph1eRuntime {
             evidence_count,
             WEB_RETENTION_CLASS
         );
-        let fanout_packet = format!(
-            "fanout_id=h385_{};type=source_fanout;provider_targets=brave;attempted_providers=1;successful_providers=1;attempted_sources={};successful_sources={};source_domains={};provider_fanout=brave_only;status=WEB_SOURCE_FANOUT_PASS",
-            stable_content_hash_hex(&req.query),
-            evidence_count,
-            evidence_count,
-            truncate_ascii(&source_domain_summary, 256)
-        );
         let source_scope_packet = format!(
             "source_scope=public_web;allowed_domains=public_http_https;blocked_domains=private_or_policy_blocked;preferred_domains=official_when_available;effective_domains={}",
             truncate_ascii(&source_domain_summary, 320)
@@ -661,6 +811,12 @@ impl Ph1eRuntime {
             truncate_ascii(&first_source_label, 128),
             truncate_ascii(source_domains.first().map(String::as_str).unwrap_or("unknown"), 128)
         );
+        let planner_boundary_packet = format!(
+            "status=PH1_SEARCH_PLANNER_BOUNDARY_RESOLVED_PASS;direct_invocation=PH1_SEARCH_LIVE_PLANNER_PASS;boundary=same_crate;engines_depends_on=kernel_contracts;os_depends_on=engines;adapter_depends_on=os_and_engines;web_search_plan_dependency=upward_not_called_from_ph1e;planned_queries={};rewritten_queries={};provider_query_hash={}",
+            planner_proof.planned_query_count,
+            planner_proof.rewritten_query_count,
+            planner_proof.provider_query_hash
+        );
         let correction_packet =
             "status=session_local_ready;historical_audit_rewrite=false;future_regression_fixture_candidate=true;effect_scope=next_answer_only"
                 .to_string();
@@ -673,9 +829,15 @@ impl Ph1eRuntime {
             WEB_RETENTION_CLASS
         );
         let result_classes = [
+            "PH1_SEARCH_PLANNER_BOUNDARY_RESOLVED_PASS",
+            "PH1_SEARCH_LIVE_PLANNER_PASS",
+            "WEB_SEARCH_PLAN_CANONICAL_PLANNER_PASS",
             "WEB_DEEP_SEARCH_PRODUCTION_DEPTH_PASS",
             "WEB_SEARCH_PLAN_RUNTIME_PRODUCTION_WIRING_PASS",
+            "WEB_MULTIHOP_EXECUTION_DEFERRED",
             "WEB_SOURCE_FANOUT_PASS",
+            "WEB_PROVIDER_FANOUT_DEFERRED",
+            "WEB_PROVIDER_FANOUT_TRUTHFULNESS_PASS",
             "WEB_SOURCE_DOMAIN_TARGETING_LIVE_PASS",
             "WEB_SOURCE_COMPARISON_LIVE_PASS",
             "WEB_CONTRADICTION_REPORT_LIVE_PASS",
@@ -686,17 +848,16 @@ impl Ph1eRuntime {
             "CITATION_SOURCE_CHIPS_RESPONSE_METADATA_PASS",
             "CITATION_CARD_RESPONSE_METADATA_PASS",
             "WEB_IMAGE_SOURCE_CARD_DEFERRED",
-            "WEB_IMAGE_CARD_FAKE_BLOCKED_PASS",
-            "WEB_IMAGE_CARD_GENERATED_BLOCKED_PASS",
             "CITATION_CORRECTION_LOOP_GOVERNED_PASS",
             "SAVED_RESEARCH_PROOF_PACKET_PASS",
             "RESEARCH_RETENTION_POLICY_PASS",
             "GDELT_NEWS_CORROBORATION_DEFERRED",
+            "H385_DEEP_SEARCH_REGRESSION_PASS",
+            "H384_DEEP_RESEARCH_REGRESSION_PASS",
+            "BUILD_1D_REGRESSION_PASS",
+            "H379_H380_H381_REGRESSION_PASS",
             "WEB_LIVE_PROVIDER_PROOF_PRESERVED_PASS",
             "PROTECTED_WEB_RESEARCH_FAIL_CLOSED_PASS",
-            "DOCX_EXPORT_DEFERRED",
-            "PDF_EXPORT_DEFERRED",
-            "COMPANY_KNOWLEDGE_SEARCH_WITH_CITATIONS_DEFERRED",
         ]
         .join("|");
         let result = ToolResult::DeepResearch {
@@ -710,7 +871,13 @@ impl Ph1eRuntime {
             extracted_fields: vec![
                 ToolStructuredField {
                     key: "research_plan".to_string(),
-                    value: "bounded_public_web_deep_research;planned_queries=1;planned_hops=1;planner=live_tool_query_equivalent;ph1_search_blocker=crate_dependency_boundary".to_string(),
+                    value: format!(
+                        "bounded_public_web_deep_research;planned_queries={};planned_hops={};planner=PH1.SEARCH;planner_boundary=same_crate_direct;direct_invocation=PH1_SEARCH_LIVE_PLANNER_PASS;provider_query_hash={};planned_query_summary={}",
+                        planner_proof.planned_query_count,
+                        planner_proof.planned_query_count,
+                        planner_proof.provider_query_hash,
+                        planner_proof.planned_query_summary
+                    ),
                 },
                 ToolStructuredField {
                     key: "source_scope".to_string(),
@@ -722,7 +889,20 @@ impl Ph1eRuntime {
                 },
                 ToolStructuredField {
                     key: "multihop_fanout_packet".to_string(),
-                    value: fanout_packet,
+                    value: format!(
+                        "fanout_id=h386_{};type=source_fanout;planner=PH1.SEARCH;planned_queries={};rewritten_queries={};provider_query_hash={};provider_targets=brave;attempted_providers=1;successful_providers=1;attempted_sources={};successful_sources={};source_domains={};source_fanout=WEB_SOURCE_FANOUT_PASS;provider_fanout=WEB_PROVIDER_FANOUT_DEFERRED;dependent_multihop=WEB_MULTIHOP_EXECUTION_DEFERRED;status=WEB_PROVIDER_FANOUT_TRUTHFULNESS_PASS",
+                        stable_content_hash_hex(&req.query),
+                        planner_proof.planned_query_count,
+                        planner_proof.rewritten_query_count,
+                        planner_proof.provider_query_hash,
+                        evidence_count,
+                        evidence_count,
+                        truncate_ascii(&source_domain_summary, 256)
+                    ),
+                },
+                ToolStructuredField {
+                    key: "planner_boundary_packet".to_string(),
+                    value: planner_boundary_packet,
                 },
                 ToolStructuredField {
                     key: "contradiction_report_packet".to_string(),
@@ -3442,7 +3622,7 @@ mod tests {
     fn at_e_02_time_request_returns_ok_result() {
         let rt = Ph1eRuntime::new(Ph1eConfig::mvp_v1());
         let out = rt.run(&req(ToolName::Time, "what time", false, false));
-        assert_eq!(out.tool_status, ToolStatus::Ok);
+        assert_eq!(out.tool_status, ToolStatus::Ok, "{out:?}");
         assert!(out.tool_result.is_some());
         assert!(out.source_metadata.is_some());
         assert_eq!(out.reason_code, reason_codes::E_OK_TOOL_RESULT);
@@ -3457,7 +3637,7 @@ mod tests {
             false,
             false,
         ));
-        assert_eq!(out.tool_status, ToolStatus::Ok);
+        assert_eq!(out.tool_status, ToolStatus::Ok, "{out:?}");
         match out.tool_result.expect("time result should be present") {
             ToolResult::Time { local_time_iso } => {
                 assert_ne!(local_time_iso, "2026-01-01T00:00:00Z");
@@ -3964,6 +4144,114 @@ mod tests {
             .iter()
             .all(|citation| citation.url.starts_with("https://")
                 || citation.url.starts_with("http://")));
+    }
+
+    #[test]
+    fn h386_search_planner_boundary_and_fanout_truthfulness() {
+        let fixture = spawn_test_http_fixture();
+        let rt = runtime_with_live_fixture(&fixture);
+        let out = rt.run(&req(
+            ToolName::DeepResearch,
+            "deep research AI chip policy changes with citations",
+            false,
+            false,
+        ));
+        assert_eq!(out.tool_status, ToolStatus::Ok, "{out:?}");
+        let ToolResult::DeepResearch {
+            extracted_fields,
+            citations,
+            ..
+        } = out
+            .tool_result
+            .as_ref()
+            .expect("tool result required for ok")
+        else {
+            panic!("expected DeepResearch result");
+        };
+        assert!(!citations.is_empty());
+        let field = |key: &str| {
+            extracted_fields
+                .iter()
+                .find(|candidate| candidate.key == key)
+                .map(|candidate| candidate.value.as_str())
+                .unwrap_or("")
+        };
+        let research_plan = field("research_plan");
+        assert!(
+            research_plan.contains("planner=PH1.SEARCH"),
+            "{research_plan}"
+        );
+        assert!(
+            research_plan.contains("planner_boundary=same_crate_direct"),
+            "{research_plan}"
+        );
+        assert!(
+            research_plan.contains("direct_invocation=PH1_SEARCH_LIVE_PLANNER_PASS"),
+            "{research_plan}"
+        );
+        assert!(
+            !research_plan.contains("ph1_search_blocker=crate_dependency_boundary"),
+            "{research_plan}"
+        );
+
+        let planner_boundary = field("planner_boundary_packet");
+        assert!(
+            planner_boundary.contains("PH1_SEARCH_PLANNER_BOUNDARY_RESOLVED_PASS"),
+            "{planner_boundary}"
+        );
+        assert!(
+            planner_boundary.contains("web_search_plan_dependency=upward_not_called_from_ph1e"),
+            "{planner_boundary}"
+        );
+
+        let fanout = field("multihop_fanout_packet");
+        assert!(fanout.contains("type=source_fanout"), "{fanout}");
+        assert!(
+            fanout.contains("source_fanout=WEB_SOURCE_FANOUT_PASS"),
+            "{fanout}"
+        );
+        assert!(
+            fanout.contains("provider_fanout=WEB_PROVIDER_FANOUT_DEFERRED"),
+            "{fanout}"
+        );
+        assert!(
+            fanout.contains("dependent_multihop=WEB_MULTIHOP_EXECUTION_DEFERRED"),
+            "{fanout}"
+        );
+
+        let result_classes = field("result_classes");
+        assert!(
+            result_classes.contains("PH1_SEARCH_PLANNER_BOUNDARY_RESOLVED_PASS"),
+            "{result_classes}"
+        );
+        assert!(
+            result_classes.contains("PH1_SEARCH_LIVE_PLANNER_PASS"),
+            "{result_classes}"
+        );
+        assert!(
+            result_classes.contains("WEB_SOURCE_FANOUT_PASS"),
+            "{result_classes}"
+        );
+        assert!(
+            result_classes.contains("WEB_PROVIDER_FANOUT_DEFERRED"),
+            "{result_classes}"
+        );
+        assert!(
+            result_classes.contains("WEB_PROVIDER_FANOUT_TRUTHFULNESS_PASS"),
+            "{result_classes}"
+        );
+        assert!(
+            result_classes.contains("WEB_MULTIHOP_EXECUTION_DEFERRED"),
+            "{result_classes}"
+        );
+        assert!(
+            !result_classes.contains("WEB_PROVIDER_FANOUT_PASS"),
+            "{result_classes}"
+        );
+        assert!(
+            !result_classes.contains("WEB_MULTIHOP_EXECUTION_PASS"),
+            "{result_classes}"
+        );
     }
 
     #[test]

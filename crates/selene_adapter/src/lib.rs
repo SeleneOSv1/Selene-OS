@@ -11837,11 +11837,21 @@ fn deep_research_metadata_from_tool_response(
         .get("gdelt_status")
         .cloned()
         .unwrap_or_else(|| "GDELT_NEWS_CORROBORATION_DEFERRED".to_string());
-    let provider_fanout_status = if provider_hint.eq_ignore_ascii_case("brave") {
-        "brave_only".to_string()
-    } else {
-        provider_hint.clone()
-    };
+    let fanout_packet = fields
+        .get("multihop_fanout_packet")
+        .map(String::as_str)
+        .unwrap_or_default();
+    let provider_fanout_packet_status =
+        packet_field_value(fanout_packet, "provider_fanout").map(ToString::to_string);
+    let source_fanout_packet_status =
+        packet_field_value(fanout_packet, "source_fanout").map(ToString::to_string);
+    let provider_fanout_status = provider_fanout_packet_status.clone().unwrap_or_else(|| {
+        if provider_hint.eq_ignore_ascii_case("brave") {
+            "brave_only".to_string()
+        } else {
+            provider_hint.clone()
+        }
+    });
 
     let citation_cards = citations
         .iter()
@@ -11921,11 +11931,13 @@ fn deep_research_metadata_from_tool_response(
             attempted_source_count: citations.len(),
             successful_source_count: citations.len(),
             provider_fanout_status,
-            source_fanout_status: if citations.len() > 1 {
-                "WEB_SOURCE_FANOUT_PASS".to_string()
-            } else {
-                "WEB_SOURCE_FANOUT_LIMITED".to_string()
-            },
+            source_fanout_status: source_fanout_packet_status.unwrap_or_else(|| {
+                if citations.len() > 1 {
+                    "WEB_SOURCE_FANOUT_PASS".to_string()
+                } else {
+                    "WEB_SOURCE_FANOUT_LIMITED".to_string()
+                }
+            }),
         },
         correction_loop: VoiceTurnCorrectionLoopMetadata {
             status: "session_local_ready".to_string(),
@@ -11946,15 +11958,33 @@ fn deep_research_metadata_from_tool_response(
         result_classes,
         image_source_card_status,
         gdelt_status,
-        provider_fanout_status: if citations.len() > 1 {
-            "source_fanout_live_provider_fanout_deferred".to_string()
-        } else {
-            "single_source_live_provider_fanout_deferred".to_string()
-        },
+        provider_fanout_status: provider_fanout_packet_status.unwrap_or_else(|| {
+            if citations.len() > 1 {
+                "source_fanout_live_provider_fanout_deferred".to_string()
+            } else {
+                "single_source_live_provider_fanout_deferred".to_string()
+            }
+        }),
         retention_class,
         response_metadata_verified: citations.iter().all(|citation| {
             citation.url.starts_with("https://") || citation.url.starts_with("http://")
         }),
+    })
+}
+
+fn packet_field_value<'a>(packet: &'a str, key: &str) -> Option<&'a str> {
+    packet.split(';').find_map(|part| {
+        let (candidate_key, value) = part.split_once('=')?;
+        if candidate_key.trim() == key {
+            let value = value.trim();
+            if value.is_empty() {
+                None
+            } else {
+                Some(value)
+            }
+        } else {
+            None
+        }
     })
 }
 
@@ -20450,6 +20480,128 @@ mod tests {
         assert!(metadata
             .gdelt_status
             .contains("GDELT_NEWS_CORROBORATION_DEFERRED"));
+    }
+
+    #[test]
+    fn h386_search_planner_boundary_and_fanout_metadata_is_truthful() {
+        let citations = vec![
+            selene_kernel_contracts::ph1e::ToolTextSnippet {
+                title: "Official OpenAI news".to_string(),
+                snippet: "OpenAI published a sourced update used as bounded evidence.".to_string(),
+                url: "https://openai.com/news/example".to_string(),
+            },
+            selene_kernel_contracts::ph1e::ToolTextSnippet {
+                title: "OpenAI policy note".to_string(),
+                snippet: "A second public source is used for source fanout proof.".to_string(),
+                url: "https://openai.com/policies/example".to_string(),
+            },
+        ];
+        let tool_response = ToolResponse::ok_v1(
+            selene_kernel_contracts::ph1e::ToolRequestId(386),
+            selene_kernel_contracts::ph1e::ToolQueryHash(386),
+            ToolResult::DeepResearch {
+                summary: "Deep Research Report\n\nSummary: verified evidence only.".to_string(),
+                extracted_fields: vec![
+                    selene_kernel_contracts::ph1e::ToolStructuredField {
+                        key: "research_plan".to_string(),
+                        value:
+                            "planner=PH1.SEARCH;planner_boundary=same_crate_direct;direct_invocation=PH1_SEARCH_LIVE_PLANNER_PASS"
+                                .to_string(),
+                    },
+                    selene_kernel_contracts::ph1e::ToolStructuredField {
+                        key: "planner_boundary_packet".to_string(),
+                        value:
+                            "status=PH1_SEARCH_PLANNER_BOUNDARY_RESOLVED_PASS;boundary=same_crate;web_search_plan_dependency=upward_not_called_from_ph1e"
+                                .to_string(),
+                    },
+                    selene_kernel_contracts::ph1e::ToolStructuredField {
+                        key: "multihop_fanout_packet".to_string(),
+                        value:
+                            "type=source_fanout;provider_targets=brave;attempted_sources=2;successful_sources=2;source_fanout=WEB_SOURCE_FANOUT_PASS;provider_fanout=WEB_PROVIDER_FANOUT_DEFERRED;dependent_multihop=WEB_MULTIHOP_EXECUTION_DEFERRED"
+                                .to_string(),
+                    },
+                    selene_kernel_contracts::ph1e::ToolStructuredField {
+                        key: "research_proof_packet".to_string(),
+                        value:
+                            "raw_page_stored=false;private_query_saved=false;retention=AUDIT_METADATA_ONLY"
+                                .to_string(),
+                    },
+                    selene_kernel_contracts::ph1e::ToolStructuredField {
+                        key: "image_source_card_status".to_string(),
+                        value: "WEB_IMAGE_SOURCE_CARD_DEFERRED:no_verified_image_metadata_provider_path"
+                            .to_string(),
+                    },
+                    selene_kernel_contracts::ph1e::ToolStructuredField {
+                        key: "gdelt_status".to_string(),
+                        value:
+                            "GDELT_NEWS_CORROBORATION_DEFERRED:not_live_wired_in_provider_ladder"
+                                .to_string(),
+                    },
+                    selene_kernel_contracts::ph1e::ToolStructuredField {
+                        key: "retention_class".to_string(),
+                        value: "AUDIT_METADATA_ONLY".to_string(),
+                    },
+                    selene_kernel_contracts::ph1e::ToolStructuredField {
+                        key: "result_classes".to_string(),
+                        value: "PH1_SEARCH_PLANNER_BOUNDARY_RESOLVED_PASS|PH1_SEARCH_LIVE_PLANNER_PASS|WEB_SOURCE_FANOUT_PASS|WEB_PROVIDER_FANOUT_DEFERRED|WEB_PROVIDER_FANOUT_TRUTHFULNESS_PASS|WEB_MULTIHOP_EXECUTION_DEFERRED|H385_DEEP_SEARCH_REGRESSION_PASS"
+                            .to_string(),
+                    },
+                ],
+                citations: citations.clone(),
+            },
+            selene_kernel_contracts::ph1e::SourceMetadata {
+                schema_version: selene_kernel_contracts::ph1e::PH1E_CONTRACT_VERSION,
+                provider_hint: Some("brave".to_string()),
+                retrieved_at_unix_ms: 1_770_000_000_000,
+                sources: citations
+                    .iter()
+                    .map(|citation| selene_kernel_contracts::ph1e::SourceRef {
+                        title: citation.title.clone(),
+                        url: citation.url.clone(),
+                    })
+                    .collect(),
+            },
+            None,
+            ReasonCodeId(0x4500_0001),
+            CacheStatus::Miss,
+        )
+        .expect("fixture tool response must validate");
+        let metadata = deep_research_metadata_from_tool_response(&tool_response)
+            .expect("deep research response metadata must be present");
+        assert!(metadata.response_metadata_verified);
+        assert_eq!(metadata.source_chips.len(), 2);
+        assert_eq!(metadata.citation_cards.len(), 2);
+        assert_eq!(
+            metadata.fanout.source_fanout_status,
+            "WEB_SOURCE_FANOUT_PASS"
+        );
+        assert_eq!(
+            metadata.fanout.provider_fanout_status,
+            "WEB_PROVIDER_FANOUT_DEFERRED"
+        );
+        assert_eq!(
+            metadata.provider_fanout_status,
+            "WEB_PROVIDER_FANOUT_DEFERRED"
+        );
+        assert!(metadata
+            .result_classes
+            .contains(&"PH1_SEARCH_PLANNER_BOUNDARY_RESOLVED_PASS".to_string()));
+        assert!(metadata
+            .result_classes
+            .contains(&"PH1_SEARCH_LIVE_PLANNER_PASS".to_string()));
+        assert!(metadata
+            .result_classes
+            .contains(&"WEB_PROVIDER_FANOUT_DEFERRED".to_string()));
+        assert!(!metadata
+            .result_classes
+            .contains(&"WEB_PROVIDER_FANOUT_PASS".to_string()));
+        assert!(metadata
+            .source_chips
+            .iter()
+            .all(|chip| !chip.source_urls.is_empty() && chip.display_safe));
+        assert!(metadata.citation_cards.iter().all(|card| card.display_safe
+            && (card.source_url.starts_with("https://")
+                || card.source_url.starts_with("http://"))));
     }
 
     #[test]
