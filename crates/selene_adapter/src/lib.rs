@@ -361,6 +361,10 @@ pub struct VoiceTurnDeepResearchMetadata {
     pub proof_packet: VoiceTurnResearchProofMetadata,
     pub result_classes: Vec<String>,
     pub image_source_card_status: String,
+    pub image_metadata_provider_path_status: String,
+    pub image_source_card_display_status: String,
+    pub image_strip_status: String,
+    pub layout: VoiceTurnReportLayoutMetadata,
     pub gdelt_status: String,
     pub provider_fanout_status: String,
     pub retention_class: String,
@@ -377,6 +381,22 @@ pub struct VoiceTurnResearchReportMetadata {
     pub source_count: usize,
     pub formatter_used: String,
     pub limitations: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct VoiceTurnReportLayoutMetadata {
+    pub query_pill_text: String,
+    pub main_heading: String,
+    pub lead_claim_id: String,
+    pub core_facts_section: String,
+    pub source_chip_positions: Vec<String>,
+    pub image_strip_status: String,
+    pub image_strip_required_count: usize,
+    pub image_strip_cards_verified_count: usize,
+    pub layout_reference_reason: String,
+    pub screenshot_not_evidence: bool,
+    pub desktop_ui_modified: bool,
 }
 
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
@@ -11825,6 +11845,18 @@ fn deep_research_metadata_from_tool_response(
                 "CITATION_CARD_RESPONSE_METADATA_PASS".to_string(),
             ]
         });
+    let mut result_classes = result_classes;
+    if let Some(extra) = fields.get("h387_result_classes") {
+        for class in extra
+            .split('|')
+            .map(str::trim)
+            .filter(|item| !item.is_empty())
+        {
+            if !result_classes.iter().any(|existing| existing == class) {
+                result_classes.push(class.to_string());
+            }
+        }
+    }
     let retention_class = fields
         .get("retention_class")
         .cloned()
@@ -11833,6 +11865,22 @@ fn deep_research_metadata_from_tool_response(
         .get("image_source_card_status")
         .cloned()
         .unwrap_or_else(|| "WEB_IMAGE_SOURCE_CARD_DEFERRED".to_string());
+    let image_metadata_provider_path_status = fields
+        .get("image_metadata_provider_path_status")
+        .cloned()
+        .unwrap_or_else(|| "WEB_IMAGE_METADATA_PROVIDER_PATH_NOT_FOUND".to_string());
+    let image_source_card_display_status = fields
+        .get("image_source_card_display_status")
+        .cloned()
+        .unwrap_or_else(|| "WEB_IMAGE_SOURCE_CARD_DISPLAY_DEFERRED".to_string());
+    let image_layout_packet = fields
+        .get("report_presentation_layout_packet")
+        .map(String::as_str)
+        .unwrap_or_default();
+    let image_strip_status = packet_field_value(image_layout_packet, "image_strip_status")
+        .or_else(|| packet_field_value(image_layout_packet, "image_strip"))
+        .unwrap_or("WEB_IMAGE_SOURCE_CARD_DEFERRED")
+        .to_string();
     let gdelt_status = fields
         .get("gdelt_status")
         .cloned()
@@ -11957,6 +12005,56 @@ fn deep_research_metadata_from_tool_response(
         },
         result_classes,
         image_source_card_status,
+        image_metadata_provider_path_status,
+        image_source_card_display_status,
+        image_strip_status: image_strip_status.clone(),
+        layout: VoiceTurnReportLayoutMetadata {
+            query_pill_text: packet_field_value(image_layout_packet, "query_pill_text")
+                .unwrap_or("user_query")
+                .to_string(),
+            main_heading: packet_field_value(image_layout_packet, "main_heading")
+                .unwrap_or("Deep Research Report")
+                .to_string(),
+            lead_claim_id: packet_field_value(image_layout_packet, "lead_claim_id")
+                .unwrap_or("claim_1")
+                .to_string(),
+            core_facts_section: packet_field_value(image_layout_packet, "core_facts_section")
+                .unwrap_or("Core facts")
+                .to_string(),
+            source_chip_positions: if citations.is_empty() {
+                Vec::new()
+            } else {
+                vec!["after_supported_claim".to_string()]
+            },
+            image_strip_status,
+            image_strip_required_count: packet_field_value(
+                image_layout_packet,
+                "image_strip_required_count",
+            )
+            .and_then(|value| value.parse::<usize>().ok())
+            .unwrap_or(3),
+            image_strip_cards_verified_count: packet_field_value(
+                image_layout_packet,
+                "image_strip_cards_verified_count",
+            )
+            .and_then(|value| value.parse::<usize>().ok())
+            .unwrap_or(0),
+            layout_reference_reason: packet_field_value(
+                image_layout_packet,
+                "layout_reference_reason",
+            )
+            .unwrap_or("user_screenshot_layout_reference_only")
+            .to_string(),
+            screenshot_not_evidence: packet_field_value(
+                image_layout_packet,
+                "screenshot_not_evidence",
+            )
+            .map(|value| value.eq_ignore_ascii_case("true"))
+            .unwrap_or(true),
+            desktop_ui_modified: packet_field_value(image_layout_packet, "desktop_ui_modified")
+                .map(|value| value.eq_ignore_ascii_case("true"))
+                .unwrap_or(false),
+        },
         gdelt_status,
         provider_fanout_status: provider_fanout_packet_status.unwrap_or_else(|| {
             if citations.len() > 1 {
@@ -20605,6 +20703,152 @@ mod tests {
     }
 
     #[test]
+    fn h387_image_metadata_provider_path_and_layout_metadata_are_safe() {
+        let citation = selene_kernel_contracts::ph1e::ToolTextSnippet {
+            title: "Official OpenAI news".to_string(),
+            snippet: "OpenAI published a sourced update used as bounded evidence.".to_string(),
+            url: "https://openai.com/news/example".to_string(),
+        };
+        let tool_response = ToolResponse::ok_v1(
+            selene_kernel_contracts::ph1e::ToolRequestId(387),
+            selene_kernel_contracts::ph1e::ToolQueryHash(387),
+            ToolResult::DeepResearch {
+                summary: "Deep Research Report\n\nSummary: verified evidence only.".to_string(),
+                extracted_fields: vec![
+                    selene_kernel_contracts::ph1e::ToolStructuredField {
+                        key: "research_report_packet".to_string(),
+                        value:
+                            "title=Deep Research Report;claim_map=verified_citations;formatter=PH1.WRITE"
+                                .to_string(),
+                    },
+                    selene_kernel_contracts::ph1e::ToolStructuredField {
+                        key: "image_source_card_status".to_string(),
+                        value: "WEB_IMAGE_SOURCE_CARD_DEFERRED:no_verified_image_metadata_provider_path"
+                            .to_string(),
+                    },
+                    selene_kernel_contracts::ph1e::ToolStructuredField {
+                        key: "image_metadata_provider_path_packet".to_string(),
+                        value:
+                            "decision=NO_PROVIDER_PATH;image_url_alone_sufficient=false;thumbnail_alone_sufficient=false;source_page_required=true;source_domain_required=true;display_safe=false;image_source_verified=false;screenshot_not_evidence=true"
+                                .to_string(),
+                    },
+                    selene_kernel_contracts::ph1e::ToolStructuredField {
+                        key: "report_presentation_layout_packet".to_string(),
+                        value:
+                            "query_pill_text=user_query;main_heading=Deep Research Report;lead_claim_id=claim_1;core_facts_section=Core facts;source_chip_positions=after_supported_claim;image_strip_status=WEB_IMAGE_SOURCE_CARD_DEFERRED;image_strip_required_count=3;image_strip_cards_verified_count=0;layout_reference_reason=user_screenshot_layout_reference_only;screenshot_not_evidence=true;desktop_ui_modified=false"
+                                .to_string(),
+                    },
+                    selene_kernel_contracts::ph1e::ToolStructuredField {
+                        key: "image_metadata_provider_path_status".to_string(),
+                        value: "WEB_IMAGE_METADATA_PROVIDER_PATH_NOT_FOUND".to_string(),
+                    },
+                    selene_kernel_contracts::ph1e::ToolStructuredField {
+                        key: "image_source_card_display_status".to_string(),
+                        value: "WEB_IMAGE_SOURCE_CARD_DISPLAY_DEFERRED".to_string(),
+                    },
+                    selene_kernel_contracts::ph1e::ToolStructuredField {
+                        key: "gdelt_status".to_string(),
+                        value:
+                            "GDELT_NEWS_CORROBORATION_DEFERRED:not_live_wired_in_provider_ladder"
+                                .to_string(),
+                    },
+                    selene_kernel_contracts::ph1e::ToolStructuredField {
+                        key: "retention_class".to_string(),
+                        value: "AUDIT_METADATA_ONLY".to_string(),
+                    },
+                    selene_kernel_contracts::ph1e::ToolStructuredField {
+                        key: "result_classes".to_string(),
+                        value: "DEEP_RESEARCH_RESPONSE_METADATA_PASS|CITATION_SOURCE_CHIPS_RESPONSE_METADATA_PASS|CITATION_CARD_RESPONSE_METADATA_PASS|WEB_IMAGE_SOURCE_CARD_DEFERRED"
+                            .to_string(),
+                    },
+                    selene_kernel_contracts::ph1e::ToolStructuredField {
+                        key: "h387_result_classes".to_string(),
+                        value: "WEB_IMAGE_METADATA_PROVIDER_PATH_NOT_FOUND|WEB_IMAGE_SOURCE_CARD_DISPLAY_DEFERRED|WEB_IMAGE_CARD_FAKE_BLOCKED_PASS|WEB_IMAGE_CARD_GENERATED_BLOCKED_PASS|WEB_IMAGE_CARD_UNVERIFIED_BLOCKED_PASS|WEB_IMAGE_URL_ALONE_INSUFFICIENT_PASS|WEB_IMAGE_THUMBNAIL_UNVERIFIED_BLOCKED_PASS|WEB_IMAGE_LICENSE_UNKNOWN_DISPLAY_DEFERRED_PASS|WEB_IMAGE_LAYOUT_REFERENCE_RECORDED|WEB_IMAGE_STRIP_METADATA_DESIGN_PASS|WEB_SOURCE_CHIP_LAYOUT_METADATA_PASS|WEB_REPORT_PRESENTATION_LAYOUT_PASS|SCREENSHOT_NOT_USED_AS_EVIDENCE_PASS|IMAGE_CARD_DISPLAY_DEFERRED_IF_UNVERIFIED_PASS"
+                            .to_string(),
+                    },
+                ],
+                citations: vec![citation.clone()],
+            },
+            selene_kernel_contracts::ph1e::SourceMetadata {
+                schema_version: selene_kernel_contracts::ph1e::PH1E_CONTRACT_VERSION,
+                provider_hint: Some("brave".to_string()),
+                retrieved_at_unix_ms: 1_770_000_000_000,
+                sources: vec![selene_kernel_contracts::ph1e::SourceRef {
+                    title: citation.title,
+                    url: citation.url,
+                }],
+            },
+            None,
+            ReasonCodeId(0x4500_0001),
+            CacheStatus::Miss,
+        )
+        .expect("fixture tool response must validate");
+        let metadata = deep_research_metadata_from_tool_response(&tool_response)
+            .expect("deep research response metadata must be present");
+        assert!(metadata.response_metadata_verified);
+        assert_eq!(
+            metadata.image_metadata_provider_path_status,
+            "WEB_IMAGE_METADATA_PROVIDER_PATH_NOT_FOUND"
+        );
+        assert_eq!(
+            metadata.image_source_card_display_status,
+            "WEB_IMAGE_SOURCE_CARD_DISPLAY_DEFERRED"
+        );
+        assert_eq!(
+            metadata.image_strip_status,
+            "WEB_IMAGE_SOURCE_CARD_DEFERRED"
+        );
+        assert_eq!(metadata.layout.query_pill_text, "user_query");
+        assert_eq!(metadata.layout.main_heading, "Deep Research Report");
+        assert_eq!(metadata.layout.lead_claim_id, "claim_1");
+        assert_eq!(metadata.layout.core_facts_section, "Core facts");
+        assert_eq!(metadata.layout.image_strip_required_count, 3);
+        assert_eq!(metadata.layout.image_strip_cards_verified_count, 0);
+        assert_eq!(
+            metadata.layout.layout_reference_reason,
+            "user_screenshot_layout_reference_only"
+        );
+        assert!(metadata.layout.screenshot_not_evidence);
+        assert!(!metadata.layout.desktop_ui_modified);
+        assert!(metadata
+            .layout
+            .source_chip_positions
+            .contains(&"after_supported_claim".to_string()));
+        assert!(metadata
+            .result_classes
+            .contains(&"WEB_IMAGE_LAYOUT_REFERENCE_RECORDED".to_string()));
+        assert!(metadata
+            .result_classes
+            .contains(&"WEB_IMAGE_STRIP_METADATA_DESIGN_PASS".to_string()));
+        assert!(metadata
+            .result_classes
+            .contains(&"WEB_SOURCE_CHIP_LAYOUT_METADATA_PASS".to_string()));
+        assert!(metadata
+            .result_classes
+            .contains(&"WEB_REPORT_PRESENTATION_LAYOUT_PASS".to_string()));
+        assert!(metadata
+            .result_classes
+            .contains(&"SCREENSHOT_NOT_USED_AS_EVIDENCE_PASS".to_string()));
+        assert!(metadata
+            .result_classes
+            .contains(&"IMAGE_CARD_DISPLAY_DEFERRED_IF_UNVERIFIED_PASS".to_string()));
+        assert!(!metadata
+            .result_classes
+            .contains(&"WEB_IMAGE_SOURCE_CARD_PASS".to_string()));
+        assert_eq!(metadata.source_chips.len(), metadata.citation_cards.len());
+        assert!(metadata.source_chips.iter().all(|chip| {
+            chip.display_position == "after_claim"
+                && !chip.source_urls.is_empty()
+                && chip.display_safe
+        }));
+        assert!(metadata
+            .citation_cards
+            .iter()
+            .all(|card| card.display_safe && card.source_url.starts_with("https://")));
+        assert!(!metadata.report.summary.contains("Tamburlaine"));
+    }
+
+    #[test]
     fn h383_protected_web_authority_phrase_fails_closed_before_public_search() {
         let runtime = AdapterRuntime::default();
         let mut req = base_request();
@@ -20751,7 +20995,7 @@ mod tests {
             (source.url.starts_with("https://") || source.url.starts_with("http://"))
                 && !source.url.contains("research.selene.ai")
                 && !source.url.contains("example.com")
-            }));
+        }));
     }
 
     #[test]
@@ -20793,12 +21037,9 @@ mod tests {
             .source_chips
             .iter()
             .all(|chip| !chip.source_urls.is_empty() && chip.display_safe));
-        assert!(metadata
-            .citation_cards
-            .iter()
-            .all(|card| card.display_safe
-                && (card.source_url.starts_with("https://")
-                    || card.source_url.starts_with("http://"))));
+        assert!(metadata.citation_cards.iter().all(|card| card.display_safe
+            && (card.source_url.starts_with("https://")
+                || card.source_url.starts_with("http://"))));
         assert_eq!(metadata.proof_packet.raw_page_stored, false);
         assert_eq!(metadata.proof_packet.private_query_saved, false);
         assert!(metadata

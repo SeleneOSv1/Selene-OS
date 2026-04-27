@@ -811,6 +811,12 @@ impl Ph1eRuntime {
             truncate_ascii(&first_source_label, 128),
             truncate_ascii(source_domains.first().map(String::as_str).unwrap_or("unknown"), 128)
         );
+        let image_metadata_provider_path_packet =
+            "decision=NO_PROVIDER_PATH;provider_path=not_found;brave_image_metadata=not_exposed_by_current_parser;vision_path=user_supplied_asset_analysis_not_public_web_image_provider;image_url_alone_sufficient=false;thumbnail_alone_sufficient=false;source_page_required=true;source_domain_required=true;display_safe=false;image_source_verified=false;screenshot_not_evidence=true"
+                .to_string();
+        let report_presentation_layout_packet =
+            "query_pill_text=user_query;main_heading=Deep Research Report;lead_claim_id=claim_1;core_facts_section=Core facts;source_chip_positions=after_supported_claim;image_strip_status=WEB_IMAGE_SOURCE_CARD_DEFERRED;image_strip_required_count=3;image_strip_cards_verified_count=0;layout_reference_reason=user_screenshot_layout_reference_only;screenshot_not_evidence=true;desktop_ui_modified=false"
+                .to_string();
         let planner_boundary_packet = format!(
             "status=PH1_SEARCH_PLANNER_BOUNDARY_RESOLVED_PASS;direct_invocation=PH1_SEARCH_LIVE_PLANNER_PASS;boundary=same_crate;engines_depends_on=kernel_contracts;os_depends_on=engines;adapter_depends_on=os_and_engines;web_search_plan_dependency=upward_not_called_from_ph1e;planned_queries={};rewritten_queries={};provider_query_hash={}",
             planner_proof.planned_query_count,
@@ -858,6 +864,25 @@ impl Ph1eRuntime {
             "H379_H380_H381_REGRESSION_PASS",
             "WEB_LIVE_PROVIDER_PROOF_PRESERVED_PASS",
             "PROTECTED_WEB_RESEARCH_FAIL_CLOSED_PASS",
+        ]
+        .join("|");
+        let h387_result_classes = [
+            "WEB_IMAGE_METADATA_PROVIDER_PATH_NOT_FOUND",
+            "WEB_IMAGE_SOURCE_CARD_DEFERRED",
+            "WEB_IMAGE_SOURCE_CARD_DISPLAY_DEFERRED",
+            "WEB_IMAGE_CARD_FAKE_BLOCKED_PASS",
+            "WEB_IMAGE_CARD_GENERATED_BLOCKED_PASS",
+            "WEB_IMAGE_CARD_UNVERIFIED_BLOCKED_PASS",
+            "WEB_IMAGE_URL_ALONE_INSUFFICIENT_PASS",
+            "WEB_IMAGE_THUMBNAIL_UNVERIFIED_BLOCKED_PASS",
+            "WEB_IMAGE_LICENSE_UNKNOWN_DISPLAY_DEFERRED_PASS",
+            "WEB_IMAGE_LAYOUT_REFERENCE_RECORDED",
+            "WEB_IMAGE_STRIP_METADATA_DESIGN_PASS",
+            "WEB_SOURCE_CHIP_LAYOUT_METADATA_PASS",
+            "WEB_REPORT_PRESENTATION_LAYOUT_PASS",
+            "SCREENSHOT_NOT_USED_AS_EVIDENCE_PASS",
+            "IMAGE_CARD_DISPLAY_DEFERRED_IF_UNVERIFIED_PASS",
+            "H386_PLANNER_FANOUT_REGRESSION_PASS",
         ]
         .join("|");
         let result = ToolResult::DeepResearch {
@@ -917,6 +942,14 @@ impl Ph1eRuntime {
                     value: citation_card_packet,
                 },
                 ToolStructuredField {
+                    key: "image_metadata_provider_path_packet".to_string(),
+                    value: image_metadata_provider_path_packet,
+                },
+                ToolStructuredField {
+                    key: "report_presentation_layout_packet".to_string(),
+                    value: report_presentation_layout_packet,
+                },
+                ToolStructuredField {
                     key: "citation_correction_packet".to_string(),
                     value: correction_packet,
                 },
@@ -954,6 +987,10 @@ impl Ph1eRuntime {
                 ToolStructuredField {
                     key: "result_classes".to_string(),
                     value: result_classes,
+                },
+                ToolStructuredField {
+                    key: "h387_result_classes".to_string(),
+                    value: h387_result_classes,
                 },
             ],
             citations: items,
@@ -4138,6 +4175,27 @@ mod tests {
         assert!(field("citation_correction_packet").contains("historical_audit_rewrite=false"));
         assert!(field("research_proof_packet").contains("raw_page_stored=false"));
         assert!(field("image_source_card_status").contains("WEB_IMAGE_SOURCE_CARD_DEFERRED"));
+        assert!(field("image_metadata_provider_path_packet").contains("decision=NO_PROVIDER_PATH"));
+        assert!(field("image_metadata_provider_path_packet")
+            .contains("image_url_alone_sufficient=false"));
+        assert!(field("image_metadata_provider_path_packet")
+            .contains("thumbnail_alone_sufficient=false"));
+        assert!(
+            field("image_metadata_provider_path_packet").contains("screenshot_not_evidence=true")
+        );
+        assert!(field("report_presentation_layout_packet").contains("image_strip_required_count=3"));
+        assert!(field("report_presentation_layout_packet")
+            .contains("image_strip_cards_verified_count=0"));
+        assert!(field("report_presentation_layout_packet").contains("desktop_ui_modified=false"));
+        assert!(field("h387_result_classes").contains("WEB_IMAGE_LAYOUT_REFERENCE_RECORDED"));
+        assert!(field("h387_result_classes").contains("WEB_IMAGE_STRIP_METADATA_DESIGN_PASS"));
+        assert!(field("h387_result_classes").contains("WEB_SOURCE_CHIP_LAYOUT_METADATA_PASS"));
+        assert!(field("h387_result_classes").contains("WEB_REPORT_PRESENTATION_LAYOUT_PASS"));
+        assert!(field("h387_result_classes").contains("SCREENSHOT_NOT_USED_AS_EVIDENCE_PASS"));
+        assert!(
+            field("h387_result_classes").contains("IMAGE_CARD_DISPLAY_DEFERRED_IF_UNVERIFIED_PASS")
+        );
+        assert!(!field("h387_result_classes").contains("WEB_IMAGE_SOURCE_CARD_PASS"));
         assert!(field("gdelt_status").contains("GDELT_NEWS_CORROBORATION_DEFERRED"));
         assert!(field("result_classes").contains("DEEP_RESEARCH_RESPONSE_METADATA_PASS"));
         assert!(citations
