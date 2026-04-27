@@ -1,0 +1,94 @@
+# Image Metadata Provider Path
+
+## H388 Decision
+
+H388 selects `Outcome C -- NO_APPROVED_PROVIDER_PATH`.
+
+Current repo truth does not contain an approved live public image metadata provider/source path for displayable sourced image/photo cards. H388 therefore keeps sourced image/photo cards deferred and records the provider/source design requirements needed for a future implementation.
+
+## Candidate Matrix
+
+| Candidate | Repo surface | Current capability | Display allowed | Blocker |
+| --- | --- | --- | --- | --- |
+| Existing Brave web/news result metadata | `crates/selene_engines/src/ph1e.rs`, `crates/selene_os/src/web_search_plan/web_provider/brave_adapter.rs` | Text web/news results with citation URLs, titles, and snippets | No | No source-page-bound image metadata is parsed or proven |
+| Brave image metadata endpoint | None in repo truth | Not represented | No | No approved endpoint, packet, parser, or secret contract in repo truth |
+| `web_search_plan/vision` | `crates/selene_os/src/web_search_plan/vision/**` | User-supplied/local/URL asset analysis with hash, locator, MIME, safe-mode, and budgets | No for web cards | Asset analysis is not a public web image-card provider |
+| Page fetch/extraction | `crates/selene_os/src/web_search_plan/url/**` | Bounded URL fetch/text extraction surfaces | No | Page-image extraction lacks source, safety, and license policy for display |
+| PH1.E provider abstraction | `crates/selene_engines/src/ph1e.rs` | Brave/OpenAI text web fallback path | No | No image endpoint/class in PH1.E provider config |
+| Existing repo media/image provider | Search discovery | Not found | No | No approved public image metadata provider exists |
+| Future provider path | Not implemented | Required design path | No | Requires approved provider selection before implementation |
+
+## ImageProviderPathPacket Contract
+
+The live Deep Research response metadata must be able to represent:
+
+- `provider_path_id`
+- `selected_outcome`
+- `selected_candidate_id`
+- `provider_name`
+- `provider_kind`
+- `secret_id`
+- `endpoint_class`
+- `query_leakage_policy`
+- `candidate_matrix`
+- `supports_image_url`
+- `supports_thumbnail_url`
+- `supports_source_page_url`
+- `supports_source_domain`
+- `supports_retrieved_at`
+- `supports_display_safety`
+- `supports_license_or_usage_note`
+- `supports_image_source_verified`
+- `supports_linked_claim_ids`
+- `display_allowed`
+- `display_deferred_reason`
+- `blocker`
+- `proof_id`
+- `no_new_provider_dependency`
+- `no_live_image_provider_call`
+- `screenshot_not_evidence`
+
+## Future Image Evidence Contract
+
+A future displayable `ImageEvidencePacket` or `ImageSourceCardPacket` must require:
+
+- `image_id`
+- `image_url`
+- `source_page_url`
+- `source_domain`
+- `title_or_alt_text` when available
+- `caption` when available
+- `publisher` when available
+- `retrieved_at`
+- `image_type`
+- `entity_or_topic`
+- `license_or_usage_note` when available
+- `display_safe`
+- `linked_claim_ids` when applicable
+- `provider`
+- `proof_id`
+- `image_source_verified`
+
+## Safety Policy
+
+- Image URL alone is insufficient.
+- Thumbnail URL alone is insufficient.
+- Missing `source_page_url`, `source_domain`, `retrieved_at`, `display_safe`, `provider`, or `proof_id` defers display.
+- Unknown display safety defers display.
+- Unknown rights/license defers display unless an approved repo policy explicitly allows display with an unknown-license note.
+- Fixture image data must never be marked live.
+- Generated images are allowed only through a separate user-requested image-generation flow.
+- Screenshot facts are not evidence.
+- Screenshot images are not provider images.
+- Images support cited answers visually; they never replace text citations.
+
+## Secret And Privacy Policy
+
+- Provider packets may record a secret ID, never the secret value.
+- Private image queries are blocked or deferred unless a future approved provider policy explicitly permits them.
+- Image metadata cache/retention must default to metadata-only retention and must not create a hidden web image archive.
+- H388 adds no new external provider dependency and introduces no new live image-provider call.
+
+## Future Implementation Step
+
+Select and approve an external image metadata provider/source path, then add the endpoint, secret contract, parser, source-page binding, display-safety evaluation, license/usage posture, retention policy, and live proof before enabling sourced image/photo card display.

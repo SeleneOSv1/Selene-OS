@@ -812,7 +812,7 @@ impl Ph1eRuntime {
             truncate_ascii(source_domains.first().map(String::as_str).unwrap_or("unknown"), 128)
         );
         let image_metadata_provider_path_packet =
-            "decision=NO_PROVIDER_PATH;provider_path=not_found;brave_image_metadata=not_exposed_by_current_parser;vision_path=user_supplied_asset_analysis_not_public_web_image_provider;image_url_alone_sufficient=false;thumbnail_alone_sufficient=false;source_page_required=true;source_domain_required=true;display_safe=false;image_source_verified=false;screenshot_not_evidence=true"
+            "provider_path_id=h388_image_provider_path;selected_outcome=NO_APPROVED_PROVIDER_PATH;selected_candidate_id=future_provider_path;provider_name=none;provider_kind=none;secret_id=none;endpoint_class=none;query_leakage_policy=private_queries_blocked_or_deferred;candidate_matrix=bwn:no_src_img,bie:not_repo,vision:asset_only,page_fetch:no_policy,ph1e:no_endpoint,repo_media:not_found,future:required;supports_image_url=false;supports_thumbnail_url=false;supports_source_page_url=false;supports_source_domain=false;supports_retrieved_at=false;supports_display_safety=false;supports_license_or_usage_note=false;supports_image_source_verified=false;supports_linked_claim_ids=false;display_allowed=false;display_deferred_reason=no_approved_provider_path;blocker=no_repo_approved_image_metadata_provider;proof_id=H388_IMAGE_PROVIDER_PATH_DESIGN;no_new_provider_dependency=true;no_live_image_provider_call=true;screenshot_not_evidence=true"
                 .to_string();
         let report_presentation_layout_packet =
             "query_pill_text=user_query;main_heading=Deep Research Report;lead_claim_id=claim_1;core_facts_section=Core facts;source_chip_positions=after_supported_claim;image_strip_status=WEB_IMAGE_SOURCE_CARD_DEFERRED;image_strip_required_count=3;image_strip_cards_verified_count=0;layout_reference_reason=user_screenshot_layout_reference_only;screenshot_not_evidence=true;desktop_ui_modified=false"
@@ -867,9 +867,13 @@ impl Ph1eRuntime {
         ]
         .join("|");
         let h387_result_classes = [
+            "WEB_IMAGE_PROVIDER_PATH_DESIGN_PASS",
+            "WEB_IMAGE_PROVIDER_CANDIDATE_MATRIX_PASS",
             "WEB_IMAGE_METADATA_PROVIDER_PATH_NOT_FOUND",
             "WEB_IMAGE_SOURCE_CARD_DEFERRED",
             "WEB_IMAGE_SOURCE_CARD_DISPLAY_DEFERRED",
+            "WEB_IMAGE_PROVIDER_SECRET_GOVERNANCE_PASS",
+            "WEB_IMAGE_PRIVATE_QUERY_POLICY_PASS",
             "WEB_IMAGE_CARD_FAKE_BLOCKED_PASS",
             "WEB_IMAGE_CARD_GENERATED_BLOCKED_PASS",
             "WEB_IMAGE_CARD_UNVERIFIED_BLOCKED_PASS",
@@ -882,6 +886,7 @@ impl Ph1eRuntime {
             "WEB_REPORT_PRESENTATION_LAYOUT_PASS",
             "SCREENSHOT_NOT_USED_AS_EVIDENCE_PASS",
             "IMAGE_CARD_DISPLAY_DEFERRED_IF_UNVERIFIED_PASS",
+            "H387_IMAGE_PATH_REGRESSION_PASS",
             "H386_PLANNER_FANOUT_REGRESSION_PASS",
         ]
         .join("|");
@@ -4175,11 +4180,11 @@ mod tests {
         assert!(field("citation_correction_packet").contains("historical_audit_rewrite=false"));
         assert!(field("research_proof_packet").contains("raw_page_stored=false"));
         assert!(field("image_source_card_status").contains("WEB_IMAGE_SOURCE_CARD_DEFERRED"));
-        assert!(field("image_metadata_provider_path_packet").contains("decision=NO_PROVIDER_PATH"));
         assert!(field("image_metadata_provider_path_packet")
-            .contains("image_url_alone_sufficient=false"));
+            .contains("selected_outcome=NO_APPROVED_PROVIDER_PATH"));
         assert!(field("image_metadata_provider_path_packet")
-            .contains("thumbnail_alone_sufficient=false"));
+            .contains("candidate_matrix=bwn:no_src_img"));
+        assert!(field("image_metadata_provider_path_packet").contains("bie:not_repo"));
         assert!(
             field("image_metadata_provider_path_packet").contains("screenshot_not_evidence=true")
         );
@@ -4188,6 +4193,9 @@ mod tests {
             .contains("image_strip_cards_verified_count=0"));
         assert!(field("report_presentation_layout_packet").contains("desktop_ui_modified=false"));
         assert!(field("h387_result_classes").contains("WEB_IMAGE_LAYOUT_REFERENCE_RECORDED"));
+        assert!(field("h387_result_classes").contains("WEB_IMAGE_PROVIDER_PATH_DESIGN_PASS"));
+        assert!(field("h387_result_classes").contains("WEB_IMAGE_PROVIDER_CANDIDATE_MATRIX_PASS"));
+        assert!(field("h387_result_classes").contains("WEB_IMAGE_PRIVATE_QUERY_POLICY_PASS"));
         assert!(field("h387_result_classes").contains("WEB_IMAGE_STRIP_METADATA_DESIGN_PASS"));
         assert!(field("h387_result_classes").contains("WEB_SOURCE_CHIP_LAYOUT_METADATA_PASS"));
         assert!(field("h387_result_classes").contains("WEB_REPORT_PRESENTATION_LAYOUT_PASS"));
@@ -4202,6 +4210,61 @@ mod tests {
             .iter()
             .all(|citation| citation.url.starts_with("https://")
                 || citation.url.starts_with("http://")));
+    }
+
+    #[test]
+    fn h388_image_provider_path_design_is_outcome_c_without_live_provider_claims() {
+        let fixture = spawn_test_http_fixture();
+        let rt = runtime_with_live_fixture(&fixture);
+        let out = rt.run(&req(
+            ToolName::DeepResearch,
+            "deep research organic wine producers with citations",
+            false,
+            false,
+        ));
+        assert_eq!(out.tool_status, ToolStatus::Ok);
+        let ToolResult::DeepResearch {
+            extracted_fields,
+            citations,
+            ..
+        } = out
+            .tool_result
+            .as_ref()
+            .expect("tool result required for ok")
+        else {
+            panic!("expected DeepResearch result");
+        };
+        assert!(!citations.is_empty());
+        let field = |key: &str| {
+            extracted_fields
+                .iter()
+                .find(|candidate| candidate.key == key)
+                .map(|candidate| candidate.value.as_str())
+                .unwrap_or("")
+        };
+        let provider_path = field("image_metadata_provider_path_packet");
+        assert!(provider_path.contains("provider_path_id=h388_image_provider_path"));
+        assert!(provider_path.contains("selected_outcome=NO_APPROVED_PROVIDER_PATH"));
+        assert!(provider_path.contains("candidate_matrix=bwn:no_src_img"));
+        assert!(provider_path.contains("bie:not_repo"));
+        assert!(provider_path.contains("vision:asset_only"));
+        assert!(provider_path.contains("page_fetch:no_policy"));
+        assert!(provider_path.contains("secret_id=none"));
+        assert!(provider_path.contains("query_leakage_policy=private_queries_blocked_or_deferred"));
+        assert!(provider_path.contains("display_allowed=false"));
+        assert!(provider_path.contains("blocker=no_repo_approved_image_metadata_provider"));
+        assert!(provider_path.contains("no_new_provider_dependency=true"));
+        assert!(provider_path.contains("no_live_image_provider_call=true"));
+        assert!(field("h387_result_classes").contains("WEB_IMAGE_PROVIDER_PATH_DESIGN_PASS"));
+        assert!(field("h387_result_classes").contains("WEB_IMAGE_PROVIDER_CANDIDATE_MATRIX_PASS"));
+        assert!(field("h387_result_classes").contains("WEB_IMAGE_PROVIDER_SECRET_GOVERNANCE_PASS"));
+        assert!(field("h387_result_classes").contains("WEB_IMAGE_PRIVATE_QUERY_POLICY_PASS"));
+        assert!(field("h387_result_classes").contains("H387_IMAGE_PATH_REGRESSION_PASS"));
+        assert!(field("image_source_card_status").contains("WEB_IMAGE_SOURCE_CARD_DEFERRED"));
+        assert!(!field("h387_result_classes").contains("WEB_IMAGE_SOURCE_CARD_PASS"));
+        assert!(!provider_path.contains("api_key="));
+        assert!(!provider_path.contains("secret_value"));
+        assert!(field("report_presentation_layout_packet").contains("desktop_ui_modified=false"));
     }
 
     #[test]
