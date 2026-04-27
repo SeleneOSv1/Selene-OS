@@ -2055,6 +2055,7 @@ fn voice_turn_security_reject_response(reject: SecurityReject, turn_id: Option<u
         response_text: String::new(),
         reason_code: canonical_reason_code_for_security_reject(&reason),
         provenance: None,
+        deep_research: None,
     };
     json_response_with_optional_retry_after(status, response, reject.retry_after_secs)
 }
@@ -2301,6 +2302,7 @@ fn voice_turn_ingress_error_response(status: StatusCode, error: VoiceTurnIngress
             response_text: String::new(),
             reason_code: error.reason_code,
             provenance: None,
+            deep_research: None,
         }),
     )
         .into_response()

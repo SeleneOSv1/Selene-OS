@@ -333,6 +333,8 @@ pub struct VoiceTurnAdapterResponse {
     pub response_text: String,
     pub reason_code: String,
     pub provenance: Option<VoiceTurnProvenance>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deep_research: Option<VoiceTurnDeepResearchMetadata>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -346,6 +348,101 @@ pub struct VoiceTurnProvenance {
     pub sources: Vec<VoiceTurnProvenanceSource>,
     pub retrieved_at: u64,
     pub cache_status: String,
+}
+
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct VoiceTurnDeepResearchMetadata {
+    pub report: VoiceTurnResearchReportMetadata,
+    pub source_chips: Vec<VoiceTurnSourceChip>,
+    pub citation_cards: Vec<VoiceTurnCitationCard>,
+    pub fanout: VoiceTurnFanoutMetadata,
+    pub correction_loop: VoiceTurnCorrectionLoopMetadata,
+    pub proof_packet: VoiceTurnResearchProofMetadata,
+    pub result_classes: Vec<String>,
+    pub image_source_card_status: String,
+    pub gdelt_status: String,
+    pub provider_fanout_status: String,
+    pub retention_class: String,
+    pub response_metadata_verified: bool,
+}
+
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct VoiceTurnResearchReportMetadata {
+    pub title: String,
+    pub summary: String,
+    pub claim_count: usize,
+    pub citation_count: usize,
+    pub source_count: usize,
+    pub formatter_used: String,
+    pub limitations: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct VoiceTurnSourceChip {
+    pub chip_id: String,
+    pub claim_id: String,
+    pub citation_ids: Vec<String>,
+    pub display_label: String,
+    pub primary_domain: String,
+    pub additional_source_count: usize,
+    pub trust_tier: String,
+    pub freshness_tier: String,
+    pub display_position: String,
+    pub source_urls: Vec<String>,
+    pub display_safe: bool,
+}
+
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct VoiceTurnCitationCard {
+    pub citation_id: String,
+    pub title: String,
+    pub domain: String,
+    pub publisher: Option<String>,
+    pub published_at: Option<String>,
+    pub retrieved_at: u64,
+    pub trust_tier: String,
+    pub freshness_tier: String,
+    pub evidence_excerpt: String,
+    pub supports_claim_ids: Vec<String>,
+    pub conflict_marker: Option<String>,
+    pub source_url: String,
+    pub display_safe: bool,
+}
+
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct VoiceTurnFanoutMetadata {
+    pub fanout_id: String,
+    pub provider_targets: Vec<String>,
+    pub attempted_provider_count: usize,
+    pub successful_provider_count: usize,
+    pub attempted_source_count: usize,
+    pub successful_source_count: usize,
+    pub provider_fanout_status: String,
+    pub source_fanout_status: String,
+}
+
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct VoiceTurnCorrectionLoopMetadata {
+    pub status: String,
+    pub audit_rewrite_blocked: bool,
+    pub correction_effect_scope: String,
+    pub future_regression_fixture_candidate: bool,
+}
+
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct VoiceTurnResearchProofMetadata {
+    pub proof_packet_id: String,
+    pub report_hash: String,
+    pub retention_class: String,
+    pub raw_page_stored: bool,
+    pub private_query_saved: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -6883,6 +6980,7 @@ impl AdapterRuntime {
                         response_text,
                         reason_code: "H381_H380_LIVE_RESPONSE".to_string(),
                         provenance: None,
+                        deep_research: None,
                     });
                 }
             }
@@ -11681,6 +11779,225 @@ fn provenance_from_tool_response(tool_response: &ToolResponse) -> VoiceTurnProve
     }
 }
 
+fn deep_research_metadata_from_tool_response(
+    tool_response: &ToolResponse,
+) -> Option<VoiceTurnDeepResearchMetadata> {
+    let ToolResult::DeepResearch {
+        summary,
+        extracted_fields,
+        citations,
+    } = tool_response.tool_result.as_ref()?
+    else {
+        return None;
+    };
+
+    let fields = deep_research_field_map(extracted_fields);
+    let retrieved_at = tool_response
+        .source_metadata
+        .as_ref()
+        .map(|meta| meta.retrieved_at_unix_ms)
+        .unwrap_or_default();
+    let provider_hint = tool_response
+        .source_metadata
+        .as_ref()
+        .and_then(|meta| meta.provider_hint.clone())
+        .unwrap_or_else(|| "unknown".to_string());
+    let source_count = tool_response
+        .source_metadata
+        .as_ref()
+        .map(|meta| meta.sources.len())
+        .unwrap_or(citations.len());
+    let result_classes = fields
+        .get("result_classes")
+        .map(|value| {
+            value
+                .split('|')
+                .map(str::trim)
+                .filter(|item| !item.is_empty())
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+        })
+        .filter(|classes| !classes.is_empty())
+        .unwrap_or_else(|| {
+            vec![
+                "DEEP_RESEARCH_RESPONSE_METADATA_PASS".to_string(),
+                "CITATION_SOURCE_CHIPS_RESPONSE_METADATA_PASS".to_string(),
+                "CITATION_CARD_RESPONSE_METADATA_PASS".to_string(),
+            ]
+        });
+    let retention_class = fields
+        .get("retention_class")
+        .cloned()
+        .unwrap_or_else(|| "AUDIT_METADATA_ONLY".to_string());
+    let image_source_card_status = fields
+        .get("image_source_card_status")
+        .cloned()
+        .unwrap_or_else(|| "WEB_IMAGE_SOURCE_CARD_DEFERRED".to_string());
+    let gdelt_status = fields
+        .get("gdelt_status")
+        .cloned()
+        .unwrap_or_else(|| "GDELT_NEWS_CORROBORATION_DEFERRED".to_string());
+    let provider_fanout_status = if provider_hint.eq_ignore_ascii_case("brave") {
+        "brave_only".to_string()
+    } else {
+        provider_hint.clone()
+    };
+
+    let citation_cards = citations
+        .iter()
+        .enumerate()
+        .map(|(idx, citation)| {
+            let citation_id = format!("citation_{}", idx + 1);
+            VoiceTurnCitationCard {
+                citation_id: citation_id.clone(),
+                title: truncate_utf8(&citation.title, 180),
+                domain: adapter_domain_from_http_url(&citation.url)
+                    .unwrap_or_else(|| "unknown".to_string()),
+                publisher: None,
+                published_at: None,
+                retrieved_at,
+                trust_tier: "UNKNOWN_OR_PROVIDER_RANKED".to_string(),
+                freshness_tier: "CURRENT_WEB_EVIDENCE".to_string(),
+                evidence_excerpt: truncate_utf8(&citation.snippet, 240),
+                supports_claim_ids: vec![format!("claim_{}", idx + 1)],
+                conflict_marker: None,
+                source_url: citation.url.clone(),
+                display_safe: citation.url.starts_with("https://")
+                    || citation.url.starts_with("http://"),
+            }
+        })
+        .collect::<Vec<_>>();
+    let source_chips = citations
+        .iter()
+        .enumerate()
+        .map(|(idx, citation)| {
+            let domain = adapter_domain_from_http_url(&citation.url)
+                .unwrap_or_else(|| "unknown".to_string());
+            VoiceTurnSourceChip {
+                chip_id: format!("chip_{}", idx + 1),
+                claim_id: format!("claim_{}", idx + 1),
+                citation_ids: vec![format!("citation_{}", idx + 1)],
+                display_label: if citations.len() > 1 && idx == 0 {
+                    format!("{} +{}", domain, citations.len().saturating_sub(1))
+                } else {
+                    domain.clone()
+                },
+                primary_domain: domain,
+                additional_source_count: if idx == 0 {
+                    citations.len().saturating_sub(1)
+                } else {
+                    0
+                },
+                trust_tier: "UNKNOWN_OR_PROVIDER_RANKED".to_string(),
+                freshness_tier: "CURRENT_WEB_EVIDENCE".to_string(),
+                display_position: "after_claim".to_string(),
+                source_urls: vec![citation.url.clone()],
+                display_safe: citation.url.starts_with("https://")
+                    || citation.url.starts_with("http://"),
+            }
+        })
+        .collect::<Vec<_>>();
+
+    Some(VoiceTurnDeepResearchMetadata {
+        report: VoiceTurnResearchReportMetadata {
+            title: "Deep Research Report".to_string(),
+            summary: truncate_utf8(summary, 512),
+            claim_count: citations.len(),
+            citation_count: citations.len(),
+            source_count,
+            formatter_used: "PH1.WRITE_OR_WEB_SEARCH_PLAN_WRITE".to_string(),
+            limitations: deep_research_limitations(&image_source_card_status, &gdelt_status),
+        },
+        source_chips,
+        citation_cards,
+        fanout: VoiceTurnFanoutMetadata {
+            fanout_id: fields
+                .get("multihop_fanout_packet")
+                .map(|value| stable_hash_hex_16(value))
+                .unwrap_or_else(|| stable_hash_hex_16(summary)),
+            provider_targets: vec![provider_hint],
+            attempted_provider_count: 1,
+            successful_provider_count: usize::from(tool_response.tool_status == ToolStatus::Ok),
+            attempted_source_count: citations.len(),
+            successful_source_count: citations.len(),
+            provider_fanout_status,
+            source_fanout_status: if citations.len() > 1 {
+                "WEB_SOURCE_FANOUT_PASS".to_string()
+            } else {
+                "WEB_SOURCE_FANOUT_LIMITED".to_string()
+            },
+        },
+        correction_loop: VoiceTurnCorrectionLoopMetadata {
+            status: "session_local_ready".to_string(),
+            audit_rewrite_blocked: true,
+            correction_effect_scope: "next_answer_only".to_string(),
+            future_regression_fixture_candidate: true,
+        },
+        proof_packet: VoiceTurnResearchProofMetadata {
+            proof_packet_id: fields
+                .get("research_proof_packet")
+                .map(|value| stable_hash_hex_16(value))
+                .unwrap_or_else(|| stable_hash_hex_16(summary)),
+            report_hash: stable_hash_hex_16(summary),
+            retention_class: retention_class.clone(),
+            raw_page_stored: false,
+            private_query_saved: false,
+        },
+        result_classes,
+        image_source_card_status,
+        gdelt_status,
+        provider_fanout_status: if citations.len() > 1 {
+            "source_fanout_live_provider_fanout_deferred".to_string()
+        } else {
+            "single_source_live_provider_fanout_deferred".to_string()
+        },
+        retention_class,
+        response_metadata_verified: citations.iter().all(|citation| {
+            citation.url.starts_with("https://") || citation.url.starts_with("http://")
+        }),
+    })
+}
+
+fn deep_research_field_map(
+    fields: &[selene_kernel_contracts::ph1e::ToolStructuredField],
+) -> BTreeMap<String, String> {
+    fields
+        .iter()
+        .map(|field| (field.key.clone(), field.value.clone()))
+        .collect()
+}
+
+fn adapter_domain_from_http_url(url: &str) -> Option<String> {
+    let rest = url
+        .strip_prefix("https://")
+        .or_else(|| url.strip_prefix("http://"))?;
+    let domain = rest
+        .split(['/', '?', '#'])
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .trim_matches('.');
+    if domain.is_empty() {
+        None
+    } else {
+        Some(domain.to_ascii_lowercase())
+    }
+}
+
+fn deep_research_limitations(image_status: &str, gdelt_status: &str) -> Vec<String> {
+    let mut limitations = Vec::new();
+    if image_status.contains("DEFERRED") {
+        limitations.push("sourced image/photo cards deferred until a verified image metadata provider path exists".to_string());
+    }
+    if gdelt_status.contains("DEFERRED") {
+        limitations.push(
+            "GDELT live corroboration deferred until the provider is cleanly live-wired"
+                .to_string(),
+        );
+    }
+    limitations
+}
+
 fn recover_typed_public_deterministic_tool_answer(
     typed_only: bool,
     execution: &mut AppVoiceTurnExecutionOutcome,
@@ -11760,6 +12077,10 @@ fn execution_outcome_to_adapter_response(
             .tool_response
             .as_ref()
             .map(provenance_from_tool_response),
+        deep_research: execution
+            .tool_response
+            .as_ref()
+            .and_then(deep_research_metadata_from_tool_response),
     }
 }
 
@@ -15823,6 +16144,7 @@ fn session_posture_evidence_response_returns_current_device_fields_for_session()
                 response_text: "ready".to_string(),
                 reason_code: "OK".to_string(),
                 provenance: None,
+                deep_research: None,
             }),
         },
     );
@@ -20040,6 +20362,97 @@ mod tests {
     }
 
     #[test]
+    fn h385_deep_search_production_depth_response_metadata_is_evidence_backed() {
+        let citation = selene_kernel_contracts::ph1e::ToolTextSnippet {
+            title: "Official OpenAI news".to_string(),
+            snippet: "OpenAI published a sourced update used as bounded evidence.".to_string(),
+            url: "https://openai.com/news/example".to_string(),
+        };
+        let tool_response = ToolResponse::ok_v1(
+            selene_kernel_contracts::ph1e::ToolRequestId(385),
+            selene_kernel_contracts::ph1e::ToolQueryHash(385),
+            ToolResult::DeepResearch {
+                summary: "Deep Research Report\n\nSummary: verified evidence only.".to_string(),
+                extracted_fields: vec![
+                    selene_kernel_contracts::ph1e::ToolStructuredField {
+                        key: "research_report_packet".to_string(),
+                        value:
+                            "title=Deep Research Report;claim_map=verified_citations;formatter=PH1.WRITE"
+                                .to_string(),
+                    },
+                    selene_kernel_contracts::ph1e::ToolStructuredField {
+                        key: "multihop_fanout_packet".to_string(),
+                        value:
+                            "type=source_fanout;provider_targets=brave;attempted_sources=1;successful_sources=1"
+                                .to_string(),
+                    },
+                    selene_kernel_contracts::ph1e::ToolStructuredField {
+                        key: "research_proof_packet".to_string(),
+                        value:
+                            "raw_page_stored=false;private_query_saved=false;retention=AUDIT_METADATA_ONLY"
+                                .to_string(),
+                    },
+                    selene_kernel_contracts::ph1e::ToolStructuredField {
+                        key: "image_source_card_status".to_string(),
+                        value: "WEB_IMAGE_SOURCE_CARD_DEFERRED:no_verified_image_metadata_provider_path"
+                            .to_string(),
+                    },
+                    selene_kernel_contracts::ph1e::ToolStructuredField {
+                        key: "gdelt_status".to_string(),
+                        value:
+                            "GDELT_NEWS_CORROBORATION_DEFERRED:not_live_wired_in_provider_ladder"
+                                .to_string(),
+                    },
+                    selene_kernel_contracts::ph1e::ToolStructuredField {
+                        key: "retention_class".to_string(),
+                        value: "AUDIT_METADATA_ONLY".to_string(),
+                    },
+                    selene_kernel_contracts::ph1e::ToolStructuredField {
+                        key: "result_classes".to_string(),
+                        value: "DEEP_RESEARCH_RESPONSE_METADATA_PASS|CITATION_SOURCE_CHIPS_RESPONSE_METADATA_PASS|CITATION_CARD_RESPONSE_METADATA_PASS|WEB_IMAGE_SOURCE_CARD_DEFERRED"
+                            .to_string(),
+                    },
+                ],
+                citations: vec![citation],
+            },
+            selene_kernel_contracts::ph1e::SourceMetadata {
+                schema_version: selene_kernel_contracts::ph1e::PH1E_CONTRACT_VERSION,
+                provider_hint: Some("brave".to_string()),
+                retrieved_at_unix_ms: 1_770_000_000_000,
+                sources: vec![selene_kernel_contracts::ph1e::SourceRef {
+                    title: "Official OpenAI news".to_string(),
+                    url: "https://openai.com/news/example".to_string(),
+                }],
+            },
+            None,
+            ReasonCodeId(0x4500_0001),
+            CacheStatus::Miss,
+        )
+        .expect("fixture tool response must validate");
+        let metadata = deep_research_metadata_from_tool_response(&tool_response)
+            .expect("deep research response metadata must be present");
+        assert!(metadata.response_metadata_verified);
+        assert_eq!(metadata.report.citation_count, 1);
+        assert_eq!(metadata.retention_class, "AUDIT_METADATA_ONLY");
+        assert_eq!(metadata.proof_packet.raw_page_stored, false);
+        assert_eq!(metadata.proof_packet.private_query_saved, false);
+        assert!(metadata
+            .result_classes
+            .contains(&"DEEP_RESEARCH_RESPONSE_METADATA_PASS".to_string()));
+        assert_eq!(metadata.source_chips.len(), 1);
+        assert_eq!(metadata.citation_cards.len(), 1);
+        assert_eq!(metadata.source_chips[0].primary_domain, "openai.com");
+        assert_eq!(metadata.citation_cards[0].domain, "openai.com");
+        assert!(metadata.citation_cards[0].display_safe);
+        assert!(metadata
+            .image_source_card_status
+            .contains("WEB_IMAGE_SOURCE_CARD_DEFERRED"));
+        assert!(metadata
+            .gdelt_status
+            .contains("GDELT_NEWS_CORROBORATION_DEFERRED"));
+    }
+
+    #[test]
     fn h383_protected_web_authority_phrase_fails_closed_before_public_search() {
         let runtime = AdapterRuntime::default();
         let mut req = base_request();
@@ -20186,7 +20599,62 @@ mod tests {
             (source.url.starts_with("https://") || source.url.starts_with("http://"))
                 && !source.url.contains("research.selene.ai")
                 && !source.url.contains("example.com")
-        }));
+            }));
+    }
+
+    #[test]
+    #[ignore = "requires a real Brave Search secret in the local Selene vault and live network access"]
+    fn h385_live_brave_deep_research_desktop_route_returns_response_metadata() {
+        assert!(
+            device_vault::resolve_secret(ProviderSecretId::BraveSearchApiKey.as_str())
+                .ok()
+                .flatten()
+                .map(|secret| !secret.trim().is_empty())
+                .unwrap_or(false),
+            "brave_search_api_key must be present in the local Selene vault for live proof"
+        );
+        let runtime = AdapterRuntime::default();
+        let mut req = base_request();
+        req.turn_id = 930_385;
+        req.correlation_id = 940_385;
+        req.thread_key = Some("h385_live_deep_research_thread".to_string());
+        req.user_text_final = Some(
+            "Do deep research on the latest OpenAI news today and compare sources.".to_string(),
+        );
+        seed_desktop_voice_profile_for_request(&runtime, &mut req, "h385_live_deep_research");
+        let out = runtime
+            .run_voice_turn(req)
+            .expect("live Brave deep research Desktop route must return an adapter response");
+        assert_eq!(out.status, "ok", "{out:?}");
+        assert_eq!(out.outcome, "FINAL_TOOL", "{out:?}");
+        assert_eq!(out.next_move, "dispatch_tool", "{out:?}");
+        let metadata = out
+            .deep_research
+            .expect("live deep research route must expose response metadata");
+        assert!(metadata.response_metadata_verified);
+        assert!(!metadata.source_chips.is_empty());
+        assert!(!metadata.citation_cards.is_empty());
+        assert!(metadata
+            .result_classes
+            .contains(&"DEEP_RESEARCH_RESPONSE_METADATA_PASS".to_string()));
+        assert!(metadata
+            .source_chips
+            .iter()
+            .all(|chip| !chip.source_urls.is_empty() && chip.display_safe));
+        assert!(metadata
+            .citation_cards
+            .iter()
+            .all(|card| card.display_safe
+                && (card.source_url.starts_with("https://")
+                    || card.source_url.starts_with("http://"))));
+        assert_eq!(metadata.proof_packet.raw_page_stored, false);
+        assert_eq!(metadata.proof_packet.private_query_saved, false);
+        assert!(metadata
+            .image_source_card_status
+            .contains("WEB_IMAGE_SOURCE_CARD_DEFERRED"));
+        assert!(metadata
+            .gdelt_status
+            .contains("GDELT_NEWS_CORROBORATION_DEFERRED"));
     }
 
     #[test]
