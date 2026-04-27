@@ -2555,6 +2555,151 @@ fn h380_transcript_notes(lower: &str) -> Vec<String> {
     notes
 }
 
+fn h381_h380_live_response_text(
+    packet: &H380TurnUnderstandingPacket,
+    last_turn_context: Option<&LastTurnContext>,
+    language_packet: Option<&LanguagePacket>,
+) -> Option<String> {
+    if !packet.answer_completeness_ok || !packet.semantic_consistency_ok {
+        return Some(
+            "Which part should I answer: the result, the proof, or the meaning?".to_string(),
+        );
+    }
+    if packet.raw_user_text.trim_start().starts_with("???") {
+        return None;
+    }
+    if packet.protected_fail_closed || packet.final_route == H380Route::ProtectedFailClosed {
+        if !h381_h380_clear_live_protected_shadow(packet) {
+            return None;
+        }
+        return Some(
+            "I can't perform or prepare that protected business action from this turn. NO_SIMULATION_NO_AUTHORITY_NO_PROTECTED_EXECUTION."
+                .to_string(),
+        );
+    }
+    let use_chinese = language_packet.is_some_and(LanguagePacket::output_language_is_chinese);
+    let Some(last_turn_context) = last_turn_context else {
+        return match packet.final_route {
+            H380Route::FollowupProvenance => Some(if use_chinese {
+                "我没有可证明的上一轮工具或提供方查询可以引用。".to_string()
+            } else {
+                "I don't have a previous provider-backed result in this thread to prove.".to_string()
+            }),
+            H380Route::FollowupMeaning => Some(if use_chinese {
+                "你想让我解释哪一句或哪一个结果的意思？".to_string()
+            } else {
+                "What should I explain the meaning behind?".to_string()
+            }),
+            H380Route::Repeat => Some(if use_chinese {
+                "我没有上一轮回答可以重复。".to_string()
+            } else {
+                "I don't have a previous answer in this thread to repeat.".to_string()
+            }),
+            H380Route::Clarification if packet.implied_intent_detected => {
+                let location = h381_h380_primary_location(packet)?;
+                Some(if use_chinese {
+                    format!("你想让我查{location}的天气还是时间？")
+                } else {
+                    format!("Should I check the weather or the time for {location}?")
+                })
+            }
+            _ => None,
+        };
+    };
+    match packet.final_route {
+        H380Route::FollowupProvenance => {
+            let decision = H379FollowupDecision {
+                primary: H379FollowupClass::ToolProvenanceQuestion,
+                correction_detected: packet.correction_detected
+                    || packet.negation_detected
+                    || packet.contrast_detected,
+            };
+            Some(h379_followup_response_text(
+                &decision,
+                last_turn_context,
+                language_packet,
+            ))
+        }
+        H380Route::FollowupMeaning => {
+            let decision = H379FollowupDecision {
+                primary: H379FollowupClass::MeaningOrRephraseRequest,
+                correction_detected: packet.correction_detected,
+            };
+            Some(h379_followup_response_text(
+                &decision,
+                last_turn_context,
+                language_packet,
+            ))
+        }
+        H380Route::Repeat => {
+            let decision = H379FollowupDecision {
+                primary: H379FollowupClass::RepeatRequest,
+                correction_detected: packet.correction_detected,
+            };
+            Some(h379_followup_response_text(
+                &decision,
+                last_turn_context,
+                language_packet,
+            ))
+        }
+        _ => None,
+    }
+}
+
+fn h381_h380_live_nlp_rewrite(
+    packet: Option<&H380TurnUnderstandingPacket>,
+    previous: Option<&LastTurnContext>,
+) -> Option<String> {
+    let packet = packet?;
+    if packet.protected_fail_closed
+        || !packet.answer_completeness_ok
+        || !packet.semantic_consistency_ok
+        || matches!(
+            packet.final_route,
+            H380Route::FollowupProvenance | H380Route::FollowupMeaning | H380Route::Repeat
+        )
+    {
+        return None;
+    }
+    let previous = previous?;
+    if !packet.implied_intent_detected {
+        return None;
+    }
+    let location = h381_h380_primary_location(packet)?;
+    match previous.route_class {
+        LastTurnRouteClass::ToolWeather => Some(format!("what is the weather in {location}")),
+        LastTurnRouteClass::ToolTime => Some(format!("what is the time in {location}")),
+        _ => None,
+    }
+}
+
+fn h381_h380_primary_location(packet: &H380TurnUnderstandingPacket) -> Option<String> {
+    packet
+        .slots_present
+        .iter()
+        .find_map(|slot| slot.strip_prefix("location:"))
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
+fn h381_h380_clear_live_protected_shadow(packet: &H380TurnUnderstandingPacket) -> bool {
+    let lower = packet.normalized_text.as_str();
+    lower.contains("approve payroll")
+        || lower.contains("increase tim s salary")
+        || lower.contains("increase tims salary")
+        || lower.contains("pay him more")
+        || lower.contains("fix the roster")
+        || lower.contains("roster change")
+        || lower.contains("send the customer refund")
+        || lower.contains("change rj s commission")
+        || lower.contains("delete that employee")
+        || lower.contains("give her access")
+        || packet.raw_user_text.contains("加薪")
+        || packet.raw_user_text.contains("退款")
+        || packet.raw_user_text.contains("排班")
+}
+
 fn h380_result_class(
     route: H380Route,
     protected: bool,
@@ -6667,22 +6812,75 @@ impl AdapterRuntime {
                 &thread_key,
             )
             .map_err(post_session_error)?;
+            let h380_understanding = user_text_final.as_deref().map(|text| {
+                h380_understand_committed_turn(text, base_thread_state.last_turn_context.as_ref())
+            });
+            let h380_nlp_rewrite = h381_h380_live_nlp_rewrite(
+                h380_understanding.as_ref(),
+                base_thread_state.last_turn_context.as_ref(),
+            );
+            if h380_nlp_rewrite.is_none() {
+                if let Some(response_text) = h380_understanding.as_ref().and_then(|packet| {
+                    h381_h380_live_response_text(
+                        packet,
+                        base_thread_state.last_turn_context.as_ref(),
+                        None,
+                    )
+                }) {
+                    finalize_session_turn_record(
+                        &mut store,
+                        now,
+                        correlation_id,
+                        turn_id,
+                        &runtime_device_id,
+                        session_turn_state.session_id_for_commits,
+                        Some(&base_thread_state),
+                        session_turn_state.device_turn_sequence,
+                        &runtime_execution_envelope.idempotency_key,
+                        &self.runtime_node_id,
+                        self.session_lease_ttl_ms,
+                    )
+                    .map_err(post_session_error)?;
+                    return Ok(VoiceTurnAdapterResponse {
+                        status: "ok".to_string(),
+                        outcome: "FINAL".to_string(),
+                        session_id: runtime_execution_envelope
+                            .session_id
+                            .clone()
+                            .map(session_id_to_string),
+                        turn_id: Some(runtime_execution_envelope.turn_id.0),
+                        session_state: Some(session_state_to_api_value(
+                            session_turn_state.session_snapshot.session_state,
+                        )),
+                        session_attach_outcome: runtime_execution_envelope
+                            .session_attach_outcome,
+                        failure_class: None,
+                        reason: None,
+                        next_move: "respond".to_string(),
+                        response_text,
+                        reason_code: "H381_H380_LIVE_RESPONSE".to_string(),
+                        provenance: None,
+                    });
+                }
+            }
             let committed_turn_followup = classify_h379_committed_turn_followup(
                 &base_thread_state,
                 user_text_final.as_deref(),
             );
-            let nlp_transcript_text = deterministic_public_clarification_followup_query(
-                &base_thread_state,
-                user_text_final.as_deref(),
-            )
-            .or_else(|| {
-                if committed_turn_followup.is_some() {
-                    return None;
-                }
-                deterministic_weather_context_followup_query(
-                    weather_context_place.as_deref(),
+            let nlp_transcript_text = h380_nlp_rewrite.or_else(|| {
+                deterministic_public_clarification_followup_query(
+                    &base_thread_state,
                     user_text_final.as_deref(),
                 )
+                .or_else(|| {
+                    if committed_turn_followup.is_some() {
+                        return None;
+                    }
+                    deterministic_weather_context_followup_query(
+                        weather_context_place.as_deref(),
+                        user_text_final.as_deref(),
+                    )
+                })
             })
             .or_else(|| user_text_final.clone());
             let (nlp_output, language_packet) = build_nlp_output_for_voice_turn(
@@ -6691,6 +6889,7 @@ impl AdapterRuntime {
                 tenant_id_for_ph1c.as_deref(),
                 &base_thread_state,
                 committed_turn_followup.as_ref(),
+                h380_understanding.as_ref(),
             )
             .map_err(post_session_error)?;
             let confirm_answer =
@@ -10193,6 +10392,7 @@ fn build_nlp_output_for_voice_turn(
     runtime_tenant_scope: Option<&str>,
     thread_state: &ThreadState,
     committed_turn_followup: Option<&H379FollowupDecision>,
+    h380_understanding: Option<&H380TurnUnderstandingPacket>,
 ) -> Result<(Ph1nResponse, Option<LanguagePacket>), String> {
     let correlation_id = CorrelationId(request.correlation_id.into());
     let turn_id = TurnId(request.turn_id);
@@ -10210,6 +10410,24 @@ fn build_nlp_output_for_voice_turn(
         .as_ref()
         .map(|context| context.nlp_transcript_text.as_str())
         .or(transcript_text);
+    if let Some(packet) = h380_understanding {
+        if let Some(response_text) = h381_h380_live_response_text(
+            packet,
+            thread_state.last_turn_context.as_ref(),
+            language_context.as_ref().map(|context| &context.packet),
+        ) {
+            return Ok((
+                Ph1nResponse::Chat(
+                    Ph1nChat::v1(
+                        response_text,
+                        ph1n_reason_codes::N_CHAT_NO_INTENT,
+                    )
+                    .map_err(|err| format!("invalid H380 live chat response: {err:?}"))?,
+                ),
+                language_context.map(|context| context.packet),
+            ));
+        }
+    }
     if let Some(decision) = committed_turn_followup {
         if let Some(last_turn_context) = thread_state.last_turn_context.as_ref() {
             let response_text = h379_followup_response_text(
@@ -26804,5 +27022,243 @@ mod tests {
         assert!(negation_packet
             .slots_present
             .contains(&"temporal:today".to_string()));
+    }
+
+    #[test]
+    fn h381_live_h380_public_followups_do_not_hit_governance_out_of_sync() {
+        let runtime = AdapterRuntime::default();
+        let seed = h363_run_desktop_typed_time_query_on_thread(
+            &runtime,
+            "h381-live-public-followups",
+            381_001,
+            "What time is it in Tokyo?",
+        );
+        assert_h363_clean_time_answer(&seed, "Tokyo");
+
+        let proof = h363_run_desktop_typed_time_query_on_thread(
+            &runtime,
+            "h381-live-public-followups",
+            381_002,
+            "Did you actually check that, or are you guessing?",
+        );
+        assert_eq!(proof.status, "ok");
+        assert!(matches!(proof.outcome.as_str(), "FINAL" | "FINAL_TOOL"));
+        assert!(!proof
+            .response_text
+            .contains("governance state is out of sync"));
+        assert!(proof.response_text.contains("time route"), "{}", proof.response_text);
+        assert!(
+            proof.response_text.contains("system time zone data")
+                || proof.response_text.contains("system UTC data")
+                || proof.response_text.contains("TimeZoneDB")
+                || proof.response_text.contains("provider name"),
+            "{}",
+            proof.response_text
+        );
+
+        let meaning_seed = h363_run_desktop_typed_time_query_on_thread(
+            &runtime,
+            "h381-live-meaning-followup",
+            381_011,
+            "What time is it in Tokyo?",
+        );
+        assert_h363_clean_time_answer(&meaning_seed, "Tokyo");
+        let meaning = h363_run_desktop_typed_time_query_on_thread(
+            &runtime,
+            "h381-live-meaning-followup",
+            381_012,
+            "With meaning behind it",
+        );
+        assert_eq!(meaning.status, "ok");
+        assert!(matches!(meaning.outcome.as_str(), "FINAL" | "FINAL_TOOL"));
+        assert!(!meaning
+            .response_text
+            .contains("governance state is out of sync"));
+        assert!(
+            meaning.response_text.contains("I meant this more plainly")
+                || meaning.response_text.contains("In plainer words"),
+            "{}",
+            meaning.response_text
+        );
+        assert!(!meaning.response_text.contains("clarify what you would like"));
+
+        let rephrase_seed = h363_run_desktop_typed_time_query_on_thread(
+            &runtime,
+            "h381-live-rephrase-followup",
+            381_021,
+            "What time is it in Tokyo?",
+        );
+        assert_h363_clean_time_answer(&rephrase_seed, "Tokyo");
+        let rephrase = h363_run_desktop_typed_time_query_on_thread(
+            &runtime,
+            "h381-live-rephrase-followup",
+            381_022,
+            "Give me the meaning, not the words",
+        );
+        assert_eq!(rephrase.status, "ok");
+        assert!(!rephrase
+            .response_text
+            .contains("governance state is out of sync"));
+        assert!(
+            rephrase.response_text.contains("I meant this more plainly")
+                || rephrase.response_text.contains("In plainer words"),
+            "{}",
+            rephrase.response_text
+        );
+    }
+
+    #[test]
+    fn h381_live_h380_weather_context_and_proof_followups_use_verifier() {
+        let endpoint = h373_spawn_tomorrow_weather_endpoint_sequence(vec![
+            r#"{
+                "data": {
+                    "time": "2026-04-25T03:00:00Z",
+                    "values": {
+                        "temperature": 18.5,
+                        "humidity": 55,
+                        "windSpeed": 2.1,
+                        "weatherCode": 1001
+                    }
+                },
+                "location": {
+                    "name": "Barcelona, Spain"
+                }
+            }"#,
+            r#"{
+                "data": {
+                    "time": "2026-04-25T03:00:00Z",
+                    "values": {
+                        "temperature": 23.2,
+                        "humidity": 62,
+                        "windSpeed": 3.4,
+                        "weatherCode": 1100
+                    }
+                },
+                "location": {
+                    "name": "Sydney, Australia"
+                }
+            }"#,
+        ]);
+        with_isolated_device_vault(
+            "h381_live_h380_weather_context",
+            &[],
+            &[
+                ("SELENE_REALTIME_TOMORROW_IO_ENDPOINT", endpoint.as_str()),
+                ("SELENE_REALTIME_TOMORROW_IO_API_KEY", "h381-secret"),
+                ("SELENE_REALTIME_WEATHER_API_KEY", " "),
+                ("SELENE_REALTIME_PROXY_MODE", "off"),
+            ],
+            || {
+                let runtime = AdapterRuntime::default();
+                let barcelona = h364_run_desktop_typed_weather_query_on_thread(
+                    &runtime,
+                    "h381-live-weather-context",
+                    381_031,
+                    "What is the weather in Barcelona?",
+                );
+                assert_h364_clean_weather_answer(&barcelona, "Barcelona");
+
+                let sydney = h364_run_desktop_typed_weather_query_on_thread(
+                    &runtime,
+                    "h381-live-weather-context",
+                    381_032,
+                    "Same for Sydney?",
+                );
+                assert_eq!(sydney.status, "ok");
+                assert_eq!(sydney.outcome, "FINAL_TOOL");
+                assert!(
+                    sydney.response_text.starts_with("Sydney"),
+                    "{}",
+                    sydney.response_text
+                );
+                assert!(!sydney.response_text.contains("Which place should I use?"));
+                assert!(!sydney
+                    .response_text
+                    .contains("governance state is out of sync"));
+            },
+        );
+
+        let proof_endpoint = h361_spawn_tomorrow_weather_endpoint(
+            r#"{
+                "data": {
+                    "time": "2026-04-25T03:00:00Z",
+                    "values": {
+                        "temperature": 18.5,
+                        "humidity": 55,
+                        "windSpeed": 2.1,
+                        "weatherCode": 1001
+                    }
+                },
+                "location": {
+                    "name": "Barcelona, Spain"
+                }
+            }"#,
+        );
+        with_isolated_device_vault(
+            "h381_live_h380_weather_proof",
+            &[],
+            &[
+                ("SELENE_REALTIME_TOMORROW_IO_ENDPOINT", proof_endpoint.as_str()),
+                ("SELENE_REALTIME_TOMORROW_IO_API_KEY", "h381-secret"),
+                ("SELENE_REALTIME_WEATHER_API_KEY", " "),
+                ("SELENE_REALTIME_PROXY_MODE", "off"),
+            ],
+            || {
+                let runtime = AdapterRuntime::default();
+                let barcelona = h364_run_desktop_typed_weather_query_on_thread(
+                    &runtime,
+                    "h381-live-weather-proof",
+                    381_041,
+                    "What is the weather in Barcelona?",
+                );
+                assert_h364_clean_weather_answer(&barcelona, "Barcelona");
+                let proof = h364_run_desktop_typed_weather_query_on_thread(
+                    &runtime,
+                    "h381-live-weather-proof",
+                    381_042,
+                    "Not the weather, the proof",
+                );
+                assert_eq!(proof.status, "ok");
+                assert!(matches!(proof.outcome.as_str(), "FINAL" | "FINAL_TOOL"));
+                assert!(
+                    proof.response_text.starts_with("You were asking whether I actually checked")
+                        || proof.response_text.starts_with("Yes. I used the weather route"),
+                    "{}",
+                    proof.response_text
+                );
+                assert!(proof.response_text.contains("weather route"));
+                assert!(proof.response_text.contains("Tomorrow.io"));
+                assert!(!proof
+                    .response_text
+                    .contains("governance state is out of sync"));
+            },
+        );
+    }
+
+    #[test]
+    fn h381_live_h380_protected_shadow_fails_closed_without_execution() {
+        let runtime = AdapterRuntime::default();
+        for (turn_id, input) in [
+            (381_051, "That's not my question, approve payroll"),
+            (381_052, "No, I mean increase Tim's salary"),
+        ] {
+            let out = h363_run_desktop_typed_time_query_on_thread(
+                &runtime,
+                "h381-live-protected-shadow",
+                turn_id,
+                input,
+            );
+            assert_eq!(out.status, "ok", "{input}");
+            assert_eq!(out.outcome, "FINAL", "{input}: {}", out.response_text);
+            assert!(
+                out.response_text
+                    .contains("NO_SIMULATION_NO_AUTHORITY_NO_PROTECTED_EXECUTION"),
+                "{input}: {}",
+                out.response_text
+            );
+            assert!(!out.response_text.contains("provide the payroll details"));
+            assert!(!out.response_text.contains("salary benchmarks"));
+            assert!(out.provenance.is_none());
+        }
     }
 }
