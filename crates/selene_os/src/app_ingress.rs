@@ -8533,6 +8533,12 @@ fn weather_place_from_query(query: &str) -> String {
         .trim_matches(|ch: char| ch == '?' || ch == '.')
         .to_string();
     let lower = cleaned.to_ascii_lowercase();
+    if let Some(place) = weather_chinese_place_from_query(cleaned.as_str()) {
+        return place.to_string();
+    }
+    if lower.starts_with("rain ") {
+        cleaned = cleaned[5..].trim().to_string();
+    }
     for marker in [
         "for the next four days in ",
         "for the next 4 days in ",
@@ -8590,6 +8596,19 @@ fn weather_place_from_query(query: &str) -> String {
         .to_string()
 }
 
+fn weather_chinese_place_from_query(query: &str) -> Option<&'static str> {
+    if query.contains("悉尼") {
+        return Some("Sydney");
+    }
+    if query.contains("巴塞罗那") || query.contains("巴塞隆拿") {
+        return Some("Barcelona");
+    }
+    if query.contains("马德里") || query.contains("馬德里") {
+        return Some("Madrid");
+    }
+    None
+}
+
 fn weather_strip_place_suffixes(place: &str) -> String {
     let mut cleaned = place.trim().to_string();
     loop {
@@ -8631,6 +8650,11 @@ fn weather_query_requests_multi_day_forecast(query: &str) -> bool {
         || normalized.contains("next 4 days")
         || normalized.contains("multi day")
         || normalized.contains("multiday")
+        || normalized.contains("预报")
+        || normalized.contains("預報")
+        || normalized.contains("未来四天")
+        || normalized.contains("未來四天")
+        || normalized.contains("四天")
 }
 
 fn weather_query_asks_rain(query: &str) -> bool {
@@ -8641,6 +8665,9 @@ fn weather_query_asks_rain(query: &str) -> bool {
         || normalized.contains("snow")
         || normalized.contains("snowing")
         || normalized.contains("precipitation")
+        || normalized.contains("下雨")
+        || normalized.contains("降雨")
+        || normalized.contains("雨")
 }
 
 fn weather_normalize_query_place(place: &str) -> String {
@@ -8653,11 +8680,14 @@ fn weather_normalize_query_place(place: &str) -> String {
         | "forecast" | "weather" | "there" | "there now" | "here" | "that place"
         | "that location" => String::new(),
         "barcelona" | "barcelona spain" => "Barcelona".to_string(),
+        "巴塞罗那" | "巴塞隆拿" => "Barcelona".to_string(),
         "kunchan" | "kunchan china" | "kunshan" | "kunshan china" => "Kunshan, China".to_string(),
         "new york" | "new york city" | "nyc" => "New York".to_string(),
         "lisbon" | "lisbon portugal" => "Lisbon".to_string(),
         "madrid" | "madrid spain" => "Madrid".to_string(),
+        "马德里" | "馬德里" => "Madrid".to_string(),
         "sydney" | "sydney australia" | "sydney new south wales australia" => "Sydney".to_string(),
+        "悉尼" => "Sydney".to_string(),
         "tokyo" | "tokyo japan" => "Tokyo".to_string(),
         "council of the city of sydney"
         | "council of the city of sydney new south wales australia"
@@ -9367,6 +9397,15 @@ fn clean_weather_place_label(place: &str) -> String {
         return "that place".to_string();
     }
     let normalized = normalize_place_key(trimmed);
+    if normalized == "悉尼" {
+        return "Sydney".to_string();
+    }
+    if normalized == "巴塞罗那" || normalized == "巴塞隆拿" {
+        return "Barcelona".to_string();
+    }
+    if normalized == "马德里" || normalized == "馬德里" {
+        return "Madrid".to_string();
+    }
     if normalized.contains("council of the city of sydney")
         || normalized == "city of sydney"
         || normalized == "sydney new south wales australia"
@@ -27069,5 +27108,135 @@ mod tests {
             .map(|source| source.url.as_str())
             .unwrap_or_default();
         assert!(source_url.contains("location=Kunshan"));
+    }
+
+    #[test]
+    fn h377_weather_tool_normalizes_chinese_sydney_rain_query() {
+        let _guard = h361_weather_env_lock();
+        let endpoint = h361_spawn_tomorrow_weather_endpoint(
+            r#"{
+                "data": {
+                    "time": "2026-04-25T03:00:00Z",
+                    "values": {
+                        "temperature": 23.0,
+                        "humidity": 52,
+                        "windSpeed": 5.1,
+                        "weatherCode": 1000
+                    }
+                },
+                "location": {
+                    "name": "Sydney, Australia"
+                }
+            }"#,
+        );
+        let _endpoint = H361ScopedEnvVar::set("SELENE_REALTIME_TOMORROW_IO_ENDPOINT", &endpoint);
+        let _api_key = H361ScopedEnvVar::set("SELENE_REALTIME_TOMORROW_IO_API_KEY", "h377-secret");
+        let _proxy = H361ScopedEnvVar::set("SELENE_REALTIME_PROXY_MODE", "off");
+
+        let request = h361_weather_tool_request("悉尼现在下雨吗？");
+        let response = maybe_build_weather_tool_response(&request)
+            .expect("weather tool response should build")
+            .expect("Chinese rain query should use weather provider");
+        match response.tool_result.as_ref() {
+            Some(ToolResult::Weather { summary }) => {
+                assert!(summary.contains("Sydney is 23°C"), "{summary}");
+                assert!(summary.contains("current conditions do not indicate rain"));
+                assert!(!summary.starts_with("There is"));
+                assert!(!summary.contains("provider_payload"));
+            }
+            other => panic!("expected weather tool result, got {other:?}"),
+        }
+        let source_url = response
+            .source_metadata
+            .as_ref()
+            .and_then(|metadata| metadata.sources.first())
+            .map(|source| source.url.as_str())
+            .unwrap_or_default();
+        assert!(source_url.contains("location=Sydney"), "{source_url}");
+    }
+
+    #[test]
+    fn h377_weather_tool_leading_rain_phrase_uses_city_place() {
+        let _guard = h361_weather_env_lock();
+        let endpoint = h361_spawn_tomorrow_weather_endpoint(
+            r#"{
+                "data": {
+                    "time": "2026-04-25T03:00:00Z",
+                    "values": {
+                        "temperature": 12.9,
+                        "humidity": 63,
+                        "windSpeed": 4.1,
+                        "weatherCode": 1101
+                    }
+                },
+                "location": {
+                    "name": "Barcelona, Spain"
+                }
+            }"#,
+        );
+        let _endpoint = H361ScopedEnvVar::set("SELENE_REALTIME_TOMORROW_IO_ENDPOINT", &endpoint);
+        let _api_key = H361ScopedEnvVar::set("SELENE_REALTIME_TOMORROW_IO_API_KEY", "h377-secret");
+        let _proxy = H361ScopedEnvVar::set("SELENE_REALTIME_PROXY_MODE", "off");
+
+        let request = h361_weather_tool_request("rain Barcelona tomorrow maybe?");
+        let response = maybe_build_weather_tool_response(&request)
+            .expect("weather tool response should build")
+            .expect("bounded rain phrase should use weather provider");
+        match response.tool_result.as_ref() {
+            Some(ToolResult::Weather { summary }) => {
+                assert!(summary.contains("Barcelona is 12.9°C"), "{summary}");
+                assert!(!summary.contains("rain Barcelona"));
+                assert!(!summary.contains("provider_payload"));
+            }
+            other => panic!("expected weather tool result, got {other:?}"),
+        }
+        let source_url = response
+            .source_metadata
+            .as_ref()
+            .and_then(|metadata| metadata.sources.first())
+            .map(|source| source.url.as_str())
+            .unwrap_or_default();
+        assert!(source_url.contains("location=Barcelona"), "{source_url}");
+    }
+
+    #[test]
+    fn h377_weather_tool_chinese_forecast_uses_forecast_provider_path() {
+        let _guard = h361_weather_env_lock();
+        let endpoint = h361_spawn_tomorrow_weather_endpoint(
+            r#"{
+                "timelines": {
+                    "daily": [
+                        {
+                            "time": "2026-04-26T00:00:00Z",
+                            "values": {
+                                "temperatureAvg": 22.0,
+                                "weatherCodeMax": 1001,
+                                "precipitationProbabilityAvg": 30
+                            }
+                        }
+                    ]
+                },
+                "location": {
+                    "name": "Sydney, Australia"
+                }
+            }"#,
+        );
+        let _endpoint = H361ScopedEnvVar::set("SELENE_REALTIME_TOMORROW_IO_ENDPOINT", &endpoint);
+        let _api_key = H361ScopedEnvVar::set("SELENE_REALTIME_TOMORROW_IO_API_KEY", "h377-secret");
+        let _proxy = H361ScopedEnvVar::set("SELENE_REALTIME_PROXY_MODE", "off");
+
+        let request = h361_weather_tool_request("悉尼未来四天天气预报？");
+        let response = maybe_build_weather_tool_response(&request)
+            .expect("weather forecast response should build")
+            .expect("Chinese forecast query should use weather provider");
+        match response.tool_result.as_ref() {
+            Some(ToolResult::Weather { summary }) => {
+                assert!(summary.starts_with("Sydney forecast:"), "{summary}");
+                assert!(summary.contains("2026-04-26"));
+                assert!(!summary.contains("multi-day forecast lane"));
+                assert!(!summary.contains("provider_payload"));
+            }
+            other => panic!("expected weather forecast result, got {other:?}"),
+        }
     }
 }

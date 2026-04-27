@@ -8955,6 +8955,10 @@ fn apply_language_continuity_to_execution_outcome(
     };
     if let Some(chinese_time) = translate_time_response_for_build1c(response_text) {
         execution_outcome.response_text = Some(chinese_time);
+        return;
+    }
+    if let Some(chinese_weather) = translate_weather_response_for_build1c(response_text) {
+        execution_outcome.response_text = Some(chinese_weather);
     }
 }
 
@@ -9043,11 +9047,121 @@ fn translate_time_response_for_build1c(response_text: &str) -> Option<String> {
     ))
 }
 
+fn translate_weather_response_for_build1c(response_text: &str) -> Option<String> {
+    let trimmed = response_text.trim();
+    if !trimmed.contains("°C") && !trimmed.contains("forecast:") {
+        return None;
+    }
+    let sentence = trimmed.trim_end_matches('.');
+    if let Some((place, entries)) = sentence.split_once(" rain forecast: ") {
+        return Some(format!(
+            "{}降雨预报：{}。",
+            chinese_place_label_for_build1c(place),
+            translate_weather_forecast_entries_for_build1c(entries)
+        ));
+    }
+    if let Some((place, entries)) = sentence.split_once(" forecast: ") {
+        return Some(format!(
+            "{}天气预报：{}。",
+            chinese_place_label_for_build1c(place),
+            translate_weather_forecast_entries_for_build1c(entries)
+        ));
+    }
+    if let Some(prefix) =
+        sentence.strip_suffix(" right now, so current conditions do not indicate rain")
+    {
+        let (place, temp, condition) = weather_place_temp_condition_for_build1c(prefix, " and ")?;
+        return Some(format!(
+            "{}现在是{}，天气{}；当前条件不显示下雨。",
+            chinese_place_label_for_build1c(place),
+            temp.trim(),
+            chinese_weather_condition_label_for_build1c(condition)
+        ));
+    }
+    if let Some(prefix) = sentence.strip_suffix(" right now") {
+        if let Some((place, temp, condition)) =
+            weather_place_temp_condition_for_build1c(prefix, " with ")
+        {
+            return Some(format!(
+                "{}现在是{}，正在{}。",
+                chinese_place_label_for_build1c(place),
+                temp.trim(),
+                chinese_weather_condition_label_for_build1c(condition)
+            ));
+        }
+    }
+    let (place, temp, condition) = weather_place_temp_condition_for_build1c(sentence, " and ")?;
+    Some(format!(
+        "{}现在是{}，天气{}。",
+        chinese_place_label_for_build1c(place),
+        temp.trim(),
+        chinese_weather_condition_label_for_build1c(condition)
+    ))
+}
+
+fn weather_place_temp_condition_for_build1c<'a>(
+    text: &'a str,
+    separator: &str,
+) -> Option<(&'a str, &'a str, &'a str)> {
+    let (place, rest) = text.split_once(" is ")?;
+    let (temp, condition) = rest.split_once(separator)?;
+    if place.trim().is_empty() || temp.trim().is_empty() || condition.trim().is_empty() {
+        return None;
+    }
+    Some((place.trim(), temp.trim(), condition.trim()))
+}
+
+fn translate_weather_forecast_entries_for_build1c(entries: &str) -> String {
+    entries
+        .split("; ")
+        .map(|entry| {
+            let Some((date, rest)) = entry.split_once(": ") else {
+                return entry.to_string();
+            };
+            let translated = rest
+                .replace(" rain chance", " 降雨概率")
+                .replace(" and ", "，天气")
+                .replace(", ", "，");
+            format!("{date}：{translated}")
+        })
+        .collect::<Vec<_>>()
+        .join("；")
+}
+
+fn chinese_weather_condition_label_for_build1c(condition: &str) -> String {
+    let normalized = condition.trim().trim_matches('.').to_ascii_lowercase();
+    if normalized.contains("partly cloudy") {
+        "局部多云".to_string()
+    } else if normalized.contains("mostly clear") {
+        "大多晴朗".to_string()
+    } else if normalized.contains("cloudy") {
+        "多云".to_string()
+    } else if normalized.contains("clear") || normalized.contains("sunny") {
+        "晴朗".to_string()
+    } else if normalized.contains("drizzle") {
+        "毛毛雨".to_string()
+    } else if normalized.contains("heavy rain") {
+        "大雨".to_string()
+    } else if normalized.contains("rain") {
+        "下雨".to_string()
+    } else if normalized.contains("snow") {
+        "下雪".to_string()
+    } else if normalized.contains("thunderstorm") {
+        "雷雨".to_string()
+    } else if normalized.contains("current conditions") {
+        "当前天气".to_string()
+    } else {
+        condition.trim().trim_matches('.').to_string()
+    }
+}
+
 fn chinese_place_label_for_build1c(place: &str) -> String {
     match place.trim().to_ascii_lowercase().as_str() {
         "tokyo" => "东京".to_string(),
         "new york" => "纽约".to_string(),
         "sydney" => "悉尼".to_string(),
+        "barcelona" => "巴塞罗那".to_string(),
+        "madrid" => "马德里".to_string(),
         _ => place.trim().to_string(),
     }
 }
@@ -23015,6 +23129,178 @@ mod tests {
                         out.response_text
                     );
                 }
+            },
+        );
+    }
+
+    #[test]
+    fn h377_chinese_weather_and_rain_direct_turns_route_and_answer_chinese() {
+        let endpoint = h373_spawn_tomorrow_weather_endpoint_sequence(vec![
+            r#"{
+                "data": {
+                    "time": "2026-04-25T03:00:00Z",
+                    "values": {
+                        "temperature": 23.0,
+                        "humidity": 52,
+                        "windSpeed": 5.1,
+                        "weatherCode": 1000
+                    }
+                },
+                "location": {
+                    "name": "Sydney, Australia"
+                }
+            }"#,
+            r#"{
+                "data": {
+                    "time": "2026-04-25T03:00:00Z",
+                    "values": {
+                        "temperature": 23.0,
+                        "humidity": 52,
+                        "windSpeed": 5.1,
+                        "weatherCode": 1000
+                    }
+                },
+                "location": {
+                    "name": "Sydney, Australia"
+                }
+            }"#,
+        ]);
+        with_isolated_device_vault(
+            "h377-chinese-weather-rain-sydney",
+            &[],
+            &[
+                ("SELENE_REALTIME_TOMORROW_IO_ENDPOINT", endpoint.as_str()),
+                ("SELENE_REALTIME_TOMORROW_IO_API_KEY", "h377-secret"),
+                ("SELENE_REALTIME_WEATHER_API_KEY", " "),
+                ("SELENE_REALTIME_PROXY_MODE", "off"),
+            ],
+            || {
+                let runtime = AdapterRuntime::default();
+                let weather = h364_run_desktop_typed_weather_query_on_thread(
+                    &runtime,
+                    "h377-chinese-weather-rain-sydney",
+                    377_001,
+                    "悉尼现在天气怎么样？",
+                );
+                assert_eq!(weather.status, "ok");
+                assert_eq!(weather.outcome, "FINAL_TOOL");
+                assert_eq!(weather.response_text, "悉尼现在是23°C，天气晴朗。");
+                assert!(!weather.response_text.contains("Sydney is"));
+                assert!(!weather.response_text.contains("provider_payload"));
+                assert!(!weather.response_text.contains("governance"));
+
+                let rain = h364_run_desktop_typed_weather_query_on_thread(
+                    &runtime,
+                    "h377-chinese-weather-rain-sydney",
+                    377_002,
+                    "悉尼现在下雨吗？",
+                );
+                assert_eq!(rain.status, "ok");
+                assert_eq!(rain.outcome, "FINAL_TOOL");
+                assert_eq!(
+                    rain.response_text,
+                    "悉尼现在是23°C，天气晴朗；当前条件不显示下雨。"
+                );
+                assert!(!rain.response_text.contains("There is"));
+                assert!(!rain.response_text.contains("provider_payload"));
+                assert!(!rain.response_text.contains("governance"));
+            },
+        );
+    }
+
+    #[test]
+    fn h377_mixed_sydney_rain_routes_to_weather_without_bad_location_text() {
+        let endpoint = h361_spawn_tomorrow_weather_endpoint(
+            r#"{
+                "data": {
+                    "time": "2026-04-25T03:00:00Z",
+                    "values": {
+                        "temperature": 23.0,
+                        "humidity": 52,
+                        "windSpeed": 5.1,
+                        "weatherCode": 1000
+                    }
+                },
+                "location": {
+                    "name": "Sydney, Australia"
+                }
+            }"#,
+        );
+        with_isolated_device_vault(
+            "h377-mixed-sydney-rain",
+            &[],
+            &[
+                ("SELENE_REALTIME_TOMORROW_IO_ENDPOINT", endpoint.as_str()),
+                ("SELENE_REALTIME_TOMORROW_IO_API_KEY", "h377-secret"),
+                ("SELENE_REALTIME_WEATHER_API_KEY", " "),
+                ("SELENE_REALTIME_PROXY_MODE", "off"),
+            ],
+            || {
+                let runtime = AdapterRuntime::default();
+                let answer = h364_run_desktop_typed_weather_query_on_thread(
+                    &runtime,
+                    "h377-mixed-sydney-rain",
+                    377_011,
+                    "Is it raining in 悉尼?",
+                );
+                assert_eq!(answer.status, "ok");
+                assert_eq!(answer.outcome, "FINAL_TOOL");
+                assert!(
+                    answer.response_text.contains("Sydney is 23°C")
+                        || answer.response_text.contains("悉尼现在是23°C"),
+                    "{}",
+                    answer.response_text
+                );
+                assert!(!answer.response_text.contains("Cley Next The Sea"));
+                assert!(!answer.response_text.starts_with("Like is"));
+                assert!(!answer.response_text.starts_with("There is"));
+                assert!(!answer.response_text.contains("provider_payload"));
+                assert!(!answer.response_text.contains("governance"));
+            },
+        );
+    }
+
+    #[test]
+    fn h377_bounded_rain_phrase_uses_barcelona_weather_place() {
+        let endpoint = h361_spawn_tomorrow_weather_endpoint(
+            r#"{
+                "data": {
+                    "time": "2026-04-25T03:00:00Z",
+                    "values": {
+                        "temperature": 12.9,
+                        "humidity": 63,
+                        "windSpeed": 4.1,
+                        "weatherCode": 1101
+                    }
+                },
+                "location": {
+                    "name": "Barcelona, Spain"
+                }
+            }"#,
+        );
+        with_isolated_device_vault(
+            "h377-rain-barcelona-place",
+            &[],
+            &[
+                ("SELENE_REALTIME_TOMORROW_IO_ENDPOINT", endpoint.as_str()),
+                ("SELENE_REALTIME_TOMORROW_IO_API_KEY", "h377-secret"),
+                ("SELENE_REALTIME_WEATHER_API_KEY", " "),
+                ("SELENE_REALTIME_PROXY_MODE", "off"),
+            ],
+            || {
+                let runtime = AdapterRuntime::default();
+                let answer = h364_run_desktop_typed_weather_query_on_thread(
+                    &runtime,
+                    "h377-rain-barcelona-place",
+                    377_021,
+                    "rain Barcelona tomorrow maybe?",
+                );
+                assert_eq!(answer.status, "ok");
+                assert_eq!(answer.outcome, "FINAL_TOOL");
+                assert!(answer.response_text.contains("Barcelona is 12.9°C"));
+                assert!(!answer.response_text.contains("rain Barcelona"));
+                assert!(!answer.response_text.contains("provider_payload"));
+                assert!(!answer.response_text.contains("governance"));
             },
         );
     }

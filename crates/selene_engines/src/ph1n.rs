@@ -266,6 +266,13 @@ fn looks_like_weather_query(lower: &str) -> bool {
         || lower.contains("rain forecast")
         || lower.contains("snow forecast")
         || lower.contains("precipitation")
+        || lower.contains("天气")
+        || lower.contains("天氣")
+        || lower.contains("下雨")
+        || lower.contains("降雨")
+        || lower.contains("雨")
+        || lower.contains("预报")
+        || lower.contains("預報")
         || (lower.contains("forecast")
             && (lower.contains(" rain")
                 || lower.contains("weather")
@@ -4201,6 +4208,27 @@ mod tests {
                 assert!(!d.requires_confirmation);
             }
             _ => panic!("expected deterministic weather intent for bounded rain phrase"),
+        }
+    }
+
+    #[test]
+    fn h377_chinese_and_mixed_weather_phrases_route_to_weather() {
+        let rt = Ph1nRuntime::new(Ph1nConfig::mvp_v1());
+        for prompt in [
+            "悉尼现在天气怎么样？",
+            "悉尼现在下雨吗？",
+            "悉尼未来四天天气预报？",
+            "Is it raining in 悉尼?",
+        ] {
+            let out = rt.run(&req(prompt, "zh")).unwrap();
+            match out {
+                Ph1nResponse::IntentDraft(d) => {
+                    assert_eq!(d.intent_type, IntentType::WeatherQuery);
+                    assert_eq!(d.overall_confidence, OverallConfidence::High);
+                    assert!(!d.requires_confirmation);
+                }
+                _ => panic!("expected deterministic weather intent for {prompt}"),
+            }
         }
     }
 }
