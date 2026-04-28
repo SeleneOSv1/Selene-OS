@@ -586,6 +586,7 @@ pub struct VoiceTurnGdeltCorroborationMetadata {
     pub h398_route_outcome: String,
     pub h399_proxy_route_outcome: String,
     pub h400_proxy_tls_connect_outcome: String,
+    pub h401_proxy_protocol_route_outcome: String,
     pub direct_curl_probe_status: String,
     pub rust_transport_probe_status: String,
     pub official_docs_reachability_status: String,
@@ -615,10 +616,22 @@ pub struct VoiceTurnGdeltCorroborationMetadata {
     pub explicit_proxy_credentials_rejected: bool,
     pub approved_proxy_route_used: bool,
     pub proxy_hostname_sni_preserved: bool,
+    pub selected_proxy_protocol: String,
+    pub socks_proxy_configured: bool,
+    pub socks_proxy_protocol: String,
+    pub socks_proxy_host_redacted: String,
+    pub socks_proxy_port_recorded: String,
+    pub socks_proxy_remote_dns: bool,
+    pub socks_proxy_credentials_present: bool,
+    pub socks_proxy_credentials_rejected: bool,
+    pub socks_proxy_route_used: bool,
+    pub socks_proxy_runtime_supported: bool,
     pub proxy_connect_phase: String,
     pub proxy_connect_status: String,
     pub proxy_connect_failure_class: Option<String>,
     pub proxy_connect_failure_detail_redacted: Option<String>,
+    pub proxy_protocol_failure_class: Option<String>,
+    pub proxy_protocol_failure_detail_redacted: Option<String>,
     pub rust_transport_failure_class: Option<String>,
     pub rust_transport_failure_detail_redacted: Option<String>,
     pub curl_and_rust_compared: bool,
@@ -12944,6 +12957,8 @@ fn parse_gdelt_corroboration_packet(packet: &str) -> VoiceTurnGdeltCorroboration
             h399_proxy_route_outcome: "GDELT_APPROVED_PROXY_ROUTE_ACTIONABLE_BLOCKER".to_string(),
             h400_proxy_tls_connect_outcome: "GDELT_PROXY_TLS_CONNECT_ACTIONABLE_BLOCKER"
                 .to_string(),
+            h401_proxy_protocol_route_outcome:
+                "GDELT_PROXY_PROTOCOL_ROUTE_FINAL_ACTIONABLE_BLOCKER".to_string(),
             direct_curl_probe_status: "not_reported".to_string(),
             rust_transport_probe_status: "not_reported".to_string(),
             official_docs_reachability_status: "not_reported".to_string(),
@@ -12956,6 +12971,10 @@ fn parse_gdelt_corroboration_packet(packet: &str) -> VoiceTurnGdeltCorroboration
             explicit_proxy_protocol: "none".to_string(),
             explicit_proxy_host_redacted: "none".to_string(),
             explicit_proxy_port_recorded: "none".to_string(),
+            selected_proxy_protocol: "none".to_string(),
+            socks_proxy_protocol: "none".to_string(),
+            socks_proxy_host_redacted: "none".to_string(),
+            socks_proxy_port_recorded: "none".to_string(),
             proxy_connect_phase: "not_run".to_string(),
             proxy_connect_status: "not_run".to_string(),
             dns_route_class: "not_reported".to_string(),
@@ -13123,6 +13142,10 @@ fn parse_gdelt_corroboration_packet(packet: &str) -> VoiceTurnGdeltCorroboration
             packet_field_value_any(packet, &["h400_proxy_tls_connect_outcome", "h400"])
                 .unwrap_or("GDELT_PROXY_TLS_CONNECT_ACTIONABLE_BLOCKER"),
         ),
+        h401_proxy_protocol_route_outcome: normalize_h401_proxy_protocol_route_outcome(
+            packet_field_value_any(packet, &["h401_proxy_protocol_route_outcome", "h401"])
+                .unwrap_or("GDELT_PROXY_PROTOCOL_ROUTE_FINAL_ACTIONABLE_BLOCKER"),
+        ),
         direct_curl_probe_status: packet_field_value_any(
             packet,
             &["direct_curl_probe_status", "curl"],
@@ -13273,6 +13296,42 @@ fn parse_gdelt_corroboration_packet(packet: &str) -> VoiceTurnGdeltCorroboration
             packet,
             &["proxy_hostname_sni_preserved", "xsni", "sn"],
         ),
+        selected_proxy_protocol: packet_field_value_any(
+            packet,
+            &["selected_proxy_protocol", "selp"],
+        )
+        .unwrap_or("none")
+        .to_string(),
+        socks_proxy_configured: packet_field_bool_any(packet, &["socks_proxy_configured", "skc"]),
+        socks_proxy_protocol: packet_field_value_any(packet, &["socks_proxy_protocol", "skpr"])
+            .unwrap_or("none")
+            .to_string(),
+        socks_proxy_host_redacted: packet_field_value_any(
+            packet,
+            &["socks_proxy_host_redacted", "skh"],
+        )
+        .unwrap_or("none")
+        .to_string(),
+        socks_proxy_port_recorded: packet_field_value_any(
+            packet,
+            &["socks_proxy_port_recorded", "skp"],
+        )
+        .unwrap_or("none")
+        .to_string(),
+        socks_proxy_remote_dns: packet_field_bool_any(packet, &["socks_proxy_remote_dns", "skrd"]),
+        socks_proxy_credentials_present: packet_field_bool_any(
+            packet,
+            &["socks_proxy_credentials_present", "skcr"],
+        ),
+        socks_proxy_credentials_rejected: packet_field_bool_any(
+            packet,
+            &["socks_proxy_credentials_rejected", "skrj"],
+        ),
+        socks_proxy_route_used: packet_field_bool_any(packet, &["socks_proxy_route_used", "sku"]),
+        socks_proxy_runtime_supported: packet_field_bool_any(
+            packet,
+            &["socks_proxy_runtime_supported", "skrt"],
+        ),
         proxy_connect_phase: packet_field_value_any(packet, &["proxy_connect_phase", "xcph"])
             .unwrap_or("not_run")
             .to_string(),
@@ -13288,6 +13347,18 @@ fn parse_gdelt_corroboration_packet(packet: &str) -> VoiceTurnGdeltCorroboration
         proxy_connect_failure_detail_redacted: packet_field_value_any(
             packet,
             &["proxy_connect_failure_detail_redacted", "xcfd"],
+        )
+        .filter(|value| *value != "none")
+        .map(ToString::to_string),
+        proxy_protocol_failure_class: packet_field_value_any(
+            packet,
+            &["proxy_protocol_failure_class", "ppfc"],
+        )
+        .filter(|value| *value != "none")
+        .map(ToString::to_string),
+        proxy_protocol_failure_detail_redacted: packet_field_value_any(
+            packet,
+            &["proxy_protocol_failure_detail_redacted", "ppfd"],
         )
         .filter(|value| *value != "none")
         .map(ToString::to_string),
@@ -13384,6 +13455,10 @@ fn apply_gdelt_h395_transport_packet(
         packet_field_value_any(packet, &["h400_proxy_tls_connect_outcome", "h400"])
             .unwrap_or(metadata.h400_proxy_tls_connect_outcome.as_str()),
     );
+    metadata.h401_proxy_protocol_route_outcome = normalize_h401_proxy_protocol_route_outcome(
+        packet_field_value_any(packet, &["h401_proxy_protocol_route_outcome", "h401"])
+            .unwrap_or(metadata.h401_proxy_protocol_route_outcome.as_str()),
+    );
     metadata.direct_curl_probe_status =
         packet_field_value_any(packet, &["direct_curl_probe_status", "curl"])
             .unwrap_or(metadata.direct_curl_probe_status.as_str())
@@ -13461,20 +13536,22 @@ fn apply_gdelt_h395_transport_packet(
         packet_field_value_any(packet, &["approved_proxy_route_policy", "xpol"])
             .unwrap_or(metadata.approved_proxy_route_policy.as_str())
             .to_string();
-    metadata.approved_proxy_route_failure_class = packet_field_value_any(
-        packet,
-        &["approved_proxy_route_failure_class", "xrc"],
-    )
-    .filter(|value| *value != "none")
-    .map(ToString::to_string)
-    .or_else(|| metadata.approved_proxy_route_failure_class.clone());
+    metadata.approved_proxy_route_failure_class =
+        packet_field_value_any(packet, &["approved_proxy_route_failure_class", "xrc"])
+            .filter(|value| *value != "none")
+            .map(ToString::to_string)
+            .or_else(|| metadata.approved_proxy_route_failure_class.clone());
     metadata.approved_proxy_route_failure_detail_redacted = packet_field_value_any(
         packet,
         &["approved_proxy_route_failure_detail_redacted", "xrd"],
     )
     .filter(|value| *value != "none")
     .map(ToString::to_string)
-    .or_else(|| metadata.approved_proxy_route_failure_detail_redacted.clone());
+    .or_else(|| {
+        metadata
+            .approved_proxy_route_failure_detail_redacted
+            .clone()
+    });
     metadata.explicit_proxy_protocol =
         packet_field_value_any(packet, &["explicit_proxy_protocol", "xproto", "xpr", "xp"])
             .unwrap_or(metadata.explicit_proxy_protocol.as_str())
@@ -13496,7 +13573,10 @@ fn apply_gdelt_h395_transport_packet(
     if packet_field_bool_any(packet, &["explicit_proxy_credentials_present", "xcr"]) {
         metadata.explicit_proxy_credentials_present = true;
     }
-    if packet_field_bool_any(packet, &["explicit_proxy_credentials_rejected", "xcrej", "xrj"]) {
+    if packet_field_bool_any(
+        packet,
+        &["explicit_proxy_credentials_rejected", "xcrej", "xrj"],
+    ) {
         metadata.explicit_proxy_credentials_rejected = true;
     }
     if packet_field_bool_any(packet, &["approved_proxy_route_used", "xuse", "xu"]) {
@@ -13505,10 +13585,43 @@ fn apply_gdelt_h395_transport_packet(
     if packet_field_bool_any(packet, &["proxy_hostname_sni_preserved", "xsni", "sn"]) {
         metadata.proxy_hostname_sni_preserved = true;
     }
-    metadata.proxy_connect_phase =
-        packet_field_value_any(packet, &["proxy_connect_phase", "xcph"])
-            .unwrap_or(metadata.proxy_connect_phase.as_str())
+    metadata.selected_proxy_protocol =
+        packet_field_value_any(packet, &["selected_proxy_protocol", "selp"])
+            .unwrap_or(metadata.selected_proxy_protocol.as_str())
             .to_string();
+    if packet_field_bool_any(packet, &["socks_proxy_configured", "skc"]) {
+        metadata.socks_proxy_configured = true;
+    }
+    metadata.socks_proxy_protocol =
+        packet_field_value_any(packet, &["socks_proxy_protocol", "skpr"])
+            .unwrap_or(metadata.socks_proxy_protocol.as_str())
+            .to_string();
+    metadata.socks_proxy_host_redacted =
+        packet_field_value_any(packet, &["socks_proxy_host_redacted", "skh"])
+            .unwrap_or(metadata.socks_proxy_host_redacted.as_str())
+            .to_string();
+    metadata.socks_proxy_port_recorded =
+        packet_field_value_any(packet, &["socks_proxy_port_recorded", "skp"])
+            .unwrap_or(metadata.socks_proxy_port_recorded.as_str())
+            .to_string();
+    if packet_field_bool_any(packet, &["socks_proxy_remote_dns", "skrd"]) {
+        metadata.socks_proxy_remote_dns = true;
+    }
+    if packet_field_bool_any(packet, &["socks_proxy_credentials_present", "skcr"]) {
+        metadata.socks_proxy_credentials_present = true;
+    }
+    if packet_field_bool_any(packet, &["socks_proxy_credentials_rejected", "skrj"]) {
+        metadata.socks_proxy_credentials_rejected = true;
+    }
+    if packet_field_bool_any(packet, &["socks_proxy_route_used", "sku"]) {
+        metadata.socks_proxy_route_used = true;
+    }
+    if packet_field_bool_any(packet, &["socks_proxy_runtime_supported", "skrt"]) {
+        metadata.socks_proxy_runtime_supported = true;
+    }
+    metadata.proxy_connect_phase = packet_field_value_any(packet, &["proxy_connect_phase", "xcph"])
+        .unwrap_or(metadata.proxy_connect_phase.as_str())
+        .to_string();
     metadata.proxy_connect_status =
         packet_field_value_any(packet, &["proxy_connect_status", "xcst"])
             .unwrap_or(metadata.proxy_connect_status.as_str())
@@ -13518,13 +13631,21 @@ fn apply_gdelt_h395_transport_packet(
             .filter(|value| *value != "none")
             .map(ToString::to_string)
             .or_else(|| metadata.proxy_connect_failure_class.clone());
-    metadata.proxy_connect_failure_detail_redacted = packet_field_value_any(
-        packet,
-        &["proxy_connect_failure_detail_redacted", "xcfd"],
-    )
-    .filter(|value| *value != "none")
-    .map(ToString::to_string)
-    .or_else(|| metadata.proxy_connect_failure_detail_redacted.clone());
+    metadata.proxy_connect_failure_detail_redacted =
+        packet_field_value_any(packet, &["proxy_connect_failure_detail_redacted", "xcfd"])
+            .filter(|value| *value != "none")
+            .map(ToString::to_string)
+            .or_else(|| metadata.proxy_connect_failure_detail_redacted.clone());
+    metadata.proxy_protocol_failure_class =
+        packet_field_value_any(packet, &["proxy_protocol_failure_class", "ppfc"])
+            .filter(|value| *value != "none")
+            .map(ToString::to_string)
+            .or_else(|| metadata.proxy_protocol_failure_class.clone());
+    metadata.proxy_protocol_failure_detail_redacted =
+        packet_field_value_any(packet, &["proxy_protocol_failure_detail_redacted", "ppfd"])
+            .filter(|value| *value != "none")
+            .map(ToString::to_string)
+            .or_else(|| metadata.proxy_protocol_failure_detail_redacted.clone());
     metadata.rust_transport_failure_class = packet_field_value_any(
         packet,
         &["rust_transport_failure_class", "rust_failure_class", "rfc"],
@@ -13660,6 +13781,18 @@ fn normalize_h400_proxy_tls_connect_outcome(raw: &str) -> String {
             "GDELT_PROXY_TLS_CONNECT_ACTIONABLE_BLOCKER".to_string()
         }
         _ => "GDELT_PROXY_TLS_CONNECT_ACTIONABLE_BLOCKER".to_string(),
+    }
+}
+
+fn normalize_h401_proxy_protocol_route_outcome(raw: &str) -> String {
+    match raw {
+        "A" | "GDELT_PROXY_PROTOCOL_ROUTE_REPAIRED_RUST_DOC_API_PARSED" => {
+            "GDELT_PROXY_PROTOCOL_ROUTE_REPAIRED_RUST_DOC_API_PARSED".to_string()
+        }
+        "B" | "GDELT_PROXY_PROTOCOL_ROUTE_FINAL_ACTIONABLE_BLOCKER" => {
+            "GDELT_PROXY_PROTOCOL_ROUTE_FINAL_ACTIONABLE_BLOCKER".to_string()
+        }
+        _ => "GDELT_PROXY_PROTOCOL_ROUTE_FINAL_ACTIONABLE_BLOCKER".to_string(),
     }
 }
 
@@ -23521,7 +23654,10 @@ mod tests {
             metadata.h399_proxy_route_outcome,
             "GDELT_APPROVED_PROXY_ROUTE_ACTIONABLE_BLOCKER"
         );
-        assert_eq!(metadata.approved_proxy_route_policy, "gdelt_explicit_env_proxy");
+        assert_eq!(
+            metadata.approved_proxy_route_policy,
+            "gdelt_explicit_env_proxy"
+        );
         assert!(metadata.explicit_proxy_configured);
         assert_eq!(metadata.explicit_proxy_host_redacted, "localhost");
         assert_eq!(metadata.explicit_proxy_port_recorded, "7897");
@@ -23569,6 +23705,36 @@ mod tests {
         assert!(metadata
             .result_classes
             .contains(&"GDELT_PROXY_CONNECT_STATUS_CLASSIFIED_PASS".to_string()));
+    }
+
+    #[test]
+    fn h401_gdelt_metadata_parses_socks_proxy_protocol_route_fields() {
+        let packet = "p=GDELT;role=corroboration;primary=false;replaces_brave=false;ver=H401_V1;docs=true;qh=abc123;rawq=false;frqs=false;mode=artlist_json;ep=doc2;window=1d;max=5;to=2000;lim=131072;status=provider_failed_timeout;n=0;bounded=true;outcome=B;h396=C;h397=B;h398=B;h399=B;h400=B;curl=explicit_socks_http000;rust=provider_failed_timeout;odr=docs_http_200;doc=api_http000_tls;sp=true;sph=localhost;spp=7897;dns=reserved_198_18_proxy_or_benchmark_route;dnsd=host_route=reserved_198_18;px=true;pxdns=true;pxtls=true;prfc=proxy_dns_intercept_detected;pnfc=proxy_or_intercept_suspected;xpol=gdelt_explicit_env_socks_proxy;xp=socks5h;xpc=true;xph=localhost;xpp=7897;xcr=false;xrj=false;xu=true;h401=B;selp=socks5h;skc=true;skpr=socks5h;skh=localhost;skp=7897;skrd=true;skcr=false;skrj=false;sku=true;skrt=true;ppfc=socks_proxy_connect_failed;ppfd=class=socks;rfc=timeout;crc=true;odds=true;sad=true;dom=none;corr=provider_failed;rsn=failure_no_fake;ind=0;same=0;cross=0;nr=none;fail=timeout;guards=docs_live_split,docs_docapi_split,no_proxy_creds,no_full_proxy_uri,live_not_policy,no_text_replace,no_brave_replace,no_image,no_vgkg,no_gcp,no_scrape,no_bulk,scoring_deferred;pid=H401;cls=H401_GDELT_PROXY_PROTOCOL_ROUTE_FINAL_ACTIONABLE_BLOCKER,GDELT_SOCKS_REMOTE_DNS_ROUTE_PASS";
+        let metadata = parse_gdelt_corroboration_packet(packet);
+        assert_eq!(
+            metadata.h401_proxy_protocol_route_outcome,
+            "GDELT_PROXY_PROTOCOL_ROUTE_FINAL_ACTIONABLE_BLOCKER"
+        );
+        assert_eq!(metadata.selected_proxy_protocol, "socks5h");
+        assert!(metadata.socks_proxy_configured);
+        assert_eq!(metadata.socks_proxy_protocol, "socks5h");
+        assert_eq!(metadata.socks_proxy_host_redacted, "localhost");
+        assert_eq!(metadata.socks_proxy_port_recorded, "7897");
+        assert!(metadata.socks_proxy_remote_dns);
+        assert!(metadata.socks_proxy_route_used);
+        assert!(metadata.socks_proxy_runtime_supported);
+        assert_eq!(
+            metadata.proxy_protocol_failure_class.as_deref(),
+            Some("socks_proxy_connect_failed")
+        );
+        assert!(!metadata.raw_query_stored);
+        assert!(!metadata.full_request_url_with_raw_query_stored);
+        assert!(!metadata.provider_primary);
+        assert!(!metadata.provider_replaces_brave);
+        assert!(metadata.source_agreement_scoring_deferred);
+        assert!(metadata
+            .result_classes
+            .contains(&"GDELT_SOCKS_REMOTE_DNS_ROUTE_PASS".to_string()));
     }
 
     #[test]

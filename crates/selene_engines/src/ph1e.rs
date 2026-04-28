@@ -71,7 +71,12 @@ const H400_OUTCOME_PROXY_TLS_CONNECT_REPAIRED_RUST_DOC_API_PARSED: &str =
     "GDELT_PROXY_TLS_CONNECT_REPAIRED_RUST_DOC_API_PARSED";
 const H400_OUTCOME_PROXY_TLS_CONNECT_ACTIONABLE_BLOCKER: &str =
     "GDELT_PROXY_TLS_CONNECT_ACTIONABLE_BLOCKER";
+const H401_OUTCOME_PROXY_PROTOCOL_ROUTE_REPAIRED_RUST_DOC_API_PARSED: &str =
+    "GDELT_PROXY_PROTOCOL_ROUTE_REPAIRED_RUST_DOC_API_PARSED";
+const H401_OUTCOME_PROXY_PROTOCOL_ROUTE_FINAL_ACTIONABLE_BLOCKER: &str =
+    "GDELT_PROXY_PROTOCOL_ROUTE_FINAL_ACTIONABLE_BLOCKER";
 const GDELT_HTTPS_PROXY_ENV: &str = "SELENE_GDELT_HTTPS_PROXY";
+const GDELT_SOCKS_PROXY_ENV: &str = "SELENE_GDELT_SOCKS_PROXY";
 
 pub mod reason_codes {
     use selene_kernel_contracts::ReasonCodeId;
@@ -299,6 +304,7 @@ struct GdeltCorroborationDecision {
     h398_route_outcome: &'static str,
     h399_proxy_route_outcome: &'static str,
     h400_proxy_tls_connect_outcome: &'static str,
+    h401_proxy_protocol_route_outcome: &'static str,
     direct_curl_probe_status: String,
     rust_transport_probe_status: String,
     official_docs_reachability_status: String,
@@ -328,10 +334,22 @@ struct GdeltCorroborationDecision {
     explicit_proxy_credentials_rejected: bool,
     approved_proxy_route_used: bool,
     proxy_hostname_sni_preserved: bool,
+    selected_proxy_protocol: &'static str,
+    socks_proxy_configured: bool,
+    socks_proxy_protocol: &'static str,
+    socks_proxy_host_redacted: String,
+    socks_proxy_port_recorded: String,
+    socks_proxy_remote_dns: bool,
+    socks_proxy_credentials_present: bool,
+    socks_proxy_credentials_rejected: bool,
+    socks_proxy_route_used: bool,
+    socks_proxy_runtime_supported: bool,
     proxy_connect_phase: &'static str,
     proxy_connect_status: String,
     proxy_connect_failure_class: Option<String>,
     proxy_connect_failure_detail_redacted: Option<String>,
+    proxy_protocol_failure_class: Option<String>,
+    proxy_protocol_failure_detail_redacted: Option<String>,
     rust_transport_failure_class: Option<String>,
     rust_transport_failure_detail_redacted: Option<String>,
     curl_and_rust_compared: bool,
@@ -413,6 +431,16 @@ struct GdeltApprovedProxyRouteProof {
     explicit_proxy_credentials_rejected: bool,
     approved_proxy_route_used: bool,
     proxy_hostname_sni_preserved: bool,
+    selected_proxy_protocol: &'static str,
+    socks_proxy_configured: bool,
+    socks_proxy_protocol: &'static str,
+    socks_proxy_host_redacted: String,
+    socks_proxy_port_recorded: String,
+    socks_proxy_remote_dns: bool,
+    socks_proxy_credentials_present: bool,
+    socks_proxy_credentials_rejected: bool,
+    socks_proxy_route_used: bool,
+    socks_proxy_runtime_supported: bool,
 }
 
 impl Default for GdeltApprovedProxyRouteProof {
@@ -427,6 +455,16 @@ impl Default for GdeltApprovedProxyRouteProof {
             explicit_proxy_credentials_rejected: false,
             approved_proxy_route_used: false,
             proxy_hostname_sni_preserved: false,
+            selected_proxy_protocol: "none",
+            socks_proxy_configured: false,
+            socks_proxy_protocol: "none",
+            socks_proxy_host_redacted: "none".to_string(),
+            socks_proxy_port_recorded: "none".to_string(),
+            socks_proxy_remote_dns: false,
+            socks_proxy_credentials_present: false,
+            socks_proxy_credentials_rejected: false,
+            socks_proxy_route_used: false,
+            socks_proxy_runtime_supported: true,
         }
     }
 }
@@ -435,6 +473,12 @@ impl Default for GdeltApprovedProxyRouteProof {
 struct GdeltProxyConnectDiagnostic {
     phase: &'static str,
     status: String,
+    failure_class: Option<&'static str>,
+    detail_redacted: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct GdeltProxyProtocolDiagnostic {
     failure_class: Option<&'static str>,
     detail_redacted: Option<String>,
 }
@@ -2432,7 +2476,17 @@ fn resolve_proxy_config(proxy_config: &Ph1eProxyConfig) -> Result<ResolvedProxyC
 fn gdelt_proxy_route_config_from_env(
     fallback_proxy_config: &Ph1eProxyConfig,
 ) -> (Ph1eProxyConfig, GdeltApprovedProxyRouteProof) {
-    let Some(raw_proxy) = env::var(GDELT_HTTPS_PROXY_ENV).ok().and_then(trim_non_empty) else {
+    if let Some(raw_socks_proxy) = env::var(GDELT_SOCKS_PROXY_ENV)
+        .ok()
+        .and_then(trim_non_empty)
+    {
+        return gdelt_socks_proxy_route_config(&raw_socks_proxy);
+    }
+
+    let Some(raw_proxy) = env::var(GDELT_HTTPS_PROXY_ENV)
+        .ok()
+        .and_then(trim_non_empty)
+    else {
         return (
             fallback_proxy_config.clone(),
             GdeltApprovedProxyRouteProof::default(),
@@ -2460,6 +2514,20 @@ fn gdelt_proxy_route_config_from_env(
         explicit_proxy_credentials_rejected: credentials_present,
         approved_proxy_route_used: scheme_allowed && !credentials_present,
         proxy_hostname_sni_preserved: scheme_allowed && !credentials_present,
+        selected_proxy_protocol: if scheme_allowed && !credentials_present {
+            explicit_proxy_protocol
+        } else {
+            "none"
+        },
+        socks_proxy_configured: false,
+        socks_proxy_protocol: "none",
+        socks_proxy_host_redacted: "none".to_string(),
+        socks_proxy_port_recorded: "none".to_string(),
+        socks_proxy_remote_dns: false,
+        socks_proxy_credentials_present: false,
+        socks_proxy_credentials_rejected: false,
+        socks_proxy_route_used: false,
+        socks_proxy_runtime_supported: true,
     };
     if proof.approved_proxy_route_used {
         (
@@ -2467,6 +2535,73 @@ fn gdelt_proxy_route_config_from_env(
                 mode: Ph1eProxyMode::Explicit,
                 http_proxy_url: Some(raw_proxy.clone()),
                 https_proxy_url: Some(raw_proxy),
+            },
+            proof,
+        )
+    } else {
+        (
+            Ph1eProxyConfig {
+                mode: Ph1eProxyMode::Off,
+                http_proxy_url: None,
+                https_proxy_url: None,
+            },
+            proof,
+        )
+    }
+}
+
+fn gdelt_socks_proxy_route_config(
+    raw_proxy: &str,
+) -> (Ph1eProxyConfig, GdeltApprovedProxyRouteProof) {
+    let host_redacted = proxy_host_redacted_hint(raw_proxy);
+    let port_recorded = proxy_port_hint(raw_proxy);
+    let socks_proxy_protocol = proxy_url_protocol(raw_proxy);
+    let credentials_present = proxy_url_has_credentials(raw_proxy);
+    let scheme_allowed = socks_proxy_url_scheme_allowed(raw_proxy);
+    let host_port = proxy_host_port_hint(raw_proxy);
+    let normalized_proxy_url = host_port
+        .as_ref()
+        .filter(|_| scheme_allowed && !credentials_present)
+        .map(|host_port| format!("socks5://{host_port}"));
+    let route_used = normalized_proxy_url.is_some();
+    let proof = GdeltApprovedProxyRouteProof {
+        policy: if credentials_present {
+            "socks_proxy_credentials_rejected"
+        } else if route_used {
+            "gdelt_explicit_env_socks_proxy"
+        } else {
+            "socks_proxy_invalid"
+        },
+        explicit_proxy_protocol: socks_proxy_protocol,
+        explicit_proxy_configured: true,
+        explicit_proxy_host_redacted: host_redacted.clone(),
+        explicit_proxy_port_recorded: port_recorded.clone(),
+        explicit_proxy_credentials_present: credentials_present,
+        explicit_proxy_credentials_rejected: credentials_present,
+        approved_proxy_route_used: route_used,
+        proxy_hostname_sni_preserved: route_used,
+        selected_proxy_protocol: if route_used {
+            socks_proxy_protocol
+        } else {
+            "none"
+        },
+        socks_proxy_configured: true,
+        socks_proxy_protocol,
+        socks_proxy_host_redacted: host_redacted,
+        socks_proxy_port_recorded: port_recorded,
+        socks_proxy_remote_dns: socks_proxy_protocol == "socks5h"
+            || socks_proxy_protocol == "socks5",
+        socks_proxy_credentials_present: credentials_present,
+        socks_proxy_credentials_rejected: credentials_present,
+        socks_proxy_route_used: route_used,
+        socks_proxy_runtime_supported: true,
+    };
+    if let Some(proxy_url) = normalized_proxy_url {
+        (
+            Ph1eProxyConfig {
+                mode: Ph1eProxyMode::Explicit,
+                http_proxy_url: Some(proxy_url.clone()),
+                https_proxy_url: Some(proxy_url),
             },
             proof,
         )
@@ -2508,13 +2643,22 @@ fn proxy_url_scheme_allowed(raw_proxy_url: &str) -> bool {
     lower.starts_with("http://") || lower.starts_with("https://")
 }
 
+fn socks_proxy_url_scheme_allowed(raw_proxy_url: &str) -> bool {
+    let lower = raw_proxy_url.trim().to_ascii_lowercase();
+    lower.starts_with("socks5://") || lower.starts_with("socks5h://")
+}
+
 fn proxy_url_protocol(raw_proxy_url: &str) -> &'static str {
     let lower = raw_proxy_url.trim().to_ascii_lowercase();
     if lower.starts_with("http://") {
         "http"
     } else if lower.starts_with("https://") {
         "https"
-    } else if lower.starts_with("socks5://") || lower.starts_with("socks://") {
+    } else if lower.starts_with("socks5h://") {
+        "socks5h"
+    } else if lower.starts_with("socks5://") {
+        "socks5"
+    } else if lower.starts_with("socks://") {
         "socks"
     } else {
         "unsupported"
@@ -2828,13 +2972,30 @@ fn gdelt_corroboration_decision_with_route_proof(
         provider_failure_reason.as_deref(),
         proxy_connect_failure_class.as_deref(),
     );
+    let proxy_protocol_diagnostic = gdelt_proxy_protocol_diagnostic(
+        &response_status,
+        provider_failure_reason.as_deref(),
+        &direct_curl_probe_status,
+        &approved_proxy_route_proof,
+        proxy_connect_failure_class.as_deref(),
+        &dns_route_class,
+        records.len(),
+    );
+    let proxy_protocol_failure_class = proxy_protocol_diagnostic
+        .failure_class
+        .map(ToString::to_string);
+    let h401_proxy_protocol_route_outcome = gdelt_h401_proxy_protocol_route_outcome(
+        records.len(),
+        provider_failure_reason.as_deref(),
+        proxy_protocol_failure_class.as_deref(),
+    );
 
     GdeltCorroborationDecision {
         provider: "GDELT",
         provider_role: "corroboration",
         provider_primary: false,
         provider_replaces_brave: false,
-        policy_version: "H400_V1",
+        policy_version: "H401_V1",
         official_docs_reviewed: true,
         official_docs_urls: vec![GDELT_DOCS_URL, GDELT_REALTIME_DOCS_URL],
         official_docs_retrieved_at: GDELT_OFFICIAL_DOCS_RETRIEVED_AT,
@@ -2869,6 +3030,7 @@ fn gdelt_corroboration_decision_with_route_proof(
         h398_route_outcome,
         h399_proxy_route_outcome,
         h400_proxy_tls_connect_outcome,
+        h401_proxy_protocol_route_outcome,
         direct_curl_probe_status: if direct_curl_probe_status
             == "external_curl_probe_recorded_separately"
         {
@@ -2900,20 +3062,35 @@ fn gdelt_corroboration_decision_with_route_proof(
         explicit_proxy_configured: approved_proxy_route_proof.explicit_proxy_configured,
         explicit_proxy_host_redacted: approved_proxy_route_proof.explicit_proxy_host_redacted,
         explicit_proxy_port_recorded: approved_proxy_route_proof.explicit_proxy_port_recorded,
-        explicit_proxy_credentials_present: approved_proxy_route_proof.explicit_proxy_credentials_present,
-        explicit_proxy_credentials_rejected: approved_proxy_route_proof.explicit_proxy_credentials_rejected,
+        explicit_proxy_credentials_present: approved_proxy_route_proof
+            .explicit_proxy_credentials_present,
+        explicit_proxy_credentials_rejected: approved_proxy_route_proof
+            .explicit_proxy_credentials_rejected,
         approved_proxy_route_used: approved_proxy_route_proof.approved_proxy_route_used,
         proxy_hostname_sni_preserved: approved_proxy_route_proof.proxy_hostname_sni_preserved,
+        selected_proxy_protocol: approved_proxy_route_proof.selected_proxy_protocol,
+        socks_proxy_configured: approved_proxy_route_proof.socks_proxy_configured,
+        socks_proxy_protocol: approved_proxy_route_proof.socks_proxy_protocol,
+        socks_proxy_host_redacted: approved_proxy_route_proof.socks_proxy_host_redacted,
+        socks_proxy_port_recorded: approved_proxy_route_proof.socks_proxy_port_recorded,
+        socks_proxy_remote_dns: approved_proxy_route_proof.socks_proxy_remote_dns,
+        socks_proxy_credentials_present: approved_proxy_route_proof.socks_proxy_credentials_present,
+        socks_proxy_credentials_rejected: approved_proxy_route_proof
+            .socks_proxy_credentials_rejected,
+        socks_proxy_route_used: approved_proxy_route_proof.socks_proxy_route_used,
+        socks_proxy_runtime_supported: approved_proxy_route_proof.socks_proxy_runtime_supported,
         proxy_connect_phase: proxy_connect_diagnostic.phase,
         proxy_connect_status: proxy_connect_diagnostic.status,
         proxy_connect_failure_class,
         proxy_connect_failure_detail_redacted: proxy_connect_diagnostic.detail_redacted,
+        proxy_protocol_failure_class,
+        proxy_protocol_failure_detail_redacted: proxy_protocol_diagnostic.detail_redacted,
         rust_transport_failure_class,
         rust_transport_failure_detail_redacted,
         curl_and_rust_compared: true,
         official_docs_vs_doc_api_separated: true,
         source_agreement_scoring_deferred: true,
-        proof_id: "H400",
+        proof_id: "H401",
     }
 }
 
@@ -3396,7 +3573,9 @@ fn gdelt_proxy_connect_diagnostic(
             "credentials_rejected".to_string(),
             Some("proxy_requires_auth"),
         )
-    } else if proof.explicit_proxy_protocol == "socks" || combined.contains("socks") {
+    } else if !proof.socks_proxy_configured
+        && (proof.explicit_proxy_protocol.starts_with("socks") || combined.contains("socks"))
+    {
         (
             "before_connect",
             "protocol_mismatch".to_string(),
@@ -3415,11 +3594,7 @@ fn gdelt_proxy_connect_diagnostic(
                 approved_proxy_route_failure_class,
                 rust_transport_failure_class,
             );
-            (
-                "after_connect",
-                "connect_200".to_string(),
-                class,
-            )
+            ("after_connect", "connect_200".to_string(), class)
         } else if connect_status == "407" {
             (
                 "before_connect",
@@ -3515,8 +3690,10 @@ fn gdelt_proxy_connect_after_200_failure_class(
 ) -> Option<&'static str> {
     if combined.contains("sni") || combined.contains("unrecognized_name") {
         Some("proxy_sni_route_failed")
+    } else if combined.contains("connection reset") || combined.contains("connection_reset") {
+        Some("http_connect_tunnel_reset")
     } else if combined.contains("timeout") || combined.contains("timed out") {
-        Some("proxy_connect_timeout")
+        Some("http_connect_tunnel_timeout")
     } else if combined.contains("cert") || combined.contains("certificate") {
         Some("proxy_tls_intercept_untrusted")
     } else if combined.contains("tls") || combined.contains("ssl") {
@@ -3576,6 +3753,173 @@ fn gdelt_h400_proxy_tls_connect_outcome(
         H400_OUTCOME_PROXY_TLS_CONNECT_ACTIONABLE_BLOCKER
     } else {
         H400_OUTCOME_PROXY_TLS_CONNECT_ACTIONABLE_BLOCKER
+    }
+}
+
+fn gdelt_proxy_protocol_diagnostic(
+    response_status: &str,
+    provider_failure_reason: Option<&str>,
+    direct_curl_probe_status: &str,
+    proof: &GdeltApprovedProxyRouteProof,
+    proxy_connect_failure_class: Option<&str>,
+    dns_route_class: &str,
+    record_count: usize,
+) -> GdeltProxyProtocolDiagnostic {
+    if provider_failure_reason.is_none() && record_count > 0 {
+        return GdeltProxyProtocolDiagnostic {
+            failure_class: None,
+            detail_redacted: None,
+        };
+    }
+
+    let class = gdelt_proxy_protocol_failure_class(
+        response_status,
+        provider_failure_reason,
+        direct_curl_probe_status,
+        proof,
+        proxy_connect_failure_class,
+        dns_route_class,
+    );
+    let detail_redacted = class.map(|class| {
+        gdelt_proxy_protocol_failure_detail(
+            class,
+            proof,
+            provider_failure_reason,
+            direct_curl_probe_status,
+            response_status,
+        )
+    });
+    GdeltProxyProtocolDiagnostic {
+        failure_class: class,
+        detail_redacted,
+    }
+}
+
+fn gdelt_proxy_protocol_failure_class(
+    response_status: &str,
+    provider_failure_reason: Option<&str>,
+    direct_curl_probe_status: &str,
+    proof: &GdeltApprovedProxyRouteProof,
+    proxy_connect_failure_class: Option<&str>,
+    dns_route_class: &str,
+) -> Option<&'static str> {
+    let combined = format!(
+        "{} {} {} {} {}",
+        response_status,
+        provider_failure_reason.unwrap_or_default(),
+        direct_curl_probe_status,
+        proxy_connect_failure_class.unwrap_or_default(),
+        dns_route_class
+    )
+    .to_ascii_lowercase();
+
+    let has_proxy_protocol_evidence = proof.socks_proxy_configured
+        || proof.explicit_proxy_configured
+        || proof.approved_proxy_route_used
+        || proxy_connect_failure_class.is_some()
+        || dns_route_class == "reserved_198_18_proxy_or_benchmark_route"
+        || combined.contains("198.18.")
+        || combined.contains("fake_ip")
+        || combined.contains("socks")
+        || combined.contains("proxy")
+        || combined.contains("http_connect");
+    if !has_proxy_protocol_evidence {
+        return None;
+    }
+    if combined.contains("429") || combined.contains("rate_limited") {
+        return Some("provider_rate_limited");
+    }
+    if proof.socks_proxy_configured && proof.socks_proxy_credentials_rejected {
+        return Some("socks_proxy_connect_failed");
+    }
+    if proof.socks_proxy_configured && !proof.socks_proxy_runtime_supported {
+        return Some("rust_transport_library_lacks_required_proxy_protocol");
+    }
+    if proof.socks_proxy_configured && !proof.socks_proxy_route_used {
+        return Some("socks_proxy_connect_failed");
+    }
+    if proof.socks_proxy_route_used {
+        if combined.contains("dns") {
+            return Some("socks_remote_dns_failed");
+        }
+        if combined.contains("cert") || combined.contains("certificate") {
+            return Some("socks_tls_handshake_failed");
+        }
+        if combined.contains("tls") || combined.contains("ssl") {
+            return Some("socks_tls_handshake_failed");
+        }
+        if combined.contains("connection refused") || combined.contains("connect refused") {
+            return Some("socks_proxy_connect_failed");
+        }
+        if combined.contains("timeout") || combined.contains("timed out") {
+            return Some("socks_proxy_connect_failed");
+        }
+        if provider_failure_reason.is_some() {
+            return Some("other_proxy_protocol_route_failure");
+        }
+        return None;
+    }
+    if dns_route_class == "reserved_198_18_proxy_or_benchmark_route"
+        || combined.contains("198.18.")
+        || combined.contains("fake_ip")
+    {
+        return Some("fake_ip_dns_route_unusable_without_socks_remote_dns");
+    }
+    match proxy_connect_failure_class {
+        Some("http_connect_tunnel_timeout") | Some("proxy_connect_timeout") => {
+            Some("http_connect_tunnel_timeout")
+        }
+        Some("http_connect_tunnel_reset") => Some("http_connect_tunnel_reset"),
+        Some("provider_tls_handshake_failed_through_proxy")
+        | Some("proxy_tls_intercept_untrusted") => Some("http_connect_tls_handshake_failed"),
+        Some("proxy_sni_route_failed") => Some("http_connect_tls_handshake_failed"),
+        Some("proxy_connect_non_200") => Some("provider_endpoint_blocked_through_proxy"),
+        Some("proxy_protocol_mismatch_http_vs_socks") => {
+            Some("rust_transport_library_lacks_required_proxy_protocol")
+        }
+        Some(_) => Some("other_proxy_protocol_route_failure"),
+        None if provider_failure_reason.is_some() && proof.approved_proxy_route_used => {
+            Some("other_proxy_protocol_route_failure")
+        }
+        None => Some("socks_proxy_not_configured"),
+    }
+}
+
+fn gdelt_proxy_protocol_failure_detail(
+    class: &str,
+    proof: &GdeltApprovedProxyRouteProof,
+    provider_failure_reason: Option<&str>,
+    direct_curl_probe_status: &str,
+    response_status: &str,
+) -> String {
+    let raw = format!(
+        "class={class} selected_protocol={} socks_configured={} socks_protocol={} socks_host={} socks_port={} socks_remote_dns={} socks_runtime_supported={} http_protocol={} provider={} response={} curl={}",
+        proof.selected_proxy_protocol,
+        proof.socks_proxy_configured,
+        proof.socks_proxy_protocol,
+        proof.socks_proxy_host_redacted,
+        proof.socks_proxy_port_recorded,
+        proof.socks_proxy_remote_dns,
+        proof.socks_proxy_runtime_supported,
+        proof.explicit_proxy_protocol,
+        provider_failure_reason.unwrap_or("none"),
+        response_status,
+        direct_curl_probe_status,
+    );
+    gdelt_redacted_failure_detail(&raw)
+}
+
+fn gdelt_h401_proxy_protocol_route_outcome(
+    record_count: usize,
+    provider_failure_reason: Option<&str>,
+    proxy_protocol_failure_class: Option<&str>,
+) -> &'static str {
+    if provider_failure_reason.is_none() && record_count > 0 {
+        H401_OUTCOME_PROXY_PROTOCOL_ROUTE_REPAIRED_RUST_DOC_API_PARSED
+    } else if proxy_protocol_failure_class.is_some() || provider_failure_reason.is_some() {
+        H401_OUTCOME_PROXY_PROTOCOL_ROUTE_FINAL_ACTIONABLE_BLOCKER
+    } else {
+        H401_OUTCOME_PROXY_PROTOCOL_ROUTE_FINAL_ACTIONABLE_BLOCKER
     }
 }
 
@@ -3760,13 +4104,22 @@ fn redact_inline_credentials(detail: &str) -> String {
 
 #[cfg(test)]
 fn gdelt_primary_result_class(decision: &GdeltCorroborationDecision) -> &'static str {
+    if decision.h401_proxy_protocol_route_outcome
+        == H401_OUTCOME_PROXY_PROTOCOL_ROUTE_REPAIRED_RUST_DOC_API_PARSED
+    {
+        return "H401_GDELT_PROXY_PROTOCOL_ROUTE_REPAIR_PASS";
+    }
+    if decision.h401_proxy_protocol_route_outcome
+        == H401_OUTCOME_PROXY_PROTOCOL_ROUTE_FINAL_ACTIONABLE_BLOCKER
+    {
+        return "H401_GDELT_PROXY_PROTOCOL_ROUTE_FINAL_ACTIONABLE_BLOCKER";
+    }
     if decision.h400_proxy_tls_connect_outcome
         == H400_OUTCOME_PROXY_TLS_CONNECT_REPAIRED_RUST_DOC_API_PARSED
     {
         return "H400_GDELT_PROXY_TLS_CONNECT_REPAIR_PASS";
     }
-    if decision.h400_proxy_tls_connect_outcome
-        == H400_OUTCOME_PROXY_TLS_CONNECT_ACTIONABLE_BLOCKER
+    if decision.h400_proxy_tls_connect_outcome == H400_OUTCOME_PROXY_TLS_CONNECT_ACTIONABLE_BLOCKER
     {
         return "H400_GDELT_PROXY_TLS_CONNECT_ACTIONABLE_BLOCKER";
     }
@@ -3853,6 +4206,17 @@ fn gdelt_h400_result_class(decision: &GdeltCorroborationDecision) -> &'static st
 }
 
 #[cfg(test)]
+fn gdelt_h401_result_class(decision: &GdeltCorroborationDecision) -> &'static str {
+    if decision.h401_proxy_protocol_route_outcome
+        == H401_OUTCOME_PROXY_PROTOCOL_ROUTE_REPAIRED_RUST_DOC_API_PARSED
+    {
+        "H401_GDELT_PROXY_PROTOCOL_ROUTE_REPAIR_PASS"
+    } else {
+        "H401_GDELT_PROXY_PROTOCOL_ROUTE_FINAL_ACTIONABLE_BLOCKER"
+    }
+}
+
+#[cfg(test)]
 fn gdelt_result_classes(decision: &GdeltCorroborationDecision) -> Vec<&'static str> {
     let mut classes = vec![
         gdelt_primary_result_class(decision),
@@ -3860,6 +4224,7 @@ fn gdelt_result_classes(decision: &GdeltCorroborationDecision) -> Vec<&'static s
         gdelt_h398_result_class(decision),
         gdelt_h399_result_class(decision),
         gdelt_h400_result_class(decision),
+        gdelt_h401_result_class(decision),
         "GDELT_OFFICIAL_DOCS_REVIEWED_PASS",
         "GDELT_PROVIDER_ISOLATED_PASS",
         "GDELT_CURL_VS_RUST_PROOF_RECORDED_PASS",
@@ -4057,6 +4422,24 @@ fn gdelt_result_classes(decision: &GdeltCorroborationDecision) -> Vec<&'static s
         classes.push("GDELT_PROXY_CONNECT_STATUS_CLASSIFIED_PASS");
         classes.push("GDELT_PROXY_TLS_CONNECT_FAILURE_CLASSIFIED_PASS");
     }
+    if decision.socks_proxy_configured {
+        classes.push("GDELT_SOCKS_PROXY_ENV_RECOGNIZED_PASS");
+    }
+    if decision.socks_proxy_remote_dns {
+        classes.push("GDELT_SOCKS_REMOTE_DNS_ROUTE_PASS");
+    }
+    if decision.socks_proxy_route_used {
+        classes.push("GDELT_SOCKS_PROXY_ROUTE_USED_PASS");
+    }
+    if decision.socks_proxy_runtime_supported {
+        classes.push("GDELT_RUST_TRANSPORT_LIBRARY_SOCKS_PROXY_SUPPORT_PASS");
+    }
+    if decision.socks_proxy_credentials_present || decision.socks_proxy_credentials_rejected {
+        classes.push("GDELT_SOCKS_PROXY_CREDENTIALS_REJECTED_PASS");
+    }
+    if decision.proxy_protocol_failure_class.is_some() {
+        classes.push("GDELT_PROXY_PROTOCOL_ROUTE_BLOCKER_CLASSIFIED_PASS");
+    }
     if decision.explicit_proxy_credentials_present || decision.explicit_proxy_credentials_rejected {
         classes.push("GDELT_EXPLICIT_PROXY_CREDENTIALS_REJECTED_PASS");
     }
@@ -4114,6 +4497,12 @@ fn gdelt_result_classes(decision: &GdeltCorroborationDecision) -> Vec<&'static s
         Some("proxy_connect_timeout") => {
             classes.push("GDELT_PROXY_CONNECT_TIMEOUT_CLASSIFIED_PASS")
         }
+        Some("http_connect_tunnel_timeout") => {
+            classes.push("GDELT_HTTP_CONNECT_TUNNEL_TIMEOUT_CLASSIFIED_PASS")
+        }
+        Some("http_connect_tunnel_reset") => {
+            classes.push("GDELT_HTTP_CONNECT_TUNNEL_RESET_CLASSIFIED_PASS")
+        }
         Some("proxy_connect_non_200") => {
             classes.push("GDELT_PROXY_CONNECT_NON_200_CLASSIFIED_PASS")
         }
@@ -4136,6 +4525,43 @@ fn gdelt_result_classes(decision: &GdeltCorroborationDecision) -> Vec<&'static s
         }
         Some("other_proxy_tls_connect_failure") => {
             classes.push("GDELT_OTHER_PROXY_TLS_CONNECT_FAILURE_SAFE_DEGRADED")
+        }
+        _ => {}
+    }
+    match decision.proxy_protocol_failure_class.as_deref() {
+        Some("http_connect_tunnel_timeout") => {
+            classes.push("GDELT_HTTP_CONNECT_TUNNEL_TIMEOUT_CLASSIFIED_PASS")
+        }
+        Some("http_connect_tunnel_reset") => {
+            classes.push("GDELT_HTTP_CONNECT_TUNNEL_RESET_CLASSIFIED_PASS")
+        }
+        Some("http_connect_tls_handshake_failed") => {
+            classes.push("GDELT_HTTP_CONNECT_TLS_HANDSHAKE_FAILURE_CLASSIFIED_PASS")
+        }
+        Some("socks_proxy_not_configured") => {
+            classes.push("GDELT_SOCKS_PROXY_NOT_CONFIGURED_SAFE_DEGRADED")
+        }
+        Some("socks_proxy_connect_failed") => {
+            classes.push("GDELT_SOCKS_PROXY_CONNECT_FAILED_SAFE_DEGRADED")
+        }
+        Some("socks_remote_dns_failed") => {
+            classes.push("GDELT_SOCKS_REMOTE_DNS_FAILED_SAFE_DEGRADED")
+        }
+        Some("socks_tls_handshake_failed") => {
+            classes.push("GDELT_SOCKS_TLS_HANDSHAKE_FAILED_SAFE_DEGRADED")
+        }
+        Some("fake_ip_dns_route_unusable_without_socks_remote_dns") => {
+            classes.push("GDELT_FAKE_IP_REQUIRES_SOCKS_REMOTE_DNS_PASS")
+        }
+        Some("provider_endpoint_blocked_through_proxy") => {
+            classes.push("GDELT_PROVIDER_ENDPOINT_BLOCKED_SAFE_DEGRADED")
+        }
+        Some("provider_rate_limited") => classes.push("GDELT_PROVIDER_RATE_LIMIT_CLASSIFIED_PASS"),
+        Some("rust_transport_library_lacks_required_proxy_protocol") => {
+            classes.push("GDELT_RUST_TRANSPORT_LIBRARY_LACKS_REQUIRED_PROXY_PROTOCOL_PASS")
+        }
+        Some("other_proxy_protocol_route_failure") => {
+            classes.push("GDELT_OTHER_PROXY_PROTOCOL_ROUTE_FAILURE_SAFE_DEGRADED")
         }
         _ => {}
     }
@@ -4265,7 +4691,9 @@ fn gdelt_failure_packet_value(reason: &str) -> String {
 
 fn gdelt_reason_packet_code(reason: &str) -> &'static str {
     match reason {
-        "provider_failure_safe_degraded_no_agreement_or_disagreement_fabricated" => "failure_no_fake",
+        "provider_failure_safe_degraded_no_agreement_or_disagreement_fabricated" => {
+            "failure_no_fake"
+        }
         "bounded_gdelt_metadata_without_truth_inference" => "bounded",
         "no_bounded_gdelt_records_returned" => "no_result",
         _ => gdelt_reason_code(reason),
@@ -4292,6 +4720,8 @@ fn gdelt_route_packet_segment(decision: &GdeltCorroborationDecision) -> String {
         || decision.explicit_proxy_credentials_rejected
         || decision.approved_proxy_route_used
         || decision.proxy_connect_failure_class.is_some()
+        || decision.socks_proxy_configured
+        || decision.proxy_protocol_failure_class.is_some()
         || has_non_default_approved_failure
         || has_non_default_dns_route
         || has_non_default_dns_detail;
@@ -4347,8 +4777,49 @@ fn gdelt_route_packet_segment(decision: &GdeltCorroborationDecision) -> String {
     } else {
         String::new()
     };
+    let protocol_packet = if decision.socks_proxy_configured {
+        format!(
+            ";h401={};selp={};skc={};skpr={};skh={};skp={};skrd={};skcr={};skrj={};sku={};skrt={};ppfc={};ppfd={}",
+            gdelt_h401_outcome_code(decision.h401_proxy_protocol_route_outcome),
+            packet_safe_value(decision.selected_proxy_protocol, 12),
+            decision.socks_proxy_configured,
+            packet_safe_value(decision.socks_proxy_protocol, 12),
+            packet_safe_value(&decision.socks_proxy_host_redacted, 16),
+            packet_safe_value(&decision.socks_proxy_port_recorded, 8),
+            decision.socks_proxy_remote_dns,
+            decision.socks_proxy_credentials_present,
+            decision.socks_proxy_credentials_rejected,
+            decision.socks_proxy_route_used,
+            decision.socks_proxy_runtime_supported,
+            decision
+                .proxy_protocol_failure_class
+                .as_deref()
+                .unwrap_or("none"),
+            decision
+                .proxy_protocol_failure_detail_redacted
+                .as_deref()
+                .map(|value| packet_safe_value(value, 16))
+                .unwrap_or_else(|| "none".to_string()),
+        )
+    } else if decision.proxy_protocol_failure_class.is_some() {
+        format!(
+            ";h401={};ppfc={};ppfd={}",
+            gdelt_h401_outcome_code(decision.h401_proxy_protocol_route_outcome),
+            decision
+                .proxy_protocol_failure_class
+                .as_deref()
+                .unwrap_or("none"),
+            decision
+                .proxy_protocol_failure_detail_redacted
+                .as_deref()
+                .map(|value| packet_safe_value(value, 16))
+                .unwrap_or_else(|| "none".to_string()),
+        )
+    } else {
+        String::new()
+    };
     format!(
-        ";sp={};sph={};spp={};dns={};dnsd={};px={};pxdns={};pxtls={};prfc={};prfd={};pnfc={}{}{}",
+        ";sp={};sph={};spp={};dns={};dnsd={};px={};pxdns={};pxtls={};prfc={};prfd={};pnfc={}{}{}{}",
         decision.system_proxy_detected,
         packet_safe_value(&decision.system_proxy_host_redacted, 16),
         packet_safe_value(&decision.system_proxy_port_recorded, 8),
@@ -4372,6 +4843,7 @@ fn gdelt_route_packet_segment(decision: &GdeltCorroborationDecision) -> String {
             .unwrap_or("none"),
         explicit_proxy_packet,
         connect_packet,
+        protocol_packet,
     )
 }
 
@@ -4423,6 +4895,14 @@ fn gdelt_h400_outcome_code(outcome: &str) -> &'static str {
     match outcome {
         H400_OUTCOME_PROXY_TLS_CONNECT_REPAIRED_RUST_DOC_API_PARSED => "A",
         H400_OUTCOME_PROXY_TLS_CONNECT_ACTIONABLE_BLOCKER => "B",
+        _ => "B",
+    }
+}
+
+fn gdelt_h401_outcome_code(outcome: &str) -> &'static str {
+    match outcome {
+        H401_OUTCOME_PROXY_PROTOCOL_ROUTE_REPAIRED_RUST_DOC_API_PARSED => "A",
+        H401_OUTCOME_PROXY_PROTOCOL_ROUTE_FINAL_ACTIONABLE_BLOCKER => "B",
         _ => "B",
     }
 }
@@ -9233,7 +9713,8 @@ mod tests {
         assert!(!proof.explicit_proxy_credentials_rejected);
         assert!(proof.approved_proxy_route_used);
         assert_eq!(proof.policy, "gdelt_explicit_env_proxy");
-        let resolved = resolve_proxy_config(&proxy_config).expect("GDELT proxy config must resolve");
+        let resolved =
+            resolve_proxy_config(&proxy_config).expect("GDELT proxy config must resolve");
         assert_eq!(
             resolved.effective_proxy_url.as_deref(),
             Some("http://127.0.0.1:7897")
@@ -9281,10 +9762,7 @@ mod tests {
 
     #[test]
     fn h399_gdelt_proxy_credentials_are_rejected_and_redacted() {
-        let _proxy = ScopedEnvVar::set(
-            GDELT_HTTPS_PROXY_ENV,
-            "http://user:secret@127.0.0.1:7897",
-        );
+        let _proxy = ScopedEnvVar::set(GDELT_HTTPS_PROXY_ENV, "http://user:secret@127.0.0.1:7897");
         let fallback = Ph1eProxyConfig {
             mode: Ph1eProxyMode::Off,
             http_proxy_url: None,
@@ -9339,6 +9817,16 @@ mod tests {
             explicit_proxy_credentials_rejected: false,
             approved_proxy_route_used: true,
             proxy_hostname_sni_preserved: true,
+            selected_proxy_protocol: "http",
+            socks_proxy_configured: false,
+            socks_proxy_protocol: "none",
+            socks_proxy_host_redacted: "none".to_string(),
+            socks_proxy_port_recorded: "none".to_string(),
+            socks_proxy_remote_dns: false,
+            socks_proxy_credentials_present: false,
+            socks_proxy_credentials_rejected: false,
+            socks_proxy_route_used: false,
+            socks_proxy_runtime_supported: true,
         };
         let decision = gdelt_corroboration_decision_with_route_proof(
             "public climate news",
@@ -9381,6 +9869,16 @@ mod tests {
             explicit_proxy_credentials_rejected: false,
             approved_proxy_route_used: true,
             proxy_hostname_sni_preserved: true,
+            selected_proxy_protocol: "http",
+            socks_proxy_configured: false,
+            socks_proxy_protocol: "none",
+            socks_proxy_host_redacted: "none".to_string(),
+            socks_proxy_port_recorded: "none".to_string(),
+            socks_proxy_remote_dns: false,
+            socks_proxy_credentials_present: false,
+            socks_proxy_credentials_rejected: false,
+            socks_proxy_route_used: false,
+            socks_proxy_runtime_supported: true,
         };
         let records = vec![GdeltArticleRecord {
             source_url: "https://independent.example.org/story".to_string(),
@@ -9415,8 +9913,9 @@ mod tests {
         assert!(!packet.contains("http://127.0.0.1:7897"));
         assert!(!packet.contains("public climate news"));
         assert!(!packet.contains("?query="));
-        assert!(gdelt_result_classes(&decision)
-            .contains(&"H400_GDELT_PROXY_TLS_CONNECT_REPAIR_PASS"));
+        assert!(
+            gdelt_result_classes(&decision).contains(&"H400_GDELT_PROXY_TLS_CONNECT_REPAIR_PASS")
+        );
     }
 
     #[test]
@@ -9431,6 +9930,16 @@ mod tests {
             explicit_proxy_credentials_rejected: false,
             approved_proxy_route_used: true,
             proxy_hostname_sni_preserved: true,
+            selected_proxy_protocol: "http",
+            socks_proxy_configured: false,
+            socks_proxy_protocol: "none",
+            socks_proxy_host_redacted: "none".to_string(),
+            socks_proxy_port_recorded: "none".to_string(),
+            socks_proxy_remote_dns: false,
+            socks_proxy_credentials_present: false,
+            socks_proxy_credentials_rejected: false,
+            socks_proxy_route_used: false,
+            socks_proxy_runtime_supported: true,
         };
         let refused = gdelt_proxy_connect_diagnostic(
             "provider_failed_connection",
@@ -9501,7 +10010,7 @@ mod tests {
         };
         let (proxy_config, proof) = gdelt_proxy_route_config_from_env(&fallback);
         assert_eq!(proxy_config.mode, Ph1eProxyMode::Off);
-        assert_eq!(proof.explicit_proxy_protocol, "socks");
+        assert_eq!(proof.explicit_proxy_protocol, "socks5");
         assert!(!proof.approved_proxy_route_used);
 
         let decision = gdelt_corroboration_decision_with_route_proof(
@@ -9510,7 +10019,10 @@ mod tests {
             "provider_failed_proxy_protocol".to_string(),
             Vec::new(),
             &[],
-            Some("provider=gdelt error=socks protocol mismatch http://user:secret@127.0.0.1:7897".to_string()),
+            Some(
+                "provider=gdelt error=socks protocol mismatch http://user:secret@127.0.0.1:7897"
+                    .to_string(),
+            ),
             "curl_proxy_socks_protocol_mismatch_http://user:secret@127.0.0.1:7897".to_string(),
             proof,
         );
@@ -9524,7 +10036,7 @@ mod tests {
         );
         let packet = gdelt_corroboration_packet(&decision);
         assert!(packet.contains("h400=B"));
-        assert!(packet.contains("xp=socks"));
+        assert!(packet.contains("xp=socks5"));
         assert!(packet.contains("xcfc=proxy_protocol_mismatch_http_vs_socks"));
         assert!(!packet.contains("user:secret"));
         assert!(!packet.contains("http://user"));
@@ -9533,8 +10045,228 @@ mod tests {
         assert!(!packet.contains("?query="));
         assert!(gdelt_result_classes(&decision)
             .contains(&"GDELT_PROXY_PROTOCOL_MISMATCH_CLASSIFIED_PASS"));
+        assert!(
+            gdelt_result_classes(&decision).contains(&"GDELT_PROXY_CONNECT_STATUS_CLASSIFIED_PASS")
+        );
+    }
+
+    #[test]
+    fn h401_socks_remote_dns_proxy_route_policy_is_deterministic() {
+        let _http_proxy = ScopedEnvVar::unset(GDELT_HTTPS_PROXY_ENV);
+        let _socks_proxy = ScopedEnvVar::set(GDELT_SOCKS_PROXY_ENV, "socks5h://127.0.0.1:7897");
+        let fallback = Ph1eProxyConfig {
+            mode: Ph1eProxyMode::Off,
+            http_proxy_url: None,
+            https_proxy_url: None,
+        };
+        let (proxy_config, proof) = gdelt_proxy_route_config_from_env(&fallback);
+        assert_eq!(proxy_config.mode, Ph1eProxyMode::Explicit);
+        let resolved =
+            resolve_proxy_config(&proxy_config).expect("SOCKS proxy config must resolve");
+        assert_eq!(
+            resolved.effective_proxy_url.as_deref(),
+            Some("socks5://127.0.0.1:7897")
+        );
+        assert_eq!(proof.policy, "gdelt_explicit_env_socks_proxy");
+        assert_eq!(proof.selected_proxy_protocol, "socks5h");
+        assert_eq!(proof.socks_proxy_protocol, "socks5h");
+        assert_eq!(proof.socks_proxy_host_redacted, "localhost");
+        assert_eq!(proof.socks_proxy_port_recorded, "7897");
+        assert!(proof.socks_proxy_remote_dns);
+        assert!(proof.socks_proxy_route_used);
+        assert!(proof.socks_proxy_runtime_supported);
+        assert!(!proof.socks_proxy_credentials_present);
+
+        let records = vec![GdeltArticleRecord {
+            source_url: "https://independent.example.org/story".to_string(),
+            source_domain: "independent.example.org".to_string(),
+            title: "Bounded public article".to_string(),
+            published_at: Some("20260428T010000Z".to_string()),
+            language_or_translation_signal: Some("English".to_string()),
+        }];
+        let decision = gdelt_corroboration_decision_with_route_proof(
+            "public climate news",
+            1_770_000_000_000,
+            "ok".to_string(),
+            records,
+            &[],
+            None,
+            "curl_socks_proxy_ok".to_string(),
+            proof,
+        );
+        assert_eq!(
+            decision.h401_proxy_protocol_route_outcome,
+            H401_OUTCOME_PROXY_PROTOCOL_ROUTE_REPAIRED_RUST_DOC_API_PARSED
+        );
+        assert_eq!(decision.selected_proxy_protocol, "socks5h");
+        assert!(decision.socks_proxy_remote_dns);
+        assert!(decision.proxy_protocol_failure_class.is_none());
+        let packet = gdelt_corroboration_packet(&decision);
+        assert!(packet.contains("h401=A"));
+        assert!(packet.contains("selp=socks5h"));
+        assert!(packet.contains("skrd=true"));
+        assert!(!packet.contains("socks5h://127.0.0.1:7897"));
+        assert!(!packet.contains("socks5://127.0.0.1:7897"));
+        assert!(!packet.contains("public climate news"));
+        assert!(!packet.contains("?query="));
         assert!(gdelt_result_classes(&decision)
-            .contains(&"GDELT_PROXY_CONNECT_STATUS_CLASSIFIED_PASS"));
+            .contains(&"H401_GDELT_PROXY_PROTOCOL_ROUTE_REPAIR_PASS"));
+        assert!(gdelt_result_classes(&decision).contains(&"GDELT_SOCKS_REMOTE_DNS_ROUTE_PASS"));
+    }
+
+    #[test]
+    fn h401_http_connect_after_200_classifies_tunnel_failures() {
+        let proof = GdeltApprovedProxyRouteProof {
+            policy: "gdelt_explicit_env_proxy",
+            explicit_proxy_protocol: "http",
+            explicit_proxy_configured: true,
+            explicit_proxy_host_redacted: "localhost".to_string(),
+            explicit_proxy_port_recorded: "7897".to_string(),
+            explicit_proxy_credentials_present: false,
+            explicit_proxy_credentials_rejected: false,
+            approved_proxy_route_used: true,
+            proxy_hostname_sni_preserved: true,
+            selected_proxy_protocol: "http",
+            socks_proxy_configured: false,
+            socks_proxy_protocol: "none",
+            socks_proxy_host_redacted: "none".to_string(),
+            socks_proxy_port_recorded: "none".to_string(),
+            socks_proxy_remote_dns: false,
+            socks_proxy_credentials_present: false,
+            socks_proxy_credentials_rejected: false,
+            socks_proxy_route_used: false,
+            socks_proxy_runtime_supported: true,
+        };
+        let decision = gdelt_corroboration_decision_with_route_proof(
+            "public climate news",
+            1_770_000_000_000,
+            "provider_failed_timeout".to_string(),
+            Vec::new(),
+            &[],
+            Some("provider=gdelt error=timeout".to_string()),
+            "curl_proxy_http000_http_connect=200_timeout".to_string(),
+            proof.clone(),
+        );
+        assert_eq!(
+            decision.proxy_connect_failure_class.as_deref(),
+            Some("http_connect_tunnel_timeout")
+        );
+        assert_eq!(
+            decision.proxy_protocol_failure_class.as_deref(),
+            Some("http_connect_tunnel_timeout")
+        );
+        assert_eq!(
+            decision.h401_proxy_protocol_route_outcome,
+            H401_OUTCOME_PROXY_PROTOCOL_ROUTE_FINAL_ACTIONABLE_BLOCKER
+        );
+        let packet = gdelt_corroboration_packet(&decision);
+        assert!(packet.contains("h401=B"));
+        assert!(packet.contains("ppfc=http_connect_tunnel_timeout"));
+        assert!(!packet.contains("public climate news"));
+        assert!(!packet.contains("?query="));
+        assert!(gdelt_result_classes(&decision)
+            .contains(&"GDELT_HTTP_CONNECT_TUNNEL_TIMEOUT_CLASSIFIED_PASS"));
+
+        let reset = gdelt_proxy_connect_diagnostic(
+            "provider_failed_connection",
+            Some("provider=gdelt error=connection reset"),
+            "curl_proxy_http_connect=200_connection_reset",
+            &proof,
+            Some("proxy_connect_failed"),
+            Some("connection"),
+            0,
+        );
+        assert_eq!(reset.failure_class, Some("http_connect_tunnel_reset"));
+
+        let tls = gdelt_proxy_protocol_diagnostic(
+            "provider_failed_tls",
+            Some("provider=gdelt error=tls"),
+            "curl_proxy_http_connect=200_tls_failed",
+            &proof,
+            Some("provider_tls_handshake_failed_through_proxy"),
+            "none",
+            0,
+        );
+        assert_eq!(tls.failure_class, Some("http_connect_tls_handshake_failed"));
+    }
+
+    #[test]
+    fn h401_socks_credentials_unsupported_runtime_and_fake_ip_are_classified() {
+        let _http_proxy = ScopedEnvVar::unset(GDELT_HTTPS_PROXY_ENV);
+        let _socks_proxy = ScopedEnvVar::set(
+            GDELT_SOCKS_PROXY_ENV,
+            "socks5h://user:secret@127.0.0.1:7897",
+        );
+        let fallback = Ph1eProxyConfig {
+            mode: Ph1eProxyMode::Off,
+            http_proxy_url: None,
+            https_proxy_url: None,
+        };
+        let (proxy_config, proof) = gdelt_proxy_route_config_from_env(&fallback);
+        assert_eq!(proxy_config.mode, Ph1eProxyMode::Off);
+        assert!(proof.socks_proxy_configured);
+        assert!(proof.socks_proxy_credentials_present);
+        assert!(proof.socks_proxy_credentials_rejected);
+        assert!(!proof.socks_proxy_route_used);
+
+        let decision = gdelt_corroboration_decision_with_route_proof(
+            "public climate news",
+            1_770_000_000_000,
+            "provider_failed_proxy_credentials_rejected".to_string(),
+            Vec::new(),
+            &[],
+            Some("provider=gdelt error=socks credentials rejected".to_string()),
+            "curl_proxy=socks5h://user:secret@127.0.0.1:7897_remote=198.18.0.165".to_string(),
+            proof,
+        );
+        assert_eq!(
+            decision.proxy_protocol_failure_class.as_deref(),
+            Some("socks_proxy_connect_failed")
+        );
+        let packet = gdelt_corroboration_packet(&decision);
+        assert!(packet.contains("skcr=true"));
+        assert!(packet.contains("skrj=true"));
+        assert!(!packet.contains("user:secret"));
+        assert!(!packet.contains("socks5h://user"));
+        assert!(!packet.contains("public climate news"));
+        assert!(!packet.contains("?query="));
+
+        let mut unsupported = GdeltApprovedProxyRouteProof::default();
+        unsupported.socks_proxy_configured = true;
+        unsupported.socks_proxy_protocol = "socks5h";
+        unsupported.socks_proxy_host_redacted = "localhost".to_string();
+        unsupported.socks_proxy_port_recorded = "7897".to_string();
+        unsupported.socks_proxy_remote_dns = true;
+        unsupported.socks_proxy_route_used = true;
+        unsupported.selected_proxy_protocol = "socks5h";
+        unsupported.socks_proxy_runtime_supported = false;
+        assert_eq!(
+            gdelt_proxy_protocol_failure_class(
+                "provider_failed_proxy_protocol",
+                Some("provider=gdelt error=socks feature disabled"),
+                "curl_socks_not_run",
+                &unsupported,
+                None,
+                "none",
+            ),
+            Some("rust_transport_library_lacks_required_proxy_protocol")
+        );
+
+        let fake_ip = gdelt_corroboration_decision_with_transport_proof(
+            "public climate news",
+            1_770_000_000_000,
+            "provider_failed_timeout".to_string(),
+            Vec::new(),
+            &[],
+            Some("provider=gdelt error=timeout".to_string()),
+            "curl_http000_remote=198.18.0.165".to_string(),
+        );
+        assert_eq!(
+            fake_ip.proxy_protocol_failure_class.as_deref(),
+            Some("fake_ip_dns_route_unusable_without_socks_remote_dns")
+        );
+        assert!(gdelt_result_classes(&fake_ip)
+            .contains(&"GDELT_FAKE_IP_REQUIRES_SOCKS_REMOTE_DNS_PASS"));
     }
 
     #[test]
@@ -9831,8 +10563,7 @@ mod tests {
     #[test]
     #[ignore]
     fn h399_live_gdelt_explicit_proxy_route_records_proxy_outcome() {
-        let (proxy_config, proof) =
-            gdelt_proxy_route_config_from_env(&Ph1eProxyConfig::from_env());
+        let (proxy_config, proof) = gdelt_proxy_route_config_from_env(&Ph1eProxyConfig::from_env());
         let search_result = run_gdelt_doc_artlist_search(
             GDELT_DOC_DEFAULT_URL,
             "climate",
@@ -9894,8 +10625,7 @@ mod tests {
     #[test]
     #[ignore]
     fn h400_live_gdelt_proxy_tls_connect_records_connect_outcome() {
-        let (proxy_config, proof) =
-            gdelt_proxy_route_config_from_env(&Ph1eProxyConfig::from_env());
+        let (proxy_config, proof) = gdelt_proxy_route_config_from_env(&Ph1eProxyConfig::from_env());
         let search_result = run_gdelt_doc_artlist_search(
             GDELT_DOC_DEFAULT_URL,
             "climate",
@@ -9951,6 +10681,73 @@ mod tests {
         assert!(!packet.contains("climate"));
         assert!(!packet.contains("?query="));
         assert!(!packet.contains("http://127.0.0.1"));
+        assert!(!packet.contains("source_agreement_score="));
+        assert!(!packet.contains("WEB_PROVIDER_FANOUT_PASS"));
+    }
+
+    #[test]
+    #[ignore]
+    fn h401_live_gdelt_proxy_protocol_route_records_final_blocker() {
+        let (proxy_config, proof) = gdelt_proxy_route_config_from_env(&Ph1eProxyConfig::from_env());
+        let search_result = run_gdelt_doc_artlist_search(
+            GDELT_DOC_DEFAULT_URL,
+            "climate",
+            2,
+            GDELT_TIMEOUT_MS,
+            "selene-ph1e-h401-live-proof/1.0",
+            &proxy_config,
+            None,
+        );
+        let (records, response_status, provider_failure_reason) = match search_result {
+            Ok(records) => {
+                let response_status = if records.is_empty() {
+                    "no_result".to_string()
+                } else {
+                    "ok".to_string()
+                };
+                (records, response_status, None)
+            }
+            Err(error) => (
+                Vec::new(),
+                format!("provider_failed_{}", error.error_kind),
+                Some(error.safe_detail()),
+            ),
+        };
+        let decision = gdelt_corroboration_decision_with_route_proof(
+            "climate",
+            now_unix_ms(),
+            response_status,
+            records,
+            &[],
+            provider_failure_reason,
+            "curl_direct_timeout_http_connect_200_timeout_socks_timeout".to_string(),
+            proof,
+        );
+        eprintln!(
+            "h401_outcome={} selected_protocol={} socks_configured={} socks_route_used={} rust={} protocol_failure_class={}",
+            decision.h401_proxy_protocol_route_outcome,
+            decision.selected_proxy_protocol,
+            decision.socks_proxy_configured,
+            decision.socks_proxy_route_used,
+            decision.rust_transport_probe_status,
+            decision
+                .proxy_protocol_failure_class
+                .as_deref()
+                .unwrap_or("none")
+        );
+        assert!(matches!(
+            decision.h401_proxy_protocol_route_outcome,
+            H401_OUTCOME_PROXY_PROTOCOL_ROUTE_REPAIRED_RUST_DOC_API_PARSED
+                | H401_OUTCOME_PROXY_PROTOCOL_ROUTE_FINAL_ACTIONABLE_BLOCKER
+        ));
+        let packet = gdelt_corroboration_packet(&decision);
+        assert!(packet.contains("h401="));
+        assert!(packet.contains("rawq=false"));
+        assert!(packet.contains("frqs=false"));
+        assert!(!packet.contains("climate"));
+        assert!(!packet.contains("?query="));
+        assert!(!packet.contains("socks5h://"));
+        assert!(!packet.contains("socks5://127.0.0.1"));
         assert!(!packet.contains("source_agreement_score="));
         assert!(!packet.contains("WEB_PROVIDER_FANOUT_PASS"));
     }
