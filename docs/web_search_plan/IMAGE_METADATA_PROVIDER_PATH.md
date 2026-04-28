@@ -39,6 +39,35 @@ The default live Brave outcome remains display deferred unless explicit source-p
 
 H390 proof passed with `cargo test -p selene_adapter h390 -- --test-threads=1 => 1 passed`, `cargo test -p selene_engines h390 -- --test-threads=1 => 5 passed; 1 ignored`, live `cargo test -p selene_engines h390_live_brave_image_display_eligibility_maps_real_metadata_without_display -- --ignored --test-threads=1 => 1 passed`, H389 live regression `cargo test -p selene_engines h389_live_brave_image_provider_approval_maps_real_metadata_without_secret_leak -- --ignored --test-threads=1 => 1 passed`, full adapter/OS/engine test suites, `git diff --check`, and macOS Desktop `xcodebuild => BUILD SUCCEEDED`. Direct runtime proof bound the adapter on `127.0.0.1:18080`, `/healthz` returned HTTP 200, and `/v1/voice/turn` remained fail-closed rather than fabricating display evidence.
 
+## H391 Decision
+
+H391 selects `Outcome B -- BRAVE_IMAGE_DISPLAY_POLICY_METADATA_AND_SOURCE_LINK_ONLY`.
+
+Brave remains the currently approved provider implementation, but H391 keeps the architecture provider-agnostic. Runtime packets and adapter metadata use generic image provider path, display eligibility, and provider display policy fields. Brave-specific logic is limited to the Brave metadata request/parser and the H391 Brave policy mapper/tests; a future provider should be added by implementing a provider adapter, mapping its metadata into the same generic packets, and adding provider-specific policy tests without changing Desktop UI or the core response shape.
+
+H391 does not implement H392. It does not display image/photo cards, render thumbnails, render source-link visual cards, modify Desktop Swift/UI/chrome, download image bytes, create a raw image cache, or emit `WEB_IMAGE_SOURCE_CARD_PASS`.
+
+Official Brave policy/docs reviewed on `2026-04-28`:
+
+| URL | Page title | Policy fields found | Policy fields not found |
+| --- | --- | --- | --- |
+| `https://api-dashboard.search.brave.com/documentation/services/image-search` | `Image search` | Image Search endpoint posture, safe search, thumbnail/proxy behavior, source page URL, image URL/thumbnail metadata, publisher metadata, warning to be aware of copyright/licensing | No explicit publisher-rights grant, no explicit thumbnail display permission, no explicit full-image display permission |
+| `https://api-dashboard.search.brave.com/api-reference/images/image_search` | `Images` | `GET /v1/images/search`, subscription-token auth, query/count/safesearch parameters, result list schema surface, default JSON response, cached content header posture | No explicit thumbnail display rights, no explicit full-image display rights, no publisher-rights transfer |
+| `https://api-dashboard.search.brave.com/documentation/resources/terms-of-service` | `Terms of service` | Search Results may include third-party content, customer may use Search Results with applications within the agreement, attribution language for provider marks, transient-only storage restriction, third-party IP responsibility | No explicit permission that Brave-returned image thumbnails or full image URLs may be displayed as sourced image/photo cards without publisher/license proof |
+
+H391 policy result:
+
+- Metadata-only use is allowed for bounded research metadata.
+- Source-page link use is allowed when source-page URL/domain are present and text citations remain separate.
+- Thumbnail display is deferred/blocked because official policy proof does not explicitly prove thumbnail display rights.
+- Full image display is blocked because official policy proof does not explicitly prove full-image display rights.
+- Sourced image/photo cards remain deferred.
+- Provider attribution is recorded as required before any future visual display.
+- Publisher rights remain required and unverified.
+- Unknown license keeps visual display deferred or blocked.
+- Storage remains transient metadata-only; raw image bytes and raw image caches remain blocked.
+- H392 handoff: design either a source-link-only visual citation card or perform separate legal/provider-rights review before any thumbnail/image UI.
+
 ## Candidate Matrix
 
 | Candidate | Repo surface | Current capability | Display allowed | Blocker |
@@ -123,6 +152,42 @@ The H390 display eligibility packet must represent:
 - `query_hash_only`
 - `text_citation_required`
 
+## ImageProviderDisplayPolicy Contract
+
+The H391 provider display policy packet must remain provider-agnostic and represent:
+
+- `provider`
+- `policy_version`
+- `policy_outcome`
+- `metadata_use_allowed`
+- `source_link_use_allowed`
+- `thumbnail_display_allowed`
+- `full_image_display_allowed`
+- `sourced_image_card_allowed`
+- `ui_display_implemented`
+- `attribution_required`
+- `attribution_text_or_code`
+- `provider_terms_reviewed`
+- `official_docs_reviewed`
+- `official_docs_unavailable`
+- `thumbnail_display_rights_explicit`
+- `full_image_display_rights_explicit`
+- `attribution_requirements_explicit`
+- `storage_cache_limits_explicit`
+- `publisher_rights_required`
+- `publisher_rights_verified`
+- `license_required_for_display`
+- `license_unknown_behavior`
+- `storage_allowed`
+- `transient_storage_only`
+- `raw_image_cache_allowed`
+- `image_bytes_download_allowed`
+- `text_citation_still_required`
+- `display_deferred_reason`
+- `display_blocked_reason`
+- `proof_id`
+- `h392_handoff_recommendation`
+
 ## Future Image Evidence Contract
 
 A future displayable `ImageEvidencePacket` or `ImageSourceCardPacket` must require:
@@ -168,6 +233,8 @@ A future displayable `ImageEvidencePacket` or `ImageSourceCardPacket` must requi
 - H389 reuses the existing Brave secret ID and bounded HTTP posture.
 - H389 stores query hash/redacted query proof only, not raw private queries.
 - H389 does not download image bytes and does not scrape source pages.
+- H391 records official policy proof but does not infer rights from API availability, provider presence, image URL, thumbnail URL, source-page URL, `og:image`, or `twitter:image`.
+- H391 keeps generic packets provider-neutral; Brave may be replaced by adding a provider adapter, provider policy mapper, and tests.
 
 ## Future Implementation Step
 

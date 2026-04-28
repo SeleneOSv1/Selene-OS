@@ -158,6 +158,41 @@ struct ImageDisplayEligibilityDecision {
     display_blocked_reason: Option<&'static str>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ImageProviderDisplayPolicyDecision {
+    provider: &'static str,
+    policy_version: &'static str,
+    policy_outcome: &'static str,
+    metadata_use_allowed: bool,
+    source_link_use_allowed: bool,
+    thumbnail_display_allowed: bool,
+    full_image_display_allowed: bool,
+    sourced_image_card_allowed: bool,
+    ui_display_implemented: bool,
+    attribution_required: bool,
+    attribution_text_or_code: &'static str,
+    provider_terms_reviewed: bool,
+    official_docs_reviewed: bool,
+    official_docs_unavailable: bool,
+    thumbnail_display_rights_explicit: bool,
+    full_image_display_rights_explicit: bool,
+    attribution_requirements_explicit: bool,
+    storage_cache_limits_explicit: bool,
+    publisher_rights_required: bool,
+    publisher_rights_verified: bool,
+    license_required_for_display: bool,
+    license_unknown_behavior: &'static str,
+    storage_allowed: bool,
+    transient_storage_only: bool,
+    raw_image_cache_allowed: bool,
+    image_bytes_download_allowed: bool,
+    text_citation_still_required: bool,
+    display_deferred_reason: &'static str,
+    display_blocked_reason: &'static str,
+    proof_id: &'static str,
+    h392_handoff_recommendation: &'static str,
+}
+
 const STARTUP_CONNECTIVITY_TIMEOUT_MS: u32 = 2_000;
 const BRAVE_CONNECTIVITY_PROBE_URL: &str = "https://api.search.brave.com/res/v1/web/search";
 const OPENAI_CONNECTIVITY_PROBE_URL: &str = "https://api.openai.com/";
@@ -875,6 +910,11 @@ impl Ph1eRuntime {
         let image_decision = self.brave_image_metadata_decision_for_query(&req.query);
         let image_display_eligibility =
             self.image_display_eligibility_for_decision(&image_decision);
+        let image_provider_display_policy = self.provider_display_policy_for_decision(
+            "brave",
+            &image_decision,
+            &image_display_eligibility,
+        );
         let query_hash = stable_content_hash_hex(&req.query);
         let endpoint_label = format!(
             "{}:{}",
@@ -912,6 +952,38 @@ impl Ph1eRuntime {
             BRAVE_IMAGE_MAX_RESULTS,
             BRAVE_IMAGE_TIMEOUT_MS,
             image_decision.display_status
+        );
+        let image_provider_display_policy_packet = format!(
+            "policy_provider={};policy_version={};policy_outcome={};metadata_use_allowed={};source_link_use_allowed={};thumbnail_display_allowed={};full_image_display_allowed={};sourced_image_card_allowed={};ui_display_implemented={};attribution_required={};attribution_text_or_code={};provider_terms_reviewed={};official_docs_reviewed={};thumbnail_rights_explicit={};full_image_rights_explicit={};attribution_explicit={};storage_cache_explicit={};publisher_rights_required={};publisher_rights_verified={};license_required_for_display={};license_unknown_behavior={};transient_storage_only={};raw_image_cache_allowed={};image_bytes_download_allowed={};text_citation_still_required={};display_deferred_reason={};display_blocked_reason={};proof_id={};h392_handoff={}",
+            image_provider_display_policy.provider,
+            image_provider_display_policy.policy_version,
+            image_provider_display_policy.policy_outcome,
+            image_provider_display_policy.metadata_use_allowed,
+            image_provider_display_policy.source_link_use_allowed,
+            image_provider_display_policy.thumbnail_display_allowed,
+            image_provider_display_policy.full_image_display_allowed,
+            image_provider_display_policy.sourced_image_card_allowed,
+            image_provider_display_policy.ui_display_implemented,
+            image_provider_display_policy.attribution_required,
+            image_provider_display_policy.attribution_text_or_code,
+            image_provider_display_policy.provider_terms_reviewed,
+            image_provider_display_policy.official_docs_reviewed,
+            image_provider_display_policy.thumbnail_display_rights_explicit,
+            image_provider_display_policy.full_image_display_rights_explicit,
+            image_provider_display_policy.attribution_requirements_explicit,
+            image_provider_display_policy.storage_cache_limits_explicit,
+            image_provider_display_policy.publisher_rights_required,
+            image_provider_display_policy.publisher_rights_verified,
+            image_provider_display_policy.license_required_for_display,
+            image_provider_display_policy.license_unknown_behavior,
+            image_provider_display_policy.transient_storage_only,
+            image_provider_display_policy.raw_image_cache_allowed,
+            image_provider_display_policy.image_bytes_download_allowed,
+            image_provider_display_policy.text_citation_still_required,
+            image_provider_display_policy.display_deferred_reason,
+            image_provider_display_policy.display_blocked_reason,
+            image_provider_display_policy.proof_id,
+            image_provider_display_policy.h392_handoff_recommendation
         );
         let image_display_eligibility_packet = format!(
             "proof_id=H390;selected_outcome={};provider=brave;live_or_fixture=live_or_fixture_separated;image_url_present={};thumbnail_url_present={};source_page_url_present={};source_domain={};retrieved_at_present={};source_page_verified={};source_page_status={};source_page_reason={};canonical_url={};og_image_match={};twitter_image_match={};page_title_present={};license_signal={};license_note={};robots_block={};display_safe={};display_eligible={};display_deferred_reason={};display_blocked_reason={};no_image_bytes_downloaded=true;no_raw_image_cache=true;no_source_page_scrape=true;query_hash_only=true;text_citation_required=true",
@@ -1062,6 +1134,14 @@ impl Ph1eRuntime {
             "WEB_IMAGE_LICENSE_UNKNOWN_DISPLAY_DEFERRED_PASS",
             "H388_IMAGE_PROVIDER_PATH_REGRESSION_PASS",
             "H387_IMAGE_PATH_REGRESSION_PASS",
+            "H391_BRAVE_IMAGE_PROVIDER_POLICY_PASS",
+            "WEB_IMAGE_SOURCE_LINK_ONLY_POLICY_PASS",
+            "WEB_IMAGE_SOURCE_CARD_PASS_BLOCKED",
+            "WEB_IMAGE_POLICY_OFFICIAL_DOCS_REVIEWED_PASS",
+            "WEB_IMAGE_THUMBNAIL_DISPLAY_RIGHTS_NOT_PROVEN_PASS",
+            "WEB_IMAGE_FULL_DISPLAY_RIGHTS_NOT_PROVEN_PASS",
+            "H390_DISPLAY_ELIGIBILITY_REGRESSION_PASS",
+            "H392_HANDOFF_RECOMMENDATION_RECORDED",
         ]
         .join("|");
         let h390_result_classes = [
@@ -1187,8 +1267,8 @@ impl Ph1eRuntime {
                     value: image_display_eligibility_packet,
                 },
                 ToolStructuredField {
-                    key: "retention_class".to_string(),
-                    value: WEB_RETENTION_CLASS.to_string(),
+                    key: "image_provider_display_policy_packet".to_string(),
+                    value: image_provider_display_policy_packet,
                 },
                 ToolStructuredField {
                     key: "result_classes".to_string(),
@@ -1521,6 +1601,28 @@ impl Ph1eRuntime {
             },
             display_blocked_reason: None,
         }
+    }
+
+    fn provider_display_policy_for_decision(
+        &self,
+        provider: &'static str,
+        decision: &BraveImageMetadataDecision,
+        eligibility: &ImageDisplayEligibilityDecision,
+    ) -> ImageProviderDisplayPolicyDecision {
+        image_provider_display_policy_for_metadata(
+            provider,
+            decision.candidate_count > 0,
+            decision
+                .candidate
+                .as_ref()
+                .map(|candidate| {
+                    candidate.source_page_url.is_some()
+                        && candidate.source_domain.is_some()
+                        && candidate.image_source_verified
+                })
+                .unwrap_or(false),
+            eligibility,
+        )
     }
 
     fn run_live_search(
@@ -2311,6 +2413,61 @@ fn h390_candidate_image_match(
             .as_deref()
             .map(|url| url == found)
             .unwrap_or(false)
+}
+
+fn image_provider_display_policy_for_metadata(
+    provider: &'static str,
+    metadata_available: bool,
+    source_link_available: bool,
+    eligibility: &ImageDisplayEligibilityDecision,
+) -> ImageProviderDisplayPolicyDecision {
+    let visual_rights_proven =
+        eligibility.display_eligible && eligibility.explicit_license_signal_present;
+    ImageProviderDisplayPolicyDecision {
+        provider,
+        policy_version: "H391_V1",
+        policy_outcome: if metadata_available && source_link_available {
+            "BRAVE_IMAGE_DISPLAY_POLICY_METADATA_AND_SOURCE_LINK_ONLY"
+        } else {
+            "BRAVE_IMAGE_DISPLAY_POLICY_BLOCKED_EXCEPT_INTERNAL_METADATA"
+        },
+        metadata_use_allowed: metadata_available,
+        source_link_use_allowed: source_link_available,
+        thumbnail_display_allowed: false,
+        full_image_display_allowed: false,
+        sourced_image_card_allowed: false,
+        ui_display_implemented: false,
+        attribution_required: true,
+        attribution_text_or_code: "POWERED_BY_BRAVE",
+        provider_terms_reviewed: true,
+        official_docs_reviewed: true,
+        official_docs_unavailable: false,
+        thumbnail_display_rights_explicit: false,
+        full_image_display_rights_explicit: false,
+        attribution_requirements_explicit: true,
+        storage_cache_limits_explicit: true,
+        publisher_rights_required: true,
+        publisher_rights_verified: false,
+        license_required_for_display: true,
+        license_unknown_behavior: "visual_display_deferred_or_blocked",
+        storage_allowed: metadata_available,
+        transient_storage_only: true,
+        raw_image_cache_allowed: false,
+        image_bytes_download_allowed: false,
+        text_citation_still_required: true,
+        display_deferred_reason: if visual_rights_proven {
+            "ui_display_out_of_scope"
+        } else {
+            "rights_not_proven"
+        },
+        display_blocked_reason: "visual_display_blocked",
+        proof_id: "H391",
+        h392_handoff_recommendation: if metadata_available && source_link_available {
+            "H392_source_link_card_or_rights_review"
+        } else {
+            "H392_internal_metadata_or_alt_provider"
+        },
+    }
 }
 
 #[cfg(test)]
@@ -5006,7 +5163,9 @@ mod tests {
         assert!(
             field("h387_result_classes").contains("IMAGE_CARD_DISPLAY_DEFERRED_IF_UNVERIFIED_PASS")
         );
-        assert!(!field("h387_result_classes").contains("WEB_IMAGE_SOURCE_CARD_PASS"));
+        assert!(!field("h387_result_classes")
+            .split('|')
+            .any(|class| class == "WEB_IMAGE_SOURCE_CARD_PASS"));
         assert!(field("gdelt_status").contains("GDELT_NEWS_CORROBORATION_DEFERRED"));
         assert!(field("result_classes").contains("DEEP_RESEARCH_RESPONSE_METADATA_PASS"));
         assert!(citations
@@ -5076,8 +5235,12 @@ mod tests {
         assert!(field("h389_result_classes").contains("WEB_IMAGE_BOUNDED_PROVIDER_USE_PASS"));
         assert!(field("h389_result_classes").contains("WEB_IMAGE_NO_BYTES_DOWNLOADED_PASS"));
         assert!(field("h389_result_classes").contains("WEB_IMAGE_NO_SOURCE_PAGE_SCRAPE_PASS"));
-        assert!(!field("h387_result_classes").contains("WEB_IMAGE_SOURCE_CARD_PASS"));
-        assert!(!field("h389_result_classes").contains("WEB_IMAGE_SOURCE_CARD_PASS"));
+        assert!(!field("h387_result_classes")
+            .split('|')
+            .any(|class| class == "WEB_IMAGE_SOURCE_CARD_PASS"));
+        assert!(!field("h389_result_classes")
+            .split('|')
+            .any(|class| class == "WEB_IMAGE_SOURCE_CARD_PASS"));
         assert!(!provider_path.contains("api_key="));
         assert!(!provider_path.contains("secret_value"));
         assert!(!provider_path.contains("fixture_brave_key"));
@@ -5152,8 +5315,12 @@ mod tests {
         assert!(field("h390_result_classes").contains("WEB_IMAGE_NO_UI_DISPLAY_PASS"));
         assert!(field("h390_result_classes").contains("WEB_IMAGE_NO_RAW_IMAGE_CACHE_PASS"));
         assert!(field("h390_result_classes").contains("WEB_IMAGE_TEXT_CITATION_REQUIRED_PASS"));
-        assert!(!field("h389_result_classes").contains("WEB_IMAGE_SOURCE_CARD_PASS"));
-        assert!(!field("h390_result_classes").contains("WEB_IMAGE_SOURCE_CARD_PASS"));
+        assert!(!field("h389_result_classes")
+            .split('|')
+            .any(|class| class == "WEB_IMAGE_SOURCE_CARD_PASS"));
+        assert!(!field("h390_result_classes")
+            .split('|')
+            .any(|class| class == "WEB_IMAGE_SOURCE_CARD_PASS"));
         let eligibility = field("image_display_eligibility_packet");
         assert!(
             eligibility.contains("selected_outcome=DISPLAY_DEFERRED_LICENSE_OR_SAFETY_INCOMPLETE")
@@ -5416,6 +5583,106 @@ mod tests {
     }
 
     #[test]
+    fn h391_brave_policy_is_metadata_and_source_link_only() {
+        let fixture = spawn_test_http_fixture();
+        let rt = runtime_with_live_fixture(&fixture);
+        let decision = rt.brave_image_metadata_decision_for_query("public vineyard image metadata");
+        let eligibility = rt.image_display_eligibility_for_decision(&decision);
+        let policy = rt.provider_display_policy_for_decision("brave", &decision, &eligibility);
+        assert_eq!(
+            policy.policy_outcome,
+            "BRAVE_IMAGE_DISPLAY_POLICY_METADATA_AND_SOURCE_LINK_ONLY"
+        );
+        assert!(policy.metadata_use_allowed);
+        assert!(policy.source_link_use_allowed);
+        assert!(!policy.thumbnail_display_allowed);
+        assert!(!policy.full_image_display_allowed);
+        assert!(!policy.sourced_image_card_allowed);
+        assert!(!policy.ui_display_implemented);
+        assert!(policy.attribution_required);
+        assert!(policy.publisher_rights_required);
+        assert!(!policy.publisher_rights_verified);
+        assert_eq!(
+            policy.h392_handoff_recommendation,
+            "H392_source_link_card_or_rights_review"
+        );
+    }
+
+    #[test]
+    fn h391_policy_does_not_treat_api_or_url_fields_as_display_rights() {
+        let mut fixture = spawn_test_http_fixture();
+        fixture.url_fetch_fixture_html = r#"
+            <html><head>
+              <meta property="og:image" content="https://cdn.selene.ai/images/vineyard.jpg">
+              <meta name="twitter:image" content="https://cdn.selene.ai/images/vineyard.jpg">
+              <link rel="license" href="https://creativecommons.org/licenses/by/4.0/">
+              <title>Licensed vineyard image</title>
+            </head></html>
+        "#
+        .to_string();
+        let rt = runtime_with_live_fixture(&fixture);
+        let decision = rt.brave_image_metadata_decision_for_query("licensed public vineyard image");
+        let eligibility = rt.image_display_eligibility_for_decision(&decision);
+        assert!(eligibility.display_eligible);
+        assert!(
+            eligibility.og_image_matches_candidate || eligibility.twitter_image_matches_candidate
+        );
+        let policy = rt.provider_display_policy_for_decision("brave", &decision, &eligibility);
+        assert!(policy.official_docs_reviewed);
+        assert!(!policy.thumbnail_display_rights_explicit);
+        assert!(!policy.full_image_display_rights_explicit);
+        assert!(!policy.thumbnail_display_allowed);
+        assert!(!policy.full_image_display_allowed);
+        assert!(!policy.sourced_image_card_allowed);
+    }
+
+    #[test]
+    fn h391_result_classes_and_handoff_are_recorded_without_source_card_pass() {
+        let fixture = spawn_test_http_fixture();
+        let rt = runtime_with_live_fixture(&fixture);
+        let out = rt.run(&req(
+            ToolName::DeepResearch,
+            "deep research public vineyard image metadata policy",
+            false,
+            false,
+        ));
+        assert_eq!(out.tool_status, ToolStatus::Ok, "{out:?}");
+        let ToolResult::DeepResearch {
+            extracted_fields, ..
+        } = out
+            .tool_result
+            .as_ref()
+            .expect("tool result required for ok")
+        else {
+            panic!("expected DeepResearch result");
+        };
+        let field = |key: &str| {
+            extracted_fields
+                .iter()
+                .find(|candidate| candidate.key == key)
+                .map(|candidate| candidate.value.as_str())
+                .unwrap_or("")
+        };
+        let policy = field("image_provider_display_policy_packet");
+        let h391_classes = field("h389_result_classes");
+        assert!(policy
+            .contains("policy_outcome=BRAVE_IMAGE_DISPLAY_POLICY_METADATA_AND_SOURCE_LINK_ONLY"));
+        assert!(policy.contains("thumbnail_display_allowed=false"));
+        assert!(policy.contains("full_image_display_allowed=false"));
+        assert!(policy.contains("sourced_image_card_allowed=false"));
+        assert!(policy.contains("h392_handoff=H392_source_link_card_or_rights_review"));
+        assert!(h391_classes.contains("H391_BRAVE_IMAGE_PROVIDER_POLICY_PASS"));
+        assert!(h391_classes.contains("WEB_IMAGE_POLICY_OFFICIAL_DOCS_REVIEWED_PASS"));
+        assert!(h391_classes.contains("WEB_IMAGE_THUMBNAIL_DISPLAY_RIGHTS_NOT_PROVEN_PASS"));
+        assert!(h391_classes.contains("WEB_IMAGE_FULL_DISPLAY_RIGHTS_NOT_PROVEN_PASS"));
+        assert!(h391_classes.contains("H392_HANDOFF_RECOMMENDATION_RECORDED"));
+        assert!(!h391_classes.contains("WEB_IMAGE_SOURCE_CARD_PASS|"));
+        assert!(!field("result_classes")
+            .split('|')
+            .any(|class| class == "WEB_IMAGE_SOURCE_CARD_PASS"));
+    }
+
+    #[test]
     #[ignore]
     fn h389_live_brave_image_provider_approval_maps_real_metadata_without_secret_leak() {
         let key = device_vault::resolve_secret(ProviderSecretId::BraveSearchApiKey.as_str())
@@ -5512,6 +5779,65 @@ mod tests {
             eligibility.display_deferred_reason,
             Some("license_or_display_safety_incomplete")
         );
+    }
+
+    #[test]
+    #[ignore]
+    fn h391_live_brave_image_provider_policy_maps_real_metadata_without_display() {
+        let key = device_vault::resolve_secret(ProviderSecretId::BraveSearchApiKey.as_str())
+            .expect("vault lookup must succeed")
+            .expect(
+                "brave_search_api_key must be present in the local Selene vault for live proof",
+            );
+        let candidate = run_brave_image_metadata_search(
+            BRAVE_IMAGE_DEFAULT_URL,
+            &key,
+            "Tamburlaine organic wine producer Australia",
+            BRAVE_IMAGE_MAX_RESULTS,
+            BRAVE_IMAGE_TIMEOUT_MS,
+            "selene-ph1e-live-proof/1.0",
+            &Ph1eProxyConfig::from_env(),
+            None,
+        )
+        .expect("Brave image metadata endpoint should return parseable metadata")
+        .into_iter()
+        .find(|item| item.image_source_verified)
+        .expect("live Brave image metadata should include source-bound metadata");
+        let decision = BraveImageMetadataDecision {
+            selected_outcome: "APPROVED_BRAVE_IMAGE_METADATA_ONLY_PATH",
+            path_status: "WEB_IMAGE_METADATA_PROVIDER_PATH_METADATA_ONLY",
+            source_card_status: "WEB_IMAGE_SOURCE_CARD_DISPLAY_DEFERRED",
+            display_status: "WEB_IMAGE_SOURCE_CARD_DISPLAY_DEFERRED",
+            display_deferred_reason: "license_or_display_safety_incomplete",
+            blocker: Some("license_or_display_safety_incomplete"),
+            supports_image_url: candidate.image_url.is_some(),
+            supports_thumbnail_url: candidate.thumbnail_url.is_some(),
+            supports_source_page_url: candidate.source_page_url.is_some(),
+            supports_source_domain: candidate.source_domain.is_some(),
+            supports_retrieved_at: true,
+            supports_display_safety: false,
+            supports_license_or_usage_note: false,
+            supports_image_source_verified: candidate.image_source_verified,
+            candidate_count: 1,
+            candidate: Some(candidate),
+            provider_call_attempted: true,
+            provider_error: None,
+        };
+        let rt = Ph1eRuntime::new(Ph1eConfig::mvp_v1());
+        let eligibility = rt.image_display_eligibility_for_decision(&decision);
+        let policy = rt.provider_display_policy_for_decision("brave", &decision, &eligibility);
+        assert_eq!(
+            policy.policy_outcome,
+            "BRAVE_IMAGE_DISPLAY_POLICY_METADATA_AND_SOURCE_LINK_ONLY"
+        );
+        assert!(policy.metadata_use_allowed);
+        assert!(policy.source_link_use_allowed);
+        assert!(!policy.thumbnail_display_allowed);
+        assert!(!policy.full_image_display_allowed);
+        assert!(!policy.sourced_image_card_allowed);
+        assert!(!policy.ui_display_implemented);
+        assert!(!policy.image_bytes_download_allowed);
+        assert!(!policy.raw_image_cache_allowed);
     }
 
     #[test]

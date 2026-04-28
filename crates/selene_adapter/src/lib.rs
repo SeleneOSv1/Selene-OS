@@ -367,6 +367,7 @@ pub struct VoiceTurnDeepResearchMetadata {
     pub layout: VoiceTurnReportLayoutMetadata,
     pub image_provider_path: VoiceTurnImageProviderPathMetadata,
     pub image_display_eligibility: VoiceTurnImageDisplayEligibilityMetadata,
+    pub image_provider_display_policy: VoiceTurnImageProviderDisplayPolicyMetadata,
     pub gdelt_status: String,
     pub provider_fanout_status: String,
     pub retention_class: String,
@@ -471,6 +472,42 @@ pub struct VoiceTurnImageDisplayEligibilityMetadata {
     pub no_source_page_scrape: bool,
     pub query_hash_only: bool,
     pub text_citation_required: bool,
+}
+
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct VoiceTurnImageProviderDisplayPolicyMetadata {
+    pub provider: String,
+    pub policy_version: String,
+    pub policy_outcome: String,
+    pub metadata_use_allowed: bool,
+    pub source_link_use_allowed: bool,
+    pub thumbnail_display_allowed: bool,
+    pub full_image_display_allowed: bool,
+    pub sourced_image_card_allowed: bool,
+    pub ui_display_implemented: bool,
+    pub attribution_required: bool,
+    pub attribution_text_or_code: String,
+    pub provider_terms_reviewed: bool,
+    pub official_docs_reviewed: bool,
+    pub official_docs_unavailable: bool,
+    pub thumbnail_display_rights_explicit: bool,
+    pub full_image_display_rights_explicit: bool,
+    pub attribution_requirements_explicit: bool,
+    pub storage_cache_limits_explicit: bool,
+    pub publisher_rights_required: bool,
+    pub publisher_rights_verified: bool,
+    pub license_required_for_display: bool,
+    pub license_unknown_behavior: String,
+    pub storage_allowed: bool,
+    pub transient_storage_only: bool,
+    pub raw_image_cache_allowed: bool,
+    pub image_bytes_download_allowed: bool,
+    pub text_citation_still_required: bool,
+    pub display_deferred_reason: Option<String>,
+    pub display_blocked_reason: Option<String>,
+    pub proof_id: Option<String>,
+    pub h392_handoff_recommendation: String,
 }
 
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
@@ -11965,6 +12002,10 @@ fn deep_research_metadata_from_tool_response(
         .get("image_display_eligibility_packet")
         .map(String::as_str)
         .unwrap_or_default();
+    let image_provider_display_policy_packet = fields
+        .get("image_provider_display_policy_packet")
+        .map(String::as_str)
+        .unwrap_or(image_provider_safety_packet);
     let retention_class = fields
         .get("retention_class")
         .cloned()
@@ -12445,6 +12486,144 @@ fn deep_research_metadata_from_tool_response(
                 image_display_eligibility_packet,
                 "text_citation_required",
             ),
+        },
+        image_provider_display_policy: VoiceTurnImageProviderDisplayPolicyMetadata {
+            provider: packet_field_value(image_provider_display_policy_packet, "policy_provider")
+                .or_else(|| packet_field_value(image_provider_path_packet, "provider_name"))
+                .unwrap_or("none")
+                .to_string(),
+            policy_version: packet_field_value(
+                image_provider_display_policy_packet,
+                "policy_version",
+            )
+            .unwrap_or("unknown")
+            .to_string(),
+            policy_outcome: packet_field_value(
+                image_provider_display_policy_packet,
+                "policy_outcome",
+            )
+            .unwrap_or("BRAVE_IMAGE_DISPLAY_POLICY_METADATA_AND_SOURCE_LINK_ONLY")
+            .to_string(),
+            metadata_use_allowed: packet_field_bool(
+                image_provider_display_policy_packet,
+                "metadata_use_allowed",
+            ),
+            source_link_use_allowed: packet_field_bool(
+                image_provider_display_policy_packet,
+                "source_link_use_allowed",
+            ),
+            thumbnail_display_allowed: packet_field_bool(
+                image_provider_display_policy_packet,
+                "thumbnail_display_allowed",
+            ),
+            full_image_display_allowed: packet_field_bool(
+                image_provider_display_policy_packet,
+                "full_image_display_allowed",
+            ),
+            sourced_image_card_allowed: packet_field_bool(
+                image_provider_display_policy_packet,
+                "sourced_image_card_allowed",
+            ),
+            ui_display_implemented: packet_field_bool(
+                image_provider_display_policy_packet,
+                "ui_display_implemented",
+            ),
+            attribution_required: packet_field_bool(
+                image_provider_display_policy_packet,
+                "attribution_required",
+            ),
+            attribution_text_or_code: packet_field_value(
+                image_provider_display_policy_packet,
+                "attribution_text_or_code",
+            )
+            .unwrap_or("provider_attribution_required_before_visual_display")
+            .to_string(),
+            provider_terms_reviewed: packet_field_bool(
+                image_provider_display_policy_packet,
+                "provider_terms_reviewed",
+            ),
+            official_docs_reviewed: packet_field_bool(
+                image_provider_display_policy_packet,
+                "official_docs_reviewed",
+            ),
+            official_docs_unavailable: packet_field_bool(
+                image_provider_display_policy_packet,
+                "official_docs_unavailable",
+            ),
+            thumbnail_display_rights_explicit: packet_field_bool(
+                image_provider_display_policy_packet,
+                "thumbnail_rights_explicit",
+            ),
+            full_image_display_rights_explicit: packet_field_bool(
+                image_provider_display_policy_packet,
+                "full_image_rights_explicit",
+            ),
+            attribution_requirements_explicit: packet_field_bool(
+                image_provider_display_policy_packet,
+                "attribution_explicit",
+            ),
+            storage_cache_limits_explicit: packet_field_bool(
+                image_provider_display_policy_packet,
+                "storage_cache_explicit",
+            ),
+            publisher_rights_required: packet_field_bool(
+                image_provider_display_policy_packet,
+                "publisher_rights_required",
+            ),
+            publisher_rights_verified: packet_field_bool(
+                image_provider_display_policy_packet,
+                "publisher_rights_verified",
+            ),
+            license_required_for_display: packet_field_bool(
+                image_provider_display_policy_packet,
+                "license_required_for_display",
+            ),
+            license_unknown_behavior: packet_field_value(
+                image_provider_display_policy_packet,
+                "license_unknown_behavior",
+            )
+            .unwrap_or("visual_display_deferred_or_blocked")
+            .to_string(),
+            storage_allowed: packet_field_bool(
+                image_provider_display_policy_packet,
+                "metadata_use_allowed",
+            ),
+            transient_storage_only: packet_field_bool(
+                image_provider_display_policy_packet,
+                "transient_storage_only",
+            ),
+            raw_image_cache_allowed: packet_field_bool(
+                image_provider_display_policy_packet,
+                "raw_image_cache_allowed",
+            ),
+            image_bytes_download_allowed: packet_field_bool(
+                image_provider_display_policy_packet,
+                "image_bytes_download_allowed",
+            ),
+            text_citation_still_required: packet_field_bool(
+                image_provider_display_policy_packet,
+                "text_citation_still_required",
+            ),
+            display_deferred_reason: packet_field_value(
+                image_provider_display_policy_packet,
+                "display_deferred_reason",
+            )
+            .filter(|value| *value != "none")
+            .map(ToString::to_string),
+            display_blocked_reason: packet_field_value(
+                image_provider_display_policy_packet,
+                "display_blocked_reason",
+            )
+            .filter(|value| *value != "none")
+            .map(ToString::to_string),
+            proof_id: packet_field_value(image_provider_display_policy_packet, "proof_id")
+                .map(ToString::to_string),
+            h392_handoff_recommendation: packet_field_value(
+                image_provider_display_policy_packet,
+                "h392_handoff",
+            )
+            .unwrap_or("H392_policy_handoff_not_recorded")
+            .to_string(),
         },
         gdelt_status,
         provider_fanout_status: provider_fanout_packet_status.unwrap_or_else(|| {
@@ -21654,6 +21833,143 @@ mod tests {
         assert!(metadata
             .result_classes
             .contains(&"WEB_IMAGE_DISPLAY_ELIGIBILITY_PACKET_PASS".to_string()));
+        assert!(!metadata
+            .result_classes
+            .contains(&"WEB_IMAGE_SOURCE_CARD_PASS".to_string()));
+    }
+
+    #[test]
+    fn h391_image_provider_display_policy_metadata_is_response_visible() {
+        let citation = selene_kernel_contracts::ph1e::ToolTextSnippet {
+            title: "Verified source".to_string(),
+            snippet: "Image policy remains metadata-only and citation-backed.".to_string(),
+            url: "https://example.com/verified-source".to_string(),
+        };
+        let tool_response = ToolResponse::ok_v1(
+            selene_kernel_contracts::ph1e::ToolRequestId(391),
+            selene_kernel_contracts::ph1e::ToolQueryHash(391),
+            ToolResult::DeepResearch {
+                summary: "Deep Research Report\n\nSummary: verified evidence only.".to_string(),
+                extracted_fields: vec![
+                    selene_kernel_contracts::ph1e::ToolStructuredField {
+                        key: "image_metadata_provider_path_packet".to_string(),
+                        value: "provider_path_id=h389;selected_outcome=APPROVED_BRAVE_IMAGE_METADATA_ONLY_PATH;provider_name=brave;provider_kind=public_image_metadata;secret_id=brave_search_api_key;endpoint_class=brave_image_search;query_hash_or_redacted_query=queryhash;supports_image_url=true;supports_thumbnail_url=true;supports_source_page_url=true;supports_source_domain=true;supports_retrieved_at=true;supports_display_safety=false;supports_license_or_usage_note=false;supports_image_source_verified=true;supports_linked_claim_ids=false;display_allowed=false;display_deferred_reason=license_or_display_safety_incomplete;blocker=license_or_display_safety_incomplete;proof_id=H389;screenshot_not_evidence=true"
+                            .to_string(),
+                    },
+                    selene_kernel_contracts::ph1e::ToolStructuredField {
+                        key: "image_metadata_provider_safety_packet".to_string(),
+                        value: "query_leakage_policy=private_block_or_defer;max_query_count=1;max_result_count=3;timeout_ms=2000;retry_policy=none;no_new_provider_dependency=true;no_image_bytes_downloaded=true;no_source_page_scrape=true;query_hash_only=true;display_status=WEB_IMAGE_SOURCE_CARD_DISPLAY_DEFERRED"
+                            .to_string(),
+                    },
+                    selene_kernel_contracts::ph1e::ToolStructuredField {
+                        key: "image_provider_display_policy_packet".to_string(),
+                        value: "policy_provider=brave;policy_version=H391_V1;policy_outcome=BRAVE_IMAGE_DISPLAY_POLICY_METADATA_AND_SOURCE_LINK_ONLY;metadata_use_allowed=true;source_link_use_allowed=true;thumbnail_display_allowed=false;full_image_display_allowed=false;sourced_image_card_allowed=false;ui_display_implemented=false;attribution_required=true;attribution_text_or_code=POWERED_BY_BRAVE;provider_terms_reviewed=true;official_docs_reviewed=true;thumbnail_rights_explicit=false;full_image_rights_explicit=false;attribution_explicit=true;storage_cache_explicit=true;publisher_rights_required=true;publisher_rights_verified=false;license_required_for_display=true;license_unknown_behavior=visual_display_deferred_or_blocked;transient_storage_only=true;raw_image_cache_allowed=false;image_bytes_download_allowed=false;text_citation_still_required=true;display_deferred_reason=rights_not_proven;display_blocked_reason=visual_display_blocked;proof_id=H391;h392_handoff=H392_source_link_card_or_rights_review"
+                            .to_string(),
+                    },
+                    selene_kernel_contracts::ph1e::ToolStructuredField {
+                        key: "h390_result_classes".to_string(),
+                        value: "H391_BRAVE_IMAGE_PROVIDER_POLICY_PASS|WEB_IMAGE_SOURCE_LINK_ONLY_POLICY_PASS|WEB_IMAGE_THUMBNAIL_DISPLAY_RIGHTS_NOT_PROVEN_PASS|WEB_IMAGE_FULL_DISPLAY_RIGHTS_NOT_PROVEN_PASS|H392_HANDOFF_RECOMMENDATION_RECORDED"
+                            .to_string(),
+                    },
+                ],
+                citations: vec![citation.clone()],
+            },
+            selene_kernel_contracts::ph1e::SourceMetadata {
+                schema_version: selene_kernel_contracts::ph1e::PH1E_CONTRACT_VERSION,
+                provider_hint: Some("brave".to_string()),
+                retrieved_at_unix_ms: 1_770_000_000_000,
+                sources: vec![selene_kernel_contracts::ph1e::SourceRef {
+                    title: citation.title,
+                    url: citation.url,
+                }],
+            },
+            None,
+            ReasonCodeId(0x4500_0001),
+            CacheStatus::Miss,
+        )
+        .expect("fixture tool response must validate");
+        let metadata = deep_research_metadata_from_tool_response(&tool_response)
+            .expect("deep research response metadata must be present");
+        assert_eq!(metadata.image_provider_display_policy.provider, "brave");
+        assert_eq!(
+            metadata.image_provider_display_policy.policy_version,
+            "H391_V1"
+        );
+        assert_eq!(
+            metadata.image_provider_display_policy.policy_outcome,
+            "BRAVE_IMAGE_DISPLAY_POLICY_METADATA_AND_SOURCE_LINK_ONLY"
+        );
+        assert!(metadata.image_provider_display_policy.metadata_use_allowed);
+        assert!(
+            metadata
+                .image_provider_display_policy
+                .source_link_use_allowed
+        );
+        assert!(
+            !metadata
+                .image_provider_display_policy
+                .thumbnail_display_allowed
+        );
+        assert!(
+            !metadata
+                .image_provider_display_policy
+                .full_image_display_allowed
+        );
+        assert!(
+            !metadata
+                .image_provider_display_policy
+                .sourced_image_card_allowed
+        );
+        assert!(
+            !metadata
+                .image_provider_display_policy
+                .ui_display_implemented
+        );
+        assert!(metadata.image_provider_display_policy.attribution_required);
+        assert!(
+            metadata
+                .image_provider_display_policy
+                .official_docs_reviewed
+        );
+        assert!(
+            !metadata
+                .image_provider_display_policy
+                .thumbnail_display_rights_explicit
+        );
+        assert!(
+            !metadata
+                .image_provider_display_policy
+                .full_image_display_rights_explicit
+        );
+        assert!(
+            metadata
+                .image_provider_display_policy
+                .publisher_rights_required
+        );
+        assert!(
+            !metadata
+                .image_provider_display_policy
+                .publisher_rights_verified
+        );
+        assert!(
+            !metadata
+                .image_provider_display_policy
+                .raw_image_cache_allowed
+        );
+        assert!(
+            !metadata
+                .image_provider_display_policy
+                .image_bytes_download_allowed
+        );
+        assert_eq!(
+            metadata
+                .image_provider_display_policy
+                .h392_handoff_recommendation,
+            "H392_source_link_card_or_rights_review"
+        );
+        assert!(metadata
+            .result_classes
+            .contains(&"H391_BRAVE_IMAGE_PROVIDER_POLICY_PASS".to_string()));
         assert!(!metadata
             .result_classes
             .contains(&"WEB_IMAGE_SOURCE_CARD_PASS".to_string()));
