@@ -410,7 +410,13 @@ pub struct VoiceTurnImageProviderPathMetadata {
     pub provider_kind: String,
     pub secret_id: Option<String>,
     pub endpoint_class: Option<String>,
+    pub endpoint_path_hash_or_label: Option<String>,
+    pub query_hash_or_redacted_query: Option<String>,
     pub query_leakage_policy: String,
+    pub max_query_count: usize,
+    pub max_result_count: usize,
+    pub timeout_ms: u64,
+    pub retry_policy: String,
     pub candidate_matrix: Vec<String>,
     pub supports_image_url: bool,
     pub supports_thumbnail_url: bool,
@@ -427,6 +433,9 @@ pub struct VoiceTurnImageProviderPathMetadata {
     pub proof_id: Option<String>,
     pub no_new_provider_dependency: bool,
     pub no_live_image_provider_call: bool,
+    pub no_image_bytes_downloaded: bool,
+    pub no_source_page_scrape: bool,
+    pub query_hash_only: bool,
     pub screenshot_not_evidence: bool,
 }
 
@@ -11888,6 +11897,25 @@ fn deep_research_metadata_from_tool_response(
             }
         }
     }
+    if let Some(extra) = fields.get("h389_result_classes") {
+        for class in extra
+            .split('|')
+            .map(str::trim)
+            .filter(|item| !item.is_empty())
+        {
+            if !result_classes.iter().any(|existing| existing == class) {
+                result_classes.push(class.to_string());
+            }
+        }
+    }
+    let image_provider_path_packet = fields
+        .get("image_metadata_provider_path_packet")
+        .map(String::as_str)
+        .unwrap_or_default();
+    let image_provider_safety_packet = fields
+        .get("image_metadata_provider_safety_packet")
+        .map(String::as_str)
+        .unwrap_or_default();
     let retention_class = fields
         .get("retention_class")
         .cloned()
@@ -11895,19 +11923,36 @@ fn deep_research_metadata_from_tool_response(
     let image_source_card_status = fields
         .get("image_source_card_status")
         .cloned()
-        .unwrap_or_else(|| "WEB_IMAGE_SOURCE_CARD_DEFERRED".to_string());
+        .unwrap_or_else(|| {
+            match packet_field_value(image_provider_path_packet, "selected_outcome") {
+                Some("APPROVED_BRAVE_IMAGE_METADATA_ONLY_PATH") => {
+                    "WEB_IMAGE_SOURCE_CARD_DISPLAY_DEFERRED:brave_metadata_license_or_display_safety_incomplete".to_string()
+                }
+                _ => "WEB_IMAGE_SOURCE_CARD_DEFERRED".to_string(),
+            }
+        });
     let image_metadata_provider_path_status = fields
         .get("image_metadata_provider_path_status")
         .cloned()
-        .unwrap_or_else(|| "WEB_IMAGE_METADATA_PROVIDER_PATH_NOT_FOUND".to_string());
+        .unwrap_or_else(|| {
+            match packet_field_value(image_provider_path_packet, "selected_outcome") {
+                Some("APPROVED_BRAVE_IMAGE_METADATA_ONLY_PATH") => {
+                    "WEB_IMAGE_METADATA_PROVIDER_PATH_METADATA_ONLY".to_string()
+                }
+                Some("APPROVED_DISPLAYABLE_BRAVE_IMAGE_PROVIDER_PATH") => {
+                    "WEB_IMAGE_METADATA_PROVIDER_PATH_FOUND".to_string()
+                }
+                _ => "WEB_IMAGE_METADATA_PROVIDER_PATH_NOT_FOUND".to_string(),
+            }
+        });
     let image_source_card_display_status = fields
         .get("image_source_card_display_status")
         .cloned()
+        .or_else(|| {
+            packet_field_value(image_provider_safety_packet, "display_status")
+                .map(ToString::to_string)
+        })
         .unwrap_or_else(|| "WEB_IMAGE_SOURCE_CARD_DISPLAY_DEFERRED".to_string());
-    let image_provider_path_packet = fields
-        .get("image_metadata_provider_path_packet")
-        .map(String::as_str)
-        .unwrap_or_default();
     let image_layout_packet = fields
         .get("report_presentation_layout_packet")
         .map(String::as_str)
@@ -12115,12 +12160,41 @@ fn deep_research_metadata_from_tool_response(
             endpoint_class: packet_field_value(image_provider_path_packet, "endpoint_class")
                 .filter(|value| *value != "none")
                 .map(ToString::to_string),
+            endpoint_path_hash_or_label: packet_field_value(
+                image_provider_path_packet,
+                "endpoint_path_hash_or_label",
+            )
+            .filter(|value| *value != "none")
+            .map(ToString::to_string),
+            query_hash_or_redacted_query: packet_field_value(
+                image_provider_path_packet,
+                "query_hash_or_redacted_query",
+            )
+            .filter(|value| *value != "none")
+            .map(ToString::to_string),
             query_leakage_policy: packet_field_value(
                 image_provider_path_packet,
                 "query_leakage_policy",
             )
+            .or_else(|| packet_field_value(image_provider_safety_packet, "query_leakage_policy"))
             .unwrap_or("private_queries_blocked_or_deferred")
             .to_string(),
+            max_query_count: packet_field_value(image_provider_path_packet, "max_query_count")
+                .or_else(|| packet_field_value(image_provider_safety_packet, "max_query_count"))
+                .and_then(|value| value.parse::<usize>().ok())
+                .unwrap_or(0),
+            max_result_count: packet_field_value(image_provider_path_packet, "max_result_count")
+                .or_else(|| packet_field_value(image_provider_safety_packet, "max_result_count"))
+                .and_then(|value| value.parse::<usize>().ok())
+                .unwrap_or(0),
+            timeout_ms: packet_field_value(image_provider_path_packet, "timeout_ms")
+                .or_else(|| packet_field_value(image_provider_safety_packet, "timeout_ms"))
+                .and_then(|value| value.parse::<u64>().ok())
+                .unwrap_or(0),
+            retry_policy: packet_field_value(image_provider_path_packet, "retry_policy")
+                .or_else(|| packet_field_value(image_provider_safety_packet, "retry_policy"))
+                .unwrap_or("none")
+                .to_string(),
             candidate_matrix: packet_field_value(image_provider_path_packet, "candidate_matrix")
                 .map(|value| {
                     value
@@ -12177,11 +12251,30 @@ fn deep_research_metadata_from_tool_response(
             no_new_provider_dependency: packet_field_bool(
                 image_provider_path_packet,
                 "no_new_provider_dependency",
+            ) || packet_field_bool(
+                image_provider_safety_packet,
+                "no_new_provider_dependency",
             ),
             no_live_image_provider_call: packet_field_bool(
                 image_provider_path_packet,
                 "no_live_image_provider_call",
             ),
+            no_image_bytes_downloaded: packet_field_bool(
+                image_provider_path_packet,
+                "no_image_bytes_downloaded",
+            ) || packet_field_bool(
+                image_provider_safety_packet,
+                "no_image_bytes_downloaded",
+            ),
+            no_source_page_scrape: packet_field_bool(
+                image_provider_path_packet,
+                "no_source_page_scrape",
+            ) || packet_field_bool(
+                image_provider_safety_packet,
+                "no_source_page_scrape",
+            ),
+            query_hash_only: packet_field_bool(image_provider_path_packet, "query_hash_only")
+                || packet_field_bool(image_provider_safety_packet, "query_hash_only"),
             screenshot_not_evidence: packet_field_bool(
                 image_provider_path_packet,
                 "screenshot_not_evidence",
@@ -20710,9 +20803,23 @@ mod tests {
         assert_eq!(metadata.source_chips[0].primary_domain, "openai.com");
         assert_eq!(metadata.citation_cards[0].domain, "openai.com");
         assert!(metadata.citation_cards[0].display_safe);
-        assert!(metadata
-            .image_source_card_status
-            .contains("WEB_IMAGE_SOURCE_CARD_DEFERRED"));
+        assert!(
+            metadata.image_metadata_provider_path_status
+                == "WEB_IMAGE_METADATA_PROVIDER_PATH_NOT_FOUND"
+                || metadata.image_metadata_provider_path_status
+                    == "WEB_IMAGE_METADATA_PROVIDER_PATH_METADATA_ONLY"
+        );
+        assert!(
+            metadata
+                .image_source_card_status
+                .contains("WEB_IMAGE_SOURCE_CARD_DEFERRED")
+                || metadata
+                    .image_source_card_status
+                    .contains("WEB_IMAGE_SOURCE_CARD_DISPLAY_DEFERRED")
+        );
+        assert!(!metadata
+            .result_classes
+            .contains(&"WEB_IMAGE_SOURCE_CARD_PASS".to_string()));
         assert!(metadata
             .gdelt_status
             .contains("GDELT_NEWS_CORROBORATION_DEFERRED"));
@@ -21140,6 +21247,126 @@ mod tests {
     }
 
     #[test]
+    fn h389_brave_image_provider_approval_metadata_only_is_response_visible() {
+        let citation = selene_kernel_contracts::ph1e::ToolTextSnippet {
+            title: "Verified source".to_string(),
+            snippet: "Evidence remains textual and citation-backed.".to_string(),
+            url: "https://example.com/verified-source".to_string(),
+        };
+        let tool_response = ToolResponse::ok_v1(
+            selene_kernel_contracts::ph1e::ToolRequestId(389),
+            selene_kernel_contracts::ph1e::ToolQueryHash(389),
+            ToolResult::DeepResearch {
+                summary: "Deep Research Report\n\nSummary: verified evidence only.".to_string(),
+                extracted_fields: vec![
+                    selene_kernel_contracts::ph1e::ToolStructuredField {
+                        key: "image_metadata_provider_path_packet".to_string(),
+                        value: "provider_path_id=h389;selected_outcome=APPROVED_BRAVE_IMAGE_METADATA_ONLY_PATH;selected_candidate_id=brave_image_search;provider_name=brave;provider_kind=public_image_metadata;secret_id=brave_search_api_key;endpoint_class=brave_image_search;endpoint_path_hash_or_label=brave_images_search_v1:abc123;query_hash_or_redacted_query=queryhash;candidate_matrix=bwn:text,bie:metadata,vision:asset,page:no_scrape;supports_image_url=true;supports_thumbnail_url=true;supports_source_page_url=true;supports_source_domain=true;supports_retrieved_at=true;supports_display_safety=false;supports_license_or_usage_note=false;supports_image_source_verified=true;supports_linked_claim_ids=false;display_allowed=false;display_deferred_reason=license_or_display_safety_incomplete;blocker=license_or_display_safety_incomplete;proof_id=H389;provider_call_attempted=true;provider_error=none;screenshot_not_evidence=true"
+                            .to_string(),
+                    },
+                    selene_kernel_contracts::ph1e::ToolStructuredField {
+                        key: "image_metadata_provider_safety_packet".to_string(),
+                        value: "query_leakage_policy=private_block_or_defer;max_query_count=1;max_result_count=3;timeout_ms=2000;retry_policy=none;secret_value_logged=false;no_new_provider_dependency=true;no_non_brave_provider=true;no_image_bytes_downloaded=true;no_source_page_scrape=true;query_hash_only=true;raw_private_query_stored=false;full_provider_request_url_persisted=false;fixture_image_marked_live=false;display_allowed=false;display_status=WEB_IMAGE_SOURCE_CARD_DISPLAY_DEFERRED"
+                            .to_string(),
+                    },
+                    selene_kernel_contracts::ph1e::ToolStructuredField {
+                        key: "report_presentation_layout_packet".to_string(),
+                        value: "query_pill_text=user_query;main_heading=Deep Research Report;lead_claim_id=claim_1;core_facts_section=Core facts;source_chip_positions=after_supported_claim;image_strip_status=WEB_IMAGE_SOURCE_CARD_DISPLAY_DEFERRED;image_strip_required_count=3;image_strip_cards_verified_count=0;layout_reference_reason=user_screenshot_layout_reference_only;screenshot_not_evidence=true;desktop_ui_modified=false"
+                            .to_string(),
+                    },
+                    selene_kernel_contracts::ph1e::ToolStructuredField {
+                        key: "result_classes".to_string(),
+                        value: "DEEP_RESEARCH_RESPONSE_METADATA_PASS|CITATION_SOURCE_CHIPS_RESPONSE_METADATA_PASS|CITATION_CARD_RESPONSE_METADATA_PASS|WEB_IMAGE_SOURCE_CARD_DISPLAY_DEFERRED"
+                            .to_string(),
+                    },
+                    selene_kernel_contracts::ph1e::ToolStructuredField {
+                        key: "h389_result_classes".to_string(),
+                        value: "WEB_IMAGE_PROVIDER_APPROVAL_PASS|WEB_IMAGE_PROVIDER_CANDIDATE_MATRIX_PASS|WEB_IMAGE_METADATA_PROVIDER_PATH_METADATA_ONLY|WEB_IMAGE_SOURCE_CARD_DISPLAY_DEFERRED|WEB_IMAGE_PROVIDER_SECRET_GOVERNANCE_PASS|WEB_IMAGE_PRIVATE_QUERY_POLICY_PASS|WEB_IMAGE_BOUNDED_PROVIDER_USE_PASS|WEB_IMAGE_NO_BYTES_DOWNLOADED_PASS|WEB_IMAGE_NO_SOURCE_PAGE_SCRAPE_PASS|WEB_IMAGE_QUERY_HASH_ONLY_PASS|WEB_IMAGE_LICENSE_UNKNOWN_DISPLAY_DEFERRED_PASS|H388_IMAGE_PROVIDER_PATH_REGRESSION_PASS"
+                            .to_string(),
+                    },
+                ],
+                citations: vec![citation.clone()],
+            },
+            selene_kernel_contracts::ph1e::SourceMetadata {
+                schema_version: selene_kernel_contracts::ph1e::PH1E_CONTRACT_VERSION,
+                provider_hint: Some("brave".to_string()),
+                retrieved_at_unix_ms: 1_770_000_000_000,
+                sources: vec![selene_kernel_contracts::ph1e::SourceRef {
+                    title: citation.title,
+                    url: citation.url,
+                }],
+            },
+            None,
+            ReasonCodeId(0x4500_0001),
+            CacheStatus::Miss,
+        )
+        .expect("fixture tool response must validate");
+        let metadata = deep_research_metadata_from_tool_response(&tool_response)
+            .expect("deep research response metadata must be present");
+        assert_eq!(
+            metadata.image_metadata_provider_path_status,
+            "WEB_IMAGE_METADATA_PROVIDER_PATH_METADATA_ONLY"
+        );
+        assert_eq!(
+            metadata.image_source_card_status,
+            "WEB_IMAGE_SOURCE_CARD_DISPLAY_DEFERRED:brave_metadata_license_or_display_safety_incomplete"
+        );
+        assert_eq!(
+            metadata.image_source_card_display_status,
+            "WEB_IMAGE_SOURCE_CARD_DISPLAY_DEFERRED"
+        );
+        assert_eq!(metadata.image_provider_path.provider_path_id, "h389");
+        assert_eq!(
+            metadata.image_provider_path.selected_outcome,
+            "APPROVED_BRAVE_IMAGE_METADATA_ONLY_PATH"
+        );
+        assert_eq!(metadata.image_provider_path.provider_name, "brave");
+        assert_eq!(
+            metadata.image_provider_path.secret_id.as_deref(),
+            Some("brave_search_api_key")
+        );
+        assert_eq!(
+            metadata
+                .image_provider_path
+                .endpoint_path_hash_or_label
+                .as_deref(),
+            Some("brave_images_search_v1:abc123")
+        );
+        assert_eq!(
+            metadata
+                .image_provider_path
+                .query_hash_or_redacted_query
+                .as_deref(),
+            Some("queryhash")
+        );
+        assert_eq!(metadata.image_provider_path.max_query_count, 1);
+        assert_eq!(metadata.image_provider_path.max_result_count, 3);
+        assert_eq!(metadata.image_provider_path.timeout_ms, 2000);
+        assert_eq!(metadata.image_provider_path.retry_policy, "none");
+        assert!(metadata.image_provider_path.supports_image_url);
+        assert!(metadata.image_provider_path.supports_thumbnail_url);
+        assert!(metadata.image_provider_path.supports_source_page_url);
+        assert!(metadata.image_provider_path.supports_source_domain);
+        assert!(!metadata.image_provider_path.supports_display_safety);
+        assert!(!metadata.image_provider_path.supports_license_or_usage_note);
+        assert!(!metadata.image_provider_path.display_allowed);
+        assert!(metadata.image_provider_path.no_new_provider_dependency);
+        assert!(metadata.image_provider_path.no_image_bytes_downloaded);
+        assert!(metadata.image_provider_path.no_source_page_scrape);
+        assert!(metadata.image_provider_path.query_hash_only);
+        assert!(metadata
+            .result_classes
+            .contains(&"WEB_IMAGE_PROVIDER_APPROVAL_PASS".to_string()));
+        assert!(metadata
+            .result_classes
+            .contains(&"WEB_IMAGE_NO_BYTES_DOWNLOADED_PASS".to_string()));
+        assert!(!metadata
+            .result_classes
+            .contains(&"WEB_IMAGE_SOURCE_CARD_PASS".to_string()));
+        assert!(!metadata.layout.desktop_ui_modified);
+    }
+
+    #[test]
     fn h383_protected_web_authority_phrase_fails_closed_before_public_search() {
         let runtime = AdapterRuntime::default();
         let mut req = base_request();
@@ -21333,9 +21560,16 @@ mod tests {
                 || card.source_url.starts_with("http://"))));
         assert_eq!(metadata.proof_packet.raw_page_stored, false);
         assert_eq!(metadata.proof_packet.private_query_saved, false);
+        assert_eq!(
+            metadata.image_metadata_provider_path_status,
+            "WEB_IMAGE_METADATA_PROVIDER_PATH_METADATA_ONLY"
+        );
         assert!(metadata
             .image_source_card_status
-            .contains("WEB_IMAGE_SOURCE_CARD_DEFERRED"));
+            .contains("WEB_IMAGE_SOURCE_CARD_DISPLAY_DEFERRED"));
+        assert!(!metadata
+            .result_classes
+            .contains(&"WEB_IMAGE_SOURCE_CARD_PASS".to_string()));
         assert!(metadata
             .gdelt_status
             .contains("GDELT_NEWS_CORROBORATION_DEFERRED"));

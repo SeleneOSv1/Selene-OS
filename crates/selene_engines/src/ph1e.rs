@@ -25,6 +25,10 @@ use serde_json::Value;
 
 const BUILD_1D_MAX_FETCH_BYTES_PER_URL: u64 = 256 * 1024;
 const WEB_RETENTION_CLASS: &str = "AUDIT_METADATA_ONLY";
+const BRAVE_IMAGE_DEFAULT_URL: &str = "https://api.search.brave.com/res/v1/images/search";
+const BRAVE_IMAGE_ENDPOINT_LABEL: &str = "brave_images_search_v1";
+const BRAVE_IMAGE_MAX_RESULTS: u8 = 3;
+const BRAVE_IMAGE_TIMEOUT_MS: u32 = 2_000;
 
 pub mod reason_codes {
     use selene_kernel_contracts::ReasonCodeId;
@@ -99,6 +103,40 @@ struct DeepResearchPlannerProof {
     rewritten_query_count: usize,
     provider_query_hash: String,
     planned_query_summary: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct BraveImageMetadataCandidate {
+    image_url: Option<String>,
+    thumbnail_url: Option<String>,
+    source_page_url: Option<String>,
+    source_domain: Option<String>,
+    title_or_alt_text: Option<String>,
+    provider: &'static str,
+    proof_id: String,
+    image_source_verified: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct BraveImageMetadataDecision {
+    selected_outcome: &'static str,
+    path_status: &'static str,
+    source_card_status: &'static str,
+    display_status: &'static str,
+    display_deferred_reason: &'static str,
+    blocker: Option<&'static str>,
+    supports_image_url: bool,
+    supports_thumbnail_url: bool,
+    supports_source_page_url: bool,
+    supports_source_domain: bool,
+    supports_retrieved_at: bool,
+    supports_display_safety: bool,
+    supports_license_or_usage_note: bool,
+    supports_image_source_verified: bool,
+    candidate_count: usize,
+    candidate: Option<BraveImageMetadataCandidate>,
+    provider_call_attempted: bool,
+    provider_error: Option<&'static str>,
 }
 
 const STARTUP_CONNECTIVITY_TIMEOUT_MS: u32 = 2_000;
@@ -216,6 +254,7 @@ pub struct Ph1eProviderConfig {
     pub brave_api_key: Option<String>,
     pub brave_web_url: String,
     pub brave_news_url: String,
+    pub brave_image_url: String,
     pub openai_api_key: Option<String>,
     pub openai_responses_url: String,
     pub openai_model: String,
@@ -229,6 +268,7 @@ pub struct Ph1eProviderConfig {
     pub proxy_config: Ph1eProxyConfig,
     pub brave_web_fixture_json: Option<String>,
     pub brave_news_fixture_json: Option<String>,
+    pub brave_image_fixture_json: Option<String>,
     pub url_fetch_fixture_html: Option<String>,
 }
 
@@ -241,6 +281,8 @@ impl Ph1eProviderConfig {
                 .unwrap_or_else(|_| "https://api.search.brave.com/res/v1/web/search".to_string()),
             brave_news_url: env::var("BRAVE_SEARCH_NEWS_URL")
                 .unwrap_or_else(|_| "https://api.search.brave.com/res/v1/news/search".to_string()),
+            brave_image_url: env::var("BRAVE_SEARCH_IMAGES_URL")
+                .unwrap_or_else(|_| BRAVE_IMAGE_DEFAULT_URL.to_string()),
             openai_api_key: None,
             openai_responses_url: env::var("OPENAI_RESPONSES_URL")
                 .unwrap_or_else(|_| "https://api.openai.com/v1/responses".to_string()),
@@ -260,6 +302,7 @@ impl Ph1eProviderConfig {
             proxy_config: Ph1eProxyConfig::from_env(),
             brave_web_fixture_json: None,
             brave_news_fixture_json: None,
+            brave_image_fixture_json: None,
             url_fetch_fixture_html: None,
         }
     }
@@ -811,11 +854,47 @@ impl Ph1eRuntime {
             truncate_ascii(&first_source_label, 128),
             truncate_ascii(source_domains.first().map(String::as_str).unwrap_or("unknown"), 128)
         );
-        let image_metadata_provider_path_packet =
-            "provider_path_id=h388_image_provider_path;selected_outcome=NO_APPROVED_PROVIDER_PATH;selected_candidate_id=future_provider_path;provider_name=none;provider_kind=none;secret_id=none;endpoint_class=none;query_leakage_policy=private_queries_blocked_or_deferred;candidate_matrix=bwn:no_src_img,bie:not_repo,vision:asset_only,page_fetch:no_policy,ph1e:no_endpoint,repo_media:not_found,future:required;supports_image_url=false;supports_thumbnail_url=false;supports_source_page_url=false;supports_source_domain=false;supports_retrieved_at=false;supports_display_safety=false;supports_license_or_usage_note=false;supports_image_source_verified=false;supports_linked_claim_ids=false;display_allowed=false;display_deferred_reason=no_approved_provider_path;blocker=no_repo_approved_image_metadata_provider;proof_id=H388_IMAGE_PROVIDER_PATH_DESIGN;no_new_provider_dependency=true;no_live_image_provider_call=true;screenshot_not_evidence=true"
-                .to_string();
+        let image_decision = self.brave_image_metadata_decision_for_query(&req.query);
+        let query_hash = stable_content_hash_hex(&req.query);
+        let endpoint_label = format!(
+            "{}:{}",
+            BRAVE_IMAGE_ENDPOINT_LABEL,
+            stable_content_hash_hex(BRAVE_IMAGE_DEFAULT_URL)
+        );
+        let selected_candidate_id = if image_decision.candidate_count > 0 {
+            "brave_image_search"
+        } else {
+            "future_provider_path"
+        };
+        let blocker = image_decision.blocker.unwrap_or("none");
+        let provider_error = image_decision.provider_error.unwrap_or("none");
+        let image_metadata_provider_path_packet = format!(
+            "provider_path_id=h389;selected_outcome={};selected_candidate_id={};provider_name=brave;provider_kind=public_image_metadata;secret_id=brave_search_api_key;endpoint_class=brave_image_search;endpoint_path_hash_or_label={};query_hash_or_redacted_query={};candidate_matrix=bwn:text,bie:metadata,vision:asset,page:no_scrape;supports_image_url={};supports_thumbnail_url={};supports_source_page_url={};supports_source_domain={};supports_retrieved_at={};supports_display_safety={};supports_license_or_usage_note={};supports_image_source_verified={};supports_linked_claim_ids=false;display_allowed=false;display_deferred_reason={};blocker={};proof_id=H389;provider_call_attempted={};provider_error={};screenshot_not_evidence=true",
+            image_decision.selected_outcome,
+            selected_candidate_id,
+            endpoint_label,
+            query_hash,
+            image_decision.supports_image_url,
+            image_decision.supports_thumbnail_url,
+            image_decision.supports_source_page_url,
+            image_decision.supports_source_domain,
+            image_decision.supports_retrieved_at,
+            image_decision.supports_display_safety,
+            image_decision.supports_license_or_usage_note,
+            image_decision.supports_image_source_verified,
+            image_decision.display_deferred_reason,
+            blocker,
+            image_decision.provider_call_attempted,
+            provider_error
+        );
+        let image_metadata_provider_safety_packet = format!(
+            "query_leakage_policy=private_block_or_defer;max_query_count=1;max_result_count={};timeout_ms={};retry_policy=none;secret_value_logged=false;no_new_provider_dependency=true;no_non_brave_provider=true;no_image_bytes_downloaded=true;no_source_page_scrape=true;query_hash_only=true;raw_private_query_stored=false;full_provider_request_url_persisted=false;fixture_image_marked_live=false;display_allowed=false;display_status={}",
+            BRAVE_IMAGE_MAX_RESULTS,
+            BRAVE_IMAGE_TIMEOUT_MS,
+            image_decision.display_status
+        );
         let report_presentation_layout_packet =
-            "query_pill_text=user_query;main_heading=Deep Research Report;lead_claim_id=claim_1;core_facts_section=Core facts;source_chip_positions=after_supported_claim;image_strip_status=WEB_IMAGE_SOURCE_CARD_DEFERRED;image_strip_required_count=3;image_strip_cards_verified_count=0;layout_reference_reason=user_screenshot_layout_reference_only;screenshot_not_evidence=true;desktop_ui_modified=false"
+            "query_pill_text=user_query;main_heading=Deep Research Report;lead_claim_id=claim_1;core_facts_section=Core facts;source_chip_positions=after_supported_claim;image_strip_status=WEB_IMAGE_SOURCE_CARD_DISPLAY_DEFERRED;image_strip_required_count=3;image_strip_cards_verified_count=0;layout_reference_reason=user_screenshot_layout_reference_only;screenshot_not_evidence=true;desktop_ui_modified=false"
                 .to_string();
         let planner_boundary_packet = format!(
             "status=PH1_SEARCH_PLANNER_BOUNDARY_RESOLVED_PASS;direct_invocation=PH1_SEARCH_LIVE_PLANNER_PASS;boundary=same_crate;engines_depends_on=kernel_contracts;os_depends_on=engines;adapter_depends_on=os_and_engines;web_search_plan_dependency=upward_not_called_from_ph1e;planned_queries={};rewritten_queries={};provider_query_hash={}",
@@ -853,7 +932,11 @@ impl Ph1eRuntime {
             "DEEP_RESEARCH_RESPONSE_METADATA_PASS",
             "CITATION_SOURCE_CHIPS_RESPONSE_METADATA_PASS",
             "CITATION_CARD_RESPONSE_METADATA_PASS",
-            "WEB_IMAGE_SOURCE_CARD_DEFERRED",
+            image_decision
+                .source_card_status
+                .split(':')
+                .next()
+                .unwrap_or(image_decision.source_card_status),
             "CITATION_CORRECTION_LOOP_GOVERNED_PASS",
             "SAVED_RESEARCH_PROOF_PACKET_PASS",
             "RESEARCH_RETENTION_POLICY_PASS",
@@ -869,9 +952,13 @@ impl Ph1eRuntime {
         let h387_result_classes = [
             "WEB_IMAGE_PROVIDER_PATH_DESIGN_PASS",
             "WEB_IMAGE_PROVIDER_CANDIDATE_MATRIX_PASS",
-            "WEB_IMAGE_METADATA_PROVIDER_PATH_NOT_FOUND",
-            "WEB_IMAGE_SOURCE_CARD_DEFERRED",
-            "WEB_IMAGE_SOURCE_CARD_DISPLAY_DEFERRED",
+            image_decision.path_status,
+            image_decision
+                .source_card_status
+                .split(':')
+                .next()
+                .unwrap_or(image_decision.source_card_status),
+            image_decision.display_status,
             "WEB_IMAGE_PROVIDER_SECRET_GOVERNANCE_PASS",
             "WEB_IMAGE_PRIVATE_QUERY_POLICY_PASS",
             "WEB_IMAGE_CARD_FAKE_BLOCKED_PASS",
@@ -888,6 +975,24 @@ impl Ph1eRuntime {
             "IMAGE_CARD_DISPLAY_DEFERRED_IF_UNVERIFIED_PASS",
             "H387_IMAGE_PATH_REGRESSION_PASS",
             "H386_PLANNER_FANOUT_REGRESSION_PASS",
+        ]
+        .join("|");
+        let h389_result_classes = [
+            "WEB_IMAGE_PROVIDER_APPROVAL_PASS",
+            "WEB_IMAGE_PROVIDER_CANDIDATE_MATRIX_PASS",
+            image_decision.path_status,
+            image_decision.display_status,
+            "WEB_IMAGE_PROVIDER_SECRET_GOVERNANCE_PASS",
+            "WEB_IMAGE_PRIVATE_QUERY_POLICY_PASS",
+            "WEB_IMAGE_BOUNDED_PROVIDER_USE_PASS",
+            "WEB_IMAGE_NO_BYTES_DOWNLOADED_PASS",
+            "WEB_IMAGE_NO_SOURCE_PAGE_SCRAPE_PASS",
+            "WEB_IMAGE_QUERY_HASH_ONLY_PASS",
+            "WEB_IMAGE_URL_ALONE_INSUFFICIENT_PASS",
+            "WEB_IMAGE_THUMBNAIL_UNVERIFIED_BLOCKED_PASS",
+            "WEB_IMAGE_LICENSE_UNKNOWN_DISPLAY_DEFERRED_PASS",
+            "H388_IMAGE_PROVIDER_PATH_REGRESSION_PASS",
+            "H387_IMAGE_PATH_REGRESSION_PASS",
         ]
         .join("|");
         let result = ToolResult::DeepResearch {
@@ -951,6 +1056,10 @@ impl Ph1eRuntime {
                     value: image_metadata_provider_path_packet,
                 },
                 ToolStructuredField {
+                    key: "image_metadata_provider_safety_packet".to_string(),
+                    value: image_metadata_provider_safety_packet,
+                },
+                ToolStructuredField {
                     key: "report_presentation_layout_packet".to_string(),
                     value: report_presentation_layout_packet,
                 },
@@ -961,12 +1070,6 @@ impl Ph1eRuntime {
                 ToolStructuredField {
                     key: "research_proof_packet".to_string(),
                     value: proof_packet,
-                },
-                ToolStructuredField {
-                    key: "image_source_card_status".to_string(),
-                    value:
-                        "WEB_IMAGE_SOURCE_CARD_DEFERRED:no_verified_image_metadata_provider_path"
-                            .to_string(),
                 },
                 ToolStructuredField {
                     key: "gdelt_status".to_string(),
@@ -982,10 +1085,6 @@ impl Ph1eRuntime {
                     value: count.clone(),
                 },
                 ToolStructuredField {
-                    key: "citation_card_count".to_string(),
-                    value: count,
-                },
-                ToolStructuredField {
                     key: "retention_class".to_string(),
                     value: WEB_RETENTION_CLASS.to_string(),
                 },
@@ -996,6 +1095,10 @@ impl Ph1eRuntime {
                 ToolStructuredField {
                     key: "h387_result_classes".to_string(),
                     value: h387_result_classes,
+                },
+                ToolStructuredField {
+                    key: "h389_result_classes".to_string(),
+                    value: h389_result_classes,
                 },
             ],
             citations: items,
@@ -1051,6 +1154,10 @@ impl Ph1eRuntime {
         }
     }
 
+    fn brave_image_fixture_json(&self) -> Option<&str> {
+        self.provider_config.brave_image_fixture_json.as_deref()
+    }
+
     fn url_fetch_fixture_html(&self) -> Option<&str> {
         self.provider_config.url_fetch_fixture_html.as_deref()
     }
@@ -1067,6 +1174,119 @@ impl Ph1eRuntime {
             self.resolve_timezonedb_api_key(),
             timeout_ms,
         )
+    }
+
+    fn brave_image_metadata_decision_for_query(&self, query: &str) -> BraveImageMetadataDecision {
+        if public_web_query_block_reason(query).is_some() {
+            return BraveImageMetadataDecision {
+                selected_outcome: "NO_APPROVED_IMAGE_PROVIDER_PATH",
+                path_status: "WEB_IMAGE_METADATA_PROVIDER_PATH_NOT_FOUND",
+                source_card_status: "WEB_IMAGE_SOURCE_CARD_DEFERRED:private_image_query_blocked",
+                display_status: "WEB_IMAGE_SOURCE_CARD_DISPLAY_DEFERRED",
+                display_deferred_reason: "private_image_query_blocked",
+                blocker: Some("private_image_query_blocked"),
+                supports_image_url: false,
+                supports_thumbnail_url: false,
+                supports_source_page_url: false,
+                supports_source_domain: false,
+                supports_retrieved_at: false,
+                supports_display_safety: false,
+                supports_license_or_usage_note: false,
+                supports_image_source_verified: false,
+                candidate_count: 0,
+                candidate: None,
+                provider_call_attempted: false,
+                provider_error: Some("private_query_blocked"),
+            };
+        }
+
+        let Some(brave_key) = self.resolve_brave_api_key() else {
+            return BraveImageMetadataDecision {
+                selected_outcome: "NO_APPROVED_IMAGE_PROVIDER_PATH",
+                path_status: "WEB_IMAGE_METADATA_PROVIDER_PATH_NOT_FOUND",
+                source_card_status: "WEB_IMAGE_SOURCE_CARD_DEFERRED:brave_image_secret_missing",
+                display_status: "WEB_IMAGE_SOURCE_CARD_DISPLAY_DEFERRED",
+                display_deferred_reason: "brave_image_secret_missing",
+                blocker: Some("brave_image_secret_missing"),
+                supports_image_url: false,
+                supports_thumbnail_url: false,
+                supports_source_page_url: false,
+                supports_source_domain: false,
+                supports_retrieved_at: false,
+                supports_display_safety: false,
+                supports_license_or_usage_note: false,
+                supports_image_source_verified: false,
+                candidate_count: 0,
+                candidate: None,
+                provider_call_attempted: false,
+                provider_error: Some("provider_secret_missing"),
+            };
+        };
+
+        match run_brave_image_metadata_search(
+            &self.provider_config.brave_image_url,
+            &brave_key,
+            query,
+            BRAVE_IMAGE_MAX_RESULTS,
+            BRAVE_IMAGE_TIMEOUT_MS,
+            &self.provider_config.user_agent,
+            &self.provider_config.proxy_config,
+            self.brave_image_fixture_json(),
+        ) {
+            Ok(candidates) => {
+                let candidate = candidates.first().cloned();
+                let supports_image_url = candidates.iter().any(|item| item.image_url.is_some());
+                let supports_thumbnail_url =
+                    candidates.iter().any(|item| item.thumbnail_url.is_some());
+                let supports_source_page_url =
+                    candidates.iter().any(|item| item.source_page_url.is_some());
+                let supports_source_domain =
+                    candidates.iter().any(|item| item.source_domain.is_some());
+                let supports_image_source_verified =
+                    candidates.iter().any(|item| item.image_source_verified);
+                BraveImageMetadataDecision {
+                    selected_outcome: "APPROVED_BRAVE_IMAGE_METADATA_ONLY_PATH",
+                    path_status: "WEB_IMAGE_METADATA_PROVIDER_PATH_METADATA_ONLY",
+                    source_card_status:
+                        "WEB_IMAGE_SOURCE_CARD_DISPLAY_DEFERRED:brave_metadata_license_or_display_safety_incomplete",
+                    display_status: "WEB_IMAGE_SOURCE_CARD_DISPLAY_DEFERRED",
+                    display_deferred_reason: "license_or_display_safety_incomplete",
+                    blocker: Some("license_or_display_safety_incomplete"),
+                    supports_image_url,
+                    supports_thumbnail_url,
+                    supports_source_page_url,
+                    supports_source_domain,
+                    supports_retrieved_at: true,
+                    supports_display_safety: false,
+                    supports_license_or_usage_note: false,
+                    supports_image_source_verified,
+                    candidate_count: candidates.len(),
+                    candidate,
+                    provider_call_attempted: true,
+                    provider_error: None,
+                }
+            }
+            Err(err) => BraveImageMetadataDecision {
+                selected_outcome: "NO_APPROVED_IMAGE_PROVIDER_PATH",
+                path_status: "WEB_IMAGE_METADATA_PROVIDER_PATH_NOT_FOUND",
+                source_card_status: "WEB_IMAGE_SOURCE_CARD_DEFERRED:brave_image_endpoint_unproven",
+                display_status: "WEB_IMAGE_SOURCE_CARD_DISPLAY_DEFERRED",
+                display_deferred_reason: "brave_image_endpoint_unproven",
+                blocker: Some("brave_image_endpoint_unproven"),
+                supports_image_url: false,
+                supports_thumbnail_url: false,
+                supports_source_page_url: false,
+                supports_source_domain: false,
+                supports_retrieved_at: false,
+                supports_display_safety: false,
+                supports_license_or_usage_note: false,
+                supports_image_source_verified: false,
+                candidate_count: 0,
+                candidate: None,
+                provider_call_attempted: true,
+                provider_error: Some(err.error_kind),
+            },
+        }
     }
 
     fn run_live_search(
@@ -1631,6 +1851,139 @@ fn run_brave_search(
     Ok((items, sources))
 }
 
+fn run_brave_image_metadata_search(
+    endpoint: &str,
+    api_key: &str,
+    query: &str,
+    max_results: u8,
+    timeout_ms: u32,
+    user_agent: &str,
+    proxy_config: &Ph1eProxyConfig,
+    fixture_json: Option<&str>,
+) -> Result<Vec<BraveImageMetadataCandidate>, ProviderCallError> {
+    let body: Value = if let Some(fixture) = fixture_json {
+        serde_json::from_str(fixture)
+            .map_err(|_| ProviderCallError::new("brave_image", "json_parse", None))?
+    } else {
+        let agent = build_http_agent(timeout_ms, user_agent, proxy_config)
+            .map_err(|_| ProviderCallError::new("brave_image", "config_invalid", None))?;
+        let response = agent
+            .get(endpoint)
+            .set("Accept", "application/json")
+            .set("X-Subscription-Token", api_key)
+            .query("q", query)
+            .query("count", &max_results.to_string())
+            .call()
+            .map_err(|e| provider_error_from_ureq("brave_image", e))?;
+        serde_json::from_reader(response.into_reader())
+            .map_err(|_| ProviderCallError::new("brave_image", "json_parse", None))?
+    };
+
+    let candidates = extract_brave_image_metadata_candidates(&body, usize::from(max_results));
+    if candidates.is_empty() {
+        Err(ProviderCallError::new(
+            "brave_image",
+            "empty_or_unverified_results",
+            None,
+        ))
+    } else {
+        Ok(candidates)
+    }
+}
+
+fn extract_brave_image_metadata_candidates(
+    root: &Value,
+    max_results: usize,
+) -> Vec<BraveImageMetadataCandidate> {
+    let mut raw_candidates: Vec<&Value> = Vec::new();
+    for pointer in ["/results", "/images/results", "/image/results"] {
+        if let Some(items) = root.pointer(pointer).and_then(Value::as_array) {
+            raw_candidates.extend(items.iter());
+        }
+    }
+
+    let mut out = Vec::new();
+    for item in raw_candidates {
+        if out.len() >= max_results {
+            break;
+        }
+        if let Some(candidate) = value_to_brave_image_metadata_candidate(item) {
+            out.push(candidate);
+        }
+    }
+    out
+}
+
+fn value_to_brave_image_metadata_candidate(value: &Value) -> Option<BraveImageMetadataCandidate> {
+    let image_url = first_string_at(
+        value,
+        &[
+            "/image_url",
+            "/properties/url",
+            "/properties/image_url",
+            "/contentUrl",
+            "/src",
+        ],
+    )
+    .and_then(verified_public_url);
+    let thumbnail_url = first_string_at(
+        value,
+        &[
+            "/thumbnail_url",
+            "/thumbnail/src",
+            "/thumbnail/url",
+            "/thumbnail",
+            "/thumbnailUrl",
+        ],
+    )
+    .and_then(verified_public_url);
+    let source_page_url = first_string_at(
+        value,
+        &[
+            "/source_page_url",
+            "/page_url",
+            "/webpage_url",
+            "/host_page_url",
+            "/url",
+            "/source/url",
+            "/source",
+            "/properties/source_url",
+        ],
+    )
+    .and_then(verified_public_url);
+    let source_domain = source_page_url
+        .as_deref()
+        .and_then(domain_from_http_url)
+        .filter(|domain| !domain.ends_with(".local"));
+    if image_url.is_none() && thumbnail_url.is_none() {
+        return None;
+    }
+    let title_or_alt_text = first_string_at(
+        value,
+        &[
+            "/title",
+            "/alt",
+            "/alt_text",
+            "/description",
+            "/caption",
+            "/name",
+        ],
+    )
+    .map(|text| truncate_ascii(text.trim(), 128))
+    .filter(|text| !text.is_empty());
+    let source_bound = source_page_url.is_some() && source_domain.is_some();
+    Some(BraveImageMetadataCandidate {
+        image_url,
+        thumbnail_url,
+        source_page_url,
+        source_domain,
+        title_or_alt_text,
+        provider: "brave_image",
+        proof_id: "H389_BRAVE_IMAGE_METADATA_PROVIDER_APPROVAL".to_string(),
+        image_source_verified: source_bound,
+    })
+}
+
 fn run_openai_search_fallback(
     endpoint: &str,
     api_key: &str,
@@ -1875,6 +2228,23 @@ fn url_host(url: &str) -> Option<String> {
 
 fn url_domain(url: &str) -> Option<String> {
     url_host(url).map(|host| host.to_ascii_lowercase())
+}
+
+fn verified_public_url(raw: &str) -> Option<String> {
+    let trimmed = raw.trim();
+    if url_fetch_safety_block_reason(trimmed).is_some() {
+        None
+    } else {
+        Some(truncate_ascii(trimmed, 2048))
+    }
+}
+
+fn first_string_at<'a>(value: &'a Value, pointers: &[&str]) -> Option<&'a str> {
+    pointers
+        .iter()
+        .find_map(|pointer| value.pointer(pointer).and_then(Value::as_str))
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
 }
 
 fn is_private_or_special_ip_literal(host: &str) -> bool {
@@ -3596,8 +3966,10 @@ mod tests {
         base_url: String,
         brave_web_url: String,
         brave_news_url: String,
+        brave_image_url: String,
         brave_web_fixture_json: String,
         brave_news_fixture_json: String,
+        brave_image_fixture_json: String,
         url_fetch_fixture_html: String,
     }
 
@@ -3607,11 +3979,15 @@ mod tests {
             base_url: base.clone(),
             brave_web_url: format!("{base}/res/v1/web/search"),
             brave_news_url: format!("{base}/res/v1/news/search"),
+            brave_image_url: format!("{base}/res/v1/images/search"),
             brave_web_fixture_json:
                 r#"{"web":{"results":[{"title":"Selene web result","url":"https://docs.selene.ai/search/1","description":"Provider-backed web snippet"}]}}"#
                     .to_string(),
             brave_news_fixture_json:
                 r#"{"results":[{"title":"Selene news result","url":"https://news.selene.ai/item/1","description":"Provider-backed news snippet"}]}"#
+                    .to_string(),
+            brave_image_fixture_json:
+                r#"{"results":[{"title":"Selene vineyard photo","image_url":"https://cdn.selene.ai/images/vineyard.jpg","thumbnail_url":"https://cdn.selene.ai/thumbs/vineyard.jpg","source_page_url":"https://docs.selene.ai/images/vineyard-source","description":"Provider-backed image metadata"}]}"#
                     .to_string(),
             url_fetch_fixture_html:
                 "<html><body><h1>Selene spec</h1><p>This page proves URL fetch and citation chunking behavior with deterministic evidence text.</p></body></html>"
@@ -3631,8 +4007,10 @@ mod tests {
             brave_api_key: Some("fixture_brave_key".to_string()),
             brave_web_url: fixture.brave_web_url.clone(),
             brave_news_url: fixture.brave_news_url.clone(),
+            brave_image_url: fixture.brave_image_url.clone(),
             brave_web_fixture_json: Some(fixture.brave_web_fixture_json.clone()),
             brave_news_fixture_json: Some(fixture.brave_news_fixture_json.clone()),
+            brave_image_fixture_json: Some(fixture.brave_image_fixture_json.clone()),
             openai_api_key: None,
             openai_responses_url: "https://api.openai.com/v1/responses".to_string(),
             openai_model: "gpt-4o-mini".to_string(),
@@ -3706,7 +4084,7 @@ mod tests {
             false,
             false,
         ));
-        assert_eq!(out.tool_status, ToolStatus::Ok);
+        assert_eq!(out.tool_status, ToolStatus::Ok, "{out:?}");
         match out.tool_result.expect("time result should be present") {
             ToolResult::Time { local_time_iso } => {
                 assert!(
@@ -3732,7 +4110,7 @@ mod tests {
             false,
             false,
         ));
-        assert_eq!(out.tool_status, ToolStatus::Ok);
+        assert_eq!(out.tool_status, ToolStatus::Ok, "{out:?}");
         match out.tool_result.expect("time result should be present") {
             ToolResult::Time { local_time_iso } => {
                 assert!(
@@ -3757,6 +4135,7 @@ mod tests {
                 brave_api_key: None,
                 brave_web_url: "https://api.search.brave.com/res/v1/web/search".to_string(),
                 brave_news_url: "https://api.search.brave.com/res/v1/news/search".to_string(),
+                brave_image_url: BRAVE_IMAGE_DEFAULT_URL.to_string(),
                 openai_api_key: None,
                 openai_responses_url: "https://api.openai.com/v1/responses".to_string(),
                 openai_model: "gpt-4o-mini".to_string(),
@@ -3779,6 +4158,7 @@ mod tests {
                 },
                 brave_web_fixture_json: None,
                 brave_news_fixture_json: None,
+                brave_image_fixture_json: None,
                 url_fetch_fixture_html: None,
             },
         );
@@ -3788,7 +4168,7 @@ mod tests {
             false,
             false,
         ));
-        assert_eq!(out.tool_status, ToolStatus::Ok);
+        assert_eq!(out.tool_status, ToolStatus::Ok, "{out:?}");
         assert_eq!(
             out.source_metadata
                 .as_ref()
@@ -3811,6 +4191,7 @@ mod tests {
                 brave_api_key: None,
                 brave_web_url: "https://api.search.brave.com/res/v1/web/search".to_string(),
                 brave_news_url: "https://api.search.brave.com/res/v1/news/search".to_string(),
+                brave_image_url: BRAVE_IMAGE_DEFAULT_URL.to_string(),
                 openai_api_key: None,
                 openai_responses_url: "https://api.openai.com/v1/responses".to_string(),
                 openai_model: "gpt-4o-mini".to_string(),
@@ -3831,6 +4212,7 @@ mod tests {
                 },
                 brave_web_fixture_json: None,
                 brave_news_fixture_json: None,
+                brave_image_fixture_json: None,
                 url_fetch_fixture_html: None,
             },
         );
@@ -4179,12 +4561,16 @@ mod tests {
         assert!(field("citation_card_packet").contains("display_safe=true"));
         assert!(field("citation_correction_packet").contains("historical_audit_rewrite=false"));
         assert!(field("research_proof_packet").contains("raw_page_stored=false"));
-        assert!(field("image_source_card_status").contains("WEB_IMAGE_SOURCE_CARD_DEFERRED"));
         assert!(field("image_metadata_provider_path_packet")
-            .contains("selected_outcome=NO_APPROVED_PROVIDER_PATH"));
+            .contains("selected_outcome=APPROVED_BRAVE_IMAGE_METADATA_ONLY_PATH"));
         assert!(field("image_metadata_provider_path_packet")
-            .contains("candidate_matrix=bwn:no_src_img"));
-        assert!(field("image_metadata_provider_path_packet").contains("bie:not_repo"));
+            .contains("candidate_matrix=bwn:text,bie:metadata"));
+        assert!(field("image_metadata_provider_path_packet").contains("page:no_scrape"));
+        assert!(field("image_metadata_provider_path_packet").contains("display_allowed=false"));
+        assert!(field("image_metadata_provider_safety_packet")
+            .contains("display_status=WEB_IMAGE_SOURCE_CARD_DISPLAY_DEFERRED"));
+        assert!(field("image_metadata_provider_safety_packet")
+            .contains("no_image_bytes_downloaded=true"));
         assert!(
             field("image_metadata_provider_path_packet").contains("screenshot_not_evidence=true")
         );
@@ -4222,7 +4608,7 @@ mod tests {
             false,
             false,
         ));
-        assert_eq!(out.tool_status, ToolStatus::Ok);
+        assert_eq!(out.tool_status, ToolStatus::Ok, "{out:?}");
         let ToolResult::DeepResearch {
             extracted_fields,
             citations,
@@ -4243,28 +4629,176 @@ mod tests {
                 .unwrap_or("")
         };
         let provider_path = field("image_metadata_provider_path_packet");
-        assert!(provider_path.contains("provider_path_id=h388_image_provider_path"));
-        assert!(provider_path.contains("selected_outcome=NO_APPROVED_PROVIDER_PATH"));
-        assert!(provider_path.contains("candidate_matrix=bwn:no_src_img"));
-        assert!(provider_path.contains("bie:not_repo"));
-        assert!(provider_path.contains("vision:asset_only"));
-        assert!(provider_path.contains("page_fetch:no_policy"));
-        assert!(provider_path.contains("secret_id=none"));
-        assert!(provider_path.contains("query_leakage_policy=private_queries_blocked_or_deferred"));
+        let safety = field("image_metadata_provider_safety_packet");
+        assert!(provider_path.contains("provider_path_id=h389"));
+        assert!(provider_path.contains("selected_outcome=APPROVED_BRAVE_IMAGE_METADATA_ONLY_PATH"));
+        assert!(provider_path.contains("candidate_matrix=bwn:text,bie:metadata"));
+        assert!(provider_path.contains("vision:asset"));
+        assert!(provider_path.contains("page:no_scrape"));
+        assert!(provider_path.contains("secret_id=brave_search_api_key"));
+        assert!(provider_path.contains("query_hash_or_redacted_query="));
         assert!(provider_path.contains("display_allowed=false"));
-        assert!(provider_path.contains("blocker=no_repo_approved_image_metadata_provider"));
-        assert!(provider_path.contains("no_new_provider_dependency=true"));
-        assert!(provider_path.contains("no_live_image_provider_call=true"));
+        assert!(provider_path.contains("blocker=license_or_display_safety_incomplete"));
+        assert!(provider_path.contains("supports_image_url=true"));
+        assert!(provider_path.contains("supports_thumbnail_url=true"));
+        assert!(provider_path.contains("supports_source_page_url=true"));
+        assert!(provider_path.contains("supports_source_domain=true"));
+        assert!(provider_path.contains("supports_display_safety=false"));
+        assert!(provider_path.contains("supports_license_or_usage_note=false"));
+        assert!(safety.contains("query_leakage_policy=private_block_or_defer"));
+        assert!(safety.contains("no_new_provider_dependency=true"));
+        assert!(safety.contains("no_image_bytes_downloaded=true"));
+        assert!(safety.contains("no_source_page_scrape=true"));
+        assert!(safety.contains("query_hash_only=true"));
         assert!(field("h387_result_classes").contains("WEB_IMAGE_PROVIDER_PATH_DESIGN_PASS"));
         assert!(field("h387_result_classes").contains("WEB_IMAGE_PROVIDER_CANDIDATE_MATRIX_PASS"));
         assert!(field("h387_result_classes").contains("WEB_IMAGE_PROVIDER_SECRET_GOVERNANCE_PASS"));
         assert!(field("h387_result_classes").contains("WEB_IMAGE_PRIVATE_QUERY_POLICY_PASS"));
         assert!(field("h387_result_classes").contains("H387_IMAGE_PATH_REGRESSION_PASS"));
-        assert!(field("image_source_card_status").contains("WEB_IMAGE_SOURCE_CARD_DEFERRED"));
+        assert!(field("h389_result_classes").contains("WEB_IMAGE_PROVIDER_APPROVAL_PASS"));
+        assert!(field("h389_result_classes").contains("WEB_IMAGE_BOUNDED_PROVIDER_USE_PASS"));
+        assert!(field("h389_result_classes").contains("WEB_IMAGE_NO_BYTES_DOWNLOADED_PASS"));
+        assert!(field("h389_result_classes").contains("WEB_IMAGE_NO_SOURCE_PAGE_SCRAPE_PASS"));
         assert!(!field("h387_result_classes").contains("WEB_IMAGE_SOURCE_CARD_PASS"));
+        assert!(!field("h389_result_classes").contains("WEB_IMAGE_SOURCE_CARD_PASS"));
         assert!(!provider_path.contains("api_key="));
         assert!(!provider_path.contains("secret_value"));
+        assert!(!provider_path.contains("fixture_brave_key"));
+        assert!(!safety.contains("fixture_brave_key"));
         assert!(field("report_presentation_layout_packet").contains("desktop_ui_modified=false"));
+    }
+
+    #[test]
+    fn h389_brave_image_provider_approval_is_metadata_only_and_bounded() {
+        let fixture = spawn_test_http_fixture();
+        let rt = runtime_with_live_fixture(&fixture);
+        let out = rt.run(&req(
+            ToolName::DeepResearch,
+            "deep research organic wine producers with sourced image metadata",
+            false,
+            false,
+        ));
+        assert_eq!(out.tool_status, ToolStatus::Ok, "{out:?}");
+        let ToolResult::DeepResearch {
+            extracted_fields,
+            citations,
+            ..
+        } = out
+            .tool_result
+            .as_ref()
+            .expect("tool result required for ok")
+        else {
+            panic!("expected DeepResearch result");
+        };
+        assert!(!citations.is_empty());
+        let field = |key: &str| {
+            extracted_fields
+                .iter()
+                .find(|candidate| candidate.key == key)
+                .map(|candidate| candidate.value.as_str())
+                .unwrap_or("")
+        };
+        let provider_path = field("image_metadata_provider_path_packet");
+        let safety = field("image_metadata_provider_safety_packet");
+        assert!(provider_path.contains("selected_outcome=APPROVED_BRAVE_IMAGE_METADATA_ONLY_PATH"));
+        assert!(provider_path.contains("provider_name=brave"));
+        assert!(provider_path.contains("secret_id=brave_search_api_key"));
+        assert!(provider_path.contains("endpoint_path_hash_or_label=brave_images_search_v1:"));
+        assert!(provider_path.contains("query_hash_or_redacted_query="));
+        assert!(!provider_path.contains("organic wine producers"));
+        assert!(!provider_path.contains("fixture_brave_key"));
+        assert!(provider_path.contains("supports_image_url=true"));
+        assert!(provider_path.contains("supports_thumbnail_url=true"));
+        assert!(provider_path.contains("supports_source_page_url=true"));
+        assert!(provider_path.contains("supports_source_domain=true"));
+        assert!(provider_path.contains("supports_display_safety=false"));
+        assert!(provider_path.contains("supports_license_or_usage_note=false"));
+        assert!(provider_path.contains("display_allowed=false"));
+        assert!(
+            provider_path.contains("display_deferred_reason=license_or_display_safety_incomplete")
+        );
+        assert!(safety.contains("max_query_count=1"));
+        assert!(safety.contains("max_result_count=3"));
+        assert!(safety.contains("timeout_ms=2000"));
+        assert!(safety.contains("retry_policy=none"));
+        assert!(safety.contains("no_image_bytes_downloaded=true"));
+        assert!(safety.contains("no_source_page_scrape=true"));
+        assert!(safety.contains("query_hash_only=true"));
+        assert!(safety.contains("raw_private_query_stored=false"));
+        assert!(field("h389_result_classes").contains("WEB_IMAGE_PROVIDER_APPROVAL_PASS"));
+        assert!(field("h389_result_classes").contains("WEB_IMAGE_BOUNDED_PROVIDER_USE_PASS"));
+        assert!(field("h389_result_classes").contains("WEB_IMAGE_QUERY_HASH_ONLY_PASS"));
+        assert!(!field("h389_result_classes").contains("WEB_IMAGE_SOURCE_CARD_PASS"));
+        assert!(field("report_presentation_layout_packet").contains("image_strip_required_count=3"));
+        assert!(field("report_presentation_layout_packet").contains("desktop_ui_modified=false"));
+    }
+
+    #[test]
+    fn h389_brave_image_provider_approval_blocks_url_or_thumbnail_without_source_binding() {
+        let body = serde_json::json!({
+            "results": [
+                {"image_url": "https://cdn.selene.ai/no-source.jpg", "title": "missing source"},
+                {"thumbnail_url": "https://cdn.selene.ai/thumb.jpg", "source_page_url": "http://127.0.0.1/private", "title": "private source"},
+                {"thumbnail_url": "https://cdn.selene.ai/thumb2.jpg", "source_page_url": "https://docs.selene.ai/source", "title": "ok source"}
+            ]
+        });
+        let candidates = extract_brave_image_metadata_candidates(&body, 3);
+        assert_eq!(candidates.len(), 3);
+        assert!(!candidates[0].image_source_verified);
+        assert_eq!(candidates[0].source_domain, None);
+        assert!(!candidates[1].image_source_verified);
+        assert_eq!(candidates[1].source_page_url, None);
+        assert!(candidates[2].image_source_verified);
+        assert_eq!(
+            candidates[2].source_domain.as_deref(),
+            Some("docs.selene.ai")
+        );
+    }
+
+    #[test]
+    fn h389_brave_image_provider_approval_blocks_private_query_before_provider() {
+        let fixture = spawn_test_http_fixture();
+        let rt = runtime_with_live_fixture(&fixture);
+        let decision =
+            rt.brave_image_metadata_decision_for_query("customer private email vineyard photo");
+        assert_eq!(decision.selected_outcome, "NO_APPROVED_IMAGE_PROVIDER_PATH");
+        assert_eq!(decision.blocker, Some("private_image_query_blocked"));
+        assert!(!decision.provider_call_attempted);
+        assert_eq!(decision.candidate_count, 0);
+    }
+
+    #[test]
+    #[ignore]
+    fn h389_live_brave_image_provider_approval_maps_real_metadata_without_secret_leak() {
+        let key = device_vault::resolve_secret(ProviderSecretId::BraveSearchApiKey.as_str())
+            .expect("vault lookup must succeed")
+            .expect(
+                "brave_search_api_key must be present in the local Selene vault for live proof",
+            );
+        let candidates = run_brave_image_metadata_search(
+            BRAVE_IMAGE_DEFAULT_URL,
+            &key,
+            "Tamburlaine organic wine producer Australia",
+            BRAVE_IMAGE_MAX_RESULTS,
+            BRAVE_IMAGE_TIMEOUT_MS,
+            "selene-ph1e-live-proof/1.0",
+            &Ph1eProxyConfig::from_env(),
+            None,
+        )
+        .expect("Brave image metadata endpoint should return parseable metadata");
+        assert!(!candidates.is_empty());
+        assert!(candidates
+            .iter()
+            .any(|candidate| candidate.image_url.is_some() || candidate.thumbnail_url.is_some()));
+        assert!(candidates
+            .iter()
+            .any(|candidate| candidate.source_page_url.is_some()));
+        assert!(candidates
+            .iter()
+            .any(|candidate| candidate.source_domain.is_some()));
+        assert!(candidates
+            .iter()
+            .all(|candidate| candidate.provider == "brave_image"));
     }
 
     #[test]
@@ -4556,8 +5090,10 @@ mod tests {
                     brave_api_key: None,
                     brave_web_url: "https://api.search.brave.com/res/v1/web/search".to_string(),
                     brave_news_url: "https://api.search.brave.com/res/v1/news/search".to_string(),
+                    brave_image_url: BRAVE_IMAGE_DEFAULT_URL.to_string(),
                     brave_web_fixture_json: None,
                     brave_news_fixture_json: None,
+                    brave_image_fixture_json: None,
                     openai_api_key: None,
                     openai_responses_url: "https://api.openai.com/v1/responses".to_string(),
                     openai_model: "gpt-4o-mini".to_string(),
@@ -4641,8 +5177,10 @@ mod tests {
                     brave_api_key: Some("test_brave_key".to_string()),
                     brave_web_url: "http://127.0.0.1:9/res/v1/web/search".to_string(),
                     brave_news_url: "http://127.0.0.1:9/res/v1/news/search".to_string(),
+                    brave_image_url: "http://127.0.0.1:9/res/v1/images/search".to_string(),
                     brave_web_fixture_json: None,
                     brave_news_fixture_json: None,
+                    brave_image_fixture_json: None,
                     openai_api_key: None,
                     openai_responses_url: "https://api.openai.com/v1/responses".to_string(),
                     openai_model: "gpt-4o-mini".to_string(),
@@ -4689,8 +5227,10 @@ mod tests {
                     brave_api_key: None,
                     brave_web_url: "https://api.search.brave.com/res/v1/web/search".to_string(),
                     brave_news_url: "https://api.search.brave.com/res/v1/news/search".to_string(),
+                    brave_image_url: BRAVE_IMAGE_DEFAULT_URL.to_string(),
                     brave_web_fixture_json: None,
                     brave_news_fixture_json: None,
+                    brave_image_fixture_json: None,
                     openai_api_key: Some("test_openai_key".to_string()),
                     openai_responses_url: "http://127.0.0.1:9/v1/responses".to_string(),
                     openai_model: "gpt-4o-mini".to_string(),
@@ -4924,6 +5464,7 @@ mod tests {
             brave_api_key: None,
             brave_web_url: "https://api.search.brave.com/res/v1/web/search".to_string(),
             brave_news_url: "https://api.search.brave.com/res/v1/news/search".to_string(),
+            brave_image_url: BRAVE_IMAGE_DEFAULT_URL.to_string(),
             openai_api_key: None,
             openai_responses_url: "https://api.openai.com/v1/responses".to_string(),
             openai_model: "gpt-4o-mini".to_string(),
@@ -4941,6 +5482,7 @@ mod tests {
             },
             brave_web_fixture_json: None,
             brave_news_fixture_json: None,
+            brave_image_fixture_json: None,
             url_fetch_fixture_html: None,
         };
 
@@ -4964,6 +5506,7 @@ mod tests {
             brave_api_key: Some("fixture_brave_key".to_string()),
             brave_web_url: "https://api.search.brave.com/res/v1/web/search".to_string(),
             brave_news_url: "https://api.search.brave.com/res/v1/news/search".to_string(),
+            brave_image_url: BRAVE_IMAGE_DEFAULT_URL.to_string(),
             openai_api_key: None,
             openai_responses_url: "https://api.openai.com/v1/responses".to_string(),
             openai_model: "gpt-4o-mini".to_string(),
@@ -4981,6 +5524,7 @@ mod tests {
             },
             brave_web_fixture_json: None,
             brave_news_fixture_json: None,
+            brave_image_fixture_json: None,
             url_fetch_fixture_html: None,
         };
 

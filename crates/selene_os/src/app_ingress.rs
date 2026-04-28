@@ -7482,17 +7482,14 @@ fn classify_governance_quarantine_identity_recovery_fail_closed_outcome(
 
 fn low_risk_public_deterministic_turn_answer(out: &AppVoiceTurnExecutionOutcome) -> bool {
     let Some(tool_response) = out.tool_response.as_ref() else {
-        return out
-            .ph1x_request
-            .as_ref()
-            .is_some_and(|request| {
-                request.thread_state.last_turn_context.is_some()
-                    && matches!(
-                        request.nlp_output.as_ref(),
-                        Some(Ph1nResponse::Chat(chat))
-                            if chat.reason_code == ph1n_reason_codes::N_CHAT_TURN_FOLLOWUP_REPAIR
-                    )
-            });
+        return out.ph1x_request.as_ref().is_some_and(|request| {
+            request.thread_state.last_turn_context.is_some()
+                && matches!(
+                    request.nlp_output.as_ref(),
+                    Some(Ph1nResponse::Chat(chat))
+                        if chat.reason_code == ph1n_reason_codes::N_CHAT_TURN_FOLLOWUP_REPAIR
+                )
+        });
     };
     let tool_response_is_time = matches!(tool_response.tool_result, Some(ToolResult::Time { .. }))
         || tool_response.fail_detail.as_deref().is_some_and(|detail| {
@@ -13115,6 +13112,7 @@ mod tests {
                     brave_api_key: Some("fixture_brave_key".to_string()),
                     brave_web_url: "https://search.selene.ai/res/v1/web/search".to_string(),
                     brave_news_url: "https://search.selene.ai/res/v1/news/search".to_string(),
+                    brave_image_url: "https://search.selene.ai/res/v1/images/search".to_string(),
                     brave_web_fixture_json: Some(
                         r#"{"web":{"results":[{"title":"Selene web result","url":"https://search.selene.ai/result-1","description":"Provider-backed web snippet"}]}}"#
                             .to_string(),
@@ -13123,6 +13121,7 @@ mod tests {
                         r#"{"results":[{"title":"Selene news result","url":"https://news.selene.ai/story-1","description":"Provider-backed news snippet"}]}"#
                             .to_string(),
                     ),
+                    brave_image_fixture_json: None,
                     openai_api_key: None,
                     openai_responses_url: "https://api.openai.com/v1/responses".to_string(),
                     openai_model: "gpt-4o-mini".to_string(),
@@ -13158,6 +13157,7 @@ mod tests {
                     brave_api_key: Some("fixture_brave_key".to_string()),
                     brave_web_url: "https://search.selene.ai/res/v1/web/search".to_string(),
                     brave_news_url: "https://search.selene.ai/res/v1/news/search".to_string(),
+                    brave_image_url: "https://search.selene.ai/res/v1/images/search".to_string(),
                     brave_web_fixture_json: Some(
                         r#"{"web":{"results":[{"title":"Selene web result","url":"https://search.selene.ai/result-1","description":"Provider-backed web snippet"}]}}"#
                             .to_string(),
@@ -13166,6 +13166,7 @@ mod tests {
                         r#"{"results":[{"title":"Selene news result","url":"https://news.selene.ai/story-1","description":"Provider-backed news snippet"}]}"#
                             .to_string(),
                     ),
+                    brave_image_fixture_json: None,
                     openai_api_key: None,
                     openai_responses_url: "https://api.openai.com/v1/responses".to_string(),
                     openai_model: "gpt-4o-mini".to_string(),
