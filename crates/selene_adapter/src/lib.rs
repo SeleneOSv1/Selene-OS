@@ -582,11 +582,19 @@ pub struct VoiceTurnGdeltCorroborationMetadata {
     pub provider_failure_reason: Option<String>,
     pub h395_transport_outcome: String,
     pub h396_transport_outcome: String,
+    pub h397_availability_outcome: String,
     pub direct_curl_probe_status: String,
     pub rust_transport_probe_status: String,
+    pub official_docs_reachability_status: String,
+    pub doc_api_reachability_status: String,
+    pub rust_docs_tls_reachability_status: String,
+    pub curl_docs_tls_reachability_status: String,
+    pub provider_network_failure_class: Option<String>,
+    pub provider_network_failure_detail_redacted: Option<String>,
     pub rust_transport_failure_class: Option<String>,
     pub rust_transport_failure_detail_redacted: Option<String>,
     pub curl_and_rust_compared: bool,
+    pub official_docs_vs_doc_api_separated: bool,
     pub source_agreement_scoring_deferred: bool,
     pub official_docs_proof_separate_from_live_api: bool,
     pub live_api_does_not_prove_policy: bool,
@@ -12902,9 +12910,16 @@ fn parse_gdelt_corroboration_packet(packet: &str) -> VoiceTurnGdeltCorroboration
             h395_transport_outcome: "PROVIDER_OR_NETWORK_UNAVAILABLE_SAFE_DEGRADED".to_string(),
             h396_transport_outcome: "PROVIDER_RATE_LIMIT_OR_NETWORK_UNAVAILABLE_SAFE_DEGRADED"
                 .to_string(),
+            h397_availability_outcome: "GDELT_PROVIDER_NETWORK_STILL_UNAVAILABLE_SAFE_DEGRADED"
+                .to_string(),
             direct_curl_probe_status: "not_reported".to_string(),
             rust_transport_probe_status: "not_reported".to_string(),
+            official_docs_reachability_status: "not_reported".to_string(),
+            doc_api_reachability_status: "not_reported".to_string(),
+            rust_docs_tls_reachability_status: "not_reported".to_string(),
+            curl_docs_tls_reachability_status: "not_reported".to_string(),
             curl_and_rust_compared: false,
+            official_docs_vs_doc_api_separated: false,
             source_agreement_scoring_deferred: true,
             ..Default::default()
         };
@@ -13013,8 +13028,8 @@ fn parse_gdelt_corroboration_packet(packet: &str) -> VoiceTurnGdeltCorroboration
             .unwrap_or("not_reported")
             .to_string(),
         independent_source_count: packet_field_value_any(
-            packet,
-            &["independent_source_count", "independent"],
+                packet,
+                &["independent_source_count", "independent", "ind"],
         )
         .and_then(|value| value.parse::<usize>().ok())
         .unwrap_or_default(),
@@ -13030,12 +13045,12 @@ fn parse_gdelt_corroboration_packet(packet: &str) -> VoiceTurnGdeltCorroboration
         )
         .and_then(|value| value.parse::<usize>().ok())
         .unwrap_or_default(),
-        no_result_reason: packet_field_value_any(packet, &["no_result_reason", "no_result"])
+        no_result_reason: packet_field_value_any(packet, &["no_result_reason", "no_result", "nr"])
             .filter(|value| *value != "none")
             .map(ToString::to_string),
         provider_failure_reason: packet_field_value_any(
             packet,
-            &["provider_failure_reason", "failure"],
+            &["provider_failure_reason", "failure", "fail"],
         )
         .filter(|value| *value != "none")
         .map(ToString::to_string),
@@ -13050,6 +13065,10 @@ fn parse_gdelt_corroboration_packet(packet: &str) -> VoiceTurnGdeltCorroboration
             packet_field_value_any(packet, &["h396_transport_outcome", "h396_outcome", "h396"])
                 .unwrap_or("PROVIDER_RATE_LIMIT_OR_NETWORK_UNAVAILABLE_SAFE_DEGRADED"),
         ),
+        h397_availability_outcome: normalize_h397_availability_outcome(
+            packet_field_value_any(packet, &["h397_availability_outcome", "h397"])
+                .unwrap_or("GDELT_PROVIDER_NETWORK_STILL_UNAVAILABLE_SAFE_DEGRADED"),
+        ),
         direct_curl_probe_status: packet_field_value_any(
             packet,
             &["direct_curl_probe_status", "curl"],
@@ -13062,6 +13081,42 @@ fn parse_gdelt_corroboration_packet(packet: &str) -> VoiceTurnGdeltCorroboration
         )
         .unwrap_or("not_reported")
         .to_string(),
+        official_docs_reachability_status: packet_field_value_any(
+            packet,
+            &["official_docs_reachability_status", "odr"],
+        )
+        .unwrap_or("not_reported")
+        .to_string(),
+        doc_api_reachability_status: packet_field_value_any(
+            packet,
+            &["doc_api_reachability_status", "doc"],
+        )
+        .unwrap_or("not_reported")
+        .to_string(),
+        rust_docs_tls_reachability_status: packet_field_value_any(
+            packet,
+            &["rust_docs_tls_reachability_status", "rdoc"],
+        )
+        .unwrap_or("not_reported")
+        .to_string(),
+        curl_docs_tls_reachability_status: packet_field_value_any(
+            packet,
+            &["curl_docs_tls_reachability_status", "cdoc"],
+        )
+        .unwrap_or("not_reported")
+        .to_string(),
+        provider_network_failure_class: packet_field_value_any(
+            packet,
+            &["provider_network_failure_class", "pnfc"],
+        )
+        .filter(|value| *value != "none")
+        .map(ToString::to_string),
+        provider_network_failure_detail_redacted: packet_field_value_any(
+            packet,
+            &["provider_network_failure_detail_redacted", "pnfd"],
+        )
+        .filter(|value| *value != "none")
+        .map(ToString::to_string),
         rust_transport_failure_class: packet_field_value_any(
             packet,
             &["rust_transport_failure_class", "rust_failure_class", "rfc"],
@@ -13082,6 +13137,14 @@ fn parse_gdelt_corroboration_packet(packet: &str) -> VoiceTurnGdeltCorroboration
             packet,
             &["curl_and_rust_compared", "curl_rust_compared", "crc"],
         ),
+        official_docs_vs_doc_api_separated: packet_field_bool_any(
+            packet,
+            &[
+                "official_docs_vs_doc_api_separated",
+                "official_docs_doc_api_separated",
+                "odds",
+            ],
+        ) || has_guard("docs_docapi_split"),
         source_agreement_scoring_deferred: packet_field_bool_any(
             packet,
             &[
@@ -13131,6 +13194,10 @@ fn apply_gdelt_h395_transport_packet(
         packet_field_value_any(packet, &["h396_transport_outcome", "h396_outcome", "h396"])
             .unwrap_or(metadata.h396_transport_outcome.as_str()),
     );
+    metadata.h397_availability_outcome = normalize_h397_availability_outcome(
+        packet_field_value_any(packet, &["h397_availability_outcome", "h397"])
+            .unwrap_or(metadata.h397_availability_outcome.as_str()),
+    );
     metadata.direct_curl_probe_status =
         packet_field_value_any(packet, &["direct_curl_probe_status", "curl"])
             .unwrap_or(metadata.direct_curl_probe_status.as_str())
@@ -13139,6 +13206,32 @@ fn apply_gdelt_h395_transport_packet(
         packet_field_value_any(packet, &["rust_transport_probe_status", "rust"])
             .unwrap_or(metadata.rust_transport_probe_status.as_str())
             .to_string();
+    metadata.official_docs_reachability_status =
+        packet_field_value_any(packet, &["official_docs_reachability_status", "odr"])
+            .unwrap_or(metadata.official_docs_reachability_status.as_str())
+            .to_string();
+    metadata.doc_api_reachability_status =
+        packet_field_value_any(packet, &["doc_api_reachability_status", "doc"])
+            .unwrap_or(metadata.doc_api_reachability_status.as_str())
+            .to_string();
+    metadata.rust_docs_tls_reachability_status =
+        packet_field_value_any(packet, &["rust_docs_tls_reachability_status", "rdoc"])
+            .unwrap_or(metadata.rust_docs_tls_reachability_status.as_str())
+            .to_string();
+    metadata.curl_docs_tls_reachability_status =
+        packet_field_value_any(packet, &["curl_docs_tls_reachability_status", "cdoc"])
+            .unwrap_or(metadata.curl_docs_tls_reachability_status.as_str())
+            .to_string();
+    metadata.provider_network_failure_class =
+        packet_field_value_any(packet, &["provider_network_failure_class", "pnfc"])
+            .filter(|value| *value != "none")
+            .map(ToString::to_string)
+            .or_else(|| metadata.provider_network_failure_class.clone());
+    metadata.provider_network_failure_detail_redacted =
+        packet_field_value_any(packet, &["provider_network_failure_detail_redacted", "pnfd"])
+            .filter(|value| *value != "none")
+            .map(ToString::to_string)
+            .or_else(|| metadata.provider_network_failure_detail_redacted.clone());
     metadata.rust_transport_failure_class = packet_field_value_any(
         packet,
         &["rust_transport_failure_class", "rust_failure_class", "rfc"],
@@ -13162,6 +13255,16 @@ fn apply_gdelt_h395_transport_packet(
         &["curl_and_rust_compared", "curl_rust_compared", "crc"],
     ) {
         metadata.curl_and_rust_compared = true;
+    }
+    if packet_field_bool_any(
+        packet,
+        &[
+            "official_docs_vs_doc_api_separated",
+            "official_docs_doc_api_separated",
+            "odds",
+        ],
+    ) {
+        metadata.official_docs_vs_doc_api_separated = true;
     }
     if packet_field_bool_any(
         packet,
@@ -13210,6 +13313,21 @@ fn normalize_h396_transport_outcome(raw: &str) -> String {
             "PROVIDER_RATE_LIMIT_OR_NETWORK_UNAVAILABLE_SAFE_DEGRADED".to_string()
         }
         _ => "PROVIDER_RATE_LIMIT_OR_NETWORK_UNAVAILABLE_SAFE_DEGRADED".to_string(),
+    }
+}
+
+fn normalize_h397_availability_outcome(raw: &str) -> String {
+    match raw {
+        "A" | "GDELT_PROVIDER_NETWORK_AVAILABLE_RUST_PARSED" => {
+            "GDELT_PROVIDER_NETWORK_AVAILABLE_RUST_PARSED".to_string()
+        }
+        "B" | "GDELT_PROVIDER_NETWORK_ISOLATED_ACTIONABLE_BLOCKER" => {
+            "GDELT_PROVIDER_NETWORK_ISOLATED_ACTIONABLE_BLOCKER".to_string()
+        }
+        "C" | "GDELT_PROVIDER_NETWORK_STILL_UNAVAILABLE_SAFE_DEGRADED" => {
+            "GDELT_PROVIDER_NETWORK_STILL_UNAVAILABLE_SAFE_DEGRADED".to_string()
+        }
+        _ => "GDELT_PROVIDER_NETWORK_STILL_UNAVAILABLE_SAFE_DEGRADED".to_string(),
     }
 }
 
@@ -22974,6 +23092,60 @@ mod tests {
         assert!(metadata
             .result_classes
             .contains(&"GDELT_NO_FULL_REQUEST_URL_WITH_RAW_QUERY_STORAGE_PASS".to_string()));
+    }
+
+    #[test]
+    fn h397_gdelt_metadata_parses_availability_split_and_proxy_blocker() {
+        let packet = "p=GDELT;role=corroboration;primary=false;replaces_brave=false;ver=H397_V1;docs=true;docs_urls=doc2|rt;docs_at=2026-04-28T06:41:09Z;live_at=none;qh=abc123;rawq=false;frqs=false;mode=artlist_json;endpoint=gdelt_doc_2_artlist;window=1d;max=5;timeout=2000;limit=131072;status=provider_failed_tls;count=0;bounded=true;outcome=B;h396=C;h397=B;curl=curl_http000_ssl_error_syscall_proxy_suspected;rust=provider_failed_tls;odr=docs_http_200;doc=api_http000_tls;rdoc=not_run;cdoc=docs_tls_http_200;pnfc=proxy_or_intercept_suspected;pnfd=class=proxy_or_intercept_suspected;rust_failure_class=tls;rust_failure_detail=provider_gdelt_error_tls;crc=true;odds=true;sad=true;urls=none;domains=none;titles=none;published=none;lang=none;corr=provider_failed;reason=failure_no_fabricated_agreement;independent=0;same=0;cross=0;no_result=none;failure=provider_gdelt_error_tls;guards=docs_live_split,docs_docapi_split,live_not_policy,no_text_replace,no_brave_replace,no_image,no_vgkg,no_gcp,no_scrape,no_bulk,scoring_deferred;proof=H397;classes=H397_GDELT_PROVIDER_NETWORK_ISOLATED_ACTIONABLE_BLOCKER,GDELT_OFFICIAL_DOCS_VS_DOC_API_SEPARATED_PASS,GDELT_PROXY_OR_INTERCEPT_SUSPECTED_CLASSIFIED_PASS,GDELT_NO_FULL_REQUEST_URL_WITH_RAW_QUERY_STORAGE_PASS";
+        let metadata = parse_gdelt_corroboration_packet(packet);
+        assert_eq!(
+            metadata.h397_availability_outcome,
+            "GDELT_PROVIDER_NETWORK_ISOLATED_ACTIONABLE_BLOCKER"
+        );
+        assert_eq!(
+            metadata.official_docs_reachability_status,
+            "docs_http_200"
+        );
+        assert_eq!(
+            metadata.doc_api_reachability_status,
+            "api_http000_tls"
+        );
+        assert_eq!(
+            metadata.rust_docs_tls_reachability_status,
+            "not_run"
+        );
+        assert_eq!(
+            metadata.curl_docs_tls_reachability_status,
+            "docs_tls_http_200"
+        );
+        assert_eq!(
+            metadata.provider_network_failure_class.as_deref(),
+            Some("proxy_or_intercept_suspected")
+        );
+        assert_eq!(
+            metadata.provider_network_failure_detail_redacted.as_deref(),
+            Some("class=proxy_or_intercept_suspected")
+        );
+        assert!(metadata.official_docs_vs_doc_api_separated);
+        assert!(metadata.curl_and_rust_compared);
+        assert!(!metadata.raw_query_stored);
+        assert!(!metadata.full_request_url_with_raw_query_stored);
+        assert!(!metadata.provider_primary);
+        assert!(!metadata.provider_replaces_brave);
+        assert!(metadata.source_agreement_scoring_deferred);
+        assert!(metadata.no_visual_gkg_use);
+        assert!(metadata.no_bigquery_or_gcp_use);
+        assert!(metadata.no_article_scrape);
+        assert!(metadata.no_bulk_download);
+        assert!(metadata
+            .result_classes
+            .contains(&"GDELT_OFFICIAL_DOCS_VS_DOC_API_SEPARATED_PASS".to_string()));
+        assert!(metadata
+            .result_classes
+            .contains(&"GDELT_PROXY_OR_INTERCEPT_SUSPECTED_CLASSIFIED_PASS".to_string()));
+        assert!(!metadata
+            .result_classes
+            .contains(&"WEB_PROVIDER_FANOUT_PASS".to_string()));
     }
 
     #[test]
