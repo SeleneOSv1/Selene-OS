@@ -27,6 +27,18 @@ H389 also preserves the H388 safety boundary:
 - screenshot content remains layout guidance only, never evidence
 - screenshot images remain non-provider images
 
+## H390 Decision
+
+H390 selects `Outcome B -- DISPLAY_DEFERRED_LICENSE_OR_SAFETY_INCOMPLETE` for the live Brave metadata path.
+
+PH1.E now emits an `ImageDisplayEligibilityPacket`-equivalent proof layer for Brave image metadata. The packet records provider identity, live/fixture separation, image URL presence, thumbnail URL presence, source-page URL presence, derived source domain, retrieved-at proof, source-page verification status/reason, canonical URL if safely available, `og:image` / `twitter:image` match booleans, page-title presence, explicit license/usage signal, robots `noindex` / `noimageindex`, display-safety posture, display eligibility, display-deferred or display-blocked reason, no-image-bytes-downloaded proof, no-raw-image-cache proof, no-source-page-scrape proof, query-hash-only proof, and the requirement that text citations remain separate.
+
+H390 does not display sourced image/photo cards. It does not modify Desktop Swift/UI/chrome. It does not download image bytes, cache raw image bytes, create a hidden web image archive, fetch source pages broadly, run JavaScript, use cookies/auth headers, bypass paywalls, add providers, or infer license/usage rights from Brave provider presence.
+
+The default live Brave outcome remains display deferred unless explicit source-page binding, display-safety, and license/usage proof are present. Image URL alone, thumbnail URL alone, source-page URL alone, Brave provider presence, screenshot content, screenshot images, fake metadata, generated placeholders, and fixture-only image data are not sufficient for display.
+
+H390 proof passed with `cargo test -p selene_adapter h390 -- --test-threads=1 => 1 passed`, `cargo test -p selene_engines h390 -- --test-threads=1 => 5 passed; 1 ignored`, live `cargo test -p selene_engines h390_live_brave_image_display_eligibility_maps_real_metadata_without_display -- --ignored --test-threads=1 => 1 passed`, H389 live regression `cargo test -p selene_engines h389_live_brave_image_provider_approval_maps_real_metadata_without_secret_leak -- --ignored --test-threads=1 => 1 passed`, full adapter/OS/engine test suites, `git diff --check`, and macOS Desktop `xcodebuild => BUILD SUCCEEDED`. Direct runtime proof bound the adapter on `127.0.0.1:18080`, `/healthz` returned HTTP 200, and `/v1/voice/turn` remained fail-closed rather than fabricating display evidence.
+
 ## Candidate Matrix
 
 | Candidate | Repo surface | Current capability | Display allowed | Blocker |
@@ -78,6 +90,39 @@ The live Deep Research response metadata must be able to represent:
 - `query_hash_only`
 - `screenshot_not_evidence`
 
+## ImageDisplayEligibilityPacket Contract
+
+The H390 display eligibility packet must represent:
+
+- `proof_id`
+- `selected_outcome`
+- `provider`
+- `live_or_fixture`
+- `image_url_present`
+- `thumbnail_url_present`
+- `source_page_url_present`
+- `source_domain`
+- `retrieved_at_present`
+- `source_page_verified`
+- `source_page_verification_status`
+- `source_page_verification_reason`
+- `canonical_url` when safely extracted
+- `og_image_matches_candidate`
+- `twitter_image_matches_candidate`
+- `page_title_present`
+- `explicit_license_signal_present`
+- `license_or_usage_note` when safely extracted
+- `robots_noindex_or_noimageindex`
+- `display_safe`
+- `display_eligible`
+- `display_deferred_reason`
+- `display_blocked_reason`
+- `no_image_bytes_downloaded`
+- `no_raw_image_cache`
+- `no_source_page_scrape`
+- `query_hash_only`
+- `text_citation_required`
+
 ## Future Image Evidence Contract
 
 A future displayable `ImageEvidencePacket` or `ImageSourceCardPacket` must require:
@@ -103,6 +148,7 @@ A future displayable `ImageEvidencePacket` or `ImageSourceCardPacket` must requi
 
 - Image URL alone is insufficient.
 - Thumbnail URL alone is insufficient.
+- Source-page URL alone is insufficient for license or display-safety proof.
 - Missing `source_page_url`, `source_domain`, `retrieved_at`, `display_safe`, `provider`, or `proof_id` defers display.
 - Unknown display safety defers display.
 - Unknown rights/license defers display unless an approved repo policy explicitly allows display with an unknown-license note.
@@ -111,6 +157,7 @@ A future displayable `ImageEvidencePacket` or `ImageSourceCardPacket` must requi
 - Screenshot facts are not evidence.
 - Screenshot images are not provider images.
 - Images support cited answers visually; they never replace text citations.
+- Minimal source-page verification may inspect only bounded public http/https HTML metadata. It must block localhost, loopback, private, link-local, multicast, metadata-service, and file URLs; enforce redirect, timeout, content-type, and response-size safety; avoid JavaScript, cookies, auth headers, secret leakage, paywall bypass, broad scraping, image byte download, and raw image caching.
 
 ## Secret And Privacy Policy
 
@@ -124,4 +171,4 @@ A future displayable `ImageEvidencePacket` or `ImageSourceCardPacket` must requi
 
 ## Future Implementation Step
 
-Complete display-safety and license/usage verification for the Brave metadata-only path, or select an additional approved image metadata provider if Brave cannot provide those fields. Only after that proof may a separate sourced image/photo card UI/display build be authorized.
+Complete an approved license/display-safety policy for Brave image metadata, or select an additional approved image metadata provider if Brave cannot provide explicit license/usage and display-safety fields. Only after that proof may a separate sourced image/photo card UI/display build be authorized.

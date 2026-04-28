@@ -366,6 +366,7 @@ pub struct VoiceTurnDeepResearchMetadata {
     pub image_strip_status: String,
     pub layout: VoiceTurnReportLayoutMetadata,
     pub image_provider_path: VoiceTurnImageProviderPathMetadata,
+    pub image_display_eligibility: VoiceTurnImageDisplayEligibilityMetadata,
     pub gdelt_status: String,
     pub provider_fanout_status: String,
     pub retention_class: String,
@@ -437,6 +438,39 @@ pub struct VoiceTurnImageProviderPathMetadata {
     pub no_source_page_scrape: bool,
     pub query_hash_only: bool,
     pub screenshot_not_evidence: bool,
+}
+
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct VoiceTurnImageDisplayEligibilityMetadata {
+    pub proof_id: Option<String>,
+    pub selected_outcome: String,
+    pub provider: String,
+    pub live_or_fixture: String,
+    pub image_url_present: bool,
+    pub thumbnail_url_present: bool,
+    pub source_page_url_present: bool,
+    pub source_domain: Option<String>,
+    pub retrieved_at_present: bool,
+    pub source_page_verified: bool,
+    pub source_page_verification_status: String,
+    pub source_page_verification_reason: String,
+    pub canonical_url: Option<String>,
+    pub og_image_matches_candidate: bool,
+    pub twitter_image_matches_candidate: bool,
+    pub page_title_present: bool,
+    pub explicit_license_signal_present: bool,
+    pub license_or_usage_note: Option<String>,
+    pub robots_noindex_or_noimageindex: bool,
+    pub display_safe: bool,
+    pub display_eligible: bool,
+    pub display_deferred_reason: Option<String>,
+    pub display_blocked_reason: Option<String>,
+    pub no_image_bytes_downloaded: bool,
+    pub no_raw_image_cache: bool,
+    pub no_source_page_scrape: bool,
+    pub query_hash_only: bool,
+    pub text_citation_required: bool,
 }
 
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
@@ -11908,12 +11942,27 @@ fn deep_research_metadata_from_tool_response(
             }
         }
     }
+    if let Some(extra) = fields.get("h390_result_classes") {
+        for class in extra
+            .split('|')
+            .map(str::trim)
+            .filter(|item| !item.is_empty())
+        {
+            if !result_classes.iter().any(|existing| existing == class) {
+                result_classes.push(class.to_string());
+            }
+        }
+    }
     let image_provider_path_packet = fields
         .get("image_metadata_provider_path_packet")
         .map(String::as_str)
         .unwrap_or_default();
     let image_provider_safety_packet = fields
         .get("image_metadata_provider_safety_packet")
+        .map(String::as_str)
+        .unwrap_or_default();
+    let image_display_eligibility_packet = fields
+        .get("image_display_eligibility_packet")
         .map(String::as_str)
         .unwrap_or_default();
     let retention_class = fields
@@ -12278,6 +12327,123 @@ fn deep_research_metadata_from_tool_response(
             screenshot_not_evidence: packet_field_bool(
                 image_provider_path_packet,
                 "screenshot_not_evidence",
+            ),
+        },
+        image_display_eligibility: VoiceTurnImageDisplayEligibilityMetadata {
+            proof_id: packet_field_value(image_display_eligibility_packet, "proof_id")
+                .map(ToString::to_string),
+            selected_outcome: packet_field_value(
+                image_display_eligibility_packet,
+                "selected_outcome",
+            )
+            .unwrap_or("DISPLAY_DEFERRED_LICENSE_OR_SAFETY_INCOMPLETE")
+            .to_string(),
+            provider: packet_field_value(image_display_eligibility_packet, "provider")
+                .unwrap_or("none")
+                .to_string(),
+            live_or_fixture: packet_field_value(
+                image_display_eligibility_packet,
+                "live_or_fixture",
+            )
+            .unwrap_or("unknown")
+            .to_string(),
+            image_url_present: packet_field_bool(
+                image_display_eligibility_packet,
+                "image_url_present",
+            ),
+            thumbnail_url_present: packet_field_bool(
+                image_display_eligibility_packet,
+                "thumbnail_url_present",
+            ),
+            source_page_url_present: packet_field_bool(
+                image_display_eligibility_packet,
+                "source_page_url_present",
+            ),
+            source_domain: packet_field_value(image_display_eligibility_packet, "source_domain")
+                .filter(|value| *value != "none")
+                .map(ToString::to_string),
+            retrieved_at_present: packet_field_bool(
+                image_display_eligibility_packet,
+                "retrieved_at_present",
+            ),
+            source_page_verified: packet_field_bool(
+                image_display_eligibility_packet,
+                "source_page_verified",
+            ),
+            source_page_verification_status: packet_field_value(
+                image_display_eligibility_packet,
+                "source_page_status",
+            )
+            .unwrap_or("WEB_IMAGE_SOURCE_PAGE_VERIFICATION_DEFERRED")
+            .to_string(),
+            source_page_verification_reason: packet_field_value(
+                image_display_eligibility_packet,
+                "source_page_reason",
+            )
+            .unwrap_or("not_reported")
+            .to_string(),
+            canonical_url: packet_field_value(image_display_eligibility_packet, "canonical_url")
+                .filter(|value| *value != "none")
+                .map(ToString::to_string),
+            og_image_matches_candidate: packet_field_bool(
+                image_display_eligibility_packet,
+                "og_image_match",
+            ),
+            twitter_image_matches_candidate: packet_field_bool(
+                image_display_eligibility_packet,
+                "twitter_image_match",
+            ),
+            page_title_present: packet_field_bool(
+                image_display_eligibility_packet,
+                "page_title_present",
+            ),
+            explicit_license_signal_present: packet_field_bool(
+                image_display_eligibility_packet,
+                "license_signal",
+            ),
+            license_or_usage_note: packet_field_value(
+                image_display_eligibility_packet,
+                "license_note",
+            )
+            .filter(|value| *value != "none")
+            .map(ToString::to_string),
+            robots_noindex_or_noimageindex: packet_field_bool(
+                image_display_eligibility_packet,
+                "robots_block",
+            ),
+            display_safe: packet_field_bool(image_display_eligibility_packet, "display_safe"),
+            display_eligible: packet_field_bool(
+                image_display_eligibility_packet,
+                "display_eligible",
+            ),
+            display_deferred_reason: packet_field_value(
+                image_display_eligibility_packet,
+                "display_deferred_reason",
+            )
+            .filter(|value| *value != "none")
+            .map(ToString::to_string),
+            display_blocked_reason: packet_field_value(
+                image_display_eligibility_packet,
+                "display_blocked_reason",
+            )
+            .filter(|value| *value != "none")
+            .map(ToString::to_string),
+            no_image_bytes_downloaded: packet_field_bool(
+                image_display_eligibility_packet,
+                "no_image_bytes_downloaded",
+            ),
+            no_raw_image_cache: packet_field_bool(
+                image_display_eligibility_packet,
+                "no_raw_image_cache",
+            ),
+            no_source_page_scrape: packet_field_bool(
+                image_display_eligibility_packet,
+                "no_source_page_scrape",
+            ),
+            query_hash_only: packet_field_bool(image_display_eligibility_packet, "query_hash_only"),
+            text_citation_required: packet_field_bool(
+                image_display_eligibility_packet,
+                "text_citation_required",
             ),
         },
         gdelt_status,
@@ -21270,6 +21436,11 @@ mod tests {
                             .to_string(),
                     },
                     selene_kernel_contracts::ph1e::ToolStructuredField {
+                        key: "image_display_eligibility_packet".to_string(),
+                        value: "proof_id=H390;selected_outcome=DISPLAY_DEFERRED_LICENSE_OR_SAFETY_INCOMPLETE;provider=brave;live_or_fixture=live_or_fixture_separated;image_url_present=true;thumbnail_url_present=true;source_page_url_present=true;source_domain=example.com;retrieved_at_present=true;source_page_verified=false;source_page_status=WEB_IMAGE_SOURCE_PAGE_VERIFICATION_DEFERRED;source_page_reason=live_source_page_minimal_metadata_fetch_not_enabled;canonical_url=none;og_image_match=false;twitter_image_match=false;page_title_present=false;license_signal=false;license_note=none;robots_block=false;display_safe=false;display_eligible=false;display_deferred_reason=license_or_display_safety_incomplete;display_blocked_reason=none;no_image_bytes_downloaded=true;no_raw_image_cache=true;no_source_page_scrape=true;query_hash_only=true;text_citation_required=true"
+                            .to_string(),
+                    },
+                    selene_kernel_contracts::ph1e::ToolStructuredField {
                         key: "report_presentation_layout_packet".to_string(),
                         value: "query_pill_text=user_query;main_heading=Deep Research Report;lead_claim_id=claim_1;core_facts_section=Core facts;source_chip_positions=after_supported_claim;image_strip_status=WEB_IMAGE_SOURCE_CARD_DISPLAY_DEFERRED;image_strip_required_count=3;image_strip_cards_verified_count=0;layout_reference_reason=user_screenshot_layout_reference_only;screenshot_not_evidence=true;desktop_ui_modified=false"
                             .to_string(),
@@ -21282,6 +21453,11 @@ mod tests {
                     selene_kernel_contracts::ph1e::ToolStructuredField {
                         key: "h389_result_classes".to_string(),
                         value: "WEB_IMAGE_PROVIDER_APPROVAL_PASS|WEB_IMAGE_PROVIDER_CANDIDATE_MATRIX_PASS|WEB_IMAGE_METADATA_PROVIDER_PATH_METADATA_ONLY|WEB_IMAGE_SOURCE_CARD_DISPLAY_DEFERRED|WEB_IMAGE_PROVIDER_SECRET_GOVERNANCE_PASS|WEB_IMAGE_PRIVATE_QUERY_POLICY_PASS|WEB_IMAGE_BOUNDED_PROVIDER_USE_PASS|WEB_IMAGE_NO_BYTES_DOWNLOADED_PASS|WEB_IMAGE_NO_SOURCE_PAGE_SCRAPE_PASS|WEB_IMAGE_QUERY_HASH_ONLY_PASS|WEB_IMAGE_LICENSE_UNKNOWN_DISPLAY_DEFERRED_PASS|H388_IMAGE_PROVIDER_PATH_REGRESSION_PASS"
+                            .to_string(),
+                    },
+                    selene_kernel_contracts::ph1e::ToolStructuredField {
+                        key: "h390_result_classes".to_string(),
+                        value: "WEB_IMAGE_DISPLAY_SAFETY_VERIFICATION_PASS|WEB_IMAGE_LICENSE_USAGE_UNVERIFIED_DEFERRED|WEB_IMAGE_SOURCE_PAGE_VERIFICATION_DEFERRED|WEB_IMAGE_DISPLAY_ELIGIBILITY_PACKET_PASS|WEB_IMAGE_DISPLAY_ELIGIBLE_FALSE_PASS|WEB_IMAGE_NO_UI_DISPLAY_PASS|WEB_IMAGE_NO_BYTES_DOWNLOADED_PASS|WEB_IMAGE_NO_RAW_IMAGE_CACHE_PASS|WEB_IMAGE_TEXT_CITATION_REQUIRED_PASS|H389_BRAVE_IMAGE_PROVIDER_REGRESSION_PASS"
                             .to_string(),
                     },
                 ],
@@ -21354,9 +21530,51 @@ mod tests {
         assert!(metadata.image_provider_path.no_image_bytes_downloaded);
         assert!(metadata.image_provider_path.no_source_page_scrape);
         assert!(metadata.image_provider_path.query_hash_only);
+        assert_eq!(
+            metadata.image_display_eligibility.proof_id.as_deref(),
+            Some("H390")
+        );
+        assert_eq!(
+            metadata.image_display_eligibility.selected_outcome,
+            "DISPLAY_DEFERRED_LICENSE_OR_SAFETY_INCOMPLETE"
+        );
+        assert_eq!(metadata.image_display_eligibility.provider, "brave");
+        assert!(metadata.image_display_eligibility.image_url_present);
+        assert!(metadata.image_display_eligibility.thumbnail_url_present);
+        assert!(metadata.image_display_eligibility.source_page_url_present);
+        assert_eq!(
+            metadata.image_display_eligibility.source_domain.as_deref(),
+            Some("example.com")
+        );
+        assert!(!metadata.image_display_eligibility.source_page_verified);
+        assert_eq!(
+            metadata
+                .image_display_eligibility
+                .source_page_verification_status,
+            "WEB_IMAGE_SOURCE_PAGE_VERIFICATION_DEFERRED"
+        );
+        assert!(!metadata.image_display_eligibility.display_eligible);
+        assert_eq!(
+            metadata
+                .image_display_eligibility
+                .display_deferred_reason
+                .as_deref(),
+            Some("license_or_display_safety_incomplete")
+        );
+        assert!(metadata.image_display_eligibility.no_image_bytes_downloaded);
+        assert!(metadata.image_display_eligibility.no_raw_image_cache);
+        assert!(metadata.image_display_eligibility.no_source_page_scrape);
+        assert!(metadata.image_display_eligibility.query_hash_only);
+        assert!(metadata.image_display_eligibility.text_citation_required);
         assert!(metadata
             .result_classes
             .contains(&"WEB_IMAGE_PROVIDER_APPROVAL_PASS".to_string()));
+        assert!(metadata
+            .result_classes
+            .contains(&"WEB_IMAGE_DISPLAY_ELIGIBILITY_PACKET_PASS".to_string()));
+        assert!(metadata
+            .result_classes
+            .contains(&"WEB_IMAGE_NO_UI_DISPLAY_PASS".to_string()));
         assert!(metadata
             .result_classes
             .contains(&"WEB_IMAGE_NO_BYTES_DOWNLOADED_PASS".to_string()));
@@ -21364,6 +21582,81 @@ mod tests {
             .result_classes
             .contains(&"WEB_IMAGE_SOURCE_CARD_PASS".to_string()));
         assert!(!metadata.layout.desktop_ui_modified);
+    }
+
+    #[test]
+    fn h390_image_display_eligibility_metadata_is_response_visible() {
+        let citation = selene_kernel_contracts::ph1e::ToolTextSnippet {
+            title: "Verified source".to_string(),
+            snippet: "Text citation remains required.".to_string(),
+            url: "https://example.com/verified-source".to_string(),
+        };
+        let tool_response = ToolResponse::ok_v1(
+            selene_kernel_contracts::ph1e::ToolRequestId(390),
+            selene_kernel_contracts::ph1e::ToolQueryHash(390),
+            ToolResult::DeepResearch {
+                summary: "Deep Research Report\n\nSummary: verified evidence only.".to_string(),
+                extracted_fields: vec![
+                    selene_kernel_contracts::ph1e::ToolStructuredField {
+                        key: "image_metadata_provider_path_packet".to_string(),
+                        value: "provider_path_id=h389;selected_outcome=APPROVED_BRAVE_IMAGE_METADATA_ONLY_PATH;provider_name=brave;provider_kind=public_image_metadata;secret_id=brave_search_api_key;endpoint_class=brave_image_search;query_hash_or_redacted_query=queryhash;supports_image_url=true;supports_thumbnail_url=true;supports_source_page_url=true;supports_source_domain=true;supports_retrieved_at=true;supports_display_safety=false;supports_license_or_usage_note=false;supports_image_source_verified=true;supports_linked_claim_ids=false;display_allowed=false;display_deferred_reason=license_or_display_safety_incomplete;blocker=license_or_display_safety_incomplete;proof_id=H389;screenshot_not_evidence=true"
+                            .to_string(),
+                    },
+                    selene_kernel_contracts::ph1e::ToolStructuredField {
+                        key: "image_metadata_provider_safety_packet".to_string(),
+                        value: "query_leakage_policy=private_block_or_defer;max_query_count=1;max_result_count=3;timeout_ms=2000;retry_policy=none;no_new_provider_dependency=true;no_image_bytes_downloaded=true;no_source_page_scrape=true;query_hash_only=true;display_status=WEB_IMAGE_SOURCE_CARD_DISPLAY_DEFERRED"
+                            .to_string(),
+                    },
+                    selene_kernel_contracts::ph1e::ToolStructuredField {
+                        key: "image_display_eligibility_packet".to_string(),
+                        value: "proof_id=H390;selected_outcome=DISPLAY_DEFERRED_LICENSE_OR_SAFETY_INCOMPLETE;provider=brave;live_or_fixture=live_or_fixture_separated;image_url_present=true;thumbnail_url_present=true;source_page_url_present=true;source_domain=example.com;retrieved_at_present=true;source_page_verified=false;source_page_status=WEB_IMAGE_SOURCE_PAGE_VERIFICATION_DEFERRED;source_page_reason=license_or_display_safety_incomplete;canonical_url=none;og_image_match=false;twitter_image_match=false;page_title_present=false;license_signal=false;license_note=none;robots_block=false;display_safe=false;display_eligible=false;display_deferred_reason=license_or_display_safety_incomplete;display_blocked_reason=none;no_image_bytes_downloaded=true;no_raw_image_cache=true;no_source_page_scrape=true;query_hash_only=true;text_citation_required=true"
+                            .to_string(),
+                    },
+                    selene_kernel_contracts::ph1e::ToolStructuredField {
+                        key: "h390_result_classes".to_string(),
+                        value: "WEB_IMAGE_DISPLAY_ELIGIBILITY_PACKET_PASS|WEB_IMAGE_DISPLAY_ELIGIBLE_FALSE_PASS|WEB_IMAGE_NO_UI_DISPLAY_PASS|WEB_IMAGE_NO_RAW_IMAGE_CACHE_PASS|WEB_IMAGE_TEXT_CITATION_REQUIRED_PASS"
+                            .to_string(),
+                    },
+                ],
+                citations: vec![citation.clone()],
+            },
+            selene_kernel_contracts::ph1e::SourceMetadata {
+                schema_version: selene_kernel_contracts::ph1e::PH1E_CONTRACT_VERSION,
+                provider_hint: Some("brave".to_string()),
+                retrieved_at_unix_ms: 1_770_000_000_000,
+                sources: vec![selene_kernel_contracts::ph1e::SourceRef {
+                    title: citation.title,
+                    url: citation.url,
+                }],
+            },
+            None,
+            ReasonCodeId(0x4500_0001),
+            CacheStatus::Miss,
+        )
+        .expect("fixture tool response must validate");
+        let metadata = deep_research_metadata_from_tool_response(&tool_response)
+            .expect("deep research response metadata must be present");
+        assert_eq!(
+            metadata.image_display_eligibility.selected_outcome,
+            "DISPLAY_DEFERRED_LICENSE_OR_SAFETY_INCOMPLETE"
+        );
+        assert!(!metadata.image_display_eligibility.display_eligible);
+        assert_eq!(
+            metadata
+                .image_display_eligibility
+                .display_deferred_reason
+                .as_deref(),
+            Some("license_or_display_safety_incomplete")
+        );
+        assert!(metadata.image_display_eligibility.no_image_bytes_downloaded);
+        assert!(metadata.image_display_eligibility.no_raw_image_cache);
+        assert!(metadata.image_display_eligibility.text_citation_required);
+        assert!(metadata
+            .result_classes
+            .contains(&"WEB_IMAGE_DISPLAY_ELIGIBILITY_PACKET_PASS".to_string()));
+        assert!(!metadata
+            .result_classes
+            .contains(&"WEB_IMAGE_SOURCE_CARD_PASS".to_string()));
     }
 
     #[test]
