@@ -82,6 +82,17 @@ Quality floor:
 - Solo Shipping Mode does not relax determinism, contract safety, idempotency, auditability, file-scope approval, or test proof requirements
 - speed is gained by removing ceremony, not by skipping engineering discipline
 
+Mandatory voice-first smoke test law:
+- Every implementation build, behavior-changing edit, UI/app change, provider/runtime change, adapter change, contract change, or user-visible feature change must include an end-to-end smoke test before final handoff.
+- Voice smoke is preferred in all cases. Codex must attempt a real app voice/microphone smoke whenever the current environment, permissions, device routing, and task scope make it practical.
+- If voice smoke cannot be run, Codex must run a typed app smoke test through the real app UI when practical and must report the exact voice-smoke blocker.
+- If neither voice nor typed app smoke is practical, Codex must run the closest authoritative text/runtime smoke against the real runtime, adapter, CLI, or endpoint that exercises the changed behavior and must report why app-level smoke was unavailable.
+- The smoke test must exercise the intended behavior of the build, not only app launch or `/healthz`. When the build touches protected, business, access, safety, provider, image, citation, voice, TTS, search, or execution behavior, the smoke pack must also prove the relevant preserved fail-closed or no-overclaim behavior.
+- A smoke test failure that reflects product behavior, regression, route failure, UI failure, provider wiring failure, or broken end-to-end execution is not acceptable final state. Codex must fix the failure, rebuild if needed, and rerun the smoke until it passes.
+- Codex may hand off with a smoke blocker only when the blocker is environmental rather than product behavior, such as missing microphone permission, unavailable audio device, unavailable app automation, network outage, or an external provider outage; in that case Codex must run the strongest available fallback smoke and state the blocker plainly.
+- Unit tests, compile checks, and `xcodebuild` do not replace smoke testing. They are required proof where applicable, but final completion still requires voice-first smoke or the documented fallback path above.
+- Final reports for build runs must include the smoke path used, exact prompt or command class, observed result, whether voice was used, and any fallback reason.
+
 Docs tail rule:
 - default is no doc change
 - docs may be updated only as a minimal tail on the same implementation run
