@@ -368,6 +368,7 @@ pub struct VoiceTurnDeepResearchMetadata {
     pub image_provider_path: VoiceTurnImageProviderPathMetadata,
     pub image_display_eligibility: VoiceTurnImageDisplayEligibilityMetadata,
     pub image_provider_display_policy: VoiceTurnImageProviderDisplayPolicyMetadata,
+    pub source_link_citation_cards: Vec<VoiceTurnSourceLinkCitationCard>,
     pub gdelt_status: String,
     pub provider_fanout_status: String,
     pub retention_class: String,
@@ -508,6 +509,35 @@ pub struct VoiceTurnImageProviderDisplayPolicyMetadata {
     pub display_blocked_reason: Option<String>,
     pub proof_id: Option<String>,
     pub h392_handoff_recommendation: String,
+}
+
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct VoiceTurnSourceLinkCitationCard {
+    pub card_id: String,
+    pub provider: String,
+    pub provider_specific_source_id: Option<String>,
+    pub source_title: String,
+    pub source_domain: String,
+    pub source_page_url: String,
+    pub retrieved_at: u64,
+    pub citation_index: Option<usize>,
+    pub attribution_text: Option<String>,
+    pub source_link_use_allowed: bool,
+    pub safe_public_source_url: bool,
+    pub thumbnail_display_allowed: bool,
+    pub full_image_display_allowed: bool,
+    pub sourced_image_card_allowed: bool,
+    pub image_url_used_for_display: bool,
+    pub thumbnail_url_used_for_display: bool,
+    pub no_image_bytes_downloaded: bool,
+    pub no_raw_image_cache: bool,
+    pub text_citation_still_required: bool,
+    pub policy_outcome: String,
+    pub layout_reference_reason: String,
+    pub screenshot_not_evidence: bool,
+    pub proof_id: Option<String>,
+    pub result_classes: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
@@ -12047,6 +12077,11 @@ fn deep_research_metadata_from_tool_response(
         .get("report_presentation_layout_packet")
         .map(String::as_str)
         .unwrap_or_default();
+    let source_link_citation_card_packet = fields
+        .get("source_link_citation_card_packet")
+        .map(String::as_str)
+        .or_else(|| fields.get("citation_card_packet").map(String::as_str))
+        .unwrap_or(image_layout_packet);
     let image_strip_status = packet_field_value(image_layout_packet, "image_strip_status")
         .or_else(|| packet_field_value(image_layout_packet, "image_strip"))
         .unwrap_or("WEB_IMAGE_SOURCE_CARD_DEFERRED")
@@ -12125,6 +12160,8 @@ fn deep_research_metadata_from_tool_response(
             }
         })
         .collect::<Vec<_>>();
+    let source_link_citation_cards =
+        parse_source_link_citation_cards(source_link_citation_card_packet);
 
     Some(VoiceTurnDeepResearchMetadata {
         report: VoiceTurnResearchReportMetadata {
@@ -12625,6 +12662,7 @@ fn deep_research_metadata_from_tool_response(
             .unwrap_or("H392_policy_handoff_not_recorded")
             .to_string(),
         },
+        source_link_citation_cards,
         gdelt_status,
         provider_fanout_status: provider_fanout_packet_status.unwrap_or_else(|| {
             if citations.len() > 1 {
@@ -12638,6 +12676,87 @@ fn deep_research_metadata_from_tool_response(
             citation.url.starts_with("https://") || citation.url.starts_with("http://")
         }),
     })
+}
+
+fn parse_source_link_citation_cards(packet: &str) -> Vec<VoiceTurnSourceLinkCitationCard> {
+    if packet.trim().is_empty()
+        || !packet_field_bool(packet, "source_link_use_allowed")
+        || !packet_field_bool(packet, "safe_public_source_url")
+        || packet_field_bool(packet, "thumbnail_display_allowed")
+        || packet_field_bool(packet, "full_image_display_allowed")
+        || packet_field_bool(packet, "sourced_image_card_allowed")
+        || packet_field_bool(packet, "image_url_used_for_display")
+        || packet_field_bool(packet, "thumbnail_url_used_for_display")
+    {
+        return Vec::new();
+    }
+
+    let Some(source_page_url) = packet_field_value(packet, "source_page_url")
+        .filter(|value| adapter_source_link_public_http_url(value))
+    else {
+        return Vec::new();
+    };
+    let derived_domain = adapter_domain_from_http_url(source_page_url);
+    let Some(source_domain) =
+        packet_field_value(packet, "source_domain").or(derived_domain.as_deref())
+    else {
+        return Vec::new();
+    };
+    let source_title = packet_field_value(packet, "source_title")
+        .filter(|value| !value.eq_ignore_ascii_case("none"))
+        .unwrap_or(source_domain);
+    let result_classes = packet_field_value(packet, "result_classes")
+        .map(|value| {
+            value
+                .split(',')
+                .map(str::trim)
+                .filter(|item| !item.is_empty())
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+
+    vec![VoiceTurnSourceLinkCitationCard {
+        card_id: packet_field_value(packet, "card_id")
+            .unwrap_or("source_link_card_1")
+            .to_string(),
+        provider: packet_field_value(packet, "provider")
+            .unwrap_or("unknown")
+            .to_string(),
+        provider_specific_source_id: packet_field_value(packet, "provider_specific_source_id")
+            .filter(|value| *value != "none")
+            .map(ToString::to_string),
+        source_title: truncate_utf8(source_title, 180),
+        source_domain: truncate_utf8(source_domain, 128),
+        source_page_url: truncate_utf8(source_page_url, 2048),
+        retrieved_at: packet_field_value(packet, "retrieved_at")
+            .and_then(|value| value.parse::<u64>().ok())
+            .unwrap_or_default(),
+        citation_index: packet_field_value(packet, "citation_index")
+            .and_then(|value| value.parse::<usize>().ok()),
+        attribution_text: packet_field_value(packet, "attribution_text")
+            .filter(|value| *value != "none")
+            .map(|value| truncate_utf8(value, 96)),
+        source_link_use_allowed: true,
+        safe_public_source_url: true,
+        thumbnail_display_allowed: false,
+        full_image_display_allowed: false,
+        sourced_image_card_allowed: false,
+        image_url_used_for_display: false,
+        thumbnail_url_used_for_display: false,
+        no_image_bytes_downloaded: packet_field_bool(packet, "no_image_bytes_downloaded"),
+        no_raw_image_cache: packet_field_bool(packet, "no_raw_image_cache"),
+        text_citation_still_required: packet_field_bool(packet, "text_citation_still_required"),
+        policy_outcome: packet_field_value(packet, "policy_outcome")
+            .unwrap_or("unknown")
+            .to_string(),
+        layout_reference_reason: packet_field_value(packet, "layout_reference_reason")
+            .unwrap_or("user_screenshot_layout_reference_only_no_images")
+            .to_string(),
+        screenshot_not_evidence: packet_field_bool(packet, "screenshot_not_evidence"),
+        proof_id: packet_field_value(packet, "proof_id").map(ToString::to_string),
+        result_classes,
+    }]
 }
 
 fn packet_field_value<'a>(packet: &'a str, key: &str) -> Option<&'a str> {
@@ -12686,6 +12805,41 @@ fn adapter_domain_from_http_url(url: &str) -> Option<String> {
     } else {
         Some(domain.to_ascii_lowercase())
     }
+}
+
+fn adapter_source_link_public_http_url(url: &str) -> bool {
+    let Some(domain) = adapter_domain_from_http_url(url) else {
+        return false;
+    };
+    if !(url.starts_with("https://") || url.starts_with("http://")) {
+        return false;
+    }
+    if domain == "localhost"
+        || domain == "metadata.google.internal"
+        || domain.ends_with(".localhost")
+        || domain.ends_with(".local")
+    {
+        return false;
+    }
+    let octets = domain
+        .split('.')
+        .map(str::parse::<u8>)
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap_or_default();
+    if octets.len() == 4 {
+        return !matches!(
+            octets.as_slice(),
+            [0, _, _, _]
+                | [10, _, _, _]
+                | [127, _, _, _]
+                | [169, 254, _, _]
+                | [192, 168, _, _]
+                | [224..=239, _, _, _]
+                | [240..=255, _, _, _]
+        ) && !(octets[0] == 172 && (16..=31).contains(&octets[1]))
+            && !(octets[0] == 100 && (64..=127).contains(&octets[1]));
+    }
+    true
 }
 
 fn deep_research_limitations(image_status: &str, gdelt_status: &str) -> Vec<String> {
@@ -21973,6 +22127,80 @@ mod tests {
         assert!(!metadata
             .result_classes
             .contains(&"WEB_IMAGE_SOURCE_CARD_PASS".to_string()));
+    }
+
+    #[test]
+    fn h392_source_link_citation_card_metadata_is_response_visible_and_text_only() {
+        let citation = selene_kernel_contracts::ph1e::ToolTextSnippet {
+            title: "Verified source".to_string(),
+            snippet: "Text citation remains required.".to_string(),
+            url: "https://example.com/verified-source".to_string(),
+        };
+        let tool_response = ToolResponse::ok_v1(
+            selene_kernel_contracts::ph1e::ToolRequestId(392),
+            selene_kernel_contracts::ph1e::ToolQueryHash(392),
+            ToolResult::DeepResearch {
+                summary: "Deep Research Report\n\nSummary: verified evidence only.".to_string(),
+                extracted_fields: vec![
+                    selene_kernel_contracts::ph1e::ToolStructuredField {
+                        key: "source_link_citation_card_packet".to_string(),
+                        value: "card_id=source_link_1;provider=brave;provider_specific_source_id=brave_image_search;source_title=Verified source;source_domain=example.com;source_page_url=https://example.com/verified-source;retrieved_at=1770000000000;citation_index=1;attribution_text=POWERED_BY_BRAVE;source_link_use_allowed=true;safe_public_source_url=true;thumbnail_display_allowed=false;full_image_display_allowed=false;sourced_image_card_allowed=false;image_url_used_for_display=false;thumbnail_url_used_for_display=false;no_image_bytes_downloaded=true;no_raw_image_cache=true;text_citation_still_required=true;policy_outcome=BRAVE_IMAGE_DISPLAY_POLICY_METADATA_AND_SOURCE_LINK_ONLY;layout_reference_reason=user_screenshot_layout_reference_only_no_images;screenshot_not_evidence=true;proof_id=H392;result_classes=H392_SOURCE_LINK_ONLY_CITATION_CARD_PASS,WEB_IMAGE_SOURCE_LINK_ONLY_CARD_PASS,WEB_IMAGE_SOURCE_LINK_CARD_PROVIDER_AGNOSTIC_PASS,WEB_IMAGE_SOURCE_LINK_CARD_BRAVE_ISOLATED_PASS"
+                            .to_string(),
+                    },
+                    selene_kernel_contracts::ph1e::ToolStructuredField {
+                        key: "h390_result_classes".to_string(),
+                        value: "H392_SOURCE_LINK_ONLY_CITATION_CARD_PASS|WEB_IMAGE_SOURCE_LINK_ONLY_CARD_PASS|WEB_IMAGE_SOURCE_LINK_CARD_NO_THUMBNAIL_PASS|WEB_IMAGE_SOURCE_LINK_CARD_NO_FULL_IMAGE_PASS|WEB_IMAGE_SOURCE_LINK_CARD_TTS_EXCLUDED_PASS|WEB_IMAGE_SOURCE_CARD_PASS_BLOCKED"
+                            .to_string(),
+                    },
+                ],
+                citations: vec![citation.clone()],
+            },
+            selene_kernel_contracts::ph1e::SourceMetadata {
+                schema_version: selene_kernel_contracts::ph1e::PH1E_CONTRACT_VERSION,
+                provider_hint: Some("brave".to_string()),
+                retrieved_at_unix_ms: 1_770_000_000_000,
+                sources: vec![selene_kernel_contracts::ph1e::SourceRef {
+                    title: citation.title,
+                    url: citation.url,
+                }],
+            },
+            None,
+            ReasonCodeId(0x4500_0001),
+            CacheStatus::Miss,
+        )
+        .expect("fixture tool response must validate");
+        let metadata = deep_research_metadata_from_tool_response(&tool_response)
+            .expect("deep research response metadata must be present");
+        assert_eq!(metadata.source_link_citation_cards.len(), 1);
+        let card = &metadata.source_link_citation_cards[0];
+        assert_eq!(card.provider, "brave");
+        assert_eq!(card.source_domain, "example.com");
+        assert_eq!(card.source_page_url, "https://example.com/verified-source");
+        assert!(card.source_link_use_allowed);
+        assert!(card.safe_public_source_url);
+        assert!(!card.thumbnail_display_allowed);
+        assert!(!card.full_image_display_allowed);
+        assert!(!card.sourced_image_card_allowed);
+        assert!(!card.image_url_used_for_display);
+        assert!(!card.thumbnail_url_used_for_display);
+        assert!(card.no_image_bytes_downloaded);
+        assert!(card.no_raw_image_cache);
+        assert!(card.text_citation_still_required);
+        assert!(card.screenshot_not_evidence);
+        assert!(card
+            .result_classes
+            .contains(&"WEB_IMAGE_SOURCE_LINK_CARD_PROVIDER_AGNOSTIC_PASS".to_string()));
+        assert!(!metadata
+            .result_classes
+            .contains(&"WEB_IMAGE_SOURCE_CARD_PASS".to_string()));
+    }
+
+    #[test]
+    fn h392_source_link_card_parser_blocks_unsafe_or_image_display_packets() {
+        let private = "card_id=source_link_1;provider=brave;source_title=Private;source_domain=127.0.0.1;source_page_url=http://127.0.0.1/private;source_link_use_allowed=true;safe_public_source_url=true;thumbnail_display_allowed=false;full_image_display_allowed=false;sourced_image_card_allowed=false;image_url_used_for_display=false;thumbnail_url_used_for_display=false";
+        assert!(parse_source_link_citation_cards(private).is_empty());
+        let image_target = "card_id=source_link_1;provider=brave;source_title=Image target;source_domain=example.com;source_page_url=https://example.com/source;source_link_use_allowed=true;safe_public_source_url=true;thumbnail_display_allowed=true;full_image_display_allowed=false;sourced_image_card_allowed=false;image_url_used_for_display=true;thumbnail_url_used_for_display=false";
+        assert!(parse_source_link_citation_cards(image_target).is_empty());
     }
 
     #[test]

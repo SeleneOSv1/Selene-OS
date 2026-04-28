@@ -17,6 +17,20 @@ struct AuthoritativeResponseProvenance: Equatable {
     let cacheStatus: String?
 }
 
+struct AuthoritativeSourceLinkCitationCard: Identifiable, Equatable {
+    let cardID: String
+    let provider: String
+    let sourceTitle: String
+    let sourceDomain: String
+    let sourcePageURL: String
+    let retrievedAt: UInt64?
+    let citationIndex: Int?
+    let attributionText: String?
+    let policyOutcome: String
+
+    var id: String { cardID }
+}
+
 struct DesktopRealtimeTranscriptionSessionState: Equatable {
     let id: String
     let endpoint: String
@@ -71,6 +85,7 @@ struct DesktopCanonicalRuntimeOutcomeState: Identifiable, Equatable {
     let failureClass: String?
     let authoritativeResponseText: String?
     let authoritativeResponseProvenance: AuthoritativeResponseProvenance?
+    let sourceLinkCitationCards: [AuthoritativeSourceLinkCitationCard]
 
     static func dispatching(
         preparedRequestID: String,
@@ -92,7 +107,8 @@ struct DesktopCanonicalRuntimeOutcomeState: Identifiable, Equatable {
             turnID: nil,
             failureClass: nil,
             authoritativeResponseText: nil,
-            authoritativeResponseProvenance: nil
+            authoritativeResponseProvenance: nil,
+            sourceLinkCitationCards: []
         )
     }
 
@@ -116,7 +132,8 @@ struct DesktopCanonicalRuntimeOutcomeState: Identifiable, Equatable {
             turnID: nil,
             failureClass: nil,
             authoritativeResponseText: nil,
-            authoritativeResponseProvenance: nil
+            authoritativeResponseProvenance: nil,
+            sourceLinkCitationCards: []
         )
     }
 
@@ -140,7 +157,8 @@ struct DesktopCanonicalRuntimeOutcomeState: Identifiable, Equatable {
             turnID: nil,
             failureClass: nil,
             authoritativeResponseText: nil,
-            authoritativeResponseProvenance: nil
+            authoritativeResponseProvenance: nil,
+            sourceLinkCitationCards: []
         )
     }
 
@@ -165,7 +183,8 @@ struct DesktopCanonicalRuntimeOutcomeState: Identifiable, Equatable {
             turnID: response.turnID.map(String.init),
             failureClass: response.failureClass,
             authoritativeResponseText: boundedAuthoritativeResponseText(response.responseText),
-            authoritativeResponseProvenance: boundedAuthoritativeResponseProvenance(response.provenance)
+            authoritativeResponseProvenance: boundedAuthoritativeResponseProvenance(response.provenance),
+            sourceLinkCitationCards: boundedSourceLinkCitationCards(response.deepResearch?.sourceLinkCitationCards)
         )
     }
 
@@ -190,7 +209,8 @@ struct DesktopCanonicalRuntimeOutcomeState: Identifiable, Equatable {
             turnID: response.turnID.map(String.init),
             failureClass: response.failureClass,
             authoritativeResponseText: boundedAuthoritativeResponseText(response.responseText),
-            authoritativeResponseProvenance: boundedAuthoritativeResponseProvenance(response.provenance)
+            authoritativeResponseProvenance: boundedAuthoritativeResponseProvenance(response.provenance),
+            sourceLinkCitationCards: boundedSourceLinkCitationCards(response.deepResearch?.sourceLinkCitationCards)
         )
     }
 
@@ -215,7 +235,8 @@ struct DesktopCanonicalRuntimeOutcomeState: Identifiable, Equatable {
             turnID: response.turnID.map(String.init),
             failureClass: response.failureClass,
             authoritativeResponseText: boundedAuthoritativeResponseText(response.responseText),
-            authoritativeResponseProvenance: boundedAuthoritativeResponseProvenance(response.provenance)
+            authoritativeResponseProvenance: boundedAuthoritativeResponseProvenance(response.provenance),
+            sourceLinkCitationCards: boundedSourceLinkCitationCards(response.deepResearch?.sourceLinkCitationCards)
         )
     }
 
@@ -245,7 +266,8 @@ struct DesktopCanonicalRuntimeOutcomeState: Identifiable, Equatable {
             turnID: turnID,
             failureClass: failureClass,
             authoritativeResponseText: nil,
-            authoritativeResponseProvenance: nil
+            authoritativeResponseProvenance: nil,
+            sourceLinkCitationCards: []
         )
     }
 
@@ -275,7 +297,8 @@ struct DesktopCanonicalRuntimeOutcomeState: Identifiable, Equatable {
             turnID: turnID,
             failureClass: failureClass,
             authoritativeResponseText: nil,
-            authoritativeResponseProvenance: nil
+            authoritativeResponseProvenance: nil,
+            sourceLinkCitationCards: []
         )
     }
 
@@ -305,7 +328,8 @@ struct DesktopCanonicalRuntimeOutcomeState: Identifiable, Equatable {
             turnID: turnID,
             failureClass: failureClass,
             authoritativeResponseText: nil,
-            authoritativeResponseProvenance: nil
+            authoritativeResponseProvenance: nil,
+            sourceLinkCitationCards: []
         )
     }
 }
@@ -3339,6 +3363,10 @@ private func boundedAuthoritativeResponseText(_ rawValue: String?) -> String? {
     return trimmed
 }
 
+private func boundedDesktopString(_ rawValue: String, maxLength: Int) -> String {
+    String(rawValue.prefix(maxLength))
+}
+
 private func boundedAuthoritativeResponseProvenance(
     _ provenance: DesktopCanonicalRuntimeBridge.VoiceTurnProvenancePayload?
 ) -> AuthoritativeResponseProvenance? {
@@ -3367,6 +3395,78 @@ private func boundedAuthoritativeResponseProvenance(
         retrievedAt: provenance.retrievedAt,
         cacheStatus: (trimmedCacheStatus?.isEmpty == false) ? trimmedCacheStatus : nil
     )
+}
+
+private func boundedSourceLinkCitationCards(
+    _ cards: [DesktopCanonicalRuntimeBridge.VoiceTurnSourceLinkCitationCardPayload]?
+) -> [AuthoritativeSourceLinkCitationCard] {
+    guard let cards else {
+        return []
+    }
+
+    return cards.prefix(4).compactMap { card in
+        let title = card.sourceTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        let domain = card.sourceDomain.trimmingCharacters(in: .whitespacesAndNewlines)
+        let url = card.sourcePageURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard card.sourceLinkUseAllowed,
+              card.safePublicSourceURL,
+              !card.thumbnailDisplayAllowed,
+              !card.fullImageDisplayAllowed,
+              !card.sourcedImageCardAllowed,
+              !card.imageURLUsedForDisplay,
+              !card.thumbnailURLUsedForDisplay,
+              card.noImageBytesDownloaded,
+              card.noRawImageCache,
+              card.textCitationStillRequired,
+              card.screenshotNotEvidence,
+              desktopSafePublicSourcePageURL(url) != nil,
+              !title.isEmpty,
+              !domain.isEmpty
+        else {
+            return nil
+        }
+
+        return AuthoritativeSourceLinkCitationCard(
+            cardID: boundedDesktopString(card.cardID, maxLength: 96),
+            provider: boundedDesktopString(card.provider, maxLength: 64),
+            sourceTitle: boundedDesktopString(title, maxLength: 180),
+            sourceDomain: boundedDesktopString(domain, maxLength: 128),
+            sourcePageURL: boundedDesktopString(url, maxLength: 2048),
+            retrievedAt: card.retrievedAt,
+            citationIndex: card.citationIndex,
+            attributionText: card.attributionText.map { boundedDesktopString($0, maxLength: 96) },
+            policyOutcome: boundedDesktopString(card.policyOutcome, maxLength: 128)
+        )
+    }
+}
+
+private func desktopSafePublicSourcePageURL(_ rawURL: String) -> URL? {
+    guard let components = URLComponents(string: rawURL.trimmingCharacters(in: .whitespacesAndNewlines)),
+          let scheme = components.scheme?.lowercased(),
+          scheme == "https" || scheme == "http",
+          let host = components.host?.lowercased(),
+          !host.isEmpty,
+          host != "localhost",
+          host != "metadata.google.internal",
+          !host.hasSuffix(".localhost"),
+          !host.hasSuffix(".local")
+    else {
+        return nil
+    }
+    let octets = host.split(separator: ".").compactMap { UInt8($0) }
+    if octets.count == 4 {
+        if octets[0] == 0
+            || octets[0] == 10
+            || octets[0] == 127
+            || (octets[0] == 169 && octets[1] == 254)
+            || (octets[0] == 172 && (16...31).contains(octets[1]))
+            || (octets[0] == 192 && octets[1] == 168)
+            || (octets[0] == 100 && (64...127).contains(octets[1]))
+            || (224...255).contains(octets[0]) {
+            return nil
+        }
+    }
+    return components.url
 }
 
 private func boundedInviteOpenField(_ rawValue: String?) -> String? {
@@ -3853,6 +3953,65 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
         }
     }
 
+    struct VoiceTurnSourceLinkCitationCardPayload: Decodable {
+        let cardID: String
+        let provider: String
+        let sourceTitle: String
+        let sourceDomain: String
+        let sourcePageURL: String
+        let retrievedAt: UInt64?
+        let citationIndex: Int?
+        let attributionText: String?
+        let sourceLinkUseAllowed: Bool
+        let safePublicSourceURL: Bool
+        let thumbnailDisplayAllowed: Bool
+        let fullImageDisplayAllowed: Bool
+        let sourcedImageCardAllowed: Bool
+        let imageURLUsedForDisplay: Bool
+        let thumbnailURLUsedForDisplay: Bool
+        let noImageBytesDownloaded: Bool
+        let noRawImageCache: Bool
+        let textCitationStillRequired: Bool
+        let policyOutcome: String
+        let screenshotNotEvidence: Bool
+
+        private enum CodingKeys: String, CodingKey {
+            case cardID = "card_id"
+            case provider
+            case sourceTitle = "source_title"
+            case sourceDomain = "source_domain"
+            case sourcePageURL = "source_page_url"
+            case retrievedAt = "retrieved_at"
+            case citationIndex = "citation_index"
+            case attributionText = "attribution_text"
+            case sourceLinkUseAllowed = "source_link_use_allowed"
+            case safePublicSourceURL = "safe_public_source_url"
+            case thumbnailDisplayAllowed = "thumbnail_display_allowed"
+            case fullImageDisplayAllowed = "full_image_display_allowed"
+            case sourcedImageCardAllowed = "sourced_image_card_allowed"
+            case imageURLUsedForDisplay = "image_url_used_for_display"
+            case thumbnailURLUsedForDisplay = "thumbnail_url_used_for_display"
+            case noImageBytesDownloaded = "no_image_bytes_downloaded"
+            case noRawImageCache = "no_raw_image_cache"
+            case textCitationStillRequired = "text_citation_still_required"
+            case policyOutcome = "policy_outcome"
+            case screenshotNotEvidence = "screenshot_not_evidence"
+        }
+    }
+
+    struct VoiceTurnDeepResearchPayload: Decodable {
+        let sourceLinkCitationCards: [VoiceTurnSourceLinkCitationCardPayload]
+
+        private enum CodingKeys: String, CodingKey {
+            case sourceLinkCitationCards = "source_link_citation_cards"
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            sourceLinkCitationCards = (try? container.decode([VoiceTurnSourceLinkCitationCardPayload].self, forKey: .sourceLinkCitationCards)) ?? []
+        }
+    }
+
     struct VoiceTurnAdapterResponsePayload: Decodable {
         let status: String
         let outcome: String
@@ -3866,6 +4025,7 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
         let responseText: String
         let reasonCode: String
         let provenance: VoiceTurnProvenancePayload?
+        let deepResearch: VoiceTurnDeepResearchPayload?
 
         private enum CodingKeys: String, CodingKey {
             case status
@@ -3880,6 +4040,7 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
             case responseText = "response_text"
             case reasonCode = "reason_code"
             case provenance
+            case deepResearch = "deep_research"
         }
     }
 

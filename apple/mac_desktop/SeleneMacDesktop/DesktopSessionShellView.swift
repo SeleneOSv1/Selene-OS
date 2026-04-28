@@ -1291,10 +1291,22 @@ private struct DesktopAuthoritativeReplyProvenanceRenderState: Equatable {
         }
     }
 
+    struct SourceLinkCitationCard: Identifiable, Equatable {
+        let cardID: String
+        let provider: String
+        let sourceTitle: String
+        let sourceDomain: String
+        let sourcePageURL: String
+        let attributionText: String?
+
+        var id: String { cardID }
+    }
+
     let title: String
     let summary: String
     let authoritativeResponseProvenance: AuthoritativeResponseProvenance?
     let sources: [Source]
+    let sourceLinkCitationCards: [SourceLinkCitationCard]
     let retrievedAtLabel: String?
     let cacheStatusLabel: String?
 }
@@ -17724,6 +17736,57 @@ struct DesktopSessionShellView: View {
                                 }
                             }
                         }
+
+                        if !desktopAuthoritativeReplyProvenanceRenderState.sourceLinkCitationCards.isEmpty {
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("Source links")
+                                    .font(.subheadline.weight(.semibold))
+
+                                ForEach(desktopAuthoritativeReplyProvenanceRenderState.sourceLinkCitationCards) { card in
+                                    VStack(alignment: .leading, spacing: 8) {
+                                        Text(card.sourceTitle)
+                                            .font(.body.weight(.medium))
+                                            .lineLimit(2)
+                                            .frame(maxWidth: .infinity, alignment: .leading)
+
+                                        HStack(spacing: 8) {
+                                            Text(card.sourceDomain)
+                                                .font(.caption.weight(.medium))
+                                                .padding(.horizontal, 10)
+                                                .padding(.vertical, 5)
+                                                .background(Color.secondary.opacity(0.12), in: Capsule())
+
+                                            Text(card.provider)
+                                                .font(.caption)
+                                                .foregroundStyle(.secondary)
+
+                                            if let attributionText = card.attributionText,
+                                               !attributionText.isEmpty {
+                                                Text(attributionText)
+                                                    .font(.caption)
+                                                    .foregroundStyle(.secondary)
+                                            }
+                                        }
+
+                                        if let sourceURL = URL(string: card.sourcePageURL) {
+                                            Link("Open source", destination: sourceURL)
+                                                .font(.footnote.weight(.medium))
+                                                .accessibilityLabel("Open source page for \(card.sourceDomain)")
+                                        } else {
+                                            Text("Source link unavailable")
+                                                .font(.footnote)
+                                                .foregroundStyle(.secondary)
+                                        }
+                                    }
+                                    .padding(10)
+                                    .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                            .stroke(Color.secondary.opacity(0.12), lineWidth: 1)
+                                    )
+                                }
+                            }
+                        }
                     }
 
                     Text("Read-only cloud-authored provenance visibility only. This shell remains explicitly non-authoritative, does not claim that search executed locally, and does not widen into new search controls, wake posture, or autonomous-unlock behavior.")
@@ -19051,6 +19114,16 @@ struct DesktopSessionShellView: View {
                             url: $0.url
                         )
                     } ?? [],
+                    sourceLinkCitationCards: outcomeState.sourceLinkCitationCards.map {
+                        DesktopAuthoritativeReplyProvenanceRenderState.SourceLinkCitationCard(
+                            cardID: $0.cardID,
+                            provider: $0.provider,
+                            sourceTitle: $0.sourceTitle,
+                            sourceDomain: $0.sourceDomain,
+                            sourcePageURL: $0.sourcePageURL,
+                            attributionText: $0.attributionText
+                        )
+                    },
                     retrievedAtLabel: formatAuthoritativeReplyRetrievedAt(
                         outcomeState.authoritativeResponseProvenance?.retrievedAt
                     ),
@@ -19186,6 +19259,16 @@ struct DesktopSessionShellView: View {
                             url: $0.url
                         )
                     } ?? [],
+                    sourceLinkCitationCards: outcomeState.sourceLinkCitationCards.map {
+                        DesktopAuthoritativeReplyProvenanceRenderState.SourceLinkCitationCard(
+                            cardID: $0.cardID,
+                            provider: $0.provider,
+                            sourceTitle: $0.sourceTitle,
+                            sourceDomain: $0.sourceDomain,
+                            sourcePageURL: $0.sourcePageURL,
+                            attributionText: $0.attributionText
+                        )
+                    },
                     retrievedAtLabel: formatAuthoritativeReplyRetrievedAt(
                         outcomeState.authoritativeResponseProvenance?.retrievedAt
                     ),
@@ -19298,6 +19381,16 @@ struct DesktopSessionShellView: View {
                             url: $0.url
                         )
                     } ?? [],
+                    sourceLinkCitationCards: outcomeState.sourceLinkCitationCards.map {
+                        DesktopAuthoritativeReplyProvenanceRenderState.SourceLinkCitationCard(
+                            cardID: $0.cardID,
+                            provider: $0.provider,
+                            sourceTitle: $0.sourceTitle,
+                            sourceDomain: $0.sourceDomain,
+                            sourcePageURL: $0.sourcePageURL,
+                            attributionText: $0.attributionText
+                        )
+                    },
                     retrievedAtLabel: formatAuthoritativeReplyRetrievedAt(
                         outcomeState.authoritativeResponseProvenance?.retrievedAt
                     ),

@@ -68,6 +68,18 @@ H391 policy result:
 - Storage remains transient metadata-only; raw image bytes and raw image caches remain blocked.
 - H392 handoff: design either a source-link-only visual citation card or perform separate legal/provider-rights review before any thumbnail/image UI.
 
+## H392 Decision
+
+H392 implements the H391-approved source-link-only visual citation-card handoff.
+
+Selene now exposes provider-agnostic `deep_research.source_link_citation_cards` metadata for source links that pass H391 policy, public source-page URL gating, and text-only display rules. The packet is carried through existing Deep Research citation metadata so PH1.E field-count and field-size contracts remain intact, and the Desktop bridge/shell render only native text source chips/cards in the existing authoritative provenance surface.
+
+H392 does not display thumbnails, full images, image/photo cards, image strips, OpenGraph/Twitter previews, page previews, WebViews, or provider media. Source-link cards use only `source_page_url`; `image_url` and `thumbnail_url` are never card targets and never displayed as media. No image bytes are downloaded, no raw image cache is created, no source-page media is fetched, and `WEB_IMAGE_SOURCE_CARD_PASS` is not emitted.
+
+The attached screenshot was used only as a layout reference for spacing, hierarchy, and grey source-chip feel. Screenshot content is not evidence, screenshot images are not provider images, and screenshot facts are not reused without separate EvidencePacket/CitationPacket backing.
+
+H392 proof passed with targeted `h392` adapter/engine tests, all required H379-H392 regressions, full adapter/OS/engine test suites, live H389/H390/H391 Brave regression tests, `git diff --check`, and macOS Desktop `xcodebuild => BUILD SUCCEEDED`. Direct runtime proof bound the adapter on `127.0.0.1:18080`, `/healthz` returned HTTP 200, and `/v1/voice/turn` failed closed on governance sync rather than fabricating image/card evidence.
+
 ## Candidate Matrix
 
 | Candidate | Repo surface | Current capability | Display allowed | Blocker |
@@ -235,6 +247,43 @@ A future displayable `ImageEvidencePacket` or `ImageSourceCardPacket` must requi
 - H389 does not download image bytes and does not scrape source pages.
 - H391 records official policy proof but does not infer rights from API availability, provider presence, image URL, thumbnail URL, source-page URL, `og:image`, or `twitter:image`.
 - H391 keeps generic packets provider-neutral; Brave may be replaced by adding a provider adapter, provider policy mapper, and tests.
+
+## H392 Source-Link-Only Citation Cards
+
+H392 implements text-only, source-page-link-only visual citation cards for source links allowed by the H391 provider display policy.
+
+- Card metadata is provider-agnostic and exposed as `deep_research.source_link_citation_cards`.
+- Runtime packet proof is carried inside the existing citation-card packet to preserve the PH1.E `DeepResearch` extracted-field contract limit.
+- Desktop rendering is native Swift text/card/chip UI only.
+- Link opening is user-click-only through a safe public `http` / `https` source-page URL.
+- Source cards show source title, source domain, provider, and required provider attribution when present.
+- Source cards do not replace text citations.
+- TTS does not read source-card URLs or metadata.
+- Screenshot layout is used only as visual layout reference; screenshot facts are not evidence and screenshot images are not provider images.
+- No image strip, thumbnail rendering, full image rendering, image/photo card rendering, WebView, OpenGraph preview, Twitter card preview, page preview, source-page media fetch, image byte download, or raw image cache is introduced.
+- `image_url` and `thumbnail_url` are never used as card targets and are never displayed as media.
+- Brave remains isolated as provider-specific policy/proof logic; the card packet and Desktop rendering are provider-agnostic.
+
+H392 result posture:
+
+- `H392_SOURCE_LINK_ONLY_CITATION_CARD_PASS`
+- `WEB_IMAGE_SOURCE_LINK_ONLY_CARD_PASS`
+- `WEB_IMAGE_SOURCE_LINK_CARD_TEXT_ONLY_PASS`
+- `WEB_IMAGE_SOURCE_LINK_CARD_NO_THUMBNAIL_PASS`
+- `WEB_IMAGE_SOURCE_LINK_CARD_NO_FULL_IMAGE_PASS`
+- `WEB_IMAGE_SOURCE_LINK_CARD_NO_IMAGE_PREVIEW_PASS`
+- `WEB_IMAGE_SOURCE_LINK_CARD_NO_WEBVIEW_PASS`
+- `WEB_IMAGE_SOURCE_LINK_CARD_SAFE_URL_PASS`
+- `WEB_IMAGE_SOURCE_LINK_CARD_USER_CLICK_ONLY_PASS`
+- `WEB_IMAGE_SOURCE_LINK_CARD_PROVIDER_AGNOSTIC_PASS`
+- `WEB_IMAGE_SOURCE_LINK_CARD_BRAVE_ISOLATED_PASS`
+- `WEB_IMAGE_SOURCE_LINK_CARD_ATTRIBUTION_PASS`
+- `WEB_IMAGE_SOURCE_LINK_CARD_TTS_EXCLUDED_PASS`
+- `WEB_IMAGE_SOURCE_LINK_CARD_SCREENSHOT_LAYOUT_REFERENCE_PASS`
+- `SCREENSHOT_NOT_USED_AS_EVIDENCE_PASS`
+- `SCREENSHOT_IMAGES_NOT_PROVIDER_IMAGES_PASS`
+- `WEB_IMAGE_SOURCE_CARD_DISPLAY_DEFERRED`
+- `WEB_IMAGE_SOURCE_CARD_PASS_BLOCKED`
 
 ## Future Implementation Step
 
