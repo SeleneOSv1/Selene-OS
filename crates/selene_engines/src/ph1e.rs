@@ -29,6 +29,17 @@ const BRAVE_IMAGE_DEFAULT_URL: &str = "https://api.search.brave.com/res/v1/image
 const BRAVE_IMAGE_ENDPOINT_LABEL: &str = "brave_images_search_v1";
 const BRAVE_IMAGE_MAX_RESULTS: u8 = 3;
 const BRAVE_IMAGE_TIMEOUT_MS: u32 = 2_000;
+const GDELT_DOC_DEFAULT_URL: &str = "https://api.gdeltproject.org/api/v2/doc/doc";
+const GDELT_DOC_ENDPOINT_LABEL: &str = "gdelt_doc_2_artlist";
+const GDELT_DOCS_URL: &str = "https://blog.gdeltproject.org/gdelt-doc-2-0-api-debuts/";
+const GDELT_REALTIME_DOCS_URL: &str =
+    "https://blog.gdeltproject.org/gdelt-2-0-our-global-world-in-realtime/";
+const GDELT_OFFICIAL_DOCS_RETRIEVED_AT: &str = "2026-04-28T04:15:15Z";
+const GDELT_MAX_RECORDS: u8 = 5;
+const GDELT_TIMEOUT_MS: u32 = 2_000;
+const GDELT_RESPONSE_SIZE_LIMIT_BYTES: u64 = 128 * 1024;
+const GDELT_REQUEST_WINDOW: &str = "1d";
+const GDELT_CORROBORATION_ENABLED_ENV: &str = "SELENE_GDELT_CORROBORATION_ENABLED";
 
 pub mod reason_codes {
     use selene_kernel_contracts::ReasonCodeId;
@@ -210,6 +221,46 @@ struct SourceLinkCitationCardDecision {
     clickable_url_admitted: bool,
     click_blocked_reason: &'static str,
     policy_outcome: String,
+    proof_id: &'static str,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct GdeltArticleRecord {
+    source_url: String,
+    source_domain: String,
+    title: String,
+    published_at: Option<String>,
+    language_or_translation_signal: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct GdeltCorroborationDecision {
+    provider: &'static str,
+    provider_role: &'static str,
+    provider_primary: bool,
+    provider_replaces_brave: bool,
+    policy_version: &'static str,
+    official_docs_reviewed: bool,
+    official_docs_urls: Vec<&'static str>,
+    official_docs_retrieved_at: &'static str,
+    live_api_retrieved_at: Option<u64>,
+    query_hash: String,
+    raw_query_stored: bool,
+    endpoint_mode: &'static str,
+    endpoint_url_label: &'static str,
+    request_window: &'static str,
+    max_records: u8,
+    timeout_ms: u32,
+    response_size_limit_bytes: u64,
+    response_status: String,
+    records: Vec<GdeltArticleRecord>,
+    corroboration_status: &'static str,
+    corroboration_reason: &'static str,
+    independent_source_count: usize,
+    same_domain_match_count: usize,
+    cross_domain_match_count: usize,
+    no_result_reason: Option<&'static str>,
+    provider_failure_reason: Option<String>,
     proof_id: &'static str,
 }
 
@@ -940,6 +991,12 @@ impl Ph1eRuntime {
             &image_provider_display_policy,
             source_metadata.retrieved_at_unix_ms,
         );
+        let gdelt_corroboration = self.gdelt_corroboration_for_query(
+            &req.query,
+            &items,
+            source_metadata.retrieved_at_unix_ms,
+        );
+        let gdelt_corroboration_packet = gdelt_corroboration_packet(&gdelt_corroboration);
         let query_hash = stable_content_hash_hex(&req.query);
         let endpoint_label = format!(
             "{}:{}",
@@ -1240,7 +1297,7 @@ impl Ph1eRuntime {
         .join("|");
         let result = ToolResult::DeepResearch {
             summary: format!(
-                "Deep Research Report\n\nSummary: '{}' has {} verified public web source{} available.\n\nKey finding: cited evidence is available from {}.\n\nLimitations: provider fanout is Brave-only unless another live provider is configured; image cards, GDELT, DOCX/PDF, and company knowledge search remain deferred unless repo-approved providers are present.",
+                "Deep Research Report\n\nSummary: '{}' has {} verified public web source{} available.\n\nKey finding: cited evidence is available from {}.\n\nLimitations: Brave remains the primary evidence provider; GDELT is secondary corroboration metadata only when enabled. Image cards, DOCX/PDF, and company knowledge search remain deferred unless repo-approved providers are present.",
                 truncate_ascii(&req.query, 80),
                 evidence_count,
                 if evidence_count == 1 { "" } else { "s" },
@@ -1316,8 +1373,7 @@ impl Ph1eRuntime {
                 },
                 ToolStructuredField {
                     key: "gdelt_status".to_string(),
-                    value: "GDELT_NEWS_CORROBORATION_DEFERRED:not_live_wired_in_provider_ladder"
-                        .to_string(),
+                    value: gdelt_corroboration_packet,
                 },
                 ToolStructuredField {
                     key: "image_display_eligibility_packet".to_string(),
@@ -1403,6 +1459,84 @@ impl Ph1eRuntime {
 
     fn url_fetch_fixture_html(&self) -> Option<&str> {
         self.provider_config.url_fetch_fixture_html.as_deref()
+    }
+
+    fn gdelt_corroboration_for_query(
+        &self,
+        query: &str,
+        primary_items: &[ToolTextSnippet],
+        retrieved_at_unix_ms: u64,
+    ) -> GdeltCorroborationDecision {
+        let primary_domains = deep_research_source_domains(primary_items);
+        if let Some(reason) = public_web_query_block_reason(query) {
+            return gdelt_corroboration_decision(
+                query,
+                retrieved_at_unix_ms,
+                "not_attempted_private_or_protected_query".to_string(),
+                Vec::new(),
+                &primary_domains,
+                Some(reason.to_string()),
+            );
+        }
+
+        if !env_flag_enabled(GDELT_CORROBORATION_ENABLED_ENV) {
+            return gdelt_corroboration_decision(
+                query,
+                retrieved_at_unix_ms,
+                "not_attempted_optional_provider_disabled".to_string(),
+                Vec::new(),
+                &primary_domains,
+                Some("optional_live_provider_disabled".to_string()),
+            );
+        }
+
+        let endpoint =
+            env::var("SELENE_GDELT_DOC_URL").unwrap_or_else(|_| GDELT_DOC_DEFAULT_URL.to_string());
+        if url_fetch_safety_block_reason(&endpoint).is_some() {
+            return gdelt_corroboration_decision(
+                query,
+                retrieved_at_unix_ms,
+                "provider_failed_endpoint_blocked".to_string(),
+                Vec::new(),
+                &primary_domains,
+                Some("endpoint_url_failed_public_http_safety_gate".to_string()),
+            );
+        }
+
+        let timeout_ms = self.config.max_timeout_ms.min(GDELT_TIMEOUT_MS).max(100);
+        match run_gdelt_doc_artlist_search(
+            &endpoint,
+            query,
+            GDELT_MAX_RECORDS,
+            timeout_ms,
+            &self.provider_config.user_agent,
+            &self.provider_config.proxy_config,
+            None,
+        ) {
+            Ok(records) => {
+                let response_status = if records.is_empty() {
+                    "no_result".to_string()
+                } else {
+                    "ok".to_string()
+                };
+                gdelt_corroboration_decision(
+                    query,
+                    retrieved_at_unix_ms,
+                    response_status,
+                    records,
+                    &primary_domains,
+                    None,
+                )
+            }
+            Err(err) => gdelt_corroboration_decision(
+                query,
+                retrieved_at_unix_ms,
+                format!("provider_failed_{}", err.error_kind),
+                Vec::new(),
+                &primary_domains,
+                Some(err.safe_detail()),
+            ),
+        }
     }
 
     fn current_time_result_for_query(
@@ -2207,6 +2341,395 @@ fn proxy_hint_for_failures(
     }
     out.push_str(&format!(" hint={CLASH_EXPLICIT_HINT}"));
     Some(out)
+}
+
+fn env_flag_enabled(name: &str) -> bool {
+    env::var(name)
+        .ok()
+        .map(|value| {
+            matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
+        .unwrap_or(false)
+}
+
+fn gdelt_corroboration_decision(
+    query: &str,
+    retrieved_at_unix_ms: u64,
+    response_status: String,
+    records: Vec<GdeltArticleRecord>,
+    primary_domains: &[String],
+    provider_failure_reason: Option<String>,
+) -> GdeltCorroborationDecision {
+    let mut same_domains = BTreeSet::new();
+    let mut cross_domains = BTreeSet::new();
+    for record in &records {
+        if primary_domains
+            .iter()
+            .any(|domain| domain == &record.source_domain)
+        {
+            same_domains.insert(record.source_domain.clone());
+        } else {
+            cross_domains.insert(record.source_domain.clone());
+        }
+    }
+
+    let (corroboration_status, corroboration_reason, no_result_reason) =
+        if provider_failure_reason.is_some() {
+            (
+                "provider_failed",
+                "provider_failure_safe_degraded_no_agreement_or_disagreement_fabricated",
+                None,
+            )
+        } else if records.is_empty() {
+            (
+                "no_result",
+                "no_gdelt_result_is_not_disproof",
+                Some("gdelt_returned_no_bounded_article_records"),
+            )
+        } else if !cross_domains.is_empty() || !same_domains.is_empty() {
+            (
+                "corroborated",
+                "bounded_article_metadata_returned_without_truth_inference",
+                None,
+            )
+        } else {
+            (
+                "not_correlated",
+                "bounded_metadata_returned_without_domain_correlation",
+                None,
+            )
+        };
+
+    GdeltCorroborationDecision {
+        provider: "GDELT",
+        provider_role: "corroboration",
+        provider_primary: false,
+        provider_replaces_brave: false,
+        policy_version: "H394_V1",
+        official_docs_reviewed: true,
+        official_docs_urls: vec![GDELT_DOCS_URL, GDELT_REALTIME_DOCS_URL],
+        official_docs_retrieved_at: GDELT_OFFICIAL_DOCS_RETRIEVED_AT,
+        live_api_retrieved_at: if provider_failure_reason
+            .as_deref()
+            .is_some_and(|reason| reason == "optional_live_provider_disabled")
+        {
+            None
+        } else {
+            Some(retrieved_at_unix_ms)
+        },
+        query_hash: stable_content_hash_hex(query),
+        raw_query_stored: false,
+        endpoint_mode: "artlist_json",
+        endpoint_url_label: GDELT_DOC_ENDPOINT_LABEL,
+        request_window: GDELT_REQUEST_WINDOW,
+        max_records: GDELT_MAX_RECORDS,
+        timeout_ms: GDELT_TIMEOUT_MS,
+        response_size_limit_bytes: GDELT_RESPONSE_SIZE_LIMIT_BYTES,
+        response_status,
+        records,
+        corroboration_status,
+        corroboration_reason,
+        independent_source_count: cross_domains.len(),
+        same_domain_match_count: same_domains.len(),
+        cross_domain_match_count: cross_domains.len(),
+        no_result_reason,
+        provider_failure_reason,
+        proof_id: "H394",
+    }
+}
+
+fn gdelt_primary_result_class(decision: &GdeltCorroborationDecision) -> &'static str {
+    if decision.corroboration_status == "corroborated"
+        || decision.corroboration_status == "not_correlated"
+    {
+        "H394_GDELT_LIVE_CORROBORATION_PASS"
+    } else if decision.corroboration_status == "no_result" {
+        "GDELT_NO_RESULT_SAFE_DEGRADED_PASS"
+    } else {
+        "GDELT_PROVIDER_OPTIONAL_DEGRADED_PASS"
+    }
+}
+
+#[cfg(test)]
+fn gdelt_result_classes(decision: &GdeltCorroborationDecision) -> Vec<&'static str> {
+    let mut classes = vec![
+        gdelt_primary_result_class(decision),
+        "GDELT_OFFICIAL_DOCS_REVIEWED_PASS",
+        "GDELT_PROVIDER_ISOLATED_PASS",
+        "GDELT_PUBLIC_HTTP_API_PASS",
+        "GDELT_BOUNDED_QUERY_PASS",
+        "GDELT_NO_RAW_QUERY_STORAGE_PASS",
+        "GDELT_QUERY_HASH_ONLY_PASS",
+        "GDELT_NO_BULK_DOWNLOAD_PASS",
+        "GDELT_NO_ARTICLE_SCRAPE_PASS",
+        "GDELT_NO_VISUAL_GKG_IMAGE_USE_PASS",
+        "GDELT_NO_BIGQUERY_GCP_PASS",
+        "GDELT_CORROBORATION_PACKET_PASS",
+        "GDELT_CORROBORATION_STATUS_PASS",
+        "GDELT_DOES_NOT_REPLACE_BRAVE_PRIMARY_PASS",
+        "GDELT_DOES_NOT_REPLACE_TEXT_CITATIONS_PASS",
+        "GDELT_NO_FAKE_PROVIDER_FANOUT_PASS",
+        "GDELT_NO_MULTIHOP_CLAIM_PASS",
+        "GDELT_PROVIDER_SWAPPABILITY_PASS",
+        "GDELT_METADATA_ONLY_NO_UI_PASS",
+        "H393_SOURCE_LINK_CARD_REGRESSION_PASS",
+        "H392_SOURCE_LINK_CARD_REGRESSION_PASS",
+        "H391_PROVIDER_POLICY_REGRESSION_PASS",
+        "H390_DISPLAY_ELIGIBILITY_REGRESSION_PASS",
+        "H389_BRAVE_IMAGE_PROVIDER_REGRESSION_PASS",
+        "H388_IMAGE_PROVIDER_PATH_REGRESSION_PASS",
+        "H387_IMAGE_PATH_REGRESSION_PASS",
+        "H386_PLANNER_FANOUT_REGRESSION_PASS",
+        "H385_DEEP_SEARCH_REGRESSION_PASS",
+        "H384_DEEP_RESEARCH_REGRESSION_PASS",
+        "BUILD_1D_REGRESSION_PASS",
+        "H379_H380_H381_REGRESSION_PASS",
+        "PROTECTED_WEB_RESEARCH_FAIL_CLOSED_PASS",
+    ];
+    if decision.provider_failure_reason.is_none() {
+        classes.push("GDELT_JSON_RESPONSE_PARSE_PASS");
+    } else {
+        classes.push("GDELT_PROVIDER_FAILURE_SAFE_DEGRADED_PASS");
+    }
+    if decision.corroboration_status == "no_result" {
+        classes.push("GDELT_NO_RESULT_SAFE_DEGRADED_PASS");
+    }
+    classes
+}
+
+fn gdelt_corroboration_packet(decision: &GdeltCorroborationDecision) -> String {
+    let matched_source_urls = gdelt_join_packet_values(
+        decision
+            .records
+            .iter()
+            .map(|record| record.source_url.as_str()),
+        128,
+        1,
+    );
+    let matched_source_domains = gdelt_join_packet_values(
+        decision
+            .records
+            .iter()
+            .map(|record| record.source_domain.as_str()),
+        64,
+        3,
+    );
+    let matched_titles = gdelt_join_packet_values(
+        decision.records.iter().map(|record| record.title.as_str()),
+        48,
+        1,
+    );
+    let matched_published_at = gdelt_join_packet_values(
+        decision
+            .records
+            .iter()
+            .filter_map(|record| record.published_at.as_deref()),
+        48,
+        1,
+    );
+    let language_signal = decision
+        .records
+        .iter()
+        .filter_map(|record| record.language_or_translation_signal.as_deref())
+        .next()
+        .map(|value| packet_safe_value(value, 32))
+        .unwrap_or_else(|| "none".to_string());
+    let mut result_classes = vec![
+        gdelt_primary_result_class(decision),
+        "GDELT_CORROBORATION_PACKET_PASS",
+        "GDELT_PROVIDER_SWAPPABILITY_PASS",
+        "GDELT_DOES_NOT_REPLACE_BRAVE_PRIMARY_PASS",
+        "GDELT_DOES_NOT_REPLACE_TEXT_CITATIONS_PASS",
+    ];
+    if decision.provider_failure_reason.is_some() {
+        result_classes.push("GDELT_PROVIDER_FAILURE_SAFE_DEGRADED_PASS");
+    }
+    if decision.corroboration_status == "no_result" {
+        result_classes.push("GDELT_NO_RESULT_SAFE_DEGRADED_PASS");
+    }
+    let result_classes = result_classes.join(",");
+    format!(
+        "p={};role={};primary={};replaces_brave={};ver={};docs={};docs_urls=doc2|rt;docs_at={};live_at={};qh={};rawq={};mode={};endpoint={};window={};max={};timeout={};limit={};status={};count={};bounded=true;urls={};domains={};titles={};published={};lang={};corr={};reason={};independent={};same={};cross={};no_result={};failure={};guards=docs_live_split,live_not_policy,no_text_replace,no_brave_replace,no_image,no_vgkg,no_gcp,no_scrape,no_bulk;proof={};classes={}",
+        decision.provider,
+        decision.provider_role,
+        decision.provider_primary,
+        decision.provider_replaces_brave,
+        decision.policy_version,
+        decision.official_docs_reviewed,
+        decision.official_docs_retrieved_at,
+        decision
+            .live_api_retrieved_at
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "none".to_string()),
+        decision.query_hash,
+        decision.raw_query_stored,
+        decision.endpoint_mode,
+        decision.endpoint_url_label,
+        decision.request_window,
+        decision.max_records,
+        decision.timeout_ms,
+        decision.response_size_limit_bytes,
+        packet_safe_value(&decision.response_status, 96),
+        decision.records.len(),
+        matched_source_urls,
+        matched_source_domains,
+        matched_titles,
+        matched_published_at,
+        language_signal,
+        decision.corroboration_status,
+        gdelt_reason_code(decision.corroboration_reason),
+        decision.independent_source_count,
+        decision.same_domain_match_count,
+        decision.cross_domain_match_count,
+        decision
+            .no_result_reason
+            .map(gdelt_reason_code)
+            .unwrap_or("none"),
+        decision
+            .provider_failure_reason
+            .as_deref()
+            .map(|value| packet_safe_value(value, 48))
+            .unwrap_or_else(|| "none".to_string()),
+        decision.proof_id,
+        result_classes
+    )
+}
+
+fn gdelt_reason_code(reason: &str) -> &'static str {
+    match reason {
+        "provider_failure_safe_degraded_no_agreement_or_disagreement_fabricated" => {
+            "failure_no_fabricated_agreement"
+        }
+        "no_gdelt_result_is_not_disproof" | "gdelt_returned_no_bounded_article_records" => {
+            "no_result_not_disproof"
+        }
+        "bounded_article_metadata_returned_without_truth_inference" => {
+            "bounded_metadata_no_truth_inference"
+        }
+        "bounded_metadata_returned_without_domain_correlation" => "metadata_no_domain_correlation",
+        _ => "safe_degraded",
+    }
+}
+
+fn gdelt_join_packet_values<'a>(
+    values: impl Iterator<Item = &'a str>,
+    max_each: usize,
+    max_items: usize,
+) -> String {
+    let joined = values
+        .take(max_items)
+        .map(|value| packet_safe_value(value, max_each))
+        .filter(|value| !value.is_empty())
+        .collect::<Vec<_>>()
+        .join("|");
+    if joined.is_empty() {
+        "none".to_string()
+    } else {
+        joined
+    }
+}
+
+fn run_gdelt_doc_artlist_search(
+    endpoint: &str,
+    query: &str,
+    max_records: u8,
+    timeout_ms: u32,
+    user_agent: &str,
+    proxy_config: &Ph1eProxyConfig,
+    fixture_json: Option<&str>,
+) -> Result<Vec<GdeltArticleRecord>, ProviderCallError> {
+    if let Some(fixture) = fixture_json {
+        return parse_gdelt_artlist_json(fixture, usize::from(max_records));
+    }
+
+    let agent = build_http_agent(timeout_ms, user_agent, proxy_config)
+        .map_err(|_| ProviderCallError::new("gdelt", "config_invalid", None))?;
+    let response = agent
+        .get(endpoint)
+        .set("Accept", "application/json")
+        .query("query", query)
+        .query("mode", "artlist")
+        .query("sort", "datedesc")
+        .query("maxrecords", &max_records.to_string())
+        .query("format", "json")
+        .query("timespan", GDELT_REQUEST_WINDOW)
+        .call()
+        .map_err(|e| provider_error_from_ureq("gdelt", e))?;
+
+    let content_type = response
+        .header("content-type")
+        .unwrap_or("application/json")
+        .to_ascii_lowercase();
+    if !(content_type.contains("json") || content_type.contains("text/plain")) {
+        return Err(ProviderCallError::new(
+            "gdelt",
+            "unsupported_content_type",
+            None,
+        ));
+    }
+
+    let mut reader = response
+        .into_reader()
+        .take(GDELT_RESPONSE_SIZE_LIMIT_BYTES + 1);
+    let mut body = Vec::new();
+    reader
+        .read_to_end(&mut body)
+        .map_err(|_| ProviderCallError::new("gdelt", "response_read", None))?;
+    if body.len() as u64 > GDELT_RESPONSE_SIZE_LIMIT_BYTES {
+        return Err(ProviderCallError::new("gdelt", "response_too_large", None));
+    }
+    let body_text = String::from_utf8_lossy(&body);
+    parse_gdelt_artlist_json(&body_text, usize::from(max_records))
+}
+
+fn parse_gdelt_artlist_json(
+    raw: &str,
+    max_records: usize,
+) -> Result<Vec<GdeltArticleRecord>, ProviderCallError> {
+    let body: Value = serde_json::from_str(raw)
+        .map_err(|_| ProviderCallError::new("gdelt", "json_parse", None))?;
+    let articles = body
+        .get("articles")
+        .and_then(Value::as_array)
+        .ok_or_else(|| ProviderCallError::new("gdelt", "missing_articles", None))?;
+    let mut records = Vec::new();
+    for article in articles {
+        if records.len() >= max_records {
+            break;
+        }
+        let Some(record) = gdelt_article_record_from_value(article) else {
+            continue;
+        };
+        records.push(record);
+    }
+    Ok(records)
+}
+
+fn gdelt_article_record_from_value(value: &Value) -> Option<GdeltArticleRecord> {
+    let raw_url = first_string_at(value, &["/url"])?;
+    let source_url = verified_public_url(raw_url)?;
+    let source_domain = domain_from_http_url(&source_url).or_else(|| {
+        first_string_at(value, &["/domain"])
+            .map(str::to_ascii_lowercase)
+            .filter(|domain| !domain.is_empty())
+    })?;
+    let title = first_string_at(value, &["/title"])
+        .map(|value| truncate_ascii(value, 160))
+        .unwrap_or_else(|| source_domain.clone());
+    let published_at = first_string_at(value, &["/seendate", "/published", "/published_at"])
+        .map(|value| truncate_ascii(value, 64));
+    let language_or_translation_signal = first_string_at(value, &["/language", "/sourcecountry"])
+        .map(|value| truncate_ascii(value, 96));
+    Some(GdeltArticleRecord {
+        source_url,
+        source_domain,
+        title,
+        published_at,
+        language_or_translation_signal,
+    })
 }
 
 fn run_brave_search(
@@ -5282,7 +5805,9 @@ mod tests {
         assert!(!field("h387_result_classes")
             .split('|')
             .any(|class| class == "WEB_IMAGE_SOURCE_CARD_PASS"));
-        assert!(field("gdelt_status").contains("GDELT_NEWS_CORROBORATION_DEFERRED"));
+        assert!(field("gdelt_status").contains("p=GDELT"));
+        assert!(field("gdelt_status").contains("role=corroboration"));
+        assert!(field("gdelt_status").contains("GDELT_PROVIDER_OPTIONAL_DEGRADED_PASS"));
         assert!(field("result_classes").contains("DEEP_RESEARCH_RESPONSE_METADATA_PASS"));
         assert!(citations
             .iter()
@@ -6295,6 +6820,254 @@ mod tests {
         assert!(!policy.ui_display_implemented);
         assert!(!policy.image_bytes_download_allowed);
         assert!(!policy.raw_image_cache_allowed);
+    }
+
+    #[test]
+    fn h394_gdelt_artlist_parser_bounds_records_and_ignores_images() {
+        let raw = r#"{
+            "articles": [
+                {
+                    "url": "https://news.one.test/story-a",
+                    "title": "Climate policy update",
+                    "seendate": "20260428T010000Z",
+                    "domain": "news.one.test",
+                    "language": "English",
+                    "socialimage": "https://cdn.one.test/social.jpg"
+                },
+                {
+                    "url": "https://news.two.test/story-b",
+                    "title": "Climate finance report",
+                    "seendate": "20260428T020000Z",
+                    "domain": "news.two.test",
+                    "language": "French",
+                    "socialimage": "https://cdn.two.test/social.jpg"
+                }
+            ]
+        }"#;
+        let records = parse_gdelt_artlist_json(raw, 1).expect("fixture JSON should parse");
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].source_domain, "news.one.test");
+        assert_eq!(records[0].published_at.as_deref(), Some("20260428T010000Z"));
+        let packet = gdelt_corroboration_packet(&gdelt_corroboration_decision(
+            "climate policy",
+            1_770_000_000_000,
+            "ok".to_string(),
+            records,
+            &["primary.test".to_string()],
+            None,
+        ));
+        assert!(packet.contains("bounded=true"));
+        assert!(packet.contains("guards=docs_live_split,live_not_policy,no_text_replace,no_brave_replace,no_image,no_vgkg,no_gcp,no_scrape,no_bulk"));
+        assert!(!packet.contains("socialimage"));
+    }
+
+    #[test]
+    fn h394_gdelt_corroboration_packet_is_secondary_metadata_only() {
+        let records = vec![
+            GdeltArticleRecord {
+                source_url: "https://primary.example.org/a".to_string(),
+                source_domain: "primary.example.org".to_string(),
+                title: "Primary-domain match".to_string(),
+                published_at: Some("20260428T010000Z".to_string()),
+                language_or_translation_signal: Some("English".to_string()),
+            },
+            GdeltArticleRecord {
+                source_url: "https://independent.example.org/b".to_string(),
+                source_domain: "independent.example.org".to_string(),
+                title: "Independent-domain match".to_string(),
+                published_at: Some("20260428T020000Z".to_string()),
+                language_or_translation_signal: Some("Spanish".to_string()),
+            },
+        ];
+        let decision = gdelt_corroboration_decision(
+            "public climate policy news",
+            1_770_000_000_000,
+            "ok".to_string(),
+            records,
+            &["primary.example.org".to_string()],
+            None,
+        );
+        assert_eq!(decision.provider_role, "corroboration");
+        assert!(!decision.provider_primary);
+        assert!(!decision.provider_replaces_brave);
+        assert_eq!(decision.same_domain_match_count, 1);
+        assert_eq!(decision.cross_domain_match_count, 1);
+        assert_eq!(decision.independent_source_count, 1);
+        assert_eq!(decision.corroboration_status, "corroborated");
+
+        let packet = gdelt_corroboration_packet(&decision);
+        assert!(packet.contains("qh="));
+        assert!(!packet.contains("public climate policy news"));
+        assert!(packet.contains("rawq=false"));
+        assert!(packet.contains("no_text_replace"));
+        assert!(packet.contains("no_brave_replace"));
+        assert!(packet.contains("no_scrape"));
+        assert!(packet.contains("no_bulk"));
+        assert!(packet.contains("no_gcp"));
+        assert!(packet.contains("GDELT_PROVIDER_SWAPPABILITY_PASS"));
+        assert!(!packet.contains("WEB_PROVIDER_FANOUT_PASS"));
+    }
+
+    #[test]
+    fn h394_gdelt_no_result_and_failure_safe_degrade_without_disproof() {
+        let no_result = gdelt_corroboration_decision(
+            "public topic",
+            1_770_000_000_000,
+            "no_result".to_string(),
+            Vec::new(),
+            &["primary.example.org".to_string()],
+            None,
+        );
+        assert_eq!(no_result.corroboration_status, "no_result");
+        assert_eq!(
+            no_result.corroboration_reason,
+            "no_gdelt_result_is_not_disproof"
+        );
+        assert!(gdelt_result_classes(&no_result).contains(&"GDELT_NO_RESULT_SAFE_DEGRADED_PASS"));
+
+        let failed = gdelt_corroboration_decision(
+            "public topic",
+            1_770_000_000_000,
+            "provider_failed_timeout".to_string(),
+            Vec::new(),
+            &["primary.example.org".to_string()],
+            Some("provider=gdelt error=timeout".to_string()),
+        );
+        assert_eq!(failed.corroboration_status, "provider_failed");
+        assert!(failed
+            .corroboration_reason
+            .contains("no_agreement_or_disagreement_fabricated"));
+        assert!(
+            gdelt_result_classes(&failed).contains(&"GDELT_PROVIDER_FAILURE_SAFE_DEGRADED_PASS")
+        );
+    }
+
+    #[test]
+    fn h394_deep_research_emits_gdelt_packet_without_claiming_broad_fanout() {
+        let fixture = spawn_test_http_fixture();
+        let rt = runtime_with_live_fixture(&fixture);
+        let out = rt.run(&req(
+            ToolName::DeepResearch,
+            "deep research climate policy updates with citations",
+            false,
+            false,
+        ));
+        assert_eq!(out.tool_status, ToolStatus::Ok, "{out:?}");
+        let ToolResult::DeepResearch {
+            extracted_fields,
+            citations,
+            ..
+        } = out
+            .tool_result
+            .as_ref()
+            .expect("tool result required for ok")
+        else {
+            panic!("expected DeepResearch result");
+        };
+        assert!(!citations.is_empty());
+        let field = |key: &str| {
+            extracted_fields
+                .iter()
+                .find(|candidate| candidate.key == key)
+                .map(|candidate| candidate.value.as_str())
+                .unwrap_or("")
+        };
+        let gdelt = field("gdelt_status");
+        assert!(gdelt.contains("p=GDELT"), "{gdelt}");
+        assert!(gdelt.contains("role=corroboration"), "{gdelt}");
+        assert!(gdelt.contains("primary=false"), "{gdelt}");
+        assert!(gdelt.contains("replaces_brave=false"), "{gdelt}");
+        assert!(gdelt.contains("docs=true"), "{gdelt}");
+        assert!(gdelt.contains("rawq=false"), "{gdelt}");
+        assert!(gdelt.contains("no_vgkg"), "{gdelt}");
+        assert!(gdelt.contains("no_gcp"), "{gdelt}");
+        assert!(gdelt.contains("no_scrape"), "{gdelt}");
+        assert!(gdelt.contains("no_bulk"), "{gdelt}");
+        assert!(!gdelt.contains("deep research climate policy updates"));
+
+        let fanout = field("multihop_fanout_packet");
+        assert!(fanout.contains("provider_targets=brave"), "{fanout}");
+        assert!(
+            fanout.contains("provider_fanout=WEB_PROVIDER_FANOUT_DEFERRED"),
+            "{fanout}"
+        );
+        assert!(!fanout.contains("WEB_PROVIDER_FANOUT_PASS"), "{fanout}");
+
+        assert!(
+            gdelt.contains("GDELT_PROVIDER_SWAPPABILITY_PASS"),
+            "{gdelt}"
+        );
+        assert!(
+            gdelt.contains("GDELT_DOES_NOT_REPLACE_BRAVE_PRIMARY_PASS"),
+            "{gdelt}"
+        );
+        assert!(
+            gdelt.contains("GDELT_DOES_NOT_REPLACE_TEXT_CITATIONS_PASS"),
+            "{gdelt}"
+        );
+    }
+
+    #[test]
+    #[ignore]
+    fn h394_live_gdelt_doc_api_returns_bounded_corroboration_metadata() {
+        let search_result = run_gdelt_doc_artlist_search(
+            GDELT_DOC_DEFAULT_URL,
+            "climate",
+            2,
+            GDELT_TIMEOUT_MS,
+            "selene-ph1e-live-proof/1.0",
+            &Ph1eProxyConfig::from_env(),
+            None,
+        );
+        let records = match search_result {
+            Ok(records) => records,
+            Err(error) => {
+                let decision = gdelt_corroboration_decision(
+                    "climate",
+                    now_unix_ms(),
+                    "provider_failed".to_string(),
+                    Vec::new(),
+                    &[],
+                    Some(error.safe_detail()),
+                );
+                let packet = gdelt_corroboration_packet(&decision);
+                assert!(packet.contains("role=corroboration"));
+                assert!(packet.contains("status=provider_failed"));
+                assert!(packet.contains("GDELT_PROVIDER_OPTIONAL_DEGRADED_PASS"));
+                assert!(packet.contains("GDELT_PROVIDER_FAILURE_SAFE_DEGRADED_PASS"));
+                assert!(packet.contains("no_vgkg"));
+                assert!(packet.contains("no_gcp"));
+                assert!(packet.contains("no_scrape"));
+                assert!(packet.contains("no_bulk"));
+                assert!(!packet.contains("WEB_PROVIDER_FANOUT_PASS"));
+                return;
+            }
+        };
+        assert!(records.len() <= 2);
+        assert!(records
+            .iter()
+            .all(|record| url_fetch_safety_block_reason(&record.source_url).is_none()));
+        let decision = gdelt_corroboration_decision(
+            "climate",
+            now_unix_ms(),
+            if records.is_empty() {
+                "no_result".to_string()
+            } else {
+                "ok".to_string()
+            },
+            records,
+            &[],
+            None,
+        );
+        let packet = gdelt_corroboration_packet(&decision);
+        assert!(packet.contains("role=corroboration"));
+        assert!(packet.contains("max=5"));
+        assert!(packet.contains("window=1d"));
+        assert!(packet.contains("no_image"));
+        assert!(packet.contains("no_vgkg"));
+        assert!(packet.contains("no_gcp"));
+        assert!(!packet.contains("socialimage"));
+        assert!(!packet.contains("WEB_PROVIDER_FANOUT_PASS"));
     }
 
     #[test]

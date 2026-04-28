@@ -369,6 +369,7 @@ pub struct VoiceTurnDeepResearchMetadata {
     pub image_display_eligibility: VoiceTurnImageDisplayEligibilityMetadata,
     pub image_provider_display_policy: VoiceTurnImageProviderDisplayPolicyMetadata,
     pub source_link_citation_cards: Vec<VoiceTurnSourceLinkCitationCard>,
+    pub gdelt_corroboration: VoiceTurnGdeltCorroborationMetadata,
     pub gdelt_status: String,
     pub provider_fanout_status: String,
     pub retention_class: String,
@@ -539,6 +540,54 @@ pub struct VoiceTurnSourceLinkCitationCard {
     pub policy_outcome: String,
     pub layout_reference_reason: String,
     pub screenshot_not_evidence: bool,
+    pub proof_id: Option<String>,
+    pub result_classes: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct VoiceTurnGdeltCorroborationMetadata {
+    pub provider: String,
+    pub provider_role: String,
+    pub provider_primary: bool,
+    pub provider_replaces_brave: bool,
+    pub policy_version: String,
+    pub official_docs_reviewed: bool,
+    pub official_docs_urls: Vec<String>,
+    pub official_docs_retrieved_at: Option<String>,
+    pub live_api_retrieved_at: Option<String>,
+    pub query_hash: Option<String>,
+    pub raw_query_stored: bool,
+    pub endpoint_mode: String,
+    pub endpoint_url_label: String,
+    pub request_window: String,
+    pub max_records: usize,
+    pub timeout_ms: u64,
+    pub response_size_limit_bytes: u64,
+    pub response_status: String,
+    pub result_count: usize,
+    pub article_records_bounded: bool,
+    pub matched_source_urls: Vec<String>,
+    pub matched_source_domains: Vec<String>,
+    pub matched_titles: Vec<String>,
+    pub matched_published_at: Vec<String>,
+    pub language_or_translation_signal: Option<String>,
+    pub corroboration_status: String,
+    pub corroboration_reason: String,
+    pub independent_source_count: usize,
+    pub same_domain_match_count: usize,
+    pub cross_domain_match_count: usize,
+    pub no_result_reason: Option<String>,
+    pub provider_failure_reason: Option<String>,
+    pub official_docs_proof_separate_from_live_api: bool,
+    pub live_api_does_not_prove_policy: bool,
+    pub does_not_replace_text_citations: bool,
+    pub does_not_replace_brave_primary: bool,
+    pub no_image_use: bool,
+    pub no_visual_gkg_use: bool,
+    pub no_bigquery_or_gcp_use: bool,
+    pub no_article_scrape: bool,
+    pub no_bulk_download: bool,
     pub proof_id: Option<String>,
     pub result_classes: Vec<String>,
 }
@@ -12023,6 +12072,17 @@ fn deep_research_metadata_from_tool_response(
             }
         }
     }
+    if let Some(extra) = fields.get("h394_result_classes") {
+        for class in extra
+            .split('|')
+            .map(str::trim)
+            .filter(|item| !item.is_empty())
+        {
+            if !result_classes.iter().any(|existing| existing == class) {
+                result_classes.push(class.to_string());
+            }
+        }
+    }
     let image_provider_path_packet = fields
         .get("image_metadata_provider_path_packet")
         .map(String::as_str)
@@ -12085,14 +12145,31 @@ fn deep_research_metadata_from_tool_response(
         .map(String::as_str)
         .or_else(|| fields.get("citation_card_packet").map(String::as_str))
         .unwrap_or(image_layout_packet);
+    let gdelt_status_field = fields.get("gdelt_status").map(String::as_str);
+    let gdelt_corroboration_packet = fields
+        .get("gdelt_corroboration_packet")
+        .map(String::as_str)
+        .or_else(|| {
+            gdelt_status_field.filter(|value| {
+                packet_field_value(value, "provider") == Some("GDELT")
+                    || packet_field_value(value, "p") == Some("GDELT")
+            })
+        })
+        .unwrap_or_default();
     let image_strip_status = packet_field_value(image_layout_packet, "image_strip_status")
         .or_else(|| packet_field_value(image_layout_packet, "image_strip"))
         .unwrap_or("WEB_IMAGE_SOURCE_CARD_DEFERRED")
         .to_string();
-    let gdelt_status = fields
-        .get("gdelt_status")
-        .cloned()
-        .unwrap_or_else(|| "GDELT_NEWS_CORROBORATION_DEFERRED".to_string());
+    let gdelt_status = if let Some(status) = packet_field_value_any(
+        gdelt_corroboration_packet,
+        &["corroboration_status", "corr"],
+    ) {
+        format!("GDELT_CORROBORATION_STATUS_PASS:{status}")
+    } else {
+        gdelt_status_field
+            .map(ToString::to_string)
+            .unwrap_or_else(|| "GDELT_NEWS_CORROBORATION_DEFERRED".to_string())
+    };
     let fanout_packet = fields
         .get("multihop_fanout_packet")
         .map(String::as_str)
@@ -12165,12 +12242,21 @@ fn deep_research_metadata_from_tool_response(
         .collect::<Vec<_>>();
     let source_link_citation_cards =
         parse_source_link_citation_cards(source_link_citation_card_packet);
+    let gdelt_corroboration = parse_gdelt_corroboration_packet(gdelt_corroboration_packet);
     for card_class in source_link_citation_cards
         .iter()
         .flat_map(|card| card.result_classes.iter())
     {
         if !result_classes.iter().any(|existing| existing == card_class) {
             result_classes.push(card_class.clone());
+        }
+    }
+    for gdelt_class in &gdelt_corroboration.result_classes {
+        if !result_classes
+            .iter()
+            .any(|existing| existing == gdelt_class)
+        {
+            result_classes.push(gdelt_class.clone());
         }
     }
 
@@ -12674,6 +12760,7 @@ fn deep_research_metadata_from_tool_response(
             .to_string(),
         },
         source_link_citation_cards,
+        gdelt_corroboration,
         gdelt_status,
         provider_fanout_status: provider_fanout_packet_status.unwrap_or_else(|| {
             if citations.len() > 1 {
@@ -12707,8 +12794,8 @@ fn parse_source_link_citation_cards(packet: &str) -> Vec<VoiceTurnSourceLinkCita
     else {
         return Vec::new();
     };
-    let clickable_source_page_url = packet_field_value(packet, "clickable_source_page_url")
-        .unwrap_or(source_page_url);
+    let clickable_source_page_url =
+        packet_field_value(packet, "clickable_source_page_url").unwrap_or(source_page_url);
     if !packet_field_bool(packet, "clickable_url_admitted")
         || !adapter_source_link_public_http_url(clickable_source_page_url)
         || clickable_source_page_url != source_page_url
@@ -12783,6 +12870,169 @@ fn parse_source_link_citation_cards(packet: &str) -> Vec<VoiceTurnSourceLinkCita
     }]
 }
 
+fn parse_gdelt_corroboration_packet(packet: &str) -> VoiceTurnGdeltCorroborationMetadata {
+    if packet.trim().is_empty() {
+        return VoiceTurnGdeltCorroborationMetadata {
+            provider: "GDELT".to_string(),
+            provider_role: "corroboration".to_string(),
+            provider_primary: false,
+            provider_replaces_brave: false,
+            corroboration_status: "GDELT_NEWS_CORROBORATION_DEFERRED".to_string(),
+            does_not_replace_text_citations: true,
+            does_not_replace_brave_primary: true,
+            no_image_use: true,
+            no_visual_gkg_use: true,
+            no_bigquery_or_gcp_use: true,
+            no_article_scrape: true,
+            no_bulk_download: true,
+            ..Default::default()
+        };
+    }
+    let guards = packet_field_list(packet, "guards", ',');
+    let has_guard = |guard: &str| guards.iter().any(|candidate| candidate == guard);
+
+    VoiceTurnGdeltCorroborationMetadata {
+        provider: packet_field_value_any(packet, &["provider", "p"])
+            .unwrap_or("GDELT")
+            .to_string(),
+        provider_role: packet_field_value_any(packet, &["provider_role", "role"])
+            .unwrap_or("corroboration")
+            .to_string(),
+        provider_primary: packet_field_bool_any(packet, &["provider_primary", "primary"]),
+        provider_replaces_brave: packet_field_bool_any(
+            packet,
+            &["provider_replaces_brave", "replaces_brave"],
+        ),
+        policy_version: packet_field_value_any(packet, &["policy_version", "ver"])
+            .unwrap_or("unknown")
+            .to_string(),
+        official_docs_reviewed: packet_field_bool_any(packet, &["official_docs_reviewed", "docs"]),
+        official_docs_urls: packet_field_list_any(
+            packet,
+            &["official_docs_urls", "docs_urls"],
+            '|',
+        ),
+        official_docs_retrieved_at: packet_field_value_any(
+            packet,
+            &["official_docs_retrieved_at", "docs_at"],
+        )
+        .filter(|value| *value != "none")
+        .map(ToString::to_string),
+        live_api_retrieved_at: packet_field_value_any(
+            packet,
+            &["live_api_retrieved_at", "live_at"],
+        )
+        .filter(|value| *value != "none")
+        .map(ToString::to_string),
+        query_hash: packet_field_value_any(packet, &["query_hash", "qh"])
+            .filter(|value| *value != "none")
+            .map(ToString::to_string),
+        raw_query_stored: packet_field_bool_any(packet, &["raw_query_stored", "rawq"]),
+        endpoint_mode: packet_field_value_any(packet, &["endpoint_mode", "mode"])
+            .unwrap_or("unknown")
+            .to_string(),
+        endpoint_url_label: packet_field_value_any(packet, &["endpoint_url_label", "endpoint"])
+            .unwrap_or("unknown")
+            .to_string(),
+        request_window: packet_field_value_any(packet, &["request_window", "window"])
+            .unwrap_or("unknown")
+            .to_string(),
+        max_records: packet_field_value_any(packet, &["max_records", "max"])
+            .and_then(|value| value.parse::<usize>().ok())
+            .unwrap_or_default(),
+        timeout_ms: packet_field_value_any(packet, &["timeout_ms", "timeout"])
+            .and_then(|value| value.parse::<u64>().ok())
+            .unwrap_or_default(),
+        response_size_limit_bytes: packet_field_value_any(
+            packet,
+            &["response_size_limit_bytes", "limit"],
+        )
+        .and_then(|value| value.parse::<u64>().ok())
+        .unwrap_or_default(),
+        response_status: packet_field_value_any(packet, &["response_status", "status"])
+            .unwrap_or("unknown")
+            .to_string(),
+        result_count: packet_field_value_any(packet, &["result_count", "count"])
+            .and_then(|value| value.parse::<usize>().ok())
+            .unwrap_or_default(),
+        article_records_bounded: packet_field_bool_any(
+            packet,
+            &["article_records_bounded", "bounded"],
+        ),
+        matched_source_urls: packet_field_list_any(packet, &["matched_source_urls", "urls"], '|'),
+        matched_source_domains: packet_field_list_any(
+            packet,
+            &["matched_source_domains", "domains"],
+            '|',
+        ),
+        matched_titles: packet_field_list_any(packet, &["matched_titles", "titles"], '|'),
+        matched_published_at: packet_field_list_any(
+            packet,
+            &["matched_published_at", "published"],
+            '|',
+        ),
+        language_or_translation_signal: packet_field_value_any(
+            packet,
+            &["language_or_translation_signal", "lang"],
+        )
+        .filter(|value| *value != "none")
+        .map(ToString::to_string),
+        corroboration_status: packet_field_value_any(packet, &["corroboration_status", "corr"])
+            .unwrap_or("unknown")
+            .to_string(),
+        corroboration_reason: packet_field_value_any(packet, &["corroboration_reason", "reason"])
+            .unwrap_or("not_reported")
+            .to_string(),
+        independent_source_count: packet_field_value_any(
+            packet,
+            &["independent_source_count", "independent"],
+        )
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or_default(),
+        same_domain_match_count: packet_field_value_any(
+            packet,
+            &["same_domain_match_count", "same"],
+        )
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or_default(),
+        cross_domain_match_count: packet_field_value_any(
+            packet,
+            &["cross_domain_match_count", "cross"],
+        )
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or_default(),
+        no_result_reason: packet_field_value_any(packet, &["no_result_reason", "no_result"])
+            .filter(|value| *value != "none")
+            .map(ToString::to_string),
+        provider_failure_reason: packet_field_value_any(
+            packet,
+            &["provider_failure_reason", "failure"],
+        )
+        .filter(|value| *value != "none")
+        .map(ToString::to_string),
+        official_docs_proof_separate_from_live_api: packet_field_bool(
+            packet,
+            "official_docs_proof_separate_from_live_api",
+        ) || has_guard("docs_live_split"),
+        live_api_does_not_prove_policy: packet_field_bool(packet, "live_api_does_not_prove_policy")
+            || has_guard("live_not_policy"),
+        does_not_replace_text_citations: packet_field_bool(
+            packet,
+            "does_not_replace_text_citations",
+        ) || has_guard("no_text_replace"),
+        does_not_replace_brave_primary: packet_field_bool(packet, "does_not_replace_brave_primary")
+            || has_guard("no_brave_replace"),
+        no_image_use: packet_field_bool(packet, "no_image_use") || has_guard("no_image"),
+        no_visual_gkg_use: packet_field_bool(packet, "no_visual_gkg_use") || has_guard("no_vgkg"),
+        no_bigquery_or_gcp_use: packet_field_bool(packet, "no_bigquery_or_gcp_use")
+            || has_guard("no_gcp"),
+        no_article_scrape: packet_field_bool(packet, "no_article_scrape") || has_guard("no_scrape"),
+        no_bulk_download: packet_field_bool(packet, "no_bulk_download") || has_guard("no_bulk"),
+        proof_id: packet_field_value_any(packet, &["proof_id", "proof"]).map(ToString::to_string),
+        result_classes: packet_field_list_any(packet, &["result_classes", "classes"], ','),
+    }
+}
+
 fn packet_field_value<'a>(packet: &'a str, key: &str) -> Option<&'a str> {
     packet.split(';').find_map(|part| {
         let (candidate_key, value) = part.split_once('=')?;
@@ -12803,6 +13053,43 @@ fn packet_field_bool(packet: &str, key: &str) -> bool {
     packet_field_value(packet, key)
         .map(|value| value.eq_ignore_ascii_case("true"))
         .unwrap_or(false)
+}
+
+fn packet_field_list(packet: &str, key: &str, delimiter: char) -> Vec<String> {
+    packet_field_value(packet, key)
+        .filter(|value| *value != "none")
+        .map(|value| {
+            value
+                .split(delimiter)
+                .map(str::trim)
+                .filter(|item| !item.is_empty() && *item != "none")
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default()
+}
+
+fn packet_field_value_any<'a>(packet: &'a str, keys: &[&str]) -> Option<&'a str> {
+    keys.iter().find_map(|key| packet_field_value(packet, key))
+}
+
+fn packet_field_bool_any(packet: &str, keys: &[&str]) -> bool {
+    packet_field_value_any(packet, keys)
+        .map(|value| value.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
+}
+
+fn packet_field_list_any(packet: &str, keys: &[&str], delimiter: char) -> Vec<String> {
+    keys.iter()
+        .find_map(|key| {
+            let values = packet_field_list(packet, key, delimiter);
+            if values.is_empty() {
+                None
+            } else {
+                Some(values)
+            }
+        })
+        .unwrap_or_default()
 }
 
 fn deep_research_field_map(
@@ -22282,14 +22569,21 @@ mod tests {
         );
         assert!(parse_source_link_citation_cards(&mismatched_clickable).is_empty());
 
-        let unadmitted = safe.replace("clickable_url_admitted=true", "clickable_url_admitted=false");
+        let unadmitted = safe.replace(
+            "clickable_url_admitted=true",
+            "clickable_url_admitted=false",
+        );
         assert!(parse_source_link_citation_cards(&unadmitted).is_empty());
     }
 
     #[test]
     fn h393_source_link_card_url_helper_blocks_unsafe_click_targets() {
-        assert!(adapter_source_link_public_http_url("https://example.com/source"));
-        assert!(adapter_source_link_public_http_url("http://example.com/source"));
+        assert!(adapter_source_link_public_http_url(
+            "https://example.com/source"
+        ));
+        assert!(adapter_source_link_public_http_url(
+            "http://example.com/source"
+        ));
 
         for blocked in [
             "",
@@ -22316,6 +22610,99 @@ mod tests {
                 "{blocked} must not become a clickable source-link card"
             );
         }
+    }
+
+    #[test]
+    fn h394_gdelt_corroboration_metadata_is_response_visible_and_secondary_only() {
+        let citation = selene_kernel_contracts::ph1e::ToolTextSnippet {
+            title: "Primary source".to_string(),
+            snippet: "Text citation remains primary.".to_string(),
+            url: "https://primary.example.org/story".to_string(),
+        };
+        let gdelt_packet = "p=GDELT;role=corroboration;primary=false;replaces_brave=false;ver=H394_V1;docs=true;docs_urls=doc2|rt;docs_at=2026-04-28T04:15:15Z;live_at=1770000000000;qh=abc123;rawq=false;mode=artlist_json;endpoint=gdelt_doc_2_artlist;window=1d;max=5;timeout=2000;limit=131072;status=ok;count=2;bounded=true;urls=https://primary.example.org/story;domains=primary.example.org|independent.example.org;titles=Primary story;published=20260428T010000Z;lang=English;corr=corroborated;reason=bounded_metadata_no_truth_inference;independent=1;same=1;cross=1;no_result=none;failure=none;guards=docs_live_split,live_not_policy,no_text_replace,no_brave_replace,no_image,no_vgkg,no_gcp,no_scrape,no_bulk;proof=H394;classes=H394_GDELT_LIVE_CORROBORATION_PASS,GDELT_CORROBORATION_PACKET_PASS,GDELT_DOES_NOT_REPLACE_BRAVE_PRIMARY_PASS";
+        let tool_response = ToolResponse::ok_v1(
+            selene_kernel_contracts::ph1e::ToolRequestId(394),
+            selene_kernel_contracts::ph1e::ToolQueryHash(394),
+            ToolResult::DeepResearch {
+                summary: "Deep Research Report\n\nSummary: verified evidence only.".to_string(),
+                extracted_fields: vec![
+                    selene_kernel_contracts::ph1e::ToolStructuredField {
+                        key: "gdelt_corroboration_packet".to_string(),
+                        value: gdelt_packet.to_string(),
+                    },
+                    selene_kernel_contracts::ph1e::ToolStructuredField {
+                        key: "gdelt_status".to_string(),
+                        value: "H394_GDELT_LIVE_CORROBORATION_PASS:corroborated".to_string(),
+                    },
+                    selene_kernel_contracts::ph1e::ToolStructuredField {
+                        key: "h394_result_classes".to_string(),
+                        value: "H394_GDELT_LIVE_CORROBORATION_PASS|GDELT_PROVIDER_SWAPPABILITY_PASS|GDELT_DOES_NOT_REPLACE_BRAVE_PRIMARY_PASS|GDELT_DOES_NOT_REPLACE_TEXT_CITATIONS_PASS|GDELT_NO_FAKE_PROVIDER_FANOUT_PASS|GDELT_NO_MULTIHOP_CLAIM_PASS".to_string(),
+                    },
+                ],
+                citations: vec![citation.clone()],
+            },
+            selene_kernel_contracts::ph1e::SourceMetadata {
+                schema_version: selene_kernel_contracts::ph1e::PH1E_CONTRACT_VERSION,
+                provider_hint: Some("brave".to_string()),
+                retrieved_at_unix_ms: 1_770_000_000_000,
+                sources: vec![selene_kernel_contracts::ph1e::SourceRef {
+                    title: citation.title,
+                    url: citation.url,
+                }],
+            },
+            None,
+            ReasonCodeId(0x4500_0001),
+            CacheStatus::Miss,
+        )
+        .expect("fixture tool response must validate");
+        let metadata = deep_research_metadata_from_tool_response(&tool_response)
+            .expect("deep research response metadata must be present");
+        assert_eq!(metadata.gdelt_corroboration.provider, "GDELT");
+        assert_eq!(metadata.gdelt_corroboration.provider_role, "corroboration");
+        assert!(!metadata.gdelt_corroboration.provider_primary);
+        assert!(!metadata.gdelt_corroboration.provider_replaces_brave);
+        assert!(metadata.gdelt_corroboration.official_docs_reviewed);
+        assert_eq!(metadata.gdelt_corroboration.official_docs_urls.len(), 2);
+        assert_eq!(
+            metadata.gdelt_corroboration.query_hash.as_deref(),
+            Some("abc123")
+        );
+        assert!(!metadata.gdelt_corroboration.raw_query_stored);
+        assert_eq!(metadata.gdelt_corroboration.endpoint_mode, "artlist_json");
+        assert_eq!(metadata.gdelt_corroboration.request_window, "1d");
+        assert_eq!(metadata.gdelt_corroboration.max_records, 5);
+        assert_eq!(metadata.gdelt_corroboration.result_count, 2);
+        assert!(metadata.gdelt_corroboration.article_records_bounded);
+        assert_eq!(
+            metadata.gdelt_corroboration.corroboration_reason,
+            "bounded_metadata_no_truth_inference"
+        );
+        assert_eq!(metadata.gdelt_corroboration.independent_source_count, 1);
+        assert_eq!(metadata.gdelt_corroboration.same_domain_match_count, 1);
+        assert_eq!(metadata.gdelt_corroboration.cross_domain_match_count, 1);
+        assert!(
+            metadata
+                .gdelt_corroboration
+                .official_docs_proof_separate_from_live_api
+        );
+        assert!(metadata.gdelt_corroboration.live_api_does_not_prove_policy);
+        assert!(metadata.gdelt_corroboration.does_not_replace_text_citations);
+        assert!(metadata.gdelt_corroboration.does_not_replace_brave_primary);
+        assert!(metadata.gdelt_corroboration.no_image_use);
+        assert!(metadata.gdelt_corroboration.no_visual_gkg_use);
+        assert!(metadata.gdelt_corroboration.no_bigquery_or_gcp_use);
+        assert!(metadata.gdelt_corroboration.no_article_scrape);
+        assert!(metadata.gdelt_corroboration.no_bulk_download);
+        assert_eq!(metadata.fanout.provider_targets, vec!["brave".to_string()]);
+        assert!(metadata
+            .result_classes
+            .contains(&"H394_GDELT_LIVE_CORROBORATION_PASS".to_string()));
+        assert!(metadata
+            .result_classes
+            .contains(&"GDELT_DOES_NOT_REPLACE_BRAVE_PRIMARY_PASS".to_string()));
+        assert!(!metadata
+            .result_classes
+            .contains(&"WEB_PROVIDER_FANOUT_PASS".to_string()));
     }
 
     #[test]
