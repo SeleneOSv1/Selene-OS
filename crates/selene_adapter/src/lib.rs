@@ -558,6 +558,7 @@ pub struct VoiceTurnGdeltCorroborationMetadata {
     pub live_api_retrieved_at: Option<String>,
     pub query_hash: Option<String>,
     pub raw_query_stored: bool,
+    pub full_request_url_with_raw_query_stored: bool,
     pub endpoint_mode: String,
     pub endpoint_url_label: String,
     pub request_window: String,
@@ -580,6 +581,7 @@ pub struct VoiceTurnGdeltCorroborationMetadata {
     pub no_result_reason: Option<String>,
     pub provider_failure_reason: Option<String>,
     pub h395_transport_outcome: String,
+    pub h396_transport_outcome: String,
     pub direct_curl_probe_status: String,
     pub rust_transport_probe_status: String,
     pub rust_transport_failure_class: Option<String>,
@@ -12254,10 +12256,7 @@ fn deep_research_metadata_from_tool_response(
     let source_link_citation_cards =
         parse_source_link_citation_cards(source_link_citation_card_packet);
     let mut gdelt_corroboration = parse_gdelt_corroboration_packet(gdelt_corroboration_packet);
-    apply_gdelt_h395_transport_packet(
-        &mut gdelt_corroboration,
-        gdelt_h395_transport_packet,
-    );
+    apply_gdelt_h395_transport_packet(&mut gdelt_corroboration, gdelt_h395_transport_packet);
     for card_class in source_link_citation_cards
         .iter()
         .flat_map(|card| card.result_classes.iter())
@@ -12901,6 +12900,8 @@ fn parse_gdelt_corroboration_packet(packet: &str) -> VoiceTurnGdeltCorroboration
             no_article_scrape: true,
             no_bulk_download: true,
             h395_transport_outcome: "PROVIDER_OR_NETWORK_UNAVAILABLE_SAFE_DEGRADED".to_string(),
+            h396_transport_outcome: "PROVIDER_RATE_LIMIT_OR_NETWORK_UNAVAILABLE_SAFE_DEGRADED"
+                .to_string(),
             direct_curl_probe_status: "not_reported".to_string(),
             rust_transport_probe_status: "not_reported".to_string(),
             curl_and_rust_compared: false,
@@ -12948,6 +12949,14 @@ fn parse_gdelt_corroboration_packet(packet: &str) -> VoiceTurnGdeltCorroboration
             .filter(|value| *value != "none")
             .map(ToString::to_string),
         raw_query_stored: packet_field_bool_any(packet, &["raw_query_stored", "rawq"]),
+        full_request_url_with_raw_query_stored: packet_field_bool_any(
+            packet,
+            &[
+                "full_request_url_with_raw_query_stored",
+                "full_request_url_query_stored",
+                "frqs",
+            ],
+        ),
         endpoint_mode: packet_field_value_any(packet, &["endpoint_mode", "mode"])
             .unwrap_or("unknown")
             .to_string(),
@@ -13031,8 +13040,15 @@ fn parse_gdelt_corroboration_packet(packet: &str) -> VoiceTurnGdeltCorroboration
         .filter(|value| *value != "none")
         .map(ToString::to_string),
         h395_transport_outcome: normalize_h395_transport_outcome(
-            packet_field_value_any(packet, &["h395_transport_outcome", "h395_outcome", "outcome"])
-                .unwrap_or("PROVIDER_OR_NETWORK_UNAVAILABLE_SAFE_DEGRADED"),
+            packet_field_value_any(
+                packet,
+                &["h395_transport_outcome", "h395_outcome", "outcome"],
+            )
+            .unwrap_or("PROVIDER_OR_NETWORK_UNAVAILABLE_SAFE_DEGRADED"),
+        ),
+        h396_transport_outcome: normalize_h396_transport_outcome(
+            packet_field_value_any(packet, &["h396_transport_outcome", "h396_outcome", "h396"])
+                .unwrap_or("PROVIDER_RATE_LIMIT_OR_NETWORK_UNAVAILABLE_SAFE_DEGRADED"),
         ),
         direct_curl_probe_status: packet_field_value_any(
             packet,
@@ -13105,8 +13121,15 @@ fn apply_gdelt_h395_transport_packet(
         return;
     }
     metadata.h395_transport_outcome = normalize_h395_transport_outcome(
-        packet_field_value_any(packet, &["h395_transport_outcome", "h395_outcome", "outcome"])
-            .unwrap_or(metadata.h395_transport_outcome.as_str()),
+        packet_field_value_any(
+            packet,
+            &["h395_transport_outcome", "h395_outcome", "outcome"],
+        )
+        .unwrap_or(metadata.h395_transport_outcome.as_str()),
+    );
+    metadata.h396_transport_outcome = normalize_h396_transport_outcome(
+        packet_field_value_any(packet, &["h396_transport_outcome", "h396_outcome", "h396"])
+            .unwrap_or(metadata.h396_transport_outcome.as_str()),
     );
     metadata.direct_curl_probe_status =
         packet_field_value_any(packet, &["direct_curl_probe_status", "curl"])
@@ -13134,7 +13157,10 @@ fn apply_gdelt_h395_transport_packet(
     .filter(|value| *value != "none")
     .map(ToString::to_string)
     .or_else(|| metadata.rust_transport_failure_detail_redacted.clone());
-    if packet_field_bool_any(packet, &["curl_and_rust_compared", "curl_rust_compared", "crc"]) {
+    if packet_field_bool_any(
+        packet,
+        &["curl_and_rust_compared", "curl_rust_compared", "crc"],
+    ) {
         metadata.curl_and_rust_compared = true;
     }
     if packet_field_bool_any(
@@ -13161,9 +13187,7 @@ fn apply_gdelt_h395_transport_packet(
 
 fn normalize_h395_transport_outcome(raw: &str) -> String {
     match raw {
-        "A" | "RUST_GDELT_TRANSPORT_LIVE_PARSED" => {
-            "RUST_GDELT_TRANSPORT_LIVE_PARSED".to_string()
-        }
+        "A" | "RUST_GDELT_TRANSPORT_LIVE_PARSED" => "RUST_GDELT_TRANSPORT_LIVE_PARSED".to_string(),
         "B" | "RUST_GDELT_TRANSPORT_ACTIONABLE_SAFE_DEGRADED" => {
             "RUST_GDELT_TRANSPORT_ACTIONABLE_SAFE_DEGRADED".to_string()
         }
@@ -13171,6 +13195,21 @@ fn normalize_h395_transport_outcome(raw: &str) -> String {
             "PROVIDER_OR_NETWORK_UNAVAILABLE_SAFE_DEGRADED".to_string()
         }
         _ => "PROVIDER_OR_NETWORK_UNAVAILABLE_SAFE_DEGRADED".to_string(),
+    }
+}
+
+fn normalize_h396_transport_outcome(raw: &str) -> String {
+    match raw {
+        "A" | "RUST_GDELT_TLS_TRANSPORT_REPAIRED_LIVE_PARSED" => {
+            "RUST_GDELT_TLS_TRANSPORT_REPAIRED_LIVE_PARSED".to_string()
+        }
+        "B" | "RUST_GDELT_TRANSPORT_STILL_ACTIONABLE_SAFE_DEGRADED" => {
+            "RUST_GDELT_TRANSPORT_STILL_ACTIONABLE_SAFE_DEGRADED".to_string()
+        }
+        "C" | "PROVIDER_RATE_LIMIT_OR_NETWORK_UNAVAILABLE_SAFE_DEGRADED" => {
+            "PROVIDER_RATE_LIMIT_OR_NETWORK_UNAVAILABLE_SAFE_DEGRADED".to_string()
+        }
+        _ => "PROVIDER_RATE_LIMIT_OR_NETWORK_UNAVAILABLE_SAFE_DEGRADED".to_string(),
     }
 }
 
@@ -22818,15 +22857,20 @@ mod tests {
             metadata.gdelt_corroboration.h395_transport_outcome,
             "RUST_GDELT_TRANSPORT_LIVE_PARSED"
         );
-        assert_eq!(metadata.gdelt_corroboration.direct_curl_probe_status, "curl_ok");
+        assert_eq!(
+            metadata.gdelt_corroboration.direct_curl_probe_status,
+            "curl_ok"
+        );
         assert_eq!(
             metadata.gdelt_corroboration.rust_transport_probe_status,
             "parsed_bounded_records"
         );
         assert!(metadata.gdelt_corroboration.curl_and_rust_compared);
-        assert!(metadata
-            .gdelt_corroboration
-            .source_agreement_scoring_deferred);
+        assert!(
+            metadata
+                .gdelt_corroboration
+                .source_agreement_scoring_deferred
+        );
         assert_eq!(
             metadata.gdelt_corroboration.corroboration_reason,
             "bounded_metadata_no_truth_inference"
@@ -22861,11 +22905,15 @@ mod tests {
 
     #[test]
     fn h395_gdelt_metadata_parses_curl_rust_split_and_redacted_failure() {
-        let packet = "p=GDELT;role=corroboration;primary=false;replaces_brave=false;ver=H395_V1;docs=true;docs_urls=doc2|rt;docs_at=2026-04-28T05:07:36Z;live_at=none;qh=abc123;rawq=false;mode=artlist_json;endpoint=gdelt_doc_2_artlist;window=1d;max=5;timeout=2000;limit=131072;status=provider_failed_tls;count=0;bounded=true;h395_outcome=RUST_GDELT_TRANSPORT_ACTIONABLE_SAFE_DEGRADED;curl=curl_ok;rust=provider_failed_tls;rust_failure_class=tls;rust_failure_detail=provider_gdelt_error_tls;curl_rust_compared=true;source_agreement_deferred=true;urls=none;domains=none;titles=none;published=none;lang=none;corr=provider_failed;reason=failure_no_fabricated_agreement;independent=0;same=0;cross=0;no_result=none;failure=provider_gdelt_error_tls;guards=docs_live_split,live_not_policy,no_text_replace,no_brave_replace,no_image,no_vgkg,no_gcp,no_scrape,no_bulk,scoring_deferred;proof=H395;classes=H395_GDELT_RUST_TRANSPORT_SEAM_SAFE_DEGRADED,GDELT_RUST_LIVE_TRANSPORT_SAFE_DEGRADED,GDELT_CURL_VS_RUST_PROOF_RECORDED_PASS,GDELT_SOURCE_AGREEMENT_SCORING_DEFERRED";
+        let packet = "p=GDELT;role=corroboration;primary=false;replaces_brave=false;ver=H396_V1;docs=true;docs_urls=doc2|rt;docs_at=2026-04-28T06:03:09Z;live_at=none;qh=abc123;rawq=false;frqs=false;mode=artlist_json;endpoint=gdelt_doc_2_artlist;window=1d;max=5;timeout=2000;limit=131072;status=provider_failed_tls;count=0;bounded=true;h395_outcome=RUST_GDELT_TRANSPORT_ACTIONABLE_SAFE_DEGRADED;h396=B;curl=curl_ok;rust=provider_failed_tls;rust_failure_class=tls;rust_failure_detail=provider_gdelt_error_tls;curl_rust_compared=true;source_agreement_deferred=true;urls=none;domains=none;titles=none;published=none;lang=none;corr=provider_failed;reason=failure_no_fabricated_agreement;independent=0;same=0;cross=0;no_result=none;failure=provider_gdelt_error_tls;guards=docs_live_split,live_not_policy,no_text_replace,no_brave_replace,no_image,no_vgkg,no_gcp,no_scrape,no_bulk,no_full_url_query_storage,scoring_deferred;proof=H396;classes=H396_GDELT_RUST_TRANSPORT_ACTIONABLE_SAFE_DEGRADED,GDELT_RUST_LIVE_TRANSPORT_SAFE_DEGRADED,GDELT_CURL_VS_RUST_PROOF_RECORDED_PASS,GDELT_SOURCE_AGREEMENT_SCORING_DEFERRED";
         let metadata = parse_gdelt_corroboration_packet(packet);
         assert_eq!(
             metadata.h395_transport_outcome,
             "RUST_GDELT_TRANSPORT_ACTIONABLE_SAFE_DEGRADED"
+        );
+        assert_eq!(
+            metadata.h396_transport_outcome,
+            "RUST_GDELT_TRANSPORT_STILL_ACTIONABLE_SAFE_DEGRADED"
         );
         assert_eq!(metadata.direct_curl_probe_status, "curl_ok");
         assert_eq!(metadata.rust_transport_probe_status, "provider_failed_tls");
@@ -22892,6 +22940,40 @@ mod tests {
         assert!(!metadata
             .result_classes
             .contains(&"WEB_PROVIDER_FANOUT_PASS".to_string()));
+    }
+
+    #[test]
+    fn h396_gdelt_metadata_parses_rate_limit_outcome_without_raw_request_url_storage() {
+        let packet = "p=GDELT;role=corroboration;primary=false;replaces_brave=false;ver=H396_V1;docs=true;docs_urls=doc2|rt;docs_at=2026-04-28T06:03:09Z;live_at=none;qh=abc123;rawq=false;frqs=false;mode=artlist_json;endpoint=gdelt_doc_2_artlist;window=1d;max=5;timeout=2000;limit=131072;status=provider_failed_rate_limited_status=429;count=0;bounded=true;outcome=C;h396=C;curl=curl_http_429_rate_limited;rust=provider_failed_rate_limited;rust_failure_class=rate_limited;rust_failure_detail=provider_gdelt_error_rate_limited_status_429;curl_rust_compared=true;source_agreement_deferred=true;urls=none;domains=none;titles=none;published=none;lang=none;corr=provider_failed;reason=failure_no_fabricated_agreement;independent=0;same=0;cross=0;no_result=none;failure=provider_gdelt_error_rate_limited_status_429;guards=docs_live_split,live_not_policy,no_text_replace,no_brave_replace,no_image,no_vgkg,no_gcp,no_scrape,no_bulk,no_full_url_query_storage,scoring_deferred;proof=H396;classes=H396_PROVIDER_RATE_LIMIT_OR_NETWORK_SAFE_DEGRADED,GDELT_RUST_RATE_LIMIT_CLASSIFIED_PASS,GDELT_NO_FULL_REQUEST_URL_WITH_RAW_QUERY_STORAGE_PASS";
+        let metadata = parse_gdelt_corroboration_packet(packet);
+        assert_eq!(
+            metadata.h396_transport_outcome,
+            "PROVIDER_RATE_LIMIT_OR_NETWORK_UNAVAILABLE_SAFE_DEGRADED"
+        );
+        assert_eq!(
+            metadata.direct_curl_probe_status,
+            "curl_http_429_rate_limited"
+        );
+        assert_eq!(
+            metadata.rust_transport_probe_status,
+            "provider_failed_rate_limited"
+        );
+        assert_eq!(
+            metadata.rust_transport_failure_class.as_deref(),
+            Some("rate_limited")
+        );
+        assert_eq!(metadata.query_hash.as_deref(), Some("abc123"));
+        assert!(!metadata.raw_query_stored);
+        assert!(!metadata.full_request_url_with_raw_query_stored);
+        assert!(metadata.source_agreement_scoring_deferred);
+        assert!(metadata.does_not_replace_brave_primary);
+        assert!(metadata.no_visual_gkg_use);
+        assert!(metadata.no_bigquery_or_gcp_use);
+        assert!(metadata.no_article_scrape);
+        assert!(metadata.no_bulk_download);
+        assert!(metadata
+            .result_classes
+            .contains(&"GDELT_NO_FULL_REQUEST_URL_WITH_RAW_QUERY_STORAGE_PASS".to_string()));
     }
 
     #[test]
