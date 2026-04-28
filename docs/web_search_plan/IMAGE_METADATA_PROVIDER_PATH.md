@@ -285,6 +285,43 @@ H392 result posture:
 - `WEB_IMAGE_SOURCE_CARD_DISPLAY_DEFERRED`
 - `WEB_IMAGE_SOURCE_CARD_PASS_BLOCKED`
 
+## H393 Source-Link Card Click Safety
+
+H393 hardens the H392 source-link-only cards without adding image display. The source-link card remains text-only, provider-agnostic, and subordinate to the answer.
+
+- `source_page_url` is the only possible clickable target.
+- Runtime and adapter packets carry `clickable_source_page_url` plus `clickable_url_admitted`; adapter parsing rejects packets unless the clickable URL is the same safe public `http` / `https` source-page URL.
+- Desktop bridge admits a clickable `URL` only through the centralized `desktopSafePublicSourcePageURL` helper.
+- Desktop rendering uses the bridge-admitted `clickableSourcePageURL`; it no longer constructs a clickable URL directly from raw source-link text.
+- `image_url` and `thumbnail_url` are never card targets, never passed to link-opening APIs, and never rendered as media.
+- Unsafe, private, localhost, loopback, link-local, multicast, metadata-service, `file:`, `javascript:`, `data:`, `mailto:`, and `ftp:` URLs are blocked before clickability.
+- Link opening remains user-click-only through native SwiftUI `Link`; Selene does not prefetch, follow redirects, auto-open, or render pages internally.
+- No WebView, OpenGraph/Twitter preview, image preview, thumbnail, full image, image/photo card, image byte download, or raw image cache is introduced.
+- TTS remains based on authoritative answer text only; card URLs and metadata are not added to spoken text.
+- Accessibility labels name title/domain/provider and do not expose raw full URLs by default.
+- Brave remains isolated as provider-specific policy/proof logic; the card shape and Desktop render path stay provider-agnostic.
+- Live Brave H392/H393 proof maps real Brave metadata into source-link-only card metadata and click-safety metadata without printing secrets, downloading image bytes, rendering thumbnails/full images, auto-opening links, or emitting `WEB_IMAGE_SOURCE_CARD_PASS`.
+
+H393 result posture:
+
+- `H393_SOURCE_LINK_CARD_CLICK_SAFETY_PASS`
+- `WEB_IMAGE_SOURCE_LINK_CARD_SAFE_CLICK_PASS`
+- `WEB_IMAGE_SOURCE_LINK_CARD_USER_CLICK_ONLY_PASS`
+- `WEB_IMAGE_SOURCE_LINK_CARD_PUBLIC_HTTP_ONLY_PASS`
+- `WEB_IMAGE_SOURCE_LINK_CARD_UNSAFE_URL_BLOCKED_PASS`
+- `WEB_IMAGE_SOURCE_LINK_CARD_IMAGE_URL_NOT_CLICKABLE_PASS`
+- `WEB_IMAGE_SOURCE_LINK_CARD_THUMBNAIL_URL_NOT_CLICKABLE_PASS`
+- `WEB_IMAGE_SOURCE_LINK_CARD_NO_AUTO_OPEN_PASS`
+- `WEB_IMAGE_SOURCE_LINK_CARD_EXTERNAL_BROWSER_ONLY_PASS`
+- `WEB_IMAGE_SOURCE_LINK_CARD_NO_WEBVIEW_PASS`
+- `WEB_IMAGE_SOURCE_LINK_CARD_NO_OPENGRAPH_PASS`
+- `WEB_IMAGE_SOURCE_LINK_CARD_NO_IMAGE_PREVIEW_PASS`
+- `WEB_IMAGE_SOURCE_LINK_CARD_ACCESSIBILITY_PASS`
+- `WEB_IMAGE_SOURCE_LINK_CARD_TTS_EXCLUDED_PASS`
+- `WEB_IMAGE_SOURCE_LINK_CARD_PROVIDER_AGNOSTIC_PASS`
+- `WEB_IMAGE_SOURCE_LINK_CARD_BRAVE_ISOLATED_PASS`
+- `WEB_IMAGE_SOURCE_CARD_PASS_BLOCKED`
+
 ## Future Implementation Step
 
 Complete an approved license/display-safety policy for Brave image metadata, or select an additional approved image metadata provider if Brave cannot provide explicit license/usage and display-safety fields. Only after that proof may a separate sourced image/photo card UI/display build be authorized.

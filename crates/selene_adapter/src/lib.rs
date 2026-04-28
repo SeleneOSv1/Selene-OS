@@ -520,6 +520,9 @@ pub struct VoiceTurnSourceLinkCitationCard {
     pub source_title: String,
     pub source_domain: String,
     pub source_page_url: String,
+    pub clickable_source_page_url: Option<String>,
+    pub clickable_url_admitted: bool,
+    pub click_blocked_reason: Option<String>,
     pub retrieved_at: u64,
     pub citation_index: Option<usize>,
     pub attribution_text: Option<String>,
@@ -12162,6 +12165,14 @@ fn deep_research_metadata_from_tool_response(
         .collect::<Vec<_>>();
     let source_link_citation_cards =
         parse_source_link_citation_cards(source_link_citation_card_packet);
+    for card_class in source_link_citation_cards
+        .iter()
+        .flat_map(|card| card.result_classes.iter())
+    {
+        if !result_classes.iter().any(|existing| existing == card_class) {
+            result_classes.push(card_class.clone());
+        }
+    }
 
     Some(VoiceTurnDeepResearchMetadata {
         report: VoiceTurnResearchReportMetadata {
@@ -12696,6 +12707,14 @@ fn parse_source_link_citation_cards(packet: &str) -> Vec<VoiceTurnSourceLinkCita
     else {
         return Vec::new();
     };
+    let clickable_source_page_url = packet_field_value(packet, "clickable_source_page_url")
+        .unwrap_or(source_page_url);
+    if !packet_field_bool(packet, "clickable_url_admitted")
+        || !adapter_source_link_public_http_url(clickable_source_page_url)
+        || clickable_source_page_url != source_page_url
+    {
+        return Vec::new();
+    }
     let derived_domain = adapter_domain_from_http_url(source_page_url);
     let Some(source_domain) =
         packet_field_value(packet, "source_domain").or(derived_domain.as_deref())
@@ -12729,6 +12748,11 @@ fn parse_source_link_citation_cards(packet: &str) -> Vec<VoiceTurnSourceLinkCita
         source_title: truncate_utf8(source_title, 180),
         source_domain: truncate_utf8(source_domain, 128),
         source_page_url: truncate_utf8(source_page_url, 2048),
+        clickable_source_page_url: Some(truncate_utf8(clickable_source_page_url, 2048)),
+        clickable_url_admitted: true,
+        click_blocked_reason: packet_field_value(packet, "click_blocked_reason")
+            .filter(|value| *value != "none")
+            .map(|value| truncate_utf8(value, 96)),
         retrieved_at: packet_field_value(packet, "retrieved_at")
             .and_then(|value| value.parse::<u64>().ok())
             .unwrap_or_default(),
@@ -12794,12 +12818,26 @@ fn adapter_domain_from_http_url(url: &str) -> Option<String> {
     let rest = url
         .strip_prefix("https://")
         .or_else(|| url.strip_prefix("http://"))?;
-    let domain = rest
+    let host_port = rest
         .split(['/', '?', '#'])
         .next()
         .unwrap_or_default()
         .trim()
         .trim_matches('.');
+    if host_port.is_empty() || host_port.contains('@') {
+        return None;
+    }
+    let domain = if host_port.starts_with('[') {
+        host_port
+            .split_once(']')
+            .map(|(host, _)| host.trim_start_matches('[').to_string())?
+    } else {
+        host_port
+            .split(':')
+            .next()
+            .map(str::to_string)
+            .unwrap_or_default()
+    };
     if domain.is_empty() {
         None
     } else {
@@ -12816,6 +12854,10 @@ fn adapter_source_link_public_http_url(url: &str) -> bool {
     }
     if domain == "localhost"
         || domain == "metadata.google.internal"
+        || domain == "::1"
+        || domain.starts_with("fc")
+        || domain.starts_with("fd")
+        || domain.starts_with("fe80")
         || domain.ends_with(".localhost")
         || domain.ends_with(".local")
     {
@@ -22144,7 +22186,7 @@ mod tests {
                 extracted_fields: vec![
                     selene_kernel_contracts::ph1e::ToolStructuredField {
                         key: "source_link_citation_card_packet".to_string(),
-                        value: "card_id=source_link_1;provider=brave;provider_specific_source_id=brave_image_search;source_title=Verified source;source_domain=example.com;source_page_url=https://example.com/verified-source;retrieved_at=1770000000000;citation_index=1;attribution_text=POWERED_BY_BRAVE;source_link_use_allowed=true;safe_public_source_url=true;thumbnail_display_allowed=false;full_image_display_allowed=false;sourced_image_card_allowed=false;image_url_used_for_display=false;thumbnail_url_used_for_display=false;no_image_bytes_downloaded=true;no_raw_image_cache=true;text_citation_still_required=true;policy_outcome=BRAVE_IMAGE_DISPLAY_POLICY_METADATA_AND_SOURCE_LINK_ONLY;layout_reference_reason=user_screenshot_layout_reference_only_no_images;screenshot_not_evidence=true;proof_id=H392;result_classes=H392_SOURCE_LINK_ONLY_CITATION_CARD_PASS,WEB_IMAGE_SOURCE_LINK_ONLY_CARD_PASS,WEB_IMAGE_SOURCE_LINK_CARD_PROVIDER_AGNOSTIC_PASS,WEB_IMAGE_SOURCE_LINK_CARD_BRAVE_ISOLATED_PASS"
+                        value: "card_id=source_link_1;provider=brave;provider_specific_source_id=brave_image_search;source_title=Verified source;source_domain=example.com;source_page_url=https://example.com/verified-source;clickable_source_page_url=https://example.com/verified-source;clickable_url_admitted=true;click_blocked_reason=none;retrieved_at=1770000000000;citation_index=1;attribution_text=POWERED_BY_BRAVE;source_link_use_allowed=true;safe_public_source_url=true;thumbnail_display_allowed=false;full_image_display_allowed=false;sourced_image_card_allowed=false;image_url_used_for_display=false;thumbnail_url_used_for_display=false;no_image_bytes_downloaded=true;no_raw_image_cache=true;text_citation_still_required=true;policy_outcome=BRAVE_IMAGE_DISPLAY_POLICY_METADATA_AND_SOURCE_LINK_ONLY;layout_reference_reason=layout_reference_only;screenshot_not_evidence=true;proof_id=H393;result_classes=H393_SOURCE_LINK_CARD_CLICK_SAFETY_PASS,WEB_IMAGE_SOURCE_LINK_CARD_SAFE_CLICK_PASS"
                             .to_string(),
                     },
                     selene_kernel_contracts::ph1e::ToolStructuredField {
@@ -22176,6 +22218,12 @@ mod tests {
         assert_eq!(card.provider, "brave");
         assert_eq!(card.source_domain, "example.com");
         assert_eq!(card.source_page_url, "https://example.com/verified-source");
+        assert_eq!(
+            card.clickable_source_page_url.as_deref(),
+            Some("https://example.com/verified-source")
+        );
+        assert!(card.clickable_url_admitted);
+        assert!(card.click_blocked_reason.is_none());
         assert!(card.source_link_use_allowed);
         assert!(card.safe_public_source_url);
         assert!(!card.thumbnail_display_allowed);
@@ -22189,7 +22237,10 @@ mod tests {
         assert!(card.screenshot_not_evidence);
         assert!(card
             .result_classes
-            .contains(&"WEB_IMAGE_SOURCE_LINK_CARD_PROVIDER_AGNOSTIC_PASS".to_string()));
+            .contains(&"H393_SOURCE_LINK_CARD_CLICK_SAFETY_PASS".to_string()));
+        assert!(metadata
+            .result_classes
+            .contains(&"H393_SOURCE_LINK_CARD_CLICK_SAFETY_PASS".to_string()));
         assert!(!metadata
             .result_classes
             .contains(&"WEB_IMAGE_SOURCE_CARD_PASS".to_string()));
@@ -22197,10 +22248,74 @@ mod tests {
 
     #[test]
     fn h392_source_link_card_parser_blocks_unsafe_or_image_display_packets() {
-        let private = "card_id=source_link_1;provider=brave;source_title=Private;source_domain=127.0.0.1;source_page_url=http://127.0.0.1/private;source_link_use_allowed=true;safe_public_source_url=true;thumbnail_display_allowed=false;full_image_display_allowed=false;sourced_image_card_allowed=false;image_url_used_for_display=false;thumbnail_url_used_for_display=false";
+        let private = "card_id=source_link_1;provider=brave;source_title=Private;source_domain=127.0.0.1;source_page_url=http://127.0.0.1/private;clickable_source_page_url=http://127.0.0.1/private;clickable_url_admitted=true;source_link_use_allowed=true;safe_public_source_url=true;thumbnail_display_allowed=false;full_image_display_allowed=false;sourced_image_card_allowed=false;image_url_used_for_display=false;thumbnail_url_used_for_display=false";
         assert!(parse_source_link_citation_cards(private).is_empty());
-        let image_target = "card_id=source_link_1;provider=brave;source_title=Image target;source_domain=example.com;source_page_url=https://example.com/source;source_link_use_allowed=true;safe_public_source_url=true;thumbnail_display_allowed=true;full_image_display_allowed=false;sourced_image_card_allowed=false;image_url_used_for_display=true;thumbnail_url_used_for_display=false";
+        let image_target = "card_id=source_link_1;provider=brave;source_title=Image target;source_domain=example.com;source_page_url=https://example.com/source;clickable_source_page_url=https://example.com/source;clickable_url_admitted=true;source_link_use_allowed=true;safe_public_source_url=true;thumbnail_display_allowed=true;full_image_display_allowed=false;sourced_image_card_allowed=false;image_url_used_for_display=true;thumbnail_url_used_for_display=false";
         assert!(parse_source_link_citation_cards(image_target).is_empty());
+    }
+
+    #[test]
+    fn h393_source_link_card_click_safety_admits_source_page_only() {
+        let safe = "card_id=source_link_1;provider=brave;provider_specific_source_id=brave_image_search;source_title=Verified source;source_domain=example.com;source_page_url=https://example.com/source;clickable_source_page_url=https://example.com/source;clickable_url_admitted=true;click_blocked_reason=none;source_link_use_allowed=true;safe_public_source_url=true;thumbnail_display_allowed=false;full_image_display_allowed=false;sourced_image_card_allowed=false;image_url_used_for_display=false;thumbnail_url_used_for_display=false;no_image_bytes_downloaded=true;no_raw_image_cache=true;text_citation_still_required=true;policy_outcome=BRAVE_IMAGE_DISPLAY_POLICY_METADATA_AND_SOURCE_LINK_ONLY;screenshot_not_evidence=true;result_classes=H393_SOURCE_LINK_CARD_CLICK_SAFETY_PASS,WEB_IMAGE_SOURCE_LINK_CARD_SAFE_CLICK_PASS,WEB_IMAGE_SOURCE_LINK_CARD_IMAGE_URL_NOT_CLICKABLE_PASS,WEB_IMAGE_SOURCE_LINK_CARD_THUMBNAIL_URL_NOT_CLICKABLE_PASS";
+        let cards = parse_source_link_citation_cards(safe);
+        assert_eq!(cards.len(), 1);
+        let card = &cards[0];
+        assert_eq!(card.source_page_url, "https://example.com/source");
+        assert_eq!(
+            card.clickable_source_page_url.as_deref(),
+            Some("https://example.com/source")
+        );
+        assert!(card.clickable_url_admitted);
+        assert!(card.click_blocked_reason.is_none());
+        assert!(!card.image_url_used_for_display);
+        assert!(!card.thumbnail_url_used_for_display);
+        assert!(card
+            .result_classes
+            .contains(&"WEB_IMAGE_SOURCE_LINK_CARD_IMAGE_URL_NOT_CLICKABLE_PASS".to_string()));
+        assert!(card
+            .result_classes
+            .contains(&"WEB_IMAGE_SOURCE_LINK_CARD_THUMBNAIL_URL_NOT_CLICKABLE_PASS".to_string()));
+
+        let mismatched_clickable = safe.replace(
+            "clickable_source_page_url=https://example.com/source",
+            "clickable_source_page_url=https://cdn.example.com/image.jpg",
+        );
+        assert!(parse_source_link_citation_cards(&mismatched_clickable).is_empty());
+
+        let unadmitted = safe.replace("clickable_url_admitted=true", "clickable_url_admitted=false");
+        assert!(parse_source_link_citation_cards(&unadmitted).is_empty());
+    }
+
+    #[test]
+    fn h393_source_link_card_url_helper_blocks_unsafe_click_targets() {
+        assert!(adapter_source_link_public_http_url("https://example.com/source"));
+        assert!(adapter_source_link_public_http_url("http://example.com/source"));
+
+        for blocked in [
+            "",
+            "not a url",
+            "file:///tmp/source.html",
+            "javascript:alert(1)",
+            "data:text/html,hello",
+            "mailto:news@example.com",
+            "ftp://example.com/file",
+            "http://localhost/source",
+            "http://127.0.0.1/source",
+            "http://[::1]/source",
+            "http://10.0.0.2/source",
+            "http://172.16.0.1/source",
+            "http://192.168.1.10/source",
+            "http://169.254.169.254/latest/meta-data",
+            "http://224.0.0.1/source",
+            "http://metadata.google.internal/source",
+            "https://example.local/source",
+            "https://example.localhost/source",
+        ] {
+            assert!(
+                !adapter_source_link_public_http_url(blocked),
+                "{blocked} must not become a clickable source-link card"
+            );
+        }
     }
 
     #[test]

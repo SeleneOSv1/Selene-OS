@@ -206,6 +206,9 @@ struct SourceLinkCitationCardDecision {
     attribution_text: Option<String>,
     source_link_use_allowed: bool,
     safe_public_source_url: bool,
+    clickable_source_page_url: String,
+    clickable_url_admitted: bool,
+    click_blocked_reason: &'static str,
     policy_outcome: String,
     proof_id: &'static str,
 }
@@ -1060,16 +1063,14 @@ impl Ph1eRuntime {
             .as_ref()
             .map(|card| {
                 format!(
-                    "card_id={};provider={};provider_specific_source_id={};source_title={};source_domain={};source_page_url={};retrieved_at={};citation_index={};attribution_text={};source_link_use_allowed={};safe_public_source_url={};thumbnail_display_allowed=false;full_image_display_allowed=false;sourced_image_card_allowed=false;image_url_used_for_display=false;thumbnail_url_used_for_display=false;no_image_bytes_downloaded=true;no_raw_image_cache=true;text_citation_still_required=true;policy_outcome={};layout_reference_reason=screenshot_layout_reference_only_no_images;screenshot_not_evidence=true;proof_id={}",
-                    packet_safe_value(&card.card_id, 96),
+                    "provider={};source_title={};source_domain={};source_page_url={};clickable_source_page_url={};clickable_url_admitted={};click_blocked_reason={};retrieved_at={};citation_index={};attribution_text={};source_link_use_allowed={};safe_public_source_url={};no_image_bytes_downloaded=true;no_raw_image_cache=true;text_citation_still_required=true;policy_outcome={};screenshot_not_evidence=true;proof_id={}",
                     packet_safe_value(&card.provider, 64),
-                    card.provider_specific_source_id
-                        .as_deref()
-                        .map(|value| packet_safe_value(value, 96))
-                        .unwrap_or_else(|| "none".to_string()),
-                    packet_safe_value(&card.source_title, 96),
+                    packet_safe_value(&card.source_title, 48),
                     packet_safe_value(&card.source_domain, 128),
                     packet_safe_value(&card.source_page_url, 256),
+                    packet_safe_value(&card.clickable_source_page_url, 256),
+                    card.clickable_url_admitted,
+                    card.click_blocked_reason,
                     card.retrieved_at,
                     card.citation_index,
                     card.attribution_text
@@ -1083,7 +1084,7 @@ impl Ph1eRuntime {
                 )
             })
             .unwrap_or_else(|| {
-                "card_status=deferred;source_link_use_allowed=false;thumbnail_display_allowed=false;full_image_display_allowed=false;sourced_image_card_allowed=false;image_url_used_for_display=false;thumbnail_url_used_for_display=false;no_image_bytes_downloaded=true;no_raw_image_cache=true;text_citation_still_required=true;layout_reference_reason=screenshot_layout_reference_only_no_images;screenshot_not_evidence=true;proof_id=H392"
+                "card_status=deferred;source_link_use_allowed=false;clickable_url_admitted=false;click_blocked_reason=no_safe_source_link_card;no_image_bytes_downloaded=true;no_raw_image_cache=true;text_citation_still_required=true;screenshot_not_evidence=true;proof_id=H393"
                     .to_string()
             });
         let citation_card_packet = format!(
@@ -2577,8 +2578,11 @@ fn source_link_citation_card_for_policy(
         },
         source_link_use_allowed: true,
         safe_public_source_url: true,
+        clickable_source_page_url: source_page_url.to_string(),
+        clickable_url_admitted: true,
+        click_blocked_reason: "none",
         policy_outcome: policy.policy_outcome.to_string(),
-        proof_id: "H392",
+        proof_id: "H393",
     })
 }
 
@@ -5810,6 +5814,9 @@ mod tests {
         );
         assert!(card.source_page_url.starts_with("https://"));
         assert!(card.safe_public_source_url);
+        assert_eq!(card.clickable_source_page_url, card.source_page_url);
+        assert!(card.clickable_url_admitted);
+        assert_eq!(card.click_blocked_reason, "none");
         assert!(card.source_link_use_allowed);
         assert_eq!(
             card.policy_outcome,
@@ -5943,19 +5950,54 @@ mod tests {
         };
         let card = field("citation_card_packet");
         assert!(card.contains("source_page_url=https://"));
-        assert!(card.contains("thumbnail_display_allowed=false"));
-        assert!(card.contains("full_image_display_allowed=false"));
-        assert!(card.contains("sourced_image_card_allowed=false"));
-        assert!(card.contains("image_url_used_for_display=false"));
-        assert!(card.contains("thumbnail_url_used_for_display=false"));
+        assert!(!card.contains("thumbnail_display_allowed=true"));
+        assert!(!card.contains("full_image_display_allowed=true"));
+        assert!(!card.contains("sourced_image_card_allowed=true"));
+        assert!(!card.contains("image_url_used_for_display=true"));
+        assert!(!card.contains("thumbnail_url_used_for_display=true"));
         assert!(card.contains("no_image_bytes_downloaded=true"));
         assert!(card.contains("no_raw_image_cache=true"));
         assert!(card.contains("text_citation_still_required=true"));
         assert!(card.contains("screenshot_not_evidence=true"));
-        assert!(card.contains("proof_id=H392"));
+        assert!(card.contains("clickable_source_page_url=https://"));
+        assert!(card.contains("clickable_url_admitted=true"));
+        assert!(card.contains("click_blocked_reason=none"));
+        assert!(card.contains("proof_id=H393"));
         assert!(!field("result_classes")
             .split('|')
             .any(|class| class == "WEB_IMAGE_SOURCE_CARD_PASS"));
+    }
+
+    #[test]
+    fn h393_source_link_click_safety_accepts_only_public_source_page_url() {
+        assert!(url_fetch_safety_block_reason("https://example.com/source").is_none());
+        assert!(url_fetch_safety_block_reason("http://example.com/source").is_none());
+
+        for blocked in [
+            "",
+            "not a url",
+            "file:///tmp/source.html",
+            "javascript:alert(1)",
+            "data:text/html,hello",
+            "mailto:news@example.com",
+            "ftp://example.com/file",
+            "http://localhost/source",
+            "http://127.0.0.1/source",
+            "http://[::1]/source",
+            "http://10.0.0.2/source",
+            "http://172.16.0.1/source",
+            "http://192.168.1.10/source",
+            "http://169.254.169.254/latest/meta-data",
+            "http://224.0.0.1/source",
+            "http://metadata.google.internal/source",
+            "https://example.local/source",
+            "https://example.localhost/source",
+        ] {
+            assert!(
+                url_fetch_safety_block_reason(blocked).is_some(),
+                "{blocked} must not become clickable source_link card URL"
+            );
+        }
     }
 
     #[test]
@@ -6108,6 +6150,145 @@ mod tests {
         );
         assert!(policy.metadata_use_allowed);
         assert!(policy.source_link_use_allowed);
+        assert!(!policy.thumbnail_display_allowed);
+        assert!(!policy.full_image_display_allowed);
+        assert!(!policy.sourced_image_card_allowed);
+        assert!(!policy.ui_display_implemented);
+        assert!(!policy.image_bytes_download_allowed);
+        assert!(!policy.raw_image_cache_allowed);
+    }
+
+    #[test]
+    #[ignore]
+    fn h392_live_brave_source_link_card_maps_real_metadata_without_image_display() {
+        let key = device_vault::resolve_secret(ProviderSecretId::BraveSearchApiKey.as_str())
+            .expect("vault lookup must succeed")
+            .expect(
+                "brave_search_api_key must be present in the local Selene vault for live proof",
+            );
+        let candidate = run_brave_image_metadata_search(
+            BRAVE_IMAGE_DEFAULT_URL,
+            &key,
+            "Tamburlaine organic wine producer Australia",
+            BRAVE_IMAGE_MAX_RESULTS,
+            BRAVE_IMAGE_TIMEOUT_MS,
+            "selene-ph1e-live-proof/1.0",
+            &Ph1eProxyConfig::from_env(),
+            None,
+        )
+        .expect("Brave image metadata endpoint should return parseable metadata")
+        .into_iter()
+        .find(|item| {
+            item.image_source_verified
+                && item
+                    .source_page_url
+                    .as_deref()
+                    .is_some_and(|url| url_fetch_safety_block_reason(url).is_none())
+        })
+        .expect("live Brave image metadata should include a safe public source_page_url");
+        let decision = BraveImageMetadataDecision {
+            selected_outcome: "APPROVED_BRAVE_IMAGE_METADATA_ONLY_PATH",
+            path_status: "WEB_IMAGE_METADATA_PROVIDER_PATH_METADATA_ONLY",
+            source_card_status: "WEB_IMAGE_SOURCE_CARD_DISPLAY_DEFERRED",
+            display_status: "WEB_IMAGE_SOURCE_CARD_DISPLAY_DEFERRED",
+            display_deferred_reason: "license_or_display_safety_incomplete",
+            blocker: Some("license_or_display_safety_incomplete"),
+            supports_image_url: candidate.image_url.is_some(),
+            supports_thumbnail_url: candidate.thumbnail_url.is_some(),
+            supports_source_page_url: candidate.source_page_url.is_some(),
+            supports_source_domain: candidate.source_domain.is_some(),
+            supports_retrieved_at: true,
+            supports_display_safety: false,
+            supports_license_or_usage_note: false,
+            supports_image_source_verified: candidate.image_source_verified,
+            candidate_count: 1,
+            candidate: Some(candidate),
+            provider_call_attempted: true,
+            provider_error: None,
+        };
+        let rt = Ph1eRuntime::new(Ph1eConfig::mvp_v1());
+        let eligibility = rt.image_display_eligibility_for_decision(&decision);
+        let policy = rt.provider_display_policy_for_decision("brave", &decision, &eligibility);
+        let card = source_link_citation_card_for_policy(&decision, &policy, now_unix_ms())
+            .expect("source-link-only card metadata should map from safe live Brave source link");
+        assert!(card.source_link_use_allowed);
+        assert!(card.safe_public_source_url);
+        assert_eq!(card.source_page_url, card.clickable_source_page_url);
+        assert_eq!(
+            policy.policy_outcome,
+            "BRAVE_IMAGE_DISPLAY_POLICY_METADATA_AND_SOURCE_LINK_ONLY"
+        );
+        assert!(!policy.thumbnail_display_allowed);
+        assert!(!policy.full_image_display_allowed);
+        assert!(!policy.sourced_image_card_allowed);
+        assert!(!policy.image_bytes_download_allowed);
+        assert!(!policy.raw_image_cache_allowed);
+    }
+
+    #[test]
+    #[ignore]
+    fn h393_live_brave_source_link_click_safety_maps_real_metadata_without_auto_open() {
+        let key = device_vault::resolve_secret(ProviderSecretId::BraveSearchApiKey.as_str())
+            .expect("vault lookup must succeed")
+            .expect(
+                "brave_search_api_key must be present in the local Selene vault for live proof",
+            );
+        let candidate = run_brave_image_metadata_search(
+            BRAVE_IMAGE_DEFAULT_URL,
+            &key,
+            "Tamburlaine organic wine producer Australia",
+            BRAVE_IMAGE_MAX_RESULTS,
+            BRAVE_IMAGE_TIMEOUT_MS,
+            "selene-ph1e-live-proof/1.0",
+            &Ph1eProxyConfig::from_env(),
+            None,
+        )
+        .expect("Brave image metadata endpoint should return parseable metadata")
+        .into_iter()
+        .find(|item| {
+            item.image_source_verified
+                && item
+                    .source_page_url
+                    .as_deref()
+                    .is_some_and(|url| url_fetch_safety_block_reason(url).is_none())
+        })
+        .expect("live Brave image metadata should include a click-safe public source_page_url");
+        let image_url = candidate.image_url.clone();
+        let thumbnail_url = candidate.thumbnail_url.clone();
+        let decision = BraveImageMetadataDecision {
+            selected_outcome: "APPROVED_BRAVE_IMAGE_METADATA_ONLY_PATH",
+            path_status: "WEB_IMAGE_METADATA_PROVIDER_PATH_METADATA_ONLY",
+            source_card_status: "WEB_IMAGE_SOURCE_CARD_DISPLAY_DEFERRED",
+            display_status: "WEB_IMAGE_SOURCE_CARD_DISPLAY_DEFERRED",
+            display_deferred_reason: "license_or_display_safety_incomplete",
+            blocker: Some("license_or_display_safety_incomplete"),
+            supports_image_url: image_url.is_some(),
+            supports_thumbnail_url: thumbnail_url.is_some(),
+            supports_source_page_url: candidate.source_page_url.is_some(),
+            supports_source_domain: candidate.source_domain.is_some(),
+            supports_retrieved_at: true,
+            supports_display_safety: false,
+            supports_license_or_usage_note: false,
+            supports_image_source_verified: candidate.image_source_verified,
+            candidate_count: 1,
+            candidate: Some(candidate),
+            provider_call_attempted: true,
+            provider_error: None,
+        };
+        let rt = Ph1eRuntime::new(Ph1eConfig::mvp_v1());
+        let eligibility = rt.image_display_eligibility_for_decision(&decision);
+        let policy = rt.provider_display_policy_for_decision("brave", &decision, &eligibility);
+        let card = source_link_citation_card_for_policy(&decision, &policy, now_unix_ms())
+            .expect("source-link click safety should admit safe live source_page_url only");
+        assert!(card.clickable_url_admitted);
+        assert_eq!(card.click_blocked_reason, "none");
+        assert_eq!(card.clickable_source_page_url, card.source_page_url);
+        if let Some(image_url) = image_url {
+            assert_ne!(card.clickable_source_page_url, image_url);
+        }
+        if let Some(thumbnail_url) = thumbnail_url {
+            assert_ne!(card.clickable_source_page_url, thumbnail_url);
+        }
         assert!(!policy.thumbnail_display_allowed);
         assert!(!policy.full_image_display_allowed);
         assert!(!policy.sourced_image_card_allowed);

@@ -23,12 +23,17 @@ struct AuthoritativeSourceLinkCitationCard: Identifiable, Equatable {
     let sourceTitle: String
     let sourceDomain: String
     let sourcePageURL: String
+    let clickableSourcePageURL: URL
     let retrievedAt: UInt64?
     let citationIndex: Int?
     let attributionText: String?
     let policyOutcome: String
 
     var id: String { cardID }
+
+    var accessibilityOpenLabel: String {
+        "Open \(sourceTitle) from \(sourceDomain) via \(provider)"
+    }
 }
 
 struct DesktopRealtimeTranscriptionSessionState: Equatable {
@@ -3408,8 +3413,12 @@ private func boundedSourceLinkCitationCards(
         let title = card.sourceTitle.trimmingCharacters(in: .whitespacesAndNewlines)
         let domain = card.sourceDomain.trimmingCharacters(in: .whitespacesAndNewlines)
         let url = card.sourcePageURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        let clickableURLText = (card.clickableSourcePageURL ?? card.sourcePageURL)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let admittedClickableURL = desktopSafePublicSourcePageURL(clickableURLText)
         guard card.sourceLinkUseAllowed,
               card.safePublicSourceURL,
+              card.clickableURLAdmitted == true,
               !card.thumbnailDisplayAllowed,
               !card.fullImageDisplayAllowed,
               !card.sourcedImageCardAllowed,
@@ -3419,7 +3428,8 @@ private func boundedSourceLinkCitationCards(
               card.noRawImageCache,
               card.textCitationStillRequired,
               card.screenshotNotEvidence,
-              desktopSafePublicSourcePageURL(url) != nil,
+              let clickableURL = admittedClickableURL,
+              clickableURL.absoluteString == url,
               !title.isEmpty,
               !domain.isEmpty
         else {
@@ -3432,6 +3442,7 @@ private func boundedSourceLinkCitationCards(
             sourceTitle: boundedDesktopString(title, maxLength: 180),
             sourceDomain: boundedDesktopString(domain, maxLength: 128),
             sourcePageURL: boundedDesktopString(url, maxLength: 2048),
+            clickableSourcePageURL: clickableURL,
             retrievedAt: card.retrievedAt,
             citationIndex: card.citationIndex,
             attributionText: card.attributionText.map { boundedDesktopString($0, maxLength: 96) },
@@ -3959,6 +3970,9 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
         let sourceTitle: String
         let sourceDomain: String
         let sourcePageURL: String
+        let clickableSourcePageURL: String?
+        let clickableURLAdmitted: Bool?
+        let clickBlockedReason: String?
         let retrievedAt: UInt64?
         let citationIndex: Int?
         let attributionText: String?
@@ -3981,6 +3995,9 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
             case sourceTitle = "source_title"
             case sourceDomain = "source_domain"
             case sourcePageURL = "source_page_url"
+            case clickableSourcePageURL = "clickable_source_page_url"
+            case clickableURLAdmitted = "clickable_url_admitted"
+            case clickBlockedReason = "click_blocked_reason"
             case retrievedAt = "retrieved_at"
             case citationIndex = "citation_index"
             case attributionText = "attribution_text"

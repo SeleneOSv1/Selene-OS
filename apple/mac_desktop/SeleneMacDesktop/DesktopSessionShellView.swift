@@ -1297,9 +1297,14 @@ private struct DesktopAuthoritativeReplyProvenanceRenderState: Equatable {
         let sourceTitle: String
         let sourceDomain: String
         let sourcePageURL: String
+        let clickableSourcePageURL: URL
         let attributionText: String?
 
         var id: String { cardID }
+
+        var accessibilityOpenLabel: String {
+            "Open \(sourceTitle) from \(sourceDomain) via \(provider)"
+        }
     }
 
     let title: String
@@ -5695,6 +5700,48 @@ private enum DesktopShellSecondaryPanel: String, Identifiable {
     case developer
 
     var id: String { rawValue }
+}
+
+private struct DesktopSourceLinkCitationCardView: View {
+    let card: DesktopAuthoritativeReplyProvenanceRenderState.SourceLinkCitationCard
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(card.sourceTitle)
+                .font(.body.weight(.medium))
+                .lineLimit(2)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            HStack(spacing: 8) {
+                Text(card.sourceDomain)
+                    .font(.caption.weight(.medium))
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(Color.secondary.opacity(0.12), in: Capsule())
+
+                Text(card.provider)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                if let attributionText = card.attributionText,
+                   !attributionText.isEmpty {
+                    Text(attributionText)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            Link("Open source", destination: card.clickableSourcePageURL)
+                .font(.footnote.weight(.medium))
+                .accessibilityLabel(card.accessibilityOpenLabel)
+        }
+        .padding(10)
+        .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(Color.secondary.opacity(0.12), lineWidth: 1)
+        )
+    }
 }
 
 struct DesktopSessionShellView: View {
@@ -17743,47 +17790,7 @@ struct DesktopSessionShellView: View {
                                     .font(.subheadline.weight(.semibold))
 
                                 ForEach(desktopAuthoritativeReplyProvenanceRenderState.sourceLinkCitationCards) { card in
-                                    VStack(alignment: .leading, spacing: 8) {
-                                        Text(card.sourceTitle)
-                                            .font(.body.weight(.medium))
-                                            .lineLimit(2)
-                                            .frame(maxWidth: .infinity, alignment: .leading)
-
-                                        HStack(spacing: 8) {
-                                            Text(card.sourceDomain)
-                                                .font(.caption.weight(.medium))
-                                                .padding(.horizontal, 10)
-                                                .padding(.vertical, 5)
-                                                .background(Color.secondary.opacity(0.12), in: Capsule())
-
-                                            Text(card.provider)
-                                                .font(.caption)
-                                                .foregroundStyle(.secondary)
-
-                                            if let attributionText = card.attributionText,
-                                               !attributionText.isEmpty {
-                                                Text(attributionText)
-                                                    .font(.caption)
-                                                    .foregroundStyle(.secondary)
-                                            }
-                                        }
-
-                                        if let sourceURL = URL(string: card.sourcePageURL) {
-                                            Link("Open source", destination: sourceURL)
-                                                .font(.footnote.weight(.medium))
-                                                .accessibilityLabel("Open source page for \(card.sourceDomain)")
-                                        } else {
-                                            Text("Source link unavailable")
-                                                .font(.footnote)
-                                                .foregroundStyle(.secondary)
-                                        }
-                                    }
-                                    .padding(10)
-                                    .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-                                    .overlay(
-                                        RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                            .stroke(Color.secondary.opacity(0.12), lineWidth: 1)
-                                    )
+                                    DesktopSourceLinkCitationCardView(card: card)
                                 }
                             }
                         }
@@ -19121,6 +19128,7 @@ struct DesktopSessionShellView: View {
                             sourceTitle: $0.sourceTitle,
                             sourceDomain: $0.sourceDomain,
                             sourcePageURL: $0.sourcePageURL,
+                            clickableSourcePageURL: $0.clickableSourcePageURL,
                             attributionText: $0.attributionText
                         )
                     },
@@ -19266,6 +19274,7 @@ struct DesktopSessionShellView: View {
                             sourceTitle: $0.sourceTitle,
                             sourceDomain: $0.sourceDomain,
                             sourcePageURL: $0.sourcePageURL,
+                            clickableSourcePageURL: $0.clickableSourcePageURL,
                             attributionText: $0.attributionText
                         )
                     },
@@ -19388,6 +19397,7 @@ struct DesktopSessionShellView: View {
                             sourceTitle: $0.sourceTitle,
                             sourceDomain: $0.sourceDomain,
                             sourcePageURL: $0.sourcePageURL,
+                            clickableSourcePageURL: $0.clickableSourcePageURL,
                             attributionText: $0.attributionText
                         )
                     },
