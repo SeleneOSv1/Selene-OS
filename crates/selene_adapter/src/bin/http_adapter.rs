@@ -4106,6 +4106,87 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn h407_openai_tts_uses_exact_final_answer_text_hash_without_rewrite_or_raw_audio() {
+        let _guard = realtime_env_lock();
+        let permanent_key = "sk-test-permanent-key-never-exposed";
+        let audio_bytes = b"h407-fake-mp3-audio-bytes-from-openai".to_vec();
+        let expected_audio_sha = sha256_hex(&audio_bytes);
+        let expected_audio_base64 = BASE64_STANDARD.encode(&audio_bytes);
+        let mock = spawn_mock_openai_speech_server(200, "audio/mpeg", audio_bytes.clone());
+        let (vault_path, key_path) = isolated_realtime_vault_path(
+            "h407-tts-exact-final-text",
+            &[("openai_api_key", permanent_key)],
+        );
+        let vault_path_text = vault_path
+            .to_str()
+            .expect("test vault path should be valid UTF-8")
+            .to_string();
+        let _unset_openai = ScopedEnvVar::unset("OPENAI_API_KEY");
+        let _vault_scope = ScopedEnvVar::set("SELENE_DEVICE_VAULT_PATH", &vault_path_text);
+        let _endpoint_scope = ScopedEnvVar::set("OPENAI_AUDIO_SPEECH_URL", &mock.url);
+
+        let state = test_state_with_config(IngressSecurityConfig::from_env());
+        let mut request = base_openai_tts_speech_request();
+        request.response_text =
+            "  Final Selene runtime answer for H407 exact TTS proof.  ".to_string();
+        request.request_id = Some("voice_turn_request_h407_exact_tts".to_string());
+        let expected_tts_input = "Final Selene runtime answer for H407 exact TTS proof.";
+        let expected_answer_sha = sha256_hex(expected_tts_input.as_bytes());
+        let now_ms = system_time_now_ms();
+        let headers = security_headers(
+            Some(bearer_for(&request.actor_user_id, &request.device_id)),
+            "req-h407-tts-exact",
+            "idem-h407-tts-exact",
+            now_ms,
+            "nonce-h407-tts-exact",
+        );
+        let response = run_desktop_openai_tts_speech(State(state), headers, Json(request)).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let body: DesktopOpenAiTtsSpeechResponse = decode_json_response(response).await;
+        assert!(body.ok);
+        assert_eq!(body.outcome, "OPENAI_TTS_SPEECH_CREATED");
+        assert_eq!(
+            body.answer_text_sha256.as_deref(),
+            Some(expected_answer_sha.as_str())
+        );
+        assert_eq!(
+            body.audio_sha256.as_deref(),
+            Some(expected_audio_sha.as_str())
+        );
+        assert_eq!(
+            body.audio_base64.as_deref(),
+            Some(expected_audio_base64.as_str())
+        );
+        assert_eq!(body.ai_voice_disclosure, "synthetic_ai_voice");
+        assert!(!body.fallback_allowed);
+        let serialized = serde_json::to_string(&body).expect("response should serialize");
+        assert!(!serialized.contains(permanent_key));
+
+        let request_text = mock
+            .request_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("mock provider should receive request");
+        assert!(request_text.contains("POST /v1/audio/speech"));
+        assert!(request_text
+            .contains("\"input\":\"Final Selene runtime answer for H407 exact TTS proof.\""));
+        for forbidden in [
+            "partial transcript",
+            "candidate interpretation",
+            "stale previous answer",
+            "raw_audio",
+            "audio_capture_ref",
+        ] {
+            assert!(
+                !request_text.contains(forbidden),
+                "OpenAI TTS request used forbidden non-final-answer material: {forbidden}"
+            );
+        }
+        mock.join.join().expect("mock provider thread should join");
+        let _ = fs::remove_file(vault_path);
+        let _ = fs::remove_file(key_path);
+    }
+
+    #[tokio::test]
     async fn ingress_openai_tts_rejects_more_than_one_request_per_turn() {
         let _guard = realtime_env_lock();
         let permanent_key = "sk-test-permanent-key-never-exposed";

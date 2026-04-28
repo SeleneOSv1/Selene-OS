@@ -22891,6 +22891,222 @@ mod tests {
         });
     }
 
+    #[test]
+    fn h407_voice_like_public_committed_turns_preserve_public_lane_and_h406_presentation() {
+        with_isolated_empty_device_vault("h407_public_voice_like_committed_turns", || {
+            let runtime = AdapterRuntime::default();
+
+            for (idx, prompt) in [
+                "Tell me a joke.",
+                "What time is it in New York? Use 24-hour time.",
+                "Search latest public climate news and keep it short.",
+                "Prepare a simple profit and loss report template.",
+                "请用一句话介绍 Selene。",
+                "Can you explain 这个功能 in simple English?",
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                let mut req = base_request();
+                req.app_platform = "DESKTOP".to_string();
+                req.correlation_id = 40_701 + idx as u64;
+                req.turn_id = 50_701 + idx as u64;
+                req.device_id = Some(format!("h407_public_voice_device_{idx}"));
+                req.user_text_final = Some(prompt.to_string());
+                seed_desktop_voice_profile_for_request(
+                    &runtime,
+                    &mut req,
+                    &format!("h407_public_voice_{idx}"),
+                );
+                let out = runtime
+                    .run_voice_turn(req)
+                    .expect("public voice-like final turn should complete");
+                assert_eq!(out.status, "ok", "{prompt}: {out:?}");
+                assert_no_h406_public_refusal(&out.response_text);
+                assert!(
+                    !out.response_text
+                        .contains("NO_SIMULATION_NO_AUTHORITY_NO_PROTECTED_EXECUTION"),
+                    "{prompt}: {}",
+                    out.response_text
+                );
+                if prompt.contains("24-hour") {
+                    assert!(!out.response_text.contains(" AM"), "{}", out.response_text);
+                    assert!(!out.response_text.contains(" PM"), "{}", out.response_text);
+                }
+                if prompt.contains("profit and loss report template") {
+                    assert!(out
+                        .response_text
+                        .contains("Simple Profit and Loss Template"));
+                    assert!(out
+                        .response_text
+                        .contains("not official company accounting execution"));
+                }
+            }
+        });
+
+        let endpoint = h361_spawn_tomorrow_weather_endpoint(
+            r#"{
+                "data": {
+                    "time": "2026-04-25T03:00:00Z",
+                    "values": {
+                        "temperature": 22.0,
+                        "humidity": 50,
+                        "windSpeed": 3.0,
+                        "weatherCode": 1000
+                    }
+                },
+                "location": {
+                    "name": "Sydney, Australia"
+                }
+            }"#,
+        );
+        with_isolated_device_vault(
+            "h407_public_voice_weather",
+            &[],
+            &[
+                ("SELENE_REALTIME_TOMORROW_IO_ENDPOINT", endpoint.as_str()),
+                ("SELENE_REALTIME_TOMORROW_IO_API_KEY", "h407-secret"),
+                ("SELENE_REALTIME_WEATHER_API_KEY", " "),
+                ("SELENE_REALTIME_PROXY_MODE", "off"),
+            ],
+            || {
+                let runtime = AdapterRuntime::default();
+                let mut weather_req = base_request();
+                weather_req.app_platform = "DESKTOP".to_string();
+                weather_req.correlation_id = 40_720;
+                weather_req.turn_id = 50_720;
+                weather_req.device_id = Some("h407_public_voice_weather_device".to_string());
+                weather_req.user_text_final =
+                    Some("What's the weather in Sydney today? Keep it short.".to_string());
+                seed_desktop_voice_profile_for_request(
+                    &runtime,
+                    &mut weather_req,
+                    "h407_public_voice_weather",
+                );
+                let weather_out = runtime
+                    .run_voice_turn(weather_req)
+                    .expect("public voice-like weather turn should complete");
+                assert_eq!(weather_out.status, "ok", "{weather_out:?}");
+                assert_eq!(weather_out.outcome, "FINAL_TOOL", "{weather_out:?}");
+                assert!(weather_out.response_text.contains("Sydney"));
+                assert!(
+                    weather_out.response_text.chars().count() <= 120,
+                    "{}",
+                    weather_out.response_text
+                );
+                assert_no_h406_public_refusal(&weather_out.response_text);
+            },
+        );
+    }
+
+    #[test]
+    fn h407_voice_like_protected_committed_turns_stay_fail_closed_without_execution() {
+        with_isolated_empty_device_vault("h407_protected_voice_like_fail_closed", || {
+            let runtime = AdapterRuntime::default();
+            for (idx, prompt) in [
+                "Approve payroll for Tim.",
+                "Increase Tim's salary.",
+                "Run the official company P&L from accounting records.",
+                "Analyze this CSV and update payroll.",
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                let mut req = base_request();
+                req.app_platform = "DESKTOP".to_string();
+                req.correlation_id = 40_730 + idx as u64;
+                req.turn_id = 50_730 + idx as u64;
+                req.device_id = Some(format!("h407_protected_voice_device_{idx}"));
+                req.user_text_final = Some(prompt.to_string());
+                seed_desktop_voice_profile_for_request(
+                    &runtime,
+                    &mut req,
+                    &format!("h407_protected_voice_{idx}"),
+                );
+                let out = runtime
+                    .run_voice_turn(req)
+                    .expect("protected voice-like turn should return fail-closed response");
+                assert_eq!(out.status, "ok", "{prompt}: {out:?}");
+                assert!(
+                    out.response_text
+                        .contains("NO_SIMULATION_NO_AUTHORITY_NO_PROTECTED_EXECUTION"),
+                    "{prompt}: {}",
+                    out.response_text
+                );
+                assert!(
+                    out.provenance.is_none(),
+                    "protected voice-like turn must not produce public provenance: {prompt}"
+                );
+            }
+        });
+    }
+
+    #[test]
+    fn h407_partial_transcripts_remain_preview_and_do_not_execute_final_or_protected_actions() {
+        with_isolated_empty_device_vault("h407_partial_transcript_preview_only", || {
+            let runtime = AdapterRuntime::default();
+
+            let mut public_partial = base_request();
+            public_partial.app_platform = "DESKTOP".to_string();
+            public_partial.correlation_id = 40_740;
+            public_partial.turn_id = 50_740;
+            public_partial.device_id = Some("h407_partial_public_device".to_string());
+            public_partial.user_text_partial = Some("Tell me a jo".to_string());
+            seed_desktop_voice_profile_for_request(
+                &runtime,
+                &mut public_partial,
+                "h407_partial_public",
+            );
+            let public_out = runtime
+                .run_voice_turn(public_partial)
+                .expect("partial public transcript should remain a safe preview");
+            assert_eq!(public_out.status, "ok", "{public_out:?}");
+            assert_no_h406_public_refusal(&public_out.response_text);
+
+            let mut protected_partial = base_request();
+            protected_partial.app_platform = "DESKTOP".to_string();
+            protected_partial.correlation_id = 40_741;
+            protected_partial.turn_id = 50_741;
+            protected_partial.device_id = Some("h407_partial_protected_device".to_string());
+            protected_partial.user_text_partial = Some("Approve payroll for Ti".to_string());
+            seed_desktop_voice_profile_for_request(
+                &runtime,
+                &mut protected_partial,
+                "h407_partial_protected",
+            );
+            let protected_out = runtime
+                .run_voice_turn(protected_partial)
+                .expect("partial protected transcript must not execute protected action");
+            assert_eq!(protected_out.status, "ok", "{protected_out:?}");
+            assert!(
+                !protected_out
+                    .response_text
+                    .contains("NO_SIMULATION_NO_AUTHORITY_NO_PROTECTED_EXECUTION"),
+                "{}",
+                protected_out.response_text
+            );
+            assert!(protected_out.provenance.is_none());
+
+            let transcript = runtime.ui_chat_transcript_report(Some(407_000));
+            assert!(transcript.messages.iter().any(|message| {
+                !message.finalized && message.role == "USER" && message.text == "Tell me a jo"
+            }));
+            assert!(transcript.messages.iter().any(|message| {
+                !message.finalized
+                    && message.role == "USER"
+                    && message.text == "Approve payroll for Ti"
+            }));
+            assert!(!transcript.messages.iter().any(|message| {
+                message.finalized
+                    && (message.text == "Tell me a jo"
+                        || message.text == "Approve payroll for Ti"
+                        || message
+                            .text
+                            .contains("NO_SIMULATION_NO_AUTHORITY_NO_PROTECTED_EXECUTION"))
+            }));
+        });
+    }
+
     fn assert_no_h406_public_refusal(text: &str) {
         let lower = text.to_ascii_lowercase();
         for forbidden in [
