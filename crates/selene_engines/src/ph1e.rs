@@ -34,7 +34,7 @@ const GDELT_DOC_ENDPOINT_LABEL: &str = "gdelt_doc_2_artlist";
 const GDELT_DOCS_URL: &str = "https://blog.gdeltproject.org/gdelt-doc-2-0-api-debuts/";
 const GDELT_REALTIME_DOCS_URL: &str =
     "https://blog.gdeltproject.org/gdelt-2-0-our-global-world-in-realtime/";
-const GDELT_OFFICIAL_DOCS_RETRIEVED_AT: &str = "2026-04-28T06:03:09Z";
+const GDELT_OFFICIAL_DOCS_RETRIEVED_AT: &str = "2026-04-28T07:23:34Z";
 const GDELT_MAX_RECORDS: u8 = 5;
 const GDELT_TIMEOUT_MS: u32 = 2_000;
 const GDELT_RESPONSE_SIZE_LIMIT_BYTES: u64 = 128 * 1024;
@@ -57,6 +57,12 @@ const H397_OUTCOME_PROVIDER_NETWORK_ISOLATED_ACTIONABLE_BLOCKER: &str =
     "GDELT_PROVIDER_NETWORK_ISOLATED_ACTIONABLE_BLOCKER";
 const H397_OUTCOME_PROVIDER_NETWORK_STILL_UNAVAILABLE_SAFE_DEGRADED: &str =
     "GDELT_PROVIDER_NETWORK_STILL_UNAVAILABLE_SAFE_DEGRADED";
+const H398_OUTCOME_PROXY_ROUTE_REPAIRED_RUST_DOC_API_PARSED: &str =
+    "GDELT_PROXY_ROUTE_REPAIRED_RUST_DOC_API_PARSED";
+const H398_OUTCOME_PROXY_ROUTE_ISOLATED_ACTIONABLE_BLOCKER: &str =
+    "GDELT_PROXY_ROUTE_ISOLATED_ACTIONABLE_BLOCKER";
+const H398_OUTCOME_ROUTE_ENVIRONMENT_UNAVAILABLE_SAFE_DEGRADED: &str =
+    "GDELT_ROUTE_ENVIRONMENT_UNAVAILABLE_SAFE_DEGRADED";
 
 pub mod reason_codes {
     use selene_kernel_contracts::ReasonCodeId;
@@ -281,12 +287,23 @@ struct GdeltCorroborationDecision {
     h395_transport_outcome: &'static str,
     h396_transport_outcome: &'static str,
     h397_availability_outcome: &'static str,
+    h398_route_outcome: &'static str,
     direct_curl_probe_status: String,
     rust_transport_probe_status: String,
     official_docs_reachability_status: String,
     doc_api_reachability_status: String,
     rust_docs_tls_reachability_status: String,
     curl_docs_tls_reachability_status: String,
+    system_proxy_detected: bool,
+    system_proxy_host_redacted: String,
+    system_proxy_port_recorded: String,
+    dns_route_class: String,
+    dns_route_detail_redacted: String,
+    proxy_or_intercept_suspected: bool,
+    proxy_dns_intercept_detected: bool,
+    proxy_tls_intercept_suspected: bool,
+    provider_route_failure_class: Option<String>,
+    provider_route_failure_detail_redacted: Option<String>,
     provider_network_failure_class: Option<String>,
     provider_network_failure_detail_redacted: Option<String>,
     rust_transport_failure_class: Option<String>,
@@ -2490,6 +2507,25 @@ fn gdelt_corroboration_decision_with_transport_proof(
     let rust_docs_tls_reachability_status =
         gdelt_rust_docs_tls_reachability_status(&doc_api_reachability_status);
     let curl_docs_tls_reachability_status = gdelt_curl_docs_tls_reachability_status();
+    let system_proxy_detected = gdelt_system_proxy_detected(&direct_curl_probe_status);
+    let system_proxy_host_redacted = gdelt_system_proxy_host_redacted(&direct_curl_probe_status);
+    let system_proxy_port_recorded = gdelt_system_proxy_port_recorded(&direct_curl_probe_status);
+    let dns_route_class = gdelt_dns_route_class(
+        &direct_curl_probe_status,
+        provider_failure_reason.as_deref(),
+    );
+    let dns_route_detail_redacted =
+        gdelt_dns_route_detail_redacted(&dns_route_class, &direct_curl_probe_status);
+    let proxy_dns_intercept_detected =
+        dns_route_class == "reserved_198_18_proxy_or_benchmark_route";
+    let proxy_tls_intercept_suspected = gdelt_proxy_tls_intercept_suspected(
+        &direct_curl_probe_status,
+        provider_failure_reason.as_deref(),
+        system_proxy_detected,
+        proxy_dns_intercept_detected,
+    );
+    let proxy_or_intercept_suspected =
+        system_proxy_detected || proxy_dns_intercept_detected || proxy_tls_intercept_suspected;
     let provider_network_failure_class = gdelt_provider_network_failure_class(
         &response_status,
         provider_failure_reason.as_deref(),
@@ -2498,9 +2534,28 @@ fn gdelt_corroboration_decision_with_transport_proof(
         &official_docs_reachability_status,
     )
     .map(ToString::to_string);
-    let provider_network_failure_detail_redacted = provider_network_failure_class
-        .as_deref()
-        .map(|class| {
+    let provider_route_failure_class = gdelt_provider_route_failure_class(
+        &response_status,
+        provider_failure_reason.as_deref(),
+        &direct_curl_probe_status,
+        provider_network_failure_class.as_deref(),
+        proxy_or_intercept_suspected,
+        proxy_dns_intercept_detected,
+        proxy_tls_intercept_suspected,
+        &doc_api_reachability_status,
+    )
+    .map(ToString::to_string);
+    let provider_route_failure_detail_redacted =
+        provider_route_failure_class.as_deref().map(|class| {
+            gdelt_provider_route_failure_detail(
+                class,
+                &dns_route_class,
+                &direct_curl_probe_status,
+                &doc_api_reachability_status,
+            )
+        });
+    let provider_network_failure_detail_redacted =
+        provider_network_failure_class.as_deref().map(|class| {
             gdelt_provider_network_failure_detail(
                 class,
                 provider_failure_reason.as_deref(),
@@ -2516,13 +2571,18 @@ fn gdelt_corroboration_decision_with_transport_proof(
         rust_transport_failure_class.as_deref(),
         provider_network_failure_class.as_deref(),
     );
+    let h398_route_outcome = gdelt_h398_route_outcome(
+        records.len(),
+        provider_failure_reason.as_deref(),
+        provider_route_failure_class.as_deref(),
+    );
 
     GdeltCorroborationDecision {
         provider: "GDELT",
         provider_role: "corroboration",
         provider_primary: false,
         provider_replaces_brave: false,
-        policy_version: "H397_V1",
+        policy_version: "H398_V1",
         official_docs_reviewed: true,
         official_docs_urls: vec![GDELT_DOCS_URL, GDELT_REALTIME_DOCS_URL],
         official_docs_retrieved_at: GDELT_OFFICIAL_DOCS_RETRIEVED_AT,
@@ -2554,6 +2614,7 @@ fn gdelt_corroboration_decision_with_transport_proof(
         h395_transport_outcome,
         h396_transport_outcome,
         h397_availability_outcome,
+        h398_route_outcome,
         direct_curl_probe_status: if direct_curl_probe_status
             == "external_curl_probe_recorded_separately"
         {
@@ -2566,6 +2627,16 @@ fn gdelt_corroboration_decision_with_transport_proof(
         doc_api_reachability_status,
         rust_docs_tls_reachability_status,
         curl_docs_tls_reachability_status,
+        system_proxy_detected,
+        system_proxy_host_redacted,
+        system_proxy_port_recorded,
+        dns_route_class,
+        dns_route_detail_redacted,
+        proxy_or_intercept_suspected,
+        proxy_dns_intercept_detected,
+        proxy_tls_intercept_suspected,
+        provider_route_failure_class,
+        provider_route_failure_detail_redacted,
         provider_network_failure_class,
         provider_network_failure_detail_redacted,
         rust_transport_failure_class,
@@ -2573,7 +2644,7 @@ fn gdelt_corroboration_decision_with_transport_proof(
         curl_and_rust_compared: true,
         official_docs_vs_doc_api_separated: true,
         source_agreement_scoring_deferred: true,
-        proof_id: "H397",
+        proof_id: "H398",
     }
 }
 
@@ -2609,6 +2680,20 @@ fn gdelt_h397_availability_outcome(
     } else {
         H397_OUTCOME_PROVIDER_NETWORK_STILL_UNAVAILABLE_SAFE_DEGRADED
     }
+}
+
+fn gdelt_h398_route_outcome(
+    record_count: usize,
+    provider_failure_reason: Option<&str>,
+    provider_route_failure_class: Option<&str>,
+) -> &'static str {
+    if provider_failure_reason.is_none() && record_count > 0 {
+        return H398_OUTCOME_PROXY_ROUTE_REPAIRED_RUST_DOC_API_PARSED;
+    }
+    if provider_route_failure_class.is_some() {
+        return H398_OUTCOME_PROXY_ROUTE_ISOLATED_ACTIONABLE_BLOCKER;
+    }
+    H398_OUTCOME_ROUTE_ENVIRONMENT_UNAVAILABLE_SAFE_DEGRADED
 }
 
 fn gdelt_official_docs_reachability_status() -> String {
@@ -2649,7 +2734,9 @@ fn gdelt_doc_api_reachability_status(
         "api_rate_limited".to_string()
     } else if lowered_curl.contains("http000")
         || lowered_curl.contains("http_000")
+        || lowered_curl.contains("http_status:000")
         || lowered_curl.contains("ssl_error_syscall")
+        || lowered_curl.contains("ssl connection timeout")
     {
         "api_http000_tls".to_string()
     } else if lowered_status.contains("tls") {
@@ -2673,11 +2760,15 @@ fn gdelt_provider_network_failure_class(
     official_docs_reachability_status: &str,
 ) -> Option<&'static str> {
     if provider_failure_reason.is_none()
-        && !response_status.to_ascii_lowercase().contains("provider_failed")
+        && !response_status
+            .to_ascii_lowercase()
+            .contains("provider_failed")
     {
         return None;
     }
-    let lowered_provider_reason = provider_failure_reason.unwrap_or_default().to_ascii_lowercase();
+    let lowered_provider_reason = provider_failure_reason
+        .unwrap_or_default()
+        .to_ascii_lowercase();
     if lowered_provider_reason.contains("provider_disabled")
         || lowered_provider_reason.contains("query_blocked")
         || lowered_provider_reason.contains("endpoint_blocked")
@@ -2691,12 +2782,16 @@ fn gdelt_provider_network_failure_class(
     }
     if (lowered_curl.contains("http000")
         || lowered_curl.contains("http_000")
-        || lowered_curl.contains("ssl_error_syscall"))
+        || lowered_curl.contains("http_status:000")
+        || lowered_curl.contains("ssl_error_syscall")
+        || lowered_curl.contains("ssl connection timeout"))
         && docs_reachable
     {
         return Some("proxy_or_intercept_suspected");
     }
-    if direct_curl_probe_status.eq_ignore_ascii_case("curl_ok") && rust_transport_failure_class.is_some() {
+    if direct_curl_probe_status.eq_ignore_ascii_case("curl_ok")
+        && rust_transport_failure_class.is_some()
+    {
         return Some("rust_client_mismatch");
     }
     match rust_transport_failure_class {
@@ -2738,6 +2833,173 @@ fn gdelt_provider_network_failure_detail(
         direct_curl_probe_status,
         official_docs_reachability_status,
         doc_api_reachability_status
+    );
+    gdelt_redacted_failure_detail(&raw)
+}
+
+fn gdelt_system_proxy_detected(direct_curl_probe_status: &str) -> bool {
+    let lowered = direct_curl_probe_status.to_ascii_lowercase();
+    lowered.contains("proxy=localhost")
+        || lowered.contains("proxy=127.0.0.1")
+        || lowered.contains("system_proxy=localhost")
+        || lowered.contains("system_proxy=127.0.0.1")
+        || lowered.contains("127.0.0.1:7897")
+}
+
+fn gdelt_system_proxy_host_redacted(direct_curl_probe_status: &str) -> String {
+    if gdelt_system_proxy_detected(direct_curl_probe_status) {
+        "localhost".to_string()
+    } else if direct_curl_probe_status
+        .to_ascii_lowercase()
+        .contains("proxy=")
+    {
+        "redacted_proxy_host".to_string()
+    } else {
+        "none".to_string()
+    }
+}
+
+fn gdelt_system_proxy_port_recorded(direct_curl_probe_status: &str) -> String {
+    let lowered = direct_curl_probe_status.to_ascii_lowercase();
+    for marker in [
+        "port=",
+        "proxy=localhost:",
+        "proxy=127.0.0.1:",
+        "127.0.0.1:",
+    ] {
+        if let Some((_, tail)) = lowered.split_once(marker) {
+            let digits: String = tail.chars().take_while(|ch| ch.is_ascii_digit()).collect();
+            if !digits.is_empty() && digits.len() <= 5 {
+                return digits;
+            }
+        }
+    }
+    "none".to_string()
+}
+
+fn gdelt_dns_route_class(
+    direct_curl_probe_status: &str,
+    provider_failure_reason: Option<&str>,
+) -> String {
+    let combined = format!(
+        "{} {}",
+        direct_curl_probe_status,
+        provider_failure_reason.unwrap_or_default()
+    )
+    .to_ascii_lowercase();
+    if combined.contains("198.18.") || combined.contains("198.19.") {
+        "reserved_198_18_proxy_or_benchmark_route".to_string()
+    } else if combined.contains("dns") {
+        "dns_failure_or_unresolved".to_string()
+    } else {
+        "not_reported".to_string()
+    }
+}
+
+fn gdelt_dns_route_detail_redacted(
+    dns_route_class: &str,
+    direct_curl_probe_status: &str,
+) -> String {
+    if dns_route_class == "reserved_198_18_proxy_or_benchmark_route" {
+        "host_route=reserved_198_18".to_string()
+    } else if direct_curl_probe_status
+        .to_ascii_lowercase()
+        .contains("dns")
+    {
+        "host_route=dns_failure_redacted".to_string()
+    } else {
+        "not_reported".to_string()
+    }
+}
+
+fn gdelt_proxy_tls_intercept_suspected(
+    direct_curl_probe_status: &str,
+    provider_failure_reason: Option<&str>,
+    system_proxy_detected: bool,
+    proxy_dns_intercept_detected: bool,
+) -> bool {
+    let combined = format!(
+        "{} {}",
+        direct_curl_probe_status,
+        provider_failure_reason.unwrap_or_default()
+    )
+    .to_ascii_lowercase();
+    (system_proxy_detected || proxy_dns_intercept_detected)
+        && (combined.contains("ssl")
+            || combined.contains("tls")
+            || combined.contains("certificate")
+            || combined.contains("cert")
+            || combined.contains("http000")
+            || combined.contains("http_000")
+            || combined.contains("timeout"))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn gdelt_provider_route_failure_class(
+    response_status: &str,
+    provider_failure_reason: Option<&str>,
+    direct_curl_probe_status: &str,
+    provider_network_failure_class: Option<&str>,
+    proxy_or_intercept_suspected: bool,
+    proxy_dns_intercept_detected: bool,
+    proxy_tls_intercept_suspected: bool,
+    doc_api_reachability_status: &str,
+) -> Option<&'static str> {
+    if provider_failure_reason.is_none()
+        && !response_status
+            .to_ascii_lowercase()
+            .contains("provider_failed")
+    {
+        return None;
+    }
+    let combined = format!(
+        "{} {} {}",
+        direct_curl_probe_status,
+        provider_failure_reason.unwrap_or_default(),
+        doc_api_reachability_status
+    )
+    .to_ascii_lowercase();
+    if combined.contains("429") || combined.contains("rate_limited") {
+        return Some("provider_rate_limited");
+    }
+    if proxy_dns_intercept_detected {
+        return Some("proxy_dns_intercept_detected");
+    }
+    if proxy_tls_intercept_suspected {
+        return Some("proxy_tls_intercept_untrusted");
+    }
+    if combined.contains("proxy_required") {
+        return Some("proxy_required_not_supported");
+    }
+    if proxy_or_intercept_suspected
+        && (combined.contains("timeout") || combined.contains("http000"))
+    {
+        return Some("proxy_configured_but_unusable");
+    }
+    match provider_network_failure_class {
+        Some("rust_client_mismatch") => Some("rust_proxy_behavior_mismatch"),
+        Some("local_network_blocked") => Some("local_network_blocked"),
+        Some("provider_endpoint_unavailable") => Some("provider_endpoint_blocked"),
+        Some("provider_rate_limited") => Some("provider_rate_limited"),
+        Some("proxy_or_intercept_suspected") => Some("other_proxy_tls_failure"),
+        Some("certificate_chain_failure") => Some("proxy_tls_intercept_untrusted"),
+        Some(_) if combined.contains("tls") || combined.contains("ssl") => {
+            Some("other_proxy_tls_failure")
+        }
+        Some(_) => Some("other_proxy_tls_failure"),
+        None => None,
+    }
+}
+
+fn gdelt_provider_route_failure_detail(
+    class: &str,
+    dns_route_class: &str,
+    direct_curl_probe_status: &str,
+    doc_api_reachability_status: &str,
+) -> String {
+    let raw = format!(
+        "class={class} dns_route={dns_route_class} curl={} doc_api={doc_api_reachability_status}",
+        direct_curl_probe_status
     );
     gdelt_redacted_failure_detail(&raw)
 }
@@ -2889,12 +3151,36 @@ fn gdelt_failure_class_from_response_status(
 }
 
 fn gdelt_redacted_failure_detail(detail: &str) -> String {
-    let sanitized = detail
+    let redacted_credentials = redact_inline_credentials(detail);
+    let sanitized = redacted_credentials
         .replace("https://", "https_redacted://")
         .replace("http://", "http_redacted://")
         .replace('?', "_query_redacted_")
         .replace('&', "_");
     truncate_ascii(&packet_safe_value(&sanitized, 96), 96)
+}
+
+fn redact_inline_credentials(detail: &str) -> String {
+    let mut out = String::with_capacity(detail.len());
+    let mut rest = detail;
+    while let Some(scheme_pos) = rest.find("://") {
+        let scheme_end = scheme_pos + 3;
+        out.push_str(&rest[..scheme_end]);
+        let after_scheme = &rest[scheme_end..];
+        let token_end = after_scheme
+            .find(|ch: char| ch.is_ascii_whitespace() || matches!(ch, ';' | ','))
+            .unwrap_or(after_scheme.len());
+        let token = &after_scheme[..token_end];
+        if let Some((_, after_at)) = token.rsplit_once('@') {
+            out.push_str("redacted@");
+            out.push_str(after_at);
+        } else {
+            out.push_str(token);
+        }
+        rest = &after_scheme[token_end..];
+    }
+    out.push_str(rest);
+    out
 }
 
 #[cfg(test)]
@@ -2939,6 +3225,7 @@ fn gdelt_primary_result_class(decision: &GdeltCorroborationDecision) -> &'static
     }
 }
 
+#[cfg(test)]
 fn gdelt_h396_result_class(decision: &GdeltCorroborationDecision) -> &'static str {
     if decision.h396_transport_outcome == H396_OUTCOME_RUST_TLS_REPAIRED_LIVE_PARSED {
         "H396_GDELT_RUST_TLS_TRANSPORT_REPAIR_PASS"
@@ -2950,15 +3237,29 @@ fn gdelt_h396_result_class(decision: &GdeltCorroborationDecision) -> &'static st
 }
 
 #[cfg(test)]
+fn gdelt_h398_result_class(decision: &GdeltCorroborationDecision) -> &'static str {
+    if decision.h398_route_outcome == H398_OUTCOME_PROXY_ROUTE_REPAIRED_RUST_DOC_API_PARSED {
+        "H398_GDELT_PROXY_DNS_TLS_ROUTE_REPAIR_PASS"
+    } else if decision.h398_route_outcome == H398_OUTCOME_PROXY_ROUTE_ISOLATED_ACTIONABLE_BLOCKER {
+        "H398_GDELT_PROXY_ROUTE_ISOLATED_ACTIONABLE_BLOCKER"
+    } else {
+        "H398_GDELT_ROUTE_ENVIRONMENT_UNAVAILABLE_SAFE_DEGRADED"
+    }
+}
+
+#[cfg(test)]
+#[cfg(test)]
 fn gdelt_result_classes(decision: &GdeltCorroborationDecision) -> Vec<&'static str> {
     let mut classes = vec![
         gdelt_primary_result_class(decision),
         gdelt_h396_result_class(decision),
+        gdelt_h398_result_class(decision),
         "GDELT_OFFICIAL_DOCS_REVIEWED_PASS",
         "GDELT_PROVIDER_ISOLATED_PASS",
         "GDELT_CURL_VS_RUST_PROOF_RECORDED_PASS",
         "GDELT_OFFICIAL_DOCS_VS_DOC_API_SEPARATED_PASS",
         "GDELT_NO_INSECURE_TLS_BYPASS_PASS",
+        "GDELT_SYSTEM_PROXY_REDACTED_PASS",
         "GDELT_PUBLIC_HTTP_API_PASS",
         "GDELT_BOUNDED_QUERY_PASS",
         "GDELT_NO_RAW_QUERY_STORAGE_PASS",
@@ -2996,6 +3297,7 @@ fn gdelt_result_classes(decision: &GdeltCorroborationDecision) -> Vec<&'static s
         classes.push("GDELT_RUST_LIVE_TRANSPORT_PASS");
         classes.push("GDELT_RUST_DOC_API_PARSE_PASS");
         classes.push("GDELT_DOC_API_REACHABILITY_PASS");
+        classes.push("GDELT_PROXY_ROUTE_REPAIRED_RUST_DOC_API_PARSED");
     } else {
         classes.push("GDELT_PROVIDER_FAILURE_SAFE_DEGRADED_PASS");
         classes.push("GDELT_RUST_LIVE_TRANSPORT_SAFE_DEGRADED");
@@ -3081,20 +3383,13 @@ fn gdelt_result_classes(decision: &GdeltCorroborationDecision) -> Vec<&'static s
         classes.push("GDELT_DOC_API_RATE_LIMITED_SAFE_DEGRADED");
         classes.push("GDELT_PROVIDER_RATE_LIMIT_CLASSIFIED_PASS");
     }
-    if decision
-        .doc_api_reachability_status
-        .contains("http000")
-    {
+    if decision.doc_api_reachability_status.contains("http000") {
         classes.push("GDELT_DOC_API_HTTP000_SAFE_DEGRADED");
     }
     if decision.doc_api_reachability_status.contains("tls") {
         classes.push("GDELT_DOC_API_TLS_FAILED_SAFE_DEGRADED");
     }
-    if decision
-        .provider_network_failure_class
-        .as_deref()
-        .is_some()
-    {
+    if decision.provider_network_failure_class.as_deref().is_some() {
         classes.push("GDELT_PROVIDER_NETWORK_FAILURE_CLASSIFIED_PASS");
     }
     if decision
@@ -3136,6 +3431,33 @@ fn gdelt_result_classes(decision: &GdeltCorroborationDecision) -> Vec<&'static s
     classes.push("GDELT_NO_FULL_REQUEST_URL_WITH_RAW_QUERY_STORAGE_PASS");
     classes.push("GDELT_TRANSPORT_RESPONSE_SIZE_BOUNDED_PASS");
     classes.push("GDELT_RUST_RESPONSE_SIZE_BOUNDED_PASS");
+    if decision.system_proxy_detected {
+        classes.push("GDELT_SYSTEM_PROXY_DETECTED_PASS");
+    }
+    if decision.dns_route_class != "not_reported" {
+        classes.push("GDELT_DNS_ROUTE_CLASSIFIED_PASS");
+    }
+    if decision.dns_route_class == "reserved_198_18_proxy_or_benchmark_route" {
+        classes.push("GDELT_DNS_198_18_ROUTE_CLASSIFIED_PASS");
+    }
+    if decision.proxy_dns_intercept_detected {
+        classes.push("GDELT_PROXY_DNS_INTERCEPT_DETECTED_PASS");
+    }
+    if decision.proxy_tls_intercept_suspected {
+        classes.push("GDELT_PROXY_TLS_INTERCEPT_SUSPECTED_PASS");
+    }
+    match decision.provider_route_failure_class.as_deref() {
+        Some("proxy_required_not_supported") => {
+            classes.push("GDELT_PROXY_REQUIRED_NOT_SUPPORTED_SAFE_DEGRADED")
+        }
+        Some("proxy_configured_but_unusable") => {
+            classes.push("GDELT_PROXY_CONFIGURED_BUT_UNUSABLE_SAFE_DEGRADED")
+        }
+        Some("provider_endpoint_blocked") => {
+            classes.push("GDELT_PROVIDER_ENDPOINT_BLOCKED_SAFE_DEGRADED")
+        }
+        _ => {}
+    }
     if decision.corroboration_status == "no_result" {
         classes.push("GDELT_NO_RESULT_SAFE_DEGRADED_PASS");
     }
@@ -3143,14 +3465,6 @@ fn gdelt_result_classes(decision: &GdeltCorroborationDecision) -> Vec<&'static s
 }
 
 fn gdelt_corroboration_packet(decision: &GdeltCorroborationDecision) -> String {
-    let matched_source_urls = gdelt_join_packet_values(
-        decision
-            .records
-            .iter()
-            .map(|record| record.source_url.as_str()),
-        40,
-        1,
-    );
     let matched_source_domains = gdelt_join_packet_values(
         decision
             .records
@@ -3160,7 +3474,6 @@ fn gdelt_corroboration_packet(decision: &GdeltCorroborationDecision) -> String {
         2,
     );
     let mut result_classes = vec![
-        gdelt_h396_result_class(decision),
         "GDELT_PROVIDER_SWAPPABILITY_PASS",
         "GDELT_DOES_NOT_REPLACE_BRAVE_PRIMARY_PASS",
         "GDELT_DOES_NOT_REPLACE_TEXT_CITATIONS_PASS",
@@ -3174,46 +3487,48 @@ fn gdelt_corroboration_packet(decision: &GdeltCorroborationDecision) -> String {
     if decision.provider_failure_reason.is_some() {
         result_classes.push("GDELT_PROVIDER_OPTIONAL_DEGRADED_PASS");
     }
-    if decision
-        .provider_network_failure_class
-        .as_deref()
-        .is_some_and(|class| class == "proxy_or_intercept_suspected")
-    {
-        result_classes.push("GDELT_PROXY_OR_INTERCEPT_SUSPECTED_CLASSIFIED_PASS");
-    }
     let result_classes = result_classes.join(",");
     format!(
-        "p={};role={};primary={};replaces_brave={};ver={};docs={};docs_urls=d|r;docs_at={};live_at={};qh={};rawq={};frqs=false;mode={};endpoint={};window={};max={};timeout={};limit={};status={};count={};bounded=true;outcome={};h396={};h397={};curl={};rust={};odr={};doc={};rdoc={};cdoc={};pnfc={};rfc={};crc={};odds={};sad={};urls={};domains={};corr={};reason={};ind={};same={};cross={};nr={};fail={};guards=docs_live_split,live_not_policy,no_text_replace,no_brave_replace,no_image,no_vgkg,no_gcp,no_scrape,no_bulk,docs_docapi_split;proof={};classes={}",
+        "p={};role={};primary={};replaces_brave={};docs={};qh={};rawq={};frqs=false;mode={};ep=doc2;window={};max={};to={};lim={};status={};n={};bounded=true;outcome={};h396={};h397={};h398={};curl={};rust={};odr={};doc={};sp={};sph={};spp={};dns={};dnsd={};px={};pxdns={};pxtls={};prfc={};prfd={};pnfc={};rfc={};crc={};odds={};sad={};dom={};corr={};rsn={};ind={};same={};cross={};nr={};fail={};guards=docs_live_split,live_not_policy,no_text_replace,no_brave_replace,no_image,no_vgkg,no_gcp,no_scrape,no_bulk;pid={};cls={}",
         decision.provider,
         decision.provider_role,
         decision.provider_primary,
         decision.provider_replaces_brave,
-        decision.policy_version,
         decision.official_docs_reviewed,
-        decision.official_docs_retrieved_at,
-        decision
-            .live_api_retrieved_at
-            .map(|value| value.to_string())
-            .unwrap_or_else(|| "none".to_string()),
-        decision.query_hash,
+        packet_safe_value(&decision.query_hash, 8),
         decision.raw_query_stored,
         decision.endpoint_mode,
-        decision.endpoint_url_label,
         decision.request_window,
         decision.max_records,
         decision.timeout_ms,
         decision.response_size_limit_bytes,
-        packet_safe_value(&decision.response_status, 96),
+        packet_safe_value(&decision.response_status, 48),
         decision.records.len(),
         gdelt_h395_outcome_code(decision.h395_transport_outcome),
         gdelt_h396_outcome_code(decision.h396_transport_outcome),
         gdelt_h397_outcome_code(decision.h397_availability_outcome),
-        packet_safe_value(&decision.direct_curl_probe_status, 48),
-        packet_safe_value(&decision.rust_transport_probe_status, 48),
-        packet_safe_value(&decision.official_docs_reachability_status, 40),
-        packet_safe_value(&decision.doc_api_reachability_status, 40),
-        packet_safe_value(&decision.rust_docs_tls_reachability_status, 40),
-        packet_safe_value(&decision.curl_docs_tls_reachability_status, 40),
+        gdelt_h398_outcome_code(decision.h398_route_outcome),
+        gdelt_probe_status_for_packet(&decision.direct_curl_probe_status, 32),
+        packet_safe_value(&decision.rust_transport_probe_status, 32),
+        packet_safe_value(&decision.official_docs_reachability_status, 32),
+        packet_safe_value(&decision.doc_api_reachability_status, 32),
+        decision.system_proxy_detected,
+        packet_safe_value(&decision.system_proxy_host_redacted, 16),
+        packet_safe_value(&decision.system_proxy_port_recorded, 8),
+        packet_safe_value(&decision.dns_route_class, 48),
+        packet_safe_value(&decision.dns_route_detail_redacted, 24),
+        decision.proxy_or_intercept_suspected,
+        decision.proxy_dns_intercept_detected,
+        decision.proxy_tls_intercept_suspected,
+        decision
+            .provider_route_failure_class
+            .as_deref()
+            .unwrap_or("none"),
+        decision
+            .provider_route_failure_detail_redacted
+            .as_deref()
+            .map(|value| packet_safe_value(value, 24))
+            .unwrap_or_else(|| "none".to_string()),
         decision
             .provider_network_failure_class
             .as_deref()
@@ -3225,7 +3540,6 @@ fn gdelt_corroboration_packet(decision: &GdeltCorroborationDecision) -> String {
         decision.curl_and_rust_compared,
         decision.official_docs_vs_doc_api_separated,
         decision.source_agreement_scoring_deferred,
-        matched_source_urls,
         matched_source_domains,
         decision.corroboration_status,
         gdelt_reason_code(decision.corroboration_reason),
@@ -3239,7 +3553,7 @@ fn gdelt_corroboration_packet(decision: &GdeltCorroborationDecision) -> String {
         decision
             .provider_failure_reason
             .as_deref()
-            .map(|value| packet_safe_value(value, 48))
+            .map(|value| packet_safe_value(value, 16))
             .unwrap_or_else(|| "none".to_string()),
         decision.proof_id,
         result_classes
@@ -3273,6 +3587,15 @@ fn gdelt_h397_outcome_code(outcome: &str) -> &'static str {
     }
 }
 
+fn gdelt_h398_outcome_code(outcome: &str) -> &'static str {
+    match outcome {
+        H398_OUTCOME_PROXY_ROUTE_REPAIRED_RUST_DOC_API_PARSED => "A",
+        H398_OUTCOME_PROXY_ROUTE_ISOLATED_ACTIONABLE_BLOCKER => "B",
+        H398_OUTCOME_ROUTE_ENVIRONMENT_UNAVAILABLE_SAFE_DEGRADED => "C",
+        _ => "C",
+    }
+}
+
 #[cfg(test)]
 fn gdelt_h395_transport_packet(decision: &GdeltCorroborationDecision) -> String {
     let mut classes = vec![
@@ -3297,7 +3620,7 @@ fn gdelt_h395_transport_packet(decision: &GdeltCorroborationDecision) -> String 
     format!(
         "h395_outcome={};curl={};rust={};rust_failure_class={};rust_failure_detail={};curl_rust_compared={};source_agreement_deferred={};scoring=deferred;proof=H395;classes={}",
         decision.h395_transport_outcome,
-        packet_safe_value(&decision.direct_curl_probe_status, 48),
+        gdelt_probe_status_for_packet(&decision.direct_curl_probe_status, 48),
         packet_safe_value(&decision.rust_transport_probe_status, 48),
         decision
             .rust_transport_failure_class
@@ -3323,6 +3646,14 @@ fn gdelt_reason_code(reason: &str) -> &'static str {
         }
         "bounded_metadata_returned_without_domain_correlation" => "metadata_no_domain_correlation",
         _ => "safe_degraded",
+    }
+}
+
+fn gdelt_probe_status_for_packet(status: &str, max_len: usize) -> String {
+    if status.contains("://") || status.contains('?') || status.contains('@') {
+        packet_safe_value(&gdelt_redacted_failure_detail(status), max_len)
+    } else {
+        packet_safe_value(status, max_len)
     }
 }
 
@@ -7761,7 +8092,9 @@ mod tests {
         );
         let success_packet = gdelt_corroboration_packet(&success);
         assert!(success_packet.contains("h396=A"));
-        assert!(success_packet.contains("H396_GDELT_RUST_TLS_TRANSPORT_REPAIR_PASS"));
+        assert!(
+            gdelt_result_classes(&success).contains(&"H396_GDELT_RUST_TLS_TRANSPORT_REPAIR_PASS")
+        );
         assert!(success_packet.contains("H394_GDELT_LIVE_CORROBORATION_PASS"));
 
         let rust_tls_failed = gdelt_corroboration_decision_with_transport_proof(
@@ -7783,7 +8116,8 @@ mod tests {
         );
         let rust_tls_packet = gdelt_corroboration_packet(&rust_tls_failed);
         assert!(rust_tls_packet.contains("h396=B"));
-        assert!(rust_tls_packet.contains("H396_GDELT_RUST_TRANSPORT_ACTIONABLE_SAFE_DEGRADED"));
+        assert!(gdelt_result_classes(&rust_tls_failed)
+            .contains(&"H396_GDELT_RUST_TRANSPORT_ACTIONABLE_SAFE_DEGRADED"));
         assert!(!rust_tls_packet.contains("source_agreement_score="));
 
         let rate_limited = gdelt_corroboration_decision_with_transport_proof(
@@ -7921,6 +8255,134 @@ mod tests {
         assert!(classes.contains(&"GDELT_PROVIDER_RATE_LIMIT_CLASSIFIED_PASS"));
         assert!(!packet.contains("source_agreement_score="));
         assert!(!packet.contains("WEB_PROVIDER_FANOUT_PASS"));
+    }
+
+    #[test]
+    fn h398_gdelt_route_outcomes_and_proxy_dns_fields_are_deterministic() {
+        let success_records = vec![GdeltArticleRecord {
+            source_url: "https://independent.example.org/story".to_string(),
+            source_domain: "independent.example.org".to_string(),
+            title: "Bounded public article".to_string(),
+            published_at: Some("20260428T010000Z".to_string()),
+            language_or_translation_signal: Some("English".to_string()),
+        }];
+        let success = gdelt_corroboration_decision_with_transport_proof(
+            "public climate news",
+            1_770_000_000_000,
+            "ok".to_string(),
+            success_records,
+            &[],
+            None,
+            "curl_ok".to_string(),
+        );
+        assert_eq!(
+            success.h398_route_outcome,
+            H398_OUTCOME_PROXY_ROUTE_REPAIRED_RUST_DOC_API_PARSED
+        );
+        let success_packet = gdelt_corroboration_packet(&success);
+        assert!(success_packet.contains("h398=A"));
+        assert!(gdelt_result_classes(&success)
+            .contains(&"GDELT_PROXY_ROUTE_REPAIRED_RUST_DOC_API_PARSED"));
+
+        let proxy_blocked = gdelt_corroboration_decision_with_transport_proof(
+            "public climate news",
+            1_770_000_000_000,
+            "provider_failed_timeout".to_string(),
+            Vec::new(),
+            &[],
+            Some("provider=gdelt error=timeout".to_string()),
+            "curl_http_status:000_ssl_connection_timeout_proxy=127.0.0.1:7897_remote=198.18.0.165"
+                .to_string(),
+        );
+        assert_eq!(
+            proxy_blocked.h398_route_outcome,
+            H398_OUTCOME_PROXY_ROUTE_ISOLATED_ACTIONABLE_BLOCKER
+        );
+        assert!(proxy_blocked.system_proxy_detected);
+        assert_eq!(proxy_blocked.system_proxy_host_redacted, "localhost");
+        assert_eq!(proxy_blocked.system_proxy_port_recorded, "7897");
+        assert_eq!(
+            proxy_blocked.dns_route_class,
+            "reserved_198_18_proxy_or_benchmark_route"
+        );
+        assert!(proxy_blocked.proxy_or_intercept_suspected);
+        assert!(proxy_blocked.proxy_dns_intercept_detected);
+        assert!(proxy_blocked.proxy_tls_intercept_suspected);
+        assert_eq!(
+            proxy_blocked.provider_route_failure_class.as_deref(),
+            Some("proxy_dns_intercept_detected")
+        );
+        let packet = gdelt_corroboration_packet(&proxy_blocked);
+        assert!(packet.contains("h398=B"));
+        assert!(packet.contains("sp=true"));
+        assert!(packet.contains("sph=localhost"));
+        assert!(packet.contains("spp=7897"));
+        assert!(packet.contains("dns=reserved_198_18_proxy_or_benchmark_route"));
+        assert!(packet.contains("pxdns=true"));
+        assert!(packet.contains("pxtls=true"));
+        assert!(packet.contains("prfc=proxy_dns_intercept_detected"));
+        let classes = gdelt_result_classes(&proxy_blocked);
+        assert!(classes.contains(&"GDELT_DNS_198_18_ROUTE_CLASSIFIED_PASS"));
+        assert!(classes.contains(&"GDELT_PROXY_DNS_INTERCEPT_DETECTED_PASS"));
+        assert!(!packet.contains("public climate news"));
+        assert!(!packet.contains("?query="));
+        assert!(
+            packet.len() <= 1024,
+            "gdelt packet must fit structured field limit, len={}",
+            packet.len()
+        );
+
+        let unavailable = gdelt_corroboration_decision_with_transport_proof(
+            "public climate news",
+            1_770_000_000_000,
+            "provider_disabled".to_string(),
+            Vec::new(),
+            &[],
+            Some("provider_disabled".to_string()),
+            "external_probe".to_string(),
+        );
+        assert_eq!(
+            unavailable.h398_route_outcome,
+            H398_OUTCOME_ROUTE_ENVIRONMENT_UNAVAILABLE_SAFE_DEGRADED
+        );
+        assert!(gdelt_corroboration_packet(&unavailable).contains("h398=C"));
+    }
+
+    #[test]
+    fn h398_proxy_details_are_redacted_and_source_agreement_remains_deferred() {
+        let decision = gdelt_corroboration_decision_with_transport_proof(
+            "public climate news",
+            1_770_000_000_000,
+            "provider_failed_tls".to_string(),
+            Vec::new(),
+            &[],
+            Some("provider=gdelt error=tls".to_string()),
+            "curl_http000_proxy=http://user:secret@127.0.0.1:7897_remote=198.18.0.165".to_string(),
+        );
+        let packet = gdelt_corroboration_packet(&decision);
+        assert!(packet.contains("sph=localhost"));
+        assert!(packet.contains("spp=7897"));
+        assert!(!packet.contains("user:secret"));
+        assert!(!packet.contains("http://user"));
+        assert!(!packet.contains("https://api.gdeltproject.org/api/v2/doc/doc?"));
+        assert!(packet.contains("rawq=false"));
+        assert!(packet.contains("frqs=false"));
+        assert!(packet.contains("sad=true"));
+        assert!(!packet.contains("source_agreement_score="));
+        assert!(!packet.contains("agreement_confidence="));
+        assert!(
+            packet.len() <= 1024,
+            "gdelt packet must fit structured field limit, len={}",
+            packet.len()
+        );
+
+        let classes = gdelt_result_classes(&decision);
+        assert!(classes.contains(&"GDELT_SYSTEM_PROXY_DETECTED_PASS"));
+        assert!(classes.contains(&"GDELT_SYSTEM_PROXY_REDACTED_PASS"));
+        assert!(classes.contains(&"GDELT_DNS_ROUTE_CLASSIFIED_PASS"));
+        assert!(classes.contains(&"GDELT_PROXY_TLS_INTERCEPT_SUSPECTED_PASS"));
+        assert!(classes.contains(&"GDELT_NO_INSECURE_TLS_BYPASS_PASS"));
+        assert!(classes.contains(&"GDELT_SOURCE_AGREEMENT_SCORING_DEFERRED"));
     }
 
     #[test]

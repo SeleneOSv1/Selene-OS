@@ -583,12 +583,23 @@ pub struct VoiceTurnGdeltCorroborationMetadata {
     pub h395_transport_outcome: String,
     pub h396_transport_outcome: String,
     pub h397_availability_outcome: String,
+    pub h398_route_outcome: String,
     pub direct_curl_probe_status: String,
     pub rust_transport_probe_status: String,
     pub official_docs_reachability_status: String,
     pub doc_api_reachability_status: String,
     pub rust_docs_tls_reachability_status: String,
     pub curl_docs_tls_reachability_status: String,
+    pub system_proxy_detected: bool,
+    pub system_proxy_host_redacted: String,
+    pub system_proxy_port_recorded: String,
+    pub dns_route_class: String,
+    pub dns_route_detail_redacted: String,
+    pub proxy_or_intercept_suspected: bool,
+    pub proxy_dns_intercept_detected: bool,
+    pub proxy_tls_intercept_suspected: bool,
+    pub provider_route_failure_class: Option<String>,
+    pub provider_route_failure_detail_redacted: Option<String>,
     pub provider_network_failure_class: Option<String>,
     pub provider_network_failure_detail_redacted: Option<String>,
     pub rust_transport_failure_class: Option<String>,
@@ -12912,12 +12923,17 @@ fn parse_gdelt_corroboration_packet(packet: &str) -> VoiceTurnGdeltCorroboration
                 .to_string(),
             h397_availability_outcome: "GDELT_PROVIDER_NETWORK_STILL_UNAVAILABLE_SAFE_DEGRADED"
                 .to_string(),
+            h398_route_outcome: "GDELT_ROUTE_ENVIRONMENT_UNAVAILABLE_SAFE_DEGRADED".to_string(),
             direct_curl_probe_status: "not_reported".to_string(),
             rust_transport_probe_status: "not_reported".to_string(),
             official_docs_reachability_status: "not_reported".to_string(),
             doc_api_reachability_status: "not_reported".to_string(),
             rust_docs_tls_reachability_status: "not_reported".to_string(),
             curl_docs_tls_reachability_status: "not_reported".to_string(),
+            system_proxy_host_redacted: "none".to_string(),
+            system_proxy_port_recorded: "none".to_string(),
+            dns_route_class: "not_reported".to_string(),
+            dns_route_detail_redacted: "not_reported".to_string(),
             curl_and_rust_compared: false,
             official_docs_vs_doc_api_separated: false,
             source_agreement_scoring_deferred: true,
@@ -13028,8 +13044,8 @@ fn parse_gdelt_corroboration_packet(packet: &str) -> VoiceTurnGdeltCorroboration
             .unwrap_or("not_reported")
             .to_string(),
         independent_source_count: packet_field_value_any(
-                packet,
-                &["independent_source_count", "independent", "ind"],
+            packet,
+            &["independent_source_count", "independent", "ind"],
         )
         .and_then(|value| value.parse::<usize>().ok())
         .unwrap_or_default(),
@@ -13069,6 +13085,10 @@ fn parse_gdelt_corroboration_packet(packet: &str) -> VoiceTurnGdeltCorroboration
             packet_field_value_any(packet, &["h397_availability_outcome", "h397"])
                 .unwrap_or("GDELT_PROVIDER_NETWORK_STILL_UNAVAILABLE_SAFE_DEGRADED"),
         ),
+        h398_route_outcome: normalize_h398_route_outcome(
+            packet_field_value_any(packet, &["h398_route_outcome", "h398"])
+                .unwrap_or("GDELT_ROUTE_ENVIRONMENT_UNAVAILABLE_SAFE_DEGRADED"),
+        ),
         direct_curl_probe_status: packet_field_value_any(
             packet,
             &["direct_curl_probe_status", "curl"],
@@ -13105,6 +13125,52 @@ fn parse_gdelt_corroboration_packet(packet: &str) -> VoiceTurnGdeltCorroboration
         )
         .unwrap_or("not_reported")
         .to_string(),
+        system_proxy_detected: packet_field_bool_any(packet, &["system_proxy_detected", "sp"]),
+        system_proxy_host_redacted: packet_field_value_any(
+            packet,
+            &["system_proxy_host_redacted", "sph"],
+        )
+        .unwrap_or("none")
+        .to_string(),
+        system_proxy_port_recorded: packet_field_value_any(
+            packet,
+            &["system_proxy_port_recorded", "spp"],
+        )
+        .unwrap_or("none")
+        .to_string(),
+        dns_route_class: packet_field_value_any(packet, &["dns_route_class", "dns"])
+            .unwrap_or("not_reported")
+            .to_string(),
+        dns_route_detail_redacted: packet_field_value_any(
+            packet,
+            &["dns_route_detail_redacted", "dnsd"],
+        )
+        .unwrap_or("not_reported")
+        .to_string(),
+        proxy_or_intercept_suspected: packet_field_bool_any(
+            packet,
+            &["proxy_or_intercept_suspected", "px"],
+        ),
+        proxy_dns_intercept_detected: packet_field_bool_any(
+            packet,
+            &["proxy_dns_intercept_detected", "pxdns"],
+        ),
+        proxy_tls_intercept_suspected: packet_field_bool_any(
+            packet,
+            &["proxy_tls_intercept_suspected", "pxtls"],
+        ),
+        provider_route_failure_class: packet_field_value_any(
+            packet,
+            &["provider_route_failure_class", "prfc"],
+        )
+        .filter(|value| *value != "none")
+        .map(ToString::to_string),
+        provider_route_failure_detail_redacted: packet_field_value_any(
+            packet,
+            &["provider_route_failure_detail_redacted", "prfd"],
+        )
+        .filter(|value| *value != "none")
+        .map(ToString::to_string),
         provider_network_failure_class: packet_field_value_any(
             packet,
             &["provider_network_failure_class", "pnfc"],
@@ -13198,6 +13264,10 @@ fn apply_gdelt_h395_transport_packet(
         packet_field_value_any(packet, &["h397_availability_outcome", "h397"])
             .unwrap_or(metadata.h397_availability_outcome.as_str()),
     );
+    metadata.h398_route_outcome = normalize_h398_route_outcome(
+        packet_field_value_any(packet, &["h398_route_outcome", "h398"])
+            .unwrap_or(metadata.h398_route_outcome.as_str()),
+    );
     metadata.direct_curl_probe_status =
         packet_field_value_any(packet, &["direct_curl_probe_status", "curl"])
             .unwrap_or(metadata.direct_curl_probe_status.as_str())
@@ -13222,16 +13292,55 @@ fn apply_gdelt_h395_transport_packet(
         packet_field_value_any(packet, &["curl_docs_tls_reachability_status", "cdoc"])
             .unwrap_or(metadata.curl_docs_tls_reachability_status.as_str())
             .to_string();
+    if packet_field_bool_any(packet, &["system_proxy_detected", "sp"]) {
+        metadata.system_proxy_detected = true;
+    }
+    metadata.system_proxy_host_redacted =
+        packet_field_value_any(packet, &["system_proxy_host_redacted", "sph"])
+            .unwrap_or(metadata.system_proxy_host_redacted.as_str())
+            .to_string();
+    metadata.system_proxy_port_recorded =
+        packet_field_value_any(packet, &["system_proxy_port_recorded", "spp"])
+            .unwrap_or(metadata.system_proxy_port_recorded.as_str())
+            .to_string();
+    metadata.dns_route_class = packet_field_value_any(packet, &["dns_route_class", "dns"])
+        .unwrap_or(metadata.dns_route_class.as_str())
+        .to_string();
+    metadata.dns_route_detail_redacted =
+        packet_field_value_any(packet, &["dns_route_detail_redacted", "dnsd"])
+            .unwrap_or(metadata.dns_route_detail_redacted.as_str())
+            .to_string();
+    if packet_field_bool_any(packet, &["proxy_or_intercept_suspected", "px"]) {
+        metadata.proxy_or_intercept_suspected = true;
+    }
+    if packet_field_bool_any(packet, &["proxy_dns_intercept_detected", "pxdns"]) {
+        metadata.proxy_dns_intercept_detected = true;
+    }
+    if packet_field_bool_any(packet, &["proxy_tls_intercept_suspected", "pxtls"]) {
+        metadata.proxy_tls_intercept_suspected = true;
+    }
+    metadata.provider_route_failure_class =
+        packet_field_value_any(packet, &["provider_route_failure_class", "prfc"])
+            .filter(|value| *value != "none")
+            .map(ToString::to_string)
+            .or_else(|| metadata.provider_route_failure_class.clone());
+    metadata.provider_route_failure_detail_redacted =
+        packet_field_value_any(packet, &["provider_route_failure_detail_redacted", "prfd"])
+            .filter(|value| *value != "none")
+            .map(ToString::to_string)
+            .or_else(|| metadata.provider_route_failure_detail_redacted.clone());
     metadata.provider_network_failure_class =
         packet_field_value_any(packet, &["provider_network_failure_class", "pnfc"])
             .filter(|value| *value != "none")
             .map(ToString::to_string)
             .or_else(|| metadata.provider_network_failure_class.clone());
-    metadata.provider_network_failure_detail_redacted =
-        packet_field_value_any(packet, &["provider_network_failure_detail_redacted", "pnfd"])
-            .filter(|value| *value != "none")
-            .map(ToString::to_string)
-            .or_else(|| metadata.provider_network_failure_detail_redacted.clone());
+    metadata.provider_network_failure_detail_redacted = packet_field_value_any(
+        packet,
+        &["provider_network_failure_detail_redacted", "pnfd"],
+    )
+    .filter(|value| *value != "none")
+    .map(ToString::to_string)
+    .or_else(|| metadata.provider_network_failure_detail_redacted.clone());
     metadata.rust_transport_failure_class = packet_field_value_any(
         packet,
         &["rust_transport_failure_class", "rust_failure_class", "rfc"],
@@ -13328,6 +13437,21 @@ fn normalize_h397_availability_outcome(raw: &str) -> String {
             "GDELT_PROVIDER_NETWORK_STILL_UNAVAILABLE_SAFE_DEGRADED".to_string()
         }
         _ => "GDELT_PROVIDER_NETWORK_STILL_UNAVAILABLE_SAFE_DEGRADED".to_string(),
+    }
+}
+
+fn normalize_h398_route_outcome(raw: &str) -> String {
+    match raw {
+        "A" | "GDELT_PROXY_ROUTE_REPAIRED_RUST_DOC_API_PARSED" => {
+            "GDELT_PROXY_ROUTE_REPAIRED_RUST_DOC_API_PARSED".to_string()
+        }
+        "B" | "GDELT_PROXY_ROUTE_ISOLATED_ACTIONABLE_BLOCKER" => {
+            "GDELT_PROXY_ROUTE_ISOLATED_ACTIONABLE_BLOCKER".to_string()
+        }
+        "C" | "GDELT_ROUTE_ENVIRONMENT_UNAVAILABLE_SAFE_DEGRADED" => {
+            "GDELT_ROUTE_ENVIRONMENT_UNAVAILABLE_SAFE_DEGRADED".to_string()
+        }
+        _ => "GDELT_ROUTE_ENVIRONMENT_UNAVAILABLE_SAFE_DEGRADED".to_string(),
     }
 }
 
@@ -23102,18 +23226,9 @@ mod tests {
             metadata.h397_availability_outcome,
             "GDELT_PROVIDER_NETWORK_ISOLATED_ACTIONABLE_BLOCKER"
         );
-        assert_eq!(
-            metadata.official_docs_reachability_status,
-            "docs_http_200"
-        );
-        assert_eq!(
-            metadata.doc_api_reachability_status,
-            "api_http000_tls"
-        );
-        assert_eq!(
-            metadata.rust_docs_tls_reachability_status,
-            "not_run"
-        );
+        assert_eq!(metadata.official_docs_reachability_status, "docs_http_200");
+        assert_eq!(metadata.doc_api_reachability_status, "api_http000_tls");
+        assert_eq!(metadata.rust_docs_tls_reachability_status, "not_run");
         assert_eq!(
             metadata.curl_docs_tls_reachability_status,
             "docs_tls_http_200"
@@ -23143,6 +23258,48 @@ mod tests {
         assert!(metadata
             .result_classes
             .contains(&"GDELT_PROXY_OR_INTERCEPT_SUSPECTED_CLASSIFIED_PASS".to_string()));
+        assert!(!metadata
+            .result_classes
+            .contains(&"WEB_PROVIDER_FANOUT_PASS".to_string()));
+    }
+
+    #[test]
+    fn h398_gdelt_metadata_parses_proxy_dns_tls_route_fields() {
+        let packet = "p=GDELT;role=corroboration;primary=false;replaces_brave=false;ver=H398_V1;docs=true;docs_urls=doc2|rt;docs_at=2026-04-28T07:23:34Z;live_at=none;qh=abc123;rawq=false;frqs=false;mode=artlist_json;endpoint=gdelt_doc_2_artlist;window=1d;max=5;timeout=2000;limit=131072;status=provider_failed_timeout;count=0;bounded=true;outcome=B;h396=C;h397=B;h398=B;curl=curl_http_status_000_ssl_timeout;rust=provider_failed_timeout;odr=docs_http_200;doc=api_http000_tls;rdoc=not_run;cdoc=docs_tls_http_200;sp=true;sph=localhost;spp=7897;dns=reserved_198_18_proxy_or_benchmark_route;dnsd=host_route=reserved_198_18;px=true;pxdns=true;pxtls=true;prfc=proxy_dns_intercept_detected;prfd=class=proxy_dns_intercept_detected;pnfc=proxy_or_intercept_suspected;rfc=timeout;crc=true;odds=true;sad=true;urls=none;domains=none;corr=provider_failed;reason=failure_no_fabricated_agreement;ind=0;same=0;cross=0;nr=none;fail=provider_gdelt_error_timeout;guards=docs_live_split,docs_docapi_split,proxy_redacted,dns_route_redacted,live_not_policy,no_text_replace,no_brave_replace,no_image,no_vgkg,no_gcp,no_scrape,no_bulk,scoring_deferred;proof=H398;classes=H398_GDELT_PROXY_ROUTE_ISOLATED_ACTIONABLE_BLOCKER,GDELT_SYSTEM_PROXY_DETECTED_PASS,GDELT_SYSTEM_PROXY_REDACTED_PASS,GDELT_DNS_198_18_ROUTE_CLASSIFIED_PASS,GDELT_PROXY_DNS_INTERCEPT_DETECTED_PASS,GDELT_PROXY_TLS_INTERCEPT_SUSPECTED_PASS,GDELT_NO_FULL_REQUEST_URL_WITH_RAW_QUERY_STORAGE_PASS";
+        let metadata = parse_gdelt_corroboration_packet(packet);
+        assert_eq!(
+            metadata.h398_route_outcome,
+            "GDELT_PROXY_ROUTE_ISOLATED_ACTIONABLE_BLOCKER"
+        );
+        assert!(metadata.system_proxy_detected);
+        assert_eq!(metadata.system_proxy_host_redacted, "localhost");
+        assert_eq!(metadata.system_proxy_port_recorded, "7897");
+        assert_eq!(
+            metadata.dns_route_class,
+            "reserved_198_18_proxy_or_benchmark_route"
+        );
+        assert_eq!(
+            metadata.dns_route_detail_redacted,
+            "host_route=reserved_198_18"
+        );
+        assert!(metadata.proxy_or_intercept_suspected);
+        assert!(metadata.proxy_dns_intercept_detected);
+        assert!(metadata.proxy_tls_intercept_suspected);
+        assert_eq!(
+            metadata.provider_route_failure_class.as_deref(),
+            Some("proxy_dns_intercept_detected")
+        );
+        assert_eq!(
+            metadata.provider_route_failure_detail_redacted.as_deref(),
+            Some("class=proxy_dns_intercept_detected")
+        );
+        assert!(metadata.source_agreement_scoring_deferred);
+        assert!(!metadata.full_request_url_with_raw_query_stored);
+        assert!(!metadata.provider_primary);
+        assert!(!metadata.provider_replaces_brave);
+        assert!(metadata
+            .result_classes
+            .contains(&"GDELT_PROXY_DNS_INTERCEPT_DETECTED_PASS".to_string()));
         assert!(!metadata
             .result_classes
             .contains(&"WEB_PROVIDER_FANOUT_PASS".to_string()));
