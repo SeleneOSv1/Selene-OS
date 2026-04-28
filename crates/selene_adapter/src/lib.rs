@@ -584,6 +584,7 @@ pub struct VoiceTurnGdeltCorroborationMetadata {
     pub h396_transport_outcome: String,
     pub h397_availability_outcome: String,
     pub h398_route_outcome: String,
+    pub h399_proxy_route_outcome: String,
     pub direct_curl_probe_status: String,
     pub rust_transport_probe_status: String,
     pub official_docs_reachability_status: String,
@@ -602,6 +603,15 @@ pub struct VoiceTurnGdeltCorroborationMetadata {
     pub provider_route_failure_detail_redacted: Option<String>,
     pub provider_network_failure_class: Option<String>,
     pub provider_network_failure_detail_redacted: Option<String>,
+    pub approved_proxy_route_policy: String,
+    pub approved_proxy_route_failure_class: Option<String>,
+    pub approved_proxy_route_failure_detail_redacted: Option<String>,
+    pub explicit_proxy_configured: bool,
+    pub explicit_proxy_host_redacted: String,
+    pub explicit_proxy_port_recorded: String,
+    pub explicit_proxy_credentials_present: bool,
+    pub explicit_proxy_credentials_rejected: bool,
+    pub approved_proxy_route_used: bool,
     pub rust_transport_failure_class: Option<String>,
     pub rust_transport_failure_detail_redacted: Option<String>,
     pub curl_and_rust_compared: bool,
@@ -12924,6 +12934,7 @@ fn parse_gdelt_corroboration_packet(packet: &str) -> VoiceTurnGdeltCorroboration
             h397_availability_outcome: "GDELT_PROVIDER_NETWORK_STILL_UNAVAILABLE_SAFE_DEGRADED"
                 .to_string(),
             h398_route_outcome: "GDELT_ROUTE_ENVIRONMENT_UNAVAILABLE_SAFE_DEGRADED".to_string(),
+            h399_proxy_route_outcome: "GDELT_APPROVED_PROXY_ROUTE_ACTIONABLE_BLOCKER".to_string(),
             direct_curl_probe_status: "not_reported".to_string(),
             rust_transport_probe_status: "not_reported".to_string(),
             official_docs_reachability_status: "not_reported".to_string(),
@@ -12932,6 +12943,9 @@ fn parse_gdelt_corroboration_packet(packet: &str) -> VoiceTurnGdeltCorroboration
             curl_docs_tls_reachability_status: "not_reported".to_string(),
             system_proxy_host_redacted: "none".to_string(),
             system_proxy_port_recorded: "none".to_string(),
+            approved_proxy_route_policy: "explicit_proxy_not_configured".to_string(),
+            explicit_proxy_host_redacted: "none".to_string(),
+            explicit_proxy_port_recorded: "none".to_string(),
             dns_route_class: "not_reported".to_string(),
             dns_route_detail_redacted: "not_reported".to_string(),
             curl_and_rust_compared: false,
@@ -13089,6 +13103,10 @@ fn parse_gdelt_corroboration_packet(packet: &str) -> VoiceTurnGdeltCorroboration
             packet_field_value_any(packet, &["h398_route_outcome", "h398"])
                 .unwrap_or("GDELT_ROUTE_ENVIRONMENT_UNAVAILABLE_SAFE_DEGRADED"),
         ),
+        h399_proxy_route_outcome: normalize_h399_proxy_route_outcome(
+            packet_field_value_any(packet, &["h399_proxy_route_outcome", "h399"])
+                .unwrap_or("GDELT_APPROVED_PROXY_ROUTE_ACTIONABLE_BLOCKER"),
+        ),
         direct_curl_probe_status: packet_field_value_any(
             packet,
             &["direct_curl_probe_status", "curl"],
@@ -13183,6 +13201,52 @@ fn parse_gdelt_corroboration_packet(packet: &str) -> VoiceTurnGdeltCorroboration
         )
         .filter(|value| *value != "none")
         .map(ToString::to_string),
+        approved_proxy_route_policy: packet_field_value_any(
+            packet,
+            &["approved_proxy_route_policy", "xpol"],
+        )
+        .unwrap_or("explicit_proxy_not_configured")
+        .to_string(),
+        approved_proxy_route_failure_class: packet_field_value_any(
+            packet,
+            &["approved_proxy_route_failure_class", "xrc"],
+        )
+        .filter(|value| *value != "none")
+        .map(ToString::to_string),
+        approved_proxy_route_failure_detail_redacted: packet_field_value_any(
+            packet,
+            &["approved_proxy_route_failure_detail_redacted", "xrd"],
+        )
+        .filter(|value| *value != "none")
+        .map(ToString::to_string),
+        explicit_proxy_configured: packet_field_bool_any(
+            packet,
+            &["explicit_proxy_configured", "xpc"],
+        ),
+        explicit_proxy_host_redacted: packet_field_value_any(
+            packet,
+            &["explicit_proxy_host_redacted", "xph"],
+        )
+        .unwrap_or("none")
+        .to_string(),
+        explicit_proxy_port_recorded: packet_field_value_any(
+            packet,
+            &["explicit_proxy_port_recorded", "xpp"],
+        )
+        .unwrap_or("none")
+        .to_string(),
+        explicit_proxy_credentials_present: packet_field_bool_any(
+            packet,
+            &["explicit_proxy_credentials_present", "xcred"],
+        ),
+        explicit_proxy_credentials_rejected: packet_field_bool_any(
+            packet,
+            &["explicit_proxy_credentials_rejected", "xcrej"],
+        ),
+        approved_proxy_route_used: packet_field_bool_any(
+            packet,
+            &["approved_proxy_route_used", "xuse"],
+        ),
         rust_transport_failure_class: packet_field_value_any(
             packet,
             &["rust_transport_failure_class", "rust_failure_class", "rfc"],
@@ -13268,6 +13332,10 @@ fn apply_gdelt_h395_transport_packet(
         packet_field_value_any(packet, &["h398_route_outcome", "h398"])
             .unwrap_or(metadata.h398_route_outcome.as_str()),
     );
+    metadata.h399_proxy_route_outcome = normalize_h399_proxy_route_outcome(
+        packet_field_value_any(packet, &["h399_proxy_route_outcome", "h399"])
+            .unwrap_or(metadata.h399_proxy_route_outcome.as_str()),
+    );
     metadata.direct_curl_probe_status =
         packet_field_value_any(packet, &["direct_curl_probe_status", "curl"])
             .unwrap_or(metadata.direct_curl_probe_status.as_str())
@@ -13341,6 +13409,44 @@ fn apply_gdelt_h395_transport_packet(
     .filter(|value| *value != "none")
     .map(ToString::to_string)
     .or_else(|| metadata.provider_network_failure_detail_redacted.clone());
+    metadata.approved_proxy_route_policy =
+        packet_field_value_any(packet, &["approved_proxy_route_policy", "xpol"])
+            .unwrap_or(metadata.approved_proxy_route_policy.as_str())
+            .to_string();
+    metadata.approved_proxy_route_failure_class = packet_field_value_any(
+        packet,
+        &["approved_proxy_route_failure_class", "xrc"],
+    )
+    .filter(|value| *value != "none")
+    .map(ToString::to_string)
+    .or_else(|| metadata.approved_proxy_route_failure_class.clone());
+    metadata.approved_proxy_route_failure_detail_redacted = packet_field_value_any(
+        packet,
+        &["approved_proxy_route_failure_detail_redacted", "xrd"],
+    )
+    .filter(|value| *value != "none")
+    .map(ToString::to_string)
+    .or_else(|| metadata.approved_proxy_route_failure_detail_redacted.clone());
+    if packet_field_bool_any(packet, &["explicit_proxy_configured", "xpc"]) {
+        metadata.explicit_proxy_configured = true;
+    }
+    metadata.explicit_proxy_host_redacted =
+        packet_field_value_any(packet, &["explicit_proxy_host_redacted", "xph"])
+            .unwrap_or(metadata.explicit_proxy_host_redacted.as_str())
+            .to_string();
+    metadata.explicit_proxy_port_recorded =
+        packet_field_value_any(packet, &["explicit_proxy_port_recorded", "xpp"])
+            .unwrap_or(metadata.explicit_proxy_port_recorded.as_str())
+            .to_string();
+    if packet_field_bool_any(packet, &["explicit_proxy_credentials_present", "xcred"]) {
+        metadata.explicit_proxy_credentials_present = true;
+    }
+    if packet_field_bool_any(packet, &["explicit_proxy_credentials_rejected", "xcrej"]) {
+        metadata.explicit_proxy_credentials_rejected = true;
+    }
+    if packet_field_bool_any(packet, &["approved_proxy_route_used", "xuse"]) {
+        metadata.approved_proxy_route_used = true;
+    }
     metadata.rust_transport_failure_class = packet_field_value_any(
         packet,
         &["rust_transport_failure_class", "rust_failure_class", "rfc"],
@@ -13452,6 +13558,18 @@ fn normalize_h398_route_outcome(raw: &str) -> String {
             "GDELT_ROUTE_ENVIRONMENT_UNAVAILABLE_SAFE_DEGRADED".to_string()
         }
         _ => "GDELT_ROUTE_ENVIRONMENT_UNAVAILABLE_SAFE_DEGRADED".to_string(),
+    }
+}
+
+fn normalize_h399_proxy_route_outcome(raw: &str) -> String {
+    match raw {
+        "A" | "GDELT_APPROVED_PROXY_ROUTE_RUST_DOC_API_PARSED" => {
+            "GDELT_APPROVED_PROXY_ROUTE_RUST_DOC_API_PARSED".to_string()
+        }
+        "B" | "GDELT_APPROVED_PROXY_ROUTE_ACTIONABLE_BLOCKER" => {
+            "GDELT_APPROVED_PROXY_ROUTE_ACTIONABLE_BLOCKER".to_string()
+        }
+        _ => "GDELT_APPROVED_PROXY_ROUTE_ACTIONABLE_BLOCKER".to_string(),
     }
 }
 
@@ -23303,6 +23421,31 @@ mod tests {
         assert!(!metadata
             .result_classes
             .contains(&"WEB_PROVIDER_FANOUT_PASS".to_string()));
+    }
+
+    #[test]
+    fn h399_gdelt_metadata_parses_approved_proxy_route_fields() {
+        let packet = "p=GDELT;role=corroboration;primary=false;replaces_brave=false;ver=H399_V1;docs=true;docs_urls=doc2|rt;docs_at=2026-04-28T08:09:39Z;live_at=none;qh=abc123;rawq=false;frqs=false;mode=artlist_json;ep=doc2;window=1d;max=5;to=2000;lim=131072;status=provider_failed_timeout;n=0;bounded=true;outcome=B;h396=C;h397=B;h398=B;h399=B;curl=explicit_proxy_http000;rust=provider_failed_timeout;odr=docs_http_200;doc=api_http000_tls;sp=true;sph=localhost;spp=7897;dns=reserved_198_18_proxy_or_benchmark_route;dnsd=host_route=reserved_198_18;px=true;pxdns=true;pxtls=true;prfc=proxy_dns_intercept_detected;pnfc=proxy_or_intercept_suspected;xpol=gdelt_explicit_env_proxy;xpc=true;xph=localhost;xpp=7897;xcred=false;xcrej=false;xuse=true;xrc=proxy_connect_failed;xrd=class=proxy_connect_failed;rfc=timeout;crc=true;odds=true;sad=true;dom=none;corr=provider_failed;rsn=failure_no_fabricated_agreement;ind=0;same=0;cross=0;nr=none;fail=provider_gdelt_error_timeout;guards=docs_live_split,docs_docapi_split,no_proxy_creds,no_full_proxy_uri,live_not_policy,no_text_replace,no_brave_replace,no_image,no_vgkg,no_gcp,no_scrape,no_bulk,scoring_deferred;pid=H399;cls=H399_GDELT_APPROVED_PROXY_ROUTE_ACTIONABLE_BLOCKER,GDELT_NO_FULL_PROXY_URI_STORAGE_PASS";
+        let metadata = parse_gdelt_corroboration_packet(packet);
+        assert_eq!(
+            metadata.h399_proxy_route_outcome,
+            "GDELT_APPROVED_PROXY_ROUTE_ACTIONABLE_BLOCKER"
+        );
+        assert_eq!(metadata.approved_proxy_route_policy, "gdelt_explicit_env_proxy");
+        assert!(metadata.explicit_proxy_configured);
+        assert_eq!(metadata.explicit_proxy_host_redacted, "localhost");
+        assert_eq!(metadata.explicit_proxy_port_recorded, "7897");
+        assert!(!metadata.explicit_proxy_credentials_present);
+        assert!(!metadata.explicit_proxy_credentials_rejected);
+        assert!(metadata.approved_proxy_route_used);
+        assert_eq!(
+            metadata.approved_proxy_route_failure_class.as_deref(),
+            Some("proxy_connect_failed")
+        );
+        assert_eq!(metadata.query_hash.as_deref(), Some("abc123"));
+        assert!(!metadata.raw_query_stored);
+        assert!(!metadata.full_request_url_with_raw_query_stored);
+        assert!(metadata.source_agreement_scoring_deferred);
     }
 
     #[test]
