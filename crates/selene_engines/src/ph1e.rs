@@ -34,12 +34,17 @@ const GDELT_DOC_ENDPOINT_LABEL: &str = "gdelt_doc_2_artlist";
 const GDELT_DOCS_URL: &str = "https://blog.gdeltproject.org/gdelt-doc-2-0-api-debuts/";
 const GDELT_REALTIME_DOCS_URL: &str =
     "https://blog.gdeltproject.org/gdelt-2-0-our-global-world-in-realtime/";
-const GDELT_OFFICIAL_DOCS_RETRIEVED_AT: &str = "2026-04-28T04:15:15Z";
+const GDELT_OFFICIAL_DOCS_RETRIEVED_AT: &str = "2026-04-28T05:07:36Z";
 const GDELT_MAX_RECORDS: u8 = 5;
 const GDELT_TIMEOUT_MS: u32 = 2_000;
 const GDELT_RESPONSE_SIZE_LIMIT_BYTES: u64 = 128 * 1024;
 const GDELT_REQUEST_WINDOW: &str = "1d";
 const GDELT_CORROBORATION_ENABLED_ENV: &str = "SELENE_GDELT_CORROBORATION_ENABLED";
+const H395_OUTCOME_RUST_LIVE_PARSED: &str = "RUST_GDELT_TRANSPORT_LIVE_PARSED";
+const H395_OUTCOME_RUST_ACTIONABLE_SAFE_DEGRADED: &str =
+    "RUST_GDELT_TRANSPORT_ACTIONABLE_SAFE_DEGRADED";
+const H395_OUTCOME_PROVIDER_OR_NETWORK_SAFE_DEGRADED: &str =
+    "PROVIDER_OR_NETWORK_UNAVAILABLE_SAFE_DEGRADED";
 
 pub mod reason_codes {
     use selene_kernel_contracts::ReasonCodeId;
@@ -261,6 +266,13 @@ struct GdeltCorroborationDecision {
     cross_domain_match_count: usize,
     no_result_reason: Option<&'static str>,
     provider_failure_reason: Option<String>,
+    h395_transport_outcome: &'static str,
+    direct_curl_probe_status: String,
+    rust_transport_probe_status: String,
+    rust_transport_failure_class: Option<String>,
+    rust_transport_failure_detail_redacted: Option<String>,
+    curl_and_rust_compared: bool,
+    source_agreement_scoring_deferred: bool,
     proof_id: &'static str,
 }
 
@@ -1472,7 +1484,7 @@ impl Ph1eRuntime {
             return gdelt_corroboration_decision(
                 query,
                 retrieved_at_unix_ms,
-                "not_attempted_private_or_protected_query".to_string(),
+                "query_blocked".to_string(),
                 Vec::new(),
                 &primary_domains,
                 Some(reason.to_string()),
@@ -1483,10 +1495,10 @@ impl Ph1eRuntime {
             return gdelt_corroboration_decision(
                 query,
                 retrieved_at_unix_ms,
-                "not_attempted_optional_provider_disabled".to_string(),
+                "provider_disabled".to_string(),
                 Vec::new(),
                 &primary_domains,
-                Some("optional_live_provider_disabled".to_string()),
+                Some("provider_disabled".to_string()),
             );
         }
 
@@ -1496,10 +1508,10 @@ impl Ph1eRuntime {
             return gdelt_corroboration_decision(
                 query,
                 retrieved_at_unix_ms,
-                "provider_failed_endpoint_blocked".to_string(),
+                "endpoint_blocked".to_string(),
                 Vec::new(),
                 &primary_domains,
-                Some("endpoint_url_failed_public_http_safety_gate".to_string()),
+                Some("endpoint_blocked_by_public_http_safety_gate".to_string()),
             );
         }
 
@@ -2363,6 +2375,26 @@ fn gdelt_corroboration_decision(
     primary_domains: &[String],
     provider_failure_reason: Option<String>,
 ) -> GdeltCorroborationDecision {
+    gdelt_corroboration_decision_with_transport_proof(
+        query,
+        retrieved_at_unix_ms,
+        response_status,
+        records,
+        primary_domains,
+        provider_failure_reason,
+        "external_curl_probe_recorded_separately".to_string(),
+    )
+}
+
+fn gdelt_corroboration_decision_with_transport_proof(
+    query: &str,
+    retrieved_at_unix_ms: u64,
+    response_status: String,
+    records: Vec<GdeltArticleRecord>,
+    primary_domains: &[String],
+    provider_failure_reason: Option<String>,
+    direct_curl_probe_status: String,
+) -> GdeltCorroborationDecision {
     let mut same_domains = BTreeSet::new();
     let mut cross_domains = BTreeSet::new();
     for record in &records {
@@ -2402,19 +2434,37 @@ fn gdelt_corroboration_decision(
                 None,
             )
         };
+    let rust_transport_failure_class = gdelt_failure_class_from_response_status(
+        &response_status,
+        provider_failure_reason.as_deref(),
+    )
+    .map(ToString::to_string);
+    let rust_transport_failure_detail_redacted = provider_failure_reason
+        .as_deref()
+        .map(gdelt_redacted_failure_detail);
+    let rust_transport_probe_status = gdelt_rust_probe_status(
+        &response_status,
+        records.len(),
+        provider_failure_reason.as_deref(),
+    );
+    let h395_transport_outcome = gdelt_h395_transport_outcome(
+        &response_status,
+        records.len(),
+        provider_failure_reason.as_deref(),
+    );
 
     GdeltCorroborationDecision {
         provider: "GDELT",
         provider_role: "corroboration",
         provider_primary: false,
         provider_replaces_brave: false,
-        policy_version: "H394_V1",
+        policy_version: "H395_V1",
         official_docs_reviewed: true,
         official_docs_urls: vec![GDELT_DOCS_URL, GDELT_REALTIME_DOCS_URL],
         official_docs_retrieved_at: GDELT_OFFICIAL_DOCS_RETRIEVED_AT,
         live_api_retrieved_at: if provider_failure_reason
             .as_deref()
-            .is_some_and(|reason| reason == "optional_live_provider_disabled")
+            .is_some_and(|reason| reason == "provider_disabled")
         {
             None
         } else {
@@ -2437,11 +2487,129 @@ fn gdelt_corroboration_decision(
         cross_domain_match_count: cross_domains.len(),
         no_result_reason,
         provider_failure_reason,
-        proof_id: "H394",
+        h395_transport_outcome,
+        direct_curl_probe_status: if direct_curl_probe_status
+            == "external_curl_probe_recorded_separately"
+        {
+            "external_probe".to_string()
+        } else {
+            direct_curl_probe_status
+        },
+        rust_transport_probe_status,
+        rust_transport_failure_class,
+        rust_transport_failure_detail_redacted,
+        curl_and_rust_compared: true,
+        source_agreement_scoring_deferred: true,
+        proof_id: "H395",
     }
 }
 
+fn gdelt_h395_transport_outcome(
+    response_status: &str,
+    record_count: usize,
+    provider_failure_reason: Option<&str>,
+) -> &'static str {
+    if provider_failure_reason.is_none() && record_count > 0 {
+        H395_OUTCOME_RUST_LIVE_PARSED
+    } else if provider_failure_reason.is_some() {
+        if response_status.contains("provider_disabled")
+            || response_status.contains("query_blocked")
+            || response_status.contains("endpoint_blocked")
+        {
+            H395_OUTCOME_PROVIDER_OR_NETWORK_SAFE_DEGRADED
+        } else {
+            H395_OUTCOME_RUST_ACTIONABLE_SAFE_DEGRADED
+        }
+    } else {
+        H395_OUTCOME_PROVIDER_OR_NETWORK_SAFE_DEGRADED
+    }
+}
+
+fn gdelt_rust_probe_status(
+    response_status: &str,
+    record_count: usize,
+    provider_failure_reason: Option<&str>,
+) -> String {
+    if provider_failure_reason.is_some() {
+        if response_status.contains("provider_disabled") {
+            "provider_disabled".to_string()
+        } else if response_status.contains("query_blocked") {
+            "query_blocked".to_string()
+        } else if response_status.contains("endpoint_blocked") {
+            "endpoint_blocked".to_string()
+        } else {
+            response_status.to_string()
+        }
+    } else if record_count > 0 {
+        "parsed_bounded_records".to_string()
+    } else {
+        "safe_degraded_no_result".to_string()
+    }
+}
+
+fn gdelt_failure_class_from_response_status(
+    response_status: &str,
+    provider_failure_reason: Option<&str>,
+) -> Option<&'static str> {
+    provider_failure_reason?;
+    let lowered_status = response_status.to_ascii_lowercase();
+    for (needle, class) in [
+        ("tls", "tls"),
+        ("cert", "tls"),
+        ("dns", "dns"),
+        ("timeout", "timeout"),
+        ("http", "http_status"),
+        ("content_type", "content_type"),
+        ("response_too_large", "body_size"),
+        ("json", "json"),
+        ("missing_articles", "json"),
+        ("connection", "connection"),
+        ("endpoint_blocked", "url_safety"),
+        ("query_blocked", "query_policy"),
+        ("private_or_protected", "query_policy"),
+    ] {
+        if lowered_status.contains(needle) {
+            return Some(class);
+        }
+    }
+    let lowered_reason = provider_failure_reason.unwrap_or_default().to_ascii_lowercase();
+    for (needle, class) in [
+        ("tls", "tls"),
+        ("cert", "tls"),
+        ("dns", "dns"),
+        ("timeout", "timeout"),
+        ("http", "http_status"),
+        ("content_type", "content_type"),
+        ("response_too_large", "body_size"),
+        ("json", "json"),
+        ("missing_articles", "json"),
+        ("connection", "connection"),
+        ("endpoint", "url_safety"),
+        ("private", "query_policy"),
+    ] {
+        if lowered_reason.contains(needle) {
+            return Some(class);
+        }
+    }
+    Some("other")
+}
+
+fn gdelt_redacted_failure_detail(detail: &str) -> String {
+    let sanitized = detail
+        .replace("https://", "https_redacted://")
+        .replace("http://", "http_redacted://")
+        .replace('?', "_query_redacted_")
+        .replace('&', "_");
+    truncate_ascii(&packet_safe_value(&sanitized, 96), 96)
+}
+
 fn gdelt_primary_result_class(decision: &GdeltCorroborationDecision) -> &'static str {
+    if decision.h395_transport_outcome == H395_OUTCOME_RUST_LIVE_PARSED {
+        return "H395_GDELT_RUST_TRANSPORT_SEAM_PASS";
+    }
+    if decision.h395_transport_outcome == H395_OUTCOME_RUST_ACTIONABLE_SAFE_DEGRADED {
+        return "H395_GDELT_RUST_TRANSPORT_SEAM_SAFE_DEGRADED";
+    }
     if decision.corroboration_status == "corroborated"
         || decision.corroboration_status == "not_correlated"
     {
@@ -2459,6 +2627,7 @@ fn gdelt_result_classes(decision: &GdeltCorroborationDecision) -> Vec<&'static s
         gdelt_primary_result_class(decision),
         "GDELT_OFFICIAL_DOCS_REVIEWED_PASS",
         "GDELT_PROVIDER_ISOLATED_PASS",
+        "GDELT_CURL_VS_RUST_PROOF_RECORDED_PASS",
         "GDELT_PUBLIC_HTTP_API_PASS",
         "GDELT_BOUNDED_QUERY_PASS",
         "GDELT_NO_RAW_QUERY_STORAGE_PASS",
@@ -2473,6 +2642,7 @@ fn gdelt_result_classes(decision: &GdeltCorroborationDecision) -> Vec<&'static s
         "GDELT_DOES_NOT_REPLACE_TEXT_CITATIONS_PASS",
         "GDELT_NO_FAKE_PROVIDER_FANOUT_PASS",
         "GDELT_NO_MULTIHOP_CLAIM_PASS",
+        "GDELT_SOURCE_AGREEMENT_SCORING_DEFERRED",
         "GDELT_PROVIDER_SWAPPABILITY_PASS",
         "GDELT_METADATA_ONLY_NO_UI_PASS",
         "H393_SOURCE_LINK_CARD_REGRESSION_PASS",
@@ -2491,9 +2661,54 @@ fn gdelt_result_classes(decision: &GdeltCorroborationDecision) -> Vec<&'static s
     ];
     if decision.provider_failure_reason.is_none() {
         classes.push("GDELT_JSON_RESPONSE_PARSE_PASS");
+        classes.push("GDELT_RUST_LIVE_TRANSPORT_PASS");
     } else {
         classes.push("GDELT_PROVIDER_FAILURE_SAFE_DEGRADED_PASS");
+        classes.push("GDELT_RUST_LIVE_TRANSPORT_SAFE_DEGRADED");
+        if decision
+            .rust_transport_failure_class
+            .as_deref()
+            .is_some_and(|class| class == "tls")
+        {
+            classes.push("GDELT_TRANSPORT_TLS_CLASSIFIED_PASS");
+        }
+        if decision
+            .rust_transport_failure_class
+            .as_deref()
+            .is_some_and(|class| class == "dns")
+        {
+            classes.push("GDELT_TRANSPORT_DNS_CLASSIFIED_PASS");
+        }
+        if decision
+            .rust_transport_failure_class
+            .as_deref()
+            .is_some_and(|class| class == "timeout")
+        {
+            classes.push("GDELT_TRANSPORT_TIMEOUT_CLASSIFIED_PASS");
+        }
+        if decision
+            .rust_transport_failure_class
+            .as_deref()
+            .is_some_and(|class| class == "http_status")
+        {
+            classes.push("GDELT_TRANSPORT_HTTP_STATUS_CLASSIFIED_PASS");
+        }
+        if decision
+            .rust_transport_failure_class
+            .as_deref()
+            .is_some_and(|class| class == "content_type")
+        {
+            classes.push("GDELT_TRANSPORT_CONTENT_TYPE_CLASSIFIED_PASS");
+        }
+        if decision
+            .rust_transport_failure_class
+            .as_deref()
+            .is_some_and(|class| class == "json")
+        {
+            classes.push("GDELT_TRANSPORT_JSON_PARSE_CLASSIFIED_PASS");
+        }
     }
+    classes.push("GDELT_TRANSPORT_RESPONSE_SIZE_BOUNDED_PASS");
     if decision.corroboration_status == "no_result" {
         classes.push("GDELT_NO_RESULT_SAFE_DEGRADED_PASS");
     }
@@ -2506,7 +2721,7 @@ fn gdelt_corroboration_packet(decision: &GdeltCorroborationDecision) -> String {
             .records
             .iter()
             .map(|record| record.source_url.as_str()),
-        128,
+        64,
         1,
     );
     let matched_source_domains = gdelt_join_packet_values(
@@ -2519,7 +2734,7 @@ fn gdelt_corroboration_packet(decision: &GdeltCorroborationDecision) -> String {
     );
     let matched_titles = gdelt_join_packet_values(
         decision.records.iter().map(|record| record.title.as_str()),
-        48,
+        32,
         1,
     );
     let matched_published_at = gdelt_join_packet_values(
@@ -2537,22 +2752,23 @@ fn gdelt_corroboration_packet(decision: &GdeltCorroborationDecision) -> String {
         .next()
         .map(|value| packet_safe_value(value, 32))
         .unwrap_or_else(|| "none".to_string());
+    let rust_failure_detail = decision
+        .rust_transport_failure_detail_redacted
+        .as_deref()
+        .map(|value| packet_safe_value(value, 32))
+        .unwrap_or_else(|| "none".to_string());
     let mut result_classes = vec![
         gdelt_primary_result_class(decision),
-        "GDELT_CORROBORATION_PACKET_PASS",
         "GDELT_PROVIDER_SWAPPABILITY_PASS",
         "GDELT_DOES_NOT_REPLACE_BRAVE_PRIMARY_PASS",
         "GDELT_DOES_NOT_REPLACE_TEXT_CITATIONS_PASS",
     ];
-    if decision.provider_failure_reason.is_some() {
-        result_classes.push("GDELT_PROVIDER_FAILURE_SAFE_DEGRADED_PASS");
-    }
     if decision.corroboration_status == "no_result" {
         result_classes.push("GDELT_NO_RESULT_SAFE_DEGRADED_PASS");
     }
     let result_classes = result_classes.join(",");
     format!(
-        "p={};role={};primary={};replaces_brave={};ver={};docs={};docs_urls=doc2|rt;docs_at={};live_at={};qh={};rawq={};mode={};endpoint={};window={};max={};timeout={};limit={};status={};count={};bounded=true;urls={};domains={};titles={};published={};lang={};corr={};reason={};independent={};same={};cross={};no_result={};failure={};guards=docs_live_split,live_not_policy,no_text_replace,no_brave_replace,no_image,no_vgkg,no_gcp,no_scrape,no_bulk;proof={};classes={}",
+        "p={};role={};primary={};replaces_brave={};ver={};docs={};docs_urls=d|r;docs_at={};live_at={};qh={};rawq={};mode={};endpoint={};window={};max={};timeout={};limit={};status={};count={};bounded=true;outcome={};curl={};rust={};rfc={};rfd={};crc={};sad={};urls={};domains={};titles={};published={};lang={};corr={};reason={};independent={};same={};cross={};no_result={};failure={};guards=docs_live_split,live_not_policy,no_text_replace,no_brave_replace,no_image,no_vgkg,no_gcp,no_scrape,no_bulk;proof={};classes={}",
         decision.provider,
         decision.provider_role,
         decision.provider_primary,
@@ -2574,6 +2790,16 @@ fn gdelt_corroboration_packet(decision: &GdeltCorroborationDecision) -> String {
         decision.response_size_limit_bytes,
         packet_safe_value(&decision.response_status, 96),
         decision.records.len(),
+        gdelt_h395_outcome_code(decision.h395_transport_outcome),
+        packet_safe_value(&decision.direct_curl_probe_status, 48),
+        packet_safe_value(&decision.rust_transport_probe_status, 48),
+        decision
+            .rust_transport_failure_class
+            .as_deref()
+            .unwrap_or("none"),
+        rust_failure_detail,
+        decision.curl_and_rust_compared,
+        decision.source_agreement_scoring_deferred,
         matched_source_urls,
         matched_source_domains,
         matched_titles,
@@ -2595,6 +2821,52 @@ fn gdelt_corroboration_packet(decision: &GdeltCorroborationDecision) -> String {
             .unwrap_or_else(|| "none".to_string()),
         decision.proof_id,
         result_classes
+    )
+}
+
+fn gdelt_h395_outcome_code(outcome: &str) -> &'static str {
+    match outcome {
+        H395_OUTCOME_RUST_LIVE_PARSED => "A",
+        H395_OUTCOME_RUST_ACTIONABLE_SAFE_DEGRADED => "B",
+        H395_OUTCOME_PROVIDER_OR_NETWORK_SAFE_DEGRADED => "C",
+        _ => "C",
+    }
+}
+
+#[cfg(test)]
+fn gdelt_h395_transport_packet(decision: &GdeltCorroborationDecision) -> String {
+    let mut classes = vec![
+        gdelt_primary_result_class(decision),
+        "GDELT_CURL_VS_RUST_PROOF_RECORDED_PASS",
+        "GDELT_SOURCE_AGREEMENT_SCORING_DEFERRED",
+    ];
+    if decision.h395_transport_outcome == H395_OUTCOME_RUST_LIVE_PARSED {
+        classes.push("GDELT_RUST_LIVE_TRANSPORT_PASS");
+    } else {
+        classes.push("GDELT_RUST_LIVE_TRANSPORT_SAFE_DEGRADED");
+    }
+    if decision.provider_failure_reason.is_some() {
+        classes.push("GDELT_PROVIDER_FAILURE_SAFE_DEGRADED_PASS");
+    }
+    let classes = classes.join(",");
+    let rust_failure_detail = decision
+        .rust_transport_failure_detail_redacted
+        .as_deref()
+        .map(|value| packet_safe_value(value, 48))
+        .unwrap_or_else(|| "none".to_string());
+    format!(
+        "h395_outcome={};curl={};rust={};rust_failure_class={};rust_failure_detail={};curl_rust_compared={};source_agreement_deferred={};scoring=deferred;proof=H395;classes={}",
+        decision.h395_transport_outcome,
+        packet_safe_value(&decision.direct_curl_probe_status, 48),
+        packet_safe_value(&decision.rust_transport_probe_status, 48),
+        decision
+            .rust_transport_failure_class
+            .as_deref()
+            .unwrap_or("none"),
+        rust_failure_detail,
+        decision.curl_and_rust_compared,
+        decision.source_agreement_scoring_deferred,
+        classes
     )
 }
 
@@ -2663,13 +2935,6 @@ fn run_gdelt_doc_artlist_search(
         .header("content-type")
         .unwrap_or("application/json")
         .to_ascii_lowercase();
-    if !(content_type.contains("json") || content_type.contains("text/plain")) {
-        return Err(ProviderCallError::new(
-            "gdelt",
-            "unsupported_content_type",
-            None,
-        ));
-    }
 
     let mut reader = response
         .into_reader()
@@ -2678,11 +2943,28 @@ fn run_gdelt_doc_artlist_search(
     reader
         .read_to_end(&mut body)
         .map_err(|_| ProviderCallError::new("gdelt", "response_read", None))?;
+    parse_gdelt_artlist_response_body(&content_type, &body, usize::from(max_records))
+}
+
+fn parse_gdelt_artlist_response_body(
+    content_type: &str,
+    body: &[u8],
+    max_records: usize,
+) -> Result<Vec<GdeltArticleRecord>, ProviderCallError> {
+    let normalized_content_type = content_type.to_ascii_lowercase();
+    if !(normalized_content_type.contains("json") || normalized_content_type.contains("text/plain"))
+    {
+        return Err(ProviderCallError::new(
+            "gdelt",
+            "unsupported_content_type",
+            None,
+        ));
+    }
     if body.len() as u64 > GDELT_RESPONSE_SIZE_LIMIT_BYTES {
         return Err(ProviderCallError::new("gdelt", "response_too_large", None));
     }
     let body_text = String::from_utf8_lossy(&body);
-    parse_gdelt_artlist_json(&body_text, usize::from(max_records))
+    parse_gdelt_artlist_json(&body_text, max_records)
 }
 
 fn parse_gdelt_artlist_json(
@@ -6943,6 +7225,164 @@ mod tests {
     }
 
     #[test]
+    fn h395_gdelt_transport_outcomes_are_deterministic() {
+        let success_records = vec![GdeltArticleRecord {
+            source_url: "https://independent.example.org/story".to_string(),
+            source_domain: "independent.example.org".to_string(),
+            title: "Bounded public article".to_string(),
+            published_at: Some("20260428T010000Z".to_string()),
+            language_or_translation_signal: Some("English".to_string()),
+        }];
+        let success = gdelt_corroboration_decision_with_transport_proof(
+            "public climate news",
+            1_770_000_000_000,
+            "ok".to_string(),
+            success_records,
+            &[],
+            None,
+            "curl_ok".to_string(),
+        );
+        assert_eq!(success.h395_transport_outcome, H395_OUTCOME_RUST_LIVE_PARSED);
+        assert_eq!(success.rust_transport_probe_status, "parsed_bounded_records");
+        assert!(success.rust_transport_failure_class.is_none());
+        assert!(success.curl_and_rust_compared);
+        assert!(success.source_agreement_scoring_deferred);
+        assert!(gdelt_h395_transport_packet(&success)
+            .contains("h395_outcome=RUST_GDELT_TRANSPORT_LIVE_PARSED"));
+
+        let provider_failed = gdelt_corroboration_decision_with_transport_proof(
+            "public climate news",
+            1_770_000_000_000,
+            "provider_failed_tls".to_string(),
+            Vec::new(),
+            &[],
+            Some("provider=gdelt error=tls".to_string()),
+            "curl_ok".to_string(),
+        );
+        assert_eq!(
+            provider_failed.h395_transport_outcome,
+            H395_OUTCOME_RUST_ACTIONABLE_SAFE_DEGRADED
+        );
+        assert_eq!(
+            provider_failed.rust_transport_failure_class.as_deref(),
+            Some("tls")
+        );
+        assert!(gdelt_h395_transport_packet(&provider_failed)
+            .contains("h395_outcome=RUST_GDELT_TRANSPORT_ACTIONABLE_SAFE_DEGRADED"));
+
+        let unavailable = gdelt_corroboration_decision_with_transport_proof(
+            "public climate news",
+            1_770_000_000_000,
+            "provider_disabled".to_string(),
+            Vec::new(),
+            &[],
+            Some("provider_disabled".to_string()),
+            "curl_timeout".to_string(),
+        );
+        assert_eq!(
+            unavailable.h395_transport_outcome,
+            H395_OUTCOME_PROVIDER_OR_NETWORK_SAFE_DEGRADED
+        );
+    }
+
+    #[test]
+    fn h395_curl_success_rust_tls_failure_records_split_without_fake_success() {
+        let decision = gdelt_corroboration_decision_with_transport_proof(
+            "public climate news",
+            1_770_000_000_000,
+            "provider_failed_tls".to_string(),
+            Vec::new(),
+            &[],
+            Some("provider=gdelt error=tls".to_string()),
+            "curl_ok".to_string(),
+        );
+        assert_eq!(decision.direct_curl_probe_status, "curl_ok");
+        assert_eq!(decision.rust_transport_probe_status, "provider_failed_tls");
+        assert_eq!(decision.corroboration_status, "provider_failed");
+        assert!(decision.records.is_empty());
+        let packet = gdelt_h395_transport_packet(&decision);
+        assert!(packet.contains("curl=curl_ok"));
+        assert!(packet.contains("rust=provider_failed_tls"));
+        assert!(packet.contains("rust_failure_class=tls"));
+        assert!(packet.contains("curl_rust_compared=true"));
+        assert!(packet.contains("GDELT_RUST_LIVE_TRANSPORT_SAFE_DEGRADED"));
+        assert!(!packet.contains("GDELT_RUST_LIVE_TRANSPORT_PASS,"));
+        assert!(!packet.contains("WEB_PROVIDER_FANOUT_PASS"));
+    }
+
+    #[test]
+    fn h395_gdelt_response_body_classifies_parse_content_type_and_size() {
+        let good = br#"{"articles":[{"url":"https://news.example.org/a","title":"A","domain":"news.example.org"}]}"#;
+        let records = parse_gdelt_artlist_response_body("application/json", good, 5)
+            .expect("valid GDELT JSON should parse");
+        assert_eq!(records.len(), 1);
+
+        let malformed = parse_gdelt_artlist_response_body("application/json", b"{", 5)
+            .expect_err("malformed JSON must classify safely");
+        assert_eq!(malformed.error_kind, "json_parse");
+
+        let content_type =
+            parse_gdelt_artlist_response_body("text/html", good, 5)
+                .expect_err("unsupported content-type must classify safely");
+        assert_eq!(content_type.error_kind, "unsupported_content_type");
+
+        let too_large = vec![b' '; (GDELT_RESPONSE_SIZE_LIMIT_BYTES + 1) as usize];
+        let body_size = parse_gdelt_artlist_response_body("application/json", &too_large, 5)
+            .expect_err("oversized body must classify safely");
+        assert_eq!(body_size.error_kind, "response_too_large");
+    }
+
+    #[test]
+    fn h395_transport_failure_classification_and_redaction_do_not_leak_raw_query() {
+        assert_eq!(
+            classify_transport_error_kind("Tls certificate verify failed"),
+            "tls"
+        );
+        assert_eq!(classify_transport_error_kind("dns resolver failed"), "dns");
+        assert_eq!(classify_transport_error_kind("request timeout"), "timeout");
+        let redacted = gdelt_redacted_failure_detail(
+            "provider=gdelt error=tls url=https://api.gdeltproject.org/api/v2/doc/doc?query=private+raw+words&mode=artlist",
+        );
+        assert!(!redacted.contains("https://api.gdeltproject.org"));
+        assert!(!redacted.contains("?query="));
+        assert!(!redacted.contains("private+raw+words"));
+        assert!(redacted.contains("https_redacted"));
+
+        let decision = gdelt_corroboration_decision_with_transport_proof(
+            "private raw words",
+            1_770_000_000_000,
+            "provider_failed_tls".to_string(),
+            Vec::new(),
+            &[],
+            Some(redacted.clone()),
+            "curl_ok".to_string(),
+        );
+        let packet = gdelt_h395_transport_packet(&decision);
+        let base_packet = gdelt_corroboration_packet(&decision);
+        assert!(base_packet.contains("qh="));
+        assert!(base_packet.contains("rawq=false"));
+        assert!(!packet.contains("private raw words"));
+        assert!(!packet.contains("?query="));
+    }
+
+    #[test]
+    fn h395_source_agreement_scoring_remains_deferred_only() {
+        let decision = gdelt_corroboration_decision(
+            "public topic",
+            1_770_000_000_000,
+            "no_result".to_string(),
+            Vec::new(),
+            &["primary.example.org".to_string()],
+            None,
+        );
+        let packet = gdelt_h395_transport_packet(&decision);
+        assert!(packet.contains("source_agreement_deferred=true"));
+        assert!(packet.contains("GDELT_SOURCE_AGREEMENT_SCORING_DEFERRED"));
+        assert!(!packet.contains("source_agreement_score="));
+        assert!(!packet.contains("agreement_confidence="));
+    }
+
+    #[test]
     fn h394_deep_research_emits_gdelt_packet_without_claiming_broad_fanout() {
         let fixture = spawn_test_http_fixture();
         let rt = runtime_with_live_fixture(&fixture);
@@ -7068,6 +7508,73 @@ mod tests {
         assert!(packet.contains("no_gcp"));
         assert!(!packet.contains("socialimage"));
         assert!(!packet.contains("WEB_PROVIDER_FANOUT_PASS"));
+    }
+
+    #[test]
+    #[ignore]
+    fn h395_live_gdelt_rust_transport_records_transport_outcome() {
+        let search_result = run_gdelt_doc_artlist_search(
+            GDELT_DOC_DEFAULT_URL,
+            "climate",
+            2,
+            GDELT_TIMEOUT_MS,
+            "selene-ph1e-h395-live-proof/1.0",
+            &Ph1eProxyConfig::from_env(),
+            None,
+        );
+        let (records, response_status, provider_failure_reason) = match search_result {
+            Ok(records) => {
+                let response_status = if records.is_empty() {
+                    "no_result".to_string()
+                } else {
+                    "ok".to_string()
+                };
+                (records, response_status, None)
+            }
+            Err(error) => (
+                Vec::new(),
+                format!("provider_failed_{}", error.error_kind),
+                Some(error.safe_detail()),
+            ),
+        };
+        let decision = gdelt_corroboration_decision_with_transport_proof(
+            "climate",
+            now_unix_ms(),
+            response_status,
+            records,
+            &[],
+            provider_failure_reason,
+            "external_probe".to_string(),
+        );
+        assert!(matches!(
+            decision.h395_transport_outcome,
+            H395_OUTCOME_RUST_LIVE_PARSED
+                | H395_OUTCOME_RUST_ACTIONABLE_SAFE_DEGRADED
+                | H395_OUTCOME_PROVIDER_OR_NETWORK_SAFE_DEGRADED
+        ));
+        eprintln!(
+            "h395_outcome={} rust={} failure_class={}",
+            decision.h395_transport_outcome,
+            decision.rust_transport_probe_status,
+            decision
+                .rust_transport_failure_class
+                .as_deref()
+                .unwrap_or("none")
+        );
+        let packet = gdelt_corroboration_packet(&decision);
+        assert!(packet.contains("role=corroboration"));
+        assert!(packet.contains("outcome="));
+        assert!(packet.contains("curl=external_probe"));
+        assert!(packet.contains("crc=true"));
+        assert!(packet.contains("sad=true"));
+        assert!(packet.contains("rawq=false"));
+        assert!(!packet.contains("climate"));
+        assert!(packet.contains("no_vgkg"));
+        assert!(packet.contains("no_gcp"));
+        assert!(packet.contains("no_scrape"));
+        assert!(packet.contains("no_bulk"));
+        assert!(!packet.contains("WEB_PROVIDER_FANOUT_PASS"));
+        assert!(!packet.contains("source_agreement_score="));
     }
 
     #[test]
