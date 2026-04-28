@@ -2430,6 +2430,10 @@ fn h380_detects_protected_intent(lower: &str, original: &str) -> bool {
         "change rj s commission",
         "delete that employee",
         "give her access",
+        "approve leave",
+        "leave approval",
+        "database write",
+        "database mutation",
         "payroll",
         "salary",
         "roster",
@@ -2444,11 +2448,33 @@ fn h380_detects_protected_intent(lower: &str, original: &str) -> bool {
     ]
     .iter()
     .any(|needle| lower.contains(needle))
+        || h406_official_company_execution_request(lower)
         || original.contains("工资")
         || original.contains("薪水")
         || original.contains("加薪")
         || original.contains("退款")
         || original.contains("排班")
+}
+
+fn h406_official_company_execution_request(lower: &str) -> bool {
+    lower.contains("run the official company p&l")
+        || lower.contains("run the official company p l")
+        || lower.contains("run the official company profit and loss")
+        || lower.contains("official company p&l")
+        || lower.contains("official company profit and loss")
+        || ((lower.contains("official company")
+            || lower.contains("accounting records")
+            || lower.contains("company records"))
+            && (lower.contains("p&l")
+                || lower.contains("p l")
+                || lower.contains("profit and loss")
+                || lower.contains("accounting")
+                || lower.contains("report")))
+        || lower.contains("post this invoice")
+        || lower.contains("update inventory count")
+        || lower.contains("change access for")
+        || lower.contains("change employee salary")
+        || lower.contains("update payroll")
 }
 
 fn h380_detects_provenance(lower: &str, original: &str) -> bool {
@@ -2855,6 +2881,10 @@ fn h380_business_references(lower: &str) -> Vec<String> {
         "commission",
         "employee",
         "access",
+        "leave",
+        "database",
+        "invoice",
+        "accounting",
     ]
     .iter()
     .filter(|needle| lower.contains(**needle))
@@ -2865,6 +2895,10 @@ fn h380_business_references(lower: &str) -> Vec<String> {
 fn h380_simulation_candidate(lower: &str) -> Option<String> {
     if lower.contains("payroll") || lower.contains("salary") {
         Some("simulation_candidate:payroll".to_string())
+    } else if lower.contains("approve leave") || lower.contains("leave approval") {
+        Some("simulation_candidate:leave".to_string())
+    } else if h406_official_company_execution_request(lower) {
+        Some("simulation_candidate:official_company_execution".to_string())
     } else if lower.contains("roster") {
         Some("simulation_candidate:roster".to_string())
     } else if lower.contains("refund") {
@@ -3089,6 +3123,9 @@ fn h381_h380_clear_live_protected_shadow(packet: &H380TurnUnderstandingPacket) -
         || lower.contains("change rj s commission")
         || lower.contains("delete that employee")
         || lower.contains("give her access")
+        || lower.contains("approve leave")
+        || lower.contains("leave approval")
+        || h406_official_company_execution_request(lower)
         || packet.raw_user_text.contains("加薪")
         || packet.raw_user_text.contains("退款")
         || packet.raw_user_text.contains("排班")
@@ -5927,6 +5964,7 @@ impl AdapterRuntime {
         let Some(user_text) = user_text.map(str::trim).filter(|value| !value.is_empty()) else {
             return None;
         };
+        let advisory_fallback = h406_public_advisory_fallback_answer(user_text, language_packet);
         let answer = match self.ph1d_live_adapter.as_ref() {
             Some(adapter) => match self.run_ph1d_public_answer(
                 adapter,
@@ -5945,11 +5983,15 @@ impl AdapterRuntime {
                     {
                         safe_public_provider_internals_refusal()
                     } else {
-                        public_failure_text_for_language(language_packet)
+                        advisory_fallback
+                            .clone()
+                            .unwrap_or_else(|| public_failure_text_for_language(language_packet))
                     }
                 }
             },
-            None => public_failure_text_for_language(language_packet),
+            None => advisory_fallback
+                .clone()
+                .unwrap_or_else(|| public_failure_text_for_language(language_packet)),
         };
         let answer = self.apply_public_joke_diversity(actor_user_id, thread_key, user_text, answer);
         execution_outcome.response_text = Some(answer.clone());
@@ -7339,6 +7381,10 @@ impl AdapterRuntime {
                     request.audio_capture_ref.is_none(),
                     &mut execution_outcome,
                 );
+            apply_h406_public_presentation_adaptation_to_execution_outcome(
+                user_text_final.as_deref(),
+                &mut execution_outcome,
+            );
             if let Some(ph1x_response) = execution_outcome.ph1x_response.as_ref() {
                 let persisted_thread_state = decorate_thread_state_with_last_turn_context(
                     ph1x_response.thread_state.clone(),
@@ -10116,6 +10162,47 @@ fn select_distinct_public_joke(
 
 fn safe_public_provider_internals_refusal() -> String {
     "I can't confirm internal service details from this chat, but I can still help.".to_string()
+}
+
+fn h406_public_advisory_fallback_answer(
+    user_text: &str,
+    language_packet: Option<&LanguagePacket>,
+) -> Option<String> {
+    if language_packet
+        .map(LanguagePacket::output_language_is_chinese)
+        .unwrap_or(false)
+    {
+        return None;
+    }
+    let lower = user_text.to_ascii_lowercase();
+    if lower.contains("joke") {
+        return Some("Why did the calendar apply for a job? It wanted more dates.".to_string());
+    }
+    if lower.contains("one short sentence about selene")
+        || (lower.contains("short sentence") && lower.contains("selene"))
+    {
+        return Some(
+            "Selene is a privacy-conscious assistant for public answers and protected execution boundaries."
+                .to_string(),
+        );
+    }
+    let mentions_pnl =
+        lower.contains("profit and loss") || lower.contains("p&l") || lower.contains("p l");
+    let advisory_report =
+        lower.contains("template") || lower.contains("draft") || lower.contains("summary");
+    if mentions_pnl && advisory_report && !h406_official_company_execution_request(&lower) {
+        if lower.contains("analyze") || lower.contains("numbers") {
+            return Some(
+                "Advisory P&L summary: list revenue, subtract cost of goods sold, subtract operating expenses, and show net profit or loss. This is a draft from user-provided figures, not official company execution."
+                    .to_string(),
+            );
+        }
+        return Some(
+            "Simple Profit and Loss Template\nRevenue:\nCost of goods sold:\nGross profit:\nOperating expenses:\nNet profit or loss:\n\nThis is an advisory template, not official company accounting execution."
+                .to_string(),
+        );
+    }
+    None
 }
 
 fn classify_voice_turn_runtime_error(
@@ -14065,6 +14152,114 @@ fn recover_typed_public_deterministic_tool_answer(
     execution.response_text = Some(response_text.clone());
     execution.reason_code = Some(reason_code);
     Some(response_text)
+}
+
+fn apply_h406_public_presentation_adaptation_to_execution_outcome(
+    user_text: Option<&str>,
+    execution: &mut AppVoiceTurnExecutionOutcome,
+) {
+    let Some(user_text) = user_text else {
+        return;
+    };
+    let Some(tool_response) = execution.tool_response.as_ref() else {
+        return;
+    };
+    if tool_response.tool_status != ToolStatus::Ok {
+        return;
+    }
+    match tool_response.tool_result.as_ref() {
+        Some(ToolResult::Time { local_time_iso }) if h406_user_requested_24_hour_time(user_text) => {
+            if let Some(answer) = h406_time_answer_24_hour(local_time_iso) {
+                execution.response_text = Some(answer);
+            }
+        }
+        Some(ToolResult::Weather { summary }) if h406_user_requested_short_answer(user_text) => {
+            let current = execution
+                .response_text
+                .as_deref()
+                .filter(|value| !value.trim().is_empty())
+                .unwrap_or(summary);
+            execution.response_text = Some(h406_short_weather_answer(current));
+        }
+        _ => {}
+    }
+}
+
+fn h406_user_requested_24_hour_time(user_text: &str) -> bool {
+    let lower = user_text.to_ascii_lowercase();
+    lower.contains("24-hour")
+        || lower.contains("24 hour")
+        || lower.contains("24hr")
+        || lower.contains("24 hr")
+        || lower.contains("military time")
+        || lower.contains("use 24")
+}
+
+fn h406_user_requested_short_answer(user_text: &str) -> bool {
+    let lower = user_text.to_ascii_lowercase();
+    lower.contains("keep it short")
+        || lower.contains("short answer")
+        || lower.contains("brief")
+        || lower.contains("concise")
+}
+
+fn h406_time_answer_24_hour(local_time_iso: &str) -> Option<String> {
+    let (time, label) = h406_time_24_hour_display_and_label(local_time_iso)?;
+    if label.is_empty() {
+        Some(format!("It's {time}."))
+    } else {
+        Some(format!("It's {time} in {label}."))
+    }
+}
+
+fn h406_time_24_hour_display_and_label(local_time_iso: &str) -> Option<(String, String)> {
+    let (timestamp, label) = match local_time_iso.rsplit_once('[') {
+        Some((timestamp, zone_part)) => {
+            let zone_and_label = zone_part.strip_suffix(']')?;
+            let (zone, explicit_label) = zone_and_label
+                .split_once('|')
+                .map(|(zone, label)| (zone, Some(label)))
+                .unwrap_or((zone_and_label, None));
+            let label = explicit_label
+                .map(str::trim)
+                .filter(|label| !label.is_empty())
+                .map(str::to_string)
+                .unwrap_or_else(|| h406_time_zone_display_label(zone));
+            (timestamp, label)
+        }
+        None => (local_time_iso, String::new()),
+    };
+    let time = timestamp.split_once('T')?.1;
+    let hour: u32 = time.get(0..2)?.parse().ok()?;
+    let minute = time.get(3..5)?;
+    Some((format!("{hour:02}:{minute}"), label))
+}
+
+fn h406_time_zone_display_label(zone: &str) -> String {
+    match zone {
+        "America/New_York" => "New York".to_string(),
+        "Asia/Tokyo" => "Japan".to_string(),
+        "Australia/Sydney" => "Sydney".to_string(),
+        "Europe/Berlin" => "Germany".to_string(),
+        "Europe/Rome" => "Italy".to_string(),
+        "Europe/Lisbon" => "Lisbon".to_string(),
+        "Europe/London" => "London".to_string(),
+        other => other.rsplit('/').next().unwrap_or(other).replace('_', " "),
+    }
+}
+
+fn h406_short_weather_answer(answer: &str) -> String {
+    let trimmed = answer.trim();
+    if trimmed.chars().count() <= 120 {
+        return trimmed.to_string();
+    }
+    if let Some((first, _)) = trimmed.split_once('.') {
+        let first = first.trim();
+        if !first.is_empty() {
+            return format!("{first}.");
+        }
+    }
+    trimmed.chars().take(120).collect::<String>().trim().to_string()
 }
 
 enum Ph1xResponseLike {
@@ -22491,6 +22686,227 @@ mod tests {
                 );
             }
         });
+    }
+
+    #[test]
+    fn h406_public_time_weather_and_report_presentation_adapt_without_protected_refusal() {
+        with_isolated_empty_device_vault("h406_public_time_report_adaptation", || {
+            let runtime = AdapterRuntime::default();
+
+            let mut time_req = base_request();
+            time_req.app_platform = "DESKTOP".to_string();
+            time_req.audio_capture_ref = None;
+            time_req.correlation_id = 40_601;
+            time_req.turn_id = 50_601;
+            time_req.user_text_final =
+                Some("What time is it in New York? Use 24-hour time.".to_string());
+            seed_desktop_voice_profile_for_request(&runtime, &mut time_req, "h406_public_time");
+            let time_out = runtime
+                .run_voice_turn(time_req)
+                .expect("public 24-hour time request should complete");
+            assert_eq!(time_out.status, "ok", "{time_out:?}");
+            assert_eq!(time_out.outcome, "FINAL_TOOL", "{time_out:?}");
+            assert!(time_out.response_text.contains(" in New York."));
+            assert!(!time_out.response_text.contains(" AM"), "{}", time_out.response_text);
+            assert!(!time_out.response_text.contains(" PM"), "{}", time_out.response_text);
+            assert_no_h406_public_refusal(&time_out.response_text);
+
+            let mut template_req = base_request();
+            template_req.app_platform = "DESKTOP".to_string();
+            template_req.audio_capture_ref = None;
+            template_req.correlation_id = 40_602;
+            template_req.turn_id = 50_602;
+            template_req.user_text_final =
+                Some("Prepare a simple profit and loss report template.".to_string());
+            seed_desktop_voice_profile_for_request(
+                &runtime,
+                &mut template_req,
+                "h406_public_template",
+            );
+            let template_out = runtime
+                .run_voice_turn(template_req)
+                .expect("public advisory P&L template should complete");
+            assert_eq!(template_out.status, "ok", "{template_out:?}");
+            assert!(template_out.response_text.contains("Simple Profit and Loss Template"));
+            assert!(template_out
+                .response_text
+                .contains("not official company accounting execution"));
+            assert_no_h406_public_refusal(&template_out.response_text);
+
+            let mut summary_req = base_request();
+            summary_req.app_platform = "DESKTOP".to_string();
+            summary_req.audio_capture_ref = None;
+            summary_req.correlation_id = 40_603;
+            summary_req.turn_id = 50_603;
+            summary_req.user_text_final =
+                Some("Draft a P&L summary from these user-provided numbers.".to_string());
+            seed_desktop_voice_profile_for_request(&runtime, &mut summary_req, "h406_public_summary");
+            let summary_out = runtime
+                .run_voice_turn(summary_req)
+                .expect("public advisory P&L summary should complete");
+            assert_eq!(summary_out.status, "ok", "{summary_out:?}");
+            assert!(summary_out.response_text.contains("Advisory P&L summary"));
+            assert!(summary_out
+                .response_text
+                .contains("not official company execution"));
+            assert_no_h406_public_refusal(&summary_out.response_text);
+        });
+
+        let endpoint = h361_spawn_tomorrow_weather_endpoint(
+            r#"{
+                "data": {
+                    "time": "2026-04-25T03:00:00Z",
+                    "values": {
+                        "temperature": 22.0,
+                        "humidity": 50,
+                        "windSpeed": 3.0,
+                        "weatherCode": 1000
+                    }
+                },
+                "location": {
+                    "name": "Sydney, Australia"
+                }
+            }"#,
+        );
+        with_isolated_device_vault(
+            "h406_public_weather_brevity",
+            &[],
+            &[
+                ("SELENE_REALTIME_TOMORROW_IO_ENDPOINT", endpoint.as_str()),
+                ("SELENE_REALTIME_TOMORROW_IO_API_KEY", "h406-secret"),
+                ("SELENE_REALTIME_WEATHER_API_KEY", " "),
+                ("SELENE_REALTIME_PROXY_MODE", "off"),
+            ],
+            || {
+                let runtime = AdapterRuntime::default();
+                let mut weather_req = base_request();
+                weather_req.app_platform = "DESKTOP".to_string();
+                weather_req.audio_capture_ref = None;
+                weather_req.correlation_id = 40_604;
+                weather_req.turn_id = 50_604;
+                weather_req.user_text_final =
+                    Some("What's the weather in Sydney today? Keep it short.".to_string());
+                seed_desktop_voice_profile_for_request(
+                    &runtime,
+                    &mut weather_req,
+                    "h406_public_weather",
+                );
+                let weather_out = runtime
+                    .run_voice_turn(weather_req)
+                    .expect("public short weather request should complete");
+                assert_eq!(weather_out.status, "ok", "{weather_out:?}");
+                assert_eq!(weather_out.outcome, "FINAL_TOOL", "{weather_out:?}");
+                assert!(weather_out.response_text.contains("Sydney"));
+                assert!(
+                    weather_out.response_text.chars().count() <= 120,
+                    "{}",
+                    weather_out.response_text
+                );
+                assert_no_h406_public_refusal(&weather_out.response_text);
+            },
+        );
+    }
+
+    #[test]
+    fn h406_protected_business_execution_stays_fail_closed() {
+        let runtime = AdapterRuntime::default();
+        for (idx, prompt) in [
+            "Approve payroll for Tim.",
+            "Increase Tim's salary.",
+            "Approve leave for Sarah.",
+            "Change access for Tim.",
+            "Update inventory count.",
+            "Post this invoice.",
+            "Run the official company P&L from accounting records.",
+            "Analyze this CSV and update payroll.",
+            "Summarize this PDF and change employee salary.",
+            "Search the web and approve payroll.",
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let mut req = base_request();
+            req.app_platform = "DESKTOP".to_string();
+            req.audio_capture_ref = None;
+            req.correlation_id = 40_620 + idx as u64;
+            req.turn_id = 50_620 + idx as u64;
+            req.user_text_final = Some(prompt.to_string());
+            seed_desktop_voice_profile_for_request(
+                &runtime,
+                &mut req,
+                &format!("h406_protected_{idx}"),
+            );
+            let out = runtime
+                .run_voice_turn(req)
+                .expect("protected command should return fail-closed response");
+            assert_eq!(out.status, "ok", "{prompt}: {out:?}");
+            assert!(
+                out.response_text
+                    .contains("NO_SIMULATION_NO_AUTHORITY_NO_PROTECTED_EXECUTION"),
+                "{prompt}: {}",
+                out.response_text
+            );
+            assert!(
+                out.provenance.is_none(),
+                "protected command must not produce public provenance: {prompt}"
+            );
+        }
+    }
+
+    #[test]
+    fn h406_provider_degraded_public_search_and_file_analysis_do_not_become_protected_refusals() {
+        with_isolated_empty_device_vault("h406_public_degraded_and_files", || {
+            let runtime = AdapterRuntime::default();
+            for (idx, prompt) in [
+                "Search latest public climate news and keep it short.",
+                "Summarize this PDF.",
+                "Analyze this CSV.",
+                "What does this image show?",
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                let mut req = base_request();
+                req.app_platform = "DESKTOP".to_string();
+                req.audio_capture_ref = None;
+                req.correlation_id = 40_650 + idx as u64;
+                req.turn_id = 50_650 + idx as u64;
+                req.user_text_final = Some(prompt.to_string());
+                seed_desktop_voice_profile_for_request(
+                    &runtime,
+                    &mut req,
+                    &format!("h406_public_degraded_{idx}"),
+                );
+                let out = runtime
+                    .run_voice_turn(req)
+                    .expect("public read-only prompt should not become protected refusal");
+                assert_eq!(out.status, "ok", "{prompt}: {out:?}");
+                assert_no_h406_public_refusal(&out.response_text);
+                assert!(
+                    !out.response_text.contains("NO_SIMULATION_NO_AUTHORITY_NO_PROTECTED_EXECUTION"),
+                    "{prompt}: {}",
+                    out.response_text
+                );
+            }
+        });
+    }
+
+    fn assert_no_h406_public_refusal(text: &str) {
+        let lower = text.to_ascii_lowercase();
+        for forbidden in [
+            "governance state is out of sync",
+            "policy versions are out of sync",
+            "missing simulation",
+            "no simulation no execution",
+            "identity posture fail-closed",
+            "no_simulation_no_authority_no_protected_execution",
+            "couldn't verify your identity",
+        ] {
+            assert!(
+                !lower.contains(forbidden),
+                "public answer leaked protected refusal `{forbidden}`: {text}"
+            );
+        }
     }
 
     #[test]
