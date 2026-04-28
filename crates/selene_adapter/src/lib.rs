@@ -587,6 +587,11 @@ pub struct VoiceTurnGdeltCorroborationMetadata {
     pub h399_proxy_route_outcome: String,
     pub h400_proxy_tls_connect_outcome: String,
     pub h401_proxy_protocol_route_outcome: String,
+    pub h402_socks_tls_phase_outcome: String,
+    pub gdelt_duplicate_audit_status: String,
+    pub gdelt_canonical_provider_path: String,
+    pub gdelt_transport_route_count: usize,
+    pub gdelt_duplicate_conflict_found: bool,
     pub direct_curl_probe_status: String,
     pub rust_transport_probe_status: String,
     pub official_docs_reachability_status: String,
@@ -632,6 +637,10 @@ pub struct VoiceTurnGdeltCorroborationMetadata {
     pub proxy_connect_failure_detail_redacted: Option<String>,
     pub proxy_protocol_failure_class: Option<String>,
     pub proxy_protocol_failure_detail_redacted: Option<String>,
+    pub socks_tls_phase_failure_class: Option<String>,
+    pub socks_tls_phase_failure_detail_redacted: Option<String>,
+    pub socks_tls_failing_function: String,
+    pub socks_tls_failing_line_range: String,
     pub rust_transport_failure_class: Option<String>,
     pub rust_transport_failure_detail_redacted: Option<String>,
     pub curl_and_rust_compared: bool,
@@ -12959,6 +12968,12 @@ fn parse_gdelt_corroboration_packet(packet: &str) -> VoiceTurnGdeltCorroboration
                 .to_string(),
             h401_proxy_protocol_route_outcome:
                 "GDELT_PROXY_PROTOCOL_ROUTE_FINAL_ACTIONABLE_BLOCKER".to_string(),
+            h402_socks_tls_phase_outcome: "GDELT_SOCKS_TLS_PHASE_FINAL_ACTIONABLE_BLOCKER"
+                .to_string(),
+            gdelt_duplicate_audit_status: "not_reported".to_string(),
+            gdelt_canonical_provider_path: "not_reported".to_string(),
+            gdelt_transport_route_count: 0,
+            gdelt_duplicate_conflict_found: false,
             direct_curl_probe_status: "not_reported".to_string(),
             rust_transport_probe_status: "not_reported".to_string(),
             official_docs_reachability_status: "not_reported".to_string(),
@@ -12975,6 +12990,8 @@ fn parse_gdelt_corroboration_packet(packet: &str) -> VoiceTurnGdeltCorroboration
             socks_proxy_protocol: "none".to_string(),
             socks_proxy_host_redacted: "none".to_string(),
             socks_proxy_port_recorded: "none".to_string(),
+            socks_tls_failing_function: "not_reported".to_string(),
+            socks_tls_failing_line_range: "not_reported".to_string(),
             proxy_connect_phase: "not_run".to_string(),
             proxy_connect_status: "not_run".to_string(),
             dns_route_class: "not_reported".to_string(),
@@ -13145,6 +13162,32 @@ fn parse_gdelt_corroboration_packet(packet: &str) -> VoiceTurnGdeltCorroboration
         h401_proxy_protocol_route_outcome: normalize_h401_proxy_protocol_route_outcome(
             packet_field_value_any(packet, &["h401_proxy_protocol_route_outcome", "h401"])
                 .unwrap_or("GDELT_PROXY_PROTOCOL_ROUTE_FINAL_ACTIONABLE_BLOCKER"),
+        ),
+        h402_socks_tls_phase_outcome: normalize_h402_socks_tls_phase_outcome(
+            packet_field_value_any(packet, &["h402_socks_tls_phase_outcome", "h402"])
+                .unwrap_or("GDELT_SOCKS_TLS_PHASE_FINAL_ACTIONABLE_BLOCKER"),
+        ),
+        gdelt_duplicate_audit_status: packet_field_value_any(
+            packet,
+            &["gdelt_duplicate_audit_status", "dup"],
+        )
+        .unwrap_or("not_reported")
+        .to_string(),
+        gdelt_canonical_provider_path: packet_field_value_any(
+            packet,
+            &["gdelt_canonical_provider_path", "canon"],
+        )
+        .unwrap_or("not_reported")
+        .to_string(),
+        gdelt_transport_route_count: packet_field_value_any(
+            packet,
+            &["gdelt_transport_route_count", "routes"],
+        )
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or_default(),
+        gdelt_duplicate_conflict_found: packet_field_bool_any(
+            packet,
+            &["gdelt_duplicate_conflict_found", "dupc"],
         ),
         direct_curl_probe_status: packet_field_value_any(
             packet,
@@ -13362,6 +13405,30 @@ fn parse_gdelt_corroboration_packet(packet: &str) -> VoiceTurnGdeltCorroboration
         )
         .filter(|value| *value != "none")
         .map(ToString::to_string),
+        socks_tls_phase_failure_class: packet_field_value_any(
+            packet,
+            &["socks_tls_phase_failure_class", "stp"],
+        )
+        .filter(|value| *value != "none")
+        .map(ToString::to_string),
+        socks_tls_phase_failure_detail_redacted: packet_field_value_any(
+            packet,
+            &["socks_tls_phase_failure_detail_redacted", "stpd"],
+        )
+        .filter(|value| *value != "none")
+        .map(ToString::to_string),
+        socks_tls_failing_function: packet_field_value_any(
+            packet,
+            &["socks_tls_failing_function", "ff"],
+        )
+        .unwrap_or("not_reported")
+        .to_string(),
+        socks_tls_failing_line_range: packet_field_value_any(
+            packet,
+            &["socks_tls_failing_line_range", "fl"],
+        )
+        .unwrap_or("not_reported")
+        .to_string(),
         rust_transport_failure_class: packet_field_value_any(
             packet,
             &["rust_transport_failure_class", "rust_failure_class", "rfc"],
@@ -13793,6 +13860,21 @@ fn normalize_h401_proxy_protocol_route_outcome(raw: &str) -> String {
             "GDELT_PROXY_PROTOCOL_ROUTE_FINAL_ACTIONABLE_BLOCKER".to_string()
         }
         _ => "GDELT_PROXY_PROTOCOL_ROUTE_FINAL_ACTIONABLE_BLOCKER".to_string(),
+    }
+}
+
+fn normalize_h402_socks_tls_phase_outcome(raw: &str) -> String {
+    match raw {
+        "A" | "GDELT_CANONICAL_SINGLE_PROVIDER_SOCKS_TLS_REPAIRED_PARSED" => {
+            "GDELT_CANONICAL_SINGLE_PROVIDER_SOCKS_TLS_REPAIRED_PARSED".to_string()
+        }
+        "B" | "GDELT_DUPLICATE_CONFLICT_FOUND_AND_CANONICALIZED" => {
+            "GDELT_DUPLICATE_CONFLICT_FOUND_AND_CANONICALIZED".to_string()
+        }
+        "C" | "GDELT_SOCKS_TLS_PHASE_FINAL_ACTIONABLE_BLOCKER" => {
+            "GDELT_SOCKS_TLS_PHASE_FINAL_ACTIONABLE_BLOCKER".to_string()
+        }
+        _ => "GDELT_SOCKS_TLS_PHASE_FINAL_ACTIONABLE_BLOCKER".to_string(),
     }
 }
 
@@ -23735,6 +23817,37 @@ mod tests {
         assert!(metadata
             .result_classes
             .contains(&"GDELT_SOCKS_REMOTE_DNS_ROUTE_PASS".to_string()));
+    }
+
+    #[test]
+    fn h402_gdelt_metadata_parses_duplicate_audit_and_socks_phase_fields() {
+        let packet = "p=GDELT;role=corroboration;primary=false;replaces_brave=false;docs=true;qh=abc123;rawq=false;frqs=false;mode=artlist_json;ep=doc2;window=1d;max=5;to=2000;lim=131072;status=provider_failed;n=0;bounded=true;outcome=B;h396=C;h397=B;h398=B;h399=B;h400=B;curl=explicit_socks_http000;rust=provider_failed_tls;odr=docs_http_200;doc=api_http000_tls;sp=true;sph=localhost;spp=7897;dns=reserved_198_18_proxy_or_benchmark_route;dnsd=host_route=reserved_198_18;px=true;pxdns=true;pxtls=true;prfc=proxy_dns_intercept_detected;pnfc=proxy_or_intercept_suspected;xpol=gdelt_explicit_env_socks_proxy;xp=socks5h;xpc=true;xph=localhost;xpp=7897;xcr=false;xrj=false;xu=true;h401=B;selp=socks5h;skc=true;skpr=socks5h;skh=localhost;skp=7897;skrd=true;skcr=false;skrj=false;sku=true;skrt=true;ppfc=socks_tls_handshake_failed;ppfd=class=socks;h402=C;dup=single_canonical_p;canon=ph1e;routes=3;stp=provider_tls_handshake_failed;stpd=class=provider;ff=run_gdelt_doc_artlist_search;fl=5355-5380;rfc=tls;crc=true;odds=true;sad=true;dom=none;corr=provider_failed;rsn=failure_no_fake;ind=0;same=0;cross=0;nr=none;fail=tls;guards=docs_live_split,docs_docapi_split,no_proxy_creds,no_full_proxy_uri,live_not_policy,no_text_replace,no_brave_replace,no_image,no_vgkg,no_gcp,no_scrape,no_bulk,scoring_deferred;pid=H402;cls=H402_GDELT_SOCKS_TLS_EXACT_BLOCKER_NO_SAFE_FIX,H402_GDELT_DUPLICATE_AUDIT_PASS,GDELT_SINGLE_CANONICAL_PROVIDER_PASS,GDELT_FAILING_FUNCTION_IDENTIFIED_PASS";
+        let metadata = parse_gdelt_corroboration_packet(packet);
+        assert_eq!(
+            metadata.h402_socks_tls_phase_outcome,
+            "GDELT_SOCKS_TLS_PHASE_FINAL_ACTIONABLE_BLOCKER"
+        );
+        assert_eq!(metadata.gdelt_duplicate_audit_status, "single_canonical_p");
+        assert_eq!(metadata.gdelt_canonical_provider_path, "ph1e");
+        assert_eq!(metadata.gdelt_transport_route_count, 3);
+        assert!(!metadata.gdelt_duplicate_conflict_found);
+        assert_eq!(
+            metadata.socks_tls_phase_failure_class.as_deref(),
+            Some("provider_tls_handshake_failed")
+        );
+        assert_eq!(
+            metadata.socks_tls_failing_function,
+            "run_gdelt_doc_artlist_search"
+        );
+        assert_eq!(metadata.socks_tls_failing_line_range, "5355-5380");
+        assert!(!metadata.raw_query_stored);
+        assert!(!metadata.full_request_url_with_raw_query_stored);
+        assert!(!metadata.provider_primary);
+        assert!(!metadata.provider_replaces_brave);
+        assert!(metadata.source_agreement_scoring_deferred);
+        assert!(metadata
+            .result_classes
+            .contains(&"H402_GDELT_DUPLICATE_AUDIT_PASS".to_string()));
     }
 
     #[test]
