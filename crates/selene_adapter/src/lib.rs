@@ -22394,6 +22394,46 @@ mod tests {
     }
 
     #[test]
+    fn h403_public_climate_research_probabilistic_lane_does_not_return_governance_out_of_sync() {
+        with_isolated_empty_device_vault("h403_public_research_governance_drift", || {
+            let runtime = AdapterRuntime::default();
+            let _ = runtime
+                .ingress
+                .observe_runtime_governance_node_policy_version(
+                    "node_h403_public_research",
+                    Some("2026.04.01.v1"),
+                );
+            let mut req = base_request();
+            req.app_platform = "DESKTOP".to_string();
+            req.user_text_final = Some(
+                "Check the latest public news about climate and tell me if there is corroboration."
+                    .to_string(),
+            );
+            seed_desktop_voice_profile_for_request(&runtime, &mut req, "h403_public_research");
+
+            let out = runtime
+                .run_voice_turn(req)
+                .expect("public research should stay in the probabilistic answer lane");
+            assert_eq!(out.status, "ok", "{out:?}");
+            assert_eq!(out.outcome, "FINAL_TOOL", "{out:?}");
+            assert_eq!(out.next_move, "dispatch_tool", "{out:?}");
+            let lowered = out.response_text.to_ascii_lowercase();
+            assert!(
+                !lowered.contains("governance state is out of sync")
+                    && !lowered.contains("policy versions are out of sync"),
+                "public research must not return governance drift refusal: {}",
+                out.response_text
+            );
+            assert!(
+                out.response_text.contains("brave_search_api_key")
+                    || out.deep_research.is_some(),
+                "public research should either answer with deep-research metadata or fail only on public provider availability: {}",
+                out.response_text
+            );
+        });
+    }
+
+    #[test]
     fn h385_deep_search_production_depth_response_metadata_is_evidence_backed() {
         let citation = selene_kernel_contracts::ph1e::ToolTextSnippet {
             title: "Official OpenAI news".to_string(),

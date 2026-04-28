@@ -7655,7 +7655,7 @@ fn classify_governance_drift_fail_closed_for_directive(
     {
         return None;
     }
-    if directive_is_public_deterministic_read_only_tool(directive)
+    if directive_is_public_probabilistic_answer_lane_tool(ph1x_request, directive)
         || directive_is_public_no_intent_answer_handoff(ph1x_request, directive)
     {
         return None;
@@ -7677,15 +7677,42 @@ fn classify_governance_drift_fail_closed_for_directive(
     })
 }
 
-fn directive_is_public_deterministic_read_only_tool(directive: &Ph1xDirective) -> bool {
+fn directive_is_public_probabilistic_answer_lane_tool(
+    ph1x_request: &Ph1xRequest,
+    directive: &Ph1xDirective,
+) -> bool {
+    if ph1x_request.policy_context_ref.privacy_mode
+        || ph1x_request.policy_context_ref.do_not_disturb
+        || ph1x_request.policy_context_ref.safety_tier != SafetyTier::Standard
+    {
+        return false;
+    }
+    let Some(intent) = ph1x_request.nlp_output.as_ref().and_then(|nlp| match nlp {
+        Ph1nResponse::IntentDraft(intent) => Some(intent),
+        _ => None,
+    }) else {
+        return false;
+    };
+    if intent.sensitivity_level != SensitivityLevel::Public || intent.requires_confirmation {
+        return false;
+    }
+    let Some(tool_name) = (match directive {
+        Ph1xDirective::Dispatch(dispatch) => match &dispatch.dispatch_request {
+            DispatchRequest::Tool(tool) => Some(&tool.tool_name),
+            _ => None,
+        },
+        _ => None,
+    }) else {
+        return false;
+    };
     matches!(
-        directive,
-        Ph1xDirective::Dispatch(dispatch)
-            if matches!(
-                &dispatch.dispatch_request,
-                DispatchRequest::Tool(tool)
-                    if matches!(tool.tool_name, ToolName::Time | ToolName::Weather)
-            )
+        (intent.intent_type, tool_name),
+        (IntentType::TimeQuery, ToolName::Time)
+            | (IntentType::WeatherQuery, ToolName::Weather)
+            | (IntentType::WebSearchQuery, ToolName::WebSearch)
+            | (IntentType::NewsQuery, ToolName::News)
+            | (IntentType::UrlFetchAndCiteQuery, ToolName::UrlFetchAndCite)
+            | (IntentType::DeepResearchQuery, ToolName::DeepResearch)
     )
 }
 
@@ -20459,6 +20486,107 @@ mod tests {
             confirmed_voice_assertion(actor_user_id),
             CorrelationId(98242),
             TurnId(99242),
+        );
+        assert_eq!(protected_out.next_move, AppVoiceTurnNextMove::Refused);
+        assert!(
+            protected_out
+                .response_text
+                .as_deref()
+                .is_some_and(|text| text.contains("out of sync right now")),
+            "protected drift path must still fail closed, got {:?}",
+            protected_out.response_text
+        );
+    }
+
+    #[test]
+    fn h403_public_web_research_probabilistic_lane_skips_governance_drift_without_weakening_protected_fail_closed(
+    ) {
+        let runtime = runtime_with_search_tool_fixtures();
+        let actor_user_id = UserId::new("tenant_1:h403_public_research_runtime_user").unwrap();
+        let device_id = DeviceId::new("h403_public_research_runtime_device_1").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &actor_user_id, &device_id);
+        let _ = runtime
+            .observe_runtime_governance_node_policy_version("node_h403", Some("2026.04.01.v1"));
+
+        let phrase =
+            "Check the latest public news about climate and tell me if there is corroboration.";
+        let request = AppVoiceIngressRequest::v1(
+            CorrelationId(98243),
+            TurnId(99243),
+            AppPlatform::Desktop,
+            OsVoiceTrigger::Explicit,
+            sample_voice_id_request(MonotonicTimeNs(3), actor_user_id.clone()),
+            actor_user_id.clone(),
+            Some("tenant_1".to_string()),
+            Some(device_id.clone()),
+            Vec::new(),
+            no_observation(),
+        )
+        .unwrap();
+        let x_build = AppVoicePh1xBuildInput {
+            now: MonotonicTimeNs(17),
+            thread_key: None,
+            thread_state: ThreadState::empty_v1(),
+            session_state: SessionState::Active,
+            policy_context_ref: PolicyContextRef::v1(false, false, SafetyTier::Standard),
+            memory_candidates: vec![],
+            confirm_answer: None,
+            nlp_output: Some(deep_research_draft(phrase)),
+            tool_response: None,
+            interruption: None,
+            locale: Some("en-US".to_string()),
+            last_failure_reason_code: None,
+        };
+        let public_out = run_desktop_voice_turn_end_to_end_with_confirmed_voice_assertion(
+            &runtime, &mut store, request, x_build,
+        )
+        .expect(
+            "public research must stay in the probabilistic answer lane under governance drift",
+        );
+
+        assert_eq!(public_out.next_move, AppVoiceTurnNextMove::Respond);
+        let public_text = public_out
+            .response_text
+            .as_deref()
+            .expect("public research should produce response text");
+        assert!(!public_text.contains("governance state is out of sync"));
+        assert!(!public_text.contains("policy versions are out of sync"));
+        let tool_response = public_out
+            .tool_response
+            .as_ref()
+            .expect("public research should dispatch the read-only deep research tool");
+        assert_eq!(tool_response.tool_status, ToolStatus::Ok);
+        let Some(ToolResult::DeepResearch {
+            extracted_fields, ..
+        }) = &tool_response.tool_result
+        else {
+            panic!(
+                "public research should return deep research metadata, got {:?}",
+                tool_response.tool_result
+            );
+        };
+        let gdelt_packet = extracted_fields
+            .iter()
+            .find(|field| field.key == "gdelt_status")
+            .expect("deep research should carry GDELT corroboration metadata")
+            .value
+            .as_str();
+        assert!(
+            gdelt_packet.contains("provider_disabled")
+                || gdelt_packet.contains("provider_failed")
+                || gdelt_packet.contains("corroborated"),
+            "GDELT should remain metadata/degraded corroboration, got {gdelt_packet}"
+        );
+
+        let protected_out = run_protected_chat_response_turn_with_identity_assertion(
+            &runtime,
+            &mut store,
+            actor_user_id.clone(),
+            device_id,
+            confirmed_voice_assertion(actor_user_id),
+            CorrelationId(98244),
+            TurnId(99244),
         );
         assert_eq!(protected_out.next_move, AppVoiceTurnNextMove::Refused);
         assert!(
