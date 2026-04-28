@@ -7480,41 +7480,102 @@ fn classify_governance_quarantine_identity_recovery_fail_closed_outcome(
     })
 }
 
-fn low_risk_public_deterministic_turn_answer(out: &AppVoiceTurnExecutionOutcome) -> bool {
-    let Some(tool_response) = out.tool_response.as_ref() else {
-        return out.ph1x_request.as_ref().is_some_and(|request| {
-            request.thread_state.last_turn_context.is_some()
-                && matches!(
-                    request.nlp_output.as_ref(),
-                    Some(Ph1nResponse::Chat(chat))
-                        if chat.reason_code == ph1n_reason_codes::N_CHAT_TURN_FOLLOWUP_REPAIR
-                )
-        });
-    };
-    let tool_response_is_time = matches!(tool_response.tool_result, Some(ToolResult::Time { .. }))
-        || tool_response.fail_detail.as_deref().is_some_and(|detail| {
-            detail.contains("ambiguous_time_location")
-                || detail.contains("unsupported_time_location")
-        });
-    if !tool_response_is_time {
+fn public_answer_lane_policy_allows(request: &Ph1xRequest) -> bool {
+    !request.policy_context_ref.privacy_mode
+        && !request.policy_context_ref.do_not_disturb
+        && request.policy_context_ref.safety_tier == SafetyTier::Standard
+}
+
+fn public_probabilistic_answer_lane_intent_type(intent_type: IntentType) -> bool {
+    matches!(
+        intent_type,
+        IntentType::TimeQuery
+            | IntentType::WeatherQuery
+            | IntentType::WebSearchQuery
+            | IntentType::NewsQuery
+            | IntentType::UrlFetchAndCiteQuery
+            | IntentType::DocumentUnderstandQuery
+            | IntentType::PhotoUnderstandQuery
+            | IntentType::DataAnalysisQuery
+            | IntentType::DeepResearchQuery
+            | IntentType::RecordModeQuery
+            | IntentType::ConnectorQuery
+    )
+}
+
+fn public_probabilistic_answer_lane_intent(intent: &IntentDraft) -> bool {
+    intent.sensitivity_level == SensitivityLevel::Public
+        && !intent.requires_confirmation
+        && public_probabilistic_answer_lane_intent_type(intent.intent_type)
+}
+
+fn public_probabilistic_answer_lane_tool_pair(
+    intent_type: IntentType,
+    tool_name: &ToolName,
+) -> bool {
+    matches!(
+        (intent_type, tool_name),
+        (IntentType::TimeQuery, ToolName::Time)
+            | (IntentType::WeatherQuery, ToolName::Weather)
+            | (IntentType::WebSearchQuery, ToolName::WebSearch)
+            | (IntentType::NewsQuery, ToolName::News)
+            | (IntentType::UrlFetchAndCiteQuery, ToolName::UrlFetchAndCite)
+            | (IntentType::DocumentUnderstandQuery, ToolName::DocumentUnderstand)
+            | (IntentType::PhotoUnderstandQuery, ToolName::PhotoUnderstand)
+            | (IntentType::DataAnalysisQuery, ToolName::DataAnalysis)
+            | (IntentType::DeepResearchQuery, ToolName::DeepResearch)
+            | (IntentType::RecordModeQuery, ToolName::RecordMode)
+            | (IntentType::ConnectorQuery, ToolName::ConnectorQuery)
+    )
+}
+
+fn ph1x_request_is_public_probabilistic_answer_lane(request: &Ph1xRequest) -> bool {
+    if !public_answer_lane_policy_allows(request) {
         return false;
     }
-    out.ph1x_request
-        .as_ref()
-        .and_then(|request| request.nlp_output.as_ref())
-        .is_some_and(|nlp_output| {
-            matches!(
-                nlp_output,
-                Ph1nResponse::IntentDraft(intent)
-                    if intent.intent_type == IntentType::TimeQuery
-                        && intent.sensitivity_level == SensitivityLevel::Public
-                        && !intent.requires_confirmation
-            )
-        })
-        || tool_response.fail_detail.as_deref().is_some_and(|detail| {
-            detail.contains("ambiguous_time_location")
-                || detail.contains("unsupported_time_location")
-        })
+    match request.nlp_output.as_ref() {
+        Some(Ph1nResponse::Chat(chat)) => matches!(
+            chat.reason_code,
+            ph1n_reason_codes::N_CHAT_NO_INTENT
+                | ph1n_reason_codes::N_CHAT_TURN_FOLLOWUP_REPAIR
+        ),
+        Some(Ph1nResponse::IntentDraft(intent)) => {
+            public_probabilistic_answer_lane_intent(intent)
+        }
+        _ => false,
+    }
+}
+
+fn directive_is_public_probabilistic_answer_lane(
+    ph1x_request: &Ph1xRequest,
+    directive: &Ph1xDirective,
+) -> bool {
+    match directive {
+        Ph1xDirective::Respond(_) => {
+            directive_is_public_no_intent_answer_handoff(ph1x_request, directive)
+                || ph1x_request_is_public_probabilistic_answer_lane(ph1x_request)
+        }
+        Ph1xDirective::Dispatch(_) => {
+            directive_is_public_probabilistic_answer_lane_tool(ph1x_request, directive)
+        }
+        _ => false,
+    }
+}
+
+fn low_risk_public_deterministic_turn_answer(out: &AppVoiceTurnExecutionOutcome) -> bool {
+    if !matches!(
+        out.next_move,
+        AppVoiceTurnNextMove::Dispatch | AppVoiceTurnNextMove::Respond
+    ) {
+        return false;
+    }
+    let Some(request) = out.ph1x_request.as_ref() else {
+        return false;
+    };
+    if let Some(response) = out.ph1x_response.as_ref() {
+        return directive_is_public_probabilistic_answer_lane(request, &response.directive);
+    }
+    ph1x_request_is_public_probabilistic_answer_lane(request)
 }
 
 fn classify_low_confidence_identity_posture_fail_closed_outcome(
@@ -7655,9 +7716,7 @@ fn classify_governance_drift_fail_closed_for_directive(
     {
         return None;
     }
-    if directive_is_public_probabilistic_answer_lane_tool(ph1x_request, directive)
-        || directive_is_public_no_intent_answer_handoff(ph1x_request, directive)
-    {
+    if directive_is_public_probabilistic_answer_lane(ph1x_request, directive) {
         return None;
     }
     if governance_state
@@ -7681,21 +7740,6 @@ fn directive_is_public_probabilistic_answer_lane_tool(
     ph1x_request: &Ph1xRequest,
     directive: &Ph1xDirective,
 ) -> bool {
-    if ph1x_request.policy_context_ref.privacy_mode
-        || ph1x_request.policy_context_ref.do_not_disturb
-        || ph1x_request.policy_context_ref.safety_tier != SafetyTier::Standard
-    {
-        return false;
-    }
-    let Some(intent) = ph1x_request.nlp_output.as_ref().and_then(|nlp| match nlp {
-        Ph1nResponse::IntentDraft(intent) => Some(intent),
-        _ => None,
-    }) else {
-        return false;
-    };
-    if intent.sensitivity_level != SensitivityLevel::Public || intent.requires_confirmation {
-        return false;
-    }
     let Some(tool_name) = (match directive {
         Ph1xDirective::Dispatch(dispatch) => match &dispatch.dispatch_request {
             DispatchRequest::Tool(tool) => Some(&tool.tool_name),
@@ -7705,35 +7749,23 @@ fn directive_is_public_probabilistic_answer_lane_tool(
     }) else {
         return false;
     };
-    matches!(
-        (intent.intent_type, tool_name),
-        (IntentType::TimeQuery, ToolName::Time)
-            | (IntentType::WeatherQuery, ToolName::Weather)
-            | (IntentType::WebSearchQuery, ToolName::WebSearch)
-            | (IntentType::NewsQuery, ToolName::News)
-            | (IntentType::UrlFetchAndCiteQuery, ToolName::UrlFetchAndCite)
-            | (IntentType::DeepResearchQuery, ToolName::DeepResearch)
-    )
+    let Some(intent) = ph1x_request.nlp_output.as_ref().and_then(|nlp| match nlp {
+        Ph1nResponse::IntentDraft(intent) => Some(intent),
+        _ => None,
+    }) else {
+        return false;
+    };
+    public_answer_lane_policy_allows(ph1x_request)
+        && public_probabilistic_answer_lane_intent(intent)
+        && public_probabilistic_answer_lane_tool_pair(intent.intent_type, tool_name)
 }
 
 fn directive_is_public_no_intent_answer_handoff(
     ph1x_request: &Ph1xRequest,
     directive: &Ph1xDirective,
 ) -> bool {
-    if !matches!(directive, Ph1xDirective::Respond(_)) {
-        return false;
-    }
-    if ph1x_request.policy_context_ref.privacy_mode
-        || ph1x_request.policy_context_ref.do_not_disturb
-        || ph1x_request.policy_context_ref.safety_tier != SafetyTier::Standard
-    {
-        return false;
-    }
-    matches!(
-        ph1x_request.nlp_output.as_ref(),
-        Some(Ph1nResponse::Chat(chat))
-            if chat.reason_code == ph1n_reason_codes::N_CHAT_NO_INTENT
-    )
+    matches!(directive, Ph1xDirective::Respond(_))
+        && ph1x_request_is_public_probabilistic_answer_lane(ph1x_request)
 }
 
 fn classify_access_fail_closed_error(err: &StorageError) -> Option<AccessFailClosedBehavior> {
@@ -14328,6 +14360,98 @@ mod tests {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
+    fn run_public_x_build_with_identity_assertion(
+        runtime: &AppServerIngressRuntime,
+        store: &mut Ph1fStore,
+        actor_user_id: UserId,
+        device_id: DeviceId,
+        assertion: Ph1VoiceIdResponse,
+        correlation_id: CorrelationId,
+        turn_id: TurnId,
+        x_build: AppVoicePh1xBuildInput,
+    ) -> Result<AppVoiceTurnExecutionOutcome, StorageError> {
+        let request = AppVoiceIngressRequest::v1(
+            correlation_id,
+            turn_id,
+            AppPlatform::Desktop,
+            OsVoiceTrigger::Explicit,
+            sample_voice_id_request(MonotonicTimeNs(3), actor_user_id.clone()),
+            actor_user_id.clone(),
+            Some("tenant_1".to_string()),
+            Some(device_id.clone()),
+            Vec::new(),
+            no_observation(),
+        )
+        .unwrap();
+        let request_session_id = request.voice_id_request.session_state_ref.session_id;
+        let request_session_state = request.voice_id_request.session_state_ref.session_state;
+        let received_at = request.voice_id_request.now;
+        let dispatch_now = x_build.now;
+
+        let outcome = runtime.run_voice_turn(store, request).unwrap();
+        let OsVoiceLiveTurnOutcome::Forwarded(mut forwarded) = outcome else {
+            panic!("expected forwarded voice turn");
+        };
+        forwarded.voice_identity_assertion = assertion;
+        recanonicalize_forwarded_bundle_for_tests(&mut forwarded);
+
+        let ph1x_request = runtime.build_ph1x_request_for_forwarded_voice(
+            store,
+            ForwardedVoicePh1xRequestInput {
+                correlation_id,
+                turn_id,
+                app_platform: AppPlatform::Desktop,
+                forwarded: &forwarded,
+                request_session_id,
+                tenant_id: Some("tenant_1"),
+                x_build,
+            },
+        )?;
+        let packet = runtime
+            .debug_last_agent_input_packet()
+            .expect("agent packet should be captured");
+        let finder_terminal = runtime.run_finder_terminal_packet_for_turn(
+            store,
+            &actor_user_id,
+            Some("tenant_1"),
+            Some(&packet),
+        )?;
+        assert!(
+            finder_terminal.is_none(),
+            "public probabilistic lane test should not enter simulation finder"
+        );
+        let runtime_execution_envelope = packet
+            .runtime_execution_envelope
+            .clone()
+            .expect("runtime execution envelope must be attached");
+        let out = runtime.run_ph1x_and_dispatch_with_access_fail_closed(
+            store,
+            runtime_execution_envelope,
+            OsVoiceLiveTurnOutcome::Forwarded(forwarded),
+            request_session_state,
+            ph1x_request,
+            &actor_user_id,
+            Some(&device_id),
+            Some("tenant_1"),
+            request_session_id,
+            dispatch_now,
+        )?;
+        runtime.finalize_voice_turn_outcome(
+            store,
+            out,
+            finder_terminal.as_ref(),
+            &actor_user_id,
+            Some(&device_id),
+            Some("tenant_1"),
+            request_session_id,
+            correlation_id,
+            turn_id,
+            received_at,
+            dispatch_now,
+        )
+    }
+
     fn finalize_pending_protected_chat_response_turn(
         runtime: &AppServerIngressRuntime,
         store: &mut Ph1fStore,
@@ -20596,6 +20720,185 @@ mod tests {
                 .is_some_and(|text| text.contains("out of sync right now")),
             "protected drift path must still fail closed, got {:?}",
             protected_out.response_text
+        );
+    }
+
+    #[test]
+    fn h405_public_read_only_tools_skip_governance_drift_with_central_lane_predicate() {
+        let runtime = runtime_with_search_tool_fixtures();
+        let actor_user_id = UserId::new("tenant_1:h405_public_tools_runtime_user").unwrap();
+        let device_id = DeviceId::new("h405_public_tools_runtime_device_1").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &actor_user_id, &device_id);
+        let _ = runtime
+            .observe_runtime_governance_node_policy_version("node_h405_tools", Some("2026.04.01.v1"));
+
+        let cases: [(&str, fn(&str) -> Ph1nResponse); 5] = [
+            ("Summarize this PDF.", document_understand_draft),
+            ("What does this screenshot say?", photo_understand_draft),
+            ("Analyze this CSV.", data_analysis_draft),
+            ("Summarize this meeting recording.", record_mode_draft),
+            ("Search connected apps for roadmap notes.", connector_query_draft),
+        ];
+
+        for (idx, (phrase, draft)) in cases.into_iter().enumerate() {
+            let request = AppVoiceIngressRequest::v1(
+                CorrelationId(98250 + idx as u128),
+                TurnId(99250 + idx as u64),
+                AppPlatform::Desktop,
+                OsVoiceTrigger::Explicit,
+                sample_voice_id_request(MonotonicTimeNs(3), actor_user_id.clone()),
+                actor_user_id.clone(),
+                Some("tenant_1".to_string()),
+                Some(device_id.clone()),
+                Vec::new(),
+                no_observation(),
+            )
+            .unwrap();
+            let x_build = AppVoicePh1xBuildInput {
+                now: MonotonicTimeNs(17 + idx as u64),
+                thread_key: None,
+                thread_state: ThreadState::empty_v1(),
+                session_state: SessionState::Active,
+                policy_context_ref: PolicyContextRef::v1(false, false, SafetyTier::Standard),
+                memory_candidates: vec![],
+                confirm_answer: None,
+                nlp_output: Some(draft(phrase)),
+                tool_response: None,
+                interruption: None,
+                locale: Some("en-US".to_string()),
+                last_failure_reason_code: None,
+            };
+
+            let out = run_desktop_voice_turn_end_to_end_with_confirmed_voice_assertion(
+                &runtime, &mut store, request, x_build,
+            )
+            .expect("public read-only tool should remain in probabilistic answer lane");
+            assert_eq!(out.next_move, AppVoiceTurnNextMove::Respond, "{phrase}");
+            let text = out
+                .response_text
+                .as_deref()
+                .expect("public read-only response should keep response text");
+            assert!(
+                !text.contains("governance state is out of sync")
+                    && !text.contains("policy versions are out of sync"),
+                "{phrase}: {text}"
+            );
+        }
+
+        let protected_out = run_protected_chat_response_turn_with_identity_assertion(
+            &runtime,
+            &mut store,
+            actor_user_id.clone(),
+            device_id,
+            confirmed_voice_assertion(actor_user_id),
+            CorrelationId(98260),
+            TurnId(99260),
+        );
+        assert_eq!(protected_out.next_move, AppVoiceTurnNextMove::Refused);
+        assert!(
+            protected_out
+                .response_text
+                .as_deref()
+                .is_some_and(|text| text.contains("out of sync right now")),
+            "protected drift path must still fail closed, got {:?}",
+            protected_out.response_text
+        );
+    }
+
+    #[test]
+    fn h405_public_voice_identity_posture_allows_chat_and_search_but_preserves_protected_fail_closed(
+    ) {
+        let runtime = runtime_with_search_tool_fixtures();
+        let actor_user_id = UserId::new("tenant_1:h405_public_identity_runtime_user").unwrap();
+        let device_id = DeviceId::new("h405_public_identity_runtime_device_1").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &actor_user_id, &device_id);
+
+        let chat_out = run_public_x_build_with_identity_assertion(
+            &runtime,
+            &mut store,
+            actor_user_id.clone(),
+            device_id.clone(),
+            low_confidence_voice_assertion(actor_user_id.clone()),
+            CorrelationId(98261),
+            TurnId(99261),
+            AppVoicePh1xBuildInput {
+                now: MonotonicTimeNs(17),
+                thread_key: None,
+                thread_state: ThreadState::empty_v1(),
+                session_state: SessionState::Active,
+                policy_context_ref: PolicyContextRef::v1(false, false, SafetyTier::Standard),
+                memory_candidates: vec![],
+                confirm_answer: None,
+                nlp_output: Some(
+                    Chat::v1(
+                        "Here is one short public answer.".to_string(),
+                        ph1n_reason_codes::N_CHAT_NO_INTENT,
+                    )
+                    .map(Ph1nResponse::Chat)
+                    .unwrap(),
+                ),
+                tool_response: None,
+                interruption: None,
+                locale: Some("en-US".to_string()),
+                last_failure_reason_code: None,
+            },
+        )
+        .expect("public chat should not be identity-posture fail-closed");
+        assert_eq!(chat_out.next_move, AppVoiceTurnNextMove::Respond);
+        assert!(
+            !chat_out
+                .response_text
+                .as_deref()
+                .unwrap_or_default()
+                .contains("couldn't verify your identity"),
+            "{:?}",
+            chat_out.response_text
+        );
+
+        let search_out = run_public_x_build_with_identity_assertion(
+            &runtime,
+            &mut store,
+            actor_user_id.clone(),
+            device_id.clone(),
+            low_confidence_voice_assertion(actor_user_id.clone()),
+            CorrelationId(98262),
+            TurnId(99262),
+            AppVoicePh1xBuildInput {
+                now: MonotonicTimeNs(18),
+                thread_key: None,
+                thread_state: ThreadState::empty_v1(),
+                session_state: SessionState::Active,
+                policy_context_ref: PolicyContextRef::v1(false, false, SafetyTier::Standard),
+                memory_candidates: vec![],
+                confirm_answer: None,
+                nlp_output: Some(web_search_draft("Search latest public climate news.")),
+                tool_response: None,
+                interruption: None,
+                locale: Some("en-US".to_string()),
+                last_failure_reason_code: None,
+            },
+        )
+        .expect("public search should not be identity-posture fail-closed");
+        assert_eq!(search_out.next_move, AppVoiceTurnNextMove::Respond);
+        let search_text = search_out.response_text.as_deref().unwrap_or_default();
+        assert!(!search_text.contains("couldn't verify your identity"));
+        assert!(!search_text.contains("got an ambiguous identity result"));
+
+        let protected_out = run_protected_chat_response_turn_with_identity_assertion(
+            &runtime,
+            &mut store,
+            actor_user_id.clone(),
+            device_id,
+            low_confidence_voice_assertion(actor_user_id),
+            CorrelationId(98263),
+            TurnId(99263),
+        );
+        assert_eq!(protected_out.next_move, AppVoiceTurnNextMove::Refused);
+        assert_eq!(
+            protected_out.response_text.as_deref(),
+            Some("I couldn't verify your identity strongly enough, so I can't continue.")
         );
     }
 

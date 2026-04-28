@@ -22434,6 +22434,66 @@ mod tests {
     }
 
     #[test]
+    fn h405_adapter_public_chat_allowed_and_protected_execution_preserved() {
+        with_isolated_empty_device_vault("h405_public_lane_adapter_boundary", || {
+            let runtime = AdapterRuntime::default();
+
+            let mut public_req = base_request();
+            public_req.app_platform = "DESKTOP".to_string();
+            public_req.correlation_id = 40_501;
+            public_req.turn_id = 50_501;
+            public_req.device_id = Some("h405_public_adapter_device".to_string());
+            public_req.user_text_final = Some("Tell me a joke.".to_string());
+            seed_desktop_voice_profile_for_request(&runtime, &mut public_req, "h405_public_chat");
+            let public_out = runtime
+                .run_voice_turn(public_req)
+                .expect("public chat should remain in the probabilistic answer lane");
+            assert_eq!(public_out.status, "ok", "{public_out:?}");
+            let public_lower = public_out.response_text.to_ascii_lowercase();
+            assert!(!public_lower.contains("governance state is out of sync"));
+            assert!(!public_lower.contains("policy versions are out of sync"));
+            assert!(!public_lower.contains("no_simulation_no_authority_no_protected_execution"));
+            assert!(!public_lower.contains("couldn't verify your identity"));
+
+            for (idx, prompt) in [
+                "Approve payroll for Tim.",
+                "Increase Tim's salary.",
+                "Search the web and approve payroll.",
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                let mut protected_req = base_request();
+                protected_req.app_platform = "DESKTOP".to_string();
+                protected_req.correlation_id = 40_510 + idx as u64;
+                protected_req.turn_id = 50_510 + idx as u64;
+                protected_req.device_id = Some(format!("h405_protected_adapter_device_{idx}"));
+                protected_req.user_text_final = Some(prompt.to_string());
+                seed_desktop_voice_profile_for_request(
+                    &runtime,
+                    &mut protected_req,
+                    &format!("h405_protected_{idx}"),
+                );
+                let protected_out = runtime
+                    .run_voice_turn(protected_req)
+                    .expect("protected execution should return a fail-closed answer");
+                assert_eq!(protected_out.status, "ok", "{prompt}: {protected_out:?}");
+                assert!(
+                    protected_out
+                        .response_text
+                        .contains("NO_SIMULATION_NO_AUTHORITY_NO_PROTECTED_EXECUTION"),
+                    "{prompt}: {}",
+                    protected_out.response_text
+                );
+                assert!(
+                    protected_out.provenance.is_none(),
+                    "protected execution must not produce public-search provenance: {prompt}"
+                );
+            }
+        });
+    }
+
+    #[test]
     fn h385_deep_search_production_depth_response_metadata_is_evidence_backed() {
         let citation = selene_kernel_contracts::ph1e::ToolTextSnippet {
             title: "Official OpenAI news".to_string(),
