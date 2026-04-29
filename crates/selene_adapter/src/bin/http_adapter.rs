@@ -21,6 +21,7 @@ use selene_adapter::{
     app_ui_assets, build_runtime_execution_envelope_for_voice_turn_request, AdapterHealthResponse,
     AdapterRuntime, AdapterSyncHealth, InviteLinkOpenAdapterRequest, InviteLinkOpenAdapterResponse,
     OnboardingContinueAdapterRequest, OnboardingContinueAdapterResponse,
+    PublicBrainTraceReportResponse,
     SessionAttachAdapterRequest, SessionAttachAdapterResponse,
     SessionPostureEvidenceAdapterRequest, SessionPostureEvidenceAdapterResponse,
     SessionRecentListAdapterRequest, SessionRecentListAdapterResponse,
@@ -292,6 +293,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/v1/ui/health/detail/:check_id", get(ui_health_detail))
         .route("/v1/ui/health/report/query", post(ui_health_report_query))
         .route("/v1/ui/chat/transcript", get(ui_chat_transcript))
+        .route("/v1/ui/public-brain/trace", get(ui_public_brain_trace))
         .route("/v1/voice/turn", post(run_voice_turn))
         .route(
             "/v1/desktop/realtime-transcription/session",
@@ -540,6 +542,29 @@ async fn ui_chat_transcript(
     (
         StatusCode::OK,
         Json(runtime.ui_chat_transcript_report(None)),
+    )
+}
+
+async fn ui_public_brain_trace(
+    State(state): State<HttpAdapterState>,
+) -> (StatusCode, Json<PublicBrainTraceReportResponse>) {
+    let runtime = match state.runtime.lock() {
+        Ok(runtime) => runtime,
+        Err(_) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(PublicBrainTraceReportResponse {
+                    status: "error".to_string(),
+                    generated_at_ns: 0,
+                    note: Some("adapter runtime lock poisoned".to_string()),
+                    traces: Vec::new(),
+                }),
+            );
+        }
+    };
+    (
+        StatusCode::OK,
+        Json(runtime.ui_public_brain_trace_report(None)),
     )
 }
 
@@ -4413,6 +4438,19 @@ mod tests {
         );
         let response = run_voice_turn(State(state), headers, Json(request)).await;
         assert_ne!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    }
+
+    #[tokio::test]
+    async fn h410_http_public_brain_trace_route_returns_bounded_diagnostic_report() {
+        let state = test_state_with_config(IngressSecurityConfig::from_env());
+        let (status, Json(body)) = ui_public_brain_trace(State(state)).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body.status, "ok");
+        assert!(body.traces.is_empty());
+        assert!(body
+            .note
+            .as_deref()
+            .is_some_and(|note| note.contains("SELENE_PUBLIC_BRAIN_TRACE_ENABLED")));
     }
 
     #[tokio::test]

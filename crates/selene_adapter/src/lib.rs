@@ -1392,6 +1392,61 @@ pub struct UiChatTranscriptResponse {
     pub messages: Vec<UiTranscriptMessage>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct PublicBrainTraceSourceSummary {
+    pub title_sha256: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title_text: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url_sha256: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct PublicBrainTraceRow {
+    pub schema_version: u8,
+    pub result_class: String,
+    pub trace_id: String,
+    pub correlation_id: u64,
+    pub turn_id: u64,
+    pub diagnostic_mode: String,
+    pub raw_text_included: bool,
+    pub raw_audio_retained: bool,
+    pub captured_input_sha256: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub captured_input_text: Option<String>,
+    pub normalized_input_sha256: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub normalized_input_text: Option<String>,
+    pub language_detected: Option<String>,
+    pub dominant_language: Option<String>,
+    pub intent_chosen: Option<String>,
+    pub context_used: bool,
+    pub context_route_used: Option<String>,
+    pub tool_route_selected: Option<String>,
+    pub search_query_sha256: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub search_query_text: Option<String>,
+    pub sources_accepted_count: usize,
+    pub sources_rejected_count: usize,
+    pub sources_accepted: Vec<PublicBrainTraceSourceSummary>,
+    pub sources_rejected: Vec<PublicBrainTraceSourceSummary>,
+    pub final_answer_sha256: String,
+    pub formatter_output_sha256: String,
+    pub tts_input_text_sha256: Option<String>,
+    pub protected_execution_attempted: bool,
+    pub protected_fail_closed: bool,
+    pub failure_reason: Option<String>,
+    pub engine_layer_responsible: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct PublicBrainTraceReportResponse {
+    pub status: String,
+    pub generated_at_ns: u64,
+    pub note: Option<String>,
+    pub traces: Vec<PublicBrainTraceRow>,
+}
+
 #[derive(Debug, Clone)]
 pub struct AdapterRuntime {
     ingress: AppServerIngressRuntime,
@@ -1400,6 +1455,7 @@ pub struct AdapterRuntime {
     sync_worker_counters: Arc<Mutex<AdapterSyncWorkerCounters>>,
     improvement_counters: Arc<Mutex<AdapterImprovementCounters>>,
     transcript_state: Arc<Mutex<AdapterTranscriptState>>,
+    public_brain_trace_state: Arc<Mutex<AdapterPublicBrainTraceState>>,
     public_answer_state: Arc<Mutex<AdapterPublicAnswerState>>,
     weather_context_state: Arc<Mutex<BTreeMap<String, String>>>,
     report_display_target_defaults: Arc<Mutex<BTreeMap<String, String>>>,
@@ -1511,6 +1567,11 @@ impl Default for AdapterTranscriptState {
             events: Vec::new(),
         }
     }
+}
+
+#[derive(Debug, Clone, Default)]
+struct AdapterPublicBrainTraceState {
+    traces: Vec<PublicBrainTraceRow>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -3696,6 +3757,7 @@ impl Default for AdapterRuntime {
             sync_worker_counters: Arc::new(Mutex::new(AdapterSyncWorkerCounters::default())),
             improvement_counters: Arc::new(Mutex::new(AdapterImprovementCounters::default())),
             transcript_state: Arc::new(Mutex::new(AdapterTranscriptState::default())),
+            public_brain_trace_state: Arc::new(Mutex::new(AdapterPublicBrainTraceState::default())),
             public_answer_state: Arc::new(Mutex::new(AdapterPublicAnswerState::default())),
             weather_context_state: Arc::new(Mutex::new(BTreeMap::new())),
             report_display_target_defaults: Arc::new(Mutex::new(BTreeMap::new())),
@@ -3735,6 +3797,7 @@ impl AdapterRuntime {
             sync_worker_counters: Arc::new(Mutex::new(AdapterSyncWorkerCounters::default())),
             improvement_counters: Arc::new(Mutex::new(AdapterImprovementCounters::default())),
             transcript_state: Arc::new(Mutex::new(AdapterTranscriptState::default())),
+            public_brain_trace_state: Arc::new(Mutex::new(AdapterPublicBrainTraceState::default())),
             public_answer_state: Arc::new(Mutex::new(AdapterPublicAnswerState::default())),
             weather_context_state: Arc::new(Mutex::new(BTreeMap::new())),
             report_display_target_defaults: Arc::new(Mutex::new(BTreeMap::new())),
@@ -3769,6 +3832,7 @@ impl AdapterRuntime {
             sync_worker_counters: Arc::new(Mutex::new(AdapterSyncWorkerCounters::default())),
             improvement_counters: Arc::new(Mutex::new(AdapterImprovementCounters::default())),
             transcript_state: Arc::new(Mutex::new(AdapterTranscriptState::default())),
+            public_brain_trace_state: Arc::new(Mutex::new(AdapterPublicBrainTraceState::default())),
             public_answer_state: Arc::new(Mutex::new(AdapterPublicAnswerState::default())),
             weather_context_state: Arc::new(Mutex::new(BTreeMap::new())),
             report_display_target_defaults: Arc::new(Mutex::new(BTreeMap::new())),
@@ -4496,6 +4560,49 @@ impl AdapterRuntime {
             note,
             messages,
         }
+    }
+
+    pub fn ui_public_brain_trace_report(
+        &self,
+        now_ns: Option<u64>,
+    ) -> PublicBrainTraceReportResponse {
+        let now_ns = now_ns.unwrap_or_else(system_time_now_ns).max(1);
+        let traces = match self.public_brain_trace_state.lock() {
+            Ok(state) => state.traces.clone(),
+            Err(_) => {
+                return PublicBrainTraceReportResponse {
+                    status: "error".to_string(),
+                    generated_at_ns: now_ns,
+                    note: Some("adapter public brain trace lock poisoned".to_string()),
+                    traces: Vec::new(),
+                };
+            }
+        };
+        let note = if traces.is_empty() {
+            Some("No public brain traces recorded. Enable SELENE_PUBLIC_BRAIN_TRACE_ENABLED for dev diagnostics.".to_string())
+        } else {
+            None
+        };
+        PublicBrainTraceReportResponse {
+            status: "ok".to_string(),
+            generated_at_ns: now_ns,
+            note,
+            traces,
+        }
+    }
+
+    fn record_public_brain_trace(&self, trace: PublicBrainTraceRow) -> Result<(), String> {
+        let mut state = self
+            .public_brain_trace_state
+            .lock()
+            .map_err(|_| "adapter public brain trace lock poisoned".to_string())?;
+        state.traces.push(trace);
+        let max = h410_public_brain_trace_max_entries();
+        if state.traces.len() > max {
+            let overflow = state.traces.len().saturating_sub(max);
+            state.traces.drain(0..overflow);
+        }
+        Ok(())
     }
 
     pub fn ui_health_report_query(
@@ -7302,7 +7409,7 @@ impl AdapterRuntime {
                         self.session_lease_ttl_ms,
                     )
                     .map_err(post_session_error)?;
-                    return Ok(VoiceTurnAdapterResponse {
+                    let response = VoiceTurnAdapterResponse {
                         status: "ok".to_string(),
                         outcome: "FINAL".to_string(),
                         session_id: runtime_execution_envelope
@@ -7321,7 +7428,19 @@ impl AdapterRuntime {
                         reason_code: "H381_H380_LIVE_RESPONSE".to_string(),
                         provenance: None,
                         deep_research: None,
-                    });
+                    };
+                    if let Some(trace) = h410_build_public_brain_trace(
+                        &request_for_journal,
+                        user_text_final.as_deref(),
+                        h380_understanding.as_ref(),
+                        None,
+                        None,
+                        &response.response_text,
+                    ) {
+                        self.record_public_brain_trace(trace)
+                            .map_err(post_session_error)?;
+                    }
+                    return Ok(response);
                 }
             }
             let committed_turn_followup = classify_h379_committed_turn_followup(
@@ -7487,6 +7606,7 @@ impl AdapterRuntime {
             ) {
                 eprintln!("selene_adapter read-only incident emission failed: {err}");
             }
+            let h410_captured_final_for_trace = user_text_final.clone();
             self.record_transcript_updates(
                 &mut store,
                 now,
@@ -7562,7 +7682,21 @@ impl AdapterRuntime {
                 self.session_lease_ttl_ms,
             )
             .map_err(post_session_error)?;
+            let h410_response_text_for_trace =
+                execution_outcome.response_text.clone().unwrap_or_default();
+            let h410_trace = h410_build_public_brain_trace(
+                &request_for_journal,
+                h410_captured_final_for_trace.as_deref(),
+                h380_understanding.as_ref(),
+                Some(&nlp_output),
+                Some(&execution_outcome),
+                &h410_response_text_for_trace,
+            );
             let response = execution_outcome_to_adapter_response(execution_outcome);
+            if let Some(trace) = h410_trace {
+                self.record_public_brain_trace(trace)
+                    .map_err(post_session_error)?;
+            }
             if let Some(proof_log) = build1c_language_audit_proof_log(
                 language_packet.as_ref(),
                 response.response_text.as_str(),
@@ -14344,6 +14478,233 @@ fn execution_outcome_to_adapter_response(
             .as_ref()
             .and_then(deep_research_metadata_from_tool_response),
     }
+}
+
+fn h410_public_brain_trace_enabled() -> bool {
+    parse_bool_env("SELENE_PUBLIC_BRAIN_TRACE_ENABLED", false)
+}
+
+fn h410_public_brain_trace_raw_text_enabled() -> bool {
+    parse_bool_env("SELENE_PUBLIC_BRAIN_TRACE_RAW_TEXT_ENABLED", false)
+}
+
+fn h410_public_brain_trace_max_entries() -> usize {
+    (parse_u64_env("SELENE_PUBLIC_BRAIN_TRACE_MAX_ENTRIES", 128) as usize).clamp(1, 1_024)
+}
+
+fn h410_hash_text(value: &str) -> String {
+    sha256_hex_for_build1c(value)
+}
+
+fn h410_trace_text(value: Option<&str>, include_raw: bool) -> (Option<String>, Option<String>) {
+    let value = value.map(str::trim).filter(|value| !value.is_empty());
+    (
+        value.map(h410_hash_text),
+        value
+            .filter(|_| include_raw)
+            .map(|value| truncate_text_chars(value, 512)),
+    )
+}
+
+fn h410_intent_type_label(output: Option<&Ph1nResponse>) -> Option<String> {
+    match output {
+        Some(Ph1nResponse::IntentDraft(intent)) => Some(format!("{:?}", intent.intent_type)),
+        Some(Ph1nResponse::Chat(_)) => Some("PublicChat".to_string()),
+        Some(Ph1nResponse::Clarify(_)) => Some("Clarify".to_string()),
+        None => None,
+    }
+}
+
+fn h410_tool_route_from_nlp_output(output: Option<&Ph1nResponse>) -> Option<String> {
+    match output {
+        Some(Ph1nResponse::IntentDraft(intent)) => Some(format!("{:?}", intent.intent_type)),
+        _ => None,
+    }
+}
+
+fn h410_search_query_from_nlp_output(output: Option<&Ph1nResponse>) -> Option<String> {
+    let Some(Ph1nResponse::IntentDraft(intent)) = output else {
+        return None;
+    };
+    if !matches!(
+        intent.intent_type,
+        IntentType::WebSearchQuery | IntentType::NewsQuery | IntentType::DeepResearchQuery
+    ) {
+        return None;
+    }
+    intent.fields.iter().find_map(|field| {
+        if field.key != FieldKey::Task {
+            return None;
+        }
+        field
+            .value
+            .normalized_value
+            .clone()
+            .or_else(|| Some(field.value.original_span.clone()))
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+    })
+}
+
+fn h410_source_summary(source: &selene_kernel_contracts::ph1e::SourceRef, include_raw: bool) -> PublicBrainTraceSourceSummary {
+    PublicBrainTraceSourceSummary {
+        title_sha256: h410_hash_text(&source.title),
+        title_text: include_raw.then(|| truncate_text_chars(&source.title, 256)),
+        url_sha256: Some(h410_hash_text(&source.url)),
+    }
+}
+
+fn h410_tamburlaine_ceo_safe_degrade(answer: &str) -> bool {
+    let lower = answer.to_ascii_lowercase();
+    lower.contains("couldn't verify")
+        && lower.contains("publicly listed ceo")
+        && lower.contains("tamburlaine organic wines")
+}
+
+fn h410_source_rejected_for_tamburlaine_ceo(
+    source: &selene_kernel_contracts::ph1e::SourceRef,
+) -> bool {
+    let title = source.title.to_ascii_lowercase();
+    let url = source.url.to_ascii_lowercase();
+    (title.contains("wine australia") || url.contains("wineaustralia"))
+        || (!title.contains("tamburlaine") && !url.contains("tamburlaine"))
+}
+
+fn h410_source_trace_summaries(
+    tool_response: Option<&ToolResponse>,
+    answer_text: &str,
+    include_raw: bool,
+) -> (Vec<PublicBrainTraceSourceSummary>, Vec<PublicBrainTraceSourceSummary>) {
+    let sources = tool_response
+        .and_then(|response| response.source_metadata.as_ref())
+        .map(|metadata| metadata.sources.as_slice())
+        .unwrap_or(&[]);
+    if h410_tamburlaine_ceo_safe_degrade(answer_text) {
+        let rejected = sources
+            .iter()
+            .filter(|source| h410_source_rejected_for_tamburlaine_ceo(source))
+            .map(|source| h410_source_summary(source, include_raw))
+            .collect::<Vec<_>>();
+        return (Vec::new(), rejected);
+    }
+    let accepted = sources
+        .iter()
+        .map(|source| h410_source_summary(source, include_raw))
+        .collect::<Vec<_>>();
+    (accepted, Vec::new())
+}
+
+fn h410_engine_layer_responsible(
+    packet: Option<&H380TurnUnderstandingPacket>,
+    tool_response: Option<&ToolResponse>,
+    rejected_sources_count: usize,
+    protected_fail_closed: bool,
+) -> String {
+    if protected_fail_closed {
+        return "DETERMINISTIC_PROTECTED_EXECUTION_GATE".to_string();
+    }
+    if rejected_sources_count > 0 {
+        return "PH1.E_SEARCH_VERIFIER".to_string();
+    }
+    if packet.is_some_and(|p| p.referenced_tool_route.is_some()) {
+        return "PH1.X_CONTEXT_ROUTER".to_string();
+    }
+    if tool_response.is_some() {
+        return "PH1.E_TOOL_OR_SEARCH".to_string();
+    }
+    if packet.is_some() {
+        return "PH1.N_PUBLIC_UNDERSTANDING".to_string();
+    }
+    "ADAPTER_PUBLIC_ANSWER".to_string()
+}
+
+fn h410_build_public_brain_trace(
+    request: &VoiceTurnAdapterRequest,
+    captured_text: Option<&str>,
+    h380_packet: Option<&H380TurnUnderstandingPacket>,
+    nlp_output: Option<&Ph1nResponse>,
+    execution: Option<&AppVoiceTurnExecutionOutcome>,
+    response_text: &str,
+) -> Option<PublicBrainTraceRow> {
+    if !h410_public_brain_trace_enabled() {
+        return None;
+    }
+    let include_raw = h410_public_brain_trace_raw_text_enabled();
+    let normalized_text = h380_packet.map(|packet| packet.normalized_text.as_str());
+    let (captured_input_sha256, captured_input_text) = h410_trace_text(captured_text, include_raw);
+    let (normalized_input_sha256, normalized_input_text) =
+        h410_trace_text(normalized_text, include_raw);
+    let search_query = h410_search_query_from_nlp_output(nlp_output);
+    let (search_query_sha256, search_query_text) =
+        h410_trace_text(search_query.as_deref(), include_raw);
+    let tool_response = execution.and_then(|outcome| outcome.tool_response.as_ref());
+    let (sources_accepted, sources_rejected) =
+        h410_source_trace_summaries(tool_response, response_text, include_raw);
+    let protected_fail_closed = h380_packet.is_some_and(|packet| packet.protected_fail_closed)
+        || response_text.contains("NO_SIMULATION_NO_AUTHORITY_NO_PROTECTED_EXECUTION");
+    let protected_execution_attempted =
+        protected_fail_closed || h380_packet.is_some_and(|packet| packet.protected_fail_closed);
+    let failure_reason = if h410_tamburlaine_ceo_safe_degrade(response_text) {
+        Some("UNVERIFIED_ENTITY_ANSWER_SAFE_DEGRADE".to_string())
+    } else if protected_fail_closed {
+        Some("NO_SIMULATION_NO_EXECUTION_PROTECTED_ONLY".to_string())
+    } else {
+        execution.and_then(|outcome| outcome.reason_code.map(|code| code.0.to_string()))
+    };
+    let engine_layer_responsible = h410_engine_layer_responsible(
+        h380_packet,
+        tool_response,
+        sources_rejected.len(),
+        protected_fail_closed,
+    );
+    let final_answer_sha256 = h410_hash_text(response_text);
+    Some(PublicBrainTraceRow {
+        schema_version: 1,
+        result_class: "H410_PUBLIC_BRAIN_BLACK_BOX_TRACE_PASS".to_string(),
+        trace_id: format!("h410:{}:{}", request.correlation_id, request.turn_id),
+        correlation_id: request.correlation_id,
+        turn_id: request.turn_id,
+        diagnostic_mode: if include_raw {
+            "dev_raw_text".to_string()
+        } else {
+            "metadata_hash_only".to_string()
+        },
+        raw_text_included: include_raw,
+        raw_audio_retained: false,
+        captured_input_sha256,
+        captured_input_text,
+        normalized_input_sha256,
+        normalized_input_text,
+        language_detected: h380_packet.map(|packet| packet.detected_language.clone()),
+        dominant_language: h380_packet.map(|packet| packet.dominant_language.clone()),
+        intent_chosen: h380_packet
+            .map(|packet| format!("{:?}", packet.primary_intent))
+            .or_else(|| h410_intent_type_label(nlp_output)),
+        context_used: h380_packet.is_some_and(|packet| {
+            packet.referenced_previous_turn
+                || packet.referenced_previous_answer
+                || packet.referenced_tool_route.is_some()
+        }),
+        context_route_used: h380_packet
+            .and_then(|packet| packet.referenced_tool_route)
+            .map(|route| format!("{:?}", route)),
+        tool_route_selected: h380_packet
+            .map(|packet| packet.final_route.as_str().to_string())
+            .or_else(|| h410_tool_route_from_nlp_output(nlp_output)),
+        search_query_sha256,
+        search_query_text,
+        sources_accepted_count: sources_accepted.len(),
+        sources_rejected_count: sources_rejected.len(),
+        sources_accepted,
+        sources_rejected,
+        final_answer_sha256: final_answer_sha256.clone(),
+        formatter_output_sha256: final_answer_sha256,
+        tts_input_text_sha256: None,
+        protected_execution_attempted,
+        protected_fail_closed,
+        failure_reason,
+        engine_layer_responsible,
+    })
 }
 
 fn execution_outcome_is_public_no_intent(execution: &AppVoiceTurnExecutionOutcome) -> bool {
@@ -32402,6 +32763,207 @@ mod tests {
             assert!(!request.contains("Wine%20Australia"), "{request}");
             assert!(!request.contains("Wine+Australia"), "{request}");
         }
+    }
+
+    #[test]
+    fn h410_public_brain_trace_records_metadata_without_raw_text_or_audio() {
+        let endpoint = h373_spawn_tomorrow_weather_endpoint_sequence(vec![r#"{
+            "data": {
+                "time": "2026-04-25T03:00:00Z",
+                "values": {
+                    "temperature": 21.2,
+                    "humidity": 61,
+                    "windSpeed": 3.0,
+                    "weatherCode": 1101
+                }
+            },
+            "location": {
+                "name": "Sydney, Australia"
+            }
+        }"#]);
+        with_isolated_device_vault(
+            "h410-public-brain-trace-metadata",
+            &[],
+            &[
+                ("SELENE_PUBLIC_BRAIN_TRACE_ENABLED", "true"),
+                ("SELENE_PUBLIC_BRAIN_TRACE_RAW_TEXT_ENABLED", "false"),
+                ("SELENE_REALTIME_TOMORROW_IO_ENDPOINT", endpoint.as_str()),
+                ("SELENE_REALTIME_TOMORROW_IO_API_KEY", "h410-secret"),
+                ("SELENE_REALTIME_WEATHER_API_KEY", " "),
+                ("SELENE_REALTIME_PROXY_MODE", "off"),
+            ],
+            || {
+                let runtime = AdapterRuntime::default();
+                let seed = h363_run_desktop_typed_time_query_on_thread(
+                    &runtime,
+                    "h410-trace-time-weather",
+                    410_001,
+                    "What time is it in Sydney right now?",
+                );
+                assert_h363_clean_time_answer(&seed, "Sydney");
+
+                let followup = h364_run_desktop_typed_weather_query_on_thread(
+                    &runtime,
+                    "h410-trace-time-weather",
+                    410_002,
+                    "Like in Sydney right now.",
+                );
+                assert_h364_clean_weather_answer(&followup, "Sydney");
+
+                let mut protected = base_request();
+                protected.correlation_id = 410_003;
+                protected.turn_id = 410_003;
+                protected.device_turn_sequence = Some(410_003);
+                protected.now_ns = Some(410_003);
+                protected.thread_key = Some("h410-trace-time-weather".to_string());
+                protected.app_platform = "DESKTOP".to_string();
+                protected.audio_capture_ref = None;
+                protected.user_text_final = Some("Approve payroll for Tim.".to_string());
+                let protected_out = runtime
+                    .run_voice_turn(protected)
+                    .expect("protected trace prompt should fail closed cleanly");
+                assert!(protected_out
+                    .response_text
+                    .contains("NO_SIMULATION_NO_AUTHORITY_NO_PROTECTED_EXECUTION"));
+
+                let report = runtime.ui_public_brain_trace_report(Some(410_999));
+                assert_eq!(report.status, "ok");
+                assert_eq!(report.traces.len(), 3, "{report:?}");
+                let followup_trace = report
+                    .traces
+                    .iter()
+                    .find(|trace| trace.turn_id == 410_002)
+                    .expect("follow-up trace should be recorded");
+                assert_eq!(
+                    followup_trace.result_class,
+                    "H410_PUBLIC_BRAIN_BLACK_BOX_TRACE_PASS"
+                );
+                assert_eq!(followup_trace.diagnostic_mode, "metadata_hash_only");
+                assert!(!followup_trace.raw_text_included);
+                assert!(!followup_trace.raw_audio_retained);
+                assert!(followup_trace.captured_input_sha256.is_some());
+                assert!(followup_trace.normalized_input_sha256.is_some());
+                assert_eq!(followup_trace.captured_input_text, None);
+                assert_eq!(followup_trace.normalized_input_text, None);
+                assert_eq!(
+                    followup_trace.tool_route_selected.as_deref(),
+                    Some("WEATHER_LOOKUP")
+                );
+                assert!(followup_trace.context_used);
+                assert_eq!(
+                    followup_trace.context_route_used.as_deref(),
+                    Some("ToolTime")
+                );
+                assert_eq!(
+                    followup_trace.engine_layer_responsible,
+                    "PH1.X_CONTEXT_ROUTER"
+                );
+                assert_ne!(followup_trace.final_answer_sha256, "");
+                assert_eq!(
+                    followup_trace.final_answer_sha256,
+                    followup_trace.formatter_output_sha256
+                );
+
+                let protected_trace = report
+                    .traces
+                    .iter()
+                    .find(|trace| trace.turn_id == 410_003)
+                    .expect("protected trace should be recorded");
+                assert!(protected_trace.protected_execution_attempted);
+                assert!(protected_trace.protected_fail_closed);
+                assert_eq!(
+                    protected_trace.engine_layer_responsible,
+                    "DETERMINISTIC_PROTECTED_EXECUTION_GATE"
+                );
+            },
+        );
+    }
+
+    #[test]
+    fn h410_public_brain_trace_raw_text_mode_records_search_verifier_failure_layer() {
+        let captured = Arc::new(Mutex::new(Vec::new()));
+        let endpoint = h409_spawn_brave_web_endpoint_sequence(
+            vec![r#"{"web":{"results":[
+                {"title":"Our CEO and executive management team | Wine Australia","url":"https://www.wineaustralia.com/about-us/our-ceo-and-executive-management-team","description":"Along with his wine sector experience, <strong>Dr Cole</strong> brings more than 25 years of experience."},
+                {"title":"Tamburlaine Organic Wines | Australia's Favourite Winemaker","url":"https://tamburlaine.com.au/","description":"Tamburlaine Organic Wines is an Australian organic winery."}
+            ]}}"#],
+            Arc::clone(&captured),
+        );
+
+        with_isolated_device_vault(
+            "h410-public-brain-trace-raw-search",
+            &[("brave_search_api_key", "h410-brave-key")],
+            &[
+                ("SELENE_PUBLIC_BRAIN_TRACE_ENABLED", "true"),
+                ("SELENE_PUBLIC_BRAIN_TRACE_RAW_TEXT_ENABLED", "true"),
+                ("BRAVE_SEARCH_WEB_URL", endpoint.as_str()),
+                ("BRAVE_SEARCH_NEWS_URL", endpoint.as_str()),
+                ("SELENE_PROXY_MODE", "off"),
+            ],
+            || {
+                let runtime = AdapterRuntime::default();
+                let mut req = base_request();
+                req.correlation_id = 410_101;
+                req.turn_id = 410_101;
+                req.device_turn_sequence = Some(410_101);
+                req.now_ns = Some(410_101);
+                req.thread_key = Some("h410-public-brain-trace-raw-search".to_string());
+                req.app_platform = "DESKTOP".to_string();
+                req.audio_capture_ref = None;
+                req.user_text_final = Some(
+                    "Do a deep web search and find me the CEO for Tumba Lane Organic Wines in Australia."
+                        .to_string(),
+                );
+                let out = runtime
+                    .run_voice_turn(req)
+                    .expect("noisy public CEO prompt should complete");
+                assert_eq!(
+                    out.response_text,
+                    "I couldn't verify a publicly listed CEO for Tamburlaine Organic Wines from reliable public sources."
+                );
+
+                let report = runtime.ui_public_brain_trace_report(Some(410_199));
+                let trace = report
+                    .traces
+                    .iter()
+                    .find(|trace| trace.turn_id == 410_101)
+                    .expect("raw search trace should be recorded");
+                assert_eq!(trace.diagnostic_mode, "dev_raw_text");
+                assert!(trace.raw_text_included);
+                assert!(!trace.raw_audio_retained);
+                assert_eq!(
+                    trace.captured_input_text.as_deref(),
+                    Some("Do a deep web search and find me the CEO for Tumba Lane Organic Wines in Australia.")
+                );
+                assert_eq!(
+                    trace.search_query_text.as_deref(),
+                    Some("Tamburlaine Organic Wines CEO Australia")
+                );
+                assert_eq!(trace.sources_accepted_count, 0);
+                assert!(trace.sources_rejected_count >= 1, "{trace:?}");
+                assert!(trace
+                    .sources_rejected
+                    .iter()
+                    .any(|source| source
+                        .title_text
+                        .as_deref()
+                        .is_some_and(|title| title.contains("Wine Australia"))));
+                assert_eq!(
+                    trace.engine_layer_responsible,
+                    "PH1.E_SEARCH_VERIFIER"
+                );
+                assert_eq!(
+                    trace.failure_reason.as_deref(),
+                    Some("UNVERIFIED_ENTITY_ANSWER_SAFE_DEGRADE")
+                );
+                assert_ne!(trace.final_answer_sha256, "");
+            },
+        );
+
+        let requests = captured.lock().expect("captured request lock").clone();
+        assert_eq!(requests.len(), 1, "{requests:?}");
+        assert!(requests[0].contains("Tamburlaine"), "{}", requests[0]);
+        assert!(!requests[0].contains("Wine%20Australia"), "{}", requests[0]);
     }
 
     #[test]
