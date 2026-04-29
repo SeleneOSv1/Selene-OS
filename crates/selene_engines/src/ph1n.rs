@@ -218,6 +218,12 @@ fn looks_like_bcast_urgent_followup_policy_update(lower: &str) -> bool {
 }
 
 fn looks_like_time_query(lower: &str) -> bool {
+    let explicit_chinese_weather = lower.contains("天气")
+        || lower.contains("天氣")
+        || lower.contains("下雨")
+        || lower.contains("降雨")
+        || lower.contains("预报")
+        || lower.contains("預報");
     lower == "time"
         || lower.starts_with("time ")
         || lower.contains("time rn")
@@ -232,8 +238,10 @@ fn looks_like_time_query(lower: &str) -> bool {
         || lower.contains("tell me the time")
         || lower.contains("几点")
         || lower.contains("幾點")
-        || (lower.contains("东京") && (lower.contains("时间") || lower.contains("现在")))
-        || (lower.contains("東京") && (lower.contains("時間") || lower.contains("現在")))
+        || (lower.contains("东京")
+            && (lower.contains("时间") || (lower.contains("现在") && !explicit_chinese_weather)))
+        || (lower.contains("東京")
+            && (lower.contains("時間") || (lower.contains("現在") && !explicit_chinese_weather)))
 }
 
 fn canonical_time_tool_query(transcript: &str) -> Option<String> {
@@ -250,9 +258,35 @@ fn canonical_time_tool_query(transcript: &str) -> Option<String> {
         } else if lower.contains("sydney") || transcript.contains("悉尼") {
             Some("Sydney")
         } else {
+        None
+    }?;
+    Some(format!("what time is it in {place}"))
+}
+
+fn canonical_weather_tool_query(transcript: &str) -> Option<String> {
+    let lower = transcript.to_ascii_lowercase();
+    let place =
+        if lower.contains("tokyo") || transcript.contains("东京") || transcript.contains("東京")
+        {
+            Some("Tokyo")
+        } else if lower.contains("barcelona") || transcript.contains("巴塞罗那") {
+            Some("Barcelona")
+        } else if lower.contains("sydney") || transcript.contains("悉尼") {
+            Some("Sydney")
+        } else {
             None
         }?;
-    Some(format!("what time is it in {place}"))
+    let asks_rain = lower.contains("rain")
+        || transcript.contains("下雨")
+        || transcript.contains("降雨")
+        || transcript.contains("雨");
+    if asks_rain && lower.contains("tomorrow") {
+        Some(format!("will it rain in {place} tomorrow"))
+    } else if asks_rain {
+        Some(format!("is it raining in {place}"))
+    } else {
+        Some(format!("what is the weather in {place}"))
+    }
 }
 
 fn looks_like_weather_query(lower: &str) -> bool {
@@ -708,6 +742,17 @@ fn normalize_intent(
             let (sens, confirm) = meta_for_intent(intent_type);
             let fields = if intent_type == IntentType::TimeQuery {
                 canonical_time_tool_query(t)
+                    .map(|canonical| {
+                        Ok(vec![IntentField {
+                            key: FieldKey::Task,
+                            value: FieldValue::normalized(t.to_string(), canonical)?,
+                            confidence: OverallConfidence::High,
+                        }])
+                    })
+                    .transpose()?
+                    .unwrap_or_default()
+            } else if intent_type == IntentType::WeatherQuery {
+                canonical_weather_tool_query(t)
                     .map(|canonical| {
                         Ok(vec![IntentField {
                             key: FieldKey::Task,
@@ -4410,6 +4455,7 @@ mod tests {
         let rt = Ph1nRuntime::new(Ph1nConfig::mvp_v1());
         for prompt in [
             "悉尼现在天气怎么样？",
+            "现在东京天气怎么样？",
             "悉尼现在下雨吗？",
             "悉尼未来四天天气预报？",
             "Is it raining in 悉尼?",
@@ -4424,6 +4470,26 @@ mod tests {
                 }
                 _ => panic!("expected deterministic weather intent for {prompt}"),
             }
+        }
+    }
+
+    #[test]
+    fn h412_chinese_tokyo_weather_now_is_not_multi_intent_time_weather() {
+        let rt = Ph1nRuntime::new(Ph1nConfig::mvp_v1());
+        let out = rt.run(&req("现在东京天气怎么样？", "zh")).unwrap();
+        match out {
+            Ph1nResponse::IntentDraft(d) => {
+                assert_eq!(d.intent_type, IntentType::WeatherQuery);
+                assert_eq!(d.overall_confidence, OverallConfidence::High);
+                assert!(!d.requires_confirmation);
+                let task = d
+                    .fields
+                    .iter()
+                    .find(|field| field.key == FieldKey::Task)
+                    .and_then(|field| field.value.normalized_value.as_deref());
+                assert_eq!(task, Some("what is the weather in Tokyo"));
+            }
+            _ => panic!("expected Tokyo Chinese weather prompt to stay WeatherQuery"),
         }
     }
 }

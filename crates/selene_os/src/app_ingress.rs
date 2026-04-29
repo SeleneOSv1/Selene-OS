@@ -7563,6 +7563,9 @@ fn directive_is_public_probabilistic_answer_lane(
 }
 
 fn low_risk_public_deterministic_turn_answer(out: &AppVoiceTurnExecutionOutcome) -> bool {
+    if low_risk_public_tool_response(out) {
+        return true;
+    }
     if !matches!(
         out.next_move,
         AppVoiceTurnNextMove::Dispatch | AppVoiceTurnNextMove::Respond
@@ -7576,6 +7579,36 @@ fn low_risk_public_deterministic_turn_answer(out: &AppVoiceTurnExecutionOutcome)
         return directive_is_public_probabilistic_answer_lane(request, &response.directive);
     }
     ph1x_request_is_public_probabilistic_answer_lane(request)
+}
+
+fn low_risk_public_tool_response(out: &AppVoiceTurnExecutionOutcome) -> bool {
+    if out.dispatch_outcome.is_some() {
+        return false;
+    }
+    let Some(tool_response) = out.tool_response.as_ref() else {
+        return false;
+    };
+    if tool_response.tool_status != ToolStatus::Ok {
+        return false;
+    }
+    let provider_hint = tool_response
+        .source_metadata
+        .as_ref()
+        .and_then(|metadata| metadata.provider_hint.as_deref());
+    matches!(
+        provider_hint,
+        Some(
+            "tomorrow_io_weather"
+                | "weatherapi_weather"
+                | "system_utc"
+                | "system_tzdb"
+                | "google_time_zone"
+                | "timezonedb"
+                | "brave"
+                | "ph1search_url_fetch"
+                | "ph1e_builtin"
+        )
+    )
 }
 
 fn classify_low_confidence_identity_posture_fail_closed_outcome(
@@ -8500,7 +8533,13 @@ fn maybe_build_weather_tool_response(
                 weather_rain_summary_from_payload(place.as_str(), payload)
                     .or_else(|_| weather_summary_from_payload(place.as_str(), payload))
             } else {
-                weather_summary_from_payload(place.as_str(), payload)
+                weather_summary_from_payload(place.as_str(), payload).or_else(|_| {
+                    weather_forecast_summary_from_payload(
+                        place.as_str(),
+                        tool_request.query.as_str(),
+                        payload,
+                    )
+                })
             }
             .map_err(|_| weather_payload_contract_error())?;
             let source_metadata = weather_source_metadata_from_evidence(&result.evidence_packet)
@@ -8668,6 +8707,9 @@ fn weather_chinese_place_from_query(query: &str) -> Option<&'static str> {
     if query.contains("悉尼") {
         return Some("Sydney");
     }
+    if query.contains("东京") || query.contains("東京") {
+        return Some("Tokyo");
+    }
     if query.contains("巴塞罗那") || query.contains("巴塞隆拿") {
         return Some("Barcelona");
     }
@@ -8758,6 +8800,7 @@ fn weather_normalize_query_place(place: &str) -> String {
         "sydney" | "sydney australia" | "sydney new south wales australia" => "Sydney".to_string(),
         "悉尼" => "Sydney".to_string(),
         "tokyo" | "tokyo japan" => "Tokyo".to_string(),
+        "东京" | "東京" => "Tokyo".to_string(),
         "council of the city of sydney"
         | "council of the city of sydney new south wales australia"
         | "city of sydney"
@@ -20908,6 +20951,61 @@ mod tests {
             protected_out.response_text.as_deref(),
             Some("I couldn't verify your identity strongly enough, so I can't continue.")
         );
+    }
+
+    #[test]
+    fn h412_public_tool_response_still_skips_identity_posture_after_tool_followup() {
+        assert_eq!(weather_place_from_query("现在东京天气怎么样？"), "Tokyo");
+        assert_eq!(weather_normalize_query_place("東京"), "Tokyo");
+
+        let actor_user_id = UserId::new("tenant_1:h412_public_tool_identity_user").unwrap();
+        let device_id = DeviceId::new("h412_public_tool_identity_device_1").unwrap();
+        let voice_request = sample_voice_id_request(MonotonicTimeNs(3), actor_user_id.clone());
+        let runtime_execution_envelope = fallback_runtime_execution_envelope_for_app_voice_request(
+            CorrelationId(98412),
+            TurnId(99412),
+            AppPlatform::Desktop,
+            OsVoiceTrigger::Explicit,
+            &voice_request,
+            &actor_user_id,
+            Some(&device_id),
+        )
+        .expect("runtime envelope should build");
+        let source_metadata = SourceMetadata {
+            schema_version: selene_kernel_contracts::ph1e::PH1E_CONTRACT_VERSION,
+            provider_hint: Some("tomorrow_io_weather".to_string()),
+            retrieved_at_unix_ms: 1,
+            sources: vec![SourceRef {
+                title: "Weather provider evidence".to_string(),
+                url: "https://selene.local/weather/evidence".to_string(),
+            }],
+        };
+        let tool_response = ToolResponse::ok_v1(
+            selene_kernel_contracts::ph1e::ToolRequestId(1),
+            selene_kernel_contracts::ph1e::ToolQueryHash(1),
+            ToolResult::Weather {
+                summary: "Tokyo is 18.4°C and clear.".to_string(),
+            },
+            source_metadata,
+            None,
+            ReasonCodeId(0x4500_0412),
+            CacheStatus::Bypassed,
+        )
+        .expect("public weather tool response should build");
+        let out = AppVoiceTurnExecutionOutcome {
+            runtime_execution_envelope,
+            voice_outcome: OsVoiceLiveTurnOutcome::NotInvokedDisabled,
+            session_state: SessionState::Active,
+            next_move: AppVoiceTurnNextMove::Respond,
+            ph1x_request: None,
+            ph1x_response: None,
+            dispatch_outcome: None,
+            tool_response: Some(tool_response),
+            response_text: Some("Tokyo is 18.4°C and clear.".to_string()),
+            reason_code: Some(ReasonCodeId(0x4500_0412)),
+        };
+
+        assert!(low_risk_public_deterministic_turn_answer(&out));
     }
 
     #[test]

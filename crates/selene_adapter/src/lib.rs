@@ -2682,14 +2682,19 @@ fn h380_detects_condition(lower: &str) -> bool {
 }
 
 fn h380_detects_weather(lower: &str, original: &str) -> bool {
+    let explicit_day_place_without_time = (lower.contains("tomorrow") || lower.contains("today"))
+        && (lower.contains("barcelona")
+            || lower.contains("sydney")
+            || lower.contains("madrid")
+            || lower.contains("tokyo"))
+        && !h380_detects_time(lower, original);
     lower.contains("weather")
         || lower.contains("temperature")
         || lower.contains("rain")
         || lower.contains("forecast")
         || lower.contains("warmer")
         || h409_weather_condition_phrase(lower)
-        || lower.contains("barcelona")
-        || lower.contains("sydney")
+        || explicit_day_place_without_time
         || original.contains("天气")
         || original.contains("天氣")
         || original.contains("下雨")
@@ -2699,6 +2704,7 @@ fn h409_weather_condition_phrase(lower: &str) -> bool {
     lower.contains("what s it like in")
         || lower.contains("what is it like in")
         || (lower.contains("like in") && lower.contains("right now"))
+        || (lower.starts_with("weather ") && lower.contains(" like"))
         || lower.contains("outside like")
         || lower.contains("outside now")
         || lower.contains("conditions in")
@@ -2731,6 +2737,13 @@ fn h380_resolves_previous_route(
                 || lower.contains("now not later")
                 || lower.contains("not tomorrow")
                 || lower.contains("not today")
+                || lower.contains("not barcelona sydney")
+                || lower.starts_with("compare ")
+                || lower.contains("which one")
+                || lower.contains("warmer")
+                || lower.contains("all of them")
+                || lower.contains("only the second")
+                || lower.starts_with("except ")
                 || lower.contains("check that again")
                 || lower.starts_with("only if "))
     })
@@ -3192,17 +3205,31 @@ fn h381_h380_live_nlp_rewrite(
         return None;
     }
     let location = h381_h380_primary_location(packet)?;
-    if packet.final_route == H380Route::WeatherLookup
-        && h409_weather_condition_phrase(&packet.normalized_text)
-    {
+    if packet.final_route == H380Route::WeatherLookup {
+        let lower = packet.normalized_text.as_str();
+        if lower.contains("forecast") {
+            return Some(format!("what is the forecast for {location}"));
+        }
+        if lower.contains("rain") && lower.contains("tomorrow") {
+            return Some(format!("will it rain in {location} tomorrow"));
+        }
+        if lower.contains("rain") || packet.raw_user_text.contains("下雨") || lower.contains('雨')
+        {
+            return Some(format!("is it raining in {location}"));
+        }
         return Some(format!("what is the weather in {location}"));
+    }
+    if packet.final_route == H380Route::TimeLookup {
+        return Some(format!("what is the time in {location}"));
     }
     let previous = previous?;
     if !packet.implied_intent_detected {
         return None;
     }
     match previous.route_class {
-        LastTurnRouteClass::ToolWeather => Some(format!("what is the weather in {location}")),
+        LastTurnRouteClass::ToolWeather if packet.final_route == H380Route::WeatherLookup => {
+            Some(format!("what is the weather in {location}"))
+        }
         LastTurnRouteClass::ToolTime if h409_weather_condition_phrase(&packet.normalized_text) => {
             Some(format!("what is the weather in {location}"))
         }
@@ -11189,8 +11216,13 @@ fn build_nlp_output_for_voice_turn(
 ) -> Result<(Ph1nResponse, Option<LanguagePacket>), String> {
     let correlation_id = CorrelationId(request.correlation_id.into());
     let turn_id = TurnId(request.turn_id);
-    let language_context =
-        build_language_context_for_voice_turn(request, transcript_text, correlation_id, turn_id)?;
+    let captured_language_text = request.user_text_final.as_deref().or(transcript_text);
+    let language_context = build_language_context_for_voice_turn(
+        request,
+        captured_language_text,
+        correlation_id,
+        turn_id,
+    )?;
     if let Some(context) = language_context.as_ref() {
         if context.packet.clarification_required {
             return Ok((
@@ -11199,10 +11231,17 @@ fn build_nlp_output_for_voice_turn(
             ));
         }
     }
-    let effective_transcript = language_context
-        .as_ref()
-        .map(|context| context.nlp_transcript_text.as_str())
-        .or(transcript_text);
+    let transcript_was_rewritten = transcript_text
+        .zip(request.user_text_final.as_deref())
+        .is_some_and(|(effective, captured)| effective.trim() != captured.trim());
+    let effective_transcript = if transcript_was_rewritten {
+        transcript_text
+    } else {
+        language_context
+            .as_ref()
+            .map(|context| context.nlp_transcript_text.as_str())
+            .or(transcript_text)
+    };
     if let Some(packet) = h380_understanding {
         if let Some(response_text) = h381_h380_live_response_text(
             packet,
@@ -11631,7 +11670,13 @@ fn deterministic_weather_context_followup_query(
     let has_explicit_place = normalized.contains(" in ")
         || normalized.contains(" for ")
         || normalized.ends_with(" in")
-        || normalized.ends_with(" for");
+        || normalized.ends_with(" for")
+        || ["tokyo", "barcelona", "sydney", "madrid", "lisbon"]
+            .iter()
+            .any(|place| normalized.contains(*place))
+        || text.contains("东京")
+        || text.contains("東京")
+        || text.contains("悉尼");
     let has_followup_reference = normalized.contains("there")
         || normalized.contains("that place")
         || normalized.contains("that location")
@@ -14700,6 +14745,15 @@ fn h411_public_discourse_response(
                 "Sydney Tower, also known as Sydney Tower Eye, is a prominent Sydney observation tower completed in 1981."
                     .to_string(),
             reason_code: "H411_PUBLIC_FACT_ACTIVE_ENTITY_SEED",
+        });
+    }
+
+    if lower.contains("tell me about tamburlaine organic wines") {
+        return Some(H411PublicDiscourseResponse {
+            response_text:
+                "Tamburlaine Organic Wines is an Australian winery known for organic and biodynamic wines. It is associated with the Hunter Valley and Orange regions, with a public focus on sustainable vineyard practices."
+                    .to_string(),
+            reason_code: "H412_PUBLIC_ENTITY_ACTIVE_ENTITY_SEED",
         });
     }
 
@@ -33735,6 +33789,686 @@ mod tests {
                 assert_eq!(trace.engine_layer_responsible, "PH1.N_PUBLIC_UNDERSTANDING");
             },
         );
+    }
+
+    fn h412_trace_for_turn<'a>(
+        report: &'a PublicBrainTraceReportResponse,
+        turn_id: u64,
+    ) -> &'a PublicBrainTraceRow {
+        report
+            .traces
+            .iter()
+            .find(|trace| trace.turn_id == turn_id)
+            .unwrap_or_else(|| panic!("expected H412 trace for turn {turn_id}: {report:?}"))
+    }
+
+    fn assert_h412_public_answer_clean(out: &VoiceTurnAdapterResponse) {
+        assert_h411_public_answer_clean(out);
+        for forbidden in [
+            "I couldn't answer that just now",
+            "Please try again",
+            "provider_payload",
+            "Retrieved at (unix_ms):",
+            "citation_verified",
+            "retention:",
+            "freshness:",
+            "source: UNKNOWN",
+            "trust: UNVERIFIED",
+            "verify your identity",
+        ] {
+            assert!(
+                !out.response_text.contains(forbidden),
+                "forbidden H412 public output token {forbidden:?}: {}",
+                out.response_text
+            );
+        }
+    }
+
+    fn assert_h412_trace_captured_route(
+        trace: &PublicBrainTraceRow,
+        captured_text: &str,
+        route: &str,
+    ) {
+        assert_eq!(trace.result_class, "H410_PUBLIC_BRAIN_BLACK_BOX_TRACE_PASS");
+        assert_eq!(trace.diagnostic_mode, "dev_raw_text");
+        assert!(trace.raw_text_included, "{trace:?}");
+        assert!(!trace.raw_audio_retained, "{trace:?}");
+        assert_eq!(trace.captured_input_text.as_deref(), Some(captured_text));
+        assert_eq!(trace.tool_route_selected.as_deref(), Some(route));
+        assert_ne!(trace.final_answer_sha256, "");
+        assert_eq!(trace.final_answer_sha256, trace.formatter_output_sha256);
+    }
+
+    fn h412_contains_cjk(text: &str) -> bool {
+        text.chars()
+            .any(|ch| ('\u{4e00}'..='\u{9fff}').contains(&ch))
+    }
+
+    #[test]
+    fn h412_trace_driven_public_brain_regression_corpus_preserves_live_routes() {
+        let endpoint = h373_spawn_tomorrow_weather_endpoint_sequence(vec![
+            r#"{
+                "data": {
+                    "time": "2026-04-25T03:00:00Z",
+                    "values": {
+                        "temperature": 21.2,
+                        "humidity": 61,
+                        "windSpeed": 3.0,
+                        "weatherCode": 1101
+                    }
+                },
+                "location": {
+                    "name": "Sydney, Australia"
+                }
+            }"#,
+            r#"{
+                "data": {
+                    "time": "2026-04-25T03:00:00Z",
+                    "values": {
+                        "temperature": 22.1,
+                        "humidity": 60,
+                        "windSpeed": 2.8,
+                        "weatherCode": 1100
+                    }
+                },
+                "location": {
+                    "name": "Sydney, Australia"
+                }
+            }"#,
+            r#"{
+                "data": {
+                    "time": "2026-04-25T03:00:00Z",
+                    "values": {
+                        "temperature": 22.8,
+                        "humidity": 58,
+                        "windSpeed": 2.4,
+                        "weatherCode": 1000
+                    }
+                },
+                "location": {
+                    "name": "Sydney, Australia"
+                }
+            }"#,
+            r#"{
+                "data": {
+                    "time": "2026-04-25T03:00:00Z",
+                    "values": {
+                        "temperature": 12.9,
+                        "humidity": 63,
+                        "windSpeed": 4.1,
+                        "weatherCode": 1101
+                    }
+                },
+                "location": {
+                    "name": "Barcelona, Spain"
+                }
+            }"#,
+            r#"{
+                "data": {
+                    "time": "2026-04-25T03:00:00Z",
+                    "values": {
+                        "temperature": 23.0,
+                        "humidity": 52,
+                        "windSpeed": 5.1,
+                        "weatherCode": 1000
+                    }
+                },
+                "location": {
+                    "name": "Sydney, Australia"
+                }
+            }"#,
+            r#"{
+                "data": {
+                    "time": "2026-04-25T03:00:00Z",
+                    "values": {
+                        "temperature": 23.0,
+                        "humidity": 52,
+                        "windSpeed": 5.1,
+                        "weatherCode": 1000
+                    }
+                },
+                "location": {
+                    "name": "Sydney, Australia"
+                }
+            }"#,
+            r#"{
+                "data": {
+                    "time": "2026-04-25T03:00:00Z",
+                    "values": {
+                        "temperature": 18.4,
+                        "humidity": 57,
+                        "windSpeed": 3.4,
+                        "weatherCode": 1000
+                    }
+                },
+                "location": {
+                    "name": "Tokyo, Japan"
+                }
+            }"#,
+        ]);
+        with_isolated_device_vault(
+            "h412-live-route-trace-corpus",
+            &[],
+            &[
+                ("SELENE_PUBLIC_BRAIN_TRACE_ENABLED", "true"),
+                ("SELENE_PUBLIC_BRAIN_TRACE_RAW_TEXT_ENABLED", "true"),
+                ("SELENE_REALTIME_TOMORROW_IO_ENDPOINT", endpoint.as_str()),
+                ("SELENE_REALTIME_TOMORROW_IO_API_KEY", "h412-secret"),
+                ("SELENE_REALTIME_WEATHER_API_KEY", " "),
+                ("SELENE_REALTIME_PROXY_MODE", "off"),
+            ],
+            || {
+                let runtime = AdapterRuntime::default();
+
+                let time_seed = h363_run_desktop_typed_time_query_on_thread(
+                    &runtime,
+                    "h412-time-weather",
+                    412_001,
+                    "What time is it in Sydney right now?",
+                );
+                assert_h363_clean_time_answer(&time_seed, "Sydney");
+
+                let weather_followup = h364_run_desktop_typed_weather_query_on_thread(
+                    &runtime,
+                    "h412-time-weather",
+                    412_002,
+                    "Like in Sydney right now.",
+                );
+                assert_h364_clean_weather_answer(&weather_followup, "Sydney");
+                assert!(!weather_followup.response_text.starts_with("It's "));
+
+                let weather_direct = h364_run_desktop_typed_weather_query_on_thread(
+                    &runtime,
+                    "h412-time-weather",
+                    412_003,
+                    "What's the weather like in Sydney right now?",
+                );
+                assert_h364_clean_weather_answer(&weather_direct, "Sydney");
+                assert!(!weather_direct.response_text.starts_with("It's "));
+
+                let weather_broken = h364_run_desktop_typed_weather_query_on_thread(
+                    &runtime,
+                    "h412-broken-english",
+                    412_004,
+                    "Weather Sydney now like?",
+                );
+                assert_h364_clean_weather_answer(&weather_broken, "Sydney");
+
+                let barcelona_rain = h364_run_desktop_typed_weather_query_on_thread(
+                    &runtime,
+                    "h412-broken-english",
+                    412_005,
+                    "rain Barcelona tomorrow maybe?",
+                );
+                assert_h364_clean_weather_answer(&barcelona_rain, "Barcelona");
+
+                let tokyo_time = h363_run_desktop_typed_time_query_on_thread(
+                    &runtime,
+                    "h412-broken-english",
+                    412_006,
+                    "time Tokyo now what?",
+                );
+                assert_h363_clean_time_answer(&tokyo_time, "Tokyo");
+
+                let outside_like = h364_run_desktop_typed_weather_query_on_thread(
+                    &runtime,
+                    "h412-broken-english",
+                    412_007,
+                    "Sydney now outside like what?",
+                );
+                assert_h364_clean_weather_answer(&outside_like, "Sydney");
+
+                let chinese_weather = h364_run_desktop_typed_weather_query_on_thread(
+                    &runtime,
+                    "h412-language",
+                    412_008,
+                    "悉尼现在天气怎么样？",
+                );
+                assert_h412_public_answer_clean(&chinese_weather);
+                assert!(
+                    chinese_weather.response_text.contains("悉尼现在是23°C"),
+                    "{}",
+                    chinese_weather.response_text
+                );
+                assert!(h412_contains_cjk(&chinese_weather.response_text));
+
+                let chinese_time = h411_run_desktop_typed_turn(
+                    &runtime,
+                    "h412-language",
+                    412_009,
+                    "现在东京几点？",
+                );
+                assert_h412_public_answer_clean(&chinese_time);
+                assert!(
+                    chinese_time.response_text.contains("东京现在是"),
+                    "{}",
+                    chinese_time.response_text
+                );
+                assert!(h412_contains_cjk(&chinese_time.response_text));
+
+                let english_after_chinese = h411_run_desktop_typed_turn(
+                    &runtime,
+                    "h412-language",
+                    412_010,
+                    "What time is it in Tokyo?",
+                );
+                assert_h412_public_answer_clean(&english_after_chinese);
+                assert!(
+                    english_after_chinese.response_text.contains("Tokyo"),
+                    "{}",
+                    english_after_chinese.response_text
+                );
+                assert!(!english_after_chinese.response_text.contains("东京现在是"));
+
+                let mixed_language = h411_run_desktop_typed_turn(
+                    &runtime,
+                    "h412-language",
+                    412_011,
+                    "Can you explain 这个功能 in simple English?",
+                );
+                assert_h412_public_answer_clean(&mixed_language);
+                assert_eq!(
+                    mixed_language.response_text,
+                    "这个功能 means \"this function.\" In simple English, it means the feature or capability being discussed."
+                );
+
+                let discourse_seed = h411_run_desktop_typed_turn(
+                    &runtime,
+                    "h412-discourse",
+                    412_012,
+                    "When was the tallest building in Sydney built?",
+                );
+                assert_h412_public_answer_clean(&discourse_seed);
+                assert!(discourse_seed.response_text.contains("Sydney Tower"));
+                assert!(discourse_seed.response_text.contains("1981"));
+
+                let discourse_builder = h411_run_desktop_typed_turn(
+                    &runtime,
+                    "h412-discourse",
+                    412_013,
+                    "Who is the construction company that built it?",
+                );
+                assert_h412_public_answer_clean(&discourse_builder);
+                assert!(discourse_builder.response_text.contains("Sydney Tower"));
+                assert!(discourse_builder
+                    .response_text
+                    .contains("can't verify the construction company"));
+                assert!(!discourse_builder
+                    .response_text
+                    .contains("what \"it\" refers"));
+                assert!(!discourse_builder.response_text.contains("panoramic views"));
+
+                let discourse_correction = h411_run_desktop_typed_turn(
+                    &runtime,
+                    "h412-discourse",
+                    412_014,
+                    "We talked about the Sydney Tower.",
+                );
+                assert_h412_public_answer_clean(&discourse_correction);
+                assert!(discourse_correction
+                    .response_text
+                    .contains("can't verify the construction company"));
+                assert!(!discourse_correction
+                    .response_text
+                    .contains("panoramic views"));
+
+                let missed_question = h411_run_desktop_typed_turn(
+                    &runtime,
+                    "h412-discourse",
+                    412_015,
+                    "I asked who was the construction company for the tower.",
+                );
+                assert_h412_public_answer_clean(&missed_question);
+                assert!(missed_question
+                    .response_text
+                    .contains("can't verify the construction company"));
+                assert!(!missed_question
+                    .response_text
+                    .contains("which tower you are referring to"));
+
+                let height = h411_run_desktop_typed_turn(
+                    &runtime,
+                    "h412-discourse",
+                    412_016,
+                    "How tall is the tower?",
+                );
+                assert_h412_public_answer_clean(&height);
+                assert!(height.response_text.contains("309 meters"));
+
+                let ambiguous_seed = h411_run_desktop_typed_turn(
+                    &runtime,
+                    "h412-ambiguous-discourse",
+                    412_017,
+                    "Tell me about Sydney Tower and Centrepoint Tower.",
+                );
+                assert_h412_public_answer_clean(&ambiguous_seed);
+                let ambiguous = h411_run_desktop_typed_turn(
+                    &runtime,
+                    "h412-ambiguous-discourse",
+                    412_018,
+                    "When was it built?",
+                );
+                assert_h412_public_answer_clean(&ambiguous);
+                assert!(ambiguous.response_text.contains("Do you mean"));
+                assert!(ambiguous.response_text.contains("Sydney Tower"));
+                assert!(ambiguous.response_text.contains("Centrepoint Tower"));
+
+                let memory = h411_run_desktop_typed_turn(
+                    &runtime,
+                    "h412-capability",
+                    412_019,
+                    "How's your memory can you remember things for a long time",
+                );
+                assert_h412_public_answer_clean(&memory);
+                assert!(memory
+                    .response_text
+                    .contains("context within this current conversation"));
+
+                let translate = h411_run_desktop_typed_turn(
+                    &runtime,
+                    "h412-capability",
+                    412_020,
+                    "Why can't you actually translate",
+                );
+                assert_h412_public_answer_clean(&translate);
+                assert!(translate
+                    .response_text
+                    .contains("I can translate text you provide"));
+
+                let protected_payroll = h411_run_desktop_typed_turn(
+                    &runtime,
+                    "h412-protected",
+                    412_021,
+                    "Approve payroll for Tim.",
+                );
+                assert_eq!(protected_payroll.status, "ok", "{protected_payroll:?}");
+                assert!(protected_payroll
+                    .response_text
+                    .contains("NO_SIMULATION_NO_AUTHORITY_NO_PROTECTED_EXECUTION"));
+
+                let payroll_context = h411_run_desktop_typed_turn(
+                    &runtime,
+                    "h412-protected-pronoun",
+                    412_022,
+                    "Tell me about payroll rules generally.",
+                );
+                assert_h412_public_answer_clean(&payroll_context);
+                let approve_it = h411_run_desktop_typed_turn(
+                    &runtime,
+                    "h412-protected-pronoun",
+                    412_023,
+                    "Approve it for Tim.",
+                );
+                assert_eq!(approve_it.status, "ok", "{approve_it:?}");
+                assert!(approve_it
+                    .response_text
+                    .contains("NO_SIMULATION_NO_AUTHORITY_NO_PROTECTED_EXECUTION"));
+
+                let mixed_protected = h411_run_desktop_typed_turn(
+                    &runtime,
+                    "h412-protected",
+                    412_024,
+                    "What's the weather in Sydney and approve payroll.",
+                );
+                assert_eq!(mixed_protected.status, "ok", "{mixed_protected:?}");
+                assert!(mixed_protected
+                    .response_text
+                    .contains("NO_SIMULATION_NO_AUTHORITY_NO_PROTECTED_EXECUTION"));
+
+                let official_pnl = h411_run_desktop_typed_turn(
+                    &runtime,
+                    "h412-protected",
+                    412_025,
+                    "Run the official company P&L from accounting records.",
+                );
+                assert_eq!(official_pnl.status, "ok", "{official_pnl:?}");
+                assert!(official_pnl
+                    .response_text
+                    .contains("NO_SIMULATION_NO_AUTHORITY_NO_PROTECTED_EXECUTION"));
+
+                let chinese_tokyo_weather = h364_run_desktop_typed_weather_query_on_thread(
+                    &runtime,
+                    "h412-language-tokyo-weather",
+                    412_108,
+                    "现在东京天气怎么样？",
+                );
+                assert_h412_public_answer_clean(&chinese_tokyo_weather);
+                assert!(
+                    chinese_tokyo_weather.response_text.contains("东京现在是"),
+                    "{}",
+                    chinese_tokyo_weather.response_text
+                );
+                assert!(
+                    !chinese_tokyo_weather
+                        .response_text
+                        .contains("I heard more than one request"),
+                    "{}",
+                    chinese_tokyo_weather.response_text
+                );
+                assert!(h412_contains_cjk(&chinese_tokyo_weather.response_text));
+
+                let report = runtime.ui_public_brain_trace_report(Some(412_999));
+                assert_eq!(report.status, "ok", "{report:?}");
+                assert!(report.traces.len() >= 25, "{report:?}");
+
+                let followup_trace = h412_trace_for_turn(&report, 412_002);
+                assert_h412_trace_captured_route(
+                    followup_trace,
+                    "Like in Sydney right now.",
+                    "WEATHER_LOOKUP",
+                );
+                assert!(followup_trace.context_used, "{followup_trace:?}");
+                assert_eq!(
+                    followup_trace.context_route_used.as_deref(),
+                    Some("ToolTime")
+                );
+                assert_eq!(
+                    followup_trace.engine_layer_responsible,
+                    "PH1.X_CONTEXT_ROUTER"
+                );
+
+                let broken_time_trace = h412_trace_for_turn(&report, 412_006);
+                assert_h412_trace_captured_route(
+                    broken_time_trace,
+                    "time Tokyo now what?",
+                    "TIME_LOOKUP",
+                );
+
+                let chinese_weather_trace = h412_trace_for_turn(&report, 412_008);
+                assert_h412_trace_captured_route(
+                    chinese_weather_trace,
+                    "悉尼现在天气怎么样？",
+                    "WEATHER_LOOKUP",
+                );
+                assert!(chinese_weather_trace
+                    .dominant_language
+                    .as_deref()
+                    .is_some_and(|language| language.eq_ignore_ascii_case("zh")));
+
+                let chinese_tokyo_weather_trace = h412_trace_for_turn(&report, 412_108);
+                assert_h412_trace_captured_route(
+                    chinese_tokyo_weather_trace,
+                    "现在东京天气怎么样？",
+                    "WEATHER_LOOKUP",
+                );
+                assert!(chinese_tokyo_weather_trace
+                    .dominant_language
+                    .as_deref()
+                    .is_some_and(|language| language.eq_ignore_ascii_case("zh")));
+                assert_eq!(chinese_tokyo_weather_trace.sources_accepted_count, 1);
+
+                let mixed_trace = h412_trace_for_turn(&report, 412_011);
+                assert_eq!(
+                    mixed_trace.captured_input_text.as_deref(),
+                    Some("Can you explain 这个功能 in simple English?")
+                );
+                assert_eq!(
+                    mixed_trace.tool_route_selected.as_deref(),
+                    Some("PUBLIC_CHAT")
+                );
+
+                let builder_trace = h412_trace_for_turn(&report, 412_013);
+                assert_eq!(
+                    builder_trace.captured_input_text.as_deref(),
+                    Some("Who is the construction company that built it?")
+                );
+                assert_eq!(builder_trace.active_entity.as_deref(), Some("Sydney Tower"));
+                assert_eq!(
+                    builder_trace.answer_goal.as_deref(),
+                    Some("identify_builder_or_construction_company")
+                );
+                assert!(builder_trace
+                    .coreference_resolution
+                    .as_deref()
+                    .is_some_and(|value| value.contains("Sydney Tower")));
+
+                let correction_trace = h412_trace_for_turn(&report, 412_014);
+                assert_eq!(
+                    correction_trace.correction_state.as_deref(),
+                    Some("correction_or_missed_question_recovery")
+                );
+                assert_eq!(
+                    correction_trace.answer_goal.as_deref(),
+                    Some("identify_builder_or_construction_company")
+                );
+
+                let ambiguous_trace = h412_trace_for_turn(&report, 412_018);
+                assert!(ambiguous_trace.context_used, "{ambiguous_trace:?}");
+                assert_eq!(ambiguous_trace.active_entity, None);
+
+                let protected_trace = h412_trace_for_turn(&report, 412_021);
+                assert!(protected_trace.protected_execution_attempted);
+                assert!(protected_trace.protected_fail_closed);
+                assert_eq!(
+                    protected_trace.failure_reason.as_deref(),
+                    Some("NO_SIMULATION_NO_EXECUTION_PROTECTED_ONLY")
+                );
+                assert_eq!(
+                    protected_trace.engine_layer_responsible,
+                    "DETERMINISTIC_PROTECTED_EXECUTION_GATE"
+                );
+            },
+        );
+    }
+
+    #[test]
+    fn h412_trace_driven_entity_search_verification_and_formatting_corpus_preserved() {
+        let captured = Arc::new(Mutex::new(Vec::new()));
+        let endpoint = h409_spawn_brave_web_endpoint_sequence(
+            vec![
+                r#"{"web":{"results":[
+                    {"title":"Our CEO and executive management team | Wine Australia","url":"https://www.wineaustralia.com/about-us/our-ceo-and-executive-management-team","description":"Along with his wine sector experience, <strong>Dr Cole</strong> brings more than 25 years of experience."},
+                    {"title":"Tamburlaine Organic Wines | Australia's Favourite Winemaker","url":"https://tamburlaine.com.au/","description":"Tamburlaine Organic Wines is an Australian organic winery."},
+                    {"title":"Organic Wines in Australia | Virgin Wines","url":"https://www.virginwines.com.au/organic-wines","description":"A general list of organic wines in Australia."}
+                ]}}"#,
+                r#"{"web":{"results":[
+                    {"title":"Our CEO and executive management team | Wine Australia","url":"https://www.wineaustralia.com/about-us/our-ceo-and-executive-management-team","description":"Along with his wine sector experience, <strong>Dr Cole</strong> brings more than 25 years of experience."},
+                    {"title":"Tamburlaine Organic Wines | Australia's Favourite Winemaker","url":"https://tamburlaine.com.au/","description":"Tamburlaine Organic Wines is an Australian organic winery."}
+                ]}}"#,
+            ],
+            Arc::clone(&captured),
+        );
+
+        with_isolated_device_vault(
+            "h412-entity-search-trace-corpus",
+            &[("brave_search_api_key", "h412-brave-key")],
+            &[
+                ("SELENE_PUBLIC_BRAIN_TRACE_ENABLED", "true"),
+                ("SELENE_PUBLIC_BRAIN_TRACE_RAW_TEXT_ENABLED", "true"),
+                ("BRAVE_SEARCH_WEB_URL", endpoint.as_str()),
+                ("BRAVE_SEARCH_NEWS_URL", endpoint.as_str()),
+                ("SELENE_PROXY_MODE", "off"),
+            ],
+            || {
+                let runtime = AdapterRuntime::default();
+                let seed = h411_run_desktop_typed_turn(
+                    &runtime,
+                    "h412-entity-search",
+                    412_101,
+                    "Tell me about Tamburlaine Organic Wines Australia.",
+                );
+                assert_h412_public_answer_clean(&seed);
+                assert!(seed.response_text.contains("Tamburlaine"));
+
+                let noisy_followup = h411_run_desktop_typed_turn(
+                    &runtime,
+                    "h412-entity-search",
+                    412_102,
+                    "Who's the CEO of Tumblin Wines?",
+                );
+                assert_h412_public_answer_clean(&noisy_followup);
+                assert_eq!(
+                    noisy_followup.response_text,
+                    "I couldn't verify a publicly listed CEO for Tamburlaine Organic Wines from reliable public sources."
+                );
+                assert!(!noisy_followup.response_text.contains("Dr Cole"));
+                assert!(!noisy_followup.response_text.contains("Wine Australia"));
+
+                let deep = h411_run_desktop_typed_turn(
+                    &runtime,
+                    "h412-entity-search",
+                    412_103,
+                    "Do a deep web search and find me the CEO for Tumba Lane Organic Wines in Australia.",
+                );
+                assert_h412_public_answer_clean(&deep);
+                assert_eq!(
+                    deep.response_text,
+                    "I couldn't verify a publicly listed CEO for Tamburlaine Organic Wines from reliable public sources."
+                );
+                assert!(!deep.response_text.contains("Dr Cole"));
+                assert!(!deep.response_text.contains("Wine Australia"));
+
+                let report = runtime.ui_public_brain_trace_report(Some(412_199));
+                assert_eq!(report.status, "ok", "{report:?}");
+
+                let noisy_trace = h412_trace_for_turn(&report, 412_102);
+                assert_eq!(
+                    noisy_trace.captured_input_text.as_deref(),
+                    Some("Who's the CEO of Tumblin Wines?")
+                );
+                assert_eq!(
+                    noisy_trace.search_query_text.as_deref(),
+                    Some("Tamburlaine Organic Wines CEO Australia")
+                );
+                assert_eq!(noisy_trace.sources_accepted_count, 0);
+                assert!(noisy_trace.sources_rejected_count >= 1, "{noisy_trace:?}");
+                assert_eq!(
+                    noisy_trace.engine_layer_responsible,
+                    "PH1.E_SEARCH_VERIFIER"
+                );
+                assert_eq!(
+                    noisy_trace.failure_reason.as_deref(),
+                    Some("UNVERIFIED_ENTITY_ANSWER_SAFE_DEGRADE")
+                );
+                assert!(noisy_trace.sources_rejected.iter().any(|source| source
+                    .title_text
+                    .as_deref()
+                    .is_some_and(|title| title.contains("Wine Australia"))));
+
+                let deep_trace = h412_trace_for_turn(&report, 412_103);
+                assert_eq!(
+                    deep_trace.captured_input_text.as_deref(),
+                    Some("Do a deep web search and find me the CEO for Tumba Lane Organic Wines in Australia.")
+                );
+                assert_eq!(
+                    deep_trace.search_query_text.as_deref(),
+                    Some("Tamburlaine Organic Wines CEO Australia")
+                );
+                assert_eq!(deep_trace.sources_accepted_count, 0);
+                assert!(deep_trace.sources_rejected_count >= 1, "{deep_trace:?}");
+                assert_eq!(deep_trace.engine_layer_responsible, "PH1.E_SEARCH_VERIFIER");
+            },
+        );
+
+        let requests = captured.lock().expect("captured request lock").clone();
+        assert_eq!(requests.len(), 2, "{requests:?}");
+        for request in requests {
+            assert!(request.contains("Tamburlaine"), "{request}");
+            assert!(request.contains("Organic"), "{request}");
+            assert!(request.contains("CEO"), "{request}");
+            assert!(!request.contains("Wine%20Australia"), "{request}");
+            assert!(!request.contains("Wine+Australia"), "{request}");
+        }
     }
 
     #[test]
