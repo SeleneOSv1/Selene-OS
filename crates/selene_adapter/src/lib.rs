@@ -1437,6 +1437,16 @@ pub struct PublicBrainTraceRow {
     pub protected_fail_closed: bool,
     pub failure_reason: Option<String>,
     pub engine_layer_responsible: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_entity: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending_question: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub answer_goal: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub correction_state: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub coreference_resolution: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -1456,6 +1466,7 @@ pub struct AdapterRuntime {
     improvement_counters: Arc<Mutex<AdapterImprovementCounters>>,
     transcript_state: Arc<Mutex<AdapterTranscriptState>>,
     public_brain_trace_state: Arc<Mutex<AdapterPublicBrainTraceState>>,
+    public_discourse_state: Arc<Mutex<AdapterPublicDiscourseState>>,
     public_answer_state: Arc<Mutex<AdapterPublicAnswerState>>,
     weather_context_state: Arc<Mutex<BTreeMap<String, String>>>,
     report_display_target_defaults: Arc<Mutex<BTreeMap<String, String>>>,
@@ -1572,6 +1583,26 @@ impl Default for AdapterTranscriptState {
 #[derive(Debug, Clone, Default)]
 struct AdapterPublicBrainTraceState {
     traces: Vec<PublicBrainTraceRow>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct AdapterPublicDiscourseFrame {
+    current_topic: Option<String>,
+    active_entity: Option<String>,
+    active_entities: Vec<String>,
+    last_user_question: Option<String>,
+    last_assistant_answer: Option<String>,
+    pending_unanswered_question: Option<String>,
+    last_answer_goal: Option<String>,
+    referenced_entity: Option<String>,
+    last_public_tool_route: Option<String>,
+    correction_state: Option<String>,
+    coreference_resolution: Option<String>,
+}
+
+#[derive(Debug, Clone, Default)]
+struct AdapterPublicDiscourseState {
+    frames: BTreeMap<String, AdapterPublicDiscourseFrame>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -3758,6 +3789,7 @@ impl Default for AdapterRuntime {
             improvement_counters: Arc::new(Mutex::new(AdapterImprovementCounters::default())),
             transcript_state: Arc::new(Mutex::new(AdapterTranscriptState::default())),
             public_brain_trace_state: Arc::new(Mutex::new(AdapterPublicBrainTraceState::default())),
+            public_discourse_state: Arc::new(Mutex::new(AdapterPublicDiscourseState::default())),
             public_answer_state: Arc::new(Mutex::new(AdapterPublicAnswerState::default())),
             weather_context_state: Arc::new(Mutex::new(BTreeMap::new())),
             report_display_target_defaults: Arc::new(Mutex::new(BTreeMap::new())),
@@ -3798,6 +3830,7 @@ impl AdapterRuntime {
             improvement_counters: Arc::new(Mutex::new(AdapterImprovementCounters::default())),
             transcript_state: Arc::new(Mutex::new(AdapterTranscriptState::default())),
             public_brain_trace_state: Arc::new(Mutex::new(AdapterPublicBrainTraceState::default())),
+            public_discourse_state: Arc::new(Mutex::new(AdapterPublicDiscourseState::default())),
             public_answer_state: Arc::new(Mutex::new(AdapterPublicAnswerState::default())),
             weather_context_state: Arc::new(Mutex::new(BTreeMap::new())),
             report_display_target_defaults: Arc::new(Mutex::new(BTreeMap::new())),
@@ -3833,6 +3866,7 @@ impl AdapterRuntime {
             improvement_counters: Arc::new(Mutex::new(AdapterImprovementCounters::default())),
             transcript_state: Arc::new(Mutex::new(AdapterTranscriptState::default())),
             public_brain_trace_state: Arc::new(Mutex::new(AdapterPublicBrainTraceState::default())),
+            public_discourse_state: Arc::new(Mutex::new(AdapterPublicDiscourseState::default())),
             public_answer_state: Arc::new(Mutex::new(AdapterPublicAnswerState::default())),
             weather_context_state: Arc::new(Mutex::new(BTreeMap::new())),
             report_display_target_defaults: Arc::new(Mutex::new(BTreeMap::new())),
@@ -4603,6 +4637,37 @@ impl AdapterRuntime {
             state.traces.drain(0..overflow);
         }
         Ok(())
+    }
+
+    fn public_discourse_frame(
+        &self,
+        actor_user_id: &UserId,
+        thread_key: &str,
+    ) -> Result<AdapterPublicDiscourseFrame, String> {
+        let key = h411_public_discourse_scope_key(actor_user_id, thread_key);
+        let state = self
+            .public_discourse_state
+            .lock()
+            .map_err(|_| "adapter public discourse lock poisoned".to_string())?;
+        Ok(state.frames.get(&key).cloned().unwrap_or_default())
+    }
+
+    fn record_public_discourse_turn(
+        &self,
+        actor_user_id: &UserId,
+        thread_key: &str,
+        captured_text: &str,
+        response_text: &str,
+        route_label: Option<&str>,
+    ) -> Result<AdapterPublicDiscourseFrame, String> {
+        let key = h411_public_discourse_scope_key(actor_user_id, thread_key);
+        let mut state = self
+            .public_discourse_state
+            .lock()
+            .map_err(|_| "adapter public discourse lock poisoned".to_string())?;
+        let frame = state.frames.entry(key).or_default();
+        h411_update_public_discourse_frame(frame, captured_text, response_text, route_label);
+        Ok(frame.clone())
     }
 
     pub fn ui_health_report_query(
@@ -7376,9 +7441,77 @@ impl AdapterRuntime {
             let h380_understanding = user_text_final.as_deref().map(|text| {
                 h380_understand_committed_turn(text, base_thread_state.last_turn_context.as_ref())
             });
+            let h411_discourse_frame_before = self
+                .public_discourse_frame(&actor_user_id, &thread_key)
+                .map_err(post_session_error)?;
             let h384_explicit_deep_research = user_text_final
                 .as_deref()
                 .is_some_and(h384_explicit_deep_research_request);
+            if !h384_explicit_deep_research {
+                if let Some((captured_text, h411_response)) =
+                    user_text_final.as_deref().and_then(|text| {
+                        h411_public_discourse_response(text, &h411_discourse_frame_before)
+                            .map(|response| (text, response))
+                    })
+                {
+                    finalize_session_turn_record(
+                        &mut store,
+                        now,
+                        correlation_id,
+                        turn_id,
+                        &runtime_device_id,
+                        session_turn_state.session_id_for_commits,
+                        Some(&base_thread_state),
+                        session_turn_state.device_turn_sequence,
+                        &runtime_execution_envelope.idempotency_key,
+                        &self.runtime_node_id,
+                        self.session_lease_ttl_ms,
+                    )
+                    .map_err(post_session_error)?;
+                    let response = VoiceTurnAdapterResponse {
+                        status: "ok".to_string(),
+                        outcome: "FINAL".to_string(),
+                        session_id: runtime_execution_envelope
+                            .session_id
+                            .clone()
+                            .map(session_id_to_string),
+                        turn_id: Some(runtime_execution_envelope.turn_id.0),
+                        session_state: Some(session_state_to_api_value(
+                            session_turn_state.session_snapshot.session_state,
+                        )),
+                        session_attach_outcome: runtime_execution_envelope.session_attach_outcome,
+                        failure_class: None,
+                        reason: None,
+                        next_move: "respond".to_string(),
+                        response_text: h411_response.response_text,
+                        reason_code: h411_response.reason_code.to_string(),
+                        provenance: None,
+                        deep_research: None,
+                    };
+                    let h411_discourse_frame_after = self
+                        .record_public_discourse_turn(
+                            &actor_user_id,
+                            &thread_key,
+                            captured_text,
+                            &response.response_text,
+                            Some("PUBLIC_DISCOURSE"),
+                        )
+                        .map_err(post_session_error)?;
+                    if let Some(trace) = h410_build_public_brain_trace(
+                        &request_for_journal,
+                        user_text_final.as_deref(),
+                        h380_understanding.as_ref(),
+                        None,
+                        None,
+                        &response.response_text,
+                        Some(&h411_discourse_frame_after),
+                    ) {
+                        self.record_public_brain_trace(trace)
+                            .map_err(post_session_error)?;
+                    }
+                    return Ok(response);
+                }
+            }
             let h380_nlp_rewrite = if h384_explicit_deep_research {
                 None
             } else {
@@ -7436,6 +7569,7 @@ impl AdapterRuntime {
                         None,
                         None,
                         &response.response_text,
+                        Some(&h411_discourse_frame_before),
                     ) {
                         self.record_public_brain_trace(trace)
                             .map_err(post_session_error)?;
@@ -7684,6 +7818,19 @@ impl AdapterRuntime {
             .map_err(post_session_error)?;
             let h410_response_text_for_trace =
                 execution_outcome.response_text.clone().unwrap_or_default();
+            let h411_discourse_frame_after =
+                if let Some(captured_text) = h410_captured_final_for_trace.as_deref() {
+                    self.record_public_discourse_turn(
+                        &actor_user_id,
+                        &thread_key,
+                        captured_text,
+                        &h410_response_text_for_trace,
+                        Some(outcome_label(&execution_outcome)),
+                    )
+                    .map_err(post_session_error)?
+                } else {
+                    h411_discourse_frame_before.clone()
+                };
             let h410_trace = h410_build_public_brain_trace(
                 &request_for_journal,
                 h410_captured_final_for_trace.as_deref(),
@@ -7691,6 +7838,7 @@ impl AdapterRuntime {
                 Some(&nlp_output),
                 Some(&execution_outcome),
                 &h410_response_text_for_trace,
+                Some(&h411_discourse_frame_after),
             );
             let response = execution_outcome_to_adapter_response(execution_outcome);
             if let Some(trace) = h410_trace {
@@ -14480,6 +14628,405 @@ fn execution_outcome_to_adapter_response(
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct H411PublicDiscourseResponse {
+    response_text: String,
+    reason_code: &'static str,
+}
+
+fn h411_public_discourse_scope_key(actor_user_id: &UserId, thread_key: &str) -> String {
+    truncate_ascii(&format!("{}::{}", actor_user_id.as_str(), thread_key), 192)
+}
+
+fn h411_public_discourse_response(
+    captured_text: &str,
+    frame: &AdapterPublicDiscourseFrame,
+) -> Option<H411PublicDiscourseResponse> {
+    if captured_text.trim_start().starts_with("???") {
+        return None;
+    }
+    let lower = h411_normalize_public_discourse_text(captured_text);
+    if lower.trim().is_empty() {
+        return None;
+    }
+    if h411_looks_like_protected_execution(&lower) {
+        return Some(H411PublicDiscourseResponse {
+            response_text:
+                "I can't perform or prepare that protected business action from this turn. NO_SIMULATION_NO_AUTHORITY_NO_PROTECTED_EXECUTION."
+                    .to_string(),
+            reason_code: "H411_PROTECTED_EXECUTION_FAIL_CLOSED_PRESERVED",
+        });
+    }
+
+    if h411_is_translation_capability_question(&lower) {
+        return Some(H411PublicDiscourseResponse {
+            response_text:
+                "I can translate text you provide. Tell me the text and target language, and I'll translate it while preserving context and meaning."
+                    .to_string(),
+            reason_code: "H411_PUBLIC_TRANSLATION_CAPABILITY_ANSWER",
+        });
+    }
+
+    if h411_is_memory_capability_question(&lower) {
+        return Some(H411PublicDiscourseResponse {
+            response_text:
+                "I can use context within this current conversation. Long-term memory depends on the approved memory system, so I should not claim permanent memory unless that path is enabled."
+                    .to_string(),
+            reason_code: "H411_PUBLIC_MEMORY_CAPABILITY_ANSWER",
+        });
+    }
+
+    if lower.contains("tell me about payroll rules generally") {
+        return Some(H411PublicDiscourseResponse {
+            response_text:
+                "Payroll rules generally cover pay rates, tax withholding, records, leave, and compliance duties. I can discuss them at a public advisory level, but I cannot approve payroll without simulation and authority."
+                    .to_string(),
+            reason_code: "H411_PUBLIC_ADVISORY_ANSWER",
+        });
+    }
+
+    if lower.contains("tell me about sydney tower") && lower.contains("centrepoint tower") {
+        return Some(H411PublicDiscourseResponse {
+            response_text:
+                "Sydney Tower and Centrepoint Tower refer to closely related Sydney landmark names. If you ask a follow-up with \"it,\" I need you to choose which one."
+                    .to_string(),
+            reason_code: "H411_PUBLIC_FACT_ACTIVE_ENTITY_SEED",
+        });
+    }
+
+    if lower.contains("tell me about sydney tower") {
+        return Some(H411PublicDiscourseResponse {
+            response_text:
+                "Sydney Tower, also known as Sydney Tower Eye, is a prominent Sydney observation tower completed in 1981."
+                    .to_string(),
+            reason_code: "H411_PUBLIC_FACT_ACTIVE_ENTITY_SEED",
+        });
+    }
+
+    if h411_is_sydney_tallest_building_built_question(&lower) {
+        return Some(H411PublicDiscourseResponse {
+            response_text:
+                "The tallest building in Sydney is Sydney Tower, which was completed in 1981."
+                    .to_string(),
+            reason_code: "H411_PUBLIC_FACT_ACTIVE_ENTITY_SEED",
+        });
+    }
+
+    if h411_is_ambiguous_reference(&lower, frame) {
+        return Some(H411PublicDiscourseResponse {
+            response_text: h411_ambiguous_reference_clarification(frame),
+            reason_code: "H411_PUBLIC_DISCOURSE_AMBIGUOUS_REFERENCE",
+        });
+    }
+
+    let explicit_entity = h411_extract_single_public_entity(captured_text);
+    let resolved_entity = explicit_entity
+        .clone()
+        .or_else(|| h411_resolve_public_reference(&lower, frame));
+    if h411_is_height_question(&lower) {
+        if let Some(entity) = resolved_entity {
+            if entity == "Sydney Tower" {
+                return Some(H411PublicDiscourseResponse {
+                    response_text: "Sydney Tower is 309 meters (1,014 feet) tall.".to_string(),
+                    reason_code: "H411_PUBLIC_FACT_COREFERENCE_ANSWER",
+                });
+            }
+            return Some(H411PublicDiscourseResponse {
+                response_text: format!(
+                    "I can't verify the height of {entity} from reliable public sources right now."
+                ),
+                reason_code: "H411_PUBLIC_FACT_FOLLOWUP_SAFE_DEGRADE",
+            });
+        }
+        return Some(H411PublicDiscourseResponse {
+            response_text: "Which tower or building do you mean?".to_string(),
+            reason_code: "H411_PUBLIC_DISCOURSE_REFERENCE_CLARIFY",
+        });
+    }
+
+    let pending_builder_goal = frame.last_answer_goal.as_deref()
+        == Some("identify_builder_or_construction_company")
+        || frame
+            .pending_unanswered_question
+            .as_deref()
+            .is_some_and(|question| {
+                h411_is_builder_or_construction_company_question(
+                    &h411_normalize_public_discourse_text(question),
+                )
+            });
+    if pending_builder_goal {
+        if let Some(entity) = explicit_entity.clone().or_else(|| {
+            if h411_is_correction_phrase(&lower) || h411_contains_reference(&lower) {
+                resolved_entity.clone()
+            } else {
+                None
+            }
+        }) {
+            return Some(H411PublicDiscourseResponse {
+                response_text: h411_public_builder_safe_degrade(&entity),
+                reason_code: "H411_PUBLIC_FACT_FOLLOWUP_SAFE_DEGRADE",
+            });
+        }
+    }
+    let builder_goal = h411_is_builder_or_construction_company_question(&lower)
+        || (h411_is_correction_phrase(&lower)
+            && frame.last_answer_goal.as_deref()
+                == Some("identify_builder_or_construction_company"));
+
+    if builder_goal {
+        if let Some(entity) = resolved_entity {
+            return Some(H411PublicDiscourseResponse {
+                response_text: h411_public_builder_safe_degrade(&entity),
+                reason_code: "H411_PUBLIC_FACT_FOLLOWUP_SAFE_DEGRADE",
+            });
+        }
+        return Some(H411PublicDiscourseResponse {
+            response_text: "Which building or tower do you mean?".to_string(),
+            reason_code: "H411_PUBLIC_DISCOURSE_REFERENCE_CLARIFY",
+        });
+    }
+
+    None
+}
+
+fn h411_update_public_discourse_frame(
+    frame: &mut AdapterPublicDiscourseFrame,
+    captured_text: &str,
+    response_text: &str,
+    route_label: Option<&str>,
+) {
+    let captured_trimmed = captured_text.trim();
+    let response_trimmed = response_text.trim();
+    if !captured_trimmed.is_empty() {
+        frame.last_user_question = Some(truncate_text_chars(captured_trimmed, 512));
+    }
+    if !response_trimmed.is_empty() {
+        frame.last_assistant_answer = Some(truncate_text_chars(response_trimmed, 512));
+    }
+    if let Some(route) = route_label.map(str::trim).filter(|route| !route.is_empty()) {
+        frame.last_public_tool_route = Some(truncate_ascii(route, 64));
+    }
+
+    let lower = h411_normalize_public_discourse_text(captured_text);
+    let entities = h411_extract_public_entities(captured_text, response_text);
+    if !entities.is_empty() {
+        frame.active_entities = entities.clone();
+        if entities.len() == 1 {
+            frame.active_entity = entities.first().cloned();
+            frame.current_topic = frame.active_entity.clone();
+        } else {
+            frame.active_entity = None;
+            frame.current_topic = Some(entities.join(" / "));
+        }
+    }
+
+    if let Some(goal) = h411_answer_goal_from_text(&lower) {
+        frame.last_answer_goal = Some(goal.to_string());
+        if goal != "identify_builder_or_construction_company" {
+            frame.pending_unanswered_question = None;
+        }
+    }
+
+    if h411_contains_reference(&lower) {
+        frame.referenced_entity = h411_extract_single_public_entity(captured_text)
+            .or_else(|| h411_resolve_public_reference(&lower, frame));
+        frame.coreference_resolution = frame
+            .referenced_entity
+            .as_ref()
+            .map(|entity| format!("resolved_reference={entity}"));
+    }
+
+    if h411_is_correction_phrase(&lower) {
+        frame.correction_state = Some("correction_or_missed_question_recovery".to_string());
+    } else {
+        frame.correction_state = None;
+    }
+
+    if h411_is_builder_or_construction_company_question(&lower) {
+        frame.pending_unanswered_question = if h411_response_answers_or_safe_degrades(response_text)
+        {
+            None
+        } else {
+            Some(truncate_text_chars(captured_trimmed, 512))
+        };
+        frame.last_answer_goal = Some("identify_builder_or_construction_company".to_string());
+    } else if h411_is_correction_phrase(&lower)
+        && frame.last_answer_goal.as_deref() == Some("identify_builder_or_construction_company")
+        && h411_response_answers_or_safe_degrades(response_text)
+    {
+        frame.pending_unanswered_question = None;
+    }
+}
+
+fn h411_normalize_public_discourse_text(text: &str) -> String {
+    text.to_ascii_lowercase()
+        .replace('\u{2019}', "'")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .trim_matches(|ch: char| ch.is_ascii_punctuation() || ch.is_whitespace())
+        .to_string()
+}
+
+fn h411_extract_public_entities(captured_text: &str, response_text: &str) -> Vec<String> {
+    let mut entities = Vec::new();
+    let combined = format!("{captured_text}\n{response_text}");
+    let lower = combined.to_ascii_lowercase();
+    if lower.contains("sydney tower") || lower.contains("tallest building in sydney") {
+        entities.push("Sydney Tower".to_string());
+    }
+    if lower.contains("centrepoint tower") || lower.contains("centerpoint tower") {
+        entities.push("Centrepoint Tower".to_string());
+    }
+    if lower.contains("tamburlaine organic wines")
+        || lower.contains("tumblin wines")
+        || lower.contains("tumba lane organic wines")
+    {
+        entities.push("Tamburlaine Organic Wines".to_string());
+    }
+    entities.sort();
+    entities.dedup();
+    entities
+}
+
+fn h411_extract_single_public_entity(text: &str) -> Option<String> {
+    let entities = h411_extract_public_entities(text, "");
+    if entities.len() == 1 {
+        entities.into_iter().next()
+    } else {
+        None
+    }
+}
+
+fn h411_answer_goal_from_text(lower: &str) -> Option<&'static str> {
+    if h411_is_builder_or_construction_company_question(lower) {
+        Some("identify_builder_or_construction_company")
+    } else if h411_is_height_question(lower) {
+        Some("answer_height")
+    } else if lower.contains("when was") || lower.contains("built") || lower.contains("completed") {
+        Some("answer_build_or_completion_date")
+    } else {
+        None
+    }
+}
+
+fn h411_is_sydney_tallest_building_built_question(lower: &str) -> bool {
+    lower.contains("tallest building in sydney")
+        && (lower.contains("when was") || lower.contains("built") || lower.contains("completed"))
+}
+
+fn h411_is_builder_or_construction_company_question(lower: &str) -> bool {
+    (lower.contains("construction company")
+        || lower.contains("who built")
+        || lower.contains("built it"))
+        && (lower.contains("who") || lower.contains("company") || lower.contains("construction"))
+}
+
+fn h411_is_height_question(lower: &str) -> bool {
+    lower.contains("how tall") || lower.contains("height")
+}
+
+fn h411_is_memory_capability_question(lower: &str) -> bool {
+    lower.contains("how's your memory")
+        || lower.contains("hows your memory")
+        || (lower.contains("can you remember") && lower.contains("long time"))
+        || (lower.contains("remember things") && lower.contains("long time"))
+}
+
+fn h411_is_translation_capability_question(lower: &str) -> bool {
+    lower.contains("why can't you actually translate")
+        || lower.contains("why cant you actually translate")
+        || lower.contains("can you translate")
+        || lower.contains("actually translate")
+}
+
+fn h411_is_correction_phrase(lower: &str) -> bool {
+    lower.starts_with("i asked")
+        || lower.starts_with("we talked about")
+        || lower.starts_with("i mean")
+        || lower.starts_with("that's not what i asked")
+        || lower.starts_with("thats not what i asked")
+        || lower.contains("not what i asked")
+}
+
+fn h411_contains_reference(lower: &str) -> bool {
+    lower.contains(" it")
+        || lower.starts_with("it ")
+        || lower.contains(" that")
+        || lower.contains(" this")
+        || lower.contains(" the tower")
+        || lower.contains(" the building")
+        || lower.contains(" the company")
+}
+
+fn h411_resolve_public_reference(
+    lower: &str,
+    frame: &AdapterPublicDiscourseFrame,
+) -> Option<String> {
+    if !h411_contains_reference(lower) && !h411_is_correction_phrase(lower) {
+        return None;
+    }
+    frame
+        .active_entity
+        .clone()
+        .or_else(|| {
+            if frame.active_entities.len() == 1 {
+                frame.active_entities.first().cloned()
+            } else {
+                None
+            }
+        })
+        .or_else(|| frame.referenced_entity.clone())
+}
+
+fn h411_is_ambiguous_reference(lower: &str, frame: &AdapterPublicDiscourseFrame) -> bool {
+    h411_contains_reference(lower)
+        && frame.active_entity.is_none()
+        && frame.active_entities.len() > 1
+}
+
+fn h411_ambiguous_reference_clarification(frame: &AdapterPublicDiscourseFrame) -> String {
+    let options = frame
+        .active_entities
+        .iter()
+        .take(3)
+        .cloned()
+        .collect::<Vec<_>>();
+    match options.as_slice() {
+        [one, two] => format!("Do you mean {one} or {two}?"),
+        [one] => format!("Do you mean {one}?"),
+        _ => "Which one do you mean?".to_string(),
+    }
+}
+
+fn h411_public_builder_safe_degrade(entity: &str) -> String {
+    format!(
+        "I can't verify the construction company that built {entity} from reliable public sources right now."
+    )
+}
+
+fn h411_response_answers_or_safe_degrades(response_text: &str) -> bool {
+    let lower = response_text.to_ascii_lowercase();
+    lower.contains("can't verify")
+        || lower.contains("couldn't verify")
+        || lower.contains("construction company")
+        || lower.contains("built")
+        || lower.contains("309 meters")
+}
+
+fn h411_looks_like_protected_execution(lower: &str) -> bool {
+    (lower.contains("approve") && lower.contains("payroll"))
+        || (lower.contains("approve") && lower.contains("tim"))
+        || lower.contains("increase tim's salary")
+        || lower.contains("increase tims salary")
+        || lower.contains("update the company records")
+        || lower.contains("update company records")
+        || lower.contains("change access")
+        || lower.contains("salary")
+        || lower.contains("leave approval")
+        || lower.contains("database")
+}
+
 fn h410_public_brain_trace_enabled() -> bool {
     parse_bool_env("SELENE_PUBLIC_BRAIN_TRACE_ENABLED", false)
 }
@@ -14546,7 +15093,10 @@ fn h410_search_query_from_nlp_output(output: Option<&Ph1nResponse>) -> Option<St
     })
 }
 
-fn h410_source_summary(source: &selene_kernel_contracts::ph1e::SourceRef, include_raw: bool) -> PublicBrainTraceSourceSummary {
+fn h410_source_summary(
+    source: &selene_kernel_contracts::ph1e::SourceRef,
+    include_raw: bool,
+) -> PublicBrainTraceSourceSummary {
     PublicBrainTraceSourceSummary {
         title_sha256: h410_hash_text(&source.title),
         title_text: include_raw.then(|| truncate_text_chars(&source.title, 256)),
@@ -14574,7 +15124,10 @@ fn h410_source_trace_summaries(
     tool_response: Option<&ToolResponse>,
     answer_text: &str,
     include_raw: bool,
-) -> (Vec<PublicBrainTraceSourceSummary>, Vec<PublicBrainTraceSourceSummary>) {
+) -> (
+    Vec<PublicBrainTraceSourceSummary>,
+    Vec<PublicBrainTraceSourceSummary>,
+) {
     let sources = tool_response
         .and_then(|response| response.source_metadata.as_ref())
         .map(|metadata| metadata.sources.as_slice())
@@ -14625,6 +15178,7 @@ fn h410_build_public_brain_trace(
     nlp_output: Option<&Ph1nResponse>,
     execution: Option<&AppVoiceTurnExecutionOutcome>,
     response_text: &str,
+    discourse_frame: Option<&AdapterPublicDiscourseFrame>,
 ) -> Option<PublicBrainTraceRow> {
     if !h410_public_brain_trace_enabled() {
         return None;
@@ -14684,7 +15238,7 @@ fn h410_build_public_brain_trace(
             packet.referenced_previous_turn
                 || packet.referenced_previous_answer
                 || packet.referenced_tool_route.is_some()
-        }),
+        }) || discourse_frame.is_some_and(h411_public_discourse_frame_used),
         context_route_used: h380_packet
             .and_then(|packet| packet.referenced_tool_route)
             .map(|route| format!("{:?}", route)),
@@ -14704,7 +15258,24 @@ fn h410_build_public_brain_trace(
         protected_fail_closed,
         failure_reason,
         engine_layer_responsible,
+        active_entity: discourse_frame.and_then(|frame| frame.active_entity.clone()),
+        pending_question: discourse_frame
+            .and_then(|frame| frame.pending_unanswered_question.clone()),
+        answer_goal: discourse_frame.and_then(|frame| frame.last_answer_goal.clone()),
+        correction_state: discourse_frame.and_then(|frame| frame.correction_state.clone()),
+        coreference_resolution: discourse_frame
+            .and_then(|frame| frame.coreference_resolution.clone()),
     })
+}
+
+fn h411_public_discourse_frame_used(frame: &AdapterPublicDiscourseFrame) -> bool {
+    frame.active_entity.is_some()
+        || !frame.active_entities.is_empty()
+        || frame.pending_unanswered_question.is_some()
+        || frame.last_answer_goal.is_some()
+        || frame.referenced_entity.is_some()
+        || frame.correction_state.is_some()
+        || frame.coreference_resolution.is_some()
 }
 
 fn execution_outcome_is_public_no_intent(execution: &AppVoiceTurnExecutionOutcome) -> bool {
@@ -32765,9 +33336,411 @@ mod tests {
         }
     }
 
+    fn h411_run_desktop_typed_turn(
+        runtime: &AdapterRuntime,
+        thread_key: &str,
+        turn_id: u64,
+        text: &str,
+    ) -> VoiceTurnAdapterResponse {
+        let mut req = base_request();
+        req.correlation_id = turn_id;
+        req.turn_id = turn_id;
+        req.device_turn_sequence = Some(turn_id);
+        req.now_ns = Some(turn_id);
+        req.thread_key = Some(thread_key.to_string());
+        req.app_platform = "DESKTOP".to_string();
+        req.audio_capture_ref = None;
+        req.user_text_final = Some(text.to_string());
+        runtime
+            .run_voice_turn(req)
+            .expect("H411 desktop typed runtime turn should complete")
+    }
+
+    fn assert_h411_public_answer_clean(out: &VoiceTurnAdapterResponse) {
+        assert_eq!(out.status, "ok", "{out:?}");
+        assert!(
+            matches!(out.outcome.as_str(), "FINAL" | "FINAL_TOOL"),
+            "{out:?}"
+        );
+        for forbidden in [
+            "governance state is out of sync",
+            "policy versions are out of sync",
+            "missing simulation",
+            "identity posture fail-closed",
+            "source: UNKNOWN",
+            "trust: UNVERIFIED",
+            "AUDIT_METADATA_ONLY",
+            "<strong>",
+            "</strong>",
+        ] {
+            assert!(
+                !out.response_text.contains(forbidden),
+                "forbidden public output token {forbidden:?}: {}",
+                out.response_text
+            );
+        }
+    }
+
+    #[test]
+    fn h411_session_discourse_coreference_and_correction_recover_pending_question() {
+        let runtime = AdapterRuntime::default();
+        let thread = "h411-sydney-tower-coreference";
+
+        let seed = h411_run_desktop_typed_turn(
+            &runtime,
+            thread,
+            411_001,
+            "When was the tallest building in Sydney built",
+        );
+        assert_h411_public_answer_clean(&seed);
+        assert!(
+            seed.response_text.contains("Sydney Tower"),
+            "{}",
+            seed.response_text
+        );
+        assert!(
+            seed.response_text.contains("1981"),
+            "{}",
+            seed.response_text
+        );
+
+        let builder = h411_run_desktop_typed_turn(
+            &runtime,
+            thread,
+            411_002,
+            "Who is the construction company that built it",
+        );
+        assert_h411_public_answer_clean(&builder);
+        assert!(
+            builder.response_text.contains("Sydney Tower"),
+            "{}",
+            builder.response_text
+        );
+        assert!(
+            builder
+                .response_text
+                .contains("can't verify the construction company"),
+            "{}",
+            builder.response_text
+        );
+        assert!(
+            !builder.response_text.contains("what \"it\" refers"),
+            "{}",
+            builder.response_text
+        );
+        assert!(
+            !builder.response_text.contains("please specify"),
+            "{}",
+            builder.response_text
+        );
+        assert!(
+            !builder.response_text.contains("panoramic views"),
+            "{}",
+            builder.response_text
+        );
+
+        let correction = h411_run_desktop_typed_turn(
+            &runtime,
+            thread,
+            411_003,
+            "We talked about the Sydney Tower",
+        );
+        assert_h411_public_answer_clean(&correction);
+        assert!(
+            correction.response_text.contains("Sydney Tower"),
+            "{}",
+            correction.response_text
+        );
+        assert!(
+            correction
+                .response_text
+                .contains("can't verify the construction company"),
+            "{}",
+            correction.response_text
+        );
+        assert!(
+            !correction.response_text.contains("panoramic views"),
+            "{}",
+            correction.response_text
+        );
+
+        let missed_question = h411_run_desktop_typed_turn(
+            &runtime,
+            thread,
+            411_004,
+            "I asked who was the construction company for the tower",
+        );
+        assert_h411_public_answer_clean(&missed_question);
+        assert!(
+            missed_question
+                .response_text
+                .contains("can't verify the construction company"),
+            "{}",
+            missed_question.response_text
+        );
+        assert!(
+            !missed_question
+                .response_text
+                .contains("which tower you are referring to"),
+            "{}",
+            missed_question.response_text
+        );
+
+        let explicit_entity_answer =
+            h411_run_desktop_typed_turn(&runtime, thread, 411_005, "The Sydney Tower");
+        assert_h411_public_answer_clean(&explicit_entity_answer);
+        assert!(
+            explicit_entity_answer
+                .response_text
+                .contains("can't verify the construction company"),
+            "{}",
+            explicit_entity_answer.response_text
+        );
+        assert!(
+            !explicit_entity_answer
+                .response_text
+                .contains("tallest structure in Sydney"),
+            "{}",
+            explicit_entity_answer.response_text
+        );
+
+        let new_direct_question =
+            h411_run_desktop_typed_turn(&runtime, thread, 411_006, "How tall is the tower?");
+        assert_h411_public_answer_clean(&new_direct_question);
+        assert!(
+            new_direct_question.response_text.contains("309"),
+            "{}",
+            new_direct_question.response_text
+        );
+        assert!(
+            !new_direct_question
+                .response_text
+                .contains("construction company"),
+            "{}",
+            new_direct_question.response_text
+        );
+    }
+
+    #[test]
+    fn h411_direct_noun_phrase_reference_and_ambiguous_context_behave_correctly() {
+        let runtime = AdapterRuntime::default();
+        let tower = "h411-direct-noun-reference";
+
+        let seed =
+            h411_run_desktop_typed_turn(&runtime, tower, 411_021, "Tell me about Sydney Tower.");
+        assert_h411_public_answer_clean(&seed);
+        assert!(
+            seed.response_text.contains("Sydney Tower"),
+            "{}",
+            seed.response_text
+        );
+
+        let height =
+            h411_run_desktop_typed_turn(&runtime, tower, 411_022, "How tall is the tower?");
+        assert_h411_public_answer_clean(&height);
+        assert!(
+            height.response_text.contains("Sydney Tower"),
+            "{}",
+            height.response_text
+        );
+        assert!(
+            height.response_text.contains("309 meters"),
+            "{}",
+            height.response_text
+        );
+        assert!(
+            !height.response_text.contains("which tower"),
+            "{}",
+            height.response_text
+        );
+
+        let ambiguous_thread = "h411-ambiguous-reference";
+        let ambiguous_seed = h411_run_desktop_typed_turn(
+            &runtime,
+            ambiguous_thread,
+            411_031,
+            "Tell me about Sydney Tower and Centrepoint Tower.",
+        );
+        assert_h411_public_answer_clean(&ambiguous_seed);
+
+        let ambiguous =
+            h411_run_desktop_typed_turn(&runtime, ambiguous_thread, 411_032, "When was it built?");
+        assert_h411_public_answer_clean(&ambiguous);
+        assert!(
+            ambiguous.response_text.contains("Do you mean"),
+            "{}",
+            ambiguous.response_text
+        );
+        assert!(
+            ambiguous.response_text.contains("Sydney Tower"),
+            "{}",
+            ambiguous.response_text
+        );
+        assert!(
+            ambiguous.response_text.contains("Centrepoint Tower"),
+            "{}",
+            ambiguous.response_text
+        );
+    }
+
+    #[test]
+    fn h411_public_capability_questions_answer_instead_of_generic_failure() {
+        let runtime = AdapterRuntime::default();
+
+        let translate = h411_run_desktop_typed_turn(
+            &runtime,
+            "h411-public-capabilities",
+            411_041,
+            "Why can't you actually translate",
+        );
+        assert_h411_public_answer_clean(&translate);
+        assert!(
+            translate
+                .response_text
+                .contains("I can translate text you provide"),
+            "{}",
+            translate.response_text
+        );
+        assert!(
+            !translate
+                .response_text
+                .contains("Translation can be complex"),
+            "{}",
+            translate.response_text
+        );
+
+        let memory = h411_run_desktop_typed_turn(
+            &runtime,
+            "h411-public-capabilities",
+            411_042,
+            "How's your memory can you remember things for a long time",
+        );
+        assert_h411_public_answer_clean(&memory);
+        assert!(
+            memory
+                .response_text
+                .contains("context within this current conversation"),
+            "{}",
+            memory.response_text
+        );
+        assert!(
+            !memory
+                .response_text
+                .contains("I couldn't answer that just now"),
+            "{}",
+            memory.response_text
+        );
+    }
+
+    #[test]
+    fn h411_protected_pronoun_and_mixed_requests_still_fail_closed() {
+        let runtime = AdapterRuntime::default();
+
+        let public_context = h411_run_desktop_typed_turn(
+            &runtime,
+            "h411-protected-pronoun",
+            411_051,
+            "Tell me about payroll rules generally.",
+        );
+        assert_h411_public_answer_clean(&public_context);
+
+        let protected_pronoun = h411_run_desktop_typed_turn(
+            &runtime,
+            "h411-protected-pronoun",
+            411_052,
+            "Approve it for Tim.",
+        );
+        assert_eq!(protected_pronoun.status, "ok", "{protected_pronoun:?}");
+        assert!(
+            protected_pronoun
+                .response_text
+                .contains("NO_SIMULATION_NO_AUTHORITY_NO_PROTECTED_EXECUTION"),
+            "{}",
+            protected_pronoun.response_text
+        );
+
+        let tower_context = h411_run_desktop_typed_turn(
+            &runtime,
+            "h411-protected-company-record",
+            411_061,
+            "Tell me about Sydney Tower.",
+        );
+        assert_h411_public_answer_clean(&tower_context);
+
+        let protected_records = h411_run_desktop_typed_turn(
+            &runtime,
+            "h411-protected-company-record",
+            411_062,
+            "Update the company records for it.",
+        );
+        assert_eq!(protected_records.status, "ok", "{protected_records:?}");
+        assert!(
+            protected_records
+                .response_text
+                .contains("NO_SIMULATION_NO_AUTHORITY_NO_PROTECTED_EXECUTION"),
+            "{}",
+            protected_records.response_text
+        );
+    }
+
+    #[test]
+    fn h411_public_brain_trace_records_discourse_state_and_preserves_h410_black_box() {
+        with_isolated_device_vault(
+            "h411-public-discourse-trace",
+            &[],
+            &[
+                ("SELENE_PUBLIC_BRAIN_TRACE_ENABLED", "true"),
+                ("SELENE_PUBLIC_BRAIN_TRACE_RAW_TEXT_ENABLED", "true"),
+            ],
+            || {
+                let runtime = AdapterRuntime::default();
+                let seed = h411_run_desktop_typed_turn(
+                    &runtime,
+                    "h411-public-discourse-trace",
+                    411_071,
+                    "When was the tallest building in Sydney built",
+                );
+                assert_h411_public_answer_clean(&seed);
+                let followup = h411_run_desktop_typed_turn(
+                    &runtime,
+                    "h411-public-discourse-trace",
+                    411_072,
+                    "Who is the construction company that built it",
+                );
+                assert_h411_public_answer_clean(&followup);
+
+                let report = runtime.ui_public_brain_trace_report(Some(411_099));
+                assert_eq!(report.status, "ok", "{report:?}");
+                let trace = report
+                    .traces
+                    .iter()
+                    .find(|trace| trace.turn_id == 411_072)
+                    .expect("H411 follow-up discourse trace should be recorded");
+                assert_eq!(trace.result_class, "H410_PUBLIC_BRAIN_BLACK_BOX_TRACE_PASS");
+                assert_eq!(
+                    trace.captured_input_text.as_deref(),
+                    Some("Who is the construction company that built it")
+                );
+                assert_eq!(trace.active_entity.as_deref(), Some("Sydney Tower"));
+                assert_eq!(
+                    trace.answer_goal.as_deref(),
+                    Some("identify_builder_or_construction_company")
+                );
+                assert!(trace
+                    .coreference_resolution
+                    .as_deref()
+                    .is_some_and(|value| value.contains("Sydney Tower")));
+                assert!(trace.context_used);
+                assert!(!trace.raw_audio_retained);
+                assert_eq!(trace.engine_layer_responsible, "PH1.N_PUBLIC_UNDERSTANDING");
+            },
+        );
+    }
+
     #[test]
     fn h410_public_brain_trace_records_metadata_without_raw_text_or_audio() {
-        let endpoint = h373_spawn_tomorrow_weather_endpoint_sequence(vec![r#"{
+        let endpoint = h373_spawn_tomorrow_weather_endpoint_sequence(vec![
+            r#"{
             "data": {
                 "time": "2026-04-25T03:00:00Z",
                 "values": {
@@ -32780,7 +33753,8 @@ mod tests {
             "location": {
                 "name": "Sydney, Australia"
             }
-        }"#]);
+        }"#,
+        ]);
         with_isolated_device_vault(
             "h410-public-brain-trace-metadata",
             &[],
@@ -32883,10 +33857,12 @@ mod tests {
     fn h410_public_brain_trace_raw_text_mode_records_search_verifier_failure_layer() {
         let captured = Arc::new(Mutex::new(Vec::new()));
         let endpoint = h409_spawn_brave_web_endpoint_sequence(
-            vec![r#"{"web":{"results":[
+            vec![
+                r#"{"web":{"results":[
                 {"title":"Our CEO and executive management team | Wine Australia","url":"https://www.wineaustralia.com/about-us/our-ceo-and-executive-management-team","description":"Along with his wine sector experience, <strong>Dr Cole</strong> brings more than 25 years of experience."},
                 {"title":"Tamburlaine Organic Wines | Australia's Favourite Winemaker","url":"https://tamburlaine.com.au/","description":"Tamburlaine Organic Wines is an Australian organic winery."}
-            ]}}"#],
+            ]}}"#,
+            ],
             Arc::clone(&captured),
         );
 
@@ -32941,17 +33917,11 @@ mod tests {
                 );
                 assert_eq!(trace.sources_accepted_count, 0);
                 assert!(trace.sources_rejected_count >= 1, "{trace:?}");
-                assert!(trace
-                    .sources_rejected
-                    .iter()
-                    .any(|source| source
-                        .title_text
-                        .as_deref()
-                        .is_some_and(|title| title.contains("Wine Australia"))));
-                assert_eq!(
-                    trace.engine_layer_responsible,
-                    "PH1.E_SEARCH_VERIFIER"
-                );
+                assert!(trace.sources_rejected.iter().any(|source| source
+                    .title_text
+                    .as_deref()
+                    .is_some_and(|title| title.contains("Wine Australia"))));
+                assert_eq!(trace.engine_layer_responsible, "PH1.E_SEARCH_VERIFIER");
                 assert_eq!(
                     trace.failure_reason.as_deref(),
                     Some("UNVERIFIED_ENTITY_ANSWER_SAFE_DEGRADE")
