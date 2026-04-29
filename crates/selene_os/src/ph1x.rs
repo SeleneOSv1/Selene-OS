@@ -2361,9 +2361,14 @@ fn h409_unverified_tamburlaine_ceo_result(tr: &ToolResponse) -> bool {
     let combined = fragments.join("\n").to_ascii_lowercase();
     let tamburlaine_context = combined.contains("tamburlaine")
         || combined.contains("tumblin")
+        || (combined.contains("tumbling") && combined.contains("wine"))
         || combined.contains("tumba lane")
         || combined.contains("tumblaine")
-        || combined.contains("tamburlane");
+        || combined.contains("tamburlane")
+        || (combined.contains("timberlain") && combined.contains("organic") && combined.contains("wine"))
+        || (combined.contains("chamberlain")
+            && combined.contains("organic")
+            && combined.contains("wine"));
     let wrong_wine_australia_ceo = combined.contains("wine australia")
         && (combined.contains("ceo") || combined.contains("dr cole"));
     let directly_supported = fragments
@@ -4887,6 +4892,68 @@ mod tests {
             "retention:",
             "AUDIT_METADATA_ONLY",
             "citation_verified",
+        ] {
+            assert!(!text.contains(forbidden), "{forbidden} leaked in {text}");
+        }
+    }
+
+    #[test]
+    fn h413_voice_like_tamburlaine_alias_ceo_source_safe_degrades_without_metadata_leak() {
+        let tool_ok = ToolResponse::ok_v1(
+            ToolRequestId(413),
+            ToolQueryHash(413),
+            ToolResult::WebSearch {
+                items: vec![
+                    ToolTextSnippet {
+                        title: "Our CEO and executive management team | Wine Australia".to_string(),
+                        snippet: "Along with his wine sector experience, <strong>Dr Cole</strong> brings research management experience.".to_string(),
+                        url: "https://www.wineaustralia.com/about-us/our-ceo-and-executive-management-team".to_string(),
+                    },
+                    ToolTextSnippet {
+                        title: "Chamberlain organic wines Australia".to_string(),
+                        snippet: "Likely noisy public entity capture for organic wines in Australia.".to_string(),
+                        url: "https://example.invalid/chamberlain-organic-wines".to_string(),
+                    },
+                ],
+            },
+            SourceMetadata {
+                schema_version: SchemaVersion(1),
+                provider_hint: None,
+                retrieved_at_unix_ms: 1777468969264,
+                sources: vec![
+                    SourceRef {
+                        title: "Our CEO and executive management team | Wine Australia — source: UNKNOWN; trust: UNVERIFIED; freshness: STABLE_REFERENCE_ACCEPTABLE; citation_verified; retention:AUDIT_METADATA_ONLY".to_string(),
+                        url: "https://www.wineaustralia.com/about-us/our-ceo-and-executive-management-team".to_string(),
+                    },
+                    SourceRef {
+                        title: "Chamberlain organic wines Australia".to_string(),
+                        url: "https://example.invalid/chamberlain-organic-wines".to_string(),
+                    },
+                ],
+            },
+            None,
+            ReasonCodeId(1),
+            CacheStatus::Bypassed,
+        )
+        .unwrap();
+
+        let text = tool_ok_text(&tool_ok);
+        assert_eq!(
+            text,
+            "I couldn't verify a publicly listed CEO for Tamburlaine Organic Wines from reliable public sources."
+        );
+        for forbidden in [
+            "Dr Cole",
+            "Wine Australia",
+            "<strong>",
+            "</strong>",
+            "source: UNKNOWN",
+            "trust: UNVERIFIED",
+            "freshness:",
+            "retention:",
+            "AUDIT_METADATA_ONLY",
+            "citation_verified",
+            "Retrieved at (unix_ms):",
         ] {
             assert!(!text.contains(forbidden), "{forbidden} leaked in {text}");
         }

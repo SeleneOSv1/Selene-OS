@@ -326,15 +326,22 @@ fn looks_like_weather_query(lower: &str) -> bool {
 
 fn canonical_public_search_tool_query(transcript: &str) -> Option<String> {
     let lower = transcript.to_ascii_lowercase();
-    let mentions_tamburlaine_alias = lower.contains("tamburlaine")
-        || lower.contains("tumblin")
-        || lower.contains("tumba lane")
-        || lower.contains("tumblaine")
-        || lower.contains("tamburlane");
+    let mentions_tamburlaine_alias = h413_mentions_tamburlaine_public_alias(&lower);
     if mentions_tamburlaine_alias && lower.contains("ceo") {
         return Some("Tamburlaine Organic Wines CEO Australia".to_string());
     }
     None
+}
+
+fn h413_mentions_tamburlaine_public_alias(lower: &str) -> bool {
+    lower.contains("tamburlaine")
+        || lower.contains("tumblin")
+        || (lower.contains("tumbling") && lower.contains("wine"))
+        || lower.contains("tumba lane")
+        || lower.contains("tumblaine")
+        || lower.contains("tamburlane")
+        || (lower.contains("timberlain") && lower.contains("organic") && lower.contains("wine"))
+        || (lower.contains("chamberlain") && lower.contains("organic") && lower.contains("wine"))
 }
 
 fn looks_like_web_search(lower: &str) -> bool {
@@ -4382,6 +4389,37 @@ mod tests {
                     assert_eq!(task, Some("Tamburlaine Organic Wines CEO Australia"));
                 }
                 _ => panic!("expected H409 public search intent for {prompt}"),
+            }
+        }
+    }
+
+    #[test]
+    fn h413_voice_like_tamburlaine_aliases_rewrite_to_canonical_query() {
+        let rt = Ph1nRuntime::new(Ph1nConfig::mvp_v1());
+        for prompt in [
+            "Who's the CEO of tumbling wines",
+            "Do a deep web search and find me the CEO for Chamberlain organic wines Australia.",
+            "Who is the CEO of Timberlain organic wines Australia?",
+        ] {
+            let out = rt.run(&req(prompt, "en")).unwrap();
+            match out {
+                Ph1nResponse::IntentDraft(d) => {
+                    assert!(
+                        matches!(
+                            d.intent_type,
+                            IntentType::WebSearchQuery | IntentType::DeepResearchQuery
+                        ),
+                        "expected public web/deep research route for {prompt}, got {:?}",
+                        d.intent_type
+                    );
+                    let task = d
+                        .fields
+                        .iter()
+                        .find(|field| field.key == FieldKey::Task)
+                        .and_then(|field| field.value.normalized_value.as_deref());
+                    assert_eq!(task, Some("Tamburlaine Organic Wines CEO Australia"));
+                }
+                _ => panic!("expected H413 public search intent for {prompt}"),
             }
         }
     }

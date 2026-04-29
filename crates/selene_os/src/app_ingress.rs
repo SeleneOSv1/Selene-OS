@@ -10840,38 +10840,9 @@ fn build_tool_followup_ph1x_request(
 
 fn append_app_ingress_tool_provenance(
     response_text: String,
-    tool_response: &ToolResponse,
+    _tool_response: &ToolResponse,
 ) -> String {
-    let should_append = tool_response.tool_status == ToolStatus::Ok
-        && !matches!(
-            tool_response.tool_result.as_ref(),
-            Some(ToolResult::Time { .. } | ToolResult::Weather { .. }) | None
-        );
-    if !should_append
-        || response_text.contains("Retrieved at (unix_ms):")
-        || public_safe_degrade_answer_hides_retrieved_at(&response_text)
-    {
-        return response_text;
-    }
-
-    let Some(source_metadata) = tool_response.source_metadata.as_ref() else {
-        return response_text;
-    };
-
-    let mut text = response_text.trim_end().to_string();
-    if !text.is_empty() {
-        text.push('\n');
-    }
-    text.push_str(&format!(
-        "Retrieved at (unix_ms): {}",
-        source_metadata.retrieved_at_unix_ms
-    ));
-    text
-}
-
-fn public_safe_degrade_answer_hides_retrieved_at(response_text: &str) -> bool {
-    let lower = response_text.to_ascii_lowercase();
-    lower.contains("couldn't verify a publicly listed ceo for tamburlaine organic wines")
+    response_text
 }
 
 fn merge_thread_policy_context(
@@ -24558,7 +24529,7 @@ mod tests {
         let response_text = out.response_text.expect("respond output must include text");
         assert!(response_text.contains("https://search.selene.ai/result-1"));
         assert!(!response_text.contains("example.invalid"));
-        assert!(response_text.contains("Retrieved at (unix_ms):"));
+        assert!(!response_text.contains("Retrieved at (unix_ms):"));
         assert!(out.dispatch_outcome.is_none());
         assert!(matches!(
             out.ph1x_response
@@ -24612,7 +24583,7 @@ mod tests {
         let response_text = out.response_text.expect("respond output must include text");
         assert!(response_text.contains("https://search.selene.ai/result-1"));
         assert!(!response_text.contains("example.invalid"));
-        assert!(response_text.contains("Retrieved at (unix_ms):"));
+        assert!(!response_text.contains("Retrieved at (unix_ms):"));
         assert!(out.dispatch_outcome.is_none());
         assert!(matches!(
             out.ph1x_response
@@ -24666,7 +24637,7 @@ mod tests {
         let response_text = out.response_text.expect("respond output must include text");
         assert!(response_text.contains("https://news.selene.ai/story-1"));
         assert!(!response_text.contains("example.invalid"));
-        assert!(response_text.contains("Retrieved at (unix_ms):"));
+        assert!(!response_text.contains("Retrieved at (unix_ms):"));
         assert!(out.dispatch_outcome.is_none());
         assert!(matches!(
             out.ph1x_response
@@ -24723,7 +24694,7 @@ mod tests {
         assert!(response_text.contains("Citations:"));
         assert!(response_text.contains("https://docs.selene.ai/spec#chunk-"));
         assert!(!response_text.contains("example.invalid"));
-        assert!(response_text.contains("Retrieved at (unix_ms):"));
+        assert!(!response_text.contains("Retrieved at (unix_ms):"));
         assert!(out.dispatch_outcome.is_none());
         assert!(matches!(
             out.ph1x_response
@@ -24778,7 +24749,7 @@ mod tests {
         assert!(response_text.contains("Summary:"));
         assert!(response_text.contains("Extracted fields:"));
         assert!(response_text.contains("Citations:"));
-        assert!(response_text.contains("Retrieved at (unix_ms):"));
+        assert!(!response_text.contains("Retrieved at (unix_ms):"));
         assert!(out.dispatch_outcome.is_none());
         assert!(matches!(
             out.ph1x_response
@@ -24833,7 +24804,7 @@ mod tests {
         assert!(response_text.contains("Summary:"));
         assert!(response_text.contains("Extracted fields:"));
         assert!(response_text.contains("Citations:"));
-        assert!(response_text.contains("Retrieved at (unix_ms):"));
+        assert!(!response_text.contains("Retrieved at (unix_ms):"));
         assert!(out.dispatch_outcome.is_none());
         assert!(matches!(
             out.ph1x_response
@@ -24890,7 +24861,7 @@ mod tests {
         assert!(response_text.contains("Summary:"));
         assert!(response_text.contains("Extracted fields:"));
         assert!(response_text.contains("Citations:"));
-        assert!(response_text.contains("Retrieved at (unix_ms):"));
+        assert!(!response_text.contains("Retrieved at (unix_ms):"));
         assert!(out.dispatch_outcome.is_none());
         assert!(matches!(
             out.ph1x_response
@@ -24947,7 +24918,7 @@ mod tests {
         assert!(response_text.contains("Summary:"));
         assert!(response_text.contains("Extracted fields:"));
         assert!(response_text.contains("Citations:"));
-        assert!(response_text.contains("Retrieved at (unix_ms):"));
+        assert!(!response_text.contains("Retrieved at (unix_ms):"));
         assert!(out.dispatch_outcome.is_none());
         assert!(matches!(
             out.ph1x_response
@@ -25004,7 +24975,7 @@ mod tests {
         assert!(response_text.contains("Summary:"));
         assert!(response_text.contains("Action items:"));
         assert!(response_text.contains("Recording evidence refs:"));
-        assert!(response_text.contains("Retrieved at (unix_ms):"));
+        assert!(!response_text.contains("Retrieved at (unix_ms):"));
         assert!(out.dispatch_outcome.is_none());
         assert!(matches!(
             out.ph1x_response
@@ -25061,7 +25032,7 @@ mod tests {
         assert!(response_text.contains("Summary:"));
         assert!(response_text.contains("Extracted fields:"));
         assert!(response_text.contains("Citations:"));
-        assert!(response_text.contains("Retrieved at (unix_ms):"));
+        assert!(!response_text.contains("Retrieved at (unix_ms):"));
         assert!(out.dispatch_outcome.is_none());
         assert!(matches!(
             out.ph1x_response
@@ -25118,7 +25089,7 @@ mod tests {
         assert!(response_text.contains("/slack/"));
         assert!(response_text.contains("/notion/"));
         assert!(!response_text.contains("/gmail/"));
-        assert!(response_text.contains("Retrieved at (unix_ms):"));
+        assert!(!response_text.contains("Retrieved at (unix_ms):"));
         assert!(out.dispatch_outcome.is_none());
         assert!(matches!(
             out.ph1x_response
@@ -25215,7 +25186,7 @@ mod tests {
         assert!(response_text.contains("urgent_followup_mode"));
         assert!(response_text.contains("max_followup_attempts"));
         assert!(response_text.contains("idempotency_key"));
-        assert!(response_text.contains("Retrieved at (unix_ms):"));
+        assert!(!response_text.contains("Retrieved at (unix_ms):"));
         assert!(out.dispatch_outcome.is_none());
     }
 

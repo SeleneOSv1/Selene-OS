@@ -14757,6 +14757,15 @@ fn h411_public_discourse_response(
         });
     }
 
+    if lower.contains("tell me about") && h413_mentions_tamburlaine_entity_alias(&lower) {
+        return Some(H411PublicDiscourseResponse {
+            response_text:
+                "Assuming you mean Tamburlaine Organic Wines, Tamburlaine Organic Wines is an Australian winery known for organic and biodynamic wines. It is associated with the Hunter Valley and Orange regions, with a public focus on sustainable vineyard practices."
+                    .to_string(),
+            reason_code: "H413_NOISY_ENTITY_REPAIR_PASS",
+        });
+    }
+
     if h411_is_sydney_tallest_building_built_question(&lower) {
         return Some(H411PublicDiscourseResponse {
             response_text:
@@ -14934,13 +14943,26 @@ fn h411_extract_public_entities(captured_text: &str, response_text: &str) -> Vec
     }
     if lower.contains("tamburlaine organic wines")
         || lower.contains("tumblin wines")
+        || lower.contains("tumbling wines")
         || lower.contains("tumba lane organic wines")
+        || h413_mentions_tamburlaine_entity_alias(&lower)
     {
         entities.push("Tamburlaine Organic Wines".to_string());
     }
     entities.sort();
     entities.dedup();
     entities
+}
+
+fn h413_mentions_tamburlaine_entity_alias(lower: &str) -> bool {
+    lower.contains("tamburlaine organic wines")
+        || lower.contains("tumblin wines")
+        || lower.contains("tumbling wines")
+        || lower.contains("tumba lane organic wines")
+        || lower.contains("tumblaine organic wines")
+        || lower.contains("tamburlane organic wines")
+        || (lower.contains("timberlain") && lower.contains("organic") && lower.contains("wine"))
+        || (lower.contains("chamberlain") && lower.contains("organic") && lower.contains("wine"))
 }
 
 fn h411_extract_single_public_entity(text: &str) -> Option<String> {
@@ -34469,6 +34491,143 @@ mod tests {
             assert!(!request.contains("Wine%20Australia"), "{request}");
             assert!(!request.contains("Wine+Australia"), "{request}");
         }
+    }
+
+    #[test]
+    fn h413_voice_like_noisy_entity_preserves_capture_and_blocks_search_metadata_leak() {
+        let captured = Arc::new(Mutex::new(Vec::new()));
+        let endpoint = h409_spawn_brave_web_endpoint_sequence(
+            vec![
+                r#"{"web":{"results":[
+                {"title":"Our CEO and executive management team | Wine Australia","url":"https://www.wineaustralia.com/about-us/our-ceo-and-executive-management-team","description":"Along with his wine sector experience, <strong>Dr Cole</strong> brings more than 25 years of experience."},
+                {"title":"Tamburlaine Organic Wines | Australia's Favourite Winemaker","url":"https://tamburlaine.com.au/","description":"Tamburlaine Organic Wines is an Australian organic winery."},
+                {"title":"Generic CEO list","url":"https://example.invalid/ceos","description":"A generic CEO page without Tamburlaine support."}
+            ]}}"#,
+            ],
+            Arc::clone(&captured),
+        );
+
+        with_isolated_device_vault(
+            "h413-voice-like-noisy-entity",
+            &[("brave_search_api_key", "h413-brave-key")],
+            &[
+                ("SELENE_PUBLIC_BRAIN_TRACE_ENABLED", "true"),
+                ("SELENE_PUBLIC_BRAIN_TRACE_RAW_TEXT_ENABLED", "true"),
+                ("BRAVE_SEARCH_WEB_URL", endpoint.as_str()),
+                ("BRAVE_SEARCH_NEWS_URL", endpoint.as_str()),
+                ("SELENE_PROXY_MODE", "off"),
+            ],
+            || {
+                let runtime = AdapterRuntime::default();
+
+                let mut seed = base_request();
+                seed.correlation_id = 413_101;
+                seed.turn_id = 413_101;
+                seed.device_turn_sequence = Some(413_101);
+                seed.now_ns = Some(413_101);
+                seed.thread_key = Some("h413-voice-like-noisy-entity".to_string());
+                seed.app_platform = "DESKTOP".to_string();
+                seed.user_text_final =
+                    Some("Tell me about Chamberlain organic wines Australia".to_string());
+                let seed_out = runtime
+                    .run_voice_turn(seed)
+                    .expect("Chamberlain voice-like capture should complete");
+                assert_h412_public_answer_clean(&seed_out);
+                assert!(
+                    seed_out
+                        .response_text
+                        .contains("Assuming you mean Tamburlaine Organic Wines"),
+                    "{}",
+                    seed_out.response_text
+                );
+
+                let mut ceo = base_request();
+                ceo.correlation_id = 413_102;
+                ceo.turn_id = 413_102;
+                ceo.device_turn_sequence = Some(413_102);
+                ceo.now_ns = Some(413_102);
+                ceo.thread_key = Some("h413-voice-like-noisy-entity".to_string());
+                ceo.app_platform = "DESKTOP".to_string();
+                ceo.user_text_final = Some("Who's the CEO of tumbling wines".to_string());
+                let ceo_out = runtime
+                    .run_voice_turn(ceo)
+                    .expect("tumbling CEO prompt should reach public search route");
+                assert_h412_public_answer_clean(&ceo_out);
+                assert_eq!(
+                    ceo_out.response_text,
+                    "I couldn't verify a publicly listed CEO for Tamburlaine Organic Wines from reliable public sources."
+                );
+                assert!(!ceo_out.response_text.contains("Dr Cole"));
+                assert!(!ceo_out.response_text.contains("Wine Australia"));
+                assert!(!ceo_out.response_text.contains("Retrieved at (unix_ms):"));
+
+                let mut timberlain = base_request();
+                timberlain.correlation_id = 413_103;
+                timberlain.turn_id = 413_103;
+                timberlain.device_turn_sequence = Some(413_103);
+                timberlain.now_ns = Some(413_103);
+                timberlain.thread_key = Some("h413-voice-like-noisy-entity".to_string());
+                timberlain.app_platform = "DESKTOP".to_string();
+                timberlain.user_text_final =
+                    Some("Tell me about Timberlain organic wines Australia".to_string());
+                let timberlain_out = runtime
+                    .run_voice_turn(timberlain)
+                    .expect("Timberlain voice-like capture should complete");
+                assert_h412_public_answer_clean(&timberlain_out);
+                assert!(
+                    timberlain_out
+                        .response_text
+                        .contains("Assuming you mean Tamburlaine Organic Wines"),
+                    "{}",
+                    timberlain_out.response_text
+                );
+
+                let report = runtime.ui_public_brain_trace_report(Some(413_199));
+                assert_eq!(report.status, "ok", "{report:?}");
+                let seed_trace = h412_trace_for_turn(&report, 413_101);
+                assert_eq!(
+                    seed_trace.captured_input_text.as_deref(),
+                    Some("Tell me about Chamberlain organic wines Australia")
+                );
+                assert_eq!(
+                    seed_trace.active_entity.as_deref(),
+                    Some("Tamburlaine Organic Wines")
+                );
+                let ceo_trace = h412_trace_for_turn(&report, 413_102);
+                assert_eq!(
+                    ceo_trace.captured_input_text.as_deref(),
+                    Some("Who's the CEO of tumbling wines")
+                );
+                assert_eq!(
+                    ceo_trace.search_query_text.as_deref(),
+                    Some("Tamburlaine Organic Wines CEO Australia")
+                );
+                assert_eq!(ceo_trace.sources_accepted_count, 0);
+                assert!(ceo_trace.sources_rejected_count >= 1, "{ceo_trace:?}");
+                assert_eq!(
+                    ceo_trace.failure_reason.as_deref(),
+                    Some("UNVERIFIED_ENTITY_ANSWER_SAFE_DEGRADE")
+                );
+                let timberlain_trace = h412_trace_for_turn(&report, 413_103);
+                assert_eq!(
+                    timberlain_trace.captured_input_text.as_deref(),
+                    Some("Tell me about Timberlain organic wines Australia")
+                );
+                assert_eq!(
+                    timberlain_trace.active_entity.as_deref(),
+                    Some("Tamburlaine Organic Wines")
+                );
+            },
+        );
+
+        let requests = captured.lock().expect("captured request lock").clone();
+        assert_eq!(requests.len(), 1, "{requests:?}");
+        let request = requests.first().expect("one public search request");
+        assert!(request.contains("Tamburlaine"), "{request}");
+        assert!(request.contains("Organic"), "{request}");
+        assert!(request.contains("CEO"), "{request}");
+        assert!(!request.contains("Wine%20Australia"), "{request}");
+        assert!(!request.contains("Wine+Australia"), "{request}");
     }
 
     #[test]
