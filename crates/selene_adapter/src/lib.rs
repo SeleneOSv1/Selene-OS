@@ -2595,11 +2595,21 @@ fn h380_detects_weather(lower: &str, original: &str) -> bool {
         || lower.contains("rain")
         || lower.contains("forecast")
         || lower.contains("warmer")
+        || h409_weather_condition_phrase(lower)
         || lower.contains("barcelona")
         || lower.contains("sydney")
         || original.contains("天气")
         || original.contains("天氣")
         || original.contains("下雨")
+}
+
+fn h409_weather_condition_phrase(lower: &str) -> bool {
+    lower.contains("what s it like in")
+        || lower.contains("what is it like in")
+        || (lower.contains("like in") && lower.contains("right now"))
+        || lower.contains("outside like")
+        || lower.contains("outside now")
+        || lower.contains("conditions in")
 }
 
 fn h380_detects_time(lower: &str, original: &str) -> bool {
@@ -3089,13 +3099,21 @@ fn h381_h380_live_nlp_rewrite(
     {
         return None;
     }
+    let location = h381_h380_primary_location(packet)?;
+    if packet.final_route == H380Route::WeatherLookup
+        && h409_weather_condition_phrase(&packet.normalized_text)
+    {
+        return Some(format!("what is the weather in {location}"));
+    }
     let previous = previous?;
     if !packet.implied_intent_detected {
         return None;
     }
-    let location = h381_h380_primary_location(packet)?;
     match previous.route_class {
         LastTurnRouteClass::ToolWeather => Some(format!("what is the weather in {location}")),
+        LastTurnRouteClass::ToolTime if h409_weather_condition_phrase(&packet.normalized_text) => {
+            Some(format!("what is the weather in {location}"))
+        }
         LastTurnRouteClass::ToolTime => Some(format!("what is the time in {location}")),
         _ => None,
     }
@@ -11145,6 +11163,16 @@ fn translate_web_response_for_build1d(response_text: &str) -> Option<String> {
                 .replace("\nSources:\n", "\n来源：\n"),
         );
     }
+    if response_text.starts_with("I found a web result.") {
+        return Some(
+            response_text
+                .replace(
+                    "I found a web result. Top result: ",
+                    "我找到一个网页结果。首个结果：",
+                )
+                .replace("\nSources:\n", "\n来源：\n"),
+        );
+    }
     if response_text.starts_with("Citations:\n") {
         return Some(response_text.replace("Citations:\n", "引用：\n"));
     }
@@ -14168,7 +14196,9 @@ fn apply_h406_public_presentation_adaptation_to_execution_outcome(
         return;
     }
     match tool_response.tool_result.as_ref() {
-        Some(ToolResult::Time { local_time_iso }) if h406_user_requested_24_hour_time(user_text) => {
+        Some(ToolResult::Time { local_time_iso })
+            if h406_user_requested_24_hour_time(user_text) =>
+        {
             if let Some(answer) = h406_time_answer_24_hour(local_time_iso) {
                 execution.response_text = Some(answer);
             }
@@ -14259,7 +14289,12 @@ fn h406_short_weather_answer(answer: &str) -> String {
             return format!("{first}.");
         }
     }
-    trimmed.chars().take(120).collect::<String>().trim().to_string()
+    trimmed
+        .chars()
+        .take(120)
+        .collect::<String>()
+        .trim()
+        .to_string()
 }
 
 enum Ph1xResponseLike {
@@ -22707,8 +22742,16 @@ mod tests {
             assert_eq!(time_out.status, "ok", "{time_out:?}");
             assert_eq!(time_out.outcome, "FINAL_TOOL", "{time_out:?}");
             assert!(time_out.response_text.contains(" in New York."));
-            assert!(!time_out.response_text.contains(" AM"), "{}", time_out.response_text);
-            assert!(!time_out.response_text.contains(" PM"), "{}", time_out.response_text);
+            assert!(
+                !time_out.response_text.contains(" AM"),
+                "{}",
+                time_out.response_text
+            );
+            assert!(
+                !time_out.response_text.contains(" PM"),
+                "{}",
+                time_out.response_text
+            );
             assert_no_h406_public_refusal(&time_out.response_text);
 
             let mut template_req = base_request();
@@ -22727,7 +22770,9 @@ mod tests {
                 .run_voice_turn(template_req)
                 .expect("public advisory P&L template should complete");
             assert_eq!(template_out.status, "ok", "{template_out:?}");
-            assert!(template_out.response_text.contains("Simple Profit and Loss Template"));
+            assert!(template_out
+                .response_text
+                .contains("Simple Profit and Loss Template"));
             assert!(template_out
                 .response_text
                 .contains("not official company accounting execution"));
@@ -22740,7 +22785,11 @@ mod tests {
             summary_req.turn_id = 50_603;
             summary_req.user_text_final =
                 Some("Draft a P&L summary from these user-provided numbers.".to_string());
-            seed_desktop_voice_profile_for_request(&runtime, &mut summary_req, "h406_public_summary");
+            seed_desktop_voice_profile_for_request(
+                &runtime,
+                &mut summary_req,
+                "h406_public_summary",
+            );
             let summary_out = runtime
                 .run_voice_turn(summary_req)
                 .expect("public advisory P&L summary should complete");
@@ -22883,7 +22932,8 @@ mod tests {
                 assert_eq!(out.status, "ok", "{prompt}: {out:?}");
                 assert_no_h406_public_refusal(&out.response_text);
                 assert!(
-                    !out.response_text.contains("NO_SIMULATION_NO_AUTHORITY_NO_PROTECTED_EXECUTION"),
+                    !out.response_text
+                        .contains("NO_SIMULATION_NO_AUTHORITY_NO_PROTECTED_EXECUTION"),
                     "{prompt}: {}",
                     out.response_text
                 );
@@ -24599,6 +24649,7 @@ mod tests {
         assert!(!out
             .response_text
             .contains("I found supporting web evidence"));
+        assert!(!out.response_text.contains("I found a web result"));
         assert!(out.provenance.is_none());
     }
 
@@ -24642,7 +24693,9 @@ mod tests {
             assert!(
                 out.response_text
                     .contains("I found supporting web evidence")
+                    || out.response_text.contains("I found a web result")
                     || out.response_text.contains("可引用的网页证据")
+                    || out.response_text.contains("找到一个网页结果")
                     || out.response_text.contains("找到网页证据"),
                 "{query}: status={} outcome={} next_move={} reason_code={} text={}",
                 out.status,
@@ -24664,6 +24717,7 @@ mod tests {
                 assert!(
                     out.response_text.contains("可引用的网页证据")
                         || out.response_text.contains("找到网页证据")
+                        || out.response_text.contains("找到一个网页结果")
                         || out.response_text.contains("引用"),
                     "{query}: {}",
                     out.response_text
@@ -24713,6 +24767,7 @@ mod tests {
         assert!(
             out.response_text
                 .contains("I found supporting web evidence")
+                || out.response_text.contains("I found a web result")
                 || out.response_text.contains("Sources:"),
             "{}",
             out.response_text
@@ -28743,6 +28798,37 @@ mod tests {
         format!("http://{address}/v4/weather/realtime")
     }
 
+    fn h409_spawn_brave_web_endpoint_sequence(
+        bodies: Vec<&'static str>,
+        captured_requests: Arc<Mutex<Vec<String>>>,
+    ) -> String {
+        use std::io::{Read, Write};
+
+        let listener =
+            std::net::TcpListener::bind("127.0.0.1:0").expect("mock web listener should bind");
+        let address = listener.local_addr().expect("mock web address");
+        std::thread::spawn(move || {
+            for body in bodies {
+                let Ok((mut stream, _)) = listener.accept() else {
+                    return;
+                };
+                let mut request_buffer = [0_u8; 4096];
+                let read = stream.read(&mut request_buffer).unwrap_or(0);
+                let request = String::from_utf8_lossy(&request_buffer[..read]).to_string();
+                if let Ok(mut captured) = captured_requests.lock() {
+                    captured.push(request);
+                }
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                let _ = stream.write_all(response.as_bytes());
+            }
+        });
+        format!("http://{address}/res/v1/web/search")
+    }
+
     #[test]
     fn at_adapter_44_weather_with_lawful_tomorrow_provider_returns_clean_answer() {
         let endpoint = h361_spawn_tomorrow_weather_endpoint(
@@ -32136,6 +32222,186 @@ mod tests {
                     .contains("governance state is out of sync"));
             },
         );
+    }
+
+    #[test]
+    fn h409_live_time_context_weather_like_followups_route_to_weather() {
+        let endpoint = h373_spawn_tomorrow_weather_endpoint_sequence(vec![
+            r#"{
+                "data": {
+                    "time": "2026-04-25T03:00:00Z",
+                    "values": {
+                        "temperature": 21.2,
+                        "humidity": 61,
+                        "windSpeed": 3.0,
+                        "weatherCode": 1101
+                    }
+                },
+                "location": {
+                    "name": "Sydney, Australia"
+                }
+            }"#,
+            r#"{
+                "data": {
+                    "time": "2026-04-25T03:00:00Z",
+                    "values": {
+                        "temperature": 22.1,
+                        "humidity": 60,
+                        "windSpeed": 2.8,
+                        "weatherCode": 1100
+                    }
+                },
+                "location": {
+                    "name": "Sydney, Australia"
+                }
+            }"#,
+        ]);
+        with_isolated_device_vault(
+            "h409-live-time-weather-followup",
+            &[],
+            &[
+                ("SELENE_REALTIME_TOMORROW_IO_ENDPOINT", endpoint.as_str()),
+                ("SELENE_REALTIME_TOMORROW_IO_API_KEY", "h409-secret"),
+                ("SELENE_REALTIME_WEATHER_API_KEY", " "),
+                ("SELENE_REALTIME_PROXY_MODE", "off"),
+            ],
+            || {
+                let runtime = AdapterRuntime::default();
+                let seed = h363_run_desktop_typed_time_query_on_thread(
+                    &runtime,
+                    "h409-live-time-weather-followup",
+                    409_001,
+                    "What time is it in Sydney right now?",
+                );
+                assert_h363_clean_time_answer(&seed, "Sydney");
+
+                let time_context = h380_context(LastTurnRouteClass::ToolTime);
+                let packet = h380_understand_committed_turn(
+                    "Like in Sydney right now.",
+                    Some(&time_context),
+                );
+                assert_eq!(packet.raw_user_text, "Like in Sydney right now.");
+                assert_eq!(packet.normalized_text, "like in sydney right now");
+                assert_eq!(packet.final_route, H380Route::WeatherLookup);
+                assert_eq!(
+                    h381_h380_live_nlp_rewrite(Some(&packet), Some(&time_context)),
+                    Some("what is the weather in Sydney".to_string())
+                );
+
+                let followup = h364_run_desktop_typed_weather_query_on_thread(
+                    &runtime,
+                    "h409-live-time-weather-followup",
+                    409_002,
+                    "Like in Sydney right now.",
+                );
+                assert_h364_clean_weather_answer(&followup, "Sydney");
+                assert!(!followup.response_text.starts_with("It's "));
+
+                let direct_weather_like = h364_run_desktop_typed_weather_query_on_thread(
+                    &runtime,
+                    "h409-live-direct-weather-like",
+                    409_003,
+                    "What's it like in Sydney right now?",
+                );
+                assert_h364_clean_weather_answer(&direct_weather_like, "Sydney");
+                assert!(!direct_weather_like.response_text.starts_with("It's "));
+            },
+        );
+    }
+
+    #[test]
+    fn h409_live_tamburlaine_noisy_entity_search_rejects_wrong_source() {
+        let captured = Arc::new(Mutex::new(Vec::new()));
+        let endpoint = h409_spawn_brave_web_endpoint_sequence(
+            vec![
+                r#"{"web":{"results":[
+                    {"title":"Our CEO and executive management team | Wine Australia","url":"https://www.wineaustralia.com/about-us/our-ceo-and-executive-management-team","description":"Along with his wine sector experience, <strong>Dr Cole</strong> brings more than 25 years of experience."},
+                    {"title":"Tamburlaine Organic Wines | Australia's Favourite Winemaker","url":"https://tamburlaine.com.au/","description":"Tamburlaine Organic Wines is an Australian organic winery."},
+                    {"title":"Organic Wines in Australia | Virgin Wines","url":"https://www.virginwines.com.au/organic-wines","description":"A general list of organic wines in Australia."}
+                ]}}"#,
+                r#"{"web":{"results":[
+                    {"title":"Our CEO and executive management team | Wine Australia","url":"https://www.wineaustralia.com/about-us/our-ceo-and-executive-management-team","description":"Along with his wine sector experience, <strong>Dr Cole</strong> brings more than 25 years of experience."},
+                    {"title":"Tamburlaine Organic Wines | Australia's Favourite Winemaker","url":"https://tamburlaine.com.au/","description":"Tamburlaine Organic Wines is an Australian organic winery."}
+                ]}}"#,
+            ],
+            Arc::clone(&captured),
+        );
+
+        with_isolated_device_vault(
+            "h409-live-tamburlaine-search",
+            &[("brave_search_api_key", "h409-brave-key")],
+            &[
+                ("BRAVE_SEARCH_WEB_URL", endpoint.as_str()),
+                ("BRAVE_SEARCH_NEWS_URL", endpoint.as_str()),
+                ("SELENE_PROXY_MODE", "off"),
+            ],
+            || {
+                let runtime = AdapterRuntime::default();
+
+                let mut followup = base_request();
+                followup.correlation_id = 409_101;
+                followup.turn_id = 409_101;
+                followup.device_turn_sequence = Some(409_101);
+                followup.now_ns = Some(409_101);
+                followup.thread_key = Some("h409-live-tamburlaine-search".to_string());
+                followup.app_platform = "DESKTOP".to_string();
+                followup.audio_capture_ref = None;
+                followup.user_text_final = Some("Who's the CEO of Tumblin Wines?".to_string());
+                let out = runtime
+                    .run_voice_turn(followup)
+                    .expect("noisy CEO prompt should reach public web route");
+                assert_eq!(out.status, "ok", "{out:?}");
+                assert_eq!(out.outcome, "FINAL_TOOL", "{out:?}");
+                assert_eq!(
+                    out.response_text,
+                    "I couldn't verify a publicly listed CEO for Tamburlaine Organic Wines from reliable public sources."
+                );
+                assert!(!out.response_text.contains("Dr Cole"));
+                assert!(!out.response_text.contains("Wine Australia"));
+                assert!(!out.response_text.contains("<strong>"));
+                assert!(!out.response_text.contains("source: UNKNOWN"));
+                assert!(!out.response_text.contains("AUDIT_METADATA_ONLY"));
+
+                let mut deep = base_request();
+                deep.correlation_id = 409_102;
+                deep.turn_id = 409_102;
+                deep.device_turn_sequence = Some(409_102);
+                deep.now_ns = Some(409_102);
+                deep.thread_key = Some("h409-live-tamburlaine-search".to_string());
+                deep.app_platform = "DESKTOP".to_string();
+                deep.audio_capture_ref = None;
+                deep.user_text_final = Some(
+                    "Do a deep web search and find me the CEO for Tumba Lane Organic Wines in Australia."
+                        .to_string(),
+                );
+                let deep_out = runtime
+                    .run_voice_turn(deep)
+                    .expect("Tumba Lane CEO prompt should reach public web route");
+                assert_eq!(deep_out.status, "ok", "{deep_out:?}");
+                assert_eq!(deep_out.outcome, "FINAL_TOOL", "{deep_out:?}");
+                assert_eq!(
+                    deep_out.response_text,
+                    "I couldn't verify a publicly listed CEO for Tamburlaine Organic Wines from reliable public sources."
+                );
+                assert!(!deep_out.response_text.contains("Dr Cole"));
+                assert!(!deep_out.response_text.contains("Wine Australia"));
+                assert!(!deep_out.response_text.contains("<strong>"));
+                assert!(!deep_out.response_text.contains("source: UNKNOWN"));
+                assert!(!deep_out.response_text.contains("trust: UNVERIFIED"));
+                assert!(!deep_out.response_text.contains("retention:"));
+                assert!(!deep_out.response_text.contains("AUDIT_METADATA_ONLY"));
+            },
+        );
+
+        let requests = captured.lock().expect("captured request lock").clone();
+        assert_eq!(requests.len(), 2, "{requests:?}");
+        for request in requests {
+            assert!(request.contains("Tamburlaine"), "{request}");
+            assert!(request.contains("Organic"), "{request}");
+            assert!(request.contains("CEO"), "{request}");
+            assert!(!request.contains("Wine%20Australia"), "{request}");
+            assert!(!request.contains("Wine+Australia"), "{request}");
+        }
     }
 
     #[test]

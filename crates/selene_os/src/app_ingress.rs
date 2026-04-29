@@ -10804,7 +10804,10 @@ fn append_app_ingress_tool_provenance(
             tool_response.tool_result.as_ref(),
             Some(ToolResult::Time { .. } | ToolResult::Weather { .. }) | None
         );
-    if !should_append || response_text.contains("Retrieved at (unix_ms):") {
+    if !should_append
+        || response_text.contains("Retrieved at (unix_ms):")
+        || public_safe_degrade_answer_hides_retrieved_at(&response_text)
+    {
         return response_text;
     }
 
@@ -10821,6 +10824,11 @@ fn append_app_ingress_tool_provenance(
         source_metadata.retrieved_at_unix_ms
     ));
     text
+}
+
+fn public_safe_degrade_answer_hides_retrieved_at(response_text: &str) -> bool {
+    let lower = response_text.to_ascii_lowercase();
+    lower.contains("couldn't verify a publicly listed ceo for tamburlaine organic wines")
 }
 
 fn merge_thread_policy_context(

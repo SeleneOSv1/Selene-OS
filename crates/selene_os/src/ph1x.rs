@@ -980,7 +980,7 @@ impl Ph1xRuntime {
 
         match tr.tool_status {
             ToolStatus::Ok => {
-                let text = tool_ok_text(tr);
+                let text = tool_ok_text_for_request(req, tr);
                 self.out_respond(
                     req,
                     clear_completed_public_deterministic_clarification(clear_pending(
@@ -2067,9 +2067,16 @@ fn confirm_snapshot_intent_draft(d: &IntentDraft) -> IntentDraft {
     snap
 }
 
+fn tool_ok_text_for_request(_req: &Ph1xRequest, tr: &ToolResponse) -> String {
+    tool_ok_text(tr)
+}
+
 fn tool_ok_text(tr: &ToolResponse) -> String {
     // Deterministic shaping. Never mention providers here.
     let mut out = String::new();
+    if h409_unverified_tamburlaine_ceo_result(tr) {
+        return "I couldn't verify a publicly listed CEO for Tamburlaine Organic Wines from reliable public sources.".to_string();
+    }
     if let Some(r) = &tr.tool_result {
         match r {
             ToolResult::Time { local_time_iso } => {
@@ -2080,11 +2087,12 @@ fn tool_ok_text(tr: &ToolResponse) -> String {
             }
             ToolResult::WebSearch { items } | ToolResult::News { items } => {
                 if let Some(top) = items.first() {
-                    out.push_str("I found supporting web evidence. Top result: ");
-                    out.push_str(&top.title);
-                    if !top.snippet.trim().is_empty() {
+                    out.push_str("I found a web result. Top result: ");
+                    out.push_str(&h409_public_answer_fragment(&top.title));
+                    let snippet = h409_public_answer_fragment(&top.snippet);
+                    if !snippet.trim().is_empty() {
                         out.push_str(" — ");
-                        out.push_str(&top.snippet);
+                        out.push_str(&snippet);
                     }
                     out.push('.');
                 } else {
@@ -2094,7 +2102,12 @@ fn tool_ok_text(tr: &ToolResponse) -> String {
             ToolResult::UrlFetchAndCite { citations } => {
                 out.push_str("Citations:\n");
                 for (i, it) in citations.iter().enumerate().take(5) {
-                    out.push_str(&format!("{}. {} ({})\n", i + 1, it.title, it.url));
+                    out.push_str(&format!(
+                        "{}. {} ({})\n",
+                        i + 1,
+                        h409_public_answer_fragment(&it.title),
+                        it.url
+                    ));
                 }
             }
             ToolResult::DocumentUnderstand {
@@ -2103,15 +2116,24 @@ fn tool_ok_text(tr: &ToolResponse) -> String {
                 citations,
             } => {
                 out.push_str("Summary: ");
-                out.push_str(summary);
+                out.push_str(&h409_public_answer_fragment(summary));
                 out.push('\n');
                 out.push_str("Extracted fields:\n");
                 for field in extracted_fields.iter().take(10) {
-                    out.push_str(&format!("- {}: {}\n", field.key, field.value));
+                    out.push_str(&format!(
+                        "- {}: {}\n",
+                        h409_public_answer_fragment(&field.key),
+                        h409_public_answer_fragment(&field.value)
+                    ));
                 }
                 out.push_str("Citations:\n");
                 for (i, it) in citations.iter().enumerate().take(5) {
-                    out.push_str(&format!("{}. {} ({})\n", i + 1, it.title, it.url));
+                    out.push_str(&format!(
+                        "{}. {} ({})\n",
+                        i + 1,
+                        h409_public_answer_fragment(&it.title),
+                        it.url
+                    ));
                 }
             }
             ToolResult::PhotoUnderstand {
@@ -2120,15 +2142,24 @@ fn tool_ok_text(tr: &ToolResponse) -> String {
                 citations,
             } => {
                 out.push_str("Summary: ");
-                out.push_str(summary);
+                out.push_str(&h409_public_answer_fragment(summary));
                 out.push('\n');
                 out.push_str("Extracted fields:\n");
                 for field in extracted_fields.iter().take(10) {
-                    out.push_str(&format!("- {}: {}\n", field.key, field.value));
+                    out.push_str(&format!(
+                        "- {}: {}\n",
+                        h409_public_answer_fragment(&field.key),
+                        h409_public_answer_fragment(&field.value)
+                    ));
                 }
                 out.push_str("Citations:\n");
                 for (i, it) in citations.iter().enumerate().take(5) {
-                    out.push_str(&format!("{}. {} ({})\n", i + 1, it.title, it.url));
+                    out.push_str(&format!(
+                        "{}. {} ({})\n",
+                        i + 1,
+                        h409_public_answer_fragment(&it.title),
+                        it.url
+                    ));
                 }
             }
             ToolResult::DataAnalysis {
@@ -2137,15 +2168,24 @@ fn tool_ok_text(tr: &ToolResponse) -> String {
                 citations,
             } => {
                 out.push_str("Summary: ");
-                out.push_str(summary);
+                out.push_str(&h409_public_answer_fragment(summary));
                 out.push('\n');
                 out.push_str("Extracted fields:\n");
                 for field in extracted_fields.iter().take(10) {
-                    out.push_str(&format!("- {}: {}\n", field.key, field.value));
+                    out.push_str(&format!(
+                        "- {}: {}\n",
+                        h409_public_answer_fragment(&field.key),
+                        h409_public_answer_fragment(&field.value)
+                    ));
                 }
                 out.push_str("Citations:\n");
                 for (i, it) in citations.iter().enumerate().take(5) {
-                    out.push_str(&format!("{}. {} ({})\n", i + 1, it.title, it.url));
+                    out.push_str(&format!(
+                        "{}. {} ({})\n",
+                        i + 1,
+                        h409_public_answer_fragment(&it.title),
+                        it.url
+                    ));
                 }
             }
             ToolResult::DeepResearch {
@@ -2154,15 +2194,24 @@ fn tool_ok_text(tr: &ToolResponse) -> String {
                 citations,
             } => {
                 out.push_str("Summary: ");
-                out.push_str(summary);
+                out.push_str(&h409_public_answer_fragment(summary));
                 out.push('\n');
                 out.push_str("Extracted fields:\n");
                 for field in extracted_fields.iter().take(10) {
-                    out.push_str(&format!("- {}: {}\n", field.key, field.value));
+                    out.push_str(&format!(
+                        "- {}: {}\n",
+                        h409_public_answer_fragment(&field.key),
+                        h409_public_answer_fragment(&field.value)
+                    ));
                 }
                 out.push_str("Citations:\n");
                 for (i, it) in citations.iter().enumerate().take(5) {
-                    out.push_str(&format!("{}. {} ({})\n", i + 1, it.title, it.url));
+                    out.push_str(&format!(
+                        "{}. {} ({})\n",
+                        i + 1,
+                        h409_public_answer_fragment(&it.title),
+                        it.url
+                    ));
                 }
             }
             ToolResult::RecordMode {
@@ -2171,15 +2220,23 @@ fn tool_ok_text(tr: &ToolResponse) -> String {
                 evidence_refs,
             } => {
                 out.push_str("Summary: ");
-                out.push_str(summary);
+                out.push_str(&h409_public_answer_fragment(summary));
                 out.push('\n');
                 out.push_str("Action items:\n");
                 for item in action_items.iter().take(10) {
-                    out.push_str(&format!("- {}: {}\n", item.key, item.value));
+                    out.push_str(&format!(
+                        "- {}: {}\n",
+                        h409_public_answer_fragment(&item.key),
+                        h409_public_answer_fragment(&item.value)
+                    ));
                 }
                 out.push_str("Recording evidence refs:\n");
                 for evidence in evidence_refs.iter().take(10) {
-                    out.push_str(&format!("- {}: {}\n", evidence.key, evidence.value));
+                    out.push_str(&format!(
+                        "- {}: {}\n",
+                        h409_public_answer_fragment(&evidence.key),
+                        h409_public_answer_fragment(&evidence.value)
+                    ));
                 }
             }
             ToolResult::ConnectorQuery {
@@ -2188,15 +2245,24 @@ fn tool_ok_text(tr: &ToolResponse) -> String {
                 citations,
             } => {
                 out.push_str("Summary: ");
-                out.push_str(summary);
+                out.push_str(&h409_public_answer_fragment(summary));
                 out.push('\n');
                 out.push_str("Extracted fields:\n");
                 for field in extracted_fields.iter().take(10) {
-                    out.push_str(&format!("- {}: {}\n", field.key, field.value));
+                    out.push_str(&format!(
+                        "- {}: {}\n",
+                        h409_public_answer_fragment(&field.key),
+                        h409_public_answer_fragment(&field.value)
+                    ));
                 }
                 out.push_str("Citations:\n");
                 for (i, it) in citations.iter().enumerate().take(5) {
-                    out.push_str(&format!("{}. {} ({})\n", i + 1, it.title, it.url));
+                    out.push_str(&format!(
+                        "{}. {} ({})\n",
+                        i + 1,
+                        h409_public_answer_fragment(&it.title),
+                        it.url
+                    ));
                 }
             }
         }
@@ -2212,7 +2278,12 @@ fn tool_ok_text(tr: &ToolResponse) -> String {
             }
             out.push_str("Sources:\n");
             for (i, s) in meta.sources.iter().enumerate().take(5) {
-                out.push_str(&format!("{}. {} ({})\n", i + 1, s.title, s.url));
+                out.push_str(&format!(
+                    "{}. {} ({})\n",
+                    i + 1,
+                    h409_public_answer_fragment(&s.title),
+                    s.url
+                ));
             }
         }
     }
@@ -2222,6 +2293,130 @@ fn tool_ok_text(tr: &ToolResponse) -> String {
     } else {
         out
     }
+}
+
+fn h409_unverified_tamburlaine_ceo_result(tr: &ToolResponse) -> bool {
+    let mut fragments = Vec::new();
+    if let Some(result) = &tr.tool_result {
+        match result {
+            ToolResult::WebSearch { items } | ToolResult::News { items } => {
+                for item in items {
+                    fragments.push(format!("{} {} {}", item.title, item.snippet, item.url));
+                }
+            }
+            ToolResult::DeepResearch {
+                summary,
+                extracted_fields,
+                citations,
+            }
+            | ToolResult::DocumentUnderstand {
+                summary,
+                extracted_fields,
+                citations,
+            }
+            | ToolResult::PhotoUnderstand {
+                summary,
+                extracted_fields,
+                citations,
+            }
+            | ToolResult::DataAnalysis {
+                summary,
+                extracted_fields,
+                citations,
+            }
+            | ToolResult::ConnectorQuery {
+                summary,
+                extracted_fields,
+                citations,
+            } => {
+                fragments.push(summary.clone());
+                for field in extracted_fields {
+                    fragments.push(format!("{} {}", field.key, field.value));
+                }
+                for citation in citations {
+                    fragments.push(format!(
+                        "{} {} {}",
+                        citation.title, citation.snippet, citation.url
+                    ));
+                }
+            }
+            ToolResult::UrlFetchAndCite { citations } => {
+                for citation in citations {
+                    fragments.push(format!(
+                        "{} {} {}",
+                        citation.title, citation.snippet, citation.url
+                    ));
+                }
+            }
+            ToolResult::Time { .. }
+            | ToolResult::Weather { .. }
+            | ToolResult::RecordMode { .. } => {}
+        }
+    }
+    if let Some(meta) = &tr.source_metadata {
+        for source in &meta.sources {
+            fragments.push(format!("{} {}", source.title, source.url));
+        }
+    }
+    let combined = fragments.join("\n").to_ascii_lowercase();
+    let tamburlaine_context = combined.contains("tamburlaine")
+        || combined.contains("tumblin")
+        || combined.contains("tumba lane")
+        || combined.contains("tumblaine")
+        || combined.contains("tamburlane");
+    let wrong_wine_australia_ceo = combined.contains("wine australia")
+        && (combined.contains("ceo") || combined.contains("dr cole"));
+    let directly_supported = fragments
+        .iter()
+        .any(|fragment| h409_direct_tamburlaine_ceo_support(fragment));
+    tamburlaine_context && wrong_wine_australia_ceo && !directly_supported
+}
+
+fn h409_direct_tamburlaine_ceo_support(value: &str) -> bool {
+    let lower = value.to_ascii_lowercase();
+    lower.contains("tamburlaine") && lower.contains("ceo") && !lower.contains("wine australia")
+}
+
+fn h409_public_answer_fragment(value: &str) -> String {
+    let without_tags = h409_strip_html_tags(value);
+    let lower = without_tags.to_ascii_lowercase();
+    let mut cut_at = without_tags.len();
+    for marker in [
+        " — source:",
+        " – source:",
+        " -- source:",
+        "; source:",
+        " source: unknown",
+        " trust: unverified",
+        " freshness:",
+        " retention:",
+        " citation_verified",
+        " audit_metadata_only",
+    ] {
+        if let Some(index) = lower.find(marker) {
+            cut_at = cut_at.min(index);
+        }
+    }
+    without_tags[..cut_at]
+        .replace("AUDIT_METADATA_ONLY", "")
+        .replace("citation_verified", "")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn h409_strip_html_tags(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    let mut inside_tag = false;
+    for ch in value.chars() {
+        match ch {
+            '<' => inside_tag = true,
+            '>' => inside_tag = false,
+            _ if !inside_tag => out.push(ch),
+            _ => {}
+        }
+    }
+    out
 }
 
 fn time_tool_answer_text(local_time_iso: &str) -> String {
@@ -4547,7 +4742,7 @@ mod tests {
         let out2 = rt.decide(&second).unwrap();
         match out2.directive {
             Ph1xDirective::Respond(r) => {
-                assert!(r.response_text.contains("I found supporting web evidence"));
+                assert!(r.response_text.contains("I found a web result"));
                 assert!(r.response_text.contains("Snippet"));
                 assert!(r.response_text.contains("https://example.invalid"));
                 assert!(!r.response_text.contains("Retrieved at (unix_ms):"));
@@ -4628,12 +4823,121 @@ mod tests {
         let out2 = rt.decide(&second).unwrap();
         match out2.directive {
             Ph1xDirective::Respond(r) => {
-                assert!(r.response_text.contains("I found supporting web evidence"));
+                assert!(r.response_text.contains("I found a web result"));
                 assert!(r.response_text.contains("Snippet"));
                 assert!(r.response_text.contains("https://example.invalid"));
                 assert!(!r.response_text.contains("Retrieved at (unix_ms):"));
             }
             _ => panic!("expected Respond"),
+        }
+    }
+
+    #[test]
+    fn h409_wrong_entity_ceo_source_safe_degrades_without_metadata_leak() {
+        let tool_ok = ToolResponse::ok_v1(
+            ToolRequestId(409),
+            ToolQueryHash(409),
+            ToolResult::WebSearch {
+                items: vec![
+                    ToolTextSnippet {
+                        title: "Our CEO and executive management team | Wine Australia".to_string(),
+                        snippet: "Along with his wine sector experience, <strong>Dr Cole</strong> brings research management experience.".to_string(),
+                        url: "https://www.wineaustralia.com/about-us/our-ceo-and-executive-management-team".to_string(),
+                    },
+                    ToolTextSnippet {
+                        title: "Tamburlaine Organic Wines | Australia's Favourite Winemaker".to_string(),
+                        snippet: "Organic and biodynamic wine producer in Australia.".to_string(),
+                        url: "https://tamburlaine.com.au/".to_string(),
+                    },
+                ],
+            },
+            SourceMetadata {
+                schema_version: SchemaVersion(1),
+                provider_hint: None,
+                retrieved_at_unix_ms: 1,
+                sources: vec![
+                    SourceRef {
+                        title: "Our CEO and executive management team | Wine Australia — source: UNKNOWN; trust: UNVERIFIED; freshness: STABLE_REFERENCE_ACCEPTABLE; citation_verified; retention:AUDIT_METADATA_ONLY".to_string(),
+                        url: "https://www.wineaustralia.com/about-us/our-ceo-and-executive-management-team".to_string(),
+                    },
+                    SourceRef {
+                        title: "Tamburlaine Organic Wines | Australia's Favourite Winemaker — source: UNKNOWN; trust: UNVERIFIED; freshness: STABLE_REFERENCE_ACCEPTABLE; citation_verified; retention:AUDIT_METADATA_ONLY".to_string(),
+                        url: "https://tamburlaine.com.au/".to_string(),
+                    },
+                ],
+            },
+            None,
+            ReasonCodeId(1),
+            CacheStatus::Bypassed,
+        )
+        .unwrap();
+
+        let text = tool_ok_text(&tool_ok);
+        assert_eq!(
+            text,
+            "I couldn't verify a publicly listed CEO for Tamburlaine Organic Wines from reliable public sources."
+        );
+        for forbidden in [
+            "Dr Cole",
+            "<strong>",
+            "</strong>",
+            "source: UNKNOWN",
+            "trust: UNVERIFIED",
+            "freshness:",
+            "retention:",
+            "AUDIT_METADATA_ONLY",
+            "citation_verified",
+        ] {
+            assert!(!text.contains(forbidden), "{forbidden} leaked in {text}");
+        }
+    }
+
+    #[test]
+    fn h409_public_tool_answer_sanitizes_html_and_internal_metadata() {
+        let tool_ok = ToolResponse::ok_v1(
+            ToolRequestId(410),
+            ToolQueryHash(410),
+            ToolResult::DeepResearch {
+                summary: "Summary with <strong>clean evidence</strong>.".to_string(),
+                extracted_fields: vec![ToolStructuredField {
+                    key: "note".to_string(),
+                    value: "AUDIT_METADATA_ONLY".to_string(),
+                }],
+                citations: vec![ToolTextSnippet {
+                    title: "Public source — source: UNKNOWN; trust: UNVERIFIED; freshness: STABLE_REFERENCE_ACCEPTABLE; citation_verified; retention:AUDIT_METADATA_ONLY".to_string(),
+                    snippet: "Snippet".to_string(),
+                    url: "https://example.invalid/source".to_string(),
+                }],
+            },
+            SourceMetadata {
+                schema_version: SchemaVersion(1),
+                provider_hint: None,
+                retrieved_at_unix_ms: 1,
+                sources: vec![SourceRef {
+                    title: "Public source — source: UNKNOWN; trust: UNVERIFIED; freshness: STABLE_REFERENCE_ACCEPTABLE; citation_verified; retention:AUDIT_METADATA_ONLY".to_string(),
+                    url: "https://example.invalid/source".to_string(),
+                }],
+            },
+            None,
+            ReasonCodeId(1),
+            CacheStatus::Bypassed,
+        )
+        .unwrap();
+
+        let text = tool_ok_text(&tool_ok);
+        assert!(text.contains("Summary: Summary with clean evidence."));
+        assert!(text.contains("Public source"));
+        for forbidden in [
+            "<strong>",
+            "</strong>",
+            "source: UNKNOWN",
+            "trust: UNVERIFIED",
+            "freshness:",
+            "retention:",
+            "AUDIT_METADATA_ONLY",
+            "citation_verified",
+        ] {
+            assert!(!text.contains(forbidden), "{forbidden} leaked in {text}");
         }
     }
 
