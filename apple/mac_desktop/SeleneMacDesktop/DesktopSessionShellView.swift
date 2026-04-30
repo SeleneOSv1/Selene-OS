@@ -122,15 +122,17 @@ private enum DesktopRealtimeTranscriptionFeatureFlag {
         let rawValue = ProcessInfo.processInfo.environment[name]?
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
-        return matchesEnabled(rawValue)
+        return matchesEnabled(rawValue, defaultValue: true)
     }
 
-    private static func matchesEnabled(_ rawValue: String?) -> Bool {
+    private static func matchesEnabled(_ rawValue: String?, defaultValue: Bool) -> Bool {
         switch rawValue {
         case "1", "true", "yes", "on", "enabled":
             return true
-        default:
+        case "0", "false", "no", "off", "disabled":
             return false
+        default:
+            return defaultValue
         }
     }
 }
@@ -145,8 +147,10 @@ private enum DesktopOpenAITtsFeatureFlag {
         switch rawValue {
         case "1", "true", "yes", "on", "enabled":
             return true
-        default:
+        case "0", "false", "no", "off", "disabled":
             return false
+        default:
+            return true
         }
     }
 }
