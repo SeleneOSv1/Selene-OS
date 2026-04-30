@@ -66,7 +66,7 @@ Current shared source still preserves `AppVoiceIngressRequest`, `AppInviteLinkOp
 
 The pre-H86 native iPhone shell already preserved `EXPLICIT_ENTRY_READY`, `ONBOARDING_ENTRY_ACTIVE`, `SESSION_OPEN_VISIBLE`, exact setup-receipt display, the H74 / H75 / H76 / H77 takeover fields, the H79 / H80 / H81 / H82 surfaces, the H83 typed-turn request production surface, the H84 explicit voice-turn request production surface, and the H85 current session banner / attach-outcome continuity labeling surface, but did not yet expose `SESSION_ACTIVE_VISIBLE`, live dual transcript, or current governed-output summary.
 
-The pre-H86 native iPhone `Info.plist` already exposed `NSMicrophoneUsageDescription` and `NSSpeechRecognitionUsageDescription`, and those keys remain unchanged in this run.
+The pre-H86 native iPhone `Info.plist` already exposed `NSMicrophoneUsageDescription` and `legacy transcription permission key`, and those keys remain unchanged in this run.
 
 Native iPhone source tree and local Xcode project remain exposed in-tree.
 
@@ -104,7 +104,7 @@ This run preserves the H79-H85 surfaces and exact typed / voice request-producti
 
 native iPhone shell now exposes bounded `SESSION_ACTIVE_VISIBLE` live dual transcript and current governed-output summary in lawful `EXPLICIT_ONLY` cloud-authoritative posture.
 
-Native iPhone `Info.plist` continues to expose `NSMicrophoneUsageDescription` and `NSSpeechRecognitionUsageDescription` without change in this run.
+Native iPhone `Info.plist` continues to expose `NSMicrophoneUsageDescription` and `legacy transcription permission key` without change in this run.
 
 This run does not add explicit active-session interrupt controls, `SESSION_SOFT_CLOSED_VISIBLE`, `SESSION_SUSPENDED_VISIBLE`, recovery overlays, PH1.M `resume context`, heavy governed-content loaders, wake-word behavior, side-button producer wiring, wake parity, or autonomous unlock.
 

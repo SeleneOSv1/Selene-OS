@@ -44,7 +44,7 @@ This is the first canonical APP_IPHONE `SESSION_SUSPENDED_VISIBLE` hard full tak
 - current shared source still preserves `NextAllowedActions`, `SessionSnapshot.next_allowed_actions`, `PersistenceRecoveryMode`, `ReconciliationDecision`, PH1.M resume-select carriers `selected_thread_id`, `selected_thread_title`, `pending_work_order_id`, `resume_tier`, and `resume_summary_bullets`, and append-only `conversation_ledger` truth with append-only overwrite forbidden.
 - G1 already freezes `SESSION_SUSPENDED_VISIBLE` as the dominant suspended session surface with hard full takeover, explanation, and allowed next step only.
 - the pre-H88 native iPhone shell already preserved `EXPLICIT_ENTRY_READY`, `ONBOARDING_ENTRY_ACTIVE`, `SESSION_OPEN_VISIBLE`, `SESSION_ACTIVE_VISIBLE`, `SESSION_SOFT_CLOSED_VISIBLE`, exact setup-receipt display, the H74 / H75 / H76 / H77 takeover fields, the H79 / H80 / H81 / H82 surfaces, the H83 typed-turn request production surface, the H84 explicit voice-turn request production surface, and the H85 / H86 / H87 session surfaces, but did not yet expose `SESSION_SUSPENDED_VISIBLE`, suspended-status explanation, or allowed-next-step-only takeover posture.
-- the pre-H88 native iPhone `Info.plist` already exposed `NSMicrophoneUsageDescription` and `NSSpeechRecognitionUsageDescription`, and those keys remain unchanged in this run.
+- the pre-H88 native iPhone `Info.plist` already exposed `NSMicrophoneUsageDescription` and `legacy transcription permission key`, and those keys remain unchanged in this run.
 - native iPhone source tree and local Xcode project remain exposed in-tree.
 - native macOS source tree and local Xcode project remain exposed in-tree.
 - `APP_IPHONE-04` remains `PARTIAL`.

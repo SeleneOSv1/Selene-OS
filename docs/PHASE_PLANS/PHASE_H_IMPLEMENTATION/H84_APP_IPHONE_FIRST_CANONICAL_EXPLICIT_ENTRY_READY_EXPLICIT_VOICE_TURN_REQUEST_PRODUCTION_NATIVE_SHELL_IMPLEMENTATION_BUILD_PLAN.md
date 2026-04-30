@@ -110,7 +110,7 @@ Current shared source still preserves `voice_context_ios_explicit()` and `voice_
 
 The pre-H84 native iPhone shell already preserved `onOpenURL`, `EXPLICIT_ENTRY_READY`, `ONBOARDING_ENTRY_ACTIVE`, exact setup-receipt display, the H74 / H75 / H76 / H77 takeover fields, the H80 history surfaces, the H81 `System Activity` / `Pending` / `Failed` surfaces, the H82 `Needs Attention` surface, the H83 typed-turn request production surface, and the H79 recent-thread / explicit-voice affordance, but did not yet expose explicit voice-turn request production.
 
-The pre-H84 iPhone `Info.plist` still did not expose `NSMicrophoneUsageDescription` or `NSSpeechRecognitionUsageDescription`.
+The pre-H84 iPhone `Info.plist` still did not expose `NSMicrophoneUsageDescription` or `legacy transcription permission key`.
 
 Native iPhone source tree and local Xcode project remain exposed in-tree.
 
@@ -154,7 +154,7 @@ This run preserves the H82 surface `needsAttentionQueueCard`.
 
 This run preserves the H83 typed-turn request production surface.
 
-Native iPhone `Info.plist` now exposes `NSMicrophoneUsageDescription` and `NSSpeechRecognitionUsageDescription`.
+Native iPhone `Info.plist` now exposes `NSMicrophoneUsageDescription` and `legacy transcription permission key`.
 
 native iPhone shell now exposes bounded `EXPLICIT_ENTRY_READY` explicit voice-turn request production in lawful `EXPLICIT_ONLY` cloud-authoritative posture.
 

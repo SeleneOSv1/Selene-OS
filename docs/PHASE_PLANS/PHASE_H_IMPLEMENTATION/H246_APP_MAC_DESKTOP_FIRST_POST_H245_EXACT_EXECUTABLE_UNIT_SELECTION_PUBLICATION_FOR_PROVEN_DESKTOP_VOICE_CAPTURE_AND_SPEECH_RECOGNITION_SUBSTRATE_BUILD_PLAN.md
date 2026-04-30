@@ -44,7 +44,7 @@ H104 intentional-selection authority remains preserved.
 
 H112 executable-unit anti-loop authority remains preserved.
 
-Current native macOS app plist already preserves exact `NSMicrophoneUsageDescription` and exact `NSSpeechRecognitionUsageDescription` in [Info.plist#L25](/Users/selene/Documents/Selene-OS/apple/mac_desktop/SeleneMacDesktop/Info.plist#L25).
+Current native macOS app plist already preserves exact `NSMicrophoneUsageDescription` and exact `legacy transcription permission key` in [Info.plist#L25](/Users/selene/Documents/Selene-OS/apple/mac_desktop/SeleneMacDesktop/Info.plist#L25).
 
 Current native macOS shell source still lacks bounded explicit voice capture and bounded non-authoritative transcript-preview substrate in [DesktopSessionShellView.swift#L1](/Users/selene/Documents/Selene-OS/apple/mac_desktop/SeleneMacDesktop/DesktopSessionShellView.swift#L1).
 

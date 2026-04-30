@@ -1,6 +1,5 @@
 import AVFoundation
 import Foundation
-import Speech
 import SwiftUI
 
 final class ExplicitEntryRouter: ObservableObject {
@@ -2221,14 +2220,14 @@ private enum VoicePermissionState: String {
         case .restricted:
             return "Permission is restricted by device policy. This shell remains non-authoritative and does not bypass policy."
         case .unavailable:
-            return "Permission or recognizer availability is unavailable on this device posture."
+            return "Permission or transcription provider availability is unavailable on this device posture."
         }
     }
 }
 
 private final class ExplicitVoiceCaptureController: ObservableObject {
     @Published private(set) var microphonePermission: VoicePermissionState = .notRequested
-    @Published private(set) var speechRecognitionPermission: VoicePermissionState = .notRequested
+    @Published private(set) var transcriptionPermission: VoicePermissionState = .notRequested
     @Published private(set) var isListening = false
     @Published private(set) var transcriptPreview = ""
     @Published private(set) var pendingRequest: ExplicitVoiceTurnRequestState?
@@ -2236,15 +2235,11 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
 
     private let maxVoiceTurnBytes = 16_384
     private let audioEngine = AVAudioEngine()
-    private let speechRecognizer: SFSpeechRecognizer?
-    private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
-    private var recognitionTask: SFSpeechRecognitionTask?
     private var hasInputTap = false
     private var requestSequence = 0
 
     init(locale: Locale? = nil) {
-        let resolvedLocale = locale ?? Self.preferredLocale()
-        speechRecognizer = SFSpeechRecognizer(locale: resolvedLocale) ?? SFSpeechRecognizer()
+        _ = locale
         refreshPermissionState()
     }
 
@@ -2266,43 +2261,11 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
 
         transcriptPreview = ""
         refreshPermissionState()
-        requestMicrophonePermissionIfNeeded { [weak self] granted in
-            guard let self else {
-                return
-            }
-
-            DispatchQueue.main.async {
-                self.refreshPermissionState()
-                guard granted else {
-                    self.recordFailure(
-                        name: "failed_explicit_voice_microphone_permission",
-                        summary: "Microphone permission is required before a bounded explicit voice-turn request can begin.",
-                        detail: "Permission visibility only; this shell does not bypass device policy, start hidden capture, or synthesize a request without foreground user approval."
-                    )
-                    return
-                }
-
-                self.requestSpeechRecognitionPermissionIfNeeded { [weak self] speechGranted in
-                    guard let self else {
-                        return
-                    }
-
-                    DispatchQueue.main.async {
-                        self.refreshPermissionState()
-                        guard speechGranted else {
-                            self.recordFailure(
-                                name: "failed_explicit_voice_speech_permission",
-                                summary: "Speech-recognition permission is required before a bounded explicit voice-turn request can prepare transcript preview.",
-                                detail: "Permission visibility only; this shell does not create hidden spoken-only output, local transcript authority, or silent authoritative acceptance."
-                            )
-                            return
-                        }
-
-                        self.beginCaptureSession()
-                    }
-                }
-            }
-        }
+        recordFailure(
+            name: "failed_explicit_voice_non_openai_stt_disabled",
+            summary: "Explicit voice capture requires the approved realtime transcription path.",
+            detail: "Local platform speech recognition is disabled. No local transcript fallback, hidden retry, or authoritative assistant output was produced."
+        )
     }
 
     func stopCaptureAndPrepareVoiceTurn() {
@@ -2353,83 +2316,11 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
         failedRequest = nil
         teardownRecognitionSession()
         refreshPermissionState()
-
-        guard let speechRecognizer else {
-            speechRecognitionPermission = .unavailable
-            recordFailure(
-                name: "failed_explicit_voice_recognizer_unavailable",
-                summary: "No speech recognizer is available for bounded explicit voice-turn request preparation on this device posture.",
-                detail: "Unavailable visibility only; the shell remains `EXPLICIT_ONLY`, session-bound, and cloud-authoritative while explicit voice capture stays blocked."
-            )
-            return
-        }
-
-        guard speechRecognizer.isAvailable else {
-            speechRecognitionPermission = .unavailable
-            recordFailure(
-                name: "failed_explicit_voice_recognizer_busy",
-                summary: "The speech recognizer is not currently available for a bounded explicit voice turn.",
-                detail: "Availability visibility only; retry from the same foreground surface later. No local queue repair authority or hidden retry loop is introduced here."
-            )
-            return
-        }
-
-        do {
-            let audioSession = AVAudioSession.sharedInstance()
-            try audioSession.setCategory(.record, mode: .measurement, options: [.duckOthers])
-            try audioSession.setActive(true, options: .notifyOthersOnDeactivation)
-
-            let request = SFSpeechAudioBufferRecognitionRequest()
-            request.shouldReportPartialResults = true
-            request.taskHint = .dictation
-            recognitionRequest = request
-
-            let inputNode = audioEngine.inputNode
-            let format = inputNode.outputFormat(forBus: 0)
-            inputNode.installTap(onBus: 0, bufferSize: 1_024, format: format) { [weak self] buffer, _ in
-                self?.recognitionRequest?.append(buffer)
-            }
-            hasInputTap = true
-
-            audioEngine.prepare()
-            try audioEngine.start()
-            transcriptPreview = ""
-            isListening = true
-
-            recognitionTask = speechRecognizer.recognitionTask(with: request) { [weak self] result, error in
-                guard let self else {
-                    return
-                }
-
-                if let result {
-                    DispatchQueue.main.async {
-                        self.transcriptPreview = result.bestTranscription.formattedString
-                    }
-                }
-
-                if let error {
-                    DispatchQueue.main.async {
-                        guard self.isListening else {
-                            return
-                        }
-
-                        self.teardownRecognitionSession()
-                        self.recordFailure(
-                            name: "failed_explicit_voice_capture_session",
-                            summary: "The bounded explicit voice capture session ended before a request could be prepared.",
-                            detail: "Speech capture failed with `\(error.localizedDescription)`. Failure visibility only; no local transcript authority, no hidden retry loop, and no authoritative assistant output were produced."
-                        )
-                    }
-                }
-            }
-        } catch {
-            teardownRecognitionSession()
-            recordFailure(
-                name: "failed_explicit_voice_capture_start",
-                summary: "The bounded explicit voice capture session could not start from this foreground surface.",
-                detail: "Capture start failed with `\(error.localizedDescription)`. Failure visibility only; no background capture, no wake behavior, and no autonomous unlock were introduced."
-            )
-        }
+        recordFailure(
+            name: "failed_explicit_voice_non_openai_stt_disabled",
+            summary: "Explicit voice capture requires the approved realtime transcription path.",
+            detail: "Local platform speech recognition is disabled. No local transcript fallback, hidden retry, or authoritative assistant output was produced."
+        )
     }
 
     private func endCaptureInput() {
@@ -2442,16 +2333,12 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
             hasInputTap = false
         }
 
-        recognitionRequest?.endAudio()
         isListening = false
         deactivateAudioSessionIfNeeded()
     }
 
     private func teardownRecognitionSession() {
         endCaptureInput()
-        recognitionTask?.cancel()
-        recognitionTask = nil
-        recognitionRequest = nil
     }
 
     private func deactivateAudioSessionIfNeeded() {
@@ -2473,7 +2360,7 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
 
     private func refreshPermissionState() {
         microphonePermission = Self.currentMicrophonePermission()
-        speechRecognitionPermission = Self.currentSpeechRecognitionPermission(speechRecognizerAvailable: speechRecognizer != nil)
+        transcriptionPermission = Self.currentTranscriptionPermission()
     }
 
     private func requestMicrophonePermissionIfNeeded(completion: @escaping (Bool) -> Void) {
@@ -2489,17 +2376,8 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
         }
     }
 
-    private func requestSpeechRecognitionPermissionIfNeeded(completion: @escaping (Bool) -> Void) {
-        switch Self.currentSpeechRecognitionPermission(speechRecognizerAvailable: speechRecognizer != nil) {
-        case .granted:
-            completion(true)
-        case .denied, .restricted, .unavailable:
-            completion(false)
-        case .notRequested:
-            SFSpeechRecognizer.requestAuthorization { status in
-                completion(status == .authorized)
-            }
-        }
+    private func requestTranscriptionPermissionIfNeeded(completion: @escaping (Bool) -> Void) {
+        completion(false)
     }
 
     private static func currentMicrophonePermission() -> VoicePermissionState {
@@ -2515,23 +2393,8 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
         }
     }
 
-    private static func currentSpeechRecognitionPermission(speechRecognizerAvailable: Bool) -> VoicePermissionState {
-        guard speechRecognizerAvailable else {
-            return .unavailable
-        }
-
-        switch SFSpeechRecognizer.authorizationStatus() {
-        case .authorized:
-            return .granted
-        case .denied:
-            return .denied
-        case .restricted:
-            return .restricted
-        case .notDetermined:
-            return .notRequested
-        @unknown default:
-            return .unavailable
-        }
+    private static func currentTranscriptionPermission() -> VoicePermissionState {
+        .unavailable
     }
 
     private static func preferredLocale() -> Locale {
@@ -4681,12 +4544,12 @@ struct SessionShellView: View {
                         state: explicitVoiceController.microphonePermission
                     )
                     permissionStateRow(
-                        label: "speech_recognition_permission",
-                        state: explicitVoiceController.speechRecognitionPermission
+                        label: "transcription_permission",
+                        state: explicitVoiceController.transcriptionPermission
                     )
                 }
 
-                Text("Explicit foreground user action is required before microphone capture or speech recognition starts. This shell does not begin capture on wake, side-button, or background triggers.")
+                Text("Explicit foreground user action is required before microphone capture or approved realtime transcription starts. This shell does not begin capture on wake, side-button, or background triggers.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)

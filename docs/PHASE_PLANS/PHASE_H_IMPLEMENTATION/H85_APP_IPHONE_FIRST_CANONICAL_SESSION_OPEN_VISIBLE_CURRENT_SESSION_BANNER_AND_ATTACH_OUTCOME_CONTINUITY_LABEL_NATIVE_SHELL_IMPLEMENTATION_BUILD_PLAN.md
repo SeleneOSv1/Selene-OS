@@ -116,7 +116,7 @@ Current shared source still preserves `SessionState::{Closed, Open, Active, Soft
 
 The pre-H85 native iPhone shell already preserved `EXPLICIT_ENTRY_READY`, `ONBOARDING_ENTRY_ACTIVE`, exact setup-receipt display, the H74 / H75 / H76 / H77 takeover fields, the H79 / H80 / H81 / H82 surfaces, the H83 typed-turn request production surface, and the H84 explicit voice-turn request production surface, but did not yet expose `SESSION_OPEN_VISIBLE`, a current session banner, or an attach-outcome continuity label.
 
-The pre-H85 native iPhone `Info.plist` already exposed `NSMicrophoneUsageDescription` and `NSSpeechRecognitionUsageDescription`, and those keys remain unchanged in this run.
+The pre-H85 native iPhone `Info.plist` already exposed `NSMicrophoneUsageDescription` and `legacy transcription permission key`, and those keys remain unchanged in this run.
 
 Native iPhone source tree and local Xcode project remain exposed in-tree.
 
@@ -160,7 +160,7 @@ This run preserves the H83 typed-turn request production surface and exact typed
 
 native iPhone shell now exposes bounded `SESSION_OPEN_VISIBLE` current session banner and attach-outcome continuity label in lawful `EXPLICIT_ONLY` cloud-authoritative posture.
 
-Native iPhone `Info.plist` continues to expose `NSMicrophoneUsageDescription` and `NSSpeechRecognitionUsageDescription` without change in this run.
+Native iPhone `Info.plist` continues to expose `NSMicrophoneUsageDescription` and `legacy transcription permission key` without change in this run.
 
 This run does not add `SESSION_ACTIVE_VISIBLE`, `SESSION_SOFT_CLOSED_VISIBLE`, `SESSION_SUSPENDED_VISIBLE`, recovery overlays, current-artifact lazy detail surfaces, wake-word behavior, side-button producer wiring, wake parity, or autonomous unlock.
 

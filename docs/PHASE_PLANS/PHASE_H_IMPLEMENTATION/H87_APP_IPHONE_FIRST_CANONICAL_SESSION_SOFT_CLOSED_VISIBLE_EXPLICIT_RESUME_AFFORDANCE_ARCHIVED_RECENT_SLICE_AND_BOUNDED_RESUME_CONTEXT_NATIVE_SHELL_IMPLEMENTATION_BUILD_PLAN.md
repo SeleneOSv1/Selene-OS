@@ -43,7 +43,7 @@ This is the first canonical APP_IPHONE `SESSION_SOFT_CLOSED_VISIBLE` explicit re
 - current shared source still preserves append-only `conversation_ledger`, and append-only overwrite remains forbidden for `conversation_ledger`.
 - G1 already freezes `SESSION_SOFT_CLOSED_VISIBLE` as the dominant soft-closed session surface with explicit resume affordance, archived recent slice, and optional bounded PH1.M `resume context` visible in bounded posture.
 - the pre-H87 native iPhone shell already preserved `EXPLICIT_ENTRY_READY`, `ONBOARDING_ENTRY_ACTIVE`, `SESSION_OPEN_VISIBLE`, `SESSION_ACTIVE_VISIBLE`, exact setup-receipt display, the H74 / H75 / H76 / H77 takeover fields, the H79 / H80 / H81 / H82 surfaces, the H83 typed-turn request production surface, the H84 explicit voice-turn request production surface, and the H85 / H86 session surfaces, but did not yet expose `SESSION_SOFT_CLOSED_VISIBLE`, explicit resume affordance, archived recent slice, or bounded PH1.M `resume context`.
-- the pre-H87 native iPhone `Info.plist` already exposed `NSMicrophoneUsageDescription` and `NSSpeechRecognitionUsageDescription`, and those keys remain unchanged in this run.
+- the pre-H87 native iPhone `Info.plist` already exposed `NSMicrophoneUsageDescription` and `legacy transcription permission key`, and those keys remain unchanged in this run.
 - native iPhone source tree and local Xcode project remain exposed in-tree.
 - native macOS source tree and local Xcode project remain exposed in-tree.
 - `APP_IPHONE-04` remains `PARTIAL`.

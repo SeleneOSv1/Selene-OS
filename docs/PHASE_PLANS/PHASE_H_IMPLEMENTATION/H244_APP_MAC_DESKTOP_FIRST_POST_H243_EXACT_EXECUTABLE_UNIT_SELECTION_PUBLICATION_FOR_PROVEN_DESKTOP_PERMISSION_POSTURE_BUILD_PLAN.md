@@ -38,7 +38,7 @@ H104 intentional-selection authority remains preserved.
 
 H112 executable-unit anti-loop authority remains preserved.
 
-Current native macOS app source still lacks exact `NSMicrophoneUsageDescription` and exact `NSSpeechRecognitionUsageDescription` in [Info.plist#L1](/Users/selene/Documents/Selene-OS/apple/mac_desktop/SeleneMacDesktop/Info.plist#L1).
+Current native macOS app source still lacks exact `NSMicrophoneUsageDescription` and exact `legacy transcription permission key` in [Info.plist#L1](/Users/selene/Documents/Selene-OS/apple/mac_desktop/SeleneMacDesktop/Info.plist#L1).
 
 Current iPhone native source already preserves those exact permission keys with bounded explicit-turn wording in [Info.plist#L23](/Users/selene/Documents/Selene-OS/apple/iphone/SeleneIPhone/Info.plist#L23).
 
@@ -47,7 +47,7 @@ Current native macOS app source still lacks the broader later H243-selected desk
 The smallest coherent exact seam exposed inside the H243-selected broader residual cluster is therefore exact desktop app-bundle permission posture through:
 
 - `NSMicrophoneUsageDescription`
-- `NSSpeechRecognitionUsageDescription`
+- `legacy transcription permission key`
 
 This seam is narrower than:
 
@@ -67,11 +67,11 @@ The exact selected later implementation-first executable unit is now:
 The exact selected adjacent internal slice set is now exactly:
 
 - `NSMicrophoneUsageDescription`
-- `NSSpeechRecognitionUsageDescription`
+- `legacy transcription permission key`
 
 The exact selected implementation description is:
 
-- add bounded native macOS microphone and speech-recognition permission posture through exact `NSMicrophoneUsageDescription` and exact `NSSpeechRecognitionUsageDescription` in the desktop app bundle
+- add bounded native macOS microphone and speech-recognition permission posture through exact `NSMicrophoneUsageDescription` and exact `legacy transcription permission key` in the desktop app bundle
 
 This exact unit is intentionally selected because it is the smallest coherent exact seam inside H243's broader selected cluster.
 
@@ -100,7 +100,7 @@ The exact selected later implementation-first executable unit is now bounded nat
 The exact selected adjacent internal slice set is now exactly:
 
 - `NSMicrophoneUsageDescription`
-- `NSSpeechRecognitionUsageDescription`
+- `legacy transcription permission key`
 
 Current native macOS app source still lacks both exact permission keys.
 

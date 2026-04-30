@@ -22,7 +22,7 @@ This is the first canonical APP_IPHONE `RECOVERING` / `DEGRADED_RECOVERY` / `QUA
 - current shared source still preserves `NextAllowedActions`, `SessionSnapshot.next_allowed_actions`, `PersistenceRecoveryMode`, `ReconciliationDecision`, PH1.M resume-select carriers `selected_thread_id`, `selected_thread_title`, `pending_work_order_id`, `resume_tier`, and `resume_summary_bullets`, and append-only `conversation_ledger` truth with append-only overwrite forbidden.
 - native iPhone source tree and local Xcode project remain exposed in-tree.
 - native macOS source tree and local Xcode project remain exposed in-tree.
-- native iPhone `Info.plist` already exposed `NSMicrophoneUsageDescription` and `NSSpeechRecognitionUsageDescription`, and those keys remain unchanged in this run.
+- native iPhone `Info.plist` already exposed `NSMicrophoneUsageDescription` and `legacy transcription permission key`, and those keys remain unchanged in this run.
 - `APP_IPHONE-04` remains `PARTIAL`.
 - `APP_IPHONE-05` remains `PROVEN_COMPLETE`.
 - `APP_IPHONE-06` remains `PROVEN_COMPLETE`.

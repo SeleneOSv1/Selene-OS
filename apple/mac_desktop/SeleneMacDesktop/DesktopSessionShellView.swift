@@ -2,7 +2,6 @@ import AppKit
 import Foundation
 import AVFoundation
 import CryptoKit
-import Speech
 import SwiftUI
 
 private func desktopAppendRuntimeBridgeDebugLog(_ message: String) {
@@ -150,6 +149,11 @@ private enum DesktopOpenAITtsFeatureFlag {
             return false
         }
     }
+}
+
+private enum DesktopVoiceProviderLane {
+    static let sttProviderID = "openai_realtime_primary"
+    static let ttsProviderID = "openai_tts_primary"
 }
 
 private func boundedAudioCaptureToken(
@@ -1333,7 +1337,7 @@ private struct DesktopAuthoritativeReplyPlaybackState: Equatable {
         phase: .idle,
         title: "Authoritative reply playback idle",
         summary: "Playback remains available only for cloud-authored reply text that is already visible in the bounded reply surface.",
-        detail: "Bounded native macOS speech playback only. This shell remains explicitly non-authoritative, does not mutate transcript preview, and does not claim wake parity, native wake-listener integration, or autonomous-unlock capability."
+        detail: "OpenAI TTS playback only. Local platform speech synthesis is disabled, and this shell remains explicitly non-authoritative without transcript mutation, wake parity, or autonomous-unlock capability."
     )
 
     static func speaking(authoritativeResponseText: String) -> DesktopAuthoritativeReplyPlaybackState {
@@ -1360,16 +1364,16 @@ private struct DesktopAuthoritativeReplyPlaybackState: Equatable {
             phase: .speaking,
             title: "OpenAI TTS reply playback active",
             summary: "Playing AI-generated speech synthesized from the already-rendered Selene runtime answer.",
-            detail: "PLAYING_OPENAI voice=\(voice) audio_sha256=\(audioSHA256) audio_byte_len=\(audioByteLen). NSSpeechSynthesizer is not primary for this turn."
+            detail: "PLAYING_OPENAI tts_provider_id=\(DesktopVoiceProviderLane.ttsProviderID) voice=\(voice) audio_sha256=\(audioSHA256) audio_byte_len=\(audioByteLen) native_macos_tts=false"
         )
     }
 
-    static func nativeFallback(reason: String) -> DesktopAuthoritativeReplyPlaybackState {
+    static func ttsUnavailable(reason: String) -> DesktopAuthoritativeReplyPlaybackState {
         DesktopAuthoritativeReplyPlaybackState(
-            phase: .requesting,
-            title: "Native reply playback fallback active",
-            summary: "OpenAI TTS fallback path is explicit and will not count as Build 1B success.",
-            detail: "FALLBACK_ALLOWED reason=\(boundedFailureLogToken(reason))"
+            phase: .failed,
+            title: "OpenAI TTS reply playback unavailable",
+            summary: "Reply playback requires OpenAI TTS. Local platform speech synthesis is disabled.",
+            detail: "OPENAI_TTS_REQUIRED reason=\(boundedFailureLogToken(reason)) native_macos_tts=false fallback_counted_as_success=false"
         )
     }
 
@@ -1410,22 +1414,19 @@ private struct DesktopOpenAITtsPlaybackToken: Equatable {
 }
 
 @MainActor
-private final class DesktopAuthoritativeReplyPlaybackController: NSObject, ObservableObject, NSSpeechSynthesizerDelegate, AVAudioPlayerDelegate {
+private final class DesktopAuthoritativeReplyPlaybackController: NSObject, ObservableObject, AVAudioPlayerDelegate {
     @Published private(set) var playbackState: DesktopAuthoritativeReplyPlaybackState = .idle
 
-    private let speechSynthesizer = NSSpeechSynthesizer()
     private var openAIAudioPlayer: AVAudioPlayer?
     private var activeOpenAITtsToken: DesktopOpenAITtsPlaybackToken?
     private var stopWasRequested = false
 
-    override init() {
-        super.init()
-        speechSynthesizer.delegate = self
-    }
-
     @discardableResult
     func play(authoritativeResponseText: String?) -> DesktopAuthoritativeReplyPlaybackState {
-        playNativeFallback(authoritativeResponseText: authoritativeResponseText, fallbackReason: nil)
+        failClosedWithoutNativePlayback(
+            authoritativeResponseText: authoritativeResponseText,
+            fallbackReason: "manual_play_requires_openai_tts"
+        )
     }
 
     @discardableResult
@@ -1522,7 +1523,7 @@ private final class DesktopAuthoritativeReplyPlaybackController: NSObject, Obser
     }
 
     @discardableResult
-    func playNativeFallback(
+    func failClosedWithoutNativePlayback(
         authoritativeResponseText: String?,
         fallbackReason: String?
     ) -> DesktopAuthoritativeReplyPlaybackState {
@@ -1545,13 +1546,6 @@ private final class DesktopAuthoritativeReplyPlaybackController: NSObject, Obser
             return failedState
         }
 
-        if let fallbackReason {
-            playbackState = .nativeFallback(reason: fallbackReason)
-        }
-
-        if speechSynthesizer.isSpeaking {
-            speechSynthesizer.stopSpeaking()
-        }
         if let openAIAudioPlayer, openAIAudioPlayer.isPlaying {
             openAIAudioPlayer.stop()
         }
@@ -1560,18 +1554,11 @@ private final class DesktopAuthoritativeReplyPlaybackController: NSObject, Obser
 
         stopWasRequested = false
 
-        guard speechSynthesizer.startSpeaking(trimmed) else {
-            let failedState = DesktopAuthoritativeReplyPlaybackState.failed(
-                summary: "Native macOS reply playback could not start.",
-                detail: "The shell remains read-only and non-authoritative while bounded native speech playback initialization is unavailable."
-            )
-            playbackState = failedState
-            return failedState
-        }
-
-        let speakingState = DesktopAuthoritativeReplyPlaybackState.speaking(authoritativeResponseText: trimmed)
-        playbackState = speakingState
-        return speakingState
+        let failedState = DesktopAuthoritativeReplyPlaybackState.ttsUnavailable(
+            reason: fallbackReason ?? "openai_tts_required"
+        )
+        playbackState = failedState
+        return failedState
     }
 
     @discardableResult
@@ -1592,29 +1579,10 @@ private final class DesktopAuthoritativeReplyPlaybackController: NSObject, Obser
     }
 
     private func stopAnyPlayback() {
-        if speechSynthesizer.isSpeaking {
-            speechSynthesizer.stopSpeaking()
-        }
         if let openAIAudioPlayer, openAIAudioPlayer.isPlaying {
             openAIAudioPlayer.stop()
         }
         openAIAudioPlayer = nil
-    }
-
-    nonisolated func speechSynthesizer(_ sender: NSSpeechSynthesizer, didFinishSpeaking finishedSpeaking: Bool) {
-        Task { @MainActor in
-            if stopWasRequested {
-                stopWasRequested = false
-                playbackState = .stopped()
-            } else if finishedSpeaking {
-                playbackState = .completed()
-            } else {
-                playbackState = .failed(
-                    summary: "Native macOS reply playback ended before completion.",
-                    detail: "The shell remains explicitly non-authoritative and does not retry or fabricate substitute playback output."
-                )
-            }
-        }
     }
 
     nonisolated func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
@@ -1665,7 +1633,7 @@ private enum VoicePermissionState: String {
         case .restricted:
             return "Permission is restricted by device policy. This shell remains non-authoritative and does not bypass policy."
         case .unavailable:
-            return "Permission or recognizer availability is unavailable on this device posture."
+            return "Permission or transcription provider availability is unavailable on this device posture."
         }
     }
 }
@@ -1811,7 +1779,7 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
     }
 
     @Published private(set) var microphonePermission: VoicePermissionState = .notRequested
-    @Published private(set) var speechRecognitionPermission: VoicePermissionState = .notRequested
+    @Published private(set) var transcriptionPermission: VoicePermissionState = .notRequested
     @Published private(set) var isListening = false
     @Published private(set) var transcriptPreview = ""
     @Published private(set) var pendingRequest: ExplicitVoiceTurnRequestState?
@@ -1822,9 +1790,6 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
     private let audioEngine = AVAudioEngine()
     private let realtimeAudioQueue = DispatchQueue(label: "selene.desktop.realtime-transcription.audio")
     private let realtimeURLSession = URLSession(configuration: .ephemeral)
-    private let speechRecognizer: SFSpeechRecognizer?
-    private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
-    private var recognitionTask: SFSpeechRecognitionTask?
     private var hasInputTap = false
     private var lastGeneratedDeviceTurnSequence: UInt64 = 0
     private var activeCaptureContext: CaptureSessionTransportContext?
@@ -1841,8 +1806,7 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
     private var realtimeFirstDeltaNS: UInt64?
 
     init(locale: Locale? = nil) {
-        let resolvedLocale = locale ?? Self.preferredLocale()
-        speechRecognizer = SFSpeechRecognizer(locale: resolvedLocale) ?? SFSpeechRecognizer()
+        _ = locale
         refreshPermissionState()
     }
 
@@ -1908,45 +1872,12 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
 
         transcriptPreview = ""
         refreshPermissionState()
-        requestMicrophonePermissionIfNeeded { [weak self] granted in
-            guard let self else {
-                return
-            }
-
-            DispatchQueue.main.async {
-                self.refreshPermissionState()
-                guard granted else {
-                    self.recordFailure(
-                        id: "failed_explicit_voice_microphone_permission",
-                        title: "Failed explicit voice request",
-                        summary: "Microphone permission is required before a bounded explicit voice-turn request can begin.",
-                        detail: "Permission visibility only; this shell does not bypass device policy, start hidden capture, or synthesize a request without foreground user approval."
-                    )
-                    return
-                }
-
-                self.requestSpeechRecognitionPermissionIfNeeded { [weak self] speechGranted in
-                    guard let self else {
-                        return
-                    }
-
-                    DispatchQueue.main.async {
-                        self.refreshPermissionState()
-                        guard speechGranted else {
-                            self.recordFailure(
-                                id: "failed_explicit_voice_speech_permission",
-                                title: "Failed explicit voice request",
-                                summary: "Speech-recognition permission is required before a bounded explicit voice-turn request can prepare transcript preview.",
-                                detail: "Permission visibility only; this shell does not create hidden spoken-only output, local transcript authority, or silent authoritative acceptance."
-                            )
-                            return
-                        }
-
-                        self.beginCaptureSession()
-                    }
-                }
-            }
-        }
+        recordFailure(
+            id: "failed_explicit_voice_non_openai_stt_disabled",
+            title: "Failed explicit voice request",
+            summary: "Explicit voice capture requires OpenAI realtime transcription.",
+            detail: "Local platform speech recognition is disabled. No local transcript fallback, hidden retry, or authoritative assistant output was produced."
+        )
     }
 
     func stopCaptureAndPrepareVoiceTurn() {
@@ -2049,99 +1980,12 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
         failedRequest = nil
         teardownRecognitionSession()
         refreshPermissionState()
-
-        guard let speechRecognizer else {
-            speechRecognitionPermission = .unavailable
-            recordFailure(
-                id: "failed_explicit_voice_recognizer_unavailable",
-                title: "Failed explicit voice request",
-                summary: "No speech recognizer is available for bounded explicit voice-turn request preparation on this device posture.",
-                detail: "Unavailable visibility only; the shell remains `EXPLICIT_ONLY`, session-bound, and cloud-authoritative while explicit voice capture stays blocked."
-            )
-            return
-        }
-
-        guard speechRecognizer.isAvailable else {
-            speechRecognitionPermission = .unavailable
-            recordFailure(
-                id: "failed_explicit_voice_recognizer_busy",
-                title: "Failed explicit voice request",
-                summary: "The speech recognizer is not currently available for a bounded explicit voice turn.",
-                detail: "Availability visibility only; retry from the same foreground surface later. No local queue repair authority or hidden retry loop is introduced here."
-            )
-            return
-        }
-
-        do {
-            let captureContext = Self.makeCaptureSessionTransportContext(speechRecognizer: speechRecognizer)
-            let request = SFSpeechAudioBufferRecognitionRequest()
-            request.shouldReportPartialResults = true
-            request.taskHint = .dictation
-            recognitionRequest = request
-
-            let inputNode = audioEngine.inputNode
-            let format = inputNode.outputFormat(forBus: 0)
-            inputNode.installTap(onBus: 0, bufferSize: 1_024, format: format) { [weak self] buffer, _ in
-                self?.recognitionRequest?.append(buffer)
-            }
-            hasInputTap = true
-
-            audioEngine.prepare()
-            try audioEngine.start()
-            activeCaptureContext = captureContext
-            transcriptPreview = ""
-            isListening = true
-            cancelAutoPrepareAfterSilence()
-
-            recognitionTask = speechRecognizer.recognitionTask(with: request) { [weak self] result, error in
-                guard let self else {
-                    return
-                }
-
-                if let result {
-                    DispatchQueue.main.async {
-                        self.transcriptPreview = result.bestTranscription.formattedString
-
-                        let finalizedTranscript = result.bestTranscription.formattedString
-                            .trimmingCharacters(in: .whitespacesAndNewlines)
-                        if result.isFinal,
-                           self.isListening,
-                           self.pendingRequest == nil,
-                           !finalizedTranscript.isEmpty {
-                            self.stopCaptureAndPrepareVoiceTurn()
-                        } else {
-                            self.scheduleAutoPrepareAfterSilenceIfNeeded(
-                                using: finalizedTranscript
-                            )
-                        }
-                    }
-                }
-
-                if let error {
-                    DispatchQueue.main.async {
-                        guard self.isListening else {
-                            return
-                        }
-
-                        self.teardownRecognitionSession()
-                        self.recordFailure(
-                            id: "failed_explicit_voice_capture_session",
-                            title: "Failed explicit voice request",
-                            summary: "The bounded explicit voice capture session ended before a request could be prepared.",
-                            detail: "Speech capture failed with `\(error.localizedDescription)`. Failure visibility only; no local transcript authority, no hidden retry loop, and no authoritative assistant output were produced."
-                        )
-                    }
-                }
-            }
-        } catch {
-            teardownRecognitionSession()
-            recordFailure(
-                id: "failed_explicit_voice_capture_start",
-                title: "Failed explicit voice request",
-                summary: "The bounded explicit voice capture session could not start from this foreground surface.",
-                detail: "Capture start failed with `\(error.localizedDescription)`. Failure visibility only; no background capture, no wake behavior, and no autonomous-unlock capability were introduced."
-            )
-        }
+        recordFailure(
+            id: "failed_explicit_voice_non_openai_stt_disabled",
+            title: "Failed explicit voice request",
+            summary: "Explicit voice capture requires OpenAI realtime transcription.",
+            detail: "Local platform speech recognition is disabled. No local transcript fallback, hidden retry, or authoritative assistant output was produced."
+        )
     }
 
     private func beginRealtimeTranscriptionCapture(
@@ -2169,7 +2013,7 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
         }
 
         do {
-            let captureContext = Self.makeCaptureSessionTransportContext(speechRecognizer: speechRecognizer)
+            let captureContext = Self.makeCaptureSessionTransportContext()
             let inputNode = audioEngine.inputNode
             let inputFormat = inputNode.outputFormat(forBus: 0)
             guard let outputFormat = AVAudioFormat(
@@ -2214,7 +2058,7 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
             try audioEngine.start()
             isListening = true
             desktopAppendRuntimeBridgeDebugLog(
-                "openai realtime transcription start flag=\(DesktopRealtimeTranscriptionFeatureFlag.name) model=\(session.transcriptionModel) request=\(session.requestID)"
+                "openai realtime transcription start stt_provider_id=\(DesktopVoiceProviderLane.sttProviderID) flag=\(DesktopRealtimeTranscriptionFeatureFlag.name) model=\(session.transcriptionModel) request=\(session.requestID)"
             )
             scheduleRealtimeMaxSessionDuration(session.maxSessionDurationMS)
         } catch {
@@ -2509,7 +2353,7 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
             audioCaptureRefState: audioCaptureRefState
         )
         desktopAppendRuntimeBridgeDebugLog(
-            "openai realtime transcription completed final_chars=\(trimmedTranscript.count) runtime_handoff=/v1/voice/turn"
+            "openai realtime transcription completed stt_provider_id=\(DesktopVoiceProviderLane.sttProviderID) final_chars=\(trimmedTranscript.count) runtime_handoff=/v1/voice/turn"
         )
         completeStoppedCaptureSession()
     }
@@ -2573,25 +2417,18 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
             hasInputTap = false
         }
 
-        recognitionRequest?.endAudio()
         isListening = false
     }
 
     private func teardownRecognitionSession() {
         cancelAutoPrepareAfterSilence()
         endCaptureInput()
-        recognitionTask?.cancel()
-        recognitionTask = nil
-        recognitionRequest = nil
         activeCaptureContext = nil
         teardownRealtimeTranscriptionSession()
     }
 
     private func completeStoppedCaptureSession() {
         cancelAutoPrepareAfterSilence()
-        recognitionTask?.cancel()
-        recognitionTask = nil
-        recognitionRequest = nil
         activeCaptureContext = nil
         teardownRealtimeTranscriptionSession()
     }
@@ -2661,7 +2498,7 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
 
     private func refreshPermissionState() {
         microphonePermission = Self.currentMicrophonePermission()
-        speechRecognitionPermission = Self.currentSpeechRecognitionPermission(speechRecognizerAvailable: speechRecognizer != nil)
+        transcriptionPermission = Self.currentTranscriptionPermission()
     }
 
     private func requestMicrophonePermissionIfNeeded(completion: @escaping (Bool) -> Void) {
@@ -2677,17 +2514,8 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
         }
     }
 
-    private func requestSpeechRecognitionPermissionIfNeeded(completion: @escaping (Bool) -> Void) {
-        switch Self.currentSpeechRecognitionPermission(speechRecognizerAvailable: speechRecognizer != nil) {
-        case .granted:
-            completion(true)
-        case .denied, .restricted, .unavailable:
-            completion(false)
-        case .notRequested:
-            SFSpeechRecognizer.requestAuthorization { status in
-                completion(status == .authorized)
-            }
-        }
+    private func requestTranscriptionPermissionIfNeeded(completion: @escaping (Bool) -> Void) {
+        completion(false)
     }
 
     private static func currentMicrophonePermission() -> VoicePermissionState {
@@ -2705,23 +2533,8 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
         }
     }
 
-    private static func currentSpeechRecognitionPermission(speechRecognizerAvailable: Bool) -> VoicePermissionState {
-        guard speechRecognizerAvailable else {
-            return .unavailable
-        }
-
-        switch SFSpeechRecognizer.authorizationStatus() {
-        case .authorized:
-            return .granted
-        case .denied:
-            return .denied
-        case .restricted:
-            return .restricted
-        case .notDetermined:
-            return .notRequested
-        @unknown default:
-            return .unavailable
-        }
+    private static func currentTranscriptionPermission() -> VoicePermissionState {
+        .unavailable
     }
 
     private static func preferredLocale() -> Locale {
@@ -2732,9 +2545,7 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
         return Locale(identifier: "en-US")
     }
 
-    private static func makeCaptureSessionTransportContext(
-        speechRecognizer: SFSpeechRecognizer?
-    ) -> CaptureSessionTransportContext {
+    private static func makeCaptureSessionTransportContext() -> CaptureSessionTransportContext {
         let tStartNS = Swift.max(DispatchTime.now().uptimeNanoseconds, 1)
         let selectedMic = boundedAudioCaptureToken(
             AVCaptureDevice.default(for: .audio)?.localizedName,
@@ -2745,7 +2556,7 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
             fallback: "desktop_speaker_default"
         )
         let localeTag = boundedAudioCaptureLocaleTag(
-            speechRecognizer?.locale.identifier ?? Locale.preferredLanguages.first
+            Locale.preferredLanguages.first
         )
 
         return CaptureSessionTransportContext(
@@ -2832,7 +2643,7 @@ private final class DesktopWakeListenerController: ObservableObject {
     }
 
     @Published private(set) var microphonePermission: VoicePermissionState = .notRequested
-    @Published private(set) var speechRecognitionPermission: VoicePermissionState = .notRequested
+    @Published private(set) var transcriptionPermission: VoicePermissionState = .notRequested
     @Published private(set) var listenerState: DesktopWakeListenerState = .idle
     @Published private(set) var transcriptPreview = ""
     @Published private(set) var pendingRequest: WakeTriggeredVoiceTurnRequestState?
@@ -2842,16 +2653,12 @@ private final class DesktopWakeListenerController: ObservableObject {
     private let wakeTriggerPhrase = "Selene"
     private let maxVoiceTurnBytes = 16_384
     private let audioEngine = AVAudioEngine()
-    private let speechRecognizer: SFSpeechRecognizer?
-    private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
-    private var recognitionTask: SFSpeechRecognitionTask?
     private var hasInputTap = false
     private var lastGeneratedDeviceTurnSequence: UInt64 = 0
     private var activeCaptureContext: CaptureSessionTransportContext?
 
     init(locale: Locale? = nil) {
-        let resolvedLocale = locale ?? Self.preferredLocale()
-        speechRecognizer = SFSpeechRecognizer(locale: resolvedLocale) ?? SFSpeechRecognizer()
+        _ = locale
         refreshPermissionState()
     }
 
@@ -2876,49 +2683,14 @@ private final class DesktopWakeListenerController: ObservableObject {
         transcriptPreview = ""
         activePromptStateID = promptState.id
         refreshPermissionState()
-        requestMicrophonePermissionIfNeeded { [weak self] granted in
-            guard let self else {
-                return
-            }
-
-            DispatchQueue.main.async {
-                self.refreshPermissionState()
-                guard granted else {
-                    self.listenerState = .failed
-                    self.activePromptStateID = nil
-                    self.recordFailure(
-                        id: "failed_wake_listener_microphone_permission",
-                        title: "Failed wake listener start",
-                        summary: "Microphone permission is required before this bounded foreground wake listener can start.",
-                        detail: "Permission visibility only; this shell does not bypass device policy, start hidden capture, or claim wake parity."
-                    )
-                    return
-                }
-
-                self.requestSpeechRecognitionPermissionIfNeeded { [weak self] speechGranted in
-                    guard let self else {
-                        return
-                    }
-
-                    DispatchQueue.main.async {
-                        self.refreshPermissionState()
-                        guard speechGranted else {
-                            self.listenerState = .failed
-                            self.activePromptStateID = nil
-                            self.recordFailure(
-                                id: "failed_wake_listener_speech_permission",
-                                title: "Failed wake listener start",
-                                summary: "Speech-recognition permission is required before this bounded foreground wake listener can prepare a wake-triggered handoff.",
-                                detail: "Permission visibility only; this shell does not create hidden spoken-only wake entry, local transcript authority, or silent authoritative acceptance."
-                            )
-                            return
-                        }
-
-                        self.beginCaptureSession()
-                    }
-                }
-            }
-        }
+        listenerState = .failed
+        activePromptStateID = nil
+        recordFailure(
+            id: "failed_wake_listener_non_openai_stt_disabled",
+            title: "Failed wake listener start",
+            summary: "Foreground wake listening requires the approved realtime transcription path.",
+            detail: "Local platform speech recognition is disabled. No local wake transcript, hidden capture, or wake-triggered dispatch was created."
+        )
     }
 
     func stopListening() {
@@ -2950,99 +2722,14 @@ private final class DesktopWakeListenerController: ObservableObject {
         failedRequest = nil
         teardownRecognitionSession()
         refreshPermissionState()
-
-        guard let speechRecognizer else {
-            speechRecognitionPermission = .unavailable
-            listenerState = .failed
-            activePromptStateID = nil
-            recordFailure(
-                id: "failed_wake_listener_recognizer_unavailable",
-                title: "Failed wake listener start",
-                summary: "No speech recognizer is available for bounded foreground wake-listener preparation on this device posture.",
-                detail: "Unavailable visibility only; this shell remains explicitly non-authoritative and does not widen into hidden/background wake behavior."
-            )
-            return
-        }
-
-        guard speechRecognizer.isAvailable else {
-            speechRecognitionPermission = .unavailable
-            listenerState = .failed
-            activePromptStateID = nil
-            recordFailure(
-                id: "failed_wake_listener_recognizer_busy",
-                title: "Failed wake listener start",
-                summary: "The speech recognizer is not currently available for this bounded foreground wake listener.",
-                detail: "Availability visibility only; retry from the same foreground surface later. No hidden retry loop or wake-authority claim is introduced here."
-            )
-            return
-        }
-
-        do {
-            let captureContext = Self.makeCaptureSessionTransportContext(speechRecognizer: speechRecognizer)
-            let request = SFSpeechAudioBufferRecognitionRequest()
-            request.shouldReportPartialResults = true
-            request.taskHint = .dictation
-            recognitionRequest = request
-
-            let inputNode = audioEngine.inputNode
-            let format = inputNode.outputFormat(forBus: 0)
-            inputNode.installTap(onBus: 0, bufferSize: 1_024, format: format) { [weak self] buffer, _ in
-                self?.recognitionRequest?.append(buffer)
-            }
-            hasInputTap = true
-
-            audioEngine.prepare()
-            try audioEngine.start()
-            activeCaptureContext = captureContext
-            transcriptPreview = ""
-            listenerState = .listening
-
-            recognitionTask = speechRecognizer.recognitionTask(with: request) { [weak self] result, error in
-                guard let self else {
-                    return
-                }
-
-                if let result {
-                    DispatchQueue.main.async {
-                        guard self.listenerState == .listening else {
-                            return
-                        }
-
-                        let transcript = result.bestTranscription.formattedString
-                        self.transcriptPreview = transcript
-                        self.prepareWakeTriggeredVoiceTurnIfDetected(transcript)
-                    }
-                }
-
-                if let error {
-                    DispatchQueue.main.async {
-                        guard self.listenerState == .listening else {
-                            return
-                        }
-
-                        self.teardownRecognitionSession()
-                        self.listenerState = .failed
-                        self.activePromptStateID = nil
-                        self.recordFailure(
-                            id: "failed_wake_listener_capture_session",
-                            title: "Failed wake listener session",
-                            summary: "The bounded foreground wake-listener session ended before a lawful wake-triggered request could be prepared.",
-                            detail: "Speech capture failed with `\(error.localizedDescription)`. Failure visibility only; no hidden retry loop, no fabricated wake dispatch, and no authoritative assistant output were produced."
-                        )
-                    }
-                }
-            }
-        } catch {
-            teardownRecognitionSession()
-            listenerState = .failed
-            activePromptStateID = nil
-            recordFailure(
-                id: "failed_wake_listener_capture_start",
-                title: "Failed wake listener start",
-                summary: "The bounded foreground wake-listener session could not start from this visible desktop surface.",
-                detail: "Capture start failed with `\(error.localizedDescription)`. Failure visibility only; no hidden/background wake behavior or autonomous-unlock capability were introduced."
-            )
-        }
+        listenerState = .failed
+        activePromptStateID = nil
+        recordFailure(
+            id: "failed_wake_listener_non_openai_stt_disabled",
+            title: "Failed wake listener start",
+            summary: "Foreground wake listening requires the approved realtime transcription path.",
+            detail: "Local platform speech recognition is disabled. No local wake transcript, hidden capture, or wake-triggered dispatch was created."
+        )
     }
 
     private func prepareWakeTriggeredVoiceTurnIfDetected(_ transcript: String) {
@@ -3114,14 +2801,10 @@ private final class DesktopWakeListenerController: ObservableObject {
             hasInputTap = false
         }
 
-        recognitionRequest?.endAudio()
     }
 
     private func teardownRecognitionSession() {
         endCaptureInput()
-        recognitionTask?.cancel()
-        recognitionTask = nil
-        recognitionRequest = nil
         activeCaptureContext = nil
     }
 
@@ -3133,9 +2816,6 @@ private final class DesktopWakeListenerController: ObservableObject {
     }
 
     private func completeStoppedCaptureSession() {
-        recognitionTask?.cancel()
-        recognitionTask = nil
-        recognitionRequest = nil
         activeCaptureContext = nil
     }
 
@@ -3150,9 +2830,7 @@ private final class DesktopWakeListenerController: ObservableObject {
 
     private func refreshPermissionState() {
         microphonePermission = Self.currentMicrophonePermission()
-        speechRecognitionPermission = Self.currentSpeechRecognitionPermission(
-            speechRecognizerAvailable: speechRecognizer != nil
-        )
+        transcriptionPermission = Self.currentTranscriptionPermission()
     }
 
     private func requestMicrophonePermissionIfNeeded(completion: @escaping (Bool) -> Void) {
@@ -3168,17 +2846,8 @@ private final class DesktopWakeListenerController: ObservableObject {
         }
     }
 
-    private func requestSpeechRecognitionPermissionIfNeeded(completion: @escaping (Bool) -> Void) {
-        switch Self.currentSpeechRecognitionPermission(speechRecognizerAvailable: speechRecognizer != nil) {
-        case .granted:
-            completion(true)
-        case .denied, .restricted, .unavailable:
-            completion(false)
-        case .notRequested:
-            SFSpeechRecognizer.requestAuthorization { status in
-                completion(status == .authorized)
-            }
-        }
+    private func requestTranscriptionPermissionIfNeeded(completion: @escaping (Bool) -> Void) {
+        completion(false)
     }
 
     private static func currentMicrophonePermission() -> VoicePermissionState {
@@ -3196,23 +2865,8 @@ private final class DesktopWakeListenerController: ObservableObject {
         }
     }
 
-    private static func currentSpeechRecognitionPermission(speechRecognizerAvailable: Bool) -> VoicePermissionState {
-        guard speechRecognizerAvailable else {
-            return .unavailable
-        }
-
-        switch SFSpeechRecognizer.authorizationStatus() {
-        case .authorized:
-            return .granted
-        case .denied:
-            return .denied
-        case .restricted:
-            return .restricted
-        case .notDetermined:
-            return .notRequested
-        @unknown default:
-            return .unavailable
-        }
+    private static func currentTranscriptionPermission() -> VoicePermissionState {
+        .unavailable
     }
 
     private static func preferredLocale() -> Locale {
@@ -3223,9 +2877,7 @@ private final class DesktopWakeListenerController: ObservableObject {
         return Locale(identifier: "en-US")
     }
 
-    private static func makeCaptureSessionTransportContext(
-        speechRecognizer: SFSpeechRecognizer?
-    ) -> CaptureSessionTransportContext {
+    private static func makeCaptureSessionTransportContext() -> CaptureSessionTransportContext {
         let tStartNS = Swift.max(DispatchTime.now().uptimeNanoseconds, 1)
         let selectedMic = boundedAudioCaptureToken(
             AVCaptureDevice.default(for: .audio)?.localizedName,
@@ -3236,7 +2888,7 @@ private final class DesktopWakeListenerController: ObservableObject {
             fallback: "desktop_speaker_default"
         )
         let localeTag = boundedAudioCaptureLocaleTag(
-            speechRecognizer?.locale.identifier ?? Locale.preferredLanguages.first
+            Locale.preferredLanguages.first
         )
 
         return CaptureSessionTransportContext(
@@ -7416,18 +7068,18 @@ struct DesktopSessionShellView: View {
 
                     VStack(alignment: .leading, spacing: 6) {
                         HStack(alignment: .firstTextBaseline, spacing: 12) {
-                            Text("speech_recognition_permission")
+                            Text("transcription_permission")
                                 .font(.caption.monospaced())
                                 .foregroundStyle(.secondary)
 
                             Spacer()
 
-                            Text(explicitVoiceController.speechRecognitionPermission.rawValue)
+                            Text(explicitVoiceController.transcriptionPermission.rawValue)
                                 .font(.caption.monospaced())
                                 .foregroundStyle(.secondary)
                         }
 
-                        Text(explicitVoiceController.speechRecognitionPermission.detail)
+                        Text(explicitVoiceController.transcriptionPermission.detail)
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity, alignment: .leading)
@@ -7438,7 +7090,7 @@ struct DesktopSessionShellView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                 }
 
-                Text("Explicit foreground user action is required before microphone capture or speech recognition starts. This shell does not begin capture on wake or background triggers.")
+                Text("Explicit foreground user action is required before microphone capture or approved realtime transcription starts. This shell does not begin capture on wake or background triggers.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -7995,7 +7647,7 @@ struct DesktopSessionShellView: View {
         )
         guard featureFlagEnabled else {
             desktopAppendRuntimeBridgeDebugLog(
-                "desktop realtime transcription rollback path=old_bounded reason=feature_flag_off"
+                "desktop realtime transcription unavailable reason=feature_flag_off local_stt_fallback=false"
             )
             explicitVoiceController.startExplicitVoiceTurn()
             return
@@ -8044,7 +7696,7 @@ struct DesktopSessionShellView: View {
                     return
                 }
                 desktopAppendRuntimeBridgeDebugLog(
-                    "desktop realtime transcription fallback path=old_bounded reason=token_mint_failure redacted=true"
+                    "desktop realtime transcription unavailable reason=token_mint_failure redacted=true local_stt_fallback=false"
                 )
                 explicitVoiceController.startExplicitVoiceTurn()
             }
@@ -17856,9 +17508,9 @@ struct DesktopSessionShellView: View {
 
     private func playAuthoritativeReply() {
         desktopAuthoritativeReplyPlaybackState = desktopAuthoritativeReplyPlaybackController
-            .playNativeFallback(
+            .failClosedWithoutNativePlayback(
                 authoritativeResponseText: desktopAuthoritativeReplyRenderState?.authoritativeResponseText,
-                fallbackReason: nil
+                fallbackReason: "manual_play_requires_openai_tts"
             )
     }
 
@@ -17874,12 +17526,12 @@ struct DesktopSessionShellView: View {
 
         guard DesktopOpenAITtsFeatureFlag.isEnabled else {
             desktopAppendRuntimeBridgeDebugLog(
-                "desktop openai tts rollback path=native_speech reason=feature_flag_off"
+                "desktop openai tts unavailable reason=feature_flag_off native_macos_tts=false"
             )
             desktopAuthoritativeReplyPlaybackState = desktopAuthoritativeReplyPlaybackController
-                .playNativeFallback(
+                .failClosedWithoutNativePlayback(
                     authoritativeResponseText: authoritativeResponseText,
-                    fallbackReason: nil
+                    fallbackReason: "feature_flag_off"
                 )
             return desktopAuthoritativeReplyPlaybackState.phase == .speaking
         }
@@ -17897,7 +17549,7 @@ struct DesktopSessionShellView: View {
         desktopAuthoritativeReplyPlaybackState = desktopAuthoritativeReplyPlaybackController
             .prepareOpenAITTS(authoritativeResponseText: authoritativeResponseText, token: token)
         desktopAppendRuntimeBridgeDebugLog(
-            "desktop openai tts state=TTS_REQUESTING endpoint=\(desktopCanonicalRuntimeBridge.desktopOpenAITtsSpeechEndpoint) answer_text_sha256=\(answerTextSHA256)"
+            "desktop openai tts state=TTS_REQUESTING tts_provider_id=\(DesktopVoiceProviderLane.ttsProviderID) endpoint=\(desktopCanonicalRuntimeBridge.desktopOpenAITtsSpeechEndpoint) answer_text_sha256=\(answerTextSHA256)"
         )
 
         do {
@@ -17918,12 +17570,12 @@ struct DesktopSessionShellView: View {
                 return false
             }
             desktopAppendRuntimeBridgeDebugLog(
-                "desktop openai tts state=TTS_READY model=\(speechState.model) voice=\(speechState.voice) answer_text_sha256=\(speechState.answerTextSHA256) audio_sha256=\(speechState.audioSHA256) audio_byte_len=\(speechState.audioByteLen) ai_voice_disclosure=\(speechState.aiVoiceDisclosure)"
+                "desktop openai tts state=TTS_READY tts_provider_id=\(DesktopVoiceProviderLane.ttsProviderID) model=\(speechState.model) voice=\(speechState.voice) answer_text_sha256=\(speechState.answerTextSHA256) audio_sha256=\(speechState.audioSHA256) audio_byte_len=\(speechState.audioByteLen) ai_voice_disclosure=\(speechState.aiVoiceDisclosure)"
             )
             desktopAuthoritativeReplyPlaybackState = desktopAuthoritativeReplyPlaybackController
                 .playOpenAITTS(speechState, expectedToken: token)
             desktopAppendRuntimeBridgeDebugLog(
-                "desktop openai tts state=PLAYING_OPENAI fallback_used=false request=\(speechState.requestID)"
+                "desktop openai tts state=PLAYING_OPENAI tts_provider_id=\(DesktopVoiceProviderLane.ttsProviderID) fallback_used=false request=\(speechState.requestID)"
             )
             return desktopAuthoritativeReplyPlaybackState.phase == .speaking
         } catch {
@@ -17935,10 +17587,10 @@ struct DesktopSessionShellView: View {
             }
             let fallbackReason = boundedFailureLogToken(error.localizedDescription)
             desktopAppendRuntimeBridgeDebugLog(
-                "desktop openai tts fallback path=native_speech reason=\(fallbackReason) fallback_counted_as_success=false"
+                "desktop openai tts unavailable reason=\(fallbackReason) native_macos_tts=false fallback_counted_as_success=false"
             )
             desktopAuthoritativeReplyPlaybackState = desktopAuthoritativeReplyPlaybackController
-                .playNativeFallback(
+                .failClosedWithoutNativePlayback(
                     authoritativeResponseText: authoritativeResponseText,
                     fallbackReason: fallbackReason
                 )

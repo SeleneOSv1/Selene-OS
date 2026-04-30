@@ -14,7 +14,7 @@ use selene_engines::device_vault;
 use selene_engines::ph1_voice_id::VoiceIdObservation as EngineVoiceIdObservation;
 use selene_engines::ph1c::{
     reason_codes as ph1c_reason_codes, Ph1cConfig as EnginePh1cConfig, Ph1cLiveProviderContext,
-    Ph1cRuntime as EnginePh1cRuntime, Ph1cStreamCommit,
+    Ph1cRuntime as EnginePh1cRuntime, Ph1cStreamCommit, ProviderSlot, SttAttempt,
 };
 use selene_engines::ph1context::{
     Ph1ContextConfig as EnginePh1ContextConfig, Ph1ContextRuntime as EnginePh1ContextRuntime,
@@ -5838,6 +5838,76 @@ impl AdapterRuntime {
         })
     }
 
+    fn run_committed_voice_ph1c_gate(
+        &self,
+        transcript_text: &str,
+        capture: &VoiceTurnAudioCaptureRef,
+        session_state: SessionState,
+        ph1k: &Ph1kLiveSignalBundle,
+    ) -> Ph1cLiveTurnOutcomeSummary {
+        let transcript_text = transcript_text.trim();
+        let mut ph1c_request = match build_ph1c_live_request(ph1k, session_state) {
+            Ok(request) => request,
+            Err(_) => {
+                return ph1c_committed_voice_reject_summary(
+                    transcript_text,
+                    ph1c_reason_codes::STT_FAIL_POLICY_RESTRICTED,
+                    Ph1cRetryAdvice::SwitchToText,
+                );
+            }
+        };
+        if let Some(language_hint) =
+            high_confidence_language_hint_from_capture(capture, transcript_text)
+        {
+            ph1c_request.language_hint = Some(language_hint);
+        }
+        if let Some(segment) = committed_voice_bounded_audio_segment_from_capture(capture) {
+            ph1c_request.bounded_audio_segment_ref = segment;
+        }
+        if let Some((reason_code, retry_advice)) =
+            committed_voice_unsafe_transcript_reason(transcript_text, capture)
+        {
+            return ph1c_committed_voice_reject_summary(transcript_text, reason_code, retry_advice);
+        }
+
+        let language_tag = match LanguageTag::new(
+            language_tag_from_text_for_build1c(transcript_text, None).to_string(),
+        ) {
+            Ok(tag) => tag,
+            Err(_) => {
+                return ph1c_committed_voice_reject_summary(
+                    transcript_text,
+                    ph1c_reason_codes::STT_FAIL_LANGUAGE_MISMATCH,
+                    Ph1cRetryAdvice::Repeat,
+                );
+            }
+        };
+        let avg_word_confidence = committed_voice_confidence_from_capture(capture);
+        let low_confidence_ratio = (1.0f32 - avg_word_confidence).clamp(0.0, 1.0);
+        let attempt = SttAttempt {
+            provider: ProviderSlot::Primary,
+            latency_ms: committed_voice_latency_ms(capture),
+            transcript_text: transcript_text.to_string(),
+            language_tag,
+            avg_word_confidence,
+            low_confidence_ratio,
+            stable: true,
+        };
+        let response = self.ph1c_runtime.run(&ph1c_request, &[attempt]);
+        let final_text = match &response {
+            Ph1cResponse::TranscriptOk(ok) => Some(ok.transcript_text.clone()),
+            Ph1cResponse::TranscriptReject(_) => Some(transcript_text.to_string()),
+        };
+        Ph1cLiveTurnOutcomeSummary {
+            response,
+            partial_text: None,
+            final_text,
+            finalized: true,
+            low_latency_commit: false,
+            provider_call_trace: Vec::new(),
+        }
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn commit_ph1c_live_outcome(
         &self,
@@ -7335,8 +7405,27 @@ impl AdapterRuntime {
                 device_owner_user_id,
             )
             .map_err(|err| post_session_error(format!("voice request build failed: {err:?}")))?;
+            let committed_voice_ph1c_gate_used =
+                upstream_transcript_supplied && is_desktop_committed_voice_request(&request);
             let ph1c_live_outcome = if upstream_transcript_supplied {
-                None
+                if committed_voice_ph1c_gate_used {
+                    match (
+                        request.audio_capture_ref.as_ref(),
+                        user_text_final.as_deref(),
+                    ) {
+                        (Some(capture), Some(transcript_text)) => {
+                            Some(self.run_committed_voice_ph1c_gate(
+                                transcript_text,
+                                capture,
+                                session_turn_state.session_snapshot.session_state,
+                                &ph1k_bundle,
+                            ))
+                        }
+                        _ => None,
+                    }
+                } else {
+                    None
+                }
             } else {
                 self.run_ph1c_live_turn(
                     correlation_id,
@@ -7366,6 +7455,101 @@ impl AdapterRuntime {
                     ph1c,
                 )
                 .map_err(post_session_error)?;
+            }
+            if committed_voice_ph1c_gate_used {
+                if let Some(ph1c) = ph1c_live_outcome.as_ref() {
+                    if let Ph1cResponse::TranscriptReject(reject) = &ph1c.response {
+                        let response_text = ph1c_voice_retry_response_text(
+                            request.audio_capture_ref.as_ref(),
+                            user_text_final.as_deref(),
+                        );
+                        self.record_transcript_updates(
+                            &mut store,
+                            now,
+                            correlation_id,
+                            turn_id,
+                            &actor_user_id,
+                            Some(&runtime_device_id),
+                            session_turn_state.session_id_for_commits,
+                            user_text_partial.clone(),
+                            user_text_final.clone(),
+                            None,
+                            Some(response_text.clone()),
+                        )
+                        .map_err(post_session_error)?;
+                        self.emit_ph1c_gold_capture_and_learning(
+                            &mut store,
+                            now,
+                            correlation_id,
+                            turn_id,
+                            &actor_user_id,
+                            tenant_id_for_ph1c.as_deref(),
+                            Some(&runtime_device_id),
+                            session_turn_state.session_id_for_commits,
+                            ph1c,
+                        )
+                        .map_err(post_session_error)?;
+                        self.emit_ph1c_live_telemetry(
+                            &mut store,
+                            now,
+                            correlation_id,
+                            turn_id,
+                            ph1c,
+                            tenant_id_for_ph1c.as_deref(),
+                        )
+                        .map_err(post_session_error)?;
+                        finalize_session_turn_record(
+                            &mut store,
+                            now,
+                            correlation_id,
+                            turn_id,
+                            &runtime_device_id,
+                            session_turn_state.session_id_for_commits,
+                            None,
+                            session_turn_state.device_turn_sequence,
+                            &runtime_execution_envelope.idempotency_key,
+                            &self.runtime_node_id,
+                            self.session_lease_ttl_ms,
+                        )
+                        .map_err(post_session_error)?;
+                        let response = VoiceTurnAdapterResponse {
+                            status: "ok".to_string(),
+                            outcome: "CLARIFY".to_string(),
+                            session_id: runtime_execution_envelope
+                                .session_id
+                                .clone()
+                                .map(session_id_to_string),
+                            turn_id: Some(runtime_execution_envelope.turn_id.0),
+                            session_state: Some(session_state_to_api_value(
+                                session_turn_state.session_snapshot.session_state,
+                            )),
+                            session_attach_outcome: runtime_execution_envelope
+                                .session_attach_outcome,
+                            failure_class: None,
+                            reason: Some(
+                                "voice transcript rejected before runtime entry".to_string(),
+                            ),
+                            next_move: "clarify".to_string(),
+                            response_text,
+                            reason_code: reject.reason_code.0.to_string(),
+                            provenance: None,
+                            deep_research: None,
+                        };
+                        if let Some(trace) = h410_build_public_brain_trace(
+                            &request_for_journal,
+                            user_text_final.as_deref(),
+                            None,
+                            None,
+                            None,
+                            &response.response_text,
+                            None,
+                        ) {
+                            self.record_public_brain_trace(trace)
+                                .map_err(post_session_error)?;
+                        }
+                        return Ok(response);
+                    }
+                }
             }
             self.run_ph1vision_os_orchestration_step(
                 &request,
@@ -11020,6 +11204,10 @@ fn build_language_context_for_voice_turn(
     };
     let confidence_bps = language_confidence_bps_for_build1c(text, detected.3);
     let switch_requested = explicit_output_language_for_build1c(text).is_some();
+    let mut sources = vec![detected.4.to_string(), "runtime_classifier".to_string()];
+    if let Some(provider_source) = active_desktop_voice_stt_provider_source(request) {
+        sources.push(provider_source.to_string());
+    }
     let mut packet = LanguagePacket::v1(
         detected.0,
         detected.1,
@@ -11041,7 +11229,7 @@ fn build_language_context_for_voice_turn(
         },
         broken_language_risk_for_build1c(text).to_string(),
         confidence_bps < 5_000,
-        vec![detected.4.to_string(), "runtime_classifier".to_string()],
+        sources,
     )
     .map_err(|err| format!("language packet build failed: {err:?}"))?;
     let mut nlp_text = text.to_string();
@@ -17721,6 +17909,235 @@ fn ph1c_live_reject_summary(
     }
 }
 
+fn ph1c_committed_voice_reject_summary(
+    transcript_text: &str,
+    reason_code: ReasonCodeId,
+    retry_advice: Ph1cRetryAdvice,
+) -> Ph1cLiveTurnOutcomeSummary {
+    let mut summary = ph1c_live_reject_summary(reason_code, retry_advice);
+    summary.final_text = Some(transcript_text.trim().to_string());
+    summary.finalized = true;
+    summary
+}
+
+fn bp_to_confidence(value: Option<u16>, default: f32) -> f32 {
+    value
+        .map(|v| (v as f32) / 10_000.0)
+        .unwrap_or(default)
+        .clamp(0.0, 1.0)
+}
+
+fn committed_voice_confidence_from_capture(capture: &VoiceTurnAudioCaptureRef) -> f32 {
+    if capture.capture_degraded.unwrap_or(false)
+        || capture.stream_gap_detected.unwrap_or(false)
+        || capture.aec_unstable.unwrap_or(false)
+        || capture.device_changed.unwrap_or(false)
+    {
+        return 0.60;
+    }
+
+    let capture_quality = bp_to_confidence(capture.acoustic_confidence_bp, 0.95)
+        .min(bp_to_confidence(capture.vad_confidence_bp, 0.95))
+        .min(bp_to_confidence(capture.speech_likeness_bp, 0.95))
+        .min(bp_to_confidence(capture.echo_safe_confidence_bp, 0.95))
+        .min(bp_to_confidence(capture.nearfield_confidence_bp, 0.95));
+
+    if capture_quality < 0.80 {
+        return capture_quality.clamp(0.0, 1.0);
+    }
+
+    0.95
+}
+
+fn committed_voice_latency_ms(_capture: &VoiceTurnAudioCaptureRef) -> u32 {
+    // PH1.C latency is provider/evaluation latency. The Desktop capture ref duration is
+    // spoken utterance time, so using it here would reject normal multi-second voice turns.
+    250
+}
+
+fn committed_voice_bounded_audio_segment_from_capture(
+    capture: &VoiceTurnAudioCaptureRef,
+) -> Option<BoundedAudioSegmentRef> {
+    let full_start = capture.t_start_ns.max(1);
+    let full_end = capture.t_end_ns.max(full_start.saturating_add(1));
+    let confirmed = capture
+        .t_confirmed_ns
+        .max(full_start.saturating_add(1))
+        .min(full_end);
+    let candidate = capture
+        .t_candidate_start_ns
+        .max(full_start)
+        .min(confirmed.saturating_sub(1));
+    let max_coverage_window_ns = 3_000_000_000u64;
+    let coverage_start = if confirmed.saturating_sub(candidate) < 1_000_000_000 {
+        confirmed
+            .saturating_sub(max_coverage_window_ns)
+            .max(full_start)
+            .min(confirmed.saturating_sub(1))
+    } else {
+        candidate
+    };
+    let candidate_start = candidate.max(coverage_start).min(confirmed.saturating_sub(1));
+    BoundedAudioSegmentRef::v1(
+        AudioStreamId(capture.stream_id),
+        PreRollBufferId(capture.pre_roll_buffer_id),
+        MonotonicTimeNs(coverage_start),
+        MonotonicTimeNs(confirmed),
+        MonotonicTimeNs(candidate_start),
+        MonotonicTimeNs(confirmed),
+    )
+    .ok()
+}
+
+const ACTIVE_DESKTOP_STT_PROVIDER_SOURCE: &str = "stt_provider=openai_realtime_primary";
+
+fn active_desktop_voice_stt_provider_source(
+    request: &VoiceTurnAdapterRequest,
+) -> Option<&'static str> {
+    if request.app_platform.trim().eq_ignore_ascii_case("DESKTOP")
+        && request
+            .audio_capture_ref
+            .as_ref()
+            .is_some_and(capture_looks_like_live_desktop_input)
+    {
+        Some(ACTIVE_DESKTOP_STT_PROVIDER_SOURCE)
+    } else {
+        None
+    }
+}
+
+fn committed_voice_unsafe_transcript_reason(
+    transcript_text: &str,
+    capture: &VoiceTurnAudioCaptureRef,
+) -> Option<(ReasonCodeId, Ph1cRetryAdvice)> {
+    let trimmed = transcript_text.trim();
+    if committed_voice_single_short_unsafe_token(trimmed) {
+        return Some((
+            ph1c_reason_codes::STT_FAIL_LOW_CONFIDENCE,
+            Ph1cRetryAdvice::Repeat,
+        ));
+    }
+    if committed_voice_unsupported_latin_language(trimmed, capture) {
+        return Some((
+            ph1c_reason_codes::STT_FAIL_LANGUAGE_MISMATCH,
+            Ph1cRetryAdvice::Repeat,
+        ));
+    }
+    None
+}
+
+fn committed_voice_single_short_unsafe_token(transcript_text: &str) -> bool {
+    let token = transcript_text
+        .trim_matches(|ch: char| ch.is_whitespace() || ch.is_ascii_punctuation())
+        .to_ascii_lowercase();
+    if token.is_empty() || token.split_whitespace().count() != 1 {
+        return false;
+    }
+    if transcript_text.chars().any(is_cjk_char_for_build1c)
+        || !token.chars().any(|ch| ch.is_ascii_alphabetic())
+    {
+        return false;
+    }
+    if matches!(token.as_str(), "yes" | "no" | "ok" | "okay") {
+        return false;
+    }
+    token.chars().filter(|ch| ch.is_ascii_alphabetic()).count() <= 4
+}
+
+fn committed_voice_unsupported_latin_language(
+    transcript_text: &str,
+    capture: &VoiceTurnAudioCaptureRef,
+) -> bool {
+    if transcript_text.chars().any(is_cjk_char_for_build1c) {
+        return false;
+    }
+    let has_non_ascii_latin_alpha = transcript_text
+        .chars()
+        .any(|ch| ch.is_alphabetic() && !ch.is_ascii() && !is_cjk_char_for_build1c(ch));
+    if !has_non_ascii_latin_alpha {
+        return false;
+    }
+    let locale = capture
+        .locale_tag
+        .as_deref()
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase();
+    locale.is_empty() || locale.starts_with("en") || locale.starts_with("zh")
+}
+
+fn high_confidence_language_hint_from_capture(
+    capture: &VoiceTurnAudioCaptureRef,
+    transcript_text: &str,
+) -> Option<LanguageHint> {
+    let raw = capture.locale_tag.as_deref()?.trim();
+    if raw.is_empty() {
+        return None;
+    }
+    let raw_lower = raw.to_ascii_lowercase();
+    if transcript_text.chars().any(is_cjk_char_for_build1c) && !raw_lower.starts_with("zh") {
+        return Some(LanguageHint::v1(
+            LanguageTag::new("zh".to_string()).ok()?,
+            LanguageHintConfidence::Med,
+        ));
+    }
+    Some(LanguageHint::v1(
+        LanguageTag::new(truncate_ascii(raw, 32)).ok()?,
+        LanguageHintConfidence::High,
+    ))
+}
+
+fn is_desktop_committed_voice_request(request: &VoiceTurnAdapterRequest) -> bool {
+    request.app_platform.trim().eq_ignore_ascii_case("DESKTOP")
+        && request
+            .audio_capture_ref
+            .as_ref()
+            .is_some_and(capture_looks_like_live_desktop_input)
+        && request
+            .user_text_final
+            .as_deref()
+            .map(str::trim)
+            .is_some_and(|text| !text.is_empty())
+}
+
+fn capture_looks_like_live_desktop_input(capture: &VoiceTurnAudioCaptureRef) -> bool {
+    let selected_mic = capture
+        .selected_mic
+        .as_deref()
+        .map(str::trim)
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    let selected_speaker = capture
+        .selected_speaker
+        .as_deref()
+        .map(str::trim)
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    !selected_mic.is_empty()
+        && !selected_speaker.is_empty()
+        && !selected_mic.starts_with("ios_")
+        && !selected_speaker.starts_with("ios_")
+}
+
+fn ph1c_voice_retry_response_text(
+    capture: Option<&VoiceTurnAudioCaptureRef>,
+    transcript_text: Option<&str>,
+) -> String {
+    if transcript_text.is_some_and(|text| text.chars().any(is_cjk_char_for_build1c)) {
+        return "我没能可靠确认这段语音转写。请再说一次，或者直接输入。".to_string();
+    }
+    let locale = capture
+        .and_then(|capture| capture.locale_tag.as_deref())
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase();
+    if locale.starts_with("zh") {
+        "我没能可靠确认这段语音转写。请再说一次，或者直接输入。".to_string()
+    } else {
+        "I couldn't reliably verify that voice transcript. Please try again or type it.".to_string()
+    }
+}
+
 fn summarize_ph1c_stream_commit(
     stream_commit: Ph1cStreamCommit,
     provider_call_trace: Vec<Ph1dProviderCallResponse>,
@@ -19888,6 +20305,14 @@ mod tests {
         request.app_platform = "DESKTOP".to_string();
         request.trigger = "EXPLICIT".to_string();
         mark_request_as_echo_safe_for_tests(request);
+    }
+
+    fn mark_request_as_live_desktop_capture_for_h417_tests(request: &mut VoiceTurnAdapterRequest) {
+        mark_request_as_desktop_voice_for_tests(request);
+        if let Some(capture) = request.audio_capture_ref.as_mut() {
+            capture.selected_mic = Some("mac_builtin_mic".to_string());
+            capture.selected_speaker = Some("mac_builtin_speaker".to_string());
+        }
     }
 
     fn base_tablet_request() -> VoiceTurnAdapterRequest {
@@ -26085,7 +26510,11 @@ mod tests {
             .run_voice_turn(req)
             .expect("list reminders query should succeed");
         assert_eq!(out.status, "ok");
-        assert_eq!(out.outcome, "FINAL_TOOL");
+        assert_eq!(
+            out.outcome, "FINAL_TOOL",
+            "reason={} response={}",
+            out.reason_code, out.response_text
+        );
         assert_eq!(out.next_move, "dispatch_tool");
         assert!(out.response_text.contains("Summary:"));
         assert!(out.provenance.is_some());
@@ -26758,7 +27187,11 @@ mod tests {
             .run_voice_turn(req)
             .expect("tool-fail turn should still return an adapter response");
         assert_eq!(out.status, "ok");
-        assert_eq!(out.outcome, "FINAL_TOOL");
+        assert_eq!(
+            out.outcome, "FINAL_TOOL",
+            "reason={} response={}",
+            out.reason_code, out.response_text
+        );
 
         let correlation_id = CorrelationId(10_104);
         let store = runtime.store.lock().expect("store lock should succeed");
@@ -30839,6 +31272,7 @@ mod tests {
         let runtime = AdapterRuntime::default();
         let mut req = base_request();
         req.app_platform = "DESKTOP".to_string();
+        mark_request_as_live_desktop_capture_for_h417_tests(&mut req);
         req.correlation_id = 416_102;
         req.turn_id = 416_102;
         req.user_text_final = Some("Since I don't think".to_string());
@@ -30850,26 +31284,321 @@ mod tests {
             .run_voice_turn(req)
             .expect("voice-like public turn should complete");
         assert_eq!(out.status, "ok");
+        assert_eq!(out.outcome, "CLARIFY");
+        assert_eq!(
+            out.reason_code,
+            ph1c_reason_codes::STT_FAIL_LANGUAGE_MISMATCH.0.to_string()
+        );
         assert!(
-            !h412_contains_cjk(&out.response_text),
-            "English captured transcript must not count as Chinese understanding: {}",
+            out.response_text.contains("语音转写"),
+            "Chinese locale mismatch should ask for voice retry instead of answering the English mistranscript: {}",
             out.response_text
         );
+        assert!(
+            !out.response_text.contains("东京现在是"),
+            "English mistranscript must not be counted as understood Chinese: {}",
+            out.response_text
+        );
+        assert!(
+            runtime.ingress.debug_last_agent_input_packet().is_none(),
+            "PH1.C rejection must stop before PH1.LANG/PH1.X runtime entry"
+        );
+    }
 
+    #[test]
+    fn h417_voice_like_chinese_locale_english_committed_transcript_ph1c_mismatch_clarifies() {
+        let runtime = AdapterRuntime::default();
+        let mut req = base_request();
+        mark_request_as_live_desktop_capture_for_h417_tests(&mut req);
+        req.correlation_id = 417_101;
+        req.turn_id = 417_101;
+        req.user_text_final = Some("Since I don't think".to_string());
+        if let Some(capture) = req.audio_capture_ref.as_mut() {
+            capture.locale_tag = Some("zh-CN".to_string());
+        }
+
+        let out = runtime
+            .run_voice_turn(req)
+            .expect("voice-like mismatch turn should complete");
+        assert_eq!(out.status, "ok");
+        assert_eq!(out.outcome, "CLARIFY");
+        assert_eq!(
+            out.reason_code,
+            ph1c_reason_codes::STT_FAIL_LANGUAGE_MISMATCH.0.to_string()
+        );
+        assert!(!out.response_text.contains("东京现在是"));
+        assert!(
+            runtime.ingress.debug_last_agent_input_packet().is_none(),
+            "mismatch must stop before PH1.LANG/PH1.X runtime entry"
+        );
+    }
+
+    #[test]
+    fn h417_voice_like_low_confidence_committed_transcript_clarifies_before_runtime() {
+        let runtime = AdapterRuntime::default();
+        let mut req = base_request();
+        mark_request_as_live_desktop_capture_for_h417_tests(&mut req);
+        req.correlation_id = 417_102;
+        req.turn_id = 417_102;
+        req.user_text_final = Some("What time is it in Tokyo?".to_string());
+        if let Some(capture) = req.audio_capture_ref.as_mut() {
+            capture.locale_tag = Some("en-US".to_string());
+            capture.vad_confidence_bp = Some(7_000);
+            capture.acoustic_confidence_bp = Some(7_000);
+            capture.speech_likeness_bp = Some(7_000);
+        }
+
+        let out = runtime
+            .run_voice_turn(req)
+            .expect("voice-like low confidence turn should complete");
+        assert_eq!(out.status, "ok");
+        assert_eq!(out.outcome, "CLARIFY");
+        assert_eq!(
+            out.reason_code,
+            ph1c_reason_codes::STT_FAIL_LOW_CONFIDENCE.0.to_string()
+        );
+        assert!(!out.response_text.contains("Tokyo"));
+        assert!(
+            runtime.ingress.debug_last_agent_input_packet().is_none(),
+            "low-confidence transcript must stop before PH1.LANG/PH1.X runtime entry"
+        );
+    }
+
+    #[test]
+    fn h417_voice_like_valid_chinese_transcript_preserves_h416_language_packet() {
+        let runtime = AdapterRuntime::default();
+        let mut req = base_request();
+        mark_request_as_live_desktop_capture_for_h417_tests(&mut req);
+        req.correlation_id = 417_103;
+        req.turn_id = 417_103;
+        req.user_text_final = Some("现在东京几点？".to_string());
+        if let Some(capture) = req.audio_capture_ref.as_mut() {
+            capture.locale_tag = Some("zh-CN".to_string());
+        }
+
+        let out = runtime
+            .run_voice_turn(req)
+            .expect("voice-like valid Chinese turn should complete");
+        assert_eq!(out.status, "ok");
+        assert_eq!(out.outcome, "FINAL_TOOL");
+        assert!(out.response_text.contains("东京现在是"));
         let packet = runtime
             .ingress
             .debug_last_agent_input_packet()
-            .expect("agent packet should be captured");
+            .expect("valid transcript should reach PH1.X");
         let language = packet
             .language_packet
             .as_ref()
-            .expect("language packet should exist");
+            .expect("canonical language packet should be forwarded");
+        assert_eq!(language.input_language_primary, "zh");
+        assert_eq!(language.output_language_selected, "zh");
+    }
+
+    #[test]
+    fn h417b_openai_default_english_locale_with_chinese_transcript_routes_chinese() {
+        let runtime = AdapterRuntime::default();
+        let mut req = base_request();
+        mark_request_as_live_desktop_capture_for_h417_tests(&mut req);
+        req.correlation_id = 417_204;
+        req.turn_id = 417_204;
+        req.user_text_final = Some("现在东京几点，请告诉我现在东京几点。".to_string());
+        if let Some(capture) = req.audio_capture_ref.as_mut() {
+            capture.locale_tag = Some("en-US".to_string());
+            capture.t_start_ns = 1;
+            capture.t_end_ns = 15_000_000_000;
+            capture.t_candidate_start_ns = 14_680_000_000;
+            capture.t_confirmed_ns = 15_000_000_000;
+            capture.acoustic_confidence_bp = Some(9_000);
+            capture.vad_confidence_bp = Some(9_000);
+            capture.speech_likeness_bp = Some(9_000);
+        }
+
+        let out = runtime
+            .run_voice_turn(req)
+            .expect("OpenAI voice with default English locale and Chinese text should complete");
+        assert_eq!(out.status, "ok");
+        assert_eq!(
+            out.outcome, "FINAL_TOOL",
+            "reason={} response={}",
+            out.reason_code, out.response_text
+        );
+        assert!(
+            out.response_text.contains("东京现在是"),
+            "valid Chinese transcript must not be rejected only because Desktop kept a default English locale: {}",
+            out.response_text
+        );
+        let packet = runtime
+            .ingress
+            .debug_last_agent_input_packet()
+            .expect("valid Chinese transcript should reach PH1.X");
+        let language = packet
+            .language_packet
+            .as_ref()
+            .expect("canonical language packet should be forwarded");
+        assert_eq!(language.input_language_primary, "zh");
+        assert_eq!(language.output_language_selected, "zh");
+    }
+
+    #[test]
+    fn h417_voice_like_valid_english_transcript_passes_ph1c_before_runtime() {
+        let runtime = AdapterRuntime::default();
+        let mut req = base_request();
+        mark_request_as_live_desktop_capture_for_h417_tests(&mut req);
+        req.correlation_id = 417_105;
+        req.turn_id = 417_105;
+        req.user_text_final = Some("What time is it in Tokyo".to_string());
+        if let Some(capture) = req.audio_capture_ref.as_mut() {
+            capture.locale_tag = Some("en-US".to_string());
+            capture.t_start_ns = 1;
+            capture.t_end_ns = 6_000_000_000;
+            capture.t_candidate_start_ns = 5_680_000_000;
+            capture.t_confirmed_ns = 6_000_000_000;
+            capture.acoustic_confidence_bp = Some(8_500);
+            capture.vad_confidence_bp = Some(8_800);
+            capture.speech_likeness_bp = Some(8_700);
+        }
+
+        let out = runtime
+            .run_voice_turn(req)
+            .expect("voice-like valid English turn should complete");
+        assert_eq!(out.status, "ok");
+        assert_eq!(out.outcome, "FINAL_TOOL");
+        assert!(out.response_text.contains("Tokyo"));
+        assert_ne!(
+            out.reason_code,
+            ph1c_reason_codes::STT_FAIL_LOW_CONFIDENCE.0.to_string()
+        );
+        let packet = runtime
+            .ingress
+            .debug_last_agent_input_packet()
+            .expect("valid English transcript should reach PH1.X");
+        let language = packet
+            .language_packet
+            .as_ref()
+            .expect("canonical language packet should be forwarded");
         assert_eq!(language.input_language_primary, "en");
         assert_eq!(language.output_language_selected, "en");
+    }
+
+    #[test]
+    fn h417b_openai_primary_provider_lane_metadata_reaches_language_packet() {
+        let runtime = AdapterRuntime::default();
+        let mut req = base_request();
+        mark_request_as_live_desktop_capture_for_h417_tests(&mut req);
+        req.correlation_id = 417_201;
+        req.turn_id = 417_201;
+        req.user_text_final = Some("What time is it in Tokyo?".to_string());
+        if let Some(capture) = req.audio_capture_ref.as_mut() {
+            capture.locale_tag = Some("en-US".to_string());
+            capture.acoustic_confidence_bp = Some(8_900);
+            capture.vad_confidence_bp = Some(9_000);
+            capture.speech_likeness_bp = Some(9_000);
+        }
+
+        let out = runtime
+            .run_voice_turn(req)
+            .expect("voice-like valid English turn should complete");
+        assert_eq!(out.status, "ok");
+        assert_eq!(out.outcome, "FINAL_TOOL");
+        let packet = runtime
+            .ingress
+            .debug_last_agent_input_packet()
+            .expect("valid transcript should reach PH1.X");
+        let language = packet
+            .language_packet
+            .as_ref()
+            .expect("canonical language packet should be forwarded");
         assert!(language
             .source
             .iter()
-            .any(|source| source == "runtime_classifier"));
+            .any(|source| source == ACTIVE_DESKTOP_STT_PROVIDER_SOURCE));
+        assert!(!language
+            .source
+            .iter()
+            .any(|source| source.to_ascii_lowercase().contains("apple")));
+    }
+
+    #[test]
+    fn h417b_wrong_language_mizeri_transcript_clarifies_before_runtime() {
+        let runtime = AdapterRuntime::default();
+        let mut req = base_request();
+        mark_request_as_live_desktop_capture_for_h417_tests(&mut req);
+        req.correlation_id = 417_202;
+        req.turn_id = 417_202;
+        req.user_text_final = Some("Nō mīzeri ngā Tokyo.".to_string());
+        if let Some(capture) = req.audio_capture_ref.as_mut() {
+            capture.locale_tag = Some("en-US".to_string());
+            capture.acoustic_confidence_bp = Some(9_000);
+            capture.vad_confidence_bp = Some(9_000);
+            capture.speech_likeness_bp = Some(9_000);
+        }
+
+        let out = runtime
+            .run_voice_turn(req)
+            .expect("voice-like wrong-language transcript should complete");
+        assert_eq!(out.status, "ok");
+        assert_eq!(out.outcome, "CLARIFY");
+        assert_eq!(
+            out.reason_code,
+            ph1c_reason_codes::STT_FAIL_LANGUAGE_MISMATCH.0.to_string()
+        );
+        assert!(out.response_text.contains("voice transcript"));
+        assert!(
+            runtime.ingress.debug_last_agent_input_packet().is_none(),
+            "wrong-language live transcript must stop before PH1.LANG/PH1.X runtime entry"
+        );
+    }
+
+    #[test]
+    fn h417b_kia_transcript_clarifies_before_runtime() {
+        let runtime = AdapterRuntime::default();
+        let mut req = base_request();
+        mark_request_as_live_desktop_capture_for_h417_tests(&mut req);
+        req.correlation_id = 417_203;
+        req.turn_id = 417_203;
+        req.user_text_final = Some("Kia.".to_string());
+        if let Some(capture) = req.audio_capture_ref.as_mut() {
+            capture.locale_tag = Some("en-US".to_string());
+            capture.acoustic_confidence_bp = Some(9_000);
+            capture.vad_confidence_bp = Some(9_000);
+            capture.speech_likeness_bp = Some(9_000);
+        }
+
+        let out = runtime
+            .run_voice_turn(req)
+            .expect("voice-like short unsafe transcript should complete");
+        assert_eq!(out.status, "ok");
+        assert_eq!(out.outcome, "CLARIFY");
+        assert_eq!(
+            out.reason_code,
+            ph1c_reason_codes::STT_FAIL_LOW_CONFIDENCE.0.to_string()
+        );
+        assert!(
+            runtime.ingress.debug_last_agent_input_packet().is_none(),
+            "short unsafe transcript must stop before PH1.LANG/PH1.X runtime entry"
+        );
+    }
+
+    #[test]
+    fn h417_voice_like_protected_committed_transcript_still_fails_closed() {
+        let runtime = AdapterRuntime::default();
+        let mut req = base_request();
+        mark_request_as_live_desktop_capture_for_h417_tests(&mut req);
+        req.correlation_id = 417_104;
+        req.turn_id = 417_104;
+        req.user_text_final = Some("Approve payroll for Tim.".to_string());
+        if let Some(capture) = req.audio_capture_ref.as_mut() {
+            capture.locale_tag = Some("en-US".to_string());
+        }
+
+        let out = runtime
+            .run_voice_turn(req)
+            .expect("voice-like protected turn should complete");
+        assert_eq!(out.status, "ok");
+        assert!(out
+            .response_text
+            .contains("NO_SIMULATION_NO_AUTHORITY_NO_PROTECTED_EXECUTION"));
+        assert!(out.reason_code.contains("PROTECTED"));
     }
 
     #[test]
