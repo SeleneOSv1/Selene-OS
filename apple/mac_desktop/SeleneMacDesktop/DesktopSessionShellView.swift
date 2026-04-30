@@ -2058,7 +2058,7 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
             try audioEngine.start()
             isListening = true
             desktopAppendRuntimeBridgeDebugLog(
-                "openai realtime transcription start stt_provider_id=\(DesktopVoiceProviderLane.sttProviderID) flag=\(DesktopRealtimeTranscriptionFeatureFlag.name) model=\(session.transcriptionModel) request=\(session.requestID)"
+                "openai realtime transcription start stt_provider_id=\(DesktopVoiceProviderLane.sttProviderID) flag=\(DesktopRealtimeTranscriptionFeatureFlag.name) model=\(session.transcriptionModel) language_hint_policy=\(session.languageHintPolicy) request=\(session.requestID)"
             )
             scheduleRealtimeMaxSessionDuration(session.maxSessionDurationMS)
         } catch {
@@ -7677,7 +7677,7 @@ struct DesktopSessionShellView: View {
                         featureFlagEnabled: true
                     )
                 desktopAppendRuntimeBridgeDebugLog(
-                    "desktop realtime transcription token mint ok request=\(session.requestID) endpoint=\(session.endpoint) model=\(session.transcriptionModel)"
+                    "desktop realtime transcription token mint ok request=\(session.requestID) endpoint=\(session.endpoint) model=\(session.transcriptionModel) language_hint_policy=\(session.languageHintPolicy)"
                 )
                 guard desktopRealtimeTranscriptionStartGeneration == startGeneration,
                       desktopRealtimeTranscriptionStartInFlight else {

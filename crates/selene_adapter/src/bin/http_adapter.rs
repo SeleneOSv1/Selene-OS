@@ -21,8 +21,7 @@ use selene_adapter::{
     app_ui_assets, build_runtime_execution_envelope_for_voice_turn_request, AdapterHealthResponse,
     AdapterRuntime, AdapterSyncHealth, InviteLinkOpenAdapterRequest, InviteLinkOpenAdapterResponse,
     OnboardingContinueAdapterRequest, OnboardingContinueAdapterResponse,
-    PublicBrainTraceReportResponse,
-    SessionAttachAdapterRequest, SessionAttachAdapterResponse,
+    PublicBrainTraceReportResponse, SessionAttachAdapterRequest, SessionAttachAdapterResponse,
     SessionPostureEvidenceAdapterRequest, SessionPostureEvidenceAdapterResponse,
     SessionRecentListAdapterRequest, SessionRecentListAdapterResponse,
     SessionRecoverAdapterRequest, SessionRecoverAdapterResponse, SessionResumeAdapterRequest,
@@ -80,6 +79,7 @@ struct DesktopRealtimeTranscriptionSessionResponse {
     expires_at: Option<u64>,
     websocket_url: String,
     transcription_model: String,
+    language_hint_policy: String,
     input_audio_format: String,
     max_session_duration_ms: u64,
     max_silence_duration_ms: u64,
@@ -818,6 +818,8 @@ async fn run_desktop_realtime_transcription_session(
                 expires_at: minted.expires_at,
                 websocket_url,
                 transcription_model: model,
+                language_hint_policy: OPENAI_REALTIME_TRANSCRIPTION_LANGUAGE_HINT_POLICY
+                    .to_string(),
                 input_audio_format: "pcm16_24000_mono".to_string(),
                 max_session_duration_ms,
                 max_silence_duration_ms,
@@ -1737,6 +1739,13 @@ fn bounded_realtime_transcription_model(value: Option<&str>) -> String {
     }
 }
 
+const OPENAI_REALTIME_TRANSCRIPTION_LANGUAGE_HINT_POLICY: &str =
+    "provider_auto_detect_neutral_prompt";
+
+fn openai_realtime_transcription_prompt() -> &'static str {
+    "Transcribe exactly in the speaker's language. Auto-detect Chinese, English, and mixed Chinese/English. Preserve code-switching. Do not translate."
+}
+
 fn openai_api_key_for_realtime_transcription() -> Result<String, String> {
     env::var("OPENAI_API_KEY")
         .ok()
@@ -1774,7 +1783,7 @@ fn mint_openai_realtime_transcription_session(
         "input_audio_format": "pcm16",
         "input_audio_transcription": {
             "model": model,
-            "prompt": ""
+            "prompt": openai_realtime_transcription_prompt()
         },
         "turn_detection": {
             "type": "server_vad",
@@ -2096,6 +2105,7 @@ fn desktop_realtime_transcription_security_reject_response(reject: SecurityRejec
         expires_at: None,
         websocket_url: String::new(),
         transcription_model: "gpt-4o-transcribe".to_string(),
+        language_hint_policy: OPENAI_REALTIME_TRANSCRIPTION_LANGUAGE_HINT_POLICY.to_string(),
         input_audio_format: "pcm16_24000_mono".to_string(),
         max_session_duration_ms: 0,
         max_silence_duration_ms: 0,
@@ -2117,6 +2127,7 @@ fn desktop_realtime_transcription_error_response(status: StatusCode, reason: &st
             expires_at: None,
             websocket_url: String::new(),
             transcription_model: "gpt-4o-transcribe".to_string(),
+            language_hint_policy: OPENAI_REALTIME_TRANSCRIPTION_LANGUAGE_HINT_POLICY.to_string(),
             input_audio_format: "pcm16_24000_mono".to_string(),
             max_session_duration_ms: 0,
             max_silence_duration_ms: 0,
@@ -3678,6 +3689,19 @@ mod tests {
         }
     }
 
+    #[test]
+    fn h418_openai_realtime_transcription_prompt_uses_neutral_auto_detect_policy() {
+        assert_eq!(
+            OPENAI_REALTIME_TRANSCRIPTION_LANGUAGE_HINT_POLICY,
+            "provider_auto_detect_neutral_prompt"
+        );
+        let prompt = openai_realtime_transcription_prompt();
+        assert!(prompt.contains("Auto-detect Chinese, English, and mixed Chinese/English"));
+        assert!(prompt.contains("Preserve code-switching"));
+        assert!(prompt.contains("Do not translate"));
+        assert!(!prompt.contains("English only"));
+    }
+
     #[tokio::test]
     async fn ingress_realtime_transcription_session_without_bearer_returns_401() {
         let state = test_state_with_config(IngressSecurityConfig::from_env());
@@ -3887,6 +3911,10 @@ mod tests {
         );
         assert_eq!(body.expires_at, Some(1770000000));
         assert_eq!(body.transcription_model, "gpt-4o-transcribe");
+        assert_eq!(
+            body.language_hint_policy,
+            OPENAI_REALTIME_TRANSCRIPTION_LANGUAGE_HINT_POLICY
+        );
         assert_eq!(body.input_audio_format, "pcm16_24000_mono");
         let serialized = serde_json::to_string(&body).expect("response should serialize");
         assert!(!serialized.contains(permanent_key));
@@ -3898,6 +3926,9 @@ mod tests {
         assert!(request_text.contains("POST /v1/realtime/transcription_sessions"));
         assert!(request_text.contains("\"input_audio_format\":\"pcm16\""));
         assert!(request_text.contains("\"model\":\"gpt-4o-transcribe\""));
+        assert!(request_text.contains("Auto-detect Chinese, English, and mixed Chinese/English"));
+        assert!(request_text.contains("Preserve code-switching"));
+        assert!(request_text.contains("Do not translate"));
         assert!(request_text.contains("\"input_audio_noise_reduction\":{\"type\":\"near_field\"}"));
         assert!(!request_text.contains("\"language\""));
         mock.join.join().expect("mock provider thread should join");

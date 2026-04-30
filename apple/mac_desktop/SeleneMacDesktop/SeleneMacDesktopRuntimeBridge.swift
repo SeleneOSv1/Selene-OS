@@ -45,6 +45,7 @@ struct DesktopRealtimeTranscriptionSessionState: Equatable {
     let expiresAt: UInt64?
     let websocketURL: String
     let transcriptionModel: String
+    let languageHintPolicy: String
     let inputAudioFormat: String
     let maxSessionDurationMS: UInt64
     let maxSilenceDurationMS: UInt64
@@ -4195,6 +4196,7 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
         let expiresAt: UInt64?
         let websocketURL: String
         let transcriptionModel: String
+        let languageHintPolicy: String
         let inputAudioFormat: String
         let maxSessionDurationMS: UInt64
         let maxSilenceDurationMS: UInt64
@@ -4209,6 +4211,7 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
             case expiresAt = "expires_at"
             case websocketURL = "websocket_url"
             case transcriptionModel = "transcription_model"
+            case languageHintPolicy = "language_hint_policy"
             case inputAudioFormat = "input_audio_format"
             case maxSessionDurationMS = "max_session_duration_ms"
             case maxSilenceDurationMS = "max_silence_duration_ms"
@@ -5162,6 +5165,7 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
             expiresAt: payloadResponse.expiresAt,
             websocketURL: payloadResponse.websocketURL,
             transcriptionModel: payloadResponse.transcriptionModel,
+            languageHintPolicy: payloadResponse.languageHintPolicy,
             inputAudioFormat: payloadResponse.inputAudioFormat,
             maxSessionDurationMS: payloadResponse.maxSessionDurationMS,
             maxSilenceDurationMS: payloadResponse.maxSilenceDurationMS,

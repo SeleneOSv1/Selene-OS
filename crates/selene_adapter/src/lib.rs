@@ -15386,8 +15386,7 @@ fn h410_source_summary(
 
 fn h410_public_ceo_safe_degrade(answer: &str) -> bool {
     let lower = answer.to_ascii_lowercase();
-    lower.contains("couldn't verify")
-        && lower.contains("publicly listed ceo")
+    lower.contains("couldn't verify") && lower.contains("publicly listed ceo")
 }
 
 fn h414_public_direct_leadership_answer(answer: &str) -> bool {
@@ -15405,9 +15404,7 @@ fn h414_source_accepted_for_public_leadership(
         || title.contains("leadership")
 }
 
-fn h410_source_rejected_for_public_ceo(
-    source: &selene_kernel_contracts::ph1e::SourceRef,
-) -> bool {
+fn h410_source_rejected_for_public_ceo(source: &selene_kernel_contracts::ph1e::SourceRef) -> bool {
     let title = source.title.to_ascii_lowercase();
     let url = source.url.to_ascii_lowercase();
     title.contains("low_trust")
@@ -17977,7 +17974,9 @@ fn committed_voice_bounded_audio_segment_from_capture(
     } else {
         candidate
     };
-    let candidate_start = candidate.max(coverage_start).min(confirmed.saturating_sub(1));
+    let candidate_start = candidate
+        .max(coverage_start)
+        .min(confirmed.saturating_sub(1));
     BoundedAudioSegmentRef::v1(
         AudioStreamId(capture.stream_id),
         PreRollBufferId(capture.pre_roll_buffer_id),
@@ -18023,6 +18022,12 @@ fn committed_voice_unsafe_transcript_reason(
             Ph1cRetryAdvice::Repeat,
         ));
     }
+    if committed_voice_unclear_short_latin_fragment(trimmed) {
+        return Some((
+            ph1c_reason_codes::STT_FAIL_LOW_SEMANTIC_CONFIDENCE,
+            Ph1cRetryAdvice::Repeat,
+        ));
+    }
     None
 }
 
@@ -18044,17 +18049,98 @@ fn committed_voice_single_short_unsafe_token(transcript_text: &str) -> bool {
     token.chars().filter(|ch| ch.is_ascii_alphabetic()).count() <= 4
 }
 
+fn committed_voice_unclear_short_latin_fragment(transcript_text: &str) -> bool {
+    if transcript_text.chars().any(is_cjk_char_for_build1c)
+        || transcript_text
+            .chars()
+            .any(|ch| ch.is_alphabetic() && !ch.is_ascii())
+    {
+        return false;
+    }
+    let lower = transcript_text.to_ascii_lowercase();
+    let words: Vec<&str> = lower
+        .split(|ch: char| !ch.is_ascii_alphabetic() && ch != '\'')
+        .filter(|word| !word.is_empty())
+        .collect();
+    if !(2..=6).contains(&words.len()) {
+        return false;
+    }
+    if committed_voice_has_actionable_latin_intent(&lower)
+        || committed_voice_has_protected_latin_action(&lower)
+    {
+        return false;
+    }
+    words.iter().any(|word| {
+        matches!(
+            *word,
+            "no" | "nah"
+                | "nope"
+                | "maybe"
+                | "perhaps"
+                | "since"
+                | "thing"
+                | "stuff"
+                | "something"
+                | "anything"
+                | "misery"
+                | "miseri"
+                | "mizeri"
+        )
+    })
+}
+
+fn committed_voice_has_actionable_latin_intent(lower: &str) -> bool {
+    [
+        "what",
+        "what's",
+        "where",
+        "when",
+        "who",
+        "how",
+        "why",
+        "can",
+        "could",
+        "would",
+        "should",
+        "tell",
+        "explain",
+        "search",
+        "find",
+        "look",
+        "show",
+        "give",
+        "translate",
+        "answer",
+        "use",
+        "time",
+        "weather",
+        "temperature",
+        "forecast",
+        "joke",
+        "mean",
+        "means",
+    ]
+    .iter()
+    .any(|needle| {
+        lower.split_whitespace().any(|word| {
+            word.trim_matches(|ch: char| !ch.is_ascii_alphabetic() && ch != '\'') == *needle
+        })
+    })
+}
+
+fn committed_voice_has_protected_latin_action(lower: &str) -> bool {
+    [
+        "approve", "payroll", "salary", "leave", "access", "update", "delete", "transfer",
+    ]
+    .iter()
+    .any(|needle| lower.contains(needle))
+}
+
 fn committed_voice_unsupported_latin_language(
     transcript_text: &str,
     capture: &VoiceTurnAudioCaptureRef,
 ) -> bool {
     if transcript_text.chars().any(is_cjk_char_for_build1c) {
-        return false;
-    }
-    let has_non_ascii_latin_alpha = transcript_text
-        .chars()
-        .any(|ch| ch.is_alphabetic() && !ch.is_ascii() && !is_cjk_char_for_build1c(ch));
-    if !has_non_ascii_latin_alpha {
         return false;
     }
     let locale = capture
@@ -18063,6 +18149,20 @@ fn committed_voice_unsupported_latin_language(
         .unwrap_or_default()
         .trim()
         .to_ascii_lowercase();
+    let lower = transcript_text.to_ascii_lowercase();
+    if locale.starts_with("zh")
+        && transcript_text.chars().any(|ch| ch.is_ascii_alphabetic())
+        && !committed_voice_has_actionable_latin_intent(&lower)
+        && !committed_voice_has_protected_latin_action(&lower)
+    {
+        return true;
+    }
+    let has_non_ascii_latin_alpha = transcript_text
+        .chars()
+        .any(|ch| ch.is_alphabetic() && !ch.is_ascii() && !is_cjk_char_for_build1c(ch));
+    if !has_non_ascii_latin_alpha {
+        return false;
+    }
     locale.is_empty() || locale.starts_with("en") || locale.starts_with("zh")
 }
 
@@ -31580,6 +31680,212 @@ mod tests {
     }
 
     #[test]
+    fn h418_wrong_language_ascii_nonsense_transcript_clarifies_before_runtime() {
+        let runtime = AdapterRuntime::default();
+        let mut req = base_request();
+        mark_request_as_live_desktop_capture_for_h417_tests(&mut req);
+        req.correlation_id = 418_101;
+        req.turn_id = 418_101;
+        req.user_text_final = Some("No misery Tokyo.".to_string());
+        if let Some(capture) = req.audio_capture_ref.as_mut() {
+            capture.locale_tag = Some("en-US".to_string());
+            capture.acoustic_confidence_bp = Some(9_000);
+            capture.vad_confidence_bp = Some(9_000);
+            capture.speech_likeness_bp = Some(9_000);
+        }
+
+        let out = runtime
+            .run_voice_turn(req)
+            .expect("voice-like wrong-language transcript should complete");
+        assert_eq!(out.status, "ok");
+        assert_eq!(out.outcome, "CLARIFY");
+        assert_eq!(
+            out.reason_code,
+            ph1c_reason_codes::STT_FAIL_LOW_SEMANTIC_CONFIDENCE
+                .0
+                .to_string()
+        );
+        assert!(
+            runtime.ingress.debug_last_agent_input_packet().is_none(),
+            "wrong-language/nonsense live transcript must stop before PH1.LANG/PH1.X runtime entry"
+        );
+    }
+
+    #[test]
+    fn h418_unclear_broken_english_voice_fragment_clarifies_before_runtime() {
+        let runtime = AdapterRuntime::default();
+        let mut req = base_request();
+        mark_request_as_live_desktop_capture_for_h417_tests(&mut req);
+        req.correlation_id = 418_102;
+        req.turn_id = 418_102;
+        req.user_text_final = Some("Tokyo now maybe.".to_string());
+        if let Some(capture) = req.audio_capture_ref.as_mut() {
+            capture.locale_tag = Some("en-US".to_string());
+            capture.acoustic_confidence_bp = Some(9_000);
+            capture.vad_confidence_bp = Some(9_000);
+            capture.speech_likeness_bp = Some(9_000);
+        }
+
+        let out = runtime
+            .run_voice_turn(req)
+            .expect("voice-like unclear broken English transcript should complete");
+        assert_eq!(out.status, "ok");
+        assert_eq!(out.outcome, "CLARIFY");
+        assert_eq!(
+            out.reason_code,
+            ph1c_reason_codes::STT_FAIL_LOW_SEMANTIC_CONFIDENCE
+                .0
+                .to_string()
+        );
+        assert!(runtime.ingress.debug_last_agent_input_packet().is_none());
+    }
+
+    #[test]
+    fn h418_broken_english_clear_intent_voice_transcript_answers_english() {
+        let runtime = AdapterRuntime::default();
+        let mut req = base_request();
+        mark_request_as_live_desktop_capture_for_h417_tests(&mut req);
+        req.correlation_id = 418_103;
+        req.turn_id = 418_103;
+        req.user_text_final = Some("Tokyo time now please.".to_string());
+        if let Some(capture) = req.audio_capture_ref.as_mut() {
+            capture.locale_tag = Some("en-US".to_string());
+            capture.acoustic_confidence_bp = Some(9_000);
+            capture.vad_confidence_bp = Some(9_000);
+            capture.speech_likeness_bp = Some(9_000);
+        }
+
+        let out = runtime
+            .run_voice_turn(req)
+            .expect("voice-like clear broken English turn should complete");
+        assert_eq!(out.status, "ok");
+        assert_eq!(out.outcome, "FINAL_TOOL", "{}", out.response_text);
+        assert!(out.response_text.contains("Tokyo"), "{}", out.response_text);
+        let packet = runtime
+            .ingress
+            .debug_last_agent_input_packet()
+            .expect("clear transcript should reach PH1.X");
+        let language = packet
+            .language_packet
+            .as_ref()
+            .expect("canonical language packet should be forwarded");
+        assert_eq!(language.input_language_primary, "en");
+        assert_eq!(language.output_language_selected, "en");
+    }
+
+    #[test]
+    fn h418_chinese_accented_valid_english_voice_transcript_answers_english() {
+        let runtime = AdapterRuntime::default();
+        let mut req = base_request();
+        mark_request_as_live_desktop_capture_for_h417_tests(&mut req);
+        req.correlation_id = 418_104;
+        req.turn_id = 418_104;
+        req.user_text_final = Some("What time is it in Tokyo?".to_string());
+        if let Some(capture) = req.audio_capture_ref.as_mut() {
+            capture.locale_tag = Some("en-US".to_string());
+            capture.acoustic_confidence_bp = Some(8_700);
+            capture.vad_confidence_bp = Some(8_700);
+            capture.speech_likeness_bp = Some(8_700);
+        }
+
+        let out = runtime
+            .run_voice_turn(req)
+            .expect("voice-like valid accented English turn should complete");
+        assert_eq!(out.status, "ok");
+        assert_eq!(out.outcome, "FINAL_TOOL");
+        assert!(out.response_text.contains("Tokyo"), "{}", out.response_text);
+        let packet = runtime
+            .ingress
+            .debug_last_agent_input_packet()
+            .expect("valid English transcript should reach PH1.X");
+        let language = packet
+            .language_packet
+            .as_ref()
+            .expect("canonical language packet should be forwarded");
+        assert_eq!(language.output_language_selected, "en");
+    }
+
+    #[test]
+    fn h418_mixed_language_explicit_english_voice_transcript_preserves_phrase() {
+        let runtime = AdapterRuntime::default();
+        let mut req = base_request();
+        mark_request_as_live_desktop_capture_for_h417_tests(&mut req);
+        req.correlation_id = 418_105;
+        req.turn_id = 418_105;
+        req.user_text_final = Some("Can you explain 这个功能 in simple English?".to_string());
+        if let Some(capture) = req.audio_capture_ref.as_mut() {
+            capture.locale_tag = Some("en-US".to_string());
+            capture.acoustic_confidence_bp = Some(9_000);
+            capture.vad_confidence_bp = Some(9_000);
+            capture.speech_likeness_bp = Some(9_000);
+        }
+
+        let out = runtime
+            .run_voice_turn(req)
+            .expect("voice-like mixed language turn should complete");
+        assert_eq!(out.status, "ok");
+        assert_eq!(out.outcome, "FINAL", "{}", out.response_text);
+        assert!(
+            out.response_text.contains("这个功能"),
+            "{}",
+            out.response_text
+        );
+        assert!(
+            out.response_text.contains("this function")
+                || out.response_text.contains("this feature"),
+            "{}",
+            out.response_text
+        );
+        let packet = runtime
+            .ingress
+            .debug_last_agent_input_packet()
+            .expect("mixed transcript should reach PH1.X");
+        let language = packet
+            .language_packet
+            .as_ref()
+            .expect("canonical language packet should be forwarded");
+        assert_eq!(language.output_language_selected, "en");
+        assert!(language.mixed_language_detected);
+    }
+
+    #[test]
+    fn h418_valid_chinese_voice_transcript_preserves_openai_provider_source() {
+        let runtime = AdapterRuntime::default();
+        let mut req = base_request();
+        mark_request_as_live_desktop_capture_for_h417_tests(&mut req);
+        req.correlation_id = 418_106;
+        req.turn_id = 418_106;
+        req.user_text_final = Some("现在东京几点？".to_string());
+        if let Some(capture) = req.audio_capture_ref.as_mut() {
+            capture.locale_tag = Some("en-US".to_string());
+            capture.acoustic_confidence_bp = Some(9_000);
+            capture.vad_confidence_bp = Some(9_000);
+            capture.speech_likeness_bp = Some(9_000);
+        }
+
+        let out = runtime
+            .run_voice_turn(req)
+            .expect("voice-like valid Chinese turn should complete");
+        assert_eq!(out.status, "ok");
+        assert_eq!(out.outcome, "FINAL_TOOL", "{}", out.response_text);
+        assert!(out.response_text.contains("东京现在是"));
+        let packet = runtime
+            .ingress
+            .debug_last_agent_input_packet()
+            .expect("valid Chinese transcript should reach PH1.X");
+        let language = packet
+            .language_packet
+            .as_ref()
+            .expect("canonical language packet should be forwarded");
+        assert_eq!(language.input_language_primary, "zh");
+        assert_eq!(language.output_language_selected, "zh");
+        assert!(language
+            .source
+            .iter()
+            .any(|source| source == ACTIVE_DESKTOP_STT_PROVIDER_SOURCE));
+    }
+
+    #[test]
     fn h417_voice_like_protected_committed_transcript_still_fails_closed() {
         let runtime = AdapterRuntime::default();
         let mut req = base_request();
@@ -34256,7 +34562,10 @@ mod tests {
         let requests = captured.lock().expect("captured request lock").clone();
         assert_eq!(requests.len(), 2, "{requests:?}");
         for request in requests {
-            assert!(request.contains("Vale") || request.contains("Lane"), "{request}");
+            assert!(
+                request.contains("Vale") || request.contains("Lane"),
+                "{request}"
+            );
             assert!(request.contains("CEO"), "{request}");
             assert!(!request.contains("Wine%20Australia"), "{request}");
             assert!(!request.contains("Wine+Australia"), "{request}");
@@ -35327,7 +35636,10 @@ mod tests {
         let requests = captured.lock().expect("captured request lock").clone();
         assert_eq!(requests.len(), 2, "{requests:?}");
         for request in requests {
-            assert!(request.contains("Vale") || request.contains("Lane"), "{request}");
+            assert!(
+                request.contains("Vale") || request.contains("Lane"),
+                "{request}"
+            );
             assert!(request.contains("CEO"), "{request}");
             assert!(!request.contains("Wine%20Australia"), "{request}");
             assert!(!request.contains("Wine+Australia"), "{request}");
@@ -35404,7 +35716,10 @@ mod tests {
         let requests = captured.lock().expect("captured request lock").clone();
         assert_eq!(requests.len(), 1, "{requests:?}");
         let request = requests.first().expect("one public search request");
-        assert!(request.contains("glowcap") || request.contains("glowcap+cellars"), "{request}");
+        assert!(
+            request.contains("glowcap") || request.contains("glowcap+cellars"),
+            "{request}"
+        );
         assert!(request.contains("CEO"), "{request}");
         assert!(!request.contains("Wine%20Australia"), "{request}");
         assert!(!request.contains("Wine+Australia"), "{request}");
@@ -35453,9 +35768,7 @@ mod tests {
                 assert!(simple.response_text.contains(
                     "Mira Solen listed as Managing Director / Head of Grape and Wine Production"
                 ));
-                assert!(simple
-                    .response_text
-                    .contains("Source: Aurora Vale Cellars"));
+                assert!(simple.response_text.contains("Source: Aurora Vale Cellars"));
                 assert!(!simple.response_text.contains("I found a web result"));
                 assert!(!simple.response_text.contains("Sources:\n1."));
                 assert!(!simple.response_text.contains("leadership-rankings.test"));
@@ -35474,9 +35787,7 @@ mod tests {
                 assert!(deep.response_text.contains(
                     "Mira Solen listed as Managing Director / Head of Grape and Wine Production"
                 ));
-                assert!(deep
-                    .response_text
-                    .contains("Source: Aurora Vale Cellars"));
+                assert!(deep.response_text.contains("Source: Aurora Vale Cellars"));
                 assert!(!deep.response_text.contains("I found a web result"));
                 assert!(!deep.response_text.contains("Deep Research Report"));
                 assert!(!deep.response_text.contains("Sources:\n1."));
