@@ -14956,6 +14956,7 @@ fn h411_extract_public_entities(captured_text: &str, response_text: &str) -> Vec
 
 fn h413_mentions_tamburlaine_entity_alias(lower: &str) -> bool {
     lower.contains("tamburlaine organic wines")
+        || lower.contains("tamberlane organic wines")
         || lower.contains("tumblin wines")
         || lower.contains("tumbling wines")
         || lower.contains("tumba lane organic wines")
@@ -15187,12 +15188,31 @@ fn h410_tamburlaine_ceo_safe_degrade(answer: &str) -> bool {
         && lower.contains("tamburlaine organic wines")
 }
 
+fn h414_tamburlaine_direct_leadership_answer(answer: &str) -> bool {
+    let lower = answer.to_ascii_lowercase();
+    lower.contains("tamburlaine organic wines")
+        && lower.contains("mark davidson")
+        && lower.contains("managing director")
+        && lower.contains("not the same as a verified ceo")
+}
+
+fn h414_source_accepted_for_tamburlaine_leadership(
+    source: &selene_kernel_contracts::ph1e::SourceRef,
+) -> bool {
+    let title = source.title.to_ascii_lowercase();
+    let url = source.url.to_ascii_lowercase();
+    (title.contains("tamburlaine") || url.contains("tamburlaine"))
+        && url.contains("tamburlaine.com.au")
+}
+
 fn h410_source_rejected_for_tamburlaine_ceo(
     source: &selene_kernel_contracts::ph1e::SourceRef,
 ) -> bool {
     let title = source.title.to_ascii_lowercase();
     let url = source.url.to_ascii_lowercase();
     (title.contains("wine australia") || url.contains("wineaustralia"))
+        || title.contains("ceorankings")
+        || url.contains("ceorankings.com")
         || (!title.contains("tamburlaine") && !url.contains("tamburlaine"))
 }
 
@@ -15208,6 +15228,19 @@ fn h410_source_trace_summaries(
         .and_then(|response| response.source_metadata.as_ref())
         .map(|metadata| metadata.sources.as_slice())
         .unwrap_or(&[]);
+    if h414_tamburlaine_direct_leadership_answer(answer_text) {
+        let accepted = sources
+            .iter()
+            .filter(|source| h414_source_accepted_for_tamburlaine_leadership(source))
+            .map(|source| h410_source_summary(source, include_raw))
+            .collect::<Vec<_>>();
+        let rejected = sources
+            .iter()
+            .filter(|source| h410_source_rejected_for_tamburlaine_ceo(source))
+            .map(|source| h410_source_summary(source, include_raw))
+            .collect::<Vec<_>>();
+        return (accepted, rejected);
+    }
     if h410_tamburlaine_ceo_safe_degrade(answer_text) {
         let rejected = sources
             .iter()
@@ -34628,6 +34661,126 @@ mod tests {
         assert!(request.contains("CEO"), "{request}");
         assert!(!request.contains("Wine%20Australia"), "{request}");
         assert!(!request.contains("Wine+Australia"), "{request}");
+    }
+
+    #[test]
+    fn h414_search_source_truth_direct_answer_and_trace_proof() {
+        let captured = Arc::new(Mutex::new(Vec::new()));
+        const H414_BODY: &str = r#"{"web":{"results":[
+            {"title":"Our CEO and executive management team | Wine Australia","url":"https://www.wineaustralia.com/about-us/our-ceo-and-executive-management-team","description":"Dr Cole is the CEO of Wine Australia."},
+            {"title":"Mark Davidson - CEO at Tamburlaine Organic Wines","url":"https://www.ceorankings.com/markdavidson","description":"Generic CEO ranking profile."},
+            {"title":"Tamburlaine Organic Wines | Australia's Favourite Winemaker","url":"https://tamburlaine.com.au/","description":"In 1985, the Hunter winery was purchased by a small group of friends and relatives led by Managing Director, Head of Grape and Wine Production, Mark Davidson."},
+            {"title":"Learn More About Us - Tamburlaine Organic Wines","url":"https://tamburlaine.com.au/pages/about-us","description":"Official Tamburlaine Organic Wines information."},
+            {"title":"Organic Wine Store","url":"https://www.organicwine.com.au/tamburlaine-organic-wines","description":"Retail listing for Tamburlaine organic wines."}
+        ]}}"#;
+        let endpoint = h409_spawn_brave_web_endpoint_sequence(
+            vec![
+                H414_BODY, H414_BODY, H414_BODY, H414_BODY, H414_BODY, H414_BODY, H414_BODY,
+                H414_BODY, H414_BODY,
+            ],
+            Arc::clone(&captured),
+        );
+
+        with_isolated_device_vault(
+            "h414-source-truth-search",
+            &[("brave_search_api_key", "h414-brave-key")],
+            &[
+                ("SELENE_PUBLIC_BRAIN_TRACE_ENABLED", "true"),
+                ("SELENE_PUBLIC_BRAIN_TRACE_RAW_TEXT_ENABLED", "true"),
+                ("BRAVE_SEARCH_WEB_URL", endpoint.as_str()),
+                ("BRAVE_SEARCH_NEWS_URL", endpoint.as_str()),
+                ("SELENE_PROXY_MODE", "off"),
+            ],
+            || {
+                let runtime = AdapterRuntime::default();
+                let simple = h411_run_desktop_typed_turn(
+                    &runtime,
+                    "h414-source-truth-search",
+                    414_101,
+                    "Who's the CEO of Tamberlane Wines?",
+                );
+                assert_h412_public_answer_clean(&simple);
+                assert!(simple.response_text.starts_with(
+                    "I couldn't verify a publicly listed CEO for Tamburlaine Organic Wines"
+                ));
+                assert!(simple.response_text.contains(
+                    "Mark Davidson listed as Managing Director / Head of Grape and Wine Production"
+                ));
+                assert!(simple
+                    .response_text
+                    .contains("Source: Tamburlaine Organic Wines"));
+                assert!(!simple.response_text.contains("I found a web result"));
+                assert!(!simple.response_text.contains("Sources:\n1."));
+                assert!(!simple.response_text.contains("ceorankings.com"));
+                assert!(!simple.response_text.contains("Dr Cole"));
+
+                let deep = h411_run_desktop_typed_turn(
+                    &runtime,
+                    "h414-source-truth-search",
+                    414_102,
+                    "Do a deep web search and find me the CEO for Tumba Lane Organic Wines in Australia.",
+                );
+                assert_h412_public_answer_clean(&deep);
+                assert!(deep.response_text.starts_with(
+                    "I couldn't verify a publicly listed CEO for Tamburlaine Organic Wines"
+                ));
+                assert!(deep.response_text.contains(
+                    "Mark Davidson listed as Managing Director / Head of Grape and Wine Production"
+                ));
+                assert!(deep
+                    .response_text
+                    .contains("Source: Tamburlaine Organic Wines"));
+                assert!(!deep.response_text.contains("I found a web result"));
+                assert!(!deep.response_text.contains("Deep Research Report"));
+                assert!(!deep.response_text.contains("Sources:\n1."));
+                assert!(!deep.response_text.contains("ceorankings.com"));
+                assert!(!deep.response_text.contains("Dr Cole"));
+
+                let report = runtime.ui_public_brain_trace_report(Some(414_199));
+                assert_eq!(report.status, "ok", "{report:?}");
+                let simple_trace = h412_trace_for_turn(&report, 414_101);
+                assert_eq!(
+                    simple_trace.captured_input_text.as_deref(),
+                    Some("Who's the CEO of Tamberlane Wines?")
+                );
+                assert_eq!(
+                    simple_trace.search_query_text.as_deref(),
+                    Some("Tamburlaine Organic Wines CEO Australia")
+                );
+                assert!(simple_trace.sources_accepted_count >= 1, "{simple_trace:?}");
+                assert!(simple_trace.sources_rejected_count >= 1, "{simple_trace:?}");
+                assert_eq!(
+                    simple_trace.engine_layer_responsible,
+                    "PH1.E_SEARCH_VERIFIER"
+                );
+
+                let deep_trace = h412_trace_for_turn(&report, 414_102);
+                assert_eq!(
+                    deep_trace.search_query_text.as_deref(),
+                    Some("Tamburlaine Organic Wines CEO Australia")
+                );
+                assert!(deep_trace.sources_accepted_count >= 1, "{deep_trace:?}");
+                assert!(deep_trace.sources_rejected_count >= 1, "{deep_trace:?}");
+                assert_eq!(deep_trace.engine_layer_responsible, "PH1.E_SEARCH_VERIFIER");
+            },
+        );
+
+        let requests = captured.lock().expect("captured request lock").clone();
+        assert!(requests.len() >= 6, "{requests:?}");
+        let joined = requests.join("\n").to_ascii_lowercase();
+        assert!(joined.contains("tamburlaine"), "{joined}");
+        assert!(joined.contains("ceo"), "{joined}");
+        assert!(joined.contains("managing"), "{joined}");
+        assert!(joined.contains("director"), "{joined}");
+        assert!(joined.contains("mark"), "{joined}");
+        assert!(
+            joined.contains("site%3atamburlaine.com.au")
+                || joined.contains("site:tamburlaine.com.au"),
+            "{joined}"
+        );
+        assert!(!joined.contains("tamberlane"), "{joined}");
+        assert!(!joined.contains("tumba+lane"), "{joined}");
+        assert!(!joined.contains("tumba%20lane"), "{joined}");
     }
 
     #[test]

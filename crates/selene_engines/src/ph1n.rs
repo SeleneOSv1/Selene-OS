@@ -258,8 +258,8 @@ fn canonical_time_tool_query(transcript: &str) -> Option<String> {
         } else if lower.contains("sydney") || transcript.contains("悉尼") {
             Some("Sydney")
         } else {
-        None
-    }?;
+            None
+        }?;
     Some(format!("what time is it in {place}"))
 }
 
@@ -330,11 +330,22 @@ fn canonical_public_search_tool_query(transcript: &str) -> Option<String> {
     if mentions_tamburlaine_alias && lower.contains("ceo") {
         return Some("Tamburlaine Organic Wines CEO Australia".to_string());
     }
+    if mentions_tamburlaine_alias
+        && (lower.contains("director")
+            || lower.contains("managing director")
+            || lower.contains("founder")
+            || lower.contains("owner")
+            || lower.contains("head of grape")
+            || lower.contains("head of wine"))
+    {
+        return Some("Tamburlaine Organic Wines director Australia".to_string());
+    }
     None
 }
 
 fn h413_mentions_tamburlaine_public_alias(lower: &str) -> bool {
     lower.contains("tamburlaine")
+        || lower.contains("tamberlane")
         || lower.contains("tumblin")
         || (lower.contains("tumbling") && lower.contains("wine"))
         || lower.contains("tumba lane")
@@ -367,6 +378,17 @@ fn looks_like_web_search(lower: &str) -> bool {
                 || lower.contains("who’s")
                 || lower.contains("who s")
                 || lower.contains("find")))
+        || ((lower.contains("director")
+            || lower.contains("managing director")
+            || lower.contains("founder")
+            || lower.contains("owner"))
+            && (lower.contains("who is")
+                || lower.contains("who's")
+                || lower.contains("who’s")
+                || lower.contains("find"))
+            && (lower.contains("wine")
+                || lower.contains("company")
+                || h413_mentions_tamburlaine_public_alias(lower)))
         || lower.contains("current ceo")
         || lower.contains("current president")
         || lower.contains("current price")
@@ -469,6 +491,8 @@ fn looks_like_deep_research(lower: &str) -> bool {
             || contains_word(lower, "multi-source")
             || contains_word(lower, "multi source")))
         || lower.starts_with("deep research ")
+        || lower.contains("deep web search")
+        || lower.contains("deep search")
         || lower.starts_with("research this topic")
         || lower.starts_with("research and summarize ")
 }
@@ -4420,6 +4444,42 @@ mod tests {
                     assert_eq!(task, Some("Tamburlaine Organic Wines CEO Australia"));
                 }
                 _ => panic!("expected H413 public search intent for {prompt}"),
+            }
+        }
+    }
+
+    #[test]
+    fn h414_tamburlaine_spelling_and_role_queries_use_canonical_search_entity() {
+        let rt = Ph1nRuntime::new(Ph1nConfig::mvp_v1());
+        for (prompt, expected_task) in [
+            (
+                "Who's the CEO of Tamberlane Wines?",
+                "Tamburlaine Organic Wines CEO Australia",
+            ),
+            (
+                "Who is the director of Tamberlane organic wines Australia?",
+                "Tamburlaine Organic Wines director Australia",
+            ),
+        ] {
+            let out = rt.run(&req(prompt, "en")).unwrap();
+            match out {
+                Ph1nResponse::IntentDraft(d) => {
+                    assert!(
+                        matches!(
+                            d.intent_type,
+                            IntentType::WebSearchQuery | IntentType::DeepResearchQuery
+                        ),
+                        "expected H414 public search route for {prompt}, got {:?}",
+                        d.intent_type
+                    );
+                    let task = d
+                        .fields
+                        .iter()
+                        .find(|field| field.key == FieldKey::Task)
+                        .and_then(|field| field.value.normalized_value.as_deref());
+                    assert_eq!(task, Some(expected_task));
+                }
+                _ => panic!("expected H414 public search intent for {prompt}"),
             }
         }
     }

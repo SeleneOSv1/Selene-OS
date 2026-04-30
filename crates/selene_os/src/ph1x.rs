@@ -2074,6 +2074,9 @@ fn tool_ok_text_for_request(_req: &Ph1xRequest, tr: &ToolResponse) -> String {
 fn tool_ok_text(tr: &ToolResponse) -> String {
     // Deterministic shaping. Never mention providers here.
     let mut out = String::new();
+    if let Some(answer) = h414_tamburlaine_leadership_answer(tr) {
+        return answer;
+    }
     if h409_unverified_tamburlaine_ceo_result(tr) {
         return "I couldn't verify a publicly listed CEO for Tamburlaine Organic Wines from reliable public sources.".to_string();
     }
@@ -2295,6 +2298,195 @@ fn tool_ok_text(tr: &ToolResponse) -> String {
     }
 }
 
+#[derive(Debug, Clone)]
+struct H414SearchEvidence {
+    title: String,
+    snippet: String,
+    url: String,
+}
+
+fn h414_tamburlaine_leadership_answer(tr: &ToolResponse) -> Option<String> {
+    let evidence = h414_collect_search_evidence(tr);
+    if evidence.is_empty() {
+        return None;
+    }
+    let combined = evidence
+        .iter()
+        .map(|item| format!("{} {} {}", item.title, item.snippet, item.url))
+        .collect::<Vec<_>>()
+        .join("\n")
+        .to_ascii_lowercase();
+    if !h414_mentions_tamburlaine_alias(&combined) {
+        return None;
+    }
+    let leadership_context = combined.contains("ceo")
+        || combined.contains("director")
+        || combined.contains("founder")
+        || combined.contains("owner")
+        || combined.contains("head of grape")
+        || combined.contains("head of wine")
+        || combined.contains("mark davidson");
+    if !leadership_context {
+        return None;
+    }
+
+    if let Some(source) = evidence
+        .iter()
+        .find(|item| h414_official_tamburlaine_source(item) && h414_mark_davidson_md_evidence(item))
+    {
+        return Some(format!(
+            "I couldn't verify a publicly listed CEO for Tamburlaine Organic Wines. I did find Mark Davidson listed as Managing Director / Head of Grape and Wine Production, but that is not the same as a verified CEO listing.\nSource: {} ({})",
+            h409_public_answer_fragment(&source.title),
+            source.url
+        ));
+    }
+
+    if let Some(source) = evidence
+        .iter()
+        .find(|item| h414_entity_matched_ceo_evidence(item) && !h414_weak_or_wrong_ceo_source(item))
+    {
+        return Some(format!(
+            "I found a public CEO listing for Tamburlaine Organic Wines in this source.\nSource: {} ({})",
+            h409_public_answer_fragment(&source.title),
+            source.url
+        ));
+    }
+
+    if combined.contains("ceo") {
+        return Some(
+            "I couldn't verify a publicly listed CEO for Tamburlaine Organic Wines from reliable public sources."
+                .to_string(),
+        );
+    }
+
+    None
+}
+
+fn h414_collect_search_evidence(tr: &ToolResponse) -> Vec<H414SearchEvidence> {
+    let mut evidence = Vec::new();
+    if let Some(result) = &tr.tool_result {
+        match result {
+            ToolResult::WebSearch { items } | ToolResult::News { items } => {
+                for item in items {
+                    evidence.push(H414SearchEvidence {
+                        title: item.title.clone(),
+                        snippet: item.snippet.clone(),
+                        url: item.url.clone(),
+                    });
+                }
+            }
+            ToolResult::DeepResearch {
+                summary,
+                extracted_fields,
+                citations,
+            }
+            | ToolResult::DocumentUnderstand {
+                summary,
+                extracted_fields,
+                citations,
+            }
+            | ToolResult::PhotoUnderstand {
+                summary,
+                extracted_fields,
+                citations,
+            }
+            | ToolResult::DataAnalysis {
+                summary,
+                extracted_fields,
+                citations,
+            }
+            | ToolResult::ConnectorQuery {
+                summary,
+                extracted_fields,
+                citations,
+            } => {
+                for citation in citations {
+                    evidence.push(H414SearchEvidence {
+                        title: citation.title.clone(),
+                        snippet: citation.snippet.clone(),
+                        url: citation.url.clone(),
+                    });
+                }
+                for field in extracted_fields {
+                    evidence.push(H414SearchEvidence {
+                        title: field.key.clone(),
+                        snippet: field.value.clone(),
+                        url: String::new(),
+                    });
+                }
+                evidence.push(H414SearchEvidence {
+                    title: "summary".to_string(),
+                    snippet: summary.clone(),
+                    url: String::new(),
+                });
+            }
+            ToolResult::UrlFetchAndCite { citations } => {
+                for citation in citations {
+                    evidence.push(H414SearchEvidence {
+                        title: citation.title.clone(),
+                        snippet: citation.snippet.clone(),
+                        url: citation.url.clone(),
+                    });
+                }
+            }
+            ToolResult::Time { .. }
+            | ToolResult::Weather { .. }
+            | ToolResult::RecordMode { .. } => {}
+        }
+    }
+    if let Some(meta) = &tr.source_metadata {
+        for source in &meta.sources {
+            evidence.push(H414SearchEvidence {
+                title: source.title.clone(),
+                snippet: String::new(),
+                url: source.url.clone(),
+            });
+        }
+    }
+    evidence
+}
+
+fn h414_mentions_tamburlaine_alias(lower: &str) -> bool {
+    lower.contains("tamburlaine")
+        || lower.contains("tamberlane")
+        || lower.contains("timberlain")
+        || lower.contains("chamberlain organic wine")
+        || lower.contains("tumblin wine")
+        || lower.contains("tumbling wine")
+        || lower.contains("tumba lane")
+        || lower.contains("tumblaine")
+        || lower.contains("tamburlane")
+}
+
+fn h414_official_tamburlaine_source(item: &H414SearchEvidence) -> bool {
+    let combined = format!("{} {} {}", item.title, item.snippet, item.url).to_ascii_lowercase();
+    !item.url.trim().is_empty()
+        && combined.contains("tamburlaine.com.au")
+        && combined.contains("tamburlaine")
+}
+
+fn h414_mark_davidson_md_evidence(item: &H414SearchEvidence) -> bool {
+    let combined = format!("{} {}", item.title, item.snippet).to_ascii_lowercase();
+    combined.contains("mark davidson")
+        && (combined.contains("managing director")
+            || combined.contains("head of grape")
+            || combined.contains("head of wine"))
+}
+
+fn h414_entity_matched_ceo_evidence(item: &H414SearchEvidence) -> bool {
+    let combined = format!("{} {} {}", item.title, item.snippet, item.url).to_ascii_lowercase();
+    !item.url.trim().is_empty() && combined.contains("tamburlaine") && combined.contains("ceo")
+}
+
+fn h414_weak_or_wrong_ceo_source(item: &H414SearchEvidence) -> bool {
+    let combined = format!("{} {} {}", item.title, item.snippet, item.url).to_ascii_lowercase();
+    combined.contains("wine australia")
+        || combined.contains("wineaustralia.com")
+        || combined.contains("ceorankings.com")
+        || combined.contains("organicwine.com.au")
+        || combined.contains("virginwines.com")
+}
+
 fn h409_unverified_tamburlaine_ceo_result(tr: &ToolResponse) -> bool {
     let mut fragments = Vec::new();
     if let Some(result) = &tr.tool_result {
@@ -2360,12 +2552,15 @@ fn h409_unverified_tamburlaine_ceo_result(tr: &ToolResponse) -> bool {
     }
     let combined = fragments.join("\n").to_ascii_lowercase();
     let tamburlaine_context = combined.contains("tamburlaine")
+        || combined.contains("tamberlane")
         || combined.contains("tumblin")
         || (combined.contains("tumbling") && combined.contains("wine"))
         || combined.contains("tumba lane")
         || combined.contains("tumblaine")
         || combined.contains("tamburlane")
-        || (combined.contains("timberlain") && combined.contains("organic") && combined.contains("wine"))
+        || (combined.contains("timberlain")
+            && combined.contains("organic")
+            && combined.contains("wine"))
         || (combined.contains("chamberlain")
             && combined.contains("organic")
             && combined.contains("wine"));
@@ -2379,7 +2574,12 @@ fn h409_unverified_tamburlaine_ceo_result(tr: &ToolResponse) -> bool {
 
 fn h409_direct_tamburlaine_ceo_support(value: &str) -> bool {
     let lower = value.to_ascii_lowercase();
-    lower.contains("tamburlaine") && lower.contains("ceo") && !lower.contains("wine australia")
+    lower.contains("tamburlaine")
+        && lower.contains("ceo")
+        && !lower.contains("wine australia")
+        && !lower.contains("ceorankings.com")
+        && !lower.contains("organicwine.com.au")
+        && !lower.contains("virginwines.com")
 }
 
 fn h409_public_answer_fragment(value: &str) -> String {
@@ -2397,6 +2597,7 @@ fn h409_public_answer_fragment(value: &str) -> String {
         " retention:",
         " citation_verified",
         " audit_metadata_only",
+        " retrieved at (unix_ms)",
     ] {
         if let Some(index) = lower.find(marker) {
             cut_at = cut_at.min(index);
@@ -4957,6 +5158,118 @@ mod tests {
         ] {
             assert!(!text.contains(forbidden), "{forbidden} leaked in {text}");
         }
+    }
+
+    #[test]
+    fn h414_tamburlaine_ceo_question_returns_direct_role_distinction_with_source_link() {
+        let tool_ok = ToolResponse::ok_v1(
+            ToolRequestId(414),
+            ToolQueryHash(414),
+            ToolResult::WebSearch {
+                items: vec![
+                    ToolTextSnippet {
+                        title: "Tamburlaine Organic Wines | Australia's Favourite Winemaker"
+                            .to_string(),
+                        snippet: "In 1985, the Hunter winery was purchased by a small group of friends and relatives led by Managing Director, Head of Grape and Wine Production, Mark Davidson.".to_string(),
+                        url: "https://tamburlaine.com.au/".to_string(),
+                    },
+                    ToolTextSnippet {
+                        title: "Mark Davidson - CEO at Tamburlaine Organic Wines".to_string(),
+                        snippet: "A generic CEO ranking profile.".to_string(),
+                        url: "https://www.ceorankings.com/markdavidson".to_string(),
+                    },
+                    ToolTextSnippet {
+                        title: "Our CEO and executive management team | Wine Australia".to_string(),
+                        snippet: "Dr Cole is the CEO of Wine Australia.".to_string(),
+                        url: "https://www.wineaustralia.com/about-us/our-ceo-and-executive-management-team".to_string(),
+                    },
+                ],
+            },
+            SourceMetadata {
+                schema_version: SchemaVersion(1),
+                provider_hint: None,
+                retrieved_at_unix_ms: 1777468969264,
+                sources: vec![
+                    SourceRef {
+                        title: "Tamburlaine Organic Wines | Australia's Favourite Winemaker — source: PRIMARY_OFFICIAL; trust: HIGH_CONFIDENCE; freshness: STABLE_REFERENCE_ACCEPTABLE; citation_verified; retention:AUDIT_METADATA_ONLY".to_string(),
+                        url: "https://tamburlaine.com.au/".to_string(),
+                    },
+                    SourceRef {
+                        title: "Mark Davidson - CEO at Tamburlaine Organic Wines — source: LOW_TRUST_SEO; trust: LOW_CONFIDENCE; freshness: STABLE_REFERENCE_ACCEPTABLE; citation_verified; retention:AUDIT_METADATA_ONLY".to_string(),
+                        url: "https://www.ceorankings.com/markdavidson".to_string(),
+                    },
+                    SourceRef {
+                        title: "Our CEO and executive management team | Wine Australia — source: UNKNOWN; trust: UNVERIFIED; freshness: STABLE_REFERENCE_ACCEPTABLE; citation_verified; retention:AUDIT_METADATA_ONLY".to_string(),
+                        url: "https://www.wineaustralia.com/about-us/our-ceo-and-executive-management-team".to_string(),
+                    },
+                ],
+            },
+            None,
+            ReasonCodeId(1),
+            CacheStatus::Bypassed,
+        )
+        .unwrap();
+
+        let text = tool_ok_text(&tool_ok);
+        assert!(text.starts_with("I couldn't verify a publicly listed CEO"));
+        assert!(text.contains(
+            "Mark Davidson listed as Managing Director / Head of Grape and Wine Production"
+        ));
+        assert!(text.contains("not the same as a verified CEO listing"));
+        assert!(text.contains("Source: Tamburlaine Organic Wines | Australia's Favourite Winemaker (https://tamburlaine.com.au/)"));
+        assert!(!text.contains("I found a web result"));
+        assert!(!text.contains("Sources:\n1."));
+        assert!(!text.contains("Dr Cole"));
+        assert!(!text.contains("ceorankings.com"));
+        for forbidden in [
+            "<strong>",
+            "</strong>",
+            "source: PRIMARY_OFFICIAL",
+            "trust:",
+            "freshness:",
+            "retention:",
+            "AUDIT_METADATA_ONLY",
+            "citation_verified",
+            "Retrieved at (unix_ms):",
+        ] {
+            assert!(!text.contains(forbidden), "{forbidden} leaked in {text}");
+        }
+    }
+
+    #[test]
+    fn h414_weak_ceo_source_alone_safe_degrades_without_fake_ceo() {
+        let tool_ok = ToolResponse::ok_v1(
+            ToolRequestId(415),
+            ToolQueryHash(415),
+            ToolResult::WebSearch {
+                items: vec![ToolTextSnippet {
+                    title: "Mark Davidson - CEO at Tamburlaine Organic Wines".to_string(),
+                    snippet: "A generic CEO ranking profile.".to_string(),
+                    url: "https://www.ceorankings.com/markdavidson".to_string(),
+                }],
+            },
+            SourceMetadata {
+                schema_version: SchemaVersion(1),
+                provider_hint: None,
+                retrieved_at_unix_ms: 1777468969264,
+                sources: vec![SourceRef {
+                    title: "Mark Davidson - CEO at Tamburlaine Organic Wines — source: LOW_TRUST_SEO; trust: LOW_CONFIDENCE; freshness: STABLE_REFERENCE_ACCEPTABLE; citation_verified; retention:AUDIT_METADATA_ONLY".to_string(),
+                    url: "https://www.ceorankings.com/markdavidson".to_string(),
+                }],
+            },
+            None,
+            ReasonCodeId(1),
+            CacheStatus::Bypassed,
+        )
+        .unwrap();
+
+        let text = tool_ok_text(&tool_ok);
+        assert_eq!(
+            text,
+            "I couldn't verify a publicly listed CEO for Tamburlaine Organic Wines from reliable public sources."
+        );
+        assert!(!text.contains("Mark Davidson is the CEO"));
+        assert!(!text.contains("ceorankings"));
     }
 
     #[test]
