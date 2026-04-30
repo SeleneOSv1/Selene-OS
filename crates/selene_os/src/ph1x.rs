@@ -2074,11 +2074,8 @@ fn tool_ok_text_for_request(_req: &Ph1xRequest, tr: &ToolResponse) -> String {
 fn tool_ok_text(tr: &ToolResponse) -> String {
     // Deterministic shaping. Never mention providers here.
     let mut out = String::new();
-    if let Some(answer) = h414_tamburlaine_leadership_answer(tr) {
+    if let Some(answer) = h414_public_leadership_answer(tr) {
         return answer;
-    }
-    if h409_unverified_tamburlaine_ceo_result(tr) {
-        return "I couldn't verify a publicly listed CEO for Tamburlaine Organic Wines from reliable public sources.".to_string();
     }
     if let Some(r) = &tr.tool_result {
         match r {
@@ -2305,7 +2302,7 @@ struct H414SearchEvidence {
     url: String,
 }
 
-fn h414_tamburlaine_leadership_answer(tr: &ToolResponse) -> Option<String> {
+fn h414_public_leadership_answer(tr: &ToolResponse) -> Option<String> {
     let evidence = h414_collect_search_evidence(tr);
     if evidence.is_empty() {
         return None;
@@ -2316,37 +2313,45 @@ fn h414_tamburlaine_leadership_answer(tr: &ToolResponse) -> Option<String> {
         .collect::<Vec<_>>()
         .join("\n")
         .to_ascii_lowercase();
-    if !h414_mentions_tamburlaine_alias(&combined) {
-        return None;
-    }
     let leadership_context = combined.contains("ceo")
         || combined.contains("director")
         || combined.contains("founder")
         || combined.contains("owner")
         || combined.contains("head of grape")
         || combined.contains("head of wine")
-        || combined.contains("mark davidson");
+        || combined.contains("leadership");
     if !leadership_context {
         return None;
     }
 
-    if let Some(source) = evidence
+    if let Some((source, role, person)) = evidence
         .iter()
-        .find(|item| h414_official_tamburlaine_source(item) && h414_mark_davidson_md_evidence(item))
+        .find_map(|item| {
+            let role = h414_verified_non_ceo_role(item)?;
+            let person = h414_extract_public_person_near_role(item).unwrap_or_else(|| {
+                "a public leadership profile".to_string()
+            });
+            Some((item, role, person))
+        })
     {
         return Some(format!(
-            "I couldn't verify a publicly listed CEO for Tamburlaine Organic Wines. I did find Mark Davidson listed as Managing Director / Head of Grape and Wine Production, but that is not the same as a verified CEO listing.\nSource: {} ({})",
+            "I couldn't verify a publicly listed CEO from reliable public sources. I did find {person} listed as {role}, but that is not the same as a verified CEO listing.\nSource: {} ({})",
             h409_public_answer_fragment(&source.title),
             source.url
         ));
     }
 
-    if let Some(source) = evidence
+    if let Some((source, person)) = evidence
         .iter()
-        .find(|item| h414_entity_matched_ceo_evidence(item) && !h414_weak_or_wrong_ceo_source(item))
+        .filter(|item| h414_verified_ceo_evidence(item))
+        .find_map(|item| {
+            let person = h414_extract_public_person_near_role(item)
+                .unwrap_or_else(|| "a public CEO listing".to_string());
+            Some((item, person))
+        })
     {
         return Some(format!(
-            "I found a public CEO listing for Tamburlaine Organic Wines in this source.\nSource: {} ({})",
+            "I found {person} listed as CEO in this source.\nSource: {} ({})",
             h409_public_answer_fragment(&source.title),
             source.url
         ));
@@ -2354,7 +2359,7 @@ fn h414_tamburlaine_leadership_answer(tr: &ToolResponse) -> Option<String> {
 
     if combined.contains("ceo") {
         return Some(
-            "I couldn't verify a publicly listed CEO for Tamburlaine Organic Wines from reliable public sources."
+            "I couldn't verify a publicly listed CEO from reliable public sources."
                 .to_string(),
         );
     }
@@ -2446,140 +2451,111 @@ fn h414_collect_search_evidence(tr: &ToolResponse) -> Vec<H414SearchEvidence> {
     evidence
 }
 
-fn h414_mentions_tamburlaine_alias(lower: &str) -> bool {
-    lower.contains("tamburlaine")
-        || lower.contains("tamberlane")
-        || lower.contains("timberlain")
-        || lower.contains("chamberlain organic wine")
-        || lower.contains("tumblin wine")
-        || lower.contains("tumbling wine")
-        || lower.contains("tumba lane")
-        || lower.contains("tumblaine")
-        || lower.contains("tamburlane")
+fn h414_verified_non_ceo_role(item: &H414SearchEvidence) -> Option<&'static str> {
+    let combined = format!("{} {}", item.title, item.snippet).to_ascii_lowercase();
+    if item.url.trim().is_empty() || h414_weak_or_wrong_ceo_source(item) {
+        return None;
+    }
+    if combined.contains("managing director")
+        && (combined.contains("head of grape") || combined.contains("head of wine"))
+    {
+        Some("Managing Director / Head of Grape and Wine Production")
+    } else if combined.contains("managing director") {
+        Some("Managing Director")
+    } else if combined.contains("director") {
+        Some("Director")
+    } else if combined.contains("founder") {
+        Some("Founder")
+    } else if combined.contains("owner") {
+        Some("Owner")
+    } else {
+        None
+    }
 }
 
-fn h414_official_tamburlaine_source(item: &H414SearchEvidence) -> bool {
+fn h414_verified_ceo_evidence(item: &H414SearchEvidence) -> bool {
     let combined = format!("{} {} {}", item.title, item.snippet, item.url).to_ascii_lowercase();
     !item.url.trim().is_empty()
-        && combined.contains("tamburlaine.com.au")
-        && combined.contains("tamburlaine")
-}
-
-fn h414_mark_davidson_md_evidence(item: &H414SearchEvidence) -> bool {
-    let combined = format!("{} {}", item.title, item.snippet).to_ascii_lowercase();
-    combined.contains("mark davidson")
-        && (combined.contains("managing director")
-            || combined.contains("head of grape")
-            || combined.contains("head of wine"))
-}
-
-fn h414_entity_matched_ceo_evidence(item: &H414SearchEvidence) -> bool {
-    let combined = format!("{} {} {}", item.title, item.snippet, item.url).to_ascii_lowercase();
-    !item.url.trim().is_empty() && combined.contains("tamburlaine") && combined.contains("ceo")
+        && combined.contains("ceo")
+        && !h414_weak_or_wrong_ceo_source(item)
+        && (combined.contains("source: primary_official")
+            || combined.contains("trust: high_confidence")
+            || combined.contains("official"))
+        && (combined.contains("listed as ceo")
+            || combined.contains("ceo at")
+            || combined.contains("chief executive officer"))
+        && (combined.contains("official")
+            || combined.contains("leadership")
+            || combined.contains("management")
+            || combined.contains("about us")
+            || combined.contains("company profile"))
 }
 
 fn h414_weak_or_wrong_ceo_source(item: &H414SearchEvidence) -> bool {
     let combined = format!("{} {} {}", item.title, item.snippet, item.url).to_ascii_lowercase();
-    combined.contains("wine australia")
-        || combined.contains("wineaustralia.com")
-        || combined.contains("ceorankings.com")
-        || combined.contains("organicwine.com.au")
-        || combined.contains("virginwines.com")
+    combined.contains("ranking")
+        || combined.contains("rankings")
+        || combined.contains("top ceo")
+        || combined.contains("seo")
+        || combined.contains("directory")
+        || combined.contains("store")
+        || combined.contains("shop")
+        || combined.contains("marketplace")
+        || combined.contains("generic profile")
 }
 
-fn h409_unverified_tamburlaine_ceo_result(tr: &ToolResponse) -> bool {
-    let mut fragments = Vec::new();
-    if let Some(result) = &tr.tool_result {
-        match result {
-            ToolResult::WebSearch { items } | ToolResult::News { items } => {
-                for item in items {
-                    fragments.push(format!("{} {} {}", item.title, item.snippet, item.url));
-                }
+fn h414_extract_public_person_near_role(item: &H414SearchEvidence) -> Option<String> {
+    let text = format!("{} {}", item.title, item.snippet);
+    let lower = text.to_ascii_lowercase();
+    for marker in [
+        " is listed as ",
+        " is the ",
+        " is ",
+        " led by ",
+        " led by managing director",
+        " managing director",
+        " director",
+        " ceo",
+    ] {
+        if let Some(index) = lower.find(marker) {
+            if let Some(name) = h414_last_capitalized_name(&text[..index]) {
+                return Some(name);
             }
-            ToolResult::DeepResearch {
-                summary,
-                extracted_fields,
-                citations,
-            }
-            | ToolResult::DocumentUnderstand {
-                summary,
-                extracted_fields,
-                citations,
-            }
-            | ToolResult::PhotoUnderstand {
-                summary,
-                extracted_fields,
-                citations,
-            }
-            | ToolResult::DataAnalysis {
-                summary,
-                extracted_fields,
-                citations,
-            }
-            | ToolResult::ConnectorQuery {
-                summary,
-                extracted_fields,
-                citations,
-            } => {
-                fragments.push(summary.clone());
-                for field in extracted_fields {
-                    fragments.push(format!("{} {}", field.key, field.value));
-                }
-                for citation in citations {
-                    fragments.push(format!(
-                        "{} {} {}",
-                        citation.title, citation.snippet, citation.url
-                    ));
-                }
-            }
-            ToolResult::UrlFetchAndCite { citations } => {
-                for citation in citations {
-                    fragments.push(format!(
-                        "{} {} {}",
-                        citation.title, citation.snippet, citation.url
-                    ));
-                }
-            }
-            ToolResult::Time { .. }
-            | ToolResult::Weather { .. }
-            | ToolResult::RecordMode { .. } => {}
         }
     }
-    if let Some(meta) = &tr.source_metadata {
-        for source in &meta.sources {
-            fragments.push(format!("{} {}", source.title, source.url));
-        }
-    }
-    let combined = fragments.join("\n").to_ascii_lowercase();
-    let tamburlaine_context = combined.contains("tamburlaine")
-        || combined.contains("tamberlane")
-        || combined.contains("tumblin")
-        || (combined.contains("tumbling") && combined.contains("wine"))
-        || combined.contains("tumba lane")
-        || combined.contains("tumblaine")
-        || combined.contains("tamburlane")
-        || (combined.contains("timberlain")
-            && combined.contains("organic")
-            && combined.contains("wine"))
-        || (combined.contains("chamberlain")
-            && combined.contains("organic")
-            && combined.contains("wine"));
-    let wrong_wine_australia_ceo = combined.contains("wine australia")
-        && (combined.contains("ceo") || combined.contains("dr cole"));
-    let directly_supported = fragments
-        .iter()
-        .any(|fragment| h409_direct_tamburlaine_ceo_support(fragment));
-    tamburlaine_context && wrong_wine_australia_ceo && !directly_supported
+    None
 }
 
-fn h409_direct_tamburlaine_ceo_support(value: &str) -> bool {
-    let lower = value.to_ascii_lowercase();
-    lower.contains("tamburlaine")
-        && lower.contains("ceo")
-        && !lower.contains("wine australia")
-        && !lower.contains("ceorankings.com")
-        && !lower.contains("organicwine.com.au")
-        && !lower.contains("virginwines.com")
+fn h414_last_capitalized_name(prefix: &str) -> Option<String> {
+    let mut parts = Vec::new();
+    for token in prefix.split_whitespace().rev() {
+        let cleaned = token.trim_matches(|ch: char| ch.is_ascii_punctuation());
+        let lower = cleaned.to_ascii_lowercase();
+        if matches!(
+            lower.as_str(),
+            "by" | "as" | "the" | "and" | "with" | "company" | "profile" | "official"
+        ) {
+            continue;
+        }
+        if cleaned
+            .chars()
+            .next()
+            .is_some_and(|ch| ch.is_ascii_uppercase())
+        {
+            parts.push(cleaned.to_string());
+            if parts.len() == 2 {
+                break;
+            }
+        } else if !parts.is_empty() {
+            break;
+        }
+    }
+    if parts.is_empty() {
+        None
+    } else {
+        parts.reverse();
+        Some(parts.join(" "))
+    }
 }
 
 fn h409_public_answer_fragment(value: &str) -> String {
@@ -5046,14 +5022,14 @@ mod tests {
             ToolResult::WebSearch {
                 items: vec![
                     ToolTextSnippet {
-                        title: "Our CEO and executive management team | Wine Australia".to_string(),
-                        snippet: "Along with his wine sector experience, <strong>Dr Cole</strong> brings research management experience.".to_string(),
-                        url: "https://www.wineaustralia.com/about-us/our-ceo-and-executive-management-team".to_string(),
+                        title: "Our CEO and executive management team | Southern Wine Board".to_string(),
+                        snippet: "Along with his wine sector experience, <strong>Dr Rowan Vale</strong> brings research management experience.".to_string(),
+                        url: "https://regional-wine-board.test/about-us/our-ceo-and-executive-management-team".to_string(),
                     },
                     ToolTextSnippet {
-                        title: "Tamburlaine Organic Wines | Australia's Favourite Winemaker".to_string(),
+                        title: "Aurora Vale Cellars official site".to_string(),
                         snippet: "Organic and biodynamic wine producer in Australia.".to_string(),
-                        url: "https://tamburlaine.com.au/".to_string(),
+                        url: "https://aurora-vale-cellars.test/".to_string(),
                     },
                 ],
             },
@@ -5063,12 +5039,12 @@ mod tests {
                 retrieved_at_unix_ms: 1,
                 sources: vec![
                     SourceRef {
-                        title: "Our CEO and executive management team | Wine Australia — source: UNKNOWN; trust: UNVERIFIED; freshness: STABLE_REFERENCE_ACCEPTABLE; citation_verified; retention:AUDIT_METADATA_ONLY".to_string(),
-                        url: "https://www.wineaustralia.com/about-us/our-ceo-and-executive-management-team".to_string(),
+                        title: "Our CEO and executive management team | Southern Wine Board — source: UNKNOWN; trust: UNVERIFIED; freshness: STABLE_REFERENCE_ACCEPTABLE; citation_verified; retention:AUDIT_METADATA_ONLY".to_string(),
+                        url: "https://regional-wine-board.test/about-us/our-ceo-and-executive-management-team".to_string(),
                     },
                     SourceRef {
-                        title: "Tamburlaine Organic Wines | Australia's Favourite Winemaker — source: UNKNOWN; trust: UNVERIFIED; freshness: STABLE_REFERENCE_ACCEPTABLE; citation_verified; retention:AUDIT_METADATA_ONLY".to_string(),
-                        url: "https://tamburlaine.com.au/".to_string(),
+                        title: "Aurora Vale Cellars official site — source: UNKNOWN; trust: UNVERIFIED; freshness: STABLE_REFERENCE_ACCEPTABLE; citation_verified; retention:AUDIT_METADATA_ONLY".to_string(),
+                        url: "https://aurora-vale-cellars.test/".to_string(),
                     },
                 ],
             },
@@ -5081,10 +5057,10 @@ mod tests {
         let text = tool_ok_text(&tool_ok);
         assert_eq!(
             text,
-            "I couldn't verify a publicly listed CEO for Tamburlaine Organic Wines from reliable public sources."
+            "I couldn't verify a publicly listed CEO from reliable public sources."
         );
         for forbidden in [
-            "Dr Cole",
+            "Dr Rowan Vale",
             "<strong>",
             "</strong>",
             "source: UNKNOWN",
@@ -5099,21 +5075,21 @@ mod tests {
     }
 
     #[test]
-    fn h413_voice_like_tamburlaine_alias_ceo_source_safe_degrades_without_metadata_leak() {
+    fn h413_voice_like_synthetic_alias_ceo_source_safe_degrades_without_metadata_leak() {
         let tool_ok = ToolResponse::ok_v1(
             ToolRequestId(413),
             ToolQueryHash(413),
             ToolResult::WebSearch {
                 items: vec![
                     ToolTextSnippet {
-                        title: "Our CEO and executive management team | Wine Australia".to_string(),
-                        snippet: "Along with his wine sector experience, <strong>Dr Cole</strong> brings research management experience.".to_string(),
-                        url: "https://www.wineaustralia.com/about-us/our-ceo-and-executive-management-team".to_string(),
+                        title: "Our CEO and executive management team | Southern Wine Board".to_string(),
+                        snippet: "Along with his wine sector experience, <strong>Dr Rowan Vale</strong> brings research management experience.".to_string(),
+                        url: "https://regional-wine-board.test/about-us/our-ceo-and-executive-management-team".to_string(),
                     },
                     ToolTextSnippet {
-                        title: "Chamberlain organic wines Australia".to_string(),
+                        title: "Auroa Vale Cellars Australia".to_string(),
                         snippet: "Likely noisy public entity capture for organic wines in Australia.".to_string(),
-                        url: "https://example.invalid/chamberlain-organic-wines".to_string(),
+                        url: "https://noisy-public-entity.test/auroa-vale-cellars".to_string(),
                     },
                 ],
             },
@@ -5123,12 +5099,12 @@ mod tests {
                 retrieved_at_unix_ms: 1777468969264,
                 sources: vec![
                     SourceRef {
-                        title: "Our CEO and executive management team | Wine Australia — source: UNKNOWN; trust: UNVERIFIED; freshness: STABLE_REFERENCE_ACCEPTABLE; citation_verified; retention:AUDIT_METADATA_ONLY".to_string(),
-                        url: "https://www.wineaustralia.com/about-us/our-ceo-and-executive-management-team".to_string(),
+                        title: "Our CEO and executive management team | Southern Wine Board — source: UNKNOWN; trust: UNVERIFIED; freshness: STABLE_REFERENCE_ACCEPTABLE; citation_verified; retention:AUDIT_METADATA_ONLY".to_string(),
+                        url: "https://regional-wine-board.test/about-us/our-ceo-and-executive-management-team".to_string(),
                     },
                     SourceRef {
-                        title: "Chamberlain organic wines Australia".to_string(),
-                        url: "https://example.invalid/chamberlain-organic-wines".to_string(),
+                        title: "Auroa Vale Cellars Australia".to_string(),
+                        url: "https://noisy-public-entity.test/auroa-vale-cellars".to_string(),
                     },
                 ],
             },
@@ -5141,11 +5117,11 @@ mod tests {
         let text = tool_ok_text(&tool_ok);
         assert_eq!(
             text,
-            "I couldn't verify a publicly listed CEO for Tamburlaine Organic Wines from reliable public sources."
+            "I couldn't verify a publicly listed CEO from reliable public sources."
         );
         for forbidden in [
-            "Dr Cole",
-            "Wine Australia",
+            "Dr Rowan Vale",
+            "Southern Wine Board",
             "<strong>",
             "</strong>",
             "source: UNKNOWN",
@@ -5161,27 +5137,26 @@ mod tests {
     }
 
     #[test]
-    fn h414_tamburlaine_ceo_question_returns_direct_role_distinction_with_source_link() {
+    fn h414_synthetic_ceo_question_returns_direct_role_distinction_with_source_link() {
         let tool_ok = ToolResponse::ok_v1(
             ToolRequestId(414),
             ToolQueryHash(414),
             ToolResult::WebSearch {
                 items: vec![
                     ToolTextSnippet {
-                        title: "Tamburlaine Organic Wines | Australia's Favourite Winemaker"
-                            .to_string(),
-                        snippet: "In 1985, the Hunter winery was purchased by a small group of friends and relatives led by Managing Director, Head of Grape and Wine Production, Mark Davidson.".to_string(),
-                        url: "https://tamburlaine.com.au/".to_string(),
+                        title: "Aurora Vale Cellars official leadership".to_string(),
+                        snippet: "Mira Solen is listed as Managing Director, Head of Grape and Wine Production.".to_string(),
+                        url: "https://aurora-vale-cellars.test/".to_string(),
                     },
                     ToolTextSnippet {
-                        title: "Mark Davidson - CEO at Tamburlaine Organic Wines".to_string(),
+                        title: "Mira Solen - CEO at Aurora Vale Cellars".to_string(),
                         snippet: "A generic CEO ranking profile.".to_string(),
-                        url: "https://www.ceorankings.com/markdavidson".to_string(),
+                        url: "https://leadership-rankings.test/mira-solen".to_string(),
                     },
                     ToolTextSnippet {
-                        title: "Our CEO and executive management team | Wine Australia".to_string(),
-                        snippet: "Dr Cole is the CEO of Wine Australia.".to_string(),
-                        url: "https://www.wineaustralia.com/about-us/our-ceo-and-executive-management-team".to_string(),
+                        title: "Our CEO and executive management team | Southern Wine Board".to_string(),
+                        snippet: "Dr Rowan Vale is the CEO of Southern Wine Board.".to_string(),
+                        url: "https://regional-wine-board.test/about-us/our-ceo-and-executive-management-team".to_string(),
                     },
                 ],
             },
@@ -5191,16 +5166,16 @@ mod tests {
                 retrieved_at_unix_ms: 1777468969264,
                 sources: vec![
                     SourceRef {
-                        title: "Tamburlaine Organic Wines | Australia's Favourite Winemaker — source: PRIMARY_OFFICIAL; trust: HIGH_CONFIDENCE; freshness: STABLE_REFERENCE_ACCEPTABLE; citation_verified; retention:AUDIT_METADATA_ONLY".to_string(),
-                        url: "https://tamburlaine.com.au/".to_string(),
+                        title: "Aurora Vale Cellars official leadership — source: PRIMARY_OFFICIAL; trust: HIGH_CONFIDENCE; freshness: STABLE_REFERENCE_ACCEPTABLE; citation_verified; retention:AUDIT_METADATA_ONLY".to_string(),
+                        url: "https://aurora-vale-cellars.test/".to_string(),
                     },
                     SourceRef {
-                        title: "Mark Davidson - CEO at Tamburlaine Organic Wines — source: LOW_TRUST_SEO; trust: LOW_CONFIDENCE; freshness: STABLE_REFERENCE_ACCEPTABLE; citation_verified; retention:AUDIT_METADATA_ONLY".to_string(),
-                        url: "https://www.ceorankings.com/markdavidson".to_string(),
+                        title: "Mira Solen - CEO at Aurora Vale Cellars — source: LOW_TRUST_SEO; trust: LOW_CONFIDENCE; freshness: STABLE_REFERENCE_ACCEPTABLE; citation_verified; retention:AUDIT_METADATA_ONLY".to_string(),
+                        url: "https://leadership-rankings.test/mira-solen".to_string(),
                     },
                     SourceRef {
-                        title: "Our CEO and executive management team | Wine Australia — source: UNKNOWN; trust: UNVERIFIED; freshness: STABLE_REFERENCE_ACCEPTABLE; citation_verified; retention:AUDIT_METADATA_ONLY".to_string(),
-                        url: "https://www.wineaustralia.com/about-us/our-ceo-and-executive-management-team".to_string(),
+                        title: "Our CEO and executive management team | Southern Wine Board — source: UNKNOWN; trust: UNVERIFIED; freshness: STABLE_REFERENCE_ACCEPTABLE; citation_verified; retention:AUDIT_METADATA_ONLY".to_string(),
+                        url: "https://regional-wine-board.test/about-us/our-ceo-and-executive-management-team".to_string(),
                     },
                 ],
             },
@@ -5213,14 +5188,14 @@ mod tests {
         let text = tool_ok_text(&tool_ok);
         assert!(text.starts_with("I couldn't verify a publicly listed CEO"));
         assert!(text.contains(
-            "Mark Davidson listed as Managing Director / Head of Grape and Wine Production"
+            "Mira Solen listed as Managing Director / Head of Grape and Wine Production"
         ));
         assert!(text.contains("not the same as a verified CEO listing"));
-        assert!(text.contains("Source: Tamburlaine Organic Wines | Australia's Favourite Winemaker (https://tamburlaine.com.au/)"));
+        assert!(text.contains("Source: Aurora Vale Cellars official leadership (https://aurora-vale-cellars.test/)"));
         assert!(!text.contains("I found a web result"));
         assert!(!text.contains("Sources:\n1."));
-        assert!(!text.contains("Dr Cole"));
-        assert!(!text.contains("ceorankings.com"));
+        assert!(!text.contains("Dr Rowan Vale"));
+        assert!(!text.contains("leadership-rankings.test"));
         for forbidden in [
             "<strong>",
             "</strong>",
@@ -5243,9 +5218,9 @@ mod tests {
             ToolQueryHash(415),
             ToolResult::WebSearch {
                 items: vec![ToolTextSnippet {
-                    title: "Mark Davidson - CEO at Tamburlaine Organic Wines".to_string(),
+                    title: "Mira Solen - CEO at Aurora Vale Cellars".to_string(),
                     snippet: "A generic CEO ranking profile.".to_string(),
-                    url: "https://www.ceorankings.com/markdavidson".to_string(),
+                    url: "https://leadership-rankings.test/mira-solen".to_string(),
                 }],
             },
             SourceMetadata {
@@ -5253,8 +5228,8 @@ mod tests {
                 provider_hint: None,
                 retrieved_at_unix_ms: 1777468969264,
                 sources: vec![SourceRef {
-                    title: "Mark Davidson - CEO at Tamburlaine Organic Wines — source: LOW_TRUST_SEO; trust: LOW_CONFIDENCE; freshness: STABLE_REFERENCE_ACCEPTABLE; citation_verified; retention:AUDIT_METADATA_ONLY".to_string(),
-                    url: "https://www.ceorankings.com/markdavidson".to_string(),
+                    title: "Mira Solen - CEO at Aurora Vale Cellars — source: LOW_TRUST_SEO; trust: LOW_CONFIDENCE; freshness: STABLE_REFERENCE_ACCEPTABLE; citation_verified; retention:AUDIT_METADATA_ONLY".to_string(),
+                    url: "https://leadership-rankings.test/mira-solen".to_string(),
                 }],
             },
             None,
@@ -5266,10 +5241,10 @@ mod tests {
         let text = tool_ok_text(&tool_ok);
         assert_eq!(
             text,
-            "I couldn't verify a publicly listed CEO for Tamburlaine Organic Wines from reliable public sources."
+            "I couldn't verify a publicly listed CEO from reliable public sources."
         );
-        assert!(!text.contains("Mark Davidson is the CEO"));
-        assert!(!text.contains("ceorankings"));
+        assert!(!text.contains("Mira Solen is the CEO"));
+        assert!(!text.contains("leadership-rankings"));
     }
 
     #[test]

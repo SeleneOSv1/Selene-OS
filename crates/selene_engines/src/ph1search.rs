@@ -318,35 +318,101 @@ fn rewrite_query_text(input: &str) -> String {
 
 fn h414_source_truth_query_expansions(normalized_query: &str) -> Vec<String> {
     let lower = normalized_query.to_ascii_lowercase();
-    if !h414_mentions_tamburlaine_alias(&lower) || !h414_leadership_query(&lower) {
+    if !h414_leadership_query(&lower) {
         return Vec::new();
     }
+    let Some(entity) = h414_leadership_entity_from_query(normalized_query) else {
+        return Vec::new();
+    };
 
-    [
-        "Tamburlaine Organic Wines CEO Australia",
-        "Tamburlaine Organic Wines managing director",
-        "Tamburlaine Organic Wines director",
-        "Tamburlaine Organic Wines Mark Davidson",
-        "Tamburlaine Organic Wines head of grape and wine production",
-        "Tamburlaine Organic Wines founder owner",
-        "site:tamburlaine.com.au Tamburlaine Organic Wines Mark Davidson",
-        "Tamburlaine Organic Wines LinkedIn company profile",
+    let plans = [
+        format!("{entity} CEO"),
+        format!("{entity} managing director"),
+        format!("{entity} director"),
+        format!("{entity} leadership team"),
+        format!("{entity} founder owner"),
+        format!("{entity} head of production"),
+        format!("{entity} official site leadership"),
+        format!("{entity} company profile"),
+        format!("{entity} news interview director"),
     ]
-    .iter()
-    .map(|value| value.to_string())
-    .collect()
+    .into_iter()
+    .collect::<Vec<_>>();
+    plans
 }
 
-fn h414_mentions_tamburlaine_alias(lower: &str) -> bool {
-    lower.contains("tamburlaine")
-        || lower.contains("tamberlane")
-        || lower.contains("timberlain")
-        || lower.contains("chamberlain organic wine")
-        || lower.contains("tumblin wine")
-        || lower.contains("tumbling wine")
-        || lower.contains("tumba lane")
-        || lower.contains("tumblaine")
-        || lower.contains("tamburlane")
+fn h414_leadership_entity_from_query(query: &str) -> Option<String> {
+    let normalized = query.replace('\u{2019}', "'");
+    let lower = normalized.to_ascii_lowercase();
+    for marker in [
+        " ceo of ",
+        " ceo for ",
+        " ceo at ",
+        " director of ",
+        " director for ",
+        " director at ",
+        " managing director of ",
+        " managing director for ",
+        " founder of ",
+        " founder for ",
+        " owner of ",
+        " owner for ",
+    ] {
+        if let Some(index) = lower.find(marker) {
+            return h414_clean_leadership_entity(&normalized[index + marker.len()..]);
+        }
+    }
+    h414_clean_leadership_entity(&normalized)
+}
+
+fn h414_clean_leadership_entity(value: &str) -> Option<String> {
+    let tokens = value
+        .trim()
+        .trim_matches(|ch: char| ch.is_ascii_punctuation() || ch.is_whitespace())
+        .split_whitespace()
+        .filter_map(|token| {
+            let lower = token
+                .trim_matches(|ch: char| ch.is_ascii_punctuation())
+                .to_ascii_lowercase();
+            if matches!(
+                lower.as_str(),
+                "ceo"
+                    | "director"
+                    | "managing"
+                    | "founder"
+                    | "owner"
+                    | "leadership"
+                    | "leaders"
+                    | "head"
+                    | "production"
+                    | "official"
+                    | "site"
+                    | "company"
+                    | "profile"
+                    | "search"
+                    | "web"
+                    | "deep"
+                    | "find"
+                    | "me"
+                    | "do"
+                    | "query"
+                    | "for"
+                    | "of"
+                    | "at"
+            ) {
+                None
+            } else {
+                let cleaned = token.trim_matches(|ch: char| ch.is_ascii_punctuation());
+                (!cleaned.is_empty()).then(|| cleaned.to_string())
+            }
+        })
+        .collect::<Vec<_>>();
+    let entity = tokens.join(" ");
+    if entity.is_empty() {
+        None
+    } else {
+        Some(entity)
+    }
 }
 
 fn h414_leadership_query(lower: &str) -> bool {
@@ -511,11 +577,11 @@ mod tests {
     }
 
     #[test]
-    fn h414_query_expansion_builds_tamburlaine_leadership_source_truth_plan() {
+    fn h414_query_expansion_builds_synthetic_leadership_source_truth_plan() {
         let req = Ph1SearchRequest::SearchPlanBuild(
             SearchPlanBuildRequest::v1(
                 envelope(8),
-                "Do a deep web search and find me the CEO for Tumba Lane Organic Wines in Australia."
+                "Do a deep web search and find me the CEO for Aurora Vale Cellars."
                     .to_string(),
                 Some("en".to_string()),
             )
@@ -532,13 +598,11 @@ mod tests {
             _ => panic!("expected SearchPlanBuildOk"),
         };
 
-        assert!(queries.contains(&"Tamburlaine Organic Wines CEO Australia".to_string()));
-        assert!(queries.contains(&"Tamburlaine Organic Wines managing director".to_string()));
-        assert!(queries.contains(&"Tamburlaine Organic Wines director".to_string()));
-        assert!(queries.contains(&"Tamburlaine Organic Wines Mark Davidson".to_string()));
-        assert!(queries.contains(
-            &"site:tamburlaine.com.au Tamburlaine Organic Wines Mark Davidson".to_string()
-        ));
-        assert!(queries.iter().all(|query| !query.contains("Tumba Lane")));
+        assert!(queries.contains(&"Aurora Vale Cellars CEO".to_string()));
+        assert!(queries.contains(&"Aurora Vale Cellars managing director".to_string()));
+        assert!(queries.contains(&"Aurora Vale Cellars director".to_string()));
+        assert!(queries.contains(&"Aurora Vale Cellars official site leadership".to_string()));
+        assert!(queries.contains(&"Aurora Vale Cellars company profile".to_string()));
+        assert!(queries.iter().all(|query| query.contains("Aurora Vale Cellars")));
     }
 }

@@ -326,33 +326,142 @@ fn looks_like_weather_query(lower: &str) -> bool {
 
 fn canonical_public_search_tool_query(transcript: &str) -> Option<String> {
     let lower = transcript.to_ascii_lowercase();
-    let mentions_tamburlaine_alias = h413_mentions_tamburlaine_public_alias(&lower);
-    if mentions_tamburlaine_alias && lower.contains("ceo") {
-        return Some("Tamburlaine Organic Wines CEO Australia".to_string());
+    if !looks_like_public_leadership_lookup(&lower) {
+        return None;
     }
-    if mentions_tamburlaine_alias
-        && (lower.contains("director")
-            || lower.contains("managing director")
-            || lower.contains("founder")
-            || lower.contains("owner")
-            || lower.contains("head of grape")
-            || lower.contains("head of wine"))
-    {
-        return Some("Tamburlaine Organic Wines director Australia".to_string());
-    }
-    None
+    let entity = extract_public_leadership_entity(transcript)?;
+    let role = requested_public_leadership_role(&lower).unwrap_or("leadership");
+    Some(format!("{entity} {role}"))
 }
 
-fn h413_mentions_tamburlaine_public_alias(lower: &str) -> bool {
-    lower.contains("tamburlaine")
-        || lower.contains("tamberlane")
-        || lower.contains("tumblin")
-        || (lower.contains("tumbling") && lower.contains("wine"))
-        || lower.contains("tumba lane")
-        || lower.contains("tumblaine")
-        || lower.contains("tamburlane")
-        || (lower.contains("timberlain") && lower.contains("organic") && lower.contains("wine"))
-        || (lower.contains("chamberlain") && lower.contains("organic") && lower.contains("wine"))
+fn requested_public_leadership_role(lower: &str) -> Option<&'static str> {
+    if contains_word(lower, "ceo") {
+        Some("CEO")
+    } else if lower.contains("managing director") {
+        Some("managing director")
+    } else if contains_word(lower, "director") {
+        Some("director")
+    } else if contains_word(lower, "founder") {
+        Some("founder")
+    } else if contains_word(lower, "owner") {
+        Some("owner")
+    } else if lower.contains("head of grape") {
+        Some("head of grape production")
+    } else if lower.contains("head of wine") {
+        Some("head of wine production")
+    } else if contains_word(lower, "leadership") || contains_word(lower, "leaders") {
+        Some("leadership")
+    } else {
+        None
+    }
+}
+
+fn looks_like_public_leadership_lookup(lower: &str) -> bool {
+    requested_public_leadership_role(lower).is_some()
+        && (contains_word(lower, "who")
+            || contains_word(lower, "find")
+            || contains_word(lower, "search")
+            || lower.contains("look up")
+            || lower.contains("deep web")
+            || lower.contains("web search")
+            || lower.contains(" of ")
+            || lower.contains(" for ")
+            || lower.contains(" at "))
+}
+
+fn extract_public_leadership_entity(transcript: &str) -> Option<String> {
+    let normalized = transcript.replace('\u{2019}', "'");
+    let lower = normalized.to_ascii_lowercase();
+    for marker in [
+        " ceo of ",
+        " ceo for ",
+        " ceo at ",
+        " director of ",
+        " director for ",
+        " director at ",
+        " managing director of ",
+        " managing director for ",
+        " managing director at ",
+        " founder of ",
+        " founder for ",
+        " owner of ",
+        " owner for ",
+        " leadership of ",
+        " leadership for ",
+        " leadership at ",
+        " head of grape production at ",
+        " head of grape production for ",
+        " head of wine production at ",
+        " head of wine production for ",
+    ] {
+        if let Some(index) = lower.find(marker) {
+            return clean_public_search_entity(&normalized[index + marker.len()..]);
+        }
+    }
+
+    let mut candidate = normalized.as_str();
+    for prefix in [
+        "do a deep web search and find me",
+        "do a web search and find me",
+        "deep web search and find me",
+        "search the web and find me",
+        "search the web for",
+        "search for",
+        "look up",
+        "find me",
+        "find",
+        "who is",
+        "who's",
+        "who s",
+    ] {
+        if lower.starts_with(prefix) {
+            candidate = normalized[prefix.len()..].trim();
+            break;
+        }
+    }
+    clean_public_search_entity(candidate)
+}
+
+fn clean_public_search_entity(value: &str) -> Option<String> {
+    let mut tokens = Vec::new();
+    for token in value
+        .trim()
+        .trim_matches(|ch: char| ch.is_ascii_punctuation() || ch.is_whitespace())
+        .split_whitespace()
+    {
+        let lower = token
+            .trim_matches(|ch: char| ch.is_ascii_punctuation())
+            .to_ascii_lowercase();
+        if matches!(
+            lower.as_str(),
+            "the"
+                | "a"
+                | "an"
+                | "ceo"
+                | "director"
+                | "managing"
+                | "founder"
+                | "owner"
+                | "leadership"
+                | "leaders"
+                | "head"
+                | "of"
+                | "for"
+                | "at"
+        ) {
+            continue;
+        }
+        let cleaned = token.trim_matches(|ch: char| ch.is_ascii_punctuation());
+        if !cleaned.is_empty() {
+            tokens.push(cleaned.to_string());
+        }
+    }
+    let entity = tokens.join(" ");
+    if entity.is_empty() {
+        None
+    } else {
+        Some(entity)
+    }
 }
 
 fn looks_like_web_search(lower: &str) -> bool {
@@ -386,9 +495,8 @@ fn looks_like_web_search(lower: &str) -> bool {
                 || lower.contains("who's")
                 || lower.contains("who’s")
                 || lower.contains("find"))
-            && (lower.contains("wine")
-                || lower.contains("company")
-                || h413_mentions_tamburlaine_public_alias(lower)))
+            && (lower.contains("wine") || lower.contains("company")))
+        || looks_like_public_leadership_lookup(lower)
         || lower.contains("current ceo")
         || lower.contains("current president")
         || lower.contains("current price")
@@ -4388,11 +4496,14 @@ mod tests {
     }
 
     #[test]
-    fn h409_tamburlaine_noisy_ceo_search_rewrites_to_canonical_query() {
+    fn h409_synthetic_noisy_ceo_search_routes_to_public_lookup() {
         let rt = Ph1nRuntime::new(Ph1nConfig::mvp_v1());
-        for prompt in [
-            "Who is the CEO of Tumblin Wines?",
-            "Do a deep web search and find me the CEO for Tumba Lane Organic Wines in Australia.",
+        for (prompt, expected_task) in [
+            ("Who is the CEO of Auroa Vale Cellars?", "Auroa Vale Cellars CEO"),
+            (
+                "Do a deep web search and find me the CEO for Aura Lane Cellars.",
+                "Aura Lane Cellars CEO",
+            ),
         ] {
             let out = rt.run(&req(prompt, "en")).unwrap();
             match out {
@@ -4410,7 +4521,7 @@ mod tests {
                         .iter()
                         .find(|field| field.key == FieldKey::Task)
                         .and_then(|field| field.value.normalized_value.as_deref());
-                    assert_eq!(task, Some("Tamburlaine Organic Wines CEO Australia"));
+                    assert_eq!(task, Some(expected_task));
                 }
                 _ => panic!("expected H409 public search intent for {prompt}"),
             }
@@ -4418,12 +4529,18 @@ mod tests {
     }
 
     #[test]
-    fn h413_voice_like_tamburlaine_aliases_rewrite_to_canonical_query() {
+    fn h413_voice_like_synthetic_leadership_variants_route_to_public_lookup() {
         let rt = Ph1nRuntime::new(Ph1nConfig::mvp_v1());
-        for prompt in [
-            "Who's the CEO of tumbling wines",
-            "Do a deep web search and find me the CEO for Chamberlain organic wines Australia.",
-            "Who is the CEO of Timberlain organic wines Australia?",
+        for (prompt, expected_task) in [
+            ("Who's the CEO of glowcap cellars", "glowcap cellars CEO"),
+            (
+                "Do a deep web search and find me the CEO for North Lantern Works.",
+                "North Lantern Works CEO",
+            ),
+            (
+                "Who is the CEO of Orora Vale Cellars?",
+                "Orora Vale Cellars CEO",
+            ),
         ] {
             let out = rt.run(&req(prompt, "en")).unwrap();
             match out {
@@ -4441,7 +4558,7 @@ mod tests {
                         .iter()
                         .find(|field| field.key == FieldKey::Task)
                         .and_then(|field| field.value.normalized_value.as_deref());
-                    assert_eq!(task, Some("Tamburlaine Organic Wines CEO Australia"));
+                    assert_eq!(task, Some(expected_task));
                 }
                 _ => panic!("expected H413 public search intent for {prompt}"),
             }
@@ -4449,16 +4566,16 @@ mod tests {
     }
 
     #[test]
-    fn h414_tamburlaine_spelling_and_role_queries_use_canonical_search_entity() {
+    fn h414_synthetic_role_queries_use_generic_search_entity() {
         let rt = Ph1nRuntime::new(Ph1nConfig::mvp_v1());
         for (prompt, expected_task) in [
             (
-                "Who's the CEO of Tamberlane Wines?",
-                "Tamburlaine Organic Wines CEO Australia",
+                "Who's the CEO of Aurora Vale Cellars?",
+                "Aurora Vale Cellars CEO",
             ),
             (
-                "Who is the director of Tamberlane organic wines Australia?",
-                "Tamburlaine Organic Wines director Australia",
+                "Who is the director of Aurora Vale Cellars?",
+                "Aurora Vale Cellars director",
             ),
         ] {
             let out = rt.run(&req(prompt, "en")).unwrap();

@@ -25,6 +25,22 @@ Never create extra repo folders.
 
 Never move work into side repositories.
 
+Rule: No Real Search-Name Hardcoding
+
+Codex must never fix search, spelling, entity understanding, source ranking, or direct-answer failures by hardcoding a real searched name into code.
+
+Real searched names include customer names, company names, person names, product names, supplier names, competitor names, and one-off query examples.
+
+Real searched names are forbidden in all code files, including production code, tests, fixtures, mocks, corpora, sample data, and proof hooks.
+
+Tests must use synthetic fake entities.
+
+If a real query fails, Codex must repair the generic capability: spelling, phonetic matching, entity disambiguation, query planning, source ranking, page reading, claim verification, or answer formatting.
+
+Any real searched-name hardcoding in code is a build blocker.
+
+Docs and ledger may mention historical real examples only to describe what happened, not to drive runtime behavior.
+
 Auto-Loaded Authority Order
 
 JD explicit in-thread instructions
@@ -1737,4 +1753,3 @@ CODEX_LAW.md has been retired and must not be recreated unless JD explicitly aut
 Override
 
 These laws apply by default unless JD explicitly overrides them in-thread.
-
