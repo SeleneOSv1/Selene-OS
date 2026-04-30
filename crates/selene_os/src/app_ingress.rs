@@ -1383,6 +1383,7 @@ pub struct AppVoicePh1xBuildInput {
     pub tool_response: Option<ToolResponse>,
     pub interruption: Option<InterruptCandidate>,
     pub locale: Option<String>,
+    pub language_packet: Option<LanguagePacket>,
     pub last_failure_reason_code: Option<ReasonCodeId>,
 }
 
@@ -5315,10 +5316,14 @@ impl AppServerIngressRuntime {
         let (sim_catalog_snapshot_hash, sim_catalog_snapshot_version) =
             simulation_catalog_snapshot_for_agent_input(store, tenant_id);
         let transcript_text = transcript_text_from_nlp_output(x_build.nlp_output.as_ref());
-        let language_packet = build_language_packet_from_agent_fields(
+        let fallback_language_packet = build_language_packet_from_agent_fields(
             transcript_text.as_deref(),
             x_build.locale.as_deref(),
         )?;
+        let language_packet = x_build
+            .language_packet
+            .clone()
+            .or(fallback_language_packet);
         let trace_id = runtime_execution_envelope.trace_id.clone();
         let packet_hash = agent_input_packet_hash_hex(
             correlation_id,
@@ -11662,6 +11667,7 @@ mod tests {
         AudioDeviceId, AudioFormat, AudioStreamId, AudioStreamKind, AudioStreamRef, ChannelCount,
         Confidence, FrameDurationMs, SampleFormat, SampleRateHz, SpeechLikeness, VadEvent,
     };
+    use selene_kernel_contracts::ph1lang::{LanguagePacket, LanguageSwitchScope};
     use selene_kernel_contracts::ph1l::{NextAllowedActions, SessionId, SessionSnapshot};
     use selene_kernel_contracts::ph1link::{
         InviteeType, LinkStatus, TokenId, LINK_INVITE_GENERATE_DRAFT,
@@ -12769,6 +12775,7 @@ mod tests {
             tool_response: None,
             interruption: None,
             locale: Some("en-US".to_string()),
+            language_packet: None,
             last_failure_reason_code: None,
         };
         let out_1 = runtime
@@ -12806,6 +12813,7 @@ mod tests {
             tool_response: None,
             interruption: None,
             locale: Some("en-US".to_string()),
+            language_packet: None,
             last_failure_reason_code: None,
         };
         let out_2 = runtime
@@ -12870,6 +12878,7 @@ mod tests {
             tool_response: None,
             interruption: None,
             locale: Some("en-US".to_string()),
+            language_packet: None,
             last_failure_reason_code: None,
         };
         let out_1 = runtime
@@ -12907,6 +12916,7 @@ mod tests {
             tool_response: None,
             interruption: None,
             locale: Some("en-US".to_string()),
+            language_packet: None,
             last_failure_reason_code: None,
         };
         let out_2 = runtime
@@ -13472,6 +13482,7 @@ mod tests {
             tool_response: None,
             interruption: None,
             locale: Some("en-US".to_string()),
+            language_packet: None,
             last_failure_reason_code: None,
         };
         let ph1x_request = runtime
@@ -14324,6 +14335,7 @@ mod tests {
             tool_response: None,
             interruption: None,
             locale: Some("en-US".to_string()),
+            language_packet: None,
             last_failure_reason_code: None,
         };
         let ph1x_request = runtime
@@ -14472,6 +14484,98 @@ mod tests {
             received_at,
             dispatch_now,
         )
+    }
+
+    fn h416_language_packet(
+        input_language: &str,
+        output_language: &str,
+        source: &str,
+    ) -> LanguagePacket {
+        LanguagePacket::v1(
+            input_language.to_string(),
+            vec![input_language.to_string()],
+            9_000,
+            output_language.to_string(),
+            "same_language_continuity".to_string(),
+            if input_language.starts_with("zh") {
+                "han-simplified".to_string()
+            } else {
+                "latin".to_string()
+            },
+            false,
+            false,
+            LanguageSwitchScope::ThisTurn,
+            "typed_input".to_string(),
+            "not_measured".to_string(),
+            false,
+            vec![source.to_string()],
+        )
+        .expect("h416 language packet should validate")
+    }
+
+    #[test]
+    fn h416_language_source_app_ingress_preserves_upstream_language_packet_without_rebuilding_from_locale(
+    ) {
+        let runtime = AppServerIngressRuntime::default();
+        let mut store = Ph1fStore::new_in_memory();
+        let actor_user_id = UserId::new("tenant_1:h416_language_source_user").unwrap();
+        let device_id = DeviceId::new("h416_language_source_device").unwrap();
+        seed_actor(&mut store, &actor_user_id, &device_id);
+        let upstream_packet = h416_language_packet("zh", "zh", "h416_upstream_adapter_packet");
+
+        let out = run_public_x_build_with_identity_assertion(
+            &runtime,
+            &mut store,
+            actor_user_id.clone(),
+            device_id,
+            confirmed_voice_assertion(actor_user_id),
+            CorrelationId(416_001),
+            TurnId(416_001),
+            AppVoicePh1xBuildInput {
+                now: MonotonicTimeNs(416_001),
+                thread_key: None,
+                thread_state: ThreadState::empty_v1(),
+                session_state: SessionState::Active,
+                policy_context_ref: PolicyContextRef::v1(false, false, SafetyTier::Standard),
+                memory_candidates: vec![],
+                confirm_answer: None,
+                nlp_output: Some(
+                    Chat::v1(
+                        "plain English normalized chat should not rebuild language".to_string(),
+                        ph1n_reason_codes::N_CHAT_NO_INTENT,
+                    )
+                    .map(Ph1nResponse::Chat)
+                    .unwrap(),
+                ),
+                tool_response: None,
+                interruption: None,
+                locale: Some("en-US".to_string()),
+                language_packet: Some(upstream_packet.clone()),
+                last_failure_reason_code: None,
+            },
+        )
+        .expect("public turn should complete");
+
+        let ph1x_packet = out
+            .ph1x_request
+            .as_ref()
+            .and_then(|request| request.language_packet.as_ref())
+            .expect("PH1.X request should carry canonical language packet");
+        assert_eq!(ph1x_packet, &upstream_packet);
+
+        let agent_packet = runtime
+            .debug_last_agent_input_packet()
+            .expect("agent input packet should be captured");
+        let agent_language = agent_packet
+            .language_packet
+            .as_ref()
+            .expect("agent packet should carry canonical language packet");
+        assert_eq!(agent_language, &upstream_packet);
+        assert_eq!(agent_packet.language_hint.as_deref(), Some("en-US"));
+        assert!(agent_language
+            .source
+            .iter()
+            .any(|source| source == "h416_upstream_adapter_packet"));
     }
 
     fn finalize_pending_protected_chat_response_turn(
@@ -16234,6 +16338,7 @@ mod tests {
             tool_response: None,
             interruption: None,
             locale: None,
+            language_packet: None,
             last_failure_reason_code: None,
         };
 
@@ -16317,6 +16422,7 @@ mod tests {
             tool_response: None,
             interruption: None,
             locale: None,
+            language_packet: None,
             last_failure_reason_code: None,
         };
 
@@ -16404,6 +16510,7 @@ mod tests {
             tool_response: None,
             interruption: None,
             locale: None,
+            language_packet: None,
             last_failure_reason_code: None,
         };
 
@@ -16518,6 +16625,7 @@ mod tests {
             tool_response: None,
             interruption: None,
             locale: None,
+            language_packet: None,
             last_failure_reason_code: None,
         };
         let packet = runtime
@@ -16602,6 +16710,7 @@ mod tests {
             tool_response: None,
             interruption: None,
             locale: None,
+            language_packet: None,
             last_failure_reason_code: None,
         };
         let mut packet = runtime
@@ -16692,6 +16801,7 @@ mod tests {
             tool_response: None,
             interruption: None,
             locale: None,
+            language_packet: None,
             last_failure_reason_code: None,
         };
         let mut packet = runtime
@@ -16775,6 +16885,7 @@ mod tests {
             tool_response: None,
             interruption: None,
             locale: None,
+            language_packet: None,
             last_failure_reason_code: None,
         };
 
@@ -16857,6 +16968,7 @@ mod tests {
             tool_response: None,
             interruption: None,
             locale: None,
+            language_packet: None,
             last_failure_reason_code: None,
         };
 
@@ -16922,6 +17034,7 @@ mod tests {
             tool_response: None,
             interruption: None,
             locale: None,
+            language_packet: None,
             last_failure_reason_code: None,
         };
 
@@ -16994,6 +17107,7 @@ mod tests {
             tool_response: None,
             interruption: None,
             locale: None,
+            language_packet: None,
             last_failure_reason_code: None,
         };
 
@@ -17087,6 +17201,7 @@ mod tests {
             tool_response: None,
             interruption: None,
             locale: None,
+            language_packet: None,
             last_failure_reason_code: None,
         };
         let ph1x_request = runtime
@@ -17166,6 +17281,7 @@ mod tests {
             tool_response: None,
             interruption: None,
             locale: None,
+            language_packet: None,
             last_failure_reason_code: None,
         };
         let ph1x_request = runtime
@@ -17246,6 +17362,7 @@ mod tests {
             tool_response: None,
             interruption: None,
             locale: None,
+            language_packet: None,
             last_failure_reason_code: None,
         };
         runtime
@@ -17349,6 +17466,7 @@ mod tests {
             tool_response: None,
             interruption: None,
             locale: None,
+            language_packet: None,
             last_failure_reason_code: None,
         };
         runtime
@@ -17462,6 +17580,7 @@ mod tests {
             tool_response: None,
             interruption: None,
             locale: None,
+            language_packet: None,
             last_failure_reason_code: None,
         };
         runtime
@@ -17596,6 +17715,7 @@ mod tests {
             tool_response: None,
             interruption: None,
             locale: None,
+            language_packet: None,
             last_failure_reason_code: None,
         };
         runtime
@@ -17733,6 +17853,7 @@ mod tests {
             tool_response: None,
             interruption: None,
             locale: None,
+            language_packet: None,
             last_failure_reason_code: None,
         };
         runtime
@@ -17826,6 +17947,7 @@ mod tests {
             tool_response: None,
             interruption: None,
             locale: None,
+            language_packet: None,
             last_failure_reason_code: None,
         };
         runtime
@@ -17932,6 +18054,7 @@ mod tests {
             tool_response: None,
             interruption: None,
             locale: None,
+            language_packet: None,
             last_failure_reason_code: None,
         };
         runtime
@@ -18040,6 +18163,7 @@ mod tests {
             tool_response: None,
             interruption: None,
             locale: None,
+            language_packet: None,
             last_failure_reason_code: None,
         };
         runtime
@@ -18142,6 +18266,7 @@ mod tests {
             tool_response: None,
             interruption: None,
             locale: None,
+            language_packet: None,
             last_failure_reason_code: None,
         };
         runtime
@@ -18244,6 +18369,7 @@ mod tests {
             tool_response: None,
             interruption: None,
             locale: None,
+            language_packet: None,
             last_failure_reason_code: None,
         };
         runtime
@@ -18348,6 +18474,7 @@ mod tests {
             tool_response: None,
             interruption: None,
             locale: None,
+            language_packet: None,
             last_failure_reason_code: None,
         };
         runtime
@@ -18439,6 +18566,7 @@ mod tests {
             tool_response: None,
             interruption: None,
             locale: None,
+            language_packet: None,
             last_failure_reason_code: None,
         };
         runtime
@@ -18538,6 +18666,7 @@ mod tests {
             tool_response: None,
             interruption: None,
             locale: None,
+            language_packet: None,
             last_failure_reason_code: None,
         };
         runtime
@@ -20682,6 +20811,7 @@ mod tests {
             tool_response: None,
             interruption: None,
             locale: Some("en-US".to_string()),
+            language_packet: None,
             last_failure_reason_code: None,
         };
         let public_out = run_desktop_voice_turn_end_to_end_with_confirmed_voice_assertion(
@@ -20789,6 +20919,7 @@ mod tests {
                 tool_response: None,
                 interruption: None,
                 locale: Some("en-US".to_string()),
+                language_packet: None,
                 last_failure_reason_code: None,
             };
 
@@ -20864,6 +20995,7 @@ mod tests {
                 tool_response: None,
                 interruption: None,
                 locale: Some("en-US".to_string()),
+                language_packet: None,
                 last_failure_reason_code: None,
             },
         )
@@ -20899,6 +21031,7 @@ mod tests {
                 tool_response: None,
                 interruption: None,
                 locale: Some("en-US".to_string()),
+                language_packet: None,
                 last_failure_reason_code: None,
             },
         )
@@ -22809,6 +22942,7 @@ mod tests {
             tool_response: None,
             interruption: None,
             locale: Some("en-US".to_string()),
+            language_packet: None,
             last_failure_reason_code: None,
         };
         let (_outcome, ph1x_request) = runtime
@@ -22879,6 +23013,7 @@ mod tests {
             tool_response: None,
             interruption: None,
             locale: Some("en-US".to_string()),
+            language_packet: None,
             last_failure_reason_code: None,
         };
         let packet_a = runtime
@@ -22941,6 +23076,7 @@ mod tests {
             tool_response: None,
             interruption: None,
             locale: None,
+            language_packet: None,
             last_failure_reason_code: None,
         };
 
@@ -22994,6 +23130,7 @@ mod tests {
             tool_response: None,
             interruption: None,
             locale: None,
+            language_packet: None,
             last_failure_reason_code: None,
         };
 
@@ -23127,6 +23264,7 @@ mod tests {
             tool_response: None,
             interruption: None,
             locale: None,
+            language_packet: None,
             last_failure_reason_code: None,
         };
 
@@ -23323,6 +23461,7 @@ mod tests {
             tool_response: None,
             interruption: None,
             locale: Some("en-US".to_string()),
+            language_packet: None,
             last_failure_reason_code: None,
         };
         let out_1 = runtime
@@ -23381,6 +23520,7 @@ mod tests {
             tool_response: None,
             interruption: None,
             locale: Some("en-US".to_string()),
+            language_packet: None,
             last_failure_reason_code: None,
         };
         let out_2 = run_desktop_voice_turn_end_to_end_with_confirmed_voice_assertion(
@@ -23479,6 +23619,7 @@ mod tests {
             tool_response: None,
             interruption: None,
             locale: Some("en-US".to_string()),
+            language_packet: None,
             last_failure_reason_code: None,
         };
         let out = run_desktop_voice_turn_end_to_end_with_confirmed_voice_assertion(
@@ -23560,6 +23701,7 @@ mod tests {
             tool_response: None,
             interruption: None,
             locale: Some("en-US".to_string()),
+            language_packet: None,
             last_failure_reason_code: None,
         };
         let out_1 = runtime
@@ -23598,6 +23740,7 @@ mod tests {
             tool_response: None,
             interruption: None,
             locale: Some("en-US".to_string()),
+            language_packet: None,
             last_failure_reason_code: None,
         };
 
@@ -23676,6 +23819,7 @@ mod tests {
             tool_response: None,
             interruption: None,
             locale: Some("en-US".to_string()),
+            language_packet: None,
             last_failure_reason_code: None,
         };
         let out = runtime
@@ -23722,6 +23866,7 @@ mod tests {
             tool_response: None,
             interruption: None,
             locale: Some("en-US".to_string()),
+            language_packet: None,
             last_failure_reason_code: None,
         };
         let out = runtime
@@ -23839,6 +23984,7 @@ mod tests {
             tool_response: None,
             interruption: None,
             locale: Some("en-US".to_string()),
+            language_packet: None,
             last_failure_reason_code: None,
         };
         let out = runtime
@@ -23918,6 +24064,7 @@ mod tests {
             tool_response: None,
             interruption: None,
             locale: Some("en-US".to_string()),
+            language_packet: None,
             last_failure_reason_code: None,
         };
         let out_1 = runtime
@@ -23953,6 +24100,7 @@ mod tests {
             tool_response: None,
             interruption: None,
             locale: Some("en-US".to_string()),
+            language_packet: None,
             last_failure_reason_code: None,
         };
         let out_2 = run_desktop_voice_turn_end_to_end_with_confirmed_voice_assertion(
@@ -24029,6 +24177,7 @@ mod tests {
             tool_response: None,
             interruption: None,
             locale: Some("en-US".to_string()),
+            language_packet: None,
             last_failure_reason_code: None,
         };
         let out = runtime
@@ -24140,6 +24289,7 @@ mod tests {
             tool_response: None,
             interruption: None,
             locale: Some("en-US".to_string()),
+            language_packet: None,
             last_failure_reason_code: None,
         };
         let out_1 = runtime
@@ -24375,6 +24525,7 @@ mod tests {
             tool_response: None,
             interruption: None,
             locale: None,
+            language_packet: None,
             last_failure_reason_code: None,
         };
 
@@ -24457,6 +24608,7 @@ mod tests {
             tool_response: None,
             interruption: None,
             locale: None,
+            language_packet: None,
             last_failure_reason_code: None,
         };
 
@@ -24519,6 +24671,7 @@ mod tests {
             tool_response: None,
             interruption: None,
             locale: None,
+            language_packet: None,
             last_failure_reason_code: None,
         };
 
@@ -24573,6 +24726,7 @@ mod tests {
             tool_response: None,
             interruption: None,
             locale: None,
+            language_packet: None,
             last_failure_reason_code: None,
         };
 
@@ -24627,6 +24781,7 @@ mod tests {
             tool_response: None,
             interruption: None,
             locale: None,
+            language_packet: None,
             last_failure_reason_code: None,
         };
 
@@ -24683,6 +24838,7 @@ mod tests {
             tool_response: None,
             interruption: None,
             locale: None,
+            language_packet: None,
             last_failure_reason_code: None,
         };
 
@@ -24738,6 +24894,7 @@ mod tests {
             tool_response: None,
             interruption: None,
             locale: None,
+            language_packet: None,
             last_failure_reason_code: None,
         };
 
@@ -24793,6 +24950,7 @@ mod tests {
             tool_response: None,
             interruption: None,
             locale: None,
+            language_packet: None,
             last_failure_reason_code: None,
         };
 
@@ -24850,6 +25008,7 @@ mod tests {
             tool_response: None,
             interruption: None,
             locale: None,
+            language_packet: None,
             last_failure_reason_code: None,
         };
 
@@ -24907,6 +25066,7 @@ mod tests {
             tool_response: None,
             interruption: None,
             locale: None,
+            language_packet: None,
             last_failure_reason_code: None,
         };
 
@@ -24964,6 +25124,7 @@ mod tests {
             tool_response: None,
             interruption: None,
             locale: None,
+            language_packet: None,
             last_failure_reason_code: None,
         };
 
@@ -25021,6 +25182,7 @@ mod tests {
             tool_response: None,
             interruption: None,
             locale: None,
+            language_packet: None,
             last_failure_reason_code: None,
         };
 
@@ -25078,6 +25240,7 @@ mod tests {
             tool_response: None,
             interruption: None,
             locale: None,
+            language_packet: None,
             last_failure_reason_code: None,
         };
 
@@ -25174,6 +25337,7 @@ mod tests {
             tool_response: None,
             interruption: None,
             locale: None,
+            language_packet: None,
             last_failure_reason_code: None,
         };
 
@@ -25228,6 +25392,7 @@ mod tests {
             tool_response: None,
             interruption: None,
             locale: None,
+            language_packet: None,
             last_failure_reason_code: None,
         };
 

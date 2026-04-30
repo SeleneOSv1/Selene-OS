@@ -2067,7 +2067,24 @@ fn confirm_snapshot_intent_draft(d: &IntentDraft) -> IntentDraft {
     snap
 }
 
-fn tool_ok_text_for_request(_req: &Ph1xRequest, tr: &ToolResponse) -> String {
+fn tool_ok_text_for_request(req: &Ph1xRequest, tr: &ToolResponse) -> String {
+    if req
+        .language_packet
+        .as_ref()
+        .is_some_and(|packet| packet.output_language_is_chinese())
+    {
+        if let Some(result) = &tr.tool_result {
+            match result {
+                ToolResult::Time { local_time_iso } => {
+                    return chinese_time_tool_answer_text(local_time_iso);
+                }
+                ToolResult::Weather { summary } => {
+                    return chinese_weather_tool_answer_text(summary);
+                }
+                _ => {}
+            }
+        }
+    }
     tool_ok_text(tr)
 }
 
@@ -2607,6 +2624,108 @@ fn time_tool_answer_text(local_time_iso: &str) -> String {
     }
 
     format!("It's {local_time_iso}.")
+}
+
+fn chinese_time_tool_answer_text(local_time_iso: &str) -> String {
+    if let Some((display, label)) = local_time_display_and_label(local_time_iso) {
+        return format!(
+            "{}现在是{}。",
+            chinese_time_zone_display_label(&label),
+            display
+        );
+    }
+
+    format!("现在是{local_time_iso}。")
+}
+
+fn chinese_weather_tool_answer_text(summary: &str) -> String {
+    let trimmed = summary.trim();
+    if trimmed.chars().any(is_cjk_char) {
+        return trimmed.to_string();
+    }
+    if trimmed.to_ascii_lowercase().contains("provider")
+        || trimmed.to_ascii_lowercase().contains("unavailable")
+        || trimmed.to_ascii_lowercase().contains("failed")
+    {
+        return "天气服务暂时不可用，所以我现在不能核验实时天气。".to_string();
+    }
+    let sentence = trimmed.trim_end_matches('.');
+    if let Some(prefix) =
+        sentence.strip_suffix(" right now, so current conditions do not indicate rain")
+    {
+        if let Some((place, rest)) = prefix.split_once(" is ") {
+            if let Some((temp, condition)) = rest.split_once(" and ") {
+                return format!(
+                    "{}现在是{}，天气{}；当前条件不显示下雨。",
+                    chinese_time_zone_display_label(place),
+                    temp.trim(),
+                    chinese_weather_condition_label(condition)
+                );
+            }
+        }
+    }
+    if let Some((place, rest)) = sentence.split_once(" is ") {
+        if let Some((temp, condition)) = rest.split_once(" and ") {
+            return format!(
+                "{}现在是{}，天气{}。",
+                chinese_time_zone_display_label(place),
+                temp.trim(),
+                chinese_weather_condition_label(condition)
+            );
+        }
+        if let Some((temp, condition)) = rest.split_once(" with ") {
+            return format!(
+                "{}现在是{}，正在{}。",
+                chinese_time_zone_display_label(place),
+                temp.trim(),
+                chinese_weather_condition_label(condition)
+            );
+        }
+    }
+    format!("天气结果：{}。", trimmed.trim_end_matches('.'))
+}
+
+fn chinese_time_zone_display_label(label: &str) -> String {
+    match label.trim().to_ascii_lowercase().as_str() {
+        "tokyo" | "japan" => "东京".to_string(),
+        "new york" => "纽约".to_string(),
+        "sydney" => "悉尼".to_string(),
+        "barcelona" => "巴塞罗那".to_string(),
+        "madrid" => "马德里".to_string(),
+        other if !other.is_empty() => label.trim().to_string(),
+        _ => "当地".to_string(),
+    }
+}
+
+fn chinese_weather_condition_label(condition: &str) -> String {
+    let normalized = condition.trim().trim_matches('.').to_ascii_lowercase();
+    if normalized.contains("partly cloudy") {
+        "局部多云".to_string()
+    } else if normalized.contains("mostly clear") {
+        "大多晴朗".to_string()
+    } else if normalized.contains("cloudy") {
+        "多云".to_string()
+    } else if normalized.contains("clear") || normalized.contains("sunny") {
+        "晴朗".to_string()
+    } else if normalized.contains("drizzle") {
+        "毛毛雨".to_string()
+    } else if normalized.contains("heavy rain") {
+        "大雨".to_string()
+    } else if normalized.contains("rain") {
+        "下雨".to_string()
+    } else if normalized.contains("snow") {
+        "下雪".to_string()
+    } else if normalized.contains("thunderstorm") {
+        "雷雨".to_string()
+    } else {
+        condition.trim().trim_matches('.').to_string()
+    }
+}
+
+fn is_cjk_char(ch: char) -> bool {
+    ('\u{4e00}'..='\u{9fff}').contains(&ch)
+        || ('\u{3400}'..='\u{4dbf}').contains(&ch)
+        || ('\u{f900}'..='\u{faff}').contains(&ch)
 }
 
 fn local_time_display_and_label(local_time_iso: &str) -> Option<(String, String)> {
@@ -3524,6 +3643,7 @@ mod tests {
         InterruptSpeechWindowMetrics, InterruptSubjectRelationConfidenceBundle,
         InterruptTimingMarkers, SpeechLikeness, PH1K_INTERRUPT_LOCALE_TAG_DEFAULT,
     };
+    use selene_kernel_contracts::ph1lang::{LanguagePacket, LanguageSwitchScope};
     use selene_kernel_contracts::ph1m::{
         MemoryCandidate, MemoryConfidence, MemoryKey, MemoryProvenance, MemorySensitivityFlag,
         MemoryUsePolicy, MemoryValue,
@@ -3673,6 +3793,25 @@ mod tests {
             vec![],
         )
         .unwrap()
+    }
+
+    fn h416_chinese_language_packet() -> LanguagePacket {
+        LanguagePacket::v1(
+            "zh".to_string(),
+            vec!["zh".to_string()],
+            9_000,
+            "zh".to_string(),
+            "same_language_continuity".to_string(),
+            "han-simplified".to_string(),
+            false,
+            false,
+            LanguageSwitchScope::ThisTurn,
+            "typed_input".to_string(),
+            "not_measured".to_string(),
+            false,
+            vec!["h416_canonical_packet".to_string()],
+        )
+        .expect("h416 packet should validate")
     }
 
     fn interrupt_wait() -> InterruptCandidate {
@@ -4669,6 +4808,112 @@ mod tests {
         assert!(!text.contains("Europe/Berlin"));
         assert!(!text.contains("2026-04-25"));
         assert!(!text.contains("Sources:"));
+    }
+
+    #[test]
+    fn h416_answer_language_ph1x_time_tool_uses_canonical_language_packet_before_formatter() {
+        let rt = Ph1xRuntime::new(Ph1xConfig::mvp_v1());
+        let request_id = selene_kernel_contracts::ph1e::ToolRequestId(4161);
+        let tool_ok = ToolResponse::ok_v1(
+            request_id,
+            selene_kernel_contracts::ph1e::ToolQueryHash(4161),
+            ToolResult::Time {
+                local_time_iso: "2026-04-25T09:42:00+09:00[Asia/Tokyo]".to_string(),
+            },
+            dummy_source_metadata(),
+            None,
+            ReasonCodeId(1),
+            CacheStatus::Bypassed,
+        )
+        .unwrap();
+        let req = Ph1xRequest::v1(
+            416,
+            1,
+            now(1),
+            ThreadState::v1(
+                Some(PendingState::Tool {
+                    request_id,
+                    attempts: 1,
+                }),
+                None,
+            ),
+            SessionState::Active,
+            id_text(),
+            policy_ok(),
+            vec![],
+            None,
+            None,
+            Some(tool_ok),
+            None,
+            Some("zh".to_string()),
+            None,
+        )
+        .unwrap()
+        .with_language_packet(Some(h416_chinese_language_packet()))
+        .unwrap();
+
+        let out = rt.decide(&req).unwrap();
+        match out.directive {
+            Ph1xDirective::Respond(r) => {
+                assert_eq!(r.response_text, "东京现在是9:42 AM。");
+                assert!(!r.response_text.starts_with("It's "));
+                assert!(!r.response_text.contains("[Asia/Tokyo]"));
+            }
+            _ => panic!("expected Respond"),
+        }
+    }
+
+    #[test]
+    fn h416_answer_language_ph1x_weather_tool_uses_canonical_language_packet_before_formatter() {
+        let rt = Ph1xRuntime::new(Ph1xConfig::mvp_v1());
+        let request_id = selene_kernel_contracts::ph1e::ToolRequestId(4162);
+        let tool_ok = ToolResponse::ok_v1(
+            request_id,
+            selene_kernel_contracts::ph1e::ToolQueryHash(4162),
+            ToolResult::Weather {
+                summary: "Tokyo is 21°C and partly cloudy.".to_string(),
+            },
+            dummy_source_metadata(),
+            None,
+            ReasonCodeId(1),
+            CacheStatus::Bypassed,
+        )
+        .unwrap();
+        let req = Ph1xRequest::v1(
+            416,
+            2,
+            now(2),
+            ThreadState::v1(
+                Some(PendingState::Tool {
+                    request_id,
+                    attempts: 1,
+                }),
+                None,
+            ),
+            SessionState::Active,
+            id_text(),
+            policy_ok(),
+            vec![],
+            None,
+            None,
+            Some(tool_ok),
+            None,
+            Some("zh".to_string()),
+            None,
+        )
+        .unwrap()
+        .with_language_packet(Some(h416_chinese_language_packet()))
+        .unwrap();
+
+        let out = rt.decide(&req).unwrap();
+        match out.directive {
+            Ph1xDirective::Respond(r) => {
+                assert_eq!(r.response_text, "东京现在是21°C，天气局部多云。");
+                assert!(!r.response_text.starts_with("Tokyo is "));
+                assert!(!r.response_text.contains("provider_payload"));
+            }
+            _ => panic!("expected Respond"),
+        }
     }
 
     #[test]

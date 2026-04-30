@@ -7663,6 +7663,7 @@ impl AdapterRuntime {
                 tool_response: None,
                 interruption: None,
                 locale,
+                language_packet: language_packet.clone(),
                 last_failure_reason_code: None,
             };
             let mut execution_outcome = self
@@ -30794,6 +30795,81 @@ mod tests {
         );
         assert!(!out.response_text.contains("TIME_LOOKUP"));
         assert!(!out.response_text.contains("provider_payload"));
+    }
+
+    #[test]
+    fn h416_canonical_language_packet_adapter_forwards_to_runtime() {
+        let runtime = AdapterRuntime::default();
+        let mut req = base_request();
+        req.app_platform = "DESKTOP".to_string();
+        req.audio_capture_ref = None;
+        req.correlation_id = 416_101;
+        req.turn_id = 416_101;
+        req.user_text_final = Some("现在东京几点？".to_string());
+
+        let out = runtime
+            .run_voice_turn(req)
+            .expect("Chinese time turn should complete");
+        assert_eq!(out.status, "ok");
+        assert_eq!(out.outcome, "FINAL_TOOL");
+        assert!(out.response_text.contains("东京现在是"));
+
+        let packet = runtime
+            .ingress
+            .debug_last_agent_input_packet()
+            .expect("agent packet should be captured");
+        let language = packet
+            .language_packet
+            .as_ref()
+            .expect("canonical language packet should be forwarded");
+        assert_eq!(language.input_language_primary, "zh");
+        assert_eq!(language.output_language_selected, "zh");
+        assert!(language
+            .source
+            .iter()
+            .any(|source| source == "runtime_classifier"));
+        assert!(
+            !language.source.iter().any(|source| source == "locale_hint"),
+            "app_ingress fallback language packet should not replace adapter packet"
+        );
+    }
+
+    #[test]
+    fn h416_stt_mismatch_voice_like_english_capture_with_chinese_locale_not_counted_as_chinese() {
+        let runtime = AdapterRuntime::default();
+        let mut req = base_request();
+        req.app_platform = "DESKTOP".to_string();
+        req.correlation_id = 416_102;
+        req.turn_id = 416_102;
+        req.user_text_final = Some("Since I don't think".to_string());
+        if let Some(capture) = req.audio_capture_ref.as_mut() {
+            capture.locale_tag = Some("zh-CN".to_string());
+        }
+
+        let out = runtime
+            .run_voice_turn(req)
+            .expect("voice-like public turn should complete");
+        assert_eq!(out.status, "ok");
+        assert!(
+            !h412_contains_cjk(&out.response_text),
+            "English captured transcript must not count as Chinese understanding: {}",
+            out.response_text
+        );
+
+        let packet = runtime
+            .ingress
+            .debug_last_agent_input_packet()
+            .expect("agent packet should be captured");
+        let language = packet
+            .language_packet
+            .as_ref()
+            .expect("language packet should exist");
+        assert_eq!(language.input_language_primary, "en");
+        assert_eq!(language.output_language_selected, "en");
+        assert!(language
+            .source
+            .iter()
+            .any(|source| source == "runtime_classifier"));
     }
 
     #[test]
