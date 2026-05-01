@@ -40,7 +40,8 @@ use crate::web_search_plan::web_provider::health_state::{
 };
 use selene_engines::ph1providerctl::{
     disabled_provider_decision, fake_provider_decision, is_local_fake_endpoint,
-    ProviderControlProvider, ProviderControlRoute, ProviderGateDecision,
+    provider_fallback_enabled_from_env, ProviderControlProvider, ProviderControlRoute,
+    ProviderGateDecision,
 };
 use selene_kernel_contracts::provider_secrets::ProviderSecretId;
 use serde::{Deserialize, Serialize};
@@ -449,6 +450,9 @@ fn execute_news_provider_ladder(
     let mut fallback_reason_code: Option<String> = None;
     let mut assist_used = false;
     let mut filtered_total = 0usize;
+    let fallback_enabled = provider_fallback_enabled_from_env()
+        || (is_local_fake_endpoint(&config.brave_news_endpoint)
+            && is_local_fake_endpoint(&config.gdelt_endpoint));
 
     let mut brave_filtered = Vec::new();
     let mut gdelt_filtered = Vec::new();
@@ -464,6 +468,15 @@ fn execute_news_provider_ladder(
         now_ms,
         config.health_policy,
     ) {
+        if !fallback_enabled {
+            return Err(NewsProviderError {
+                provider_id: NewsProviderId::NewsProviderLadder,
+                kind: NewsProviderErrorKind::PolicyViolation,
+                status_code: None,
+                message: "fallback_provider_disabled".to_string(),
+                latency_ms: 0,
+            });
+        }
         fallback_used = true;
         assist_used = true;
         fallback_reason_code = Some("provider_upstream_failed".to_string());
@@ -577,7 +590,7 @@ fn execute_news_provider_ladder(
                 );
 
                 let fallback_trigger = fallback_trigger_label(err.kind);
-                let can_fallback = fallback_trigger.is_some();
+                let can_fallback = fallback_enabled && fallback_trigger.is_some();
                 if can_fallback {
                     fallback_used = true;
                     assist_used = true;
@@ -678,7 +691,7 @@ fn execute_news_provider_ladder(
             || (request.importance_tier == ImportanceTier::High
                 && !diversity_threshold_met(request.importance_tier, brave_domain_count));
 
-        if !assist_used && needs_assist_for_insufficiency {
+        if !assist_used && needs_assist_for_insufficiency && fallback_enabled {
             fallback_used = true;
             assist_used = true;
             fallback_reason_code = Some(if brave_filtered.is_empty() {

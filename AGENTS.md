@@ -189,6 +189,32 @@ Public search remains read-only.
 
 Protected execution remains simulation and authority gated.
 
+Rule: Controlled Brave Re-Enable and Low-Volume Billing Proof
+
+Brave must remain OFF by default and may only be enabled by explicit controlled configuration.
+
+Paid providers must remain OFF unless explicitly enabled.
+
+No startup provider probes or background provider calls are allowed.
+
+No live Brave call may happen without the canonical provider budget/counter gate.
+
+Every live Brave attempt must increment a pre-network call counter before dispatch.
+
+Every live Brave network dispatch must increment a network dispatch counter.
+
+Disabled providers must produce zero provider call attempts and zero network dispatches.
+
+DeepResearch, News, URL fetch, image provider calls, fallback providers, and provider fanout must remain OFF during basic Brave proof unless separately approved and capped.
+
+Normal tests must not call Brave; live Brave proof tests must be skipped unless explicitly opted in.
+
+Brave usage must be intentionally small, capped, and auditable.
+
+Public websearch remains read-only public answer work and does not require simulation approval.
+
+Protected execution remains simulation and authority gated.
+
 Auto-Loaded Authority Order
 
 JD explicit in-thread instructions

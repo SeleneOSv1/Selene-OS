@@ -20,6 +20,11 @@ pub const SELENE_PROVIDER_CALL_MAX_PER_ACTOR_USER: &str = "SELENE_PROVIDER_CALL_
 pub const SELENE_PROVIDER_CALL_MAX_PER_TENANT: &str = "SELENE_PROVIDER_CALL_MAX_PER_TENANT";
 pub const SELENE_PROVIDER_RETRY_MAX: &str = "SELENE_PROVIDER_RETRY_MAX";
 pub const SELENE_PROVIDER_FALLBACK_ENABLED: &str = "SELENE_PROVIDER_FALLBACK_ENABLED";
+pub const SELENE_PROVIDER_FANOUT_ENABLED: &str = "SELENE_PROVIDER_FANOUT_ENABLED";
+pub const SELENE_BRAVE_IMAGE_SEARCH_ENABLED: &str = "SELENE_BRAVE_IMAGE_SEARCH_ENABLED";
+pub const SELENE_BRAVE_MAX_CALLS_PER_TEST_RUN: &str = "SELENE_BRAVE_MAX_CALLS_PER_TEST_RUN";
+pub const SELENE_BRAVE_MAX_CALLS_PER_DAY_TEST: &str = "SELENE_BRAVE_MAX_CALLS_PER_DAY_TEST";
+pub const SELENE_RUN_LIVE_BRAVE_PROOF: &str = "SELENE_RUN_LIVE_BRAVE_PROOF";
 
 pub const WEB_ADMIN_DISABLED: &str = "WEB_ADMIN_DISABLED";
 pub const PROVIDER_DISABLED: &str = "PROVIDER_DISABLED";
@@ -29,6 +34,8 @@ pub const DEEP_RESEARCH_DISABLED: &str = "DEEP_RESEARCH_DISABLED";
 pub const NEWS_SEARCH_DISABLED: &str = "NEWS_SEARCH_DISABLED";
 pub const PROVIDER_BUDGET_EXHAUSTED: &str = "PROVIDER_BUDGET_EXHAUSTED";
 pub const STARTUP_PROVIDER_PROBES_DISABLED: &str = "STARTUP_PROVIDER_PROBES_DISABLED";
+pub const PROVIDER_FALLBACK_DISABLED: &str = "PROVIDER_FALLBACK_DISABLED";
+pub const PROVIDER_FANOUT_DISABLED: &str = "PROVIDER_FANOUT_DISABLED";
 pub const TEST_FAKE_PROVIDER: &str = "TEST_FAKE_PROVIDER";
 pub const BLOCKED_NOT_BILLABLE: &str = "BLOCKED_NOT_BILLABLE";
 pub const NON_BILLABLE: &str = "NON_BILLABLE";
@@ -160,12 +167,17 @@ pub struct ProviderNetworkPolicy {
     pub max_calls_this_tenant: u32,
     pub max_retries: u32,
     pub fallback_enabled: bool,
+    pub provider_fanout_enabled: bool,
+    pub brave_max_calls_per_test_run: u32,
+    pub brave_max_calls_per_day_test: u32,
+    pub live_brave_proof_enabled: bool,
 }
 
 impl Default for ProviderNetworkPolicy {
     fn default() -> Self {
         let mut provider_specific_enabled = BTreeMap::new();
         provider_specific_enabled.insert("brave".to_string(), false);
+        provider_specific_enabled.insert("brave_image".to_string(), false);
         Self {
             global_search_providers_enabled: false,
             paid_search_providers_enabled: false,
@@ -182,6 +194,10 @@ impl Default for ProviderNetworkPolicy {
             max_calls_this_tenant: 0,
             max_retries: 0,
             fallback_enabled: false,
+            provider_fanout_enabled: false,
+            brave_max_calls_per_test_run: 0,
+            brave_max_calls_per_day_test: 0,
+            live_brave_proof_enabled: false,
         }
     }
 }
@@ -192,6 +208,10 @@ impl ProviderNetworkPolicy {
         provider_specific_enabled.insert(
             "brave".to_string(),
             env_flag_enabled(SELENE_BRAVE_SEARCH_ENABLED),
+        );
+        provider_specific_enabled.insert(
+            "brave_image".to_string(),
+            env_flag_enabled(SELENE_BRAVE_IMAGE_SEARCH_ENABLED),
         );
         Self {
             global_search_providers_enabled: env_flag_enabled(SELENE_SEARCH_PROVIDERS_ENABLED),
@@ -216,12 +236,17 @@ impl ProviderNetworkPolicy {
             max_calls_this_tenant: env_u32(SELENE_PROVIDER_CALL_MAX_PER_TENANT).unwrap_or(0),
             max_retries: env_u32(SELENE_PROVIDER_RETRY_MAX).unwrap_or(0),
             fallback_enabled: env_flag_enabled(SELENE_PROVIDER_FALLBACK_ENABLED),
+            provider_fanout_enabled: env_flag_enabled(SELENE_PROVIDER_FANOUT_ENABLED),
+            brave_max_calls_per_test_run: env_u32(SELENE_BRAVE_MAX_CALLS_PER_TEST_RUN).unwrap_or(0),
+            brave_max_calls_per_day_test: env_u32(SELENE_BRAVE_MAX_CALLS_PER_DAY_TEST).unwrap_or(0),
+            live_brave_proof_enabled: env_flag_enabled(SELENE_RUN_LIVE_BRAVE_PROOF),
         }
     }
 
     pub fn fake_test_allowing(max_calls: u32) -> Self {
         let mut provider_specific_enabled = BTreeMap::new();
         provider_specific_enabled.insert("brave".to_string(), true);
+        provider_specific_enabled.insert("brave_image".to_string(), true);
         Self {
             global_search_providers_enabled: true,
             paid_search_providers_enabled: true,
@@ -238,10 +263,26 @@ impl ProviderNetworkPolicy {
             max_calls_this_tenant: max_calls,
             max_retries: 0,
             fallback_enabled: false,
+            provider_fanout_enabled: false,
+            brave_max_calls_per_test_run: max_calls,
+            brave_max_calls_per_day_test: max_calls,
+            live_brave_proof_enabled: false,
         }
     }
 
     pub fn is_provider_enabled(&self, provider: ProviderControlProvider) -> bool {
+        if matches!(provider, ProviderControlProvider::BraveImageSearch) {
+            return self
+                .provider_specific_enabled
+                .get("brave")
+                .copied()
+                .unwrap_or(false)
+                && self
+                    .provider_specific_enabled
+                    .get("brave_image")
+                    .copied()
+                    .unwrap_or(false);
+        }
         if provider.is_brave() {
             return self
                 .provider_specific_enabled
@@ -251,6 +292,10 @@ impl ProviderNetworkPolicy {
         }
         true
     }
+}
+
+pub fn provider_fallback_enabled_from_env() -> bool {
+    ProviderNetworkPolicy::from_env().fallback_enabled
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -539,13 +584,7 @@ fn deny_reason(
     counter: &ProviderCallCounter,
 ) -> Option<String> {
     if matches!(mode, ProviderControlMode::TestFake) {
-        return if policy.max_calls_this_turn > 0
-            && counter.provider_call_attempt_count >= policy.max_calls_this_turn
-        {
-            Some(PROVIDER_BUDGET_EXHAUSTED.to_string())
-        } else {
-            None
-        };
+        return budget_deny_reason(policy, context, counter);
     }
     if !policy.global_search_providers_enabled {
         return Some(WEB_ADMIN_DISABLED.to_string());
@@ -580,6 +619,56 @@ fn deny_reason(
     }
     if policy.max_calls_this_turn == 0
         || counter.provider_call_attempt_count >= policy.max_calls_this_turn
+    {
+        return Some(PROVIDER_BUDGET_EXHAUSTED.to_string());
+    }
+    if let Some(reason) = budget_deny_reason(policy, context, counter) {
+        return Some(reason);
+    }
+    if context.provider.is_brave()
+        && (policy.brave_max_calls_per_test_run == 0 || policy.brave_max_calls_per_day_test == 0)
+    {
+        return Some(PROVIDER_BUDGET_EXHAUSTED.to_string());
+    }
+    None
+}
+
+fn budget_deny_reason(
+    policy: &ProviderNetworkPolicy,
+    context: &ProviderUsageContext,
+    counter: &ProviderCallCounter,
+) -> Option<String> {
+    if policy.max_calls_this_turn > 0
+        && counter.provider_call_attempt_count >= policy.max_calls_this_turn
+    {
+        return Some(PROVIDER_BUDGET_EXHAUSTED.to_string());
+    }
+    if policy.max_calls_this_route > 0
+        && map_count(&counter.per_route_count, context.route.as_str())
+            >= policy.max_calls_this_route
+    {
+        return Some(PROVIDER_BUDGET_EXHAUSTED.to_string());
+    }
+    if policy.max_calls_this_actor_user > 0
+        && map_count(&counter.per_actor_user_count, &context.actor_user_id)
+            >= policy.max_calls_this_actor_user
+    {
+        return Some(PROVIDER_BUDGET_EXHAUSTED.to_string());
+    }
+    if policy.max_calls_this_tenant > 0
+        && map_count(&counter.per_tenant_count, &context.tenant_id) >= policy.max_calls_this_tenant
+    {
+        return Some(PROVIDER_BUDGET_EXHAUSTED.to_string());
+    }
+    if context.provider.is_brave()
+        && policy.brave_max_calls_per_test_run > 0
+        && counter.provider_call_attempt_count >= policy.brave_max_calls_per_test_run
+    {
+        return Some(PROVIDER_BUDGET_EXHAUSTED.to_string());
+    }
+    if context.provider.is_brave()
+        && policy.brave_max_calls_per_day_test > 0
+        && counter.provider_call_attempt_count >= policy.brave_max_calls_per_day_test
     {
         return Some(PROVIDER_BUDGET_EXHAUSTED.to_string());
     }
@@ -674,6 +763,10 @@ fn env_u32(name: &str) -> Option<u32> {
 fn increment(map: &mut BTreeMap<String, u32>, key: &str) {
     let entry = map.entry(key.to_string()).or_insert(0);
     *entry = entry.saturating_add(1);
+}
+
+fn map_count(map: &BTreeMap<String, u32>, key: &str) -> u32 {
+    map.get(key).copied().unwrap_or(0)
 }
 
 fn stable_hash_hex(input: &str) -> String {
@@ -814,5 +907,220 @@ mod tests {
         assert_eq!(corporate.account_layer, "SELENE_CORPORATE");
         assert_eq!(company.billing_scope, "CUSTOMER_COMPANY");
         assert_eq!(private.cost_owner_id, "private_test_owner");
+    }
+
+    #[test]
+    fn stage7_brave_default_off_blocks_before_attempt_and_dispatch() {
+        let decision = evaluate_provider_gate(
+            &ProviderNetworkPolicy::default(),
+            ProviderUsageContext::unknown(
+                ProviderControlRoute::WebSearch,
+                ProviderControlProvider::BraveWebSearch,
+                "Test Company A public profile",
+            ),
+            ProviderControlMode::Live,
+            ProviderCallCounter::default(),
+        );
+
+        assert!(!decision.allowed);
+        assert_eq!(decision.deny_reason.as_deref(), Some(WEB_ADMIN_DISABLED));
+        assert_eq!(decision.counter.provider_blocked_count, 1);
+        assert_eq!(decision.counter.provider_call_attempt_count, 0);
+        assert_eq!(decision.counter.provider_network_dispatch_count, 0);
+        assert_eq!(decision.usage_event.billable_class, BLOCKED_NOT_BILLABLE);
+    }
+
+    #[test]
+    fn stage7_controlled_brave_enable_requires_global_paid_web_and_brave_flags() {
+        let mut policy = ProviderNetworkPolicy::default();
+        policy.max_calls_this_turn = 1;
+        policy.max_calls_this_route = 1;
+        policy.brave_max_calls_per_test_run = 1;
+        policy.brave_max_calls_per_day_test = 3;
+        let context = ProviderUsageContext::unknown(
+            ProviderControlRoute::WebSearch,
+            ProviderControlProvider::BraveWebSearch,
+            "Test Company A public profile",
+        );
+
+        let global_off = evaluate_provider_gate(
+            &policy,
+            context.clone(),
+            ProviderControlMode::Live,
+            ProviderCallCounter::default(),
+        );
+        assert_eq!(global_off.deny_reason.as_deref(), Some(WEB_ADMIN_DISABLED));
+
+        policy.global_search_providers_enabled = true;
+        let web_off = evaluate_provider_gate(
+            &policy,
+            context.clone(),
+            ProviderControlMode::Live,
+            ProviderCallCounter::default(),
+        );
+        assert_eq!(web_off.deny_reason.as_deref(), Some(PROVIDER_DISABLED));
+
+        policy.web_search_enabled = true;
+        let brave_off = evaluate_provider_gate(
+            &policy,
+            context.clone(),
+            ProviderControlMode::Live,
+            ProviderCallCounter::default(),
+        );
+        assert_eq!(brave_off.deny_reason.as_deref(), Some(PROVIDER_DISABLED));
+
+        policy
+            .provider_specific_enabled
+            .insert("brave".to_string(), true);
+        let paid_off = evaluate_provider_gate(
+            &policy,
+            context.clone(),
+            ProviderControlMode::Live,
+            ProviderCallCounter::default(),
+        );
+        assert_eq!(
+            paid_off.deny_reason.as_deref(),
+            Some(PAID_PROVIDER_DISABLED)
+        );
+
+        policy.paid_search_providers_enabled = true;
+        let allowed = evaluate_provider_gate(
+            &policy,
+            context,
+            ProviderControlMode::Live,
+            ProviderCallCounter::default(),
+        );
+        assert!(allowed.allowed, "{allowed:?}");
+        assert_eq!(allowed.counter.provider_call_attempt_count, 1);
+        assert_eq!(allowed.counter.provider_network_dispatch_count, 0);
+    }
+
+    #[test]
+    fn stage7_route_cap_blocks_second_call_before_second_network_dispatch() {
+        let mut policy = ProviderNetworkPolicy::fake_test_allowing(2);
+        policy.max_calls_this_route = 1;
+        let context = ProviderUsageContext::unknown(
+            ProviderControlRoute::WebSearch,
+            ProviderControlProvider::BraveWebSearch,
+            "Test Company A public profile",
+        );
+
+        let first = evaluate_provider_gate(
+            &policy,
+            context.clone(),
+            ProviderControlMode::TestFake,
+            ProviderCallCounter::default(),
+        );
+        assert!(first.allowed, "{first:?}");
+        let mut after_dispatch = first.counter.clone();
+        after_dispatch.record_network_dispatch();
+        assert_eq!(after_dispatch.provider_call_attempt_count, 1);
+        assert_eq!(after_dispatch.provider_network_dispatch_count, 1);
+
+        let second = evaluate_provider_gate(
+            &policy,
+            context,
+            ProviderControlMode::TestFake,
+            after_dispatch,
+        );
+        assert!(!second.allowed);
+        assert_eq!(
+            second.deny_reason.as_deref(),
+            Some(PROVIDER_BUDGET_EXHAUSTED)
+        );
+        assert_eq!(second.counter.provider_call_attempt_count, 1);
+        assert_eq!(second.counter.provider_network_dispatch_count, 1);
+    }
+
+    #[test]
+    fn stage7_brave_test_run_cap_blocks_second_call_before_dispatch() {
+        let mut policy = ProviderNetworkPolicy::fake_test_allowing(3);
+        policy.max_calls_this_route = 3;
+        policy.brave_max_calls_per_test_run = 1;
+        policy.brave_max_calls_per_day_test = 3;
+        let context = ProviderUsageContext::unknown(
+            ProviderControlRoute::WebSearch,
+            ProviderControlProvider::BraveWebSearch,
+            "Test Company A public profile",
+        );
+
+        let first = evaluate_provider_gate(
+            &policy,
+            context.clone(),
+            ProviderControlMode::TestFake,
+            ProviderCallCounter::default(),
+        );
+        assert!(first.allowed, "{first:?}");
+        let mut after_dispatch = first.counter.clone();
+        after_dispatch.record_network_dispatch();
+
+        let second = evaluate_provider_gate(
+            &policy,
+            context,
+            ProviderControlMode::TestFake,
+            after_dispatch,
+        );
+        assert!(!second.allowed);
+        assert_eq!(
+            second.deny_reason.as_deref(),
+            Some(PROVIDER_BUDGET_EXHAUSTED)
+        );
+        assert_eq!(second.counter.provider_call_attempt_count, 1);
+        assert_eq!(second.counter.provider_network_dispatch_count, 1);
+    }
+
+    #[test]
+    fn stage7_retry_fallback_fanout_and_live_proof_opt_in_default_off() {
+        let policy = ProviderNetworkPolicy::default();
+        assert_eq!(policy.max_retries, 0);
+        assert!(!policy.fallback_enabled);
+        assert!(!policy.provider_fanout_enabled);
+        assert!(!policy.live_brave_proof_enabled);
+        assert_eq!(policy.brave_max_calls_per_test_run, 0);
+        assert_eq!(policy.brave_max_calls_per_day_test, 0);
+    }
+
+    #[test]
+    fn stage7_brave_image_search_requires_dedicated_image_flag() {
+        let mut policy = ProviderNetworkPolicy::default();
+        policy.global_search_providers_enabled = true;
+        policy.paid_search_providers_enabled = true;
+        policy.web_search_enabled = true;
+        policy.max_calls_this_turn = 1;
+        policy.max_calls_this_route = 1;
+        policy.brave_max_calls_per_test_run = 1;
+        policy.brave_max_calls_per_day_test = 3;
+        policy
+            .provider_specific_enabled
+            .insert("brave".to_string(), true);
+
+        let blocked = evaluate_provider_gate(
+            &policy,
+            ProviderUsageContext::unknown(
+                ProviderControlRoute::ImageSearch,
+                ProviderControlProvider::BraveImageSearch,
+                "Test Company A public profile",
+            ),
+            ProviderControlMode::Live,
+            ProviderCallCounter::default(),
+        );
+        assert!(!blocked.allowed);
+        assert_eq!(blocked.deny_reason.as_deref(), Some(PROVIDER_DISABLED));
+        assert_eq!(blocked.counter.provider_call_attempt_count, 0);
+
+        policy
+            .provider_specific_enabled
+            .insert("brave_image".to_string(), true);
+        let allowed = evaluate_provider_gate(
+            &policy,
+            ProviderUsageContext::unknown(
+                ProviderControlRoute::ImageSearch,
+                ProviderControlProvider::BraveImageSearch,
+                "Test Company A public profile",
+            ),
+            ProviderControlMode::Live,
+            ProviderCallCounter::default(),
+        );
+        assert!(allowed.allowed, "{allowed:?}");
     }
 }

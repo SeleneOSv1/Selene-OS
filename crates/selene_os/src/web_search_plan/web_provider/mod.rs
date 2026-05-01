@@ -32,7 +32,8 @@ use crate::web_search_plan::web_provider::health_state::{
 use crate::web_search_plan::web_provider::provider_merge::merge_results;
 use selene_engines::ph1providerctl::{
     disabled_provider_decision, fake_provider_decision, is_local_fake_endpoint,
-    ProviderControlProvider, ProviderControlRoute, ProviderGateDecision,
+    provider_fallback_enabled_from_env, ProviderControlProvider, ProviderControlRoute,
+    ProviderGateDecision,
 };
 use selene_kernel_contracts::provider_secrets::ProviderSecretId;
 use serde::{Deserialize, Serialize};
@@ -389,6 +390,9 @@ fn execute_web_provider_ladder(
     let mut lead_attempted = false;
     let mut fallback_used = false;
     let mut fallback_reason_code = None;
+    let fallback_enabled = provider_fallback_enabled_from_env()
+        || (is_local_fake_endpoint(&config.brave_endpoint)
+            && is_local_fake_endpoint(&config.openai_endpoint));
 
     let mut provider_runs = Vec::new();
     let mut brave_results = Vec::new();
@@ -409,6 +413,15 @@ fn execute_web_provider_ladder(
         now_ms,
         config.health_policy,
     ) {
+        if !fallback_enabled {
+            return Err(ProviderError {
+                provider_id: ProviderId::WebProviderLadder,
+                kind: ProviderErrorKind::PolicyViolation,
+                status_code: None,
+                message: "fallback_provider_disabled".to_string(),
+                latency_ms: 0,
+            });
+        }
         fallback_used = true;
         let skipped_transitions = default_degraded_transitions(request.created_at_ms);
         let skipped_debug_packet = try_build_debug_packet(DebugPacketContext {
@@ -537,7 +550,7 @@ fn execute_web_provider_ladder(
                 );
 
                 let fallback_trigger = fallback_trigger_label(brave_err.kind);
-                let should_fallback = should_trigger_fallback(brave_err.kind);
+                let should_fallback = fallback_enabled && should_trigger_fallback(brave_err.kind);
                 if should_fallback {
                     fallback_used = true;
                     fallback_reason_code = Some(brave_err.reason_code().to_string());

@@ -11,9 +11,9 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use crate::device_vault;
 use crate::ph1providerctl::{
     disabled_provider_decision, evaluate_provider_gate, fake_provider_decision,
-    is_local_fake_endpoint, ProviderCallCounter, ProviderControlMode, ProviderControlProvider,
-    ProviderControlRoute, ProviderGateDecision, ProviderNetworkPolicy, ProviderUsageContext,
-    UNAVAILABLE,
+    is_local_fake_endpoint, provider_fallback_enabled_from_env, ProviderCallCounter,
+    ProviderControlMode, ProviderControlProvider, ProviderControlRoute, ProviderGateDecision,
+    ProviderNetworkPolicy, ProviderUsageContext, UNAVAILABLE,
 };
 use crate::ph1search::{Ph1SearchConfig, Ph1SearchRuntime};
 use selene_kernel_contracts::ph1e::{
@@ -2198,6 +2198,13 @@ impl Ph1eRuntime {
         } else {
             &self.provider_config.brave_web_url
         };
+        let primary_fixture_or_local =
+            self.brave_fixture_json_for(is_news).is_some() || is_local_fake_endpoint(primary_url);
+        let fallback_fixture_or_local = self.brave_fixture_json_for(false).is_some()
+            || is_local_fake_endpoint(&self.provider_config.brave_web_url);
+        let provider_fallback_enabled = provider_fallback_enabled_from_env()
+            || primary_fixture_or_local
+            || fallback_fixture_or_local;
         if let Some(fail) = self.stage2_blocked_provider_payload(
             req,
             if is_news {
@@ -2210,14 +2217,14 @@ impl Ph1eRuntime {
             } else {
                 ProviderControlProvider::BraveWebSearch
             },
-            self.brave_fixture_json_for(is_news).is_some() || is_local_fake_endpoint(primary_url),
+            primary_fixture_or_local,
         ) {
             return Err(fail);
         }
         let max_results = req.strict_budget.max_results.min(self.config.max_results);
         let brave_api_key = self.resolve_brave_api_key();
         let openai_api_key = self.resolve_openai_api_key();
-        if brave_api_key.is_none() && openai_api_key.is_none() {
+        if brave_api_key.is_none() && (!provider_fallback_enabled || openai_api_key.is_none()) {
             return Err(ToolFailPayload::with_detail(
                 reason_codes::E_FAIL_PROVIDER_MISSING_CONFIG,
                 "PROVIDER_DISABLED_ZERO_CALL_REQUIRED provider_call_count=0".to_string(),
@@ -2268,7 +2275,7 @@ impl Ph1eRuntime {
                     ));
                 }
                 Err(err) => {
-                    if matches!(kind, ToolName::News) {
+                    if matches!(kind, ToolName::News) && provider_fallback_enabled {
                         match run_brave_search(
                             &self.provider_config.brave_web_url,
                             brave_key,
@@ -2314,57 +2321,70 @@ impl Ph1eRuntime {
             }
         }
 
-        if let Some(openai_key) = openai_api_key.as_deref() {
-            match run_openai_search_fallback(
-                &self.provider_config.openai_responses_url,
-                openai_key,
-                &self.provider_config.openai_model,
-                &req.query,
-                max_results,
-                req.strict_budget.timeout_ms,
-                &self.provider_config.user_agent,
-                &self.provider_config.proxy_config,
-                matches!(kind, ToolName::News),
-            ) {
-                Ok((items, sources)) => {
-                    let verified_items = verified_public_snippets(items);
-                    if verified_items.is_empty() {
-                        return Err(ToolFailPayload::with_detail(
-                            reason_codes::E_FAIL_PROVIDER_UPSTREAM,
-                            "provider=openai error=unverified_citation".to_string(),
-                        ));
+        if provider_fallback_enabled {
+            if let Some(openai_key) = openai_api_key.as_deref() {
+                match run_openai_search_fallback(
+                    &self.provider_config.openai_responses_url,
+                    openai_key,
+                    &self.provider_config.openai_model,
+                    &req.query,
+                    max_results,
+                    req.strict_budget.timeout_ms,
+                    &self.provider_config.user_agent,
+                    &self.provider_config.proxy_config,
+                    matches!(kind, ToolName::News),
+                ) {
+                    Ok((items, sources)) => {
+                        let verified_items = verified_public_snippets(items);
+                        if verified_items.is_empty() {
+                            return Err(ToolFailPayload::with_detail(
+                                reason_codes::E_FAIL_PROVIDER_UPSTREAM,
+                                "provider=openai error=unverified_citation".to_string(),
+                            ));
+                        }
+                        let verified_sources = verified_public_sources(sources);
+                        let (stage1_items, stage1_metadata) = stage1_web_answer_verified_metadata(
+                            &req.query,
+                            verified_items,
+                            Some("ph1search_openai_fallback".to_string()),
+                            now_unix_ms(),
+                        );
+                        Ok((
+                            if matches!(kind, ToolName::News) {
+                                ToolResult::News {
+                                    items: stage1_items,
+                                }
+                            } else {
+                                ToolResult::WebSearch {
+                                    items: stage1_items,
+                                }
+                            },
+                            stage1_preserve_provider_sources_when_unverified(
+                                stage1_metadata,
+                                verified_sources,
+                            ),
+                        ))
                     }
-                    let verified_sources = verified_public_sources(sources);
-                    let (stage1_items, stage1_metadata) = stage1_web_answer_verified_metadata(
-                        &req.query,
-                        verified_items,
-                        Some("ph1search_openai_fallback".to_string()),
-                        now_unix_ms(),
-                    );
-                    Ok((
-                        if matches!(kind, ToolName::News) {
-                            ToolResult::News {
-                                items: stage1_items,
-                            }
-                        } else {
-                            ToolResult::WebSearch {
-                                items: stage1_items,
-                            }
-                        },
-                        stage1_preserve_provider_sources_when_unverified(
-                            stage1_metadata,
-                            verified_sources,
+                    Err(openai_failure) => Err(ToolFailPayload::with_detail(
+                        reason_codes::E_FAIL_PROVIDER_UPSTREAM,
+                        combine_live_search_failure_detail(
+                            brave_failure.as_ref(),
+                            Some(&openai_failure),
+                            &self.provider_config.proxy_config,
                         ),
-                    ))
+                    )),
                 }
-                Err(openai_failure) => Err(ToolFailPayload::with_detail(
+            } else if let Some(brave_failure) = brave_failure {
+                Err(ToolFailPayload::with_detail(
                     reason_codes::E_FAIL_PROVIDER_UPSTREAM,
                     combine_live_search_failure_detail(
-                        brave_failure.as_ref(),
-                        Some(&openai_failure),
+                        Some(&brave_failure),
+                        None,
                         &self.provider_config.proxy_config,
                     ),
-                )),
+                ))
+            } else {
+                Err(ToolFailPayload::new(reason_codes::E_FAIL_PROVIDER_UPSTREAM))
             }
         } else if let Some(brave_failure) = brave_failure {
             Err(ToolFailPayload::with_detail(
@@ -2921,7 +2941,10 @@ fn stage5_presentation_packet(
             domain: source.domain.clone(),
             safe_click_url: source.safe_click_url.clone(),
             source_type: source.source_type.clone(),
-            short_excerpt_or_summary: format!("Accepted source for {}", source.supported_claim_refs.join(", ")),
+            short_excerpt_or_summary: format!(
+                "Accepted source for {}",
+                source.supported_claim_refs.join(", ")
+            ),
             accepted: true,
             claim_refs: source.supported_claim_refs.clone(),
             display_rank: index.saturating_add(1) as u16,
@@ -13914,6 +13937,73 @@ mod tests {
     }
 
     #[test]
+    fn stage7_missing_brave_key_does_not_use_openai_fallback_without_opt_in() {
+        with_isolated_empty_device_vault("stage7_missing_brave_key", || {
+            let _global = ScopedEnvVar::set("SELENE_SEARCH_PROVIDERS_ENABLED", "1");
+            let _paid = ScopedEnvVar::set("SELENE_PAID_SEARCH_PROVIDERS_ENABLED", "1");
+            let _web = ScopedEnvVar::set("SELENE_WEB_SEARCH_ENABLED", "1");
+            let _deep = ScopedEnvVar::set("SELENE_DEEP_RESEARCH_ENABLED", "0");
+            let _news = ScopedEnvVar::set("SELENE_NEWS_SEARCH_ENABLED", "0");
+            let _url_fetch = ScopedEnvVar::set("SELENE_URL_FETCH_ENABLED", "0");
+            let _startup = ScopedEnvVar::set("SELENE_STARTUP_PROVIDER_PROBES_ENABLED", "0");
+            let _brave = ScopedEnvVar::set("SELENE_BRAVE_SEARCH_ENABLED", "1");
+            let _fallback = ScopedEnvVar::set("SELENE_PROVIDER_FALLBACK_ENABLED", "0");
+            let _fanout = ScopedEnvVar::set("SELENE_PROVIDER_FANOUT_ENABLED", "0");
+            let _turn_cap = ScopedEnvVar::set("SELENE_PROVIDER_CALL_MAX_PER_TURN", "1");
+            let _route_cap = ScopedEnvVar::set("SELENE_PROVIDER_CALL_MAX_PER_ROUTE", "1");
+            let _retry_cap = ScopedEnvVar::set("SELENE_PROVIDER_RETRY_MAX", "0");
+            let _run_cap = ScopedEnvVar::set("SELENE_BRAVE_MAX_CALLS_PER_TEST_RUN", "1");
+            let _day_cap = ScopedEnvVar::set("SELENE_BRAVE_MAX_CALLS_PER_DAY_TEST", "3");
+
+            let rt = Ph1eRuntime::new_with_provider_config(
+                Ph1eConfig::mvp_v1(),
+                Ph1eProviderConfig {
+                    brave_api_key: None,
+                    brave_web_url: "https://api.search.brave.com/res/v1/web/search".to_string(),
+                    brave_news_url: "https://api.search.brave.com/res/v1/news/search".to_string(),
+                    brave_image_url: BRAVE_IMAGE_DEFAULT_URL.to_string(),
+                    brave_web_fixture_json: None,
+                    brave_news_fixture_json: None,
+                    brave_image_fixture_json: None,
+                    openai_api_key: Some("stage7-openai-fallback-key".to_string()),
+                    openai_responses_url: "http://127.0.0.1:9/v1/responses".to_string(),
+                    openai_model: "gpt-4o-mini".to_string(),
+                    google_time_zone_api_key: None,
+                    google_time_zone_url: "https://maps.googleapis.com/maps/api/timezone/json"
+                        .to_string(),
+                    google_time_zone_fixture_json: None,
+                    timezonedb_api_key: None,
+                    timezonedb_url: "https://api.timezonedb.com/v2.1/get-time-zone".to_string(),
+                    timezonedb_fixture_json: None,
+                    user_agent: "selene-ph1e-test/1.0".to_string(),
+                    proxy_config: Ph1eProxyConfig {
+                        mode: Ph1eProxyMode::Off,
+                        http_proxy_url: None,
+                        https_proxy_url: None,
+                    },
+                    url_fetch_fixture_html: None,
+                },
+            );
+
+            let out = rt.run(&req(
+                ToolName::WebSearch,
+                "Search the web for Test Company A.",
+                false,
+                false,
+            ));
+            assert_eq!(out.tool_status, ToolStatus::Fail);
+            assert_eq!(
+                out.reason_code,
+                reason_codes::E_FAIL_PROVIDER_MISSING_CONFIG
+            );
+            let detail = out.fail_detail.as_deref().unwrap_or_default();
+            assert!(detail.contains("provider_call_count=0"), "{detail}");
+            assert!(!detail.contains("openai"), "{detail}");
+            assert!(!detail.contains("stage7-openai-fallback-key"), "{detail}");
+        });
+    }
+
+    #[test]
     fn h383_news_query_uses_brave_web_fallback_when_news_endpoint_fails() {
         let fixture = spawn_test_http_fixture();
         let rt = Ph1eRuntime::new_with_provider_config(
@@ -14459,8 +14549,14 @@ mod tests {
 
         let verification = metadata.web_answer_verification.as_ref().unwrap();
         assert_eq!(verification.final_answer_class, "VERIFIED_DIRECT_ANSWER");
-        assert_eq!(verification.presentation.response_text, verification.response_text);
-        assert_eq!(verification.presentation.tts_text, verification.response_text);
+        assert_eq!(
+            verification.presentation.response_text,
+            verification.response_text
+        );
+        assert_eq!(
+            verification.presentation.tts_text,
+            verification.response_text
+        );
         assert_eq!(
             verification.presentation.presentation_boundary_used,
             "PH1E_STAGE5_PRESENTATION"
@@ -14469,7 +14565,10 @@ mod tests {
         let chip = &verification.presentation.source_chips[0];
         assert_eq!(chip.source_id, "source_001");
         assert_eq!(chip.domain, "test-company-a.test");
-        assert_eq!(chip.safe_click_url, "https://test-company-a.test/leadership");
+        assert_eq!(
+            chip.safe_click_url,
+            "https://test-company-a.test/leadership"
+        );
         assert!(chip.accepted);
         assert!(chip.verified_for_claim);
         assert_eq!(chip.display_rank, 1);
@@ -14563,14 +14662,19 @@ mod tests {
         assert_eq!(verification.presentation.image_cards.len(), 1);
         let image = &verification.presentation.image_cards[0];
         assert_eq!(image.source_id, "source_001");
-        assert_eq!(image.source_page_url, "https://test-company-a.test/leadership");
+        assert_eq!(
+            image.source_page_url,
+            "https://test-company-a.test/leadership"
+        );
         assert_eq!(image.approved_asset_ref, "fixture-image-a.png");
         assert!(image.display_allowed);
         assert!(image.fixture_or_local_asset);
         assert!(!image.remote_image_load_allowed);
         assert!(image.safe_image_url.is_none());
         assert!(image.thumbnail_url.is_none());
-        assert!(image.result_classes.contains(&"STAGE6_IMAGE_PACKET_PASS".to_string()));
+        assert!(image
+            .result_classes
+            .contains(&"STAGE6_IMAGE_PACKET_PASS".to_string()));
         assert!(image
             .result_classes
             .contains(&"STAGE6_NO_REMOTE_IMAGE_LOAD_WHEN_FETCH_DISABLED_PASS".to_string()));
@@ -14581,8 +14685,10 @@ mod tests {
 
     #[test]
     fn stage6_wrong_entity_image_metadata_is_blocked_from_presentation() {
-        let wrong_entity_metadata = stage6_fixture_image_metadata()
-            .replace("stage6_image_entity=Test Company A", "stage6_image_entity=Test Company B");
+        let wrong_entity_metadata = stage6_fixture_image_metadata().replace(
+            "stage6_image_entity=Test Company A",
+            "stage6_image_entity=Test Company B",
+        );
         let (_items, metadata) = stage1_web_answer_verified_metadata(
             "Who is the CEO of Test Company A?",
             vec![ToolTextSnippet {
@@ -14605,8 +14711,10 @@ mod tests {
 
     #[test]
     fn stage6_partial_name_overlap_image_metadata_is_blocked() {
-        let partial_overlap_metadata = stage6_fixture_image_metadata()
-            .replace("stage6_image_entity=Test Company A", "stage6_image_entity=Test Company");
+        let partial_overlap_metadata = stage6_fixture_image_metadata().replace(
+            "stage6_image_entity=Test Company A",
+            "stage6_image_entity=Test Company",
+        );
         let (_items, metadata) = stage1_web_answer_verified_metadata(
             "Who is the CEO of Test Company A?",
             vec![ToolTextSnippet {
@@ -14627,7 +14735,10 @@ mod tests {
     #[test]
     fn stage6_generic_stock_image_metadata_is_blocked_by_relevance() {
         let generic_stock_metadata = stage6_fixture_image_metadata()
-            .replace("stage6_image_kind=logo", "stage6_image_kind=generic_entity_visual")
+            .replace(
+                "stage6_image_kind=logo",
+                "stage6_image_kind=generic_entity_visual",
+            )
             .replace(
                 "stage6_image_caption=Test Company A approved fixture image",
                 "stage6_image_caption=Generic fixture skyline",
@@ -14651,7 +14762,9 @@ mod tests {
         let verification = metadata.web_answer_verification.as_ref().unwrap();
         assert_eq!(verification.final_answer_class, "VERIFIED_DIRECT_ANSWER");
         assert!(verification.presentation.image_cards.is_empty());
-        assert!(!verification.response_text.contains("Generic fixture skyline"));
+        assert!(!verification
+            .response_text
+            .contains("Generic fixture skyline"));
     }
 
     #[test]
@@ -14680,7 +14793,10 @@ mod tests {
         let verification = metadata.web_answer_verification.as_ref().unwrap();
         assert_eq!(verification.final_answer_class, "VERIFIED_DIRECT_ANSWER");
         assert_eq!(verification.presentation.image_cards.len(), 1);
-        assert_eq!(verification.presentation.image_cards[0].image_kind, "person_photo");
+        assert_eq!(
+            verification.presentation.image_cards[0].image_kind,
+            "person_photo"
+        );
         assert!(verification.presentation.image_cards[0]
             .result_classes
             .contains(&"STAGE6_PERSON_IMAGE_SAFETY_PASS".to_string()));
@@ -14689,8 +14805,10 @@ mod tests {
     #[test]
     fn stage6_unknown_policy_and_remote_image_metadata_are_blocked() {
         for blocked_metadata in [
-            stage6_fixture_image_metadata()
-                .replace("stage6_image_policy=fixture_approved", "stage6_image_policy=unknown"),
+            stage6_fixture_image_metadata().replace(
+                "stage6_image_policy=fixture_approved",
+                "stage6_image_policy=unknown",
+            ),
             format!(
                 "{}; stage6_image_remote_load=allow",
                 stage6_fixture_image_metadata()
@@ -14719,8 +14837,10 @@ mod tests {
             "Who is the CEO of Test Company A?",
             vec![ToolTextSnippet {
                 title: "Test Company A overview".to_string(),
-                snippet: stage6_fixture_image_metadata()
-                    .replace("Test Person A is the CEO of Test Company A.", "Test Company A exists."),
+                snippet: stage6_fixture_image_metadata().replace(
+                    "Test Person A is the CEO of Test Company A.",
+                    "Test Company A exists.",
+                ),
                 url: "https://test-company-a.test/about".to_string(),
             }],
             Some("stage6_fixture".to_string()),

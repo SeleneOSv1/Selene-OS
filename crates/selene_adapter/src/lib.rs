@@ -35897,9 +35897,11 @@ mod tests {
     fn stage5_adapter_verified_websearch_payload_carries_clean_source_chip_and_tts() {
         let captured = Arc::new(Mutex::new(Vec::new()));
         let endpoint = h409_spawn_brave_web_endpoint_sequence(
-            vec![r#"{"web":{"results":[
+            vec![
+                r#"{"web":{"results":[
                 {"title":"Test Company A official leadership","url":"https://test-source-a.test/leadership","description":"Test Person A is the CEO of Test Company A."}
-            ]}}"#],
+            ]}}"#,
+            ],
             Arc::clone(&captured),
         );
 
@@ -35937,10 +35939,7 @@ mod tests {
                     "Test Person A is the CEO of Test Company."
                 );
                 assert_eq!(out.tts_text, out.response_text);
-                assert_eq!(
-                    out.answer_class.as_deref(),
-                    Some("VERIFIED_DIRECT_ANSWER")
-                );
+                assert_eq!(out.answer_class.as_deref(), Some("VERIFIED_DIRECT_ANSWER"));
                 assert_eq!(out.source_chips.len(), 1, "{out:?}");
                 let chip = &out.source_chips[0];
                 assert_eq!(chip.label, "Test Company A official leadership");
@@ -36019,9 +36018,11 @@ mod tests {
     fn stage6_adapter_transports_approved_fixture_image_cards_separately() {
         let captured = Arc::new(Mutex::new(Vec::new()));
         let endpoint = h409_spawn_brave_web_endpoint_sequence(
-            vec![r#"{"web":{"results":[
+            vec![
+                r#"{"web":{"results":[
                 {"title":"Test Company B official leadership","url":"https://test-source-b.test/leadership","description":"Test Person B is the CEO of Test Company B.; stage6_image_display=allow; stage6_image_kind=logo; stage6_image_asset=fixture-image-a.png; stage6_image_caption=Test Company B approved fixture image; stage6_image_alt=Test Company B approved fixture image; stage6_image_policy=fixture_approved; stage6_image_entity=Test Company B; stage6_image_source_page=accepted_source; stage6_image_provider=stage6_fixture; stage6_image_provider_tier=fixture; stage6_image_relevance=9500; stage6_image_entity_score=9500"}
-            ]}}"#],
+            ]}}"#,
+            ],
             Arc::clone(&captured),
         );
 
@@ -36063,16 +36064,21 @@ mod tests {
                 assert_eq!(out.image_cards.len(), 1, "{out:?}");
                 let image = &out.image_cards[0];
                 assert_eq!(image.approved_asset_ref, "fixture-image-a.png");
-                assert_eq!(image.source_page_url, "https://test-source-b.test/leadership");
+                assert_eq!(
+                    image.source_page_url,
+                    "https://test-source-b.test/leadership"
+                );
                 assert!(image.display_allowed);
                 assert!(image.fixture_or_local_asset);
                 assert!(!image.remote_image_load_allowed);
-                assert!(image
-                    .result_classes
-                    .contains(&"STAGE6_ADAPTER_IMAGE_PAYLOAD_PASS".to_string())
-                    || image
+                assert!(
+                    image
                         .result_classes
-                        .contains(&"STAGE6_IMAGE_PACKET_PASS".to_string()));
+                        .contains(&"STAGE6_ADAPTER_IMAGE_PAYLOAD_PASS".to_string())
+                        || image
+                            .result_classes
+                            .contains(&"STAGE6_IMAGE_PACKET_PASS".to_string())
+                );
                 for forbidden in [
                     "fixture-image-a.png",
                     "stage6_image",
@@ -36134,6 +36140,101 @@ mod tests {
                 assert!(!out.response_text.contains("image_provider_attempt_count"));
                 assert!(!out.response_text.contains("image_fetch_attempt_count"));
                 assert!(!out.tts_text.contains("image_fetch_attempt_count"));
+            },
+        );
+    }
+
+    #[test]
+    fn stage7_adapter_provider_off_keeps_source_image_and_tts_payloads_clean() {
+        with_isolated_device_vault(
+            "stage7_adapter_provider_off",
+            &[("brave_search_api_key", "stage7-test-key")],
+            &[
+                ("SELENE_SEARCH_PROVIDERS_ENABLED", "0"),
+                ("SELENE_PAID_SEARCH_PROVIDERS_ENABLED", "0"),
+                ("SELENE_WEB_SEARCH_ENABLED", "0"),
+                ("SELENE_DEEP_RESEARCH_ENABLED", "0"),
+                ("SELENE_NEWS_SEARCH_ENABLED", "0"),
+                ("SELENE_URL_FETCH_ENABLED", "0"),
+                ("SELENE_IMAGE_PROVIDERS_ENABLED", "0"),
+                ("SELENE_IMAGE_FETCH_ENABLED", "0"),
+                ("SELENE_STARTUP_PROVIDER_PROBES_ENABLED", "0"),
+                ("SELENE_BRAVE_SEARCH_ENABLED", "0"),
+                ("SELENE_BRAVE_IMAGE_SEARCH_ENABLED", "0"),
+                ("SELENE_PROVIDER_FALLBACK_ENABLED", "0"),
+                ("SELENE_PROVIDER_FANOUT_ENABLED", "0"),
+                ("SELENE_PROVIDER_CALL_MAX_PER_TURN", "0"),
+                ("SELENE_PROVIDER_CALL_MAX_PER_ROUTE", "0"),
+                ("SELENE_PROVIDER_RETRY_MAX", "0"),
+            ],
+            || {
+                let runtime = AdapterRuntime::default();
+                let out = h411_run_desktop_typed_turn(
+                    &runtime,
+                    "stage7-adapter-provider-off",
+                    7_701,
+                    "Search the web for Test Company A",
+                );
+                assert_eq!(out.status, "ok", "{out:?}");
+                assert_eq!(out.outcome, "FINAL_TOOL", "{out:?}");
+                assert_eq!(out.response_text, out.tts_text);
+                assert!(out.source_chips.is_empty(), "{out:?}");
+                assert!(out.source_cards.is_empty(), "{out:?}");
+                assert!(out.image_cards.is_empty(), "{out:?}");
+                for forbidden in [
+                    "provider_call_attempt_count",
+                    "provider_network_dispatch_count",
+                    "provider json",
+                    "source dump",
+                    "debug trace",
+                    "image metadata",
+                    "brave_search_api_key",
+                    "Sources:",
+                ] {
+                    assert!(
+                        !out.response_text.contains(forbidden),
+                        "{forbidden} leaked in {}",
+                        out.response_text
+                    );
+                    assert!(
+                        !out.tts_text.contains(forbidden),
+                        "{forbidden} leaked in {}",
+                        out.tts_text
+                    );
+                }
+
+                let mut protected_req = base_request();
+                protected_req.app_platform = "DESKTOP".to_string();
+                protected_req.correlation_id = 7_702;
+                protected_req.turn_id = 7_702;
+                protected_req.device_turn_sequence = Some(7_702);
+                protected_req.now_ns = Some(7_702);
+                protected_req.device_id = Some("stage7_protected_device".to_string());
+                protected_req.audio_capture_ref = None;
+                protected_req.user_text_final =
+                    Some("Search the web and approve payroll for Test Employee A.".to_string());
+                seed_desktop_voice_profile_for_request(
+                    &runtime,
+                    &mut protected_req,
+                    "stage7_protected_off",
+                );
+                let protected_out = runtime
+                    .run_voice_turn(protected_req)
+                    .expect("Stage 7 protected mixed prompt should fail closed");
+                assert_eq!(protected_out.status, "ok", "{protected_out:?}");
+                assert!(
+                    protected_out
+                        .response_text
+                        .contains("NO_SIMULATION_NO_AUTHORITY_NO_PROTECTED_EXECUTION"),
+                    "{}",
+                    protected_out.response_text
+                );
+                assert!(protected_out.provenance.is_none());
+                assert!(protected_out.source_chips.is_empty());
+                assert!(protected_out.image_cards.is_empty());
+                assert!(!protected_out
+                    .response_text
+                    .contains("provider_call_attempt_count"));
             },
         );
     }

@@ -2149,9 +2149,7 @@ fn stage5_chinese_web_presentation_text(
         "STALE_UNCERTAIN_SAFE_DEGRADE" => {
             Some("现有证据似乎已经过时，因此我无法验证当前答案。".to_string())
         }
-        "PROTECTED_FAIL_CLOSED" => {
-            Some("没有授权的模拟和权限检查，我不能批准薪资。".to_string())
-        }
+        "PROTECTED_FAIL_CLOSED" => Some("没有授权的模拟和权限检查，我不能批准薪资。".to_string()),
         _ => None,
     }
 }
@@ -3726,8 +3724,7 @@ mod tests {
         ClaimVerificationPacket, PresentationPacket, RejectedSourcePacket, RequestedEntityPacket,
         SearchImagePacket, SourceCardPacket, SourceChipPacket, SourceEvaluationPacket,
         SourceMetadata, SourceRef, ToolQueryHash, ToolRequestId, ToolStructuredField,
-        ToolTextSnippet,
-        WebAnswerVerificationPacket,
+        ToolTextSnippet, WebAnswerVerificationPacket,
     };
     use selene_kernel_contracts::ph1k::{
         Confidence, DegradationClassBundle, InterruptCandidate, InterruptCandidateConfidenceBand,
@@ -5348,6 +5345,30 @@ mod tests {
         assert!(!text.contains("stage2_provider_control"));
         assert!(!text.contains("brave_web_search"));
         assert!(!text.contains("provider_call_attempt_count"));
+    }
+
+    #[test]
+    fn stage7_provider_off_detail_stays_out_of_public_and_tts_text() {
+        let text = retry_message_for_failure(
+            selene_engines::ph1e::reason_codes::E_FAIL_POLICY_BLOCK,
+            Some("stage2_provider_control=1 route=WebSearch provider=brave_web_search allowed=false deny_reason=WEB_ADMIN_DISABLED provider_call_attempt_count=0 provider_network_dispatch_count=0 billing_scope=NON_BILLABLE billable_class=BLOCKED_NOT_BILLABLE"),
+        );
+        assert_eq!(
+            text,
+            selene_engines::ph1providerctl::PROVIDER_DISABLED_RESPONSE_TEXT
+        );
+        for forbidden in [
+            "stage2_provider_control",
+            "provider_call_attempt_count",
+            "provider_network_dispatch_count",
+            "brave_web_search",
+            "billing_scope",
+            "BILLABLE",
+            "Sources:",
+            "raw provider",
+        ] {
+            assert!(!text.contains(forbidden), "{forbidden} leaked in {text}");
+        }
     }
 
     #[test]
