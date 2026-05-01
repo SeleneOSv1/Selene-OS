@@ -5320,10 +5320,7 @@ impl AppServerIngressRuntime {
             transcript_text.as_deref(),
             x_build.locale.as_deref(),
         )?;
-        let language_packet = x_build
-            .language_packet
-            .clone()
-            .or(fallback_language_packet);
+        let language_packet = x_build.language_packet.clone().or(fallback_language_packet);
         let trace_id = runtime_execution_envelope.trace_id.clone();
         let packet_hash = agent_input_packet_hash_hex(
             correlation_id,
@@ -7525,7 +7522,10 @@ fn public_probabilistic_answer_lane_tool_pair(
             | (IntentType::WebSearchQuery, ToolName::WebSearch)
             | (IntentType::NewsQuery, ToolName::News)
             | (IntentType::UrlFetchAndCiteQuery, ToolName::UrlFetchAndCite)
-            | (IntentType::DocumentUnderstandQuery, ToolName::DocumentUnderstand)
+            | (
+                IntentType::DocumentUnderstandQuery,
+                ToolName::DocumentUnderstand
+            )
             | (IntentType::PhotoUnderstandQuery, ToolName::PhotoUnderstand)
             | (IntentType::DataAnalysisQuery, ToolName::DataAnalysis)
             | (IntentType::DeepResearchQuery, ToolName::DeepResearch)
@@ -7541,12 +7541,9 @@ fn ph1x_request_is_public_probabilistic_answer_lane(request: &Ph1xRequest) -> bo
     match request.nlp_output.as_ref() {
         Some(Ph1nResponse::Chat(chat)) => matches!(
             chat.reason_code,
-            ph1n_reason_codes::N_CHAT_NO_INTENT
-                | ph1n_reason_codes::N_CHAT_TURN_FOLLOWUP_REPAIR
+            ph1n_reason_codes::N_CHAT_NO_INTENT | ph1n_reason_codes::N_CHAT_TURN_FOLLOWUP_REPAIR
         ),
-        Some(Ph1nResponse::IntentDraft(intent)) => {
-            public_probabilistic_answer_lane_intent(intent)
-        }
+        Some(Ph1nResponse::IntentDraft(intent)) => public_probabilistic_answer_lane_intent(intent),
         _ => false,
     }
 }
@@ -8621,6 +8618,7 @@ fn weather_ambiguity_response(
             title: "Selene weather place clarification".to_string(),
             url: "https://selene.local/weather/clarify".to_string(),
         }],
+        web_answer_verification: None,
     };
     ToolResponse::ok_v1(
         tool_request.request_id,
@@ -9645,6 +9643,7 @@ fn weather_source_metadata_from_evidence(
         provider_hint,
         retrieved_at_unix_ms,
         sources,
+        web_answer_verification: None,
     })
 }
 
@@ -9858,6 +9857,7 @@ fn maybe_build_list_reminders_tool_response(
         provider_hint: Some("ph1f_reminder_registry".to_string()),
         retrieved_at_unix_ms: 1_700_000_000_000,
         sources,
+        web_answer_verification: None,
     };
     let tool_result = ToolResult::ConnectorQuery {
         summary,
@@ -10047,6 +10047,7 @@ fn maybe_build_message_policy_tool_response(
                 ),
             },
         ],
+        web_answer_verification: None,
     };
     let tool_result = ToolResult::ConnectorQuery {
         summary: format!(
@@ -11667,8 +11668,8 @@ mod tests {
         AudioDeviceId, AudioFormat, AudioStreamId, AudioStreamKind, AudioStreamRef, ChannelCount,
         Confidence, FrameDurationMs, SampleFormat, SampleRateHz, SpeechLikeness, VadEvent,
     };
-    use selene_kernel_contracts::ph1lang::{LanguagePacket, LanguageSwitchScope};
     use selene_kernel_contracts::ph1l::{NextAllowedActions, SessionId, SessionSnapshot};
+    use selene_kernel_contracts::ph1lang::{LanguagePacket, LanguageSwitchScope};
     use selene_kernel_contracts::ph1link::{
         InviteeType, LinkStatus, TokenId, LINK_INVITE_GENERATE_DRAFT,
         LINK_INVITE_OPEN_ACTIVATE_COMMIT,
@@ -20882,15 +20883,20 @@ mod tests {
         let device_id = DeviceId::new("h405_public_tools_runtime_device_1").unwrap();
         let mut store = Ph1fStore::new_in_memory();
         seed_actor(&mut store, &actor_user_id, &device_id);
-        let _ = runtime
-            .observe_runtime_governance_node_policy_version("node_h405_tools", Some("2026.04.01.v1"));
+        let _ = runtime.observe_runtime_governance_node_policy_version(
+            "node_h405_tools",
+            Some("2026.04.01.v1"),
+        );
 
         let cases: [(&str, fn(&str) -> Ph1nResponse); 5] = [
             ("Summarize this PDF.", document_understand_draft),
             ("What does this screenshot say?", photo_understand_draft),
             ("Analyze this CSV.", data_analysis_draft),
             ("Summarize this meeting recording.", record_mode_draft),
-            ("Search connected apps for roadmap notes.", connector_query_draft),
+            (
+                "Search connected apps for roadmap notes.",
+                connector_query_draft,
+            ),
         ];
 
         for (idx, (phrase, draft)) in cases.into_iter().enumerate() {
@@ -21083,6 +21089,7 @@ mod tests {
                 title: "Weather provider evidence".to_string(),
                 url: "https://selene.local/weather/evidence".to_string(),
             }],
+            web_answer_verification: None,
         };
         let tool_response = ToolResponse::ok_v1(
             selene_kernel_contracts::ph1e::ToolRequestId(1),
@@ -24680,7 +24687,11 @@ mod tests {
             .unwrap();
         assert_eq!(out.next_move, AppVoiceTurnNextMove::Respond);
         let response_text = out.response_text.expect("respond output must include text");
-        assert!(response_text.contains("https://search.selene.ai/result-1"));
+        assert!(
+            response_text.contains("I could not verify that information"),
+            "{response_text}"
+        );
+        assert!(!response_text.contains("https://search.selene.ai/result-1"));
         assert!(!response_text.contains("example.invalid"));
         assert!(!response_text.contains("Retrieved at (unix_ms):"));
         assert!(out.dispatch_outcome.is_none());
@@ -24735,7 +24746,11 @@ mod tests {
             .unwrap();
         assert_eq!(out.next_move, AppVoiceTurnNextMove::Respond);
         let response_text = out.response_text.expect("respond output must include text");
-        assert!(response_text.contains("https://search.selene.ai/result-1"));
+        assert!(
+            response_text.contains("I could not verify that information"),
+            "{response_text}"
+        );
+        assert!(!response_text.contains("https://search.selene.ai/result-1"));
         assert!(!response_text.contains("example.invalid"));
         assert!(!response_text.contains("Retrieved at (unix_ms):"));
         assert!(out.dispatch_outcome.is_none());
@@ -24790,7 +24805,11 @@ mod tests {
             .unwrap();
         assert_eq!(out.next_move, AppVoiceTurnNextMove::Respond);
         let response_text = out.response_text.expect("respond output must include text");
-        assert!(response_text.contains("https://news.selene.ai/story-1"));
+        assert!(
+            response_text.contains("I could not verify that information"),
+            "{response_text}"
+        );
+        assert!(!response_text.contains("https://news.selene.ai/story-1"));
         assert!(!response_text.contains("example.invalid"));
         assert!(!response_text.contains("Retrieved at (unix_ms):"));
         assert!(out.dispatch_outcome.is_none());

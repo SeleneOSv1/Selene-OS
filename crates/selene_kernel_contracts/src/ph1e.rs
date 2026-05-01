@@ -362,12 +362,397 @@ impl Validate for SourceRef {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RequestedEntityPacket {
+    pub requested_entity_id: String,
+    pub captured_text: String,
+    pub normalized_name: String,
+    pub entity_type: String,
+    pub known_entity_status: String,
+    pub synthetic_allowed: bool,
+    pub source_turn_id: String,
+    pub language_hint: Option<String>,
+    pub confidence: u16,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourceEvaluationPacket {
+    pub source_id: String,
+    pub requested_entity_id: String,
+    pub title: String,
+    pub domain: String,
+    pub url: String,
+    pub entity_match_result: String,
+    pub claim_support_result: String,
+    pub source_strength: String,
+    pub accepted: bool,
+    pub rejection_reasons: Vec<String>,
+    pub claim_refs: Vec<String>,
+    pub safe_for_user_display: bool,
+    pub safe_for_tts: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AcceptedSourcePacket {
+    pub source_id: String,
+    pub label: String,
+    pub domain: String,
+    pub safe_click_url: String,
+    pub source_type: String,
+    pub supported_claim_refs: Vec<String>,
+    pub entity_match_result: String,
+    pub claim_support_result: String,
+    pub accepted: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RejectedSourcePacket {
+    pub source_id: String,
+    pub domain: String,
+    pub source_type: String,
+    pub accepted: bool,
+    pub rejection_reasons: Vec<String>,
+    pub entity_match_result: String,
+    pub claim_support_result: String,
+    pub trace_only: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourceChipPacket {
+    pub source_id: String,
+    pub label: String,
+    pub domain: String,
+    pub safe_click_url: String,
+    pub source_type: String,
+    pub accepted: bool,
+    pub claim_refs: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WebAnswerVerificationPacket {
+    pub requested_entity: RequestedEntityPacket,
+    pub normalized_entity: String,
+    pub query: String,
+    pub expanded_query: String,
+    pub source_candidate_ids: Vec<String>,
+    pub accepted_source_ids: Vec<String>,
+    pub rejected_source_ids: Vec<String>,
+    pub source_evaluations: Vec<SourceEvaluationPacket>,
+    pub accepted_sources: Vec<AcceptedSourcePacket>,
+    pub rejected_sources: Vec<RejectedSourcePacket>,
+    pub source_chips: Vec<SourceChipPacket>,
+    pub answer_claims: Vec<String>,
+    pub claim_to_source_map: Vec<(String, String)>,
+    pub final_answer_class: String,
+    pub response_text: String,
+    pub source_dump_present: bool,
+    pub rejected_sources_present_in_response_text: bool,
+    pub debug_trace_present_in_response_text: bool,
+    pub tts_input_text: String,
+    pub displayed_response_text_sha256: String,
+    pub tts_input_text_sha256: String,
+    pub provider_call_count_when_disabled: u32,
+}
+
+impl Validate for RequestedEntityPacket {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        validate_bounded_nonempty(
+            "requested_entity.requested_entity_id",
+            &self.requested_entity_id,
+            128,
+        )?;
+        validate_bounded_nonempty("requested_entity.captured_text", &self.captured_text, 512)?;
+        validate_bounded_nonempty(
+            "requested_entity.normalized_name",
+            &self.normalized_name,
+            256,
+        )?;
+        validate_bounded_nonempty("requested_entity.entity_type", &self.entity_type, 64)?;
+        validate_bounded_nonempty(
+            "requested_entity.known_entity_status",
+            &self.known_entity_status,
+            64,
+        )?;
+        validate_bounded_nonempty("requested_entity.source_turn_id", &self.source_turn_id, 128)?;
+        if !matches!(
+            self.known_entity_status.as_str(),
+            "KNOWN" | "UNKNOWN" | "SYNTHETIC_OR_TEST" | "AMBIGUOUS"
+        ) {
+            return Err(ContractViolation::InvalidValue {
+                field: "requested_entity.known_entity_status",
+                reason: "must be an allowed status",
+            });
+        }
+        if let Some(language_hint) = &self.language_hint {
+            validate_bounded_nonempty("requested_entity.language_hint", language_hint, 32)?;
+        }
+        if self.confidence > 10_000 {
+            return Err(ContractViolation::InvalidValue {
+                field: "requested_entity.confidence",
+                reason: "must be <= 10000",
+            });
+        }
+        Ok(())
+    }
+}
+
+impl Validate for SourceEvaluationPacket {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        validate_bounded_nonempty("source_evaluation.source_id", &self.source_id, 128)?;
+        validate_bounded_nonempty(
+            "source_evaluation.requested_entity_id",
+            &self.requested_entity_id,
+            128,
+        )?;
+        validate_bounded_nonempty("source_evaluation.title", &self.title, 256)?;
+        validate_bounded_nonempty("source_evaluation.domain", &self.domain, 256)?;
+        validate_safe_url("source_evaluation.url", &self.url)?;
+        validate_stage1_token(
+            "source_evaluation.entity_match_result",
+            &self.entity_match_result,
+            &[
+                "ENTITY_MATCH_STRONG",
+                "ENTITY_MATCH_MEDIUM",
+                "ENTITY_MATCH_WEAK",
+                "ENTITY_MATCH_REJECT",
+                "ENTITY_MATCH_UNKNOWN",
+            ],
+        )?;
+        validate_stage1_token(
+            "source_evaluation.claim_support_result",
+            &self.claim_support_result,
+            &[
+                "CLAIM_SUPPORT_DIRECT",
+                "CLAIM_SUPPORT_IMPLIED",
+                "CLAIM_SUPPORT_ENTITY_ONLY",
+                "CLAIM_SUPPORT_NONE",
+            ],
+        )?;
+        validate_bounded_nonempty(
+            "source_evaluation.source_strength",
+            &self.source_strength,
+            64,
+        )?;
+        if self.accepted && !self.rejection_reasons.is_empty() {
+            return Err(ContractViolation::InvalidValue {
+                field: "source_evaluation.rejection_reasons",
+                reason: "must be empty for accepted sources",
+            });
+        }
+        if !self.accepted && self.rejection_reasons.is_empty() {
+            return Err(ContractViolation::InvalidValue {
+                field: "source_evaluation.rejection_reasons",
+                reason: "must not be empty for rejected sources",
+            });
+        }
+        validate_reason_codes(&self.rejection_reasons)?;
+        validate_short_vec("source_evaluation.claim_refs", &self.claim_refs, 20, 128)?;
+        if self.accepted && (!self.safe_for_user_display || !self.safe_for_tts) {
+            return Err(ContractViolation::InvalidValue {
+                field: "source_evaluation.safe",
+                reason: "accepted sources must be safe for display and tts metadata",
+            });
+        }
+        Ok(())
+    }
+}
+
+impl Validate for AcceptedSourcePacket {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        validate_bounded_nonempty("accepted_source.source_id", &self.source_id, 128)?;
+        validate_bounded_nonempty("accepted_source.label", &self.label, 256)?;
+        validate_bounded_nonempty("accepted_source.domain", &self.domain, 256)?;
+        validate_safe_url("accepted_source.safe_click_url", &self.safe_click_url)?;
+        validate_bounded_nonempty("accepted_source.source_type", &self.source_type, 64)?;
+        validate_short_vec(
+            "accepted_source.supported_claim_refs",
+            &self.supported_claim_refs,
+            20,
+            128,
+        )?;
+        if self.supported_claim_refs.is_empty() || !self.accepted {
+            return Err(ContractViolation::InvalidValue {
+                field: "accepted_source.accepted",
+                reason: "accepted sources must be accepted and support at least one claim",
+            });
+        }
+        validate_bounded_nonempty(
+            "accepted_source.entity_match_result",
+            &self.entity_match_result,
+            64,
+        )?;
+        validate_bounded_nonempty(
+            "accepted_source.claim_support_result",
+            &self.claim_support_result,
+            64,
+        )?;
+        Ok(())
+    }
+}
+
+impl Validate for RejectedSourcePacket {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        validate_bounded_nonempty("rejected_source.source_id", &self.source_id, 128)?;
+        validate_bounded_nonempty("rejected_source.domain", &self.domain, 256)?;
+        validate_bounded_nonempty("rejected_source.source_type", &self.source_type, 64)?;
+        if self.accepted || !self.trace_only || self.rejection_reasons.is_empty() {
+            return Err(ContractViolation::InvalidValue {
+                field: "rejected_source.accepted",
+                reason: "rejected sources must be trace-only and include reasons",
+            });
+        }
+        validate_reason_codes(&self.rejection_reasons)?;
+        validate_bounded_nonempty(
+            "rejected_source.entity_match_result",
+            &self.entity_match_result,
+            64,
+        )?;
+        validate_bounded_nonempty(
+            "rejected_source.claim_support_result",
+            &self.claim_support_result,
+            64,
+        )?;
+        Ok(())
+    }
+}
+
+impl Validate for SourceChipPacket {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        validate_bounded_nonempty("source_chip.source_id", &self.source_id, 128)?;
+        validate_bounded_nonempty("source_chip.label", &self.label, 256)?;
+        validate_bounded_nonempty("source_chip.domain", &self.domain, 256)?;
+        validate_safe_url("source_chip.safe_click_url", &self.safe_click_url)?;
+        validate_bounded_nonempty("source_chip.source_type", &self.source_type, 64)?;
+        validate_short_vec("source_chip.claim_refs", &self.claim_refs, 20, 128)?;
+        if !self.accepted || self.claim_refs.is_empty() {
+            return Err(ContractViolation::InvalidValue {
+                field: "source_chip.accepted",
+                reason: "source chips must derive from accepted claim-supporting sources",
+            });
+        }
+        Ok(())
+    }
+}
+
+impl Validate for WebAnswerVerificationPacket {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        self.requested_entity.validate()?;
+        validate_bounded_nonempty(
+            "web_answer_verification.normalized_entity",
+            &self.normalized_entity,
+            256,
+        )?;
+        validate_bounded_nonempty("web_answer_verification.query", &self.query, 2048)?;
+        validate_bounded_nonempty(
+            "web_answer_verification.expanded_query",
+            &self.expanded_query,
+            2048,
+        )?;
+        validate_short_vec(
+            "web_answer_verification.source_candidate_ids",
+            &self.source_candidate_ids,
+            20,
+            128,
+        )?;
+        validate_short_vec(
+            "web_answer_verification.accepted_source_ids",
+            &self.accepted_source_ids,
+            20,
+            128,
+        )?;
+        validate_short_vec(
+            "web_answer_verification.rejected_source_ids",
+            &self.rejected_source_ids,
+            20,
+            128,
+        )?;
+        for evaluation in &self.source_evaluations {
+            evaluation.validate()?;
+        }
+        for accepted in &self.accepted_sources {
+            accepted.validate()?;
+        }
+        for rejected in &self.rejected_sources {
+            rejected.validate()?;
+        }
+        for chip in &self.source_chips {
+            chip.validate()?;
+            if !self.accepted_source_ids.contains(&chip.source_id) {
+                return Err(ContractViolation::InvalidValue {
+                    field: "web_answer_verification.source_chips",
+                    reason: "source chips must come from accepted source ids",
+                });
+            }
+        }
+        validate_short_vec(
+            "web_answer_verification.answer_claims",
+            &self.answer_claims,
+            20,
+            512,
+        )?;
+        validate_stage1_token(
+            "web_answer_verification.final_answer_class",
+            &self.final_answer_class,
+            &[
+                "VERIFIED_DIRECT_ANSWER",
+                "PARTIAL_UNCERTAIN_ANSWER",
+                "UNSUPPORTED_SAFE_DEGRADE",
+                "PROTECTED_FAIL_CLOSED",
+            ],
+        )?;
+        validate_bounded_nonempty(
+            "web_answer_verification.response_text",
+            &self.response_text,
+            4096,
+        )?;
+        validate_bounded_nonempty(
+            "web_answer_verification.tts_input_text",
+            &self.tts_input_text,
+            4096,
+        )?;
+        validate_sha256_hex(
+            "web_answer_verification.displayed_response_text_sha256",
+            &self.displayed_response_text_sha256,
+        )?;
+        validate_sha256_hex(
+            "web_answer_verification.tts_input_text_sha256",
+            &self.tts_input_text_sha256,
+        )?;
+        if self.tts_input_text != self.response_text {
+            return Err(ContractViolation::InvalidValue {
+                field: "web_answer_verification.tts_input_text",
+                reason: "must equal clean response_text for Stage 1",
+            });
+        }
+        if self.source_dump_present
+            || self.rejected_sources_present_in_response_text
+            || self.debug_trace_present_in_response_text
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "web_answer_verification.response_text",
+                reason: "must not contain source dumps, rejected sources, or debug trace",
+            });
+        }
+        if self.final_answer_class == "VERIFIED_DIRECT_ANSWER"
+            && (self.accepted_source_ids.is_empty() || self.answer_claims.is_empty())
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "web_answer_verification.accepted_source_ids",
+                reason: "verified answers require accepted source-backed claims",
+            });
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SourceMetadata {
     pub schema_version: SchemaVersion,
     /// Optional, coarse hint only. Must not be required for upstream logic.
     pub provider_hint: Option<String>,
     pub retrieved_at_unix_ms: u64,
+    /// Accepted/user-displayable sources only. Rejected sources live in trace-only verification.
     pub sources: Vec<SourceRef>,
+    pub web_answer_verification: Option<WebAnswerVerificationPacket>,
 }
 
 impl Validate for SourceMetadata {
@@ -398,10 +783,10 @@ impl Validate for SourceMetadata {
                 reason: "must be > 0",
             });
         }
-        if self.sources.is_empty() {
+        if self.sources.is_empty() && self.web_answer_verification.is_none() {
             return Err(ContractViolation::InvalidValue {
                 field: "source_metadata.sources",
-                reason: "must not be empty",
+                reason: "must not be empty unless web_answer_verification carries an unsupported safe-degrade packet",
             });
         }
         if self.sources.len() > 20 {
@@ -413,8 +798,115 @@ impl Validate for SourceMetadata {
         for s in &self.sources {
             s.validate()?;
         }
+        if let Some(verification) = &self.web_answer_verification {
+            verification.validate()?;
+        }
         Ok(())
     }
+}
+
+fn validate_bounded_nonempty(
+    field: &'static str,
+    value: &str,
+    max_len: usize,
+) -> Result<(), ContractViolation> {
+    if value.trim().is_empty() {
+        return Err(ContractViolation::InvalidValue {
+            field,
+            reason: "must not be empty",
+        });
+    }
+    if value.len() > max_len {
+        return Err(ContractViolation::InvalidValue {
+            field,
+            reason: "exceeds max length",
+        });
+    }
+    Ok(())
+}
+
+fn validate_safe_url(field: &'static str, value: &str) -> Result<(), ContractViolation> {
+    validate_bounded_nonempty(field, value, 2048)?;
+    if (!value.starts_with("https://") && !value.starts_with("http://"))
+        || value.chars().any(|ch| ch.is_whitespace())
+    {
+        return Err(ContractViolation::InvalidValue {
+            field,
+            reason: "must be an http(s) URL without whitespace",
+        });
+    }
+    Ok(())
+}
+
+fn validate_stage1_token(
+    field: &'static str,
+    value: &str,
+    allowed: &[&str],
+) -> Result<(), ContractViolation> {
+    validate_bounded_nonempty(field, value, 96)?;
+    if !allowed.contains(&value) {
+        return Err(ContractViolation::InvalidValue {
+            field,
+            reason: "must be an allowed Stage 1 token",
+        });
+    }
+    Ok(())
+}
+
+fn validate_reason_codes(codes: &[String]) -> Result<(), ContractViolation> {
+    for code in codes {
+        validate_stage1_token(
+            "rejection_reasons[]",
+            code,
+            &[
+                "ENTITY_MISMATCH",
+                "PARTIAL_NAME_OVERLAP_ONLY",
+                "SIMILAR_SOUNDING_NAME_ONLY",
+                "MENTIONS_ENTITY_ONLY",
+                "CLAIM_NOT_SUPPORTED",
+                "WEAK_SEO_SOURCE",
+                "SCRAPED_PROFILE_SOURCE",
+                "THIN_DIRECTORY_SOURCE",
+                "STALE_FOR_CURRENT_CLAIM",
+                "UNVERIFIED_PROFILE_SOURCE",
+                "LOW_TRUST_SOURCE",
+                "RAW_PROVIDER_DUMP_BLOCKED",
+                "UNSAFE_CLICK_URL",
+                "DEBUG_TRACE_OUTPUT_BLOCKED",
+                "PRIVATE_OR_PROTECTED_QUERY_BLOCKED",
+                "PROVIDER_DISABLED_ZERO_CALL_REQUIRED",
+            ],
+        )?;
+    }
+    Ok(())
+}
+
+fn validate_short_vec(
+    field: &'static str,
+    values: &[String],
+    max_items: usize,
+    max_len: usize,
+) -> Result<(), ContractViolation> {
+    if values.len() > max_items {
+        return Err(ContractViolation::InvalidValue {
+            field,
+            reason: "too many entries",
+        });
+    }
+    for value in values {
+        validate_bounded_nonempty(field, value, max_len)?;
+    }
+    Ok(())
+}
+
+fn validate_sha256_hex(field: &'static str, value: &str) -> Result<(), ContractViolation> {
+    if value.len() != 64 || !value.chars().all(|ch| ch.is_ascii_hexdigit()) {
+        return Err(ContractViolation::InvalidValue {
+            field,
+            reason: "must be a 64-char sha256 hex string",
+        });
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1118,6 +1610,7 @@ mod tests {
                     title: "Example".to_string(),
                     url: "https://example.invalid".to_string(),
                 }],
+                web_answer_verification: None,
             },
             None,
             ReasonCodeId(1),

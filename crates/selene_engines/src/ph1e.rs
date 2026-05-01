@@ -11,8 +11,10 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use crate::device_vault;
 use crate::ph1search::{Ph1SearchConfig, Ph1SearchRuntime};
 use selene_kernel_contracts::ph1e::{
-    CacheStatus, SourceMetadata, SourceRef, StrictBudget, ToolName, ToolRequest, ToolResponse,
-    ToolResult, ToolStructuredField, ToolTextSnippet,
+    AcceptedSourcePacket, CacheStatus, RejectedSourcePacket, RequestedEntityPacket,
+    SourceChipPacket, SourceEvaluationPacket, SourceMetadata, SourceRef, StrictBudget, ToolName,
+    ToolRequest, ToolResponse, ToolResult, ToolStructuredField, ToolTextSnippet,
+    WebAnswerVerificationPacket,
 };
 use selene_kernel_contracts::ph1j::{CorrelationId, TurnId};
 use selene_kernel_contracts::ph1search::{
@@ -22,6 +24,7 @@ use selene_kernel_contracts::ph1search::{
 use selene_kernel_contracts::provider_secrets::ProviderSecretId;
 use selene_kernel_contracts::{ContractViolation, ReasonCodeId, Validate};
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 
 const BUILD_1D_MAX_FETCH_BYTES_PER_URL: u64 = 256 * 1024;
 const WEB_RETENTION_CLASS: &str = "AUDIT_METADATA_ONLY";
@@ -2071,8 +2074,9 @@ impl Ph1eRuntime {
         let brave_api_key = self.resolve_brave_api_key();
         let openai_api_key = self.resolve_openai_api_key();
         if brave_api_key.is_none() && openai_api_key.is_none() {
-            return Err(ToolFailPayload::new(
+            return Err(ToolFailPayload::with_detail(
                 reason_codes::E_FAIL_PROVIDER_MISSING_CONFIG,
+                "PROVIDER_DISABLED_ZERO_CALL_REQUIRED provider_call_count=0".to_string(),
             ));
         }
 
@@ -2097,15 +2101,24 @@ impl Ph1eRuntime {
 
             match brave_response {
                 Ok((items, sources)) => {
+                    let (verified_items, verified_metadata) = stage1_web_answer_verified_metadata(
+                        &req.query,
+                        items,
+                        Some("ph1search_brave".to_string()),
+                        now_unix_ms(),
+                    );
                     return Ok((
                         if matches!(kind, ToolName::News) {
-                            ToolResult::News { items }
+                            ToolResult::News {
+                                items: verified_items,
+                            }
                         } else {
-                            ToolResult::WebSearch { items }
+                            ToolResult::WebSearch {
+                                items: verified_items,
+                            }
                         },
-                        source_metadata_from_live(
-                            Some("ph1search_brave".to_string()),
-                            now_unix_ms(),
+                        stage1_preserve_provider_sources_when_unverified(
+                            verified_metadata,
                             sources,
                         ),
                     ));
@@ -2124,11 +2137,19 @@ impl Ph1eRuntime {
                             self.brave_fixture_json_for(false),
                         ) {
                             Ok((items, sources)) => {
-                                return Ok((
-                                    ToolResult::News { items },
-                                    source_metadata_from_live(
+                                let (verified_items, verified_metadata) =
+                                    stage1_web_answer_verified_metadata(
+                                        &req.query,
+                                        items,
                                         Some("ph1search_brave_news_web_fallback".to_string()),
                                         now_unix_ms(),
+                                    );
+                                return Ok((
+                                    ToolResult::News {
+                                        items: verified_items,
+                                    },
+                                    stage1_preserve_provider_sources_when_unverified(
+                                        verified_metadata,
                                         sources,
                                     ),
                                 ));
@@ -2170,19 +2191,24 @@ impl Ph1eRuntime {
                         ));
                     }
                     let verified_sources = verified_public_sources(sources);
+                    let (stage1_items, stage1_metadata) = stage1_web_answer_verified_metadata(
+                        &req.query,
+                        verified_items,
+                        Some("ph1search_openai_fallback".to_string()),
+                        now_unix_ms(),
+                    );
                     Ok((
                         if matches!(kind, ToolName::News) {
                             ToolResult::News {
-                                items: verified_items,
+                                items: stage1_items,
                             }
                         } else {
                             ToolResult::WebSearch {
-                                items: verified_items,
+                                items: stage1_items,
                             }
                         },
-                        source_metadata_from_live(
-                            Some("ph1search_openai_fallback".to_string()),
-                            now_unix_ms(),
+                        stage1_preserve_provider_sources_when_unverified(
+                            stage1_metadata,
                             verified_sources,
                         ),
                     ))
@@ -2332,6 +2358,7 @@ impl ToolResultWithSource for ToolResult {
                 provider_hint: Some("ph1e_builtin".to_string()),
                 retrieved_at_unix_ms: now_unix_ms(),
                 sources: source_refs_for_tool(tool_name, query, max_results),
+                web_answer_verification: None,
             },
         )
     }
@@ -2471,6 +2498,548 @@ fn source_refs_for_tool(tool_name: &ToolName, query: &str, max_results: u8) -> V
     }]
 }
 
+fn stage1_preserve_provider_sources_when_unverified(
+    metadata: SourceMetadata,
+    fallback_sources: Vec<SourceRef>,
+) -> SourceMetadata {
+    if metadata.web_answer_verification.is_some() {
+        metadata
+    } else {
+        SourceMetadata {
+            sources: fallback_sources,
+            ..metadata
+        }
+    }
+}
+
+fn stage1_web_answer_verified_metadata(
+    query: &str,
+    items: Vec<ToolTextSnippet>,
+    provider_hint: Option<String>,
+    retrieved_at_unix_ms: u64,
+) -> (Vec<ToolTextSnippet>, SourceMetadata) {
+    let requested = stage1_requested_entity_packet(query);
+    let normalized_entity = requested.normalized_name.clone();
+    let requested_role = stage1_requested_role(query);
+    let mut evaluations = Vec::new();
+    let mut accepted_sources = Vec::new();
+    let mut rejected_sources = Vec::new();
+    let mut source_chips = Vec::new();
+    let mut accepted_refs = Vec::new();
+    let mut accepted_source_ids = Vec::new();
+    let mut rejected_source_ids = Vec::new();
+    let mut candidate_ids = Vec::new();
+
+    for (index, item) in items.iter().enumerate() {
+        let source_id = format!("source_{:03}", index + 1);
+        candidate_ids.push(source_id.clone());
+        let domain =
+            domain_from_http_url(&item.url).unwrap_or_else(|| "unknown.invalid".to_string());
+        let (entity_match_result, mut rejection_reasons) =
+            stage1_entity_match_result(&normalized_entity, item);
+        let weak_reason = stage1_weak_source_reason(item);
+        if let Some(reason) = weak_reason {
+            rejection_reasons.push(reason.to_string());
+        }
+        if !citation_url_allowed(&item.url) {
+            rejection_reasons.push("UNSAFE_CLICK_URL".to_string());
+        }
+        let (claim_support_result, person) =
+            stage1_claim_support_result(&requested_role, &entity_match_result, item);
+        if !matches!(claim_support_result.as_str(), "CLAIM_SUPPORT_DIRECT") {
+            rejection_reasons.push(match claim_support_result.as_str() {
+                "CLAIM_SUPPORT_ENTITY_ONLY" => "MENTIONS_ENTITY_ONLY".to_string(),
+                _ => "CLAIM_NOT_SUPPORTED".to_string(),
+            });
+        }
+        if matches!(
+            entity_match_result.as_str(),
+            "ENTITY_MATCH_REJECT" | "ENTITY_MATCH_UNKNOWN"
+        ) && !rejection_reasons.iter().any(|reason| {
+            matches!(
+                reason.as_str(),
+                "ENTITY_MISMATCH" | "PARTIAL_NAME_OVERLAP_ONLY" | "SIMILAR_SOUNDING_NAME_ONLY"
+            )
+        }) {
+            rejection_reasons.push("ENTITY_MISMATCH".to_string());
+        }
+        rejection_reasons.sort();
+        rejection_reasons.dedup();
+        let accepted = rejection_reasons.is_empty()
+            && matches!(
+                entity_match_result.as_str(),
+                "ENTITY_MATCH_STRONG" | "ENTITY_MATCH_MEDIUM"
+            )
+            && claim_support_result == "CLAIM_SUPPORT_DIRECT";
+        let claim_refs = if accepted {
+            vec!["claim_001".to_string()]
+        } else {
+            vec![]
+        };
+        evaluations.push(SourceEvaluationPacket {
+            source_id: source_id.clone(),
+            requested_entity_id: requested.requested_entity_id.clone(),
+            title: item.title.clone(),
+            domain: domain.clone(),
+            url: item.url.clone(),
+            entity_match_result: entity_match_result.clone(),
+            claim_support_result: claim_support_result.clone(),
+            source_strength: if accepted {
+                "ACCEPTED_DIRECT".to_string()
+            } else {
+                "REJECTED".to_string()
+            },
+            accepted,
+            rejection_reasons: rejection_reasons.clone(),
+            claim_refs: claim_refs.clone(),
+            safe_for_user_display: accepted,
+            safe_for_tts: accepted,
+        });
+        if accepted {
+            let label = stage1_source_label(&item.title);
+            accepted_source_ids.push(source_id.clone());
+            accepted_refs.push(source_ref_with_web_proof(SourceRef {
+                title: label.clone(),
+                url: item.url.clone(),
+            }));
+            accepted_sources.push(AcceptedSourcePacket {
+                source_id: source_id.clone(),
+                label: label.clone(),
+                domain: domain.clone(),
+                safe_click_url: item.url.clone(),
+                source_type: "WEB_RESULT".to_string(),
+                supported_claim_refs: claim_refs.clone(),
+                entity_match_result: entity_match_result.clone(),
+                claim_support_result: claim_support_result.clone(),
+                accepted: true,
+            });
+            source_chips.push(SourceChipPacket {
+                source_id: source_id.clone(),
+                label,
+                domain,
+                safe_click_url: item.url.clone(),
+                source_type: "WEB_RESULT".to_string(),
+                accepted: true,
+                claim_refs,
+            });
+            if let Some(person) = person {
+                // The first accepted direct source is enough for Stage 1's direct-answer lane.
+                if accepted_sources.len() == 1 {
+                    accepted_refs.last_mut().expect("accepted ref exists").title =
+                        source_ref_with_web_proof(SourceRef {
+                            title: stage1_source_label(&item.title),
+                            url: item.url.clone(),
+                        })
+                        .title;
+                    let _ = person;
+                }
+            }
+        } else {
+            rejected_source_ids.push(source_id.clone());
+            rejected_sources.push(RejectedSourcePacket {
+                source_id,
+                domain,
+                source_type: "WEB_RESULT".to_string(),
+                accepted: false,
+                rejection_reasons,
+                entity_match_result,
+                claim_support_result,
+                trace_only: true,
+            });
+        }
+    }
+
+    let (response_text, final_answer_class, answer_claims, claim_to_source_map) =
+        stage1_final_answer(
+            query,
+            &requested,
+            &requested_role,
+            &items,
+            &accepted_source_ids,
+        );
+    let verification = WebAnswerVerificationPacket {
+        requested_entity: requested,
+        normalized_entity,
+        query: query.to_string(),
+        expanded_query: query.to_string(),
+        source_candidate_ids: candidate_ids,
+        accepted_source_ids,
+        rejected_source_ids,
+        source_evaluations: evaluations,
+        accepted_sources,
+        rejected_sources,
+        source_chips,
+        answer_claims,
+        claim_to_source_map,
+        final_answer_class,
+        source_dump_present: stage1_source_dump_present(&response_text),
+        rejected_sources_present_in_response_text: false,
+        debug_trace_present_in_response_text: stage1_debug_trace_present(&response_text),
+        tts_input_text: response_text.clone(),
+        displayed_response_text_sha256: sha256_hex(response_text.as_bytes()),
+        tts_input_text_sha256: sha256_hex(response_text.as_bytes()),
+        provider_call_count_when_disabled: 0,
+        response_text,
+    };
+
+    (
+        items,
+        SourceMetadata {
+            schema_version: selene_kernel_contracts::ph1e::PH1E_CONTRACT_VERSION,
+            provider_hint,
+            retrieved_at_unix_ms,
+            sources: accepted_refs,
+            web_answer_verification: Some(verification),
+        },
+    )
+}
+
+fn stage1_requested_entity_packet(query: &str) -> RequestedEntityPacket {
+    let raw_query = truncate_ascii(query.trim(), 512);
+    let entity = stage1_requested_entity(query).unwrap_or_else(|| raw_query.clone());
+    let captured_text = truncate_ascii(entity.trim(), 512);
+    let normalized_name = normalize_stage1_entity(&entity);
+    let requested_entity_id = format!("entity_{}", short_fnv_hex(normalized_name.as_bytes()));
+    RequestedEntityPacket {
+        requested_entity_id,
+        captured_text,
+        normalized_name,
+        entity_type: if stage1_requested_role(query).is_some() {
+            "ORGANIZATION".to_string()
+        } else {
+            "UNKNOWN".to_string()
+        },
+        known_entity_status: "UNKNOWN".to_string(),
+        synthetic_allowed: true,
+        source_turn_id: format!("query_{}", short_fnv_hex(query.as_bytes())),
+        language_hint: None,
+        confidence: 8_000,
+    }
+}
+
+fn stage1_requested_entity(query: &str) -> Option<String> {
+    let normalized = query.replace('\u{2019}', "'");
+    let lower = normalized.to_ascii_lowercase();
+    for marker in [
+        " ceo of ",
+        " ceo for ",
+        " ceo at ",
+        " founder of ",
+        " owner of ",
+        " director of ",
+        " managing director of ",
+        " leadership of ",
+    ] {
+        if let Some(index) = lower.find(marker) {
+            return stage1_clean_entity(&normalized[index + marker.len()..]);
+        }
+    }
+    stage1_clean_entity(&normalized)
+}
+
+fn stage1_clean_entity(value: &str) -> Option<String> {
+    let mut tokens = Vec::new();
+    for token in value
+        .trim()
+        .trim_matches(|ch: char| ch.is_ascii_punctuation() || ch.is_whitespace())
+        .split_whitespace()
+    {
+        let cleaned = token.trim_matches(|ch: char| ch.is_ascii_punctuation());
+        let lower = cleaned.to_ascii_lowercase();
+        if matches!(
+            lower.as_str(),
+            "who"
+                | "is"
+                | "the"
+                | "a"
+                | "an"
+                | "ceo"
+                | "director"
+                | "managing"
+                | "founder"
+                | "owner"
+                | "leadership"
+                | "of"
+                | "for"
+                | "at"
+                | "find"
+                | "search"
+                | "web"
+                | "latest"
+                | "current"
+        ) {
+            continue;
+        }
+        if !cleaned.is_empty() {
+            tokens.push(cleaned.to_string());
+        }
+    }
+    let entity = tokens.join(" ");
+    if entity.is_empty() {
+        None
+    } else {
+        Some(entity)
+    }
+}
+
+fn stage1_requested_role(query: &str) -> Option<&'static str> {
+    let lower = query.to_ascii_lowercase();
+    if lower.contains("ceo") {
+        Some("CEO")
+    } else if lower.contains("managing director") {
+        Some("managing director")
+    } else if lower.contains("founder") {
+        Some("founder")
+    } else if lower.contains("owner") {
+        Some("owner")
+    } else if lower.contains("director") {
+        Some("director")
+    } else {
+        None
+    }
+}
+
+fn stage1_entity_match_result(
+    normalized_entity: &str,
+    item: &ToolTextSnippet,
+) -> (String, Vec<String>) {
+    if normalized_entity.is_empty() {
+        return (
+            "ENTITY_MATCH_UNKNOWN".to_string(),
+            vec!["ENTITY_MISMATCH".to_string()],
+        );
+    }
+    let source_text =
+        normalize_stage1_entity(&format!("{} {} {}", item.title, item.snippet, item.url));
+    if source_text.contains(normalized_entity) {
+        return ("ENTITY_MATCH_STRONG".to_string(), vec![]);
+    }
+    let entity_tokens: Vec<&str> = normalized_entity.split_whitespace().collect();
+    let matching = entity_tokens
+        .iter()
+        .filter(|token| {
+            source_text
+                .split_whitespace()
+                .any(|source| source == **token)
+        })
+        .count();
+    if stage1_sound_skeleton(&source_text).contains(&stage1_sound_skeleton(normalized_entity)) {
+        return (
+            "ENTITY_MATCH_REJECT".to_string(),
+            vec!["SIMILAR_SOUNDING_NAME_ONLY".to_string()],
+        );
+    }
+    if matching > 0 {
+        return (
+            "ENTITY_MATCH_REJECT".to_string(),
+            vec!["PARTIAL_NAME_OVERLAP_ONLY".to_string()],
+        );
+    }
+    (
+        "ENTITY_MATCH_REJECT".to_string(),
+        vec!["ENTITY_MISMATCH".to_string()],
+    )
+}
+
+fn stage1_claim_support_result(
+    requested_role: &Option<&'static str>,
+    entity_match_result: &str,
+    item: &ToolTextSnippet,
+) -> (String, Option<String>) {
+    if !matches!(
+        entity_match_result,
+        "ENTITY_MATCH_STRONG" | "ENTITY_MATCH_MEDIUM"
+    ) {
+        return ("CLAIM_SUPPORT_NONE".to_string(), None);
+    }
+    let Some(role) = requested_role else {
+        return ("CLAIM_SUPPORT_ENTITY_ONLY".to_string(), None);
+    };
+    let text = format!("{} {}", item.title, item.snippet);
+    if !text
+        .to_ascii_lowercase()
+        .contains(&role.to_ascii_lowercase())
+    {
+        return ("CLAIM_SUPPORT_ENTITY_ONLY".to_string(), None);
+    }
+    let person = stage1_extract_person_near_role(&text, role);
+    if person.is_some() {
+        ("CLAIM_SUPPORT_DIRECT".to_string(), person)
+    } else {
+        ("CLAIM_SUPPORT_IMPLIED".to_string(), None)
+    }
+}
+
+fn stage1_weak_source_reason(item: &ToolTextSnippet) -> Option<&'static str> {
+    let combined = format!("{} {} {}", item.title, item.snippet, item.url).to_ascii_lowercase();
+    if combined.contains("scraped") {
+        Some("SCRAPED_PROFILE_SOURCE")
+    } else if combined.contains("directory") {
+        Some("THIN_DIRECTORY_SOURCE")
+    } else if combined.contains("ranking")
+        || combined.contains("rankings")
+        || combined.contains("seo")
+        || combined.contains("generic profile")
+    {
+        Some("WEAK_SEO_SOURCE")
+    } else if combined.contains("profile") {
+        Some("UNVERIFIED_PROFILE_SOURCE")
+    } else if combined.contains("low_trust") || combined.contains("unverified") {
+        Some("LOW_TRUST_SOURCE")
+    } else {
+        None
+    }
+}
+
+fn stage1_final_answer(
+    _query: &str,
+    requested: &RequestedEntityPacket,
+    requested_role: &Option<&'static str>,
+    items: &[ToolTextSnippet],
+    accepted_source_ids: &[String],
+) -> (String, String, Vec<String>, Vec<(String, String)>) {
+    if let Some(first_id) = accepted_source_ids.first() {
+        let index = first_id
+            .strip_prefix("source_")
+            .and_then(|value| value.parse::<usize>().ok())
+            .and_then(|value| value.checked_sub(1))
+            .unwrap_or(0);
+        if let Some(item) = items.get(index) {
+            if let Some(role) = requested_role {
+                if let Some(person) = stage1_extract_person_near_role(
+                    &format!("{} {}", item.title, item.snippet),
+                    role,
+                ) {
+                    let claim = format!(
+                        "{person} is the {role} of {}.",
+                        requested.captured_text.trim()
+                    );
+                    return (
+                        claim.clone(),
+                        "VERIFIED_DIRECT_ANSWER".to_string(),
+                        vec![claim],
+                        vec![("claim_001".to_string(), first_id.clone())],
+                    );
+                }
+            }
+        }
+    }
+    if let Some(role) = requested_role {
+        (
+            format!(
+                "I could not verify the {role} of {} from accepted sources.",
+                requested.captured_text.trim()
+            ),
+            "UNSUPPORTED_SAFE_DEGRADE".to_string(),
+            vec![],
+            vec![],
+        )
+    } else {
+        (
+            format!(
+                "I could not verify that information about {} from accepted sources.",
+                requested.captured_text.trim()
+            ),
+            "UNSUPPORTED_SAFE_DEGRADE".to_string(),
+            vec![],
+            vec![],
+        )
+    }
+}
+
+fn stage1_extract_person_near_role(text: &str, role: &str) -> Option<String> {
+    let lower = text.to_ascii_lowercase();
+    let role_lower = role.to_ascii_lowercase();
+    let index = lower.find(&role_lower)?;
+    let prefix = &text[..index];
+    stage1_last_capitalized_phrase(prefix)
+}
+
+fn stage1_last_capitalized_phrase(prefix: &str) -> Option<String> {
+    let mut words = Vec::new();
+    for raw in prefix.split_whitespace().rev() {
+        let word = raw.trim_matches(|ch: char| !ch.is_alphanumeric());
+        if word.len() < 2 {
+            continue;
+        }
+        let first = word.chars().next()?;
+        if first.is_uppercase() {
+            words.push(word.to_string());
+            if words.len() >= 3 {
+                break;
+            }
+        } else if !words.is_empty() {
+            break;
+        }
+    }
+    words.reverse();
+    if words.is_empty() {
+        None
+    } else {
+        Some(words.join(" "))
+    }
+}
+
+fn stage1_source_label(title: &str) -> String {
+    truncate_ascii(
+        title
+            .split('—')
+            .next()
+            .unwrap_or(title)
+            .trim_matches(|ch: char| ch.is_whitespace()),
+        160,
+    )
+}
+
+fn normalize_stage1_entity(value: &str) -> String {
+    value
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() {
+                ch.to_ascii_lowercase()
+            } else {
+                ' '
+            }
+        })
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn stage1_sound_skeleton(value: &str) -> String {
+    value
+        .chars()
+        .filter(|ch| ch.is_ascii_alphabetic())
+        .map(|ch| ch.to_ascii_lowercase())
+        .filter(|ch| !matches!(ch, 'a' | 'e' | 'i' | 'o' | 'u' | 'y'))
+        .collect()
+}
+
+fn stage1_source_dump_present(text: &str) -> bool {
+    text.contains("Sources:") || text.contains("http://") || text.contains("https://")
+}
+
+fn stage1_debug_trace_present(text: &str) -> bool {
+    text.contains("source:")
+        || text.contains("trust:")
+        || text.contains("AUDIT_METADATA_ONLY")
+        || text.contains("Retrieved at")
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    let digest = hasher.finalize();
+    digest.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+fn short_fnv_hex(bytes: &[u8]) -> String {
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    bytes.hash(&mut h);
+    format!("{:016x}", h.finish())
+}
+
 fn source_metadata_from_live(
     provider_hint: Option<String>,
     retrieved_at_unix_ms: u64,
@@ -2481,6 +3050,7 @@ fn source_metadata_from_live(
         provider_hint,
         retrieved_at_unix_ms,
         sources,
+        web_answer_verification: None,
     }
 }
 
@@ -12144,11 +12714,14 @@ mod tests {
 
     #[test]
     fn at_e_build_1d_search_sources_carry_trust_freshness_and_retention_proof() {
-        let fixture = spawn_test_http_fixture();
+        let mut fixture = spawn_test_http_fixture();
+        fixture.brave_web_fixture_json =
+            r#"{"web":{"results":[{"title":"Lumen Orchard Labs official leadership","url":"https://lumen-orchard-labs.test/leadership","description":"Mira Solen is the CEO of Lumen Orchard Labs."}]}}"#
+                .to_string();
         let rt = runtime_with_live_fixture(&fixture);
         let out = rt.run(&req(
             ToolName::WebSearch,
-            "search the web for selene test fixture",
+            "Who is the CEO of Lumen Orchard Labs?",
             false,
             false,
         ));
@@ -12408,7 +12981,9 @@ mod tests {
         assert!(queries.contains(&"Aurora Vale Cellars director"));
         assert!(queries.contains(&"Aurora Vale Cellars official site leadership"));
         assert!(queries.contains(&"Aurora Vale Cellars company profile"));
-        assert!(queries.iter().all(|query| query.contains("Aurora Vale Cellars")));
+        assert!(queries
+            .iter()
+            .all(|query| query.contains("Aurora Vale Cellars")));
         assert!(proof.rewritten_query_count >= 5, "{proof:?}");
     }
 
@@ -12451,6 +13026,164 @@ mod tests {
         assert!(ranked
             .iter()
             .any(|item| item.url.contains("regional-wine-board.test")));
+    }
+
+    #[test]
+    fn h415b_stage1_verifies_synthetic_entity_and_separates_rejected_sources() {
+        let (items, metadata) = stage1_web_answer_verified_metadata(
+            "Who is the CEO of Aurora Vale Cellars?",
+            vec![
+                ToolTextSnippet {
+                    title: "Aurora Vale Cellars official leadership".to_string(),
+                    snippet: "Mira Solen is the CEO of Aurora Vale Cellars.".to_string(),
+                    url: "https://aurora-vale-cellars.test/leadership".to_string(),
+                },
+                ToolTextSnippet {
+                    title: "Our CEO and executive management team | Southern Wine Board"
+                        .to_string(),
+                    snippet: "Dr Rowan Vale is the CEO of Southern Wine Board.".to_string(),
+                    url: "https://regional-wine-board.test/leadership".to_string(),
+                },
+                ToolTextSnippet {
+                    title: "Harbor Lantern Company leadership".to_string(),
+                    snippet: "Ivo Mar is the CEO of Harbor Lantern Company.".to_string(),
+                    url: "https://harbor-lantern.test/leadership".to_string(),
+                },
+                ToolTextSnippet {
+                    title: "Vale Cellars directory".to_string(),
+                    snippet: "Thin directory page for Vale Cellars only.".to_string(),
+                    url: "https://directory-vines.test/vale-cellars".to_string(),
+                },
+                ToolTextSnippet {
+                    title: "Arora Vele Cellers profile".to_string(),
+                    snippet: "Similar sounding winery profile with no verified leadership."
+                        .to_string(),
+                    url: "https://profile-vines.test/arora-vele-cellers".to_string(),
+                },
+                ToolTextSnippet {
+                    title: "Mira Solen - CEO at Aurora Vale Cellars".to_string(),
+                    snippet: "A generic SEO ranking profile.".to_string(),
+                    url: "https://leadership-rankings.test/mira-solen".to_string(),
+                },
+                ToolTextSnippet {
+                    title: "Scraped profile for Aurora Vale Cellars".to_string(),
+                    snippet: "Scraped profile only mentions the winery.".to_string(),
+                    url: "https://scraped-profiles.test/aurora-vale-cellars".to_string(),
+                },
+            ],
+            Some("stage1_fixture".to_string()),
+            1,
+        );
+
+        assert_eq!(items.len(), 7);
+        assert_eq!(metadata.sources.len(), 1);
+        assert!(metadata.sources[0]
+            .title
+            .contains("Aurora Vale Cellars official leadership"));
+        assert!(metadata.sources[0].title.contains("source:"));
+        assert!(metadata.sources[0].title.contains("trust:"));
+        assert!(metadata.sources[0].title.contains("freshness:"));
+        assert!(metadata.sources[0].title.contains(WEB_RETENTION_CLASS));
+        let verification = metadata
+            .web_answer_verification
+            .as_ref()
+            .expect("Stage 1 verification packet must be present");
+        assert_eq!(verification.final_answer_class, "VERIFIED_DIRECT_ANSWER");
+        assert_eq!(
+            verification.response_text,
+            "Mira Solen is the CEO of Aurora Vale Cellars."
+        );
+        assert_eq!(verification.tts_input_text, verification.response_text);
+        assert_eq!(
+            verification.displayed_response_text_sha256,
+            verification.tts_input_text_sha256
+        );
+        assert!(!verification.source_dump_present);
+        assert!(!verification.debug_trace_present_in_response_text);
+        assert_eq!(verification.accepted_source_ids, vec!["source_001"]);
+        assert_eq!(verification.accepted_sources.len(), 1);
+        assert_eq!(verification.source_chips.len(), 1);
+        assert_eq!(verification.source_chips[0].source_id, "source_001");
+        assert_eq!(verification.rejected_sources.len(), 6);
+        assert!(!verification.response_text.contains("Southern Wine Board"));
+        assert!(!verification.response_text.contains("Dr Rowan Vale"));
+        assert!(!verification.response_text.contains("leadership-rankings"));
+        assert!(!verification.response_text.contains("Sources:"));
+        let rejected_reasons = verification
+            .rejected_sources
+            .iter()
+            .flat_map(|source| source.rejection_reasons.iter().map(String::as_str))
+            .collect::<Vec<_>>();
+        assert!(rejected_reasons.contains(&"ENTITY_MISMATCH"));
+        assert!(rejected_reasons.contains(&"PARTIAL_NAME_OVERLAP_ONLY"));
+        assert!(rejected_reasons.contains(&"SIMILAR_SOUNDING_NAME_ONLY"));
+        assert!(rejected_reasons.contains(&"WEAK_SEO_SOURCE"));
+        assert!(rejected_reasons.contains(&"SCRAPED_PROFILE_SOURCE"));
+    }
+
+    #[test]
+    fn h415b_stage1_entity_only_source_safe_degrades_without_source_chip() {
+        let (_items, metadata) = stage1_web_answer_verified_metadata(
+            "Who is the CEO of Lumen Orchard Labs?",
+            vec![ToolTextSnippet {
+                title: "Lumen Orchard Labs overview".to_string(),
+                snippet: "Lumen Orchard Labs is a synthetic test organization.".to_string(),
+                url: "https://lumen-orchard-labs.test/about".to_string(),
+            }],
+            Some("stage1_fixture".to_string()),
+            1,
+        );
+
+        assert!(metadata.sources.is_empty());
+        let verification = metadata
+            .web_answer_verification
+            .as_ref()
+            .expect("Stage 1 verification packet must be present");
+        assert_eq!(verification.final_answer_class, "UNSUPPORTED_SAFE_DEGRADE");
+        assert_eq!(
+            verification.response_text,
+            "I could not verify the CEO of Lumen Orchard Labs from accepted sources."
+        );
+        assert!(verification.accepted_source_ids.is_empty());
+        assert!(verification.accepted_sources.is_empty());
+        assert!(verification.source_chips.is_empty());
+        assert_eq!(verification.rejected_sources.len(), 1);
+        assert!(verification.rejected_sources[0]
+            .rejection_reasons
+            .iter()
+            .any(|reason| reason == "MENTIONS_ENTITY_ONLY"));
+        assert!(!verification.response_text.contains("Sources:"));
+        assert!(!verification.response_text.contains("https://"));
+        assert_eq!(verification.tts_input_text, verification.response_text);
+    }
+
+    #[test]
+    fn h415b_stage1_provider_disabled_proves_zero_call_without_live_search() {
+        with_isolated_empty_device_vault("h415b-provider-disabled", || {
+            let fixture = spawn_test_http_fixture();
+            let mut provider_config = provider_config_for_fixture(&fixture);
+            provider_config.brave_api_key = None;
+            provider_config.openai_api_key = None;
+            let rt = Ph1eRuntime::new_with_provider_config(Ph1eConfig::mvp_v1(), provider_config);
+
+            let out = rt.run(&req(
+                ToolName::WebSearch,
+                "Who is the CEO of Lumen Orchard Labs?",
+                false,
+                false,
+            ));
+
+            assert_eq!(out.tool_status, ToolStatus::Fail);
+            assert_eq!(
+                out.reason_code,
+                reason_codes::E_FAIL_PROVIDER_MISSING_CONFIG
+            );
+            let detail = out.fail_detail.as_deref().unwrap_or_default();
+            assert!(detail.contains("PROVIDER_DISABLED_ZERO_CALL_REQUIRED"));
+            assert!(detail.contains("provider_call_count=0"));
+            assert!(out.tool_result.is_none());
+            assert!(out.source_metadata.is_none());
+        });
     }
 
     #[test]

@@ -2068,6 +2068,13 @@ fn confirm_snapshot_intent_draft(d: &IntentDraft) -> IntentDraft {
 }
 
 fn tool_ok_text_for_request(req: &Ph1xRequest, tr: &ToolResponse) -> String {
+    if let Some(verification) = tr
+        .source_metadata
+        .as_ref()
+        .and_then(|metadata| metadata.web_answer_verification.as_ref())
+    {
+        return verification.response_text.clone();
+    }
     if req
         .language_packet
         .as_ref()
@@ -2091,6 +2098,13 @@ fn tool_ok_text_for_request(req: &Ph1xRequest, tr: &ToolResponse) -> String {
 fn tool_ok_text(tr: &ToolResponse) -> String {
     // Deterministic shaping. Never mention providers here.
     let mut out = String::new();
+    if let Some(verification) = tr
+        .source_metadata
+        .as_ref()
+        .and_then(|metadata| metadata.web_answer_verification.as_ref())
+    {
+        return verification.response_text.clone();
+    }
     if let Some(answer) = h414_public_leadership_answer(tr) {
         return answer;
     }
@@ -2103,18 +2117,7 @@ fn tool_ok_text(tr: &ToolResponse) -> String {
                 out.push_str(summary);
             }
             ToolResult::WebSearch { items } | ToolResult::News { items } => {
-                if let Some(top) = items.first() {
-                    out.push_str("I found a web result. Top result: ");
-                    out.push_str(&h409_public_answer_fragment(&top.title));
-                    let snippet = h409_public_answer_fragment(&top.snippet);
-                    if !snippet.trim().is_empty() {
-                        out.push_str(" — ");
-                        out.push_str(&snippet);
-                    }
-                    out.push('.');
-                } else {
-                    out.push_str("I did not find a usable web result.");
-                }
+                out.push_str(&web_search_without_verification_safe_degrade(items));
             }
             ToolResult::UrlFetchAndCite { citations } => {
                 out.push_str("Citations:\n");
@@ -2286,7 +2289,12 @@ fn tool_ok_text(tr: &ToolResponse) -> String {
     }
     let should_append_sources = !matches!(
         tr.tool_result,
-        Some(ToolResult::Time { .. } | ToolResult::Weather { .. })
+        Some(
+            ToolResult::Time { .. }
+                | ToolResult::Weather { .. }
+                | ToolResult::WebSearch { .. }
+                | ToolResult::News { .. }
+        )
     );
     if should_append_sources {
         if let Some(meta) = &tr.source_metadata {
@@ -2309,6 +2317,17 @@ fn tool_ok_text(tr: &ToolResponse) -> String {
         "Done.".to_string()
     } else {
         out
+    }
+}
+
+fn web_search_without_verification_safe_degrade(
+    items: &[selene_kernel_contracts::ph1e::ToolTextSnippet],
+) -> String {
+    if items.is_empty() {
+        "I could not verify this from accepted sources.".to_string()
+    } else {
+        "I found search candidates, but I could not verify the requested claim from accepted sources."
+            .to_string()
     }
 }
 
@@ -2341,24 +2360,18 @@ fn h414_public_leadership_answer(tr: &ToolResponse) -> Option<String> {
         return None;
     }
 
-    if let Some((source, role, person)) = evidence
-        .iter()
-        .find_map(|item| {
-            let role = h414_verified_non_ceo_role(item)?;
-            let person = h414_extract_public_person_near_role(item).unwrap_or_else(|| {
-                "a public leadership profile".to_string()
-            });
-            Some((item, role, person))
-        })
-    {
+    if let Some((_source, role, person)) = evidence.iter().find_map(|item| {
+        let role = h414_verified_non_ceo_role(item)?;
+        let person = h414_extract_public_person_near_role(item)
+            .unwrap_or_else(|| "a public leadership profile".to_string());
+        Some((item, role, person))
+    }) {
         return Some(format!(
-            "I couldn't verify a publicly listed CEO from reliable public sources. I did find {person} listed as {role}, but that is not the same as a verified CEO listing.\nSource: {} ({})",
-            h409_public_answer_fragment(&source.title),
-            source.url
+            "I couldn't verify a publicly listed CEO from reliable public sources. I did find {person} listed as {role}, but that is not the same as a verified CEO listing."
         ));
     }
 
-    if let Some((source, person)) = evidence
+    if let Some((_source, person)) = evidence
         .iter()
         .filter(|item| h414_verified_ceo_evidence(item))
         .find_map(|item| {
@@ -2368,16 +2381,13 @@ fn h414_public_leadership_answer(tr: &ToolResponse) -> Option<String> {
         })
     {
         return Some(format!(
-            "I found {person} listed as CEO in this source.\nSource: {} ({})",
-            h409_public_answer_fragment(&source.title),
-            source.url
+            "I found {person} listed as CEO in an accepted source."
         ));
     }
 
     if combined.contains("ceo") {
         return Some(
-            "I couldn't verify a publicly listed CEO from reliable public sources."
-                .to_string(),
+            "I couldn't verify a publicly listed CEO from reliable public sources.".to_string(),
         );
     }
 
@@ -3633,8 +3643,9 @@ mod tests {
     };
     use selene_kernel_contracts::ph1d::{PolicyContextRef, SafetyTier};
     use selene_kernel_contracts::ph1e::{
-        CacheStatus, SourceMetadata, SourceRef, ToolQueryHash, ToolRequestId, ToolStructuredField,
-        ToolTextSnippet,
+        AcceptedSourcePacket, CacheStatus, RejectedSourcePacket, RequestedEntityPacket,
+        SourceChipPacket, SourceEvaluationPacket, SourceMetadata, SourceRef, ToolQueryHash,
+        ToolRequestId, ToolStructuredField, ToolTextSnippet, WebAnswerVerificationPacket,
     };
     use selene_kernel_contracts::ph1k::{
         Confidence, DegradationClassBundle, InterruptCandidate, InterruptCandidateConfidenceBand,
@@ -3884,6 +3895,114 @@ mod tests {
                 title: "source".to_string(),
                 url: "https://example.invalid".to_string(),
             }],
+            web_answer_verification: None,
+        }
+    }
+
+    fn h415b_verified_source_metadata() -> SourceMetadata {
+        let response_text = "Mira Solen is the CEO of Aurora Vale Cellars.".to_string();
+        let hash = "0".repeat(64);
+        SourceMetadata {
+            schema_version: SchemaVersion(1),
+            provider_hint: Some("stage1_fixture".to_string()),
+            retrieved_at_unix_ms: 1,
+            sources: vec![SourceRef {
+                title: "Aurora Vale Cellars official leadership".to_string(),
+                url: "https://aurora-vale-cellars.test/leadership".to_string(),
+            }],
+            web_answer_verification: Some(WebAnswerVerificationPacket {
+                requested_entity: RequestedEntityPacket {
+                    requested_entity_id: "entity_aurora_vale_cellars".to_string(),
+                    captured_text: "Aurora Vale Cellars".to_string(),
+                    normalized_name: "aurora vale cellars".to_string(),
+                    entity_type: "ORGANIZATION".to_string(),
+                    known_entity_status: "SYNTHETIC_OR_TEST".to_string(),
+                    synthetic_allowed: true,
+                    source_turn_id: "turn_h415b".to_string(),
+                    language_hint: Some("en".to_string()),
+                    confidence: 9_000,
+                },
+                normalized_entity: "aurora vale cellars".to_string(),
+                query: "Who is the CEO of Aurora Vale Cellars?".to_string(),
+                expanded_query: "Who is the CEO of Aurora Vale Cellars?".to_string(),
+                source_candidate_ids: vec!["source_001".to_string(), "source_002".to_string()],
+                accepted_source_ids: vec!["source_001".to_string()],
+                rejected_source_ids: vec!["source_002".to_string()],
+                source_evaluations: vec![
+                    SourceEvaluationPacket {
+                        source_id: "source_001".to_string(),
+                        requested_entity_id: "entity_aurora_vale_cellars".to_string(),
+                        title: "Aurora Vale Cellars official leadership".to_string(),
+                        domain: "aurora-vale-cellars.test".to_string(),
+                        url: "https://aurora-vale-cellars.test/leadership".to_string(),
+                        entity_match_result: "ENTITY_MATCH_STRONG".to_string(),
+                        claim_support_result: "CLAIM_SUPPORT_DIRECT".to_string(),
+                        source_strength: "ACCEPTED_DIRECT".to_string(),
+                        accepted: true,
+                        rejection_reasons: vec![],
+                        claim_refs: vec!["claim_001".to_string()],
+                        safe_for_user_display: true,
+                        safe_for_tts: true,
+                    },
+                    SourceEvaluationPacket {
+                        source_id: "source_002".to_string(),
+                        requested_entity_id: "entity_aurora_vale_cellars".to_string(),
+                        title: "Our CEO and executive management team | Southern Wine Board"
+                            .to_string(),
+                        domain: "regional-wine-board.test".to_string(),
+                        url: "https://regional-wine-board.test/leadership".to_string(),
+                        entity_match_result: "ENTITY_MATCH_REJECT".to_string(),
+                        claim_support_result: "CLAIM_SUPPORT_NONE".to_string(),
+                        source_strength: "REJECTED".to_string(),
+                        accepted: false,
+                        rejection_reasons: vec!["ENTITY_MISMATCH".to_string()],
+                        claim_refs: vec![],
+                        safe_for_user_display: false,
+                        safe_for_tts: false,
+                    },
+                ],
+                accepted_sources: vec![AcceptedSourcePacket {
+                    source_id: "source_001".to_string(),
+                    label: "Aurora Vale Cellars official leadership".to_string(),
+                    domain: "aurora-vale-cellars.test".to_string(),
+                    safe_click_url: "https://aurora-vale-cellars.test/leadership".to_string(),
+                    source_type: "WEB_RESULT".to_string(),
+                    supported_claim_refs: vec!["claim_001".to_string()],
+                    entity_match_result: "ENTITY_MATCH_STRONG".to_string(),
+                    claim_support_result: "CLAIM_SUPPORT_DIRECT".to_string(),
+                    accepted: true,
+                }],
+                rejected_sources: vec![RejectedSourcePacket {
+                    source_id: "source_002".to_string(),
+                    domain: "regional-wine-board.test".to_string(),
+                    source_type: "WEB_RESULT".to_string(),
+                    accepted: false,
+                    rejection_reasons: vec!["ENTITY_MISMATCH".to_string()],
+                    entity_match_result: "ENTITY_MATCH_REJECT".to_string(),
+                    claim_support_result: "CLAIM_SUPPORT_NONE".to_string(),
+                    trace_only: true,
+                }],
+                source_chips: vec![SourceChipPacket {
+                    source_id: "source_001".to_string(),
+                    label: "Aurora Vale Cellars official leadership".to_string(),
+                    domain: "aurora-vale-cellars.test".to_string(),
+                    safe_click_url: "https://aurora-vale-cellars.test/leadership".to_string(),
+                    source_type: "WEB_RESULT".to_string(),
+                    accepted: true,
+                    claim_refs: vec!["claim_001".to_string()],
+                }],
+                answer_claims: vec![response_text.clone()],
+                claim_to_source_map: vec![("claim_001".to_string(), "source_001".to_string())],
+                final_answer_class: "VERIFIED_DIRECT_ANSWER".to_string(),
+                response_text: response_text.clone(),
+                source_dump_present: false,
+                rejected_sources_present_in_response_text: false,
+                debug_trace_present_in_response_text: false,
+                tts_input_text: response_text,
+                displayed_response_text_sha256: hash.clone(),
+                tts_input_text_sha256: hash,
+                provider_call_count_when_disabled: 0,
+            }),
         }
     }
 
@@ -5169,9 +5288,12 @@ mod tests {
         let out2 = rt.decide(&second).unwrap();
         match out2.directive {
             Ph1xDirective::Respond(r) => {
-                assert!(r.response_text.contains("I found a web result"));
-                assert!(r.response_text.contains("Snippet"));
-                assert!(r.response_text.contains("https://example.invalid"));
+                assert!(r
+                    .response_text
+                    .contains("I found search candidates, but I could not verify"));
+                assert!(!r.response_text.contains("I found a web result"));
+                assert!(!r.response_text.contains("Snippet"));
+                assert!(!r.response_text.contains("https://example.invalid"));
                 assert!(!r.response_text.contains("Retrieved at (unix_ms):"));
             }
             _ => panic!("expected Respond"),
@@ -5250,13 +5372,73 @@ mod tests {
         let out2 = rt.decide(&second).unwrap();
         match out2.directive {
             Ph1xDirective::Respond(r) => {
-                assert!(r.response_text.contains("I found a web result"));
-                assert!(r.response_text.contains("Snippet"));
-                assert!(r.response_text.contains("https://example.invalid"));
+                assert!(r
+                    .response_text
+                    .contains("I found search candidates, but I could not verify"));
+                assert!(!r.response_text.contains("I found a web result"));
+                assert!(!r.response_text.contains("Snippet"));
+                assert!(!r.response_text.contains("https://example.invalid"));
                 assert!(!r.response_text.contains("Retrieved at (unix_ms):"));
             }
             _ => panic!("expected Respond"),
         }
+    }
+
+    #[test]
+    fn h415b_ph1x_uses_verification_packet_and_keeps_rejected_sources_out_of_answer() {
+        let tool_ok = ToolResponse::ok_v1(
+            ToolRequestId(415),
+            ToolQueryHash(415),
+            ToolResult::WebSearch {
+                items: vec![
+                    ToolTextSnippet {
+                        title: "Aurora Vale Cellars official leadership".to_string(),
+                        snippet: "Mira Solen is the CEO of Aurora Vale Cellars.".to_string(),
+                        url: "https://aurora-vale-cellars.test/leadership".to_string(),
+                    },
+                    ToolTextSnippet {
+                        title: "Our CEO and executive management team | Southern Wine Board"
+                            .to_string(),
+                        snippet: "Dr Rowan Vale is the CEO of Southern Wine Board.".to_string(),
+                        url: "https://regional-wine-board.test/leadership".to_string(),
+                    },
+                ],
+            },
+            h415b_verified_source_metadata(),
+            None,
+            ReasonCodeId(1),
+            CacheStatus::Bypassed,
+        )
+        .unwrap();
+
+        let text = tool_ok_text(&tool_ok);
+        assert_eq!(text, "Mira Solen is the CEO of Aurora Vale Cellars.");
+        for forbidden in [
+            "Southern Wine Board",
+            "Dr Rowan Vale",
+            "regional-wine-board.test",
+            "Sources:",
+            "https://",
+            "source:",
+            "trust:",
+            "AUDIT_METADATA_ONLY",
+        ] {
+            assert!(!text.contains(forbidden), "{forbidden} leaked in {text}");
+        }
+        let verification = tool_ok
+            .source_metadata
+            .as_ref()
+            .and_then(|metadata| metadata.web_answer_verification.as_ref())
+            .expect("verification packet must be present");
+        assert_eq!(verification.accepted_source_ids, vec!["source_001"]);
+        assert_eq!(verification.rejected_source_ids, vec!["source_002"]);
+        assert_eq!(verification.source_chips.len(), 1);
+        assert_eq!(verification.source_chips[0].source_id, "source_001");
+        assert_eq!(verification.tts_input_text, text);
+        assert_eq!(
+            verification.displayed_response_text_sha256,
+            verification.tts_input_text_sha256
+        );
     }
 
     #[test]
@@ -5292,6 +5474,7 @@ mod tests {
                         url: "https://aurora-vale-cellars.test/".to_string(),
                     },
                 ],
+                web_answer_verification: None,
             },
             None,
             ReasonCodeId(1),
@@ -5352,6 +5535,7 @@ mod tests {
                         url: "https://noisy-public-entity.test/auroa-vale-cellars".to_string(),
                     },
                 ],
+                web_answer_verification: None,
             },
             None,
             ReasonCodeId(1),
@@ -5382,7 +5566,7 @@ mod tests {
     }
 
     #[test]
-    fn h414_synthetic_ceo_question_returns_direct_role_distinction_with_source_link() {
+    fn h414_synthetic_ceo_question_returns_direct_role_distinction_without_source_dump() {
         let tool_ok = ToolResponse::ok_v1(
             ToolRequestId(414),
             ToolQueryHash(414),
@@ -5423,6 +5607,7 @@ mod tests {
                         url: "https://regional-wine-board.test/about-us/our-ceo-and-executive-management-team".to_string(),
                     },
                 ],
+                web_answer_verification: None,
             },
             None,
             ReasonCodeId(1),
@@ -5436,7 +5621,8 @@ mod tests {
             "Mira Solen listed as Managing Director / Head of Grape and Wine Production"
         ));
         assert!(text.contains("not the same as a verified CEO listing"));
-        assert!(text.contains("Source: Aurora Vale Cellars official leadership (https://aurora-vale-cellars.test/)"));
+        assert!(!text.contains("Source:"));
+        assert!(!text.contains("https://aurora-vale-cellars.test/"));
         assert!(!text.contains("I found a web result"));
         assert!(!text.contains("Sources:\n1."));
         assert!(!text.contains("Dr Rowan Vale"));
@@ -5476,6 +5662,7 @@ mod tests {
                     title: "Mira Solen - CEO at Aurora Vale Cellars — source: LOW_TRUST_SEO; trust: LOW_CONFIDENCE; freshness: STABLE_REFERENCE_ACCEPTABLE; citation_verified; retention:AUDIT_METADATA_ONLY".to_string(),
                     url: "https://leadership-rankings.test/mira-solen".to_string(),
                 }],
+                web_answer_verification: None,
             },
             None,
             ReasonCodeId(1),
@@ -5517,6 +5704,7 @@ mod tests {
                     title: "Public source — source: UNKNOWN; trust: UNVERIFIED; freshness: STABLE_REFERENCE_ACCEPTABLE; citation_verified; retention:AUDIT_METADATA_ONLY".to_string(),
                     url: "https://example.invalid/source".to_string(),
                 }],
+                web_answer_verification: None,
             },
             None,
             ReasonCodeId(1),

@@ -162,6 +162,7 @@ mod tests {
                     title: "Example".to_string(),
                     url: "https://example.invalid/a".to_string(),
                 }],
+                web_answer_verification: None,
             },
             None,
             ReasonCodeId(1),

@@ -2531,8 +2531,7 @@ fn h380_is_selene_assistant_address_context(normalized: &str) -> bool {
         return true;
     }
     if tokens.windows(2).any(|pair| {
-        matches!(pair[0], "hey" | "hi" | "hello" | "ok" | "okay")
-            && h380_selene_name_token(pair[1])
+        matches!(pair[0], "hey" | "hi" | "hello" | "ok" | "okay") && h380_selene_name_token(pair[1])
     }) {
         return true;
     }
@@ -11289,8 +11288,8 @@ fn build_language_context_for_voice_turn(
     .run_turn(&lang_input)
     .map_err(|err| format!("ph1lang runtime failed: {err:?}"))?;
     let explicit_output_language = explicit_output_language_for_build1c(text);
-    let session_output_language = answer_language_preference
-        .and_then(language_preference_tag_for_build1c);
+    let session_output_language =
+        answer_language_preference.and_then(language_preference_tag_for_build1c);
     let detected = match lang_outcome {
         LangWiringOutcome::Forwarded(bundle) => {
             let output = explicit_output_language
@@ -15089,9 +15088,8 @@ fn h411_public_discourse_response(
         let output_language = h411_output_language_for_topic_request(captured_text, frame);
         if output_language == "zh" {
             return Some(H411PublicDiscourseResponse {
-                response_text:
-                    "可以。我们可以从常用问候、声调、拼音和短句开始练习中文。"
-                        .to_string(),
+                response_text: "可以。我们可以从常用问候、声调、拼音和短句开始练习中文。"
+                    .to_string(),
                 reason_code: "TOPIC_LANGUAGE_NOT_OUTPUT_LANGUAGE_PASS",
             });
         }
@@ -15680,16 +15678,25 @@ fn h410_source_summary(
     source: &selene_kernel_contracts::ph1e::SourceRef,
     include_raw: bool,
 ) -> PublicBrainTraceSourceSummary {
+    h410_source_summary_parts(&source.title, &source.url, include_raw)
+}
+
+fn h410_source_summary_parts(
+    title: &str,
+    url: &str,
+    include_raw: bool,
+) -> PublicBrainTraceSourceSummary {
     PublicBrainTraceSourceSummary {
-        title_sha256: h410_hash_text(&source.title),
-        title_text: include_raw.then(|| truncate_text_chars(&source.title, 256)),
-        url_sha256: Some(h410_hash_text(&source.url)),
+        title_sha256: h410_hash_text(title),
+        title_text: include_raw.then(|| truncate_text_chars(title, 256)),
+        url_sha256: Some(h410_hash_text(url)),
     }
 }
 
 fn h410_public_ceo_safe_degrade(answer: &str) -> bool {
     let lower = answer.to_ascii_lowercase();
-    lower.contains("couldn't verify") && lower.contains("publicly listed ceo")
+    (lower.contains("couldn't verify") && lower.contains("publicly listed ceo"))
+        || (lower.contains("could not verify the ceo") && lower.contains("accepted sources"))
 }
 
 fn h414_public_direct_leadership_answer(answer: &str) -> bool {
@@ -15727,6 +15734,25 @@ fn h410_source_trace_summaries(
     Vec<PublicBrainTraceSourceSummary>,
     Vec<PublicBrainTraceSourceSummary>,
 ) {
+    if let Some(verification) = tool_response
+        .and_then(|response| response.source_metadata.as_ref())
+        .and_then(|metadata| metadata.web_answer_verification.as_ref())
+    {
+        let accepted = verification
+            .accepted_sources
+            .iter()
+            .map(|source| {
+                h410_source_summary_parts(&source.label, &source.safe_click_url, include_raw)
+            })
+            .collect::<Vec<_>>();
+        let rejected = verification
+            .source_evaluations
+            .iter()
+            .filter(|source| !source.accepted)
+            .map(|source| h410_source_summary_parts(&source.title, &source.url, include_raw))
+            .collect::<Vec<_>>();
+        return (accepted, rejected);
+    }
     let sources = tool_response
         .and_then(|response| response.source_metadata.as_ref())
         .map(|metadata| metadata.sources.as_slice())
@@ -18346,7 +18372,9 @@ fn committed_voice_incomplete_final_transcript(
     if committed_voice_ends_with_continuation_cue(&final_lower) {
         return true;
     }
-    let Some(partial) = partial_transcript_text.map(str::trim).filter(|value| !value.is_empty())
+    let Some(partial) = partial_transcript_text
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
     else {
         return false;
     };
@@ -25175,6 +25203,7 @@ mod tests {
                     title: "Official OpenAI news".to_string(),
                     url: "https://openai.com/news/example".to_string(),
                 }],
+                web_answer_verification: None,
             },
             None,
             ReasonCodeId(0x4500_0001),
@@ -25296,6 +25325,7 @@ mod tests {
                         url: citation.url.clone(),
                     })
                     .collect(),
+                web_answer_verification: None,
             },
             None,
             ReasonCodeId(0x4500_0001),
@@ -25415,6 +25445,7 @@ mod tests {
                     title: citation.title,
                     url: citation.url,
                 }],
+                web_answer_verification: None,
             },
             None,
             ReasonCodeId(0x4500_0001),
@@ -25576,6 +25607,7 @@ mod tests {
                     title: citation.title,
                     url: citation.url,
                 }],
+                web_answer_verification: None,
             },
             None,
             ReasonCodeId(0x4500_0001),
@@ -25698,6 +25730,7 @@ mod tests {
                     title: citation.title,
                     url: citation.url,
                 }],
+                web_answer_verification: None,
             },
             None,
             ReasonCodeId(0x4500_0001),
@@ -25855,6 +25888,7 @@ mod tests {
                     title: citation.title,
                     url: citation.url,
                 }],
+                web_answer_verification: None,
             },
             None,
             ReasonCodeId(0x4500_0001),
@@ -25930,6 +25964,7 @@ mod tests {
                     title: citation.title,
                     url: citation.url,
                 }],
+                web_answer_verification: None,
             },
             None,
             ReasonCodeId(0x4500_0001),
@@ -26057,6 +26092,7 @@ mod tests {
                     title: citation.title,
                     url: citation.url,
                 }],
+                web_answer_verification: None,
             },
             None,
             ReasonCodeId(0x4500_0001),
@@ -26214,6 +26250,7 @@ mod tests {
                     title: citation.title,
                     url: citation.url,
                 }],
+                web_answer_verification: None,
             },
             None,
             ReasonCodeId(0x4500_0001),
@@ -32349,7 +32386,11 @@ mod tests {
         assert_eq!(out.outcome, "FINAL");
         assert_eq!(out.reason_code, "TURN_BOUNDARY_HALF_CAPTURE_GATED_PASS");
         assert!(out.response_text.contains("Tokyo"), "{}", out.response_text);
-        assert!(out.response_text.contains("Sydney"), "{}", out.response_text);
+        assert!(
+            out.response_text.contains("Sydney"),
+            "{}",
+            out.response_text
+        );
         assert!(!out.response_text.contains("12:"), "{}", out.response_text);
     }
 
@@ -32374,7 +32415,11 @@ mod tests {
             .expect("English time turn should complete");
         assert_eq!(second.status, "ok");
         assert_eq!(second.outcome, "FINAL_TOOL");
-        assert!(second.response_text.contains("Sydney"), "{}", second.response_text);
+        assert!(
+            second.response_text.contains("Sydney"),
+            "{}",
+            second.response_text
+        );
         assert!(!second.response_text.contains("悉尼现在是"));
         let packet = runtime
             .ingress
@@ -32383,7 +32428,10 @@ mod tests {
         let language = packet.language_packet.expect("language packet");
         assert_eq!(language.input_language_primary, "en");
         assert_eq!(language.output_language_selected, "en");
-        assert_eq!(language.output_language_reason, "current_turn_detected_language");
+        assert_eq!(
+            language.output_language_reason,
+            "current_turn_detected_language"
+        );
     }
 
     #[test]
@@ -32430,7 +32478,11 @@ mod tests {
         assert_eq!(out.status, "ok");
         assert_eq!(out.outcome, "FINAL");
         assert_eq!(out.reason_code, "TEACH_CHINESE_IN_ENGLISH_PASS");
-        assert!(out.response_text.starts_with("Yes."), "{}", out.response_text);
+        assert!(
+            out.response_text.starts_with("Yes."),
+            "{}",
+            out.response_text
+        );
         assert!(out.response_text.contains("Chinese phrases"));
         assert!(!out.response_text.starts_with("可以"));
     }
@@ -32447,7 +32499,11 @@ mod tests {
             .expect("explicit Chinese answer directive should complete");
         assert_eq!(out.status, "ok");
         assert_eq!(out.outcome, "FINAL");
-        assert!(out.response_text.starts_with("可以"), "{}", out.response_text);
+        assert!(
+            out.response_text.starts_with("可以"),
+            "{}",
+            out.response_text
+        );
     }
 
     #[test]
@@ -32463,7 +32519,11 @@ mod tests {
         assert_eq!(out.status, "ok");
         assert_eq!(out.outcome, "FINAL");
         assert_eq!(out.reason_code, "TOPIC_LANGUAGE_NOT_OUTPUT_LANGUAGE_PASS");
-        assert!(out.response_text.starts_with("Yes."), "{}", out.response_text);
+        assert!(
+            out.response_text.starts_with("Yes."),
+            "{}",
+            out.response_text
+        );
     }
 
     #[test]
@@ -32478,7 +32538,11 @@ mod tests {
             .expect("Chinese teach request should complete");
         assert_eq!(out.status, "ok");
         assert_eq!(out.outcome, "FINAL");
-        assert!(out.response_text.starts_with("可以"), "{}", out.response_text);
+        assert!(
+            out.response_text.starts_with("可以"),
+            "{}",
+            out.response_text
+        );
     }
 
     #[test]
@@ -32501,7 +32565,11 @@ mod tests {
             ))
             .expect("topic request after English directive should complete");
         assert_eq!(second.reason_code, "TEACH_CHINESE_IN_ENGLISH_PASS");
-        assert!(second.response_text.starts_with("Yes."), "{}", second.response_text);
+        assert!(
+            second.response_text.starts_with("Yes."),
+            "{}",
+            second.response_text
+        );
 
         let third = runtime
             .run_voice_turn(h419_desktop_typed_request(
@@ -32519,7 +32587,11 @@ mod tests {
                 "Teach me Chinese.",
             ))
             .expect("topic request after Chinese directive should complete");
-        assert!(fourth.response_text.starts_with("可以"), "{}", fourth.response_text);
+        assert!(
+            fourth.response_text.starts_with("可以"),
+            "{}",
+            fourth.response_text
+        );
 
         let fifth = runtime
             .run_voice_turn(h419_desktop_typed_request(
@@ -32537,7 +32609,11 @@ mod tests {
                 "Teach me Chinese.",
             ))
             .expect("topic request after English switch-back should complete");
-        assert!(sixth.response_text.starts_with("Yes."), "{}", sixth.response_text);
+        assert!(
+            sixth.response_text.starts_with("Yes."),
+            "{}",
+            sixth.response_text
+        );
     }
 
     #[test]
@@ -35299,7 +35375,7 @@ mod tests {
                 assert_eq!(out.outcome, "FINAL_TOOL", "{out:?}");
                 assert_eq!(
                     out.response_text,
-                    "I couldn't verify a publicly listed CEO from reliable public sources."
+                    "I could not verify the CEO of Auroa Vale Cellars from accepted sources."
                 );
                 assert!(!out.response_text.contains("Dr Rowan Vale"));
                 assert!(!out.response_text.contains("Southern Wine Board"));
@@ -36351,7 +36427,7 @@ mod tests {
                 assert_h412_public_answer_clean(&noisy_followup);
                 assert_eq!(
                     noisy_followup.response_text,
-                    "I couldn't verify a publicly listed CEO from reliable public sources."
+                    "I could not verify the CEO of Auroa Vale Cellars from accepted sources."
                 );
                 assert!(!noisy_followup.response_text.contains("Dr Rowan Vale"));
                 assert!(!noisy_followup.response_text.contains("Southern Wine Board"));
@@ -36466,7 +36542,7 @@ mod tests {
                 assert_h412_public_answer_clean(&ceo_out);
                 assert_eq!(
                     ceo_out.response_text,
-                    "I couldn't verify a publicly listed CEO from reliable public sources."
+                    "I could not verify the CEO of glowcap cellars from accepted sources."
                 );
                 assert!(!ceo_out.response_text.contains("Dr Rowan Vale"));
                 assert!(!ceo_out.response_text.contains("Southern Wine Board"));
@@ -36505,7 +36581,7 @@ mod tests {
     }
 
     #[test]
-    fn h414_search_source_truth_direct_answer_and_trace_proof() {
+    fn h414_search_source_truth_safe_degrade_and_trace_proof() {
         let captured = Arc::new(Mutex::new(Vec::new()));
         const H414_BODY: &str = r#"{"web":{"results":[
             {"title":"Our CEO and executive management team | Southern Wine Board","url":"https://regional-wine-board.test/about-us/our-ceo-and-executive-management-team","description":"Dr Rowan Vale is the CEO of Southern Wine Board."},
@@ -36541,15 +36617,14 @@ mod tests {
                     "Who's the CEO of Aurora Vale Cellars?",
                 );
                 assert_h412_public_answer_clean(&simple);
-                assert!(simple
-                    .response_text
-                    .starts_with("I couldn't verify a publicly listed CEO"));
-                assert!(simple.response_text.contains(
-                    "Mira Solen listed as Managing Director / Head of Grape and Wine Production"
-                ));
-                assert!(simple.response_text.contains("Source: Aurora Vale Cellars"));
+                assert_eq!(
+                    simple.response_text,
+                    "I could not verify the CEO of Aurora Vale Cellars from accepted sources."
+                );
                 assert!(!simple.response_text.contains("I found a web result"));
                 assert!(!simple.response_text.contains("Sources:\n1."));
+                assert!(!simple.response_text.contains("Source:"));
+                assert!(!simple.response_text.contains("Mira Solen"));
                 assert!(!simple.response_text.contains("leadership-rankings.test"));
                 assert!(!simple.response_text.contains("Dr Rowan Vale"));
 
@@ -36560,16 +36635,16 @@ mod tests {
                     "Do a deep web search and find me the CEO for Aura Lane Cellars in Australia.",
                 );
                 assert_h412_public_answer_clean(&deep);
-                assert!(deep
-                    .response_text
-                    .starts_with("I couldn't verify a publicly listed CEO"));
-                assert!(deep.response_text.contains(
-                    "Mira Solen listed as Managing Director / Head of Grape and Wine Production"
-                ));
-                assert!(deep.response_text.contains("Source: Aurora Vale Cellars"));
+                assert_eq!(
+                    deep.response_text,
+                    "I couldn't verify a publicly listed CEO from reliable public sources. I did find Mira Solen listed as Managing Director / Head of Grape and Wine Production, but that is not the same as a verified CEO listing."
+                );
+                assert!(deep.response_text.contains("Mira Solen"));
+                assert!(deep.response_text.contains("Managing Director"));
                 assert!(!deep.response_text.contains("I found a web result"));
                 assert!(!deep.response_text.contains("Deep Research Report"));
                 assert!(!deep.response_text.contains("Sources:\n1."));
+                assert!(!deep.response_text.contains("Source:"));
                 assert!(!deep.response_text.contains("leadership-rankings.test"));
                 assert!(!deep.response_text.contains("Dr Rowan Vale"));
 
@@ -36584,7 +36659,7 @@ mod tests {
                     simple_trace.search_query_text.as_deref(),
                     Some("Aurora Vale Cellars CEO")
                 );
-                assert!(simple_trace.sources_accepted_count >= 1, "{simple_trace:?}");
+                assert_eq!(simple_trace.sources_accepted_count, 0, "{simple_trace:?}");
                 assert!(simple_trace.sources_rejected_count >= 1, "{simple_trace:?}");
                 assert_eq!(
                     simple_trace.engine_layer_responsible,

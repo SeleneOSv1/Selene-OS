@@ -10,13 +10,13 @@ use selene_kernel_contracts::ph1m::{
 use selene_kernel_contracts::ph1n::{
     FieldKey, IntentDraft, IntentType, OverallConfidence, Ph1nResponse,
 };
-use selene_kernel_contracts::provider_secrets::ProviderSecretId;
 use selene_kernel_contracts::ph1tts::TtsControl;
 use selene_kernel_contracts::ph1x::{
     ClarifyDirective, ConfirmDirective, DeliveryHint, DispatchDirective, IdentityContext,
     InterruptContinuityOutcome, InterruptResumePolicy, InterruptSubjectRelation, PendingState,
     Ph1xDirective, Ph1xRequest, Ph1xResponse, ResumeBuffer, ThreadState, WaitDirective,
 };
+use selene_kernel_contracts::provider_secrets::ProviderSecretId;
 use selene_kernel_contracts::{
     ContractViolation, MonotonicTimeNs, ReasonCodeId, SessionState, Validate,
 };
@@ -2343,6 +2343,7 @@ mod tests {
                 title: "source".to_string(),
                 url: "https://example.invalid".to_string(),
             }],
+            web_answer_verification: None,
         }
     }
 
