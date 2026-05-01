@@ -36,6 +36,16 @@ struct AuthoritativeSourceLinkCitationCard: Identifiable, Equatable {
     }
 }
 
+struct AuthoritativeSourceChip: Identifiable, Equatable {
+    let sourceID: String
+    let label: String
+    let domain: String
+    let clickableSourcePageURL: URL
+    let accessibilityLabel: String
+
+    var id: String { sourceID }
+}
+
 struct DesktopRealtimeTranscriptionSessionState: Equatable {
     let id: String
     let endpoint: String
@@ -91,6 +101,7 @@ struct DesktopCanonicalRuntimeOutcomeState: Identifiable, Equatable {
     let failureClass: String?
     let authoritativeResponseText: String?
     let authoritativeResponseProvenance: AuthoritativeResponseProvenance?
+    let sourceChips: [AuthoritativeSourceChip]
     let sourceLinkCitationCards: [AuthoritativeSourceLinkCitationCard]
 
     static func dispatching(
@@ -114,6 +125,7 @@ struct DesktopCanonicalRuntimeOutcomeState: Identifiable, Equatable {
             failureClass: nil,
             authoritativeResponseText: nil,
             authoritativeResponseProvenance: nil,
+            sourceChips: [],
             sourceLinkCitationCards: []
         )
     }
@@ -139,6 +151,7 @@ struct DesktopCanonicalRuntimeOutcomeState: Identifiable, Equatable {
             failureClass: nil,
             authoritativeResponseText: nil,
             authoritativeResponseProvenance: nil,
+            sourceChips: [],
             sourceLinkCitationCards: []
         )
     }
@@ -164,6 +177,7 @@ struct DesktopCanonicalRuntimeOutcomeState: Identifiable, Equatable {
             failureClass: nil,
             authoritativeResponseText: nil,
             authoritativeResponseProvenance: nil,
+            sourceChips: [],
             sourceLinkCitationCards: []
         )
     }
@@ -190,6 +204,7 @@ struct DesktopCanonicalRuntimeOutcomeState: Identifiable, Equatable {
             failureClass: response.failureClass,
             authoritativeResponseText: boundedAuthoritativeResponseText(response.responseText),
             authoritativeResponseProvenance: boundedAuthoritativeResponseProvenance(response.provenance),
+            sourceChips: boundedAuthoritativeSourceChips(response.sourceChips),
             sourceLinkCitationCards: boundedSourceLinkCitationCards(response.deepResearch?.sourceLinkCitationCards)
         )
     }
@@ -216,6 +231,7 @@ struct DesktopCanonicalRuntimeOutcomeState: Identifiable, Equatable {
             failureClass: response.failureClass,
             authoritativeResponseText: boundedAuthoritativeResponseText(response.responseText),
             authoritativeResponseProvenance: boundedAuthoritativeResponseProvenance(response.provenance),
+            sourceChips: boundedAuthoritativeSourceChips(response.sourceChips),
             sourceLinkCitationCards: boundedSourceLinkCitationCards(response.deepResearch?.sourceLinkCitationCards)
         )
     }
@@ -242,6 +258,7 @@ struct DesktopCanonicalRuntimeOutcomeState: Identifiable, Equatable {
             failureClass: response.failureClass,
             authoritativeResponseText: boundedAuthoritativeResponseText(response.responseText),
             authoritativeResponseProvenance: boundedAuthoritativeResponseProvenance(response.provenance),
+            sourceChips: boundedAuthoritativeSourceChips(response.sourceChips),
             sourceLinkCitationCards: boundedSourceLinkCitationCards(response.deepResearch?.sourceLinkCitationCards)
         )
     }
@@ -273,6 +290,7 @@ struct DesktopCanonicalRuntimeOutcomeState: Identifiable, Equatable {
             failureClass: failureClass,
             authoritativeResponseText: nil,
             authoritativeResponseProvenance: nil,
+            sourceChips: [],
             sourceLinkCitationCards: []
         )
     }
@@ -304,6 +322,7 @@ struct DesktopCanonicalRuntimeOutcomeState: Identifiable, Equatable {
             failureClass: failureClass,
             authoritativeResponseText: nil,
             authoritativeResponseProvenance: nil,
+            sourceChips: [],
             sourceLinkCitationCards: []
         )
     }
@@ -335,6 +354,7 @@ struct DesktopCanonicalRuntimeOutcomeState: Identifiable, Equatable {
             failureClass: failureClass,
             authoritativeResponseText: nil,
             authoritativeResponseProvenance: nil,
+            sourceChips: [],
             sourceLinkCitationCards: []
         )
     }
@@ -3403,6 +3423,48 @@ private func boundedAuthoritativeResponseProvenance(
     )
 }
 
+private func boundedAuthoritativeSourceChips(
+    _ chips: [DesktopCanonicalRuntimeBridge.VoiceTurnWebSourceChipPayload]?
+) -> [AuthoritativeSourceChip] {
+    guard let chips else {
+        return []
+    }
+
+    return chips.prefix(5).compactMap { chip in
+        guard chip.accepted,
+              chip.verifiedForClaim,
+              !chip.claimRefs.isEmpty
+        else {
+            return nil
+        }
+        let label = chip.label.trimmingCharacters(in: .whitespacesAndNewlines)
+        let domain = chip.domain.trimmingCharacters(in: .whitespacesAndNewlines)
+        let urlText = chip.safeClickURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !label.isEmpty,
+              !domain.isEmpty,
+              !desktopLooksLikeRawImageAssetURL(urlText),
+              let clickableURL = desktopSafePublicSourcePageURL(urlText)
+        else {
+            return nil
+        }
+
+        let fallbackAccessibilityLabel = "Open \(label) from \(domain)"
+        let accessibilityLabel = chip.tooltipOrAccessibilityLabel?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        return AuthoritativeSourceChip(
+            sourceID: boundedDesktopString(chip.sourceID, maxLength: 96),
+            label: boundedDesktopString(label, maxLength: 80),
+            domain: boundedDesktopString(domain, maxLength: 128),
+            clickableSourcePageURL: clickableURL,
+            accessibilityLabel: boundedDesktopString(
+                (accessibilityLabel?.isEmpty == false) ? accessibilityLabel! : fallbackAccessibilityLabel,
+                maxLength: 180
+            )
+        )
+    }
+}
+
 private func boundedSourceLinkCitationCards(
     _ cards: [DesktopCanonicalRuntimeBridge.VoiceTurnSourceLinkCitationCardPayload]?
 ) -> [AuthoritativeSourceLinkCitationCard] {
@@ -3450,6 +3512,15 @@ private func boundedSourceLinkCitationCards(
             policyOutcome: boundedDesktopString(card.policyOutcome, maxLength: 128)
         )
     }
+}
+
+private func desktopLooksLikeRawImageAssetURL(_ rawURL: String) -> Bool {
+    let lowercasedPath = (URLComponents(string: rawURL)?.path ?? rawURL).lowercased()
+    guard let extensionText = lowercasedPath.split(separator: ".").last else {
+        return false
+    }
+    return ["jpg", "jpeg", "png", "gif", "webp", "avif", "svg", "bmp", "tiff", "ico"]
+        .contains(String(extensionText))
 }
 
 private func desktopSafePublicSourcePageURL(_ rawURL: String) -> URL? {
@@ -4030,6 +4101,28 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
         }
     }
 
+    struct VoiceTurnWebSourceChipPayload: Decodable {
+        let sourceID: String
+        let label: String
+        let domain: String
+        let safeClickURL: String
+        let accepted: Bool
+        let claimRefs: [String]
+        let verifiedForClaim: Bool
+        let tooltipOrAccessibilityLabel: String?
+
+        private enum CodingKeys: String, CodingKey {
+            case sourceID = "source_id"
+            case label
+            case domain
+            case safeClickURL = "safe_click_url"
+            case accepted
+            case claimRefs = "claim_refs"
+            case verifiedForClaim = "verified_for_claim"
+            case tooltipOrAccessibilityLabel = "tooltip_or_accessibility_label"
+        }
+    }
+
     struct VoiceTurnAdapterResponsePayload: Decodable {
         let status: String
         let outcome: String
@@ -4043,6 +4136,7 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
         let responseText: String
         let reasonCode: String
         let provenance: VoiceTurnProvenancePayload?
+        let sourceChips: [VoiceTurnWebSourceChipPayload]?
         let deepResearch: VoiceTurnDeepResearchPayload?
 
         private enum CodingKeys: String, CodingKey {
@@ -4058,6 +4152,7 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
             case responseText = "response_text"
             case reasonCode = "reason_code"
             case provenance
+            case sourceChips = "source_chips"
             case deepResearch = "deep_research"
         }
     }

@@ -133,6 +133,34 @@ Public search remains read-only.
 
 Protected actions remain simulation and authority gated.
 
+Rule: Websearch Presentation and Source Chips
+
+Websearch final presentation must use PH1.WRITE or the approved canonical presentation boundary where available.
+
+Websearch answers must be short, precise, and clean by default.
+
+Accepted sources must be displayed as small clickable source chips or approved equivalent metadata.
+
+response_text must not contain raw source dumps, provider JSON, debug trace, rejected source details, or long raw URLs.
+
+tts_text must be the clean spoken answer only.
+
+Rejected sources must remain in trace/debug only.
+
+Source chips must link only to safe approved source-page URLs.
+
+PH1.WRITE/current formatter must not invent facts, invent sources, invent citations, hide uncertainty, upgrade weak evidence, or override claim verification.
+
+PH1.WRITE/current formatter must preserve claim verification classes from Stage 4.
+
+Image display is not Stage 5 and must not be faked.
+
+Tests must use synthetic fake entities only.
+
+Public websearch remains read-only public answer work and does not require simulation authority.
+
+Protected execution remains simulation and authority gated.
+
 Auto-Loaded Authority Order
 
 JD explicit in-thread instructions

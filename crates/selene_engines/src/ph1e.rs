@@ -18,9 +18,10 @@ use crate::ph1providerctl::{
 use crate::ph1search::{Ph1SearchConfig, Ph1SearchRuntime};
 use selene_kernel_contracts::ph1e::{
     AcceptedSourcePacket, CacheStatus, ClaimEvidenceLink, ClaimRequestPacket,
-    ClaimVerificationPacket, RejectedSourcePacket, RequestedEntityPacket, SourceChipPacket,
-    SourceEvaluationPacket, SourceMetadata, SourceRef, StrictBudget, ToolName, ToolRequest,
-    ToolResponse, ToolResult, ToolStructuredField, ToolTextSnippet, WebAnswerVerificationPacket,
+    ClaimVerificationPacket, PresentationPacket, RejectedSourcePacket, RequestedEntityPacket,
+    SourceCardPacket, SourceChipPacket, SourceEvaluationPacket, SourceMetadata, SourceRef,
+    StrictBudget, ToolName, ToolRequest, ToolResponse, ToolResult, ToolStructuredField,
+    ToolTextSnippet, WebAnswerVerificationPacket,
 };
 use selene_kernel_contracts::ph1j::{CorrelationId, TurnId};
 use selene_kernel_contracts::ph1search::{
@@ -2786,12 +2787,16 @@ fn stage1_web_answer_verified_metadata(
             });
             source_chips.push(SourceChipPacket {
                 source_id: source_id.clone(),
-                label,
-                domain,
+                label: label.clone(),
+                domain: domain.clone(),
                 safe_click_url: item.url.clone(),
                 source_type: "WEB_RESULT".to_string(),
                 accepted: true,
                 claim_refs,
+                icon_key: Some("source_link".to_string()),
+                verified_for_claim: true,
+                display_rank: source_chips.len().saturating_add(1) as u16,
+                tooltip_or_accessibility_label: format!("Open {label} from {domain}"),
             });
             if let Some(person) = person {
                 stage4_candidates.push(Stage4SupportCandidate {
@@ -2832,6 +2837,14 @@ fn stage1_web_answer_verified_metadata(
         &rejected_source_ids,
     );
     source_chips.retain(|chip| stage4_decision.display_source_ids.contains(&chip.source_id));
+    for (index, chip) in source_chips.iter_mut().enumerate() {
+        chip.display_rank = index.saturating_add(1) as u16;
+    }
+    let presentation = stage5_presentation_packet(
+        &stage4_decision,
+        &source_chips,
+        &accepted_sources,
+    );
     let display_sources = accepted_refs
         .into_iter()
         .filter(|(source_id, _)| stage4_decision.display_source_ids.contains(source_id))
@@ -2856,6 +2869,7 @@ fn stage1_web_answer_verified_metadata(
         unsupported_claims_removed: stage4_decision.unsupported_claims_removed,
         contradiction_result: stage4_decision.contradiction_result,
         final_answer_class: stage4_decision.final_answer_class,
+        presentation,
         source_dump_present: stage1_source_dump_present(&stage4_decision.response_text),
         rejected_sources_present_in_response_text: false,
         debug_trace_present_in_response_text: stage1_debug_trace_present(
@@ -2878,6 +2892,60 @@ fn stage1_web_answer_verified_metadata(
             web_answer_verification: Some(verification),
         },
     )
+}
+
+fn stage5_presentation_packet(
+    decision: &Stage4Decision,
+    source_chips: &[SourceChipPacket],
+    accepted_sources: &[AcceptedSourcePacket],
+) -> PresentationPacket {
+    let displayed_source_ids = source_chips
+        .iter()
+        .map(|chip| chip.source_id.as_str())
+        .collect::<BTreeSet<_>>();
+    let source_cards = accepted_sources
+        .iter()
+        .filter(|source| displayed_source_ids.contains(source.source_id.as_str()))
+        .enumerate()
+        .map(|(index, source)| SourceCardPacket {
+            source_id: source.source_id.clone(),
+            title: truncate_ascii(&source.label, 180),
+            domain: source.domain.clone(),
+            safe_click_url: source.safe_click_url.clone(),
+            source_type: source.source_type.clone(),
+            short_excerpt_or_summary: format!("Accepted source for {}", source.supported_claim_refs.join(", ")),
+            accepted: true,
+            claim_refs: source.supported_claim_refs.clone(),
+            display_rank: index.saturating_add(1) as u16,
+            retrieved_at_human: None,
+            metadata_safe_for_user: true,
+        })
+        .collect::<Vec<_>>();
+    let trace_seed = format!(
+        "{}:{}:{}",
+        decision.final_answer_class,
+        decision.response_text,
+        source_chips
+            .iter()
+            .map(|chip| chip.source_id.as_str())
+            .collect::<Vec<_>>()
+            .join("|")
+    );
+    PresentationPacket {
+        display_text: decision.response_text.clone(),
+        response_text: decision.response_text.clone(),
+        tts_text: decision.response_text.clone(),
+        answer_class: decision.final_answer_class.clone(),
+        language: "und".to_string(),
+        source_chips: source_chips.to_vec(),
+        source_cards,
+        image_cards: Vec::new(),
+        trace_id: format!("stage5_{}", short_fnv_hex(trace_seed.as_bytes())),
+        metadata_safe_for_user: true,
+        response_style: "concise_default".to_string(),
+        expandable_available: true,
+        presentation_boundary_used: "PH1E_STAGE5_PRESENTATION".to_string(),
+    }
 }
 
 fn stage1_requested_entity_packet(query: &str) -> RequestedEntityPacket {
@@ -7518,6 +7586,7 @@ fn source_ref_with_web_proof(source: SourceRef) -> SourceRef {
 
 fn citation_url_allowed(url: &str) -> bool {
     url_fetch_safety_block_reason(url).is_none()
+        && !looks_like_raw_image_asset_url(url)
         && !url_domain(url)
             .map(|domain| {
                 domain == "example.com"
@@ -7526,6 +7595,21 @@ fn citation_url_allowed(url: &str) -> bool {
                     || domain.ends_with(".invalid")
             })
             .unwrap_or(true)
+}
+
+fn looks_like_raw_image_asset_url(url: &str) -> bool {
+    let path = url
+        .split_once("://")
+        .map(|(_, rest)| rest)
+        .unwrap_or(url)
+        .split(['?', '#'])
+        .next()
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    matches!(
+        path.rsplit('.').next().unwrap_or_default(),
+        "jpg" | "jpeg" | "png" | "gif" | "webp" | "avif" | "svg" | "bmp" | "tiff" | "ico"
+    )
 }
 
 fn url_fetch_safety_block_reason(url: &str) -> Option<&'static str> {
@@ -14133,6 +14217,86 @@ mod tests {
         assert!(!verification
             .response_text
             .contains("Test Person B is the CEO"));
+    }
+
+    #[test]
+    fn stage5_verified_answer_presentation_has_compact_accepted_source_chip() {
+        let (_items, metadata) = stage1_web_answer_verified_metadata(
+            "Who is the CEO of Test Company A?",
+            vec![ToolTextSnippet {
+                title: "Test Company A official leadership".to_string(),
+                snippet: "Test Person A is the CEO of Test Company A.".to_string(),
+                url: "https://test-company-a.test/leadership".to_string(),
+            }],
+            Some("stage5_fixture".to_string()),
+            1,
+        );
+
+        let verification = metadata.web_answer_verification.as_ref().unwrap();
+        assert_eq!(verification.final_answer_class, "VERIFIED_DIRECT_ANSWER");
+        assert_eq!(verification.presentation.response_text, verification.response_text);
+        assert_eq!(verification.presentation.tts_text, verification.response_text);
+        assert_eq!(
+            verification.presentation.presentation_boundary_used,
+            "PH1E_STAGE5_PRESENTATION"
+        );
+        assert_eq!(verification.presentation.source_chips.len(), 1);
+        let chip = &verification.presentation.source_chips[0];
+        assert_eq!(chip.source_id, "source_001");
+        assert_eq!(chip.domain, "test-company-a.test");
+        assert_eq!(chip.safe_click_url, "https://test-company-a.test/leadership");
+        assert!(chip.accepted);
+        assert!(chip.verified_for_claim);
+        assert_eq!(chip.display_rank, 1);
+        assert!(!verification.response_text.contains("Sources:"));
+        assert!(!verification.response_text.contains("https://"));
+        assert!(verification.presentation.image_cards.is_empty());
+    }
+
+    #[test]
+    fn stage5_unsafe_source_url_does_not_become_clickable_chip() {
+        let (_items, metadata) = stage1_web_answer_verified_metadata(
+            "Who is the CEO of Test Company A?",
+            vec![ToolTextSnippet {
+                title: "Test Company A official leadership".to_string(),
+                snippet: "Test Person A is the CEO of Test Company A.".to_string(),
+                url: "javascript:alert(1)".to_string(),
+            }],
+            Some("stage5_fixture".to_string()),
+            1,
+        );
+
+        let verification = metadata.web_answer_verification.as_ref().unwrap();
+        assert_eq!(verification.final_answer_class, "UNSUPPORTED_SAFE_DEGRADE");
+        assert!(verification.source_chips.is_empty());
+        assert!(verification.presentation.source_chips.is_empty());
+        assert!(verification.rejected_sources.iter().any(|source| {
+            source
+                .rejection_reasons
+                .iter()
+                .any(|reason| reason == "UNSAFE_CLICK_URL")
+        }));
+        assert!(!verification.response_text.contains("javascript:"));
+    }
+
+    #[test]
+    fn stage5_raw_image_source_url_does_not_become_clickable_chip() {
+        let (_items, metadata) = stage1_web_answer_verified_metadata(
+            "Who is the CEO of Test Company A?",
+            vec![ToolTextSnippet {
+                title: "Test Company A official leadership".to_string(),
+                snippet: "Test Person A is the CEO of Test Company A.".to_string(),
+                url: "https://test-company-a.test/leader.png".to_string(),
+            }],
+            Some("stage5_fixture".to_string()),
+            1,
+        );
+
+        let verification = metadata.web_answer_verification.as_ref().unwrap();
+        assert_eq!(verification.final_answer_class, "UNSUPPORTED_SAFE_DEGRADE");
+        assert!(verification.source_chips.is_empty());
+        assert!(verification.presentation.source_chips.is_empty());
+        assert!(!verification.response_text.contains(".png"));
     }
 
     #[test]

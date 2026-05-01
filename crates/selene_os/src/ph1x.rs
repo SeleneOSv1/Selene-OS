@@ -3,7 +3,7 @@
 use selene_kernel_contracts::ph1_voice_id::{IdentityTierV2, Ph1VoiceIdResponse, VoiceIdentityV2};
 use selene_kernel_contracts::ph1e::{
     StrictBudget, StructuredAmbiguity, ToolName, ToolRequest, ToolRequestOrigin, ToolResponse,
-    ToolResult, ToolStatus,
+    ToolResult, ToolStatus, WebAnswerVerificationPacket,
 };
 use selene_kernel_contracts::ph1m::{
     MemoryCandidate, MemoryConfidence, MemorySensitivityFlag, MemoryUsePolicy,
@@ -2073,7 +2073,7 @@ fn tool_ok_text_for_request(req: &Ph1xRequest, tr: &ToolResponse) -> String {
         .as_ref()
         .and_then(|metadata| metadata.web_answer_verification.as_ref())
     {
-        return verification.response_text.clone();
+        return stage5_web_presentation_text_for_request(req, verification);
     }
     if req
         .language_packet
@@ -2093,6 +2093,79 @@ fn tool_ok_text_for_request(req: &Ph1xRequest, tr: &ToolResponse) -> String {
         }
     }
     tool_ok_text(tr)
+}
+
+fn stage5_web_presentation_text_for_request(
+    req: &Ph1xRequest,
+    verification: &WebAnswerVerificationPacket,
+) -> String {
+    if req
+        .language_packet
+        .as_ref()
+        .is_some_and(|packet| packet.output_language_is_chinese())
+    {
+        if let Some(chinese) = stage5_chinese_web_presentation_text(verification) {
+            return chinese;
+        }
+    }
+    verification.response_text.clone()
+}
+
+fn stage5_chinese_web_presentation_text(
+    verification: &WebAnswerVerificationPacket,
+) -> Option<String> {
+    match verification.final_answer_class.as_str() {
+        "VERIFIED_DIRECT_ANSWER" => {
+            let claim = verification.claim_verifications.first()?;
+            if claim.claim_type != "leadership_role" || !claim.safe_for_direct_answer {
+                return None;
+            }
+            let value = claim.selected_answer_value.as_deref()?.trim();
+            let entity = claim.requested_entity.trim();
+            let role = stage5_role_from_claim_text(&claim.claim_text).unwrap_or("CEO");
+            if value.is_empty() || entity.is_empty() {
+                return None;
+            }
+            Some(format!("{value} 是 {entity} 的 {role}。"))
+        }
+        "PARTIAL_UNCERTAIN_ANSWER" => {
+            Some("我找到部分证据，但无法有把握地验证当前答案。".to_string())
+        }
+        "UNSUPPORTED_SAFE_DEGRADE" => {
+            let claim = verification.claim_verifications.first();
+            let role = claim
+                .and_then(|claim| stage5_role_from_claim_text(&claim.claim_text))
+                .unwrap_or("信息");
+            let entity = verification.requested_entity.captured_text.trim();
+            if role == "信息" {
+                Some(format!("我无法从已接受来源验证关于 {entity} 的信息。"))
+            } else {
+                Some(format!("我无法从已接受来源验证 {entity} 的 {role}。"))
+            }
+        }
+        "CONTRADICTED_SAFE_DEGRADE" => {
+            Some("我发现证据相互冲突，无法有把握地验证这个答案。".to_string())
+        }
+        "STALE_UNCERTAIN_SAFE_DEGRADE" => {
+            Some("现有证据似乎已经过时，因此我无法验证当前答案。".to_string())
+        }
+        "PROTECTED_FAIL_CLOSED" => {
+            Some("没有授权的模拟和权限检查，我不能批准薪资。".to_string())
+        }
+        _ => None,
+    }
+}
+
+fn stage5_role_from_claim_text(claim_text: &str) -> Option<&str> {
+    let trimmed = claim_text.trim();
+    let rest = trimmed.strip_prefix("Verify the ")?;
+    let (role, _) = rest.split_once(" of ")?;
+    let role = role.trim();
+    if role.is_empty() {
+        None
+    } else {
+        Some(role)
+    }
 }
 
 fn tool_ok_text(tr: &ToolResponse) -> String {
@@ -3650,9 +3723,10 @@ mod tests {
     use selene_kernel_contracts::ph1d::{PolicyContextRef, SafetyTier};
     use selene_kernel_contracts::ph1e::{
         AcceptedSourcePacket, CacheStatus, ClaimEvidenceLink, ClaimRequestPacket,
-        ClaimVerificationPacket, RejectedSourcePacket, RequestedEntityPacket, SourceChipPacket,
-        SourceEvaluationPacket, SourceMetadata, SourceRef, ToolQueryHash, ToolRequestId,
-        ToolStructuredField, ToolTextSnippet, WebAnswerVerificationPacket,
+        ClaimVerificationPacket, PresentationPacket, RejectedSourcePacket, RequestedEntityPacket,
+        SourceCardPacket, SourceChipPacket, SourceEvaluationPacket, SourceMetadata, SourceRef,
+        ToolQueryHash, ToolRequestId, ToolStructuredField, ToolTextSnippet,
+        WebAnswerVerificationPacket,
     };
     use selene_kernel_contracts::ph1k::{
         Confidence, DegradationClassBundle, InterruptCandidate, InterruptCandidateConfidenceBand,
@@ -3909,6 +3983,48 @@ mod tests {
     fn h415b_verified_source_metadata() -> SourceMetadata {
         let response_text = "Mira Solen is the CEO of Aurora Vale Cellars.".to_string();
         let hash = "0".repeat(64);
+        let source_chip = SourceChipPacket {
+            source_id: "source_001".to_string(),
+            label: "Aurora Vale Cellars official leadership".to_string(),
+            domain: "aurora-vale-cellars.test".to_string(),
+            safe_click_url: "https://aurora-vale-cellars.test/leadership".to_string(),
+            source_type: "WEB_RESULT".to_string(),
+            accepted: true,
+            claim_refs: vec!["claim_001".to_string()],
+            icon_key: Some("source_link".to_string()),
+            verified_for_claim: true,
+            display_rank: 1,
+            tooltip_or_accessibility_label:
+                "Open Aurora Vale Cellars official leadership from aurora-vale-cellars.test"
+                    .to_string(),
+        };
+        let presentation = PresentationPacket {
+            display_text: response_text.clone(),
+            response_text: response_text.clone(),
+            tts_text: response_text.clone(),
+            answer_class: "VERIFIED_DIRECT_ANSWER".to_string(),
+            language: "en".to_string(),
+            source_chips: vec![source_chip.clone()],
+            source_cards: vec![SourceCardPacket {
+                source_id: "source_001".to_string(),
+                title: "Aurora Vale Cellars official leadership".to_string(),
+                domain: "aurora-vale-cellars.test".to_string(),
+                safe_click_url: "https://aurora-vale-cellars.test/leadership".to_string(),
+                source_type: "WEB_RESULT".to_string(),
+                short_excerpt_or_summary: "Accepted source for claim_001".to_string(),
+                accepted: true,
+                claim_refs: vec!["claim_001".to_string()],
+                display_rank: 1,
+                retrieved_at_human: None,
+                metadata_safe_for_user: true,
+            }],
+            image_cards: Vec::new(),
+            trace_id: "stage5_test_trace".to_string(),
+            metadata_safe_for_user: true,
+            response_style: "concise_default".to_string(),
+            expandable_available: true,
+            presentation_boundary_used: "PH1X_TEST_PRESENTATION".to_string(),
+        };
         SourceMetadata {
             schema_version: SchemaVersion(1),
             provider_hint: Some("stage1_fixture".to_string()),
@@ -3989,15 +4105,7 @@ mod tests {
                     claim_support_result: "CLAIM_SUPPORT_NONE".to_string(),
                     trace_only: true,
                 }],
-                source_chips: vec![SourceChipPacket {
-                    source_id: "source_001".to_string(),
-                    label: "Aurora Vale Cellars official leadership".to_string(),
-                    domain: "aurora-vale-cellars.test".to_string(),
-                    safe_click_url: "https://aurora-vale-cellars.test/leadership".to_string(),
-                    source_type: "WEB_RESULT".to_string(),
-                    accepted: true,
-                    claim_refs: vec!["claim_001".to_string()],
-                }],
+                source_chips: vec![source_chip],
                 answer_claims: vec![response_text.clone()],
                 claim_to_source_map: vec![("claim_001".to_string(), "source_001".to_string())],
                 claim_requests: vec![ClaimRequestPacket {
@@ -4057,6 +4165,7 @@ mod tests {
                 unsupported_claims_removed: vec![],
                 contradiction_result: "no_conflict".to_string(),
                 final_answer_class: "VERIFIED_DIRECT_ANSWER".to_string(),
+                presentation,
                 response_text: response_text.clone(),
                 source_dump_present: false,
                 rejected_sources_present_in_response_text: false,
@@ -4067,6 +4176,70 @@ mod tests {
                 provider_call_count_when_disabled: 0,
             }),
         }
+    }
+
+    fn stage5_test_verified_source_metadata() -> SourceMetadata {
+        let mut metadata = h415b_verified_source_metadata();
+        metadata.sources = vec![SourceRef {
+            title: "Test Company A official leadership".to_string(),
+            url: "https://test-company-a.test/leadership".to_string(),
+        }];
+        let Some(verification) = metadata.web_answer_verification.as_mut() else {
+            return metadata;
+        };
+        let response_text = "Test Person A is the CEO of Test Company A.".to_string();
+        verification.requested_entity.requested_entity_id = "entity_test_company_a".to_string();
+        verification.requested_entity.captured_text = "Test Company A".to_string();
+        verification.requested_entity.normalized_name = "test company a".to_string();
+        verification.normalized_entity = "test company a".to_string();
+        verification.query = "Who is the CEO of Test Company A?".to_string();
+        verification.expanded_query = verification.query.clone();
+        if let Some(evaluation) = verification.source_evaluations.get_mut(0) {
+            evaluation.requested_entity_id = "entity_test_company_a".to_string();
+            evaluation.title = "Test Company A official leadership".to_string();
+            evaluation.domain = "test-company-a.test".to_string();
+            evaluation.url = "https://test-company-a.test/leadership".to_string();
+        }
+        if let Some(source) = verification.accepted_sources.get_mut(0) {
+            source.label = "Test Company A official leadership".to_string();
+            source.domain = "test-company-a.test".to_string();
+            source.safe_click_url = "https://test-company-a.test/leadership".to_string();
+        }
+        if let Some(chip) = verification.source_chips.get_mut(0) {
+            chip.label = "Test Company A official leadership".to_string();
+            chip.domain = "test-company-a.test".to_string();
+            chip.safe_click_url = "https://test-company-a.test/leadership".to_string();
+            chip.tooltip_or_accessibility_label =
+                "Open Test Company A official leadership from test-company-a.test".to_string();
+        }
+        verification.answer_claims = vec![response_text.clone()];
+        if let Some((_, source_id)) = verification.claim_to_source_map.get_mut(0) {
+            *source_id = "source_001".to_string();
+        }
+        if let Some(request) = verification.claim_requests.get_mut(0) {
+            request.requested_entity = "Test Company A".to_string();
+            request.normalized_entity = "test company a".to_string();
+            request.claim_text = "Verify the CEO of Test Company A.".to_string();
+        }
+        if let Some(claim) = verification.claim_verifications.get_mut(0) {
+            claim.claim_text = "Verify the CEO of Test Company A.".to_string();
+            claim.requested_entity = "Test Company A".to_string();
+            claim.selected_answer_value = Some("Test Person A".to_string());
+            claim.user_visible_summary = response_text.clone();
+        }
+        verification.response_text = response_text.clone();
+        verification.tts_input_text = response_text.clone();
+        verification.presentation.display_text = response_text.clone();
+        verification.presentation.response_text = response_text.clone();
+        verification.presentation.tts_text = response_text.clone();
+        verification.presentation.language = "en".to_string();
+        verification.presentation.source_chips = verification.source_chips.clone();
+        if let Some(card) = verification.presentation.source_cards.get_mut(0) {
+            card.title = "Test Company A official leadership".to_string();
+            card.domain = "test-company-a.test".to_string();
+            card.safe_click_url = "https://test-company-a.test/leadership".to_string();
+        }
+        metadata
     }
 
     #[test]
@@ -5558,6 +5731,51 @@ mod tests {
         assert!(!text.contains("Sources:"));
         assert!(!text.contains("source:"));
         assert!(!text.contains("provider_call_attempt_count"));
+    }
+
+    #[test]
+    fn stage5_ph1x_preserves_same_language_websearch_presentation() {
+        let tool_ok = ToolResponse::ok_v1(
+            ToolRequestId(5_001),
+            ToolQueryHash(5_001),
+            ToolResult::WebSearch {
+                items: vec![ToolTextSnippet {
+                    title: "Test Company A official leadership".to_string(),
+                    snippet: "Test Person A is the CEO of Test Company A.".to_string(),
+                    url: "https://test-company-a.test/leadership".to_string(),
+                }],
+            },
+            stage5_test_verified_source_metadata(),
+            None,
+            ReasonCodeId(1),
+            CacheStatus::Bypassed,
+        )
+        .unwrap();
+        let req = Ph1xRequest::v1(
+            5_001,
+            1,
+            now(1),
+            base_thread(),
+            SessionState::Active,
+            id_text(),
+            policy_ok(),
+            vec![],
+            None,
+            None,
+            Some(tool_ok),
+            None,
+            Some("zh".to_string()),
+            None,
+        )
+        .unwrap()
+        .with_language_packet(Some(h416_chinese_language_packet()))
+        .unwrap();
+
+        let text = tool_ok_text_for_request(&req, req.tool_response.as_ref().unwrap());
+        assert_eq!(text, "Test Person A 是 Test Company A 的 CEO。");
+        assert!(!text.contains("Sources:"));
+        assert!(!text.contains("https://"));
+        assert!(!text.contains("I found a web result"));
     }
 
     #[test]

@@ -1316,10 +1316,21 @@ private struct DesktopAuthoritativeReplyProvenanceRenderState: Equatable {
         }
     }
 
+    struct SourceChip: Identifiable, Equatable {
+        let sourceID: String
+        let label: String
+        let domain: String
+        let clickableSourcePageURL: URL
+        let accessibilityLabel: String
+
+        var id: String { sourceID }
+    }
+
     let title: String
     let summary: String
     let authoritativeResponseProvenance: AuthoritativeResponseProvenance?
     let sources: [Source]
+    let sourceChips: [SourceChip]
     let sourceLinkCitationCards: [SourceLinkCitationCard]
     let retrievedAtLabel: String?
     let cacheStatusLabel: String?
@@ -17410,6 +17421,47 @@ struct DesktopSessionShellView: View {
                     Text(desktopAuthoritativeReplyProvenanceRenderState.summary)
                         .frame(maxWidth: .infinity, alignment: .leading)
 
+                    if !desktopAuthoritativeReplyProvenanceRenderState.sourceChips.isEmpty {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Accepted sources")
+                                .font(.subheadline.weight(.semibold))
+
+                            LazyVGrid(
+                                columns: [GridItem(.adaptive(minimum: 132), spacing: 8, alignment: .leading)],
+                                alignment: .leading,
+                                spacing: 8
+                            ) {
+                                ForEach(desktopAuthoritativeReplyProvenanceRenderState.sourceChips) { chip in
+                                    Link(destination: chip.clickableSourcePageURL) {
+                                        VStack(alignment: .leading, spacing: 2) {
+                                            Text(chip.label)
+                                                .font(.caption.weight(.semibold))
+                                                .lineLimit(1)
+
+                                            Text(chip.domain)
+                                                .font(.caption2)
+                                                .foregroundStyle(.secondary)
+                                                .lineLimit(1)
+                                        }
+                                        .padding(.horizontal, 10)
+                                        .padding(.vertical, 7)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                        .background(
+                                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                                .fill(Color(nsColor: .controlBackgroundColor))
+                                        )
+                                        .overlay(
+                                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                                .stroke(Color.secondary.opacity(0.18), lineWidth: 1)
+                                        )
+                                    }
+                                    .buttonStyle(.plain)
+                                    .accessibilityLabel(chip.accessibilityLabel)
+                                }
+                            }
+                        }
+                    }
+
                     if desktopAuthoritativeReplyProvenanceRenderState.authoritativeResponseProvenance == nil {
                         Text("No cloud-authored provenance is available for this completed canonical runtime outcome. This shell fails closed and does not fabricate local sources, retrieval timing, or cache posture.")
                             .foregroundStyle(.secondary)
@@ -18902,6 +18954,15 @@ struct DesktopSessionShellView: View {
                             url: $0.url
                         )
                     } ?? [],
+                    sourceChips: outcomeState.sourceChips.map {
+                        DesktopAuthoritativeReplyProvenanceRenderState.SourceChip(
+                            sourceID: $0.sourceID,
+                            label: $0.label,
+                            domain: $0.domain,
+                            clickableSourcePageURL: $0.clickableSourcePageURL,
+                            accessibilityLabel: $0.accessibilityLabel
+                        )
+                    },
                     sourceLinkCitationCards: outcomeState.sourceLinkCitationCards.map {
                         DesktopAuthoritativeReplyProvenanceRenderState.SourceLinkCitationCard(
                             cardID: $0.cardID,
@@ -19048,6 +19109,15 @@ struct DesktopSessionShellView: View {
                             url: $0.url
                         )
                     } ?? [],
+                    sourceChips: outcomeState.sourceChips.map {
+                        DesktopAuthoritativeReplyProvenanceRenderState.SourceChip(
+                            sourceID: $0.sourceID,
+                            label: $0.label,
+                            domain: $0.domain,
+                            clickableSourcePageURL: $0.clickableSourcePageURL,
+                            accessibilityLabel: $0.accessibilityLabel
+                        )
+                    },
                     sourceLinkCitationCards: outcomeState.sourceLinkCitationCards.map {
                         DesktopAuthoritativeReplyProvenanceRenderState.SourceLinkCitationCard(
                             cardID: $0.cardID,
@@ -19171,6 +19241,15 @@ struct DesktopSessionShellView: View {
                             url: $0.url
                         )
                     } ?? [],
+                    sourceChips: outcomeState.sourceChips.map {
+                        DesktopAuthoritativeReplyProvenanceRenderState.SourceChip(
+                            sourceID: $0.sourceID,
+                            label: $0.label,
+                            domain: $0.domain,
+                            clickableSourcePageURL: $0.clickableSourcePageURL,
+                            accessibilityLabel: $0.accessibilityLabel
+                        )
+                    },
                     sourceLinkCitationCards: outcomeState.sourceLinkCitationCards.map {
                         DesktopAuthoritativeReplyProvenanceRenderState.SourceLinkCitationCard(
                             cardID: $0.cardID,

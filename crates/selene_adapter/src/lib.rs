@@ -333,6 +333,18 @@ pub struct VoiceTurnAdapterResponse {
     pub response_text: String,
     pub reason_code: String,
     pub provenance: Option<VoiceTurnProvenance>,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub tts_text: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub source_chips: Vec<VoiceTurnWebSourceChip>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub source_cards: Vec<VoiceTurnWebSourceCard>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub answer_class: Option<String>,
+    #[serde(default)]
+    pub metadata_safe_for_user: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trace_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deep_research: Option<VoiceTurnDeepResearchMetadata>,
 }
@@ -348,6 +360,36 @@ pub struct VoiceTurnProvenance {
     pub sources: Vec<VoiceTurnProvenanceSource>,
     pub retrieved_at: u64,
     pub cache_status: String,
+}
+
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct VoiceTurnWebSourceChip {
+    pub source_id: String,
+    pub label: String,
+    pub domain: String,
+    pub safe_click_url: String,
+    pub source_type: String,
+    pub accepted: bool,
+    pub claim_refs: Vec<String>,
+    pub verified_for_claim: bool,
+    pub display_rank: u16,
+    pub tooltip_or_accessibility_label: String,
+}
+
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct VoiceTurnWebSourceCard {
+    pub source_id: String,
+    pub title: String,
+    pub domain: String,
+    pub safe_click_url: String,
+    pub source_type: String,
+    pub short_excerpt_or_summary: String,
+    pub accepted: bool,
+    pub claim_refs: Vec<String>,
+    pub display_rank: u16,
+    pub metadata_safe_for_user: bool,
 }
 
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
@@ -7650,9 +7692,15 @@ impl AdapterRuntime {
                                 "voice transcript rejected before runtime entry".to_string(),
                             ),
                             next_move: "clarify".to_string(),
-                            response_text,
+                            response_text: response_text.clone(),
                             reason_code: reject.reason_code.0.to_string(),
                             provenance: None,
+                            tts_text: response_text,
+                            source_chips: Vec::new(),
+                            source_cards: Vec::new(),
+                            answer_class: None,
+                            metadata_safe_for_user: true,
+                            trace_id: None,
                             deep_research: None,
                         };
                         if let Some(trace) = h410_build_public_brain_trace(
@@ -7818,9 +7866,15 @@ impl AdapterRuntime {
                         failure_class: None,
                         reason: None,
                         next_move: "respond".to_string(),
-                        response_text: h411_response.response_text,
+                        response_text: h411_response.response_text.clone(),
                         reason_code: h411_response.reason_code.to_string(),
                         provenance: None,
+                        tts_text: h411_response.response_text,
+                        source_chips: Vec::new(),
+                        source_cards: Vec::new(),
+                        answer_class: None,
+                        metadata_safe_for_user: true,
+                        trace_id: None,
                         deep_research: None,
                     };
                     let h411_discourse_frame_after = self
@@ -7892,9 +7946,15 @@ impl AdapterRuntime {
                         failure_class: None,
                         reason: None,
                         next_move: "respond".to_string(),
-                        response_text,
+                        response_text: response_text.clone(),
                         reason_code: "H381_H380_LIVE_RESPONSE".to_string(),
                         provenance: None,
+                        tts_text: response_text,
+                        source_chips: Vec::new(),
+                        source_cards: Vec::new(),
+                        answer_class: None,
+                        metadata_safe_for_user: true,
+                        trace_id: None,
                         deep_research: None,
                     };
                     if let Some(trace) = h410_build_public_brain_trace(
@@ -15002,9 +15062,111 @@ fn typed_public_deterministic_ph1x_response_summary(
     }
 }
 
+fn stage5_web_presentation_from_tool_response(
+    tool_response: Option<&ToolResponse>,
+) -> (
+    Vec<VoiceTurnWebSourceChip>,
+    Vec<VoiceTurnWebSourceCard>,
+    Option<String>,
+    Option<String>,
+) {
+    let Some(verification) = tool_response
+        .and_then(|response| response.source_metadata.as_ref())
+        .and_then(|metadata| metadata.web_answer_verification.as_ref())
+    else {
+        return (Vec::new(), Vec::new(), None, None);
+    };
+
+    let source_chips = verification
+        .presentation
+        .source_chips
+        .iter()
+        .filter(|chip| {
+            chip.accepted
+                && chip.verified_for_claim
+                && !chip.claim_refs.is_empty()
+                && adapter_source_link_public_http_url(&chip.safe_click_url)
+                && !adapter_looks_like_raw_image_asset_url(&chip.safe_click_url)
+        })
+        .map(|chip| VoiceTurnWebSourceChip {
+            source_id: truncate_ascii(&chip.source_id, 128),
+            label: truncate_utf8(&chip.label, 80),
+            domain: truncate_ascii(&chip.domain, 128),
+            safe_click_url: truncate_ascii(&chip.safe_click_url, 2048),
+            source_type: truncate_ascii(&chip.source_type, 64),
+            accepted: true,
+            claim_refs: chip
+                .claim_refs
+                .iter()
+                .take(20)
+                .map(|claim| truncate_ascii(claim, 128))
+                .collect(),
+            verified_for_claim: true,
+            display_rank: chip.display_rank,
+            tooltip_or_accessibility_label: truncate_utf8(
+                &chip.tooltip_or_accessibility_label,
+                180,
+            ),
+        })
+        .collect::<Vec<_>>();
+    let source_cards = verification
+        .presentation
+        .source_cards
+        .iter()
+        .filter(|card| {
+            card.accepted
+                && card.metadata_safe_for_user
+                && !card.claim_refs.is_empty()
+                && adapter_source_link_public_http_url(&card.safe_click_url)
+                && !adapter_looks_like_raw_image_asset_url(&card.safe_click_url)
+        })
+        .map(|card| VoiceTurnWebSourceCard {
+            source_id: truncate_ascii(&card.source_id, 128),
+            title: truncate_utf8(&card.title, 180),
+            domain: truncate_ascii(&card.domain, 128),
+            safe_click_url: truncate_ascii(&card.safe_click_url, 2048),
+            source_type: truncate_ascii(&card.source_type, 64),
+            short_excerpt_or_summary: truncate_utf8(&card.short_excerpt_or_summary, 240),
+            accepted: true,
+            claim_refs: card
+                .claim_refs
+                .iter()
+                .take(20)
+                .map(|claim| truncate_ascii(claim, 128))
+                .collect(),
+            display_rank: card.display_rank,
+            metadata_safe_for_user: true,
+        })
+        .collect::<Vec<_>>();
+    (
+        source_chips,
+        source_cards,
+        Some(verification.final_answer_class.clone()),
+        Some(verification.presentation.trace_id.clone()),
+    )
+}
+
+fn adapter_looks_like_raw_image_asset_url(url: &str) -> bool {
+    let path = url
+        .split_once("://")
+        .map(|(_, rest)| rest)
+        .unwrap_or(url)
+        .split(['?', '#'])
+        .next()
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    matches!(
+        path.rsplit('.').next().unwrap_or_default(),
+        "jpg" | "jpeg" | "png" | "gif" | "webp" | "avif" | "svg" | "bmp" | "tiff" | "ico"
+    )
+}
+
 fn execution_outcome_to_adapter_response(
     execution: AppVoiceTurnExecutionOutcome,
 ) -> VoiceTurnAdapterResponse {
+    let response_text = execution.response_text.clone().unwrap_or_default();
+    let (source_chips, source_cards, answer_class, trace_id) =
+        stage5_web_presentation_from_tool_response(execution.tool_response.as_ref());
     VoiceTurnAdapterResponse {
         status: "ok".to_string(),
         outcome: outcome_label(&execution).to_string(),
@@ -15018,7 +15180,7 @@ fn execution_outcome_to_adapter_response(
         failure_class: None,
         reason: voice_outcome_reason(&execution.voice_outcome),
         next_move: next_move_label(&execution).to_string(),
-        response_text: execution.response_text.unwrap_or_default(),
+        response_text: response_text.clone(),
         reason_code: execution
             .reason_code
             .map(|code| code.0.to_string())
@@ -15027,6 +15189,12 @@ fn execution_outcome_to_adapter_response(
             .tool_response
             .as_ref()
             .map(provenance_from_tool_response),
+        tts_text: response_text,
+        source_chips,
+        source_cards,
+        answer_class,
+        metadata_safe_for_user: true,
+        trace_id,
         deep_research: execution
             .tool_response
             .as_ref()
@@ -20369,6 +20537,12 @@ fn session_posture_evidence_response_returns_current_device_fields_for_session()
                 response_text: "ready".to_string(),
                 reason_code: "OK".to_string(),
                 provenance: None,
+                tts_text: "ready".to_string(),
+                source_chips: Vec::new(),
+                source_cards: Vec::new(),
+                answer_class: None,
+                metadata_safe_for_user: true,
+                trace_id: None,
                 deep_research: None,
             }),
         },
@@ -35615,6 +35789,128 @@ mod tests {
         runtime
             .run_voice_turn(req)
             .expect("H411 desktop typed runtime turn should complete")
+    }
+
+    #[test]
+    fn stage5_adapter_verified_websearch_payload_carries_clean_source_chip_and_tts() {
+        let captured = Arc::new(Mutex::new(Vec::new()));
+        let endpoint = h409_spawn_brave_web_endpoint_sequence(
+            vec![r#"{"web":{"results":[
+                {"title":"Test Company A official leadership","url":"https://test-source-a.test/leadership","description":"Test Person A is the CEO of Test Company A."}
+            ]}}"#],
+            Arc::clone(&captured),
+        );
+
+        with_isolated_device_vault(
+            "stage5_adapter_verified_websearch_payload",
+            &[("brave_search_api_key", "stage5-test-key")],
+            &[
+                ("BRAVE_SEARCH_WEB_URL", endpoint.as_str()),
+                ("BRAVE_SEARCH_NEWS_URL", endpoint.as_str()),
+                ("SELENE_PROXY_MODE", "off"),
+            ],
+            || {
+                let runtime = AdapterRuntime::default();
+                let mut req = base_request();
+                req.correlation_id = 5_501;
+                req.turn_id = 5_501;
+                req.device_turn_sequence = Some(5_501);
+                req.now_ns = Some(5_501);
+                req.thread_key = Some("stage5-adapter-source-chip".to_string());
+                req.app_platform = "DESKTOP".to_string();
+                req.audio_capture_ref = None;
+                req.user_text_final = Some("Who is the CEO of Test Company A?".to_string());
+                seed_desktop_voice_profile_for_request(
+                    &runtime,
+                    &mut req,
+                    "stage5_verified_websearch_payload",
+                );
+                let out = runtime
+                    .run_voice_turn(req)
+                    .expect("Stage 5 verified websearch typed runtime turn should complete");
+                assert_eq!(out.status, "ok", "{out:?}");
+                assert_eq!(out.outcome, "FINAL_TOOL", "{out:?}");
+                assert_eq!(
+                    out.response_text,
+                    "Test Person A is the CEO of Test Company."
+                );
+                assert_eq!(out.tts_text, out.response_text);
+                assert_eq!(
+                    out.answer_class.as_deref(),
+                    Some("VERIFIED_DIRECT_ANSWER")
+                );
+                assert_eq!(out.source_chips.len(), 1, "{out:?}");
+                let chip = &out.source_chips[0];
+                assert_eq!(chip.label, "Test Company A official leadership");
+                assert_eq!(chip.domain, "test-source-a.test");
+                assert_eq!(chip.safe_click_url, "https://test-source-a.test/leadership");
+                assert!(chip.accepted);
+                assert!(chip.verified_for_claim);
+                assert!(!chip.claim_refs.is_empty());
+                assert!(out.source_cards.iter().all(|card| card.accepted));
+                for forbidden in [
+                    "Sources:",
+                    "I found a web result",
+                    "raw provider",
+                    "unix_ms",
+                    "debug trace",
+                    "rejected sources",
+                    "source dump",
+                    "https://test-source-a.test",
+                ] {
+                    assert!(
+                        !out.response_text.contains(forbidden),
+                        "forbidden Stage 5 response token {forbidden:?}: {}",
+                        out.response_text
+                    );
+                    assert!(
+                        !out.tts_text.contains(forbidden),
+                        "forbidden Stage 5 TTS token {forbidden:?}: {}",
+                        out.tts_text
+                    );
+                }
+            },
+        );
+
+        let requests = captured.lock().expect("captured request lock").clone();
+        assert_eq!(requests.len(), 1, "{requests:?}");
+    }
+
+    #[test]
+    fn stage5_adapter_provider_off_keeps_source_chips_empty_and_tts_clean() {
+        with_isolated_device_vault(
+            "stage5_adapter_provider_off",
+            &[("brave_search_api_key", "stage5-test-key")],
+            &[
+                ("SELENE_SEARCH_PROVIDERS_ENABLED", "0"),
+                ("SELENE_PAID_SEARCH_PROVIDERS_ENABLED", "0"),
+                ("SELENE_WEB_SEARCH_ENABLED", "0"),
+                ("SELENE_DEEP_RESEARCH_ENABLED", "0"),
+                ("SELENE_NEWS_SEARCH_ENABLED", "0"),
+                ("SELENE_URL_FETCH_ENABLED", "0"),
+                ("SELENE_STARTUP_PROVIDER_PROBES_ENABLED", "0"),
+                ("SELENE_BRAVE_SEARCH_ENABLED", "0"),
+                ("SELENE_PROVIDER_CALL_MAX_PER_TURN", "0"),
+                ("SELENE_URL_FETCH_MAX_PER_TURN", "0"),
+            ],
+            || {
+                let runtime = AdapterRuntime::default();
+                let out = h411_run_desktop_typed_turn(
+                    &runtime,
+                    "stage5-adapter-provider-off",
+                    5_502,
+                    "Search the web for Test Company A",
+                );
+                assert_eq!(out.status, "ok", "{out:?}");
+                assert_eq!(out.outcome, "FINAL_TOOL", "{out:?}");
+                assert_eq!(out.tts_text, out.response_text);
+                assert!(out.source_chips.is_empty(), "{out:?}");
+                assert!(out.source_cards.is_empty(), "{out:?}");
+                assert!(!out.response_text.contains("Sources:"));
+                assert!(!out.response_text.contains("provider_call_attempt_count"));
+                assert!(!out.tts_text.contains("provider_call_attempt_count"));
+            },
+        );
     }
 
     fn assert_h411_public_answer_clean(out: &VoiceTurnAdapterResponse) {

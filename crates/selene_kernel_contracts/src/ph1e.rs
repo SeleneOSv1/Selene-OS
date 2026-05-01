@@ -425,6 +425,42 @@ pub struct SourceChipPacket {
     pub source_type: String,
     pub accepted: bool,
     pub claim_refs: Vec<String>,
+    pub icon_key: Option<String>,
+    pub verified_for_claim: bool,
+    pub display_rank: u16,
+    pub tooltip_or_accessibility_label: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourceCardPacket {
+    pub source_id: String,
+    pub title: String,
+    pub domain: String,
+    pub safe_click_url: String,
+    pub source_type: String,
+    pub short_excerpt_or_summary: String,
+    pub accepted: bool,
+    pub claim_refs: Vec<String>,
+    pub display_rank: u16,
+    pub retrieved_at_human: Option<String>,
+    pub metadata_safe_for_user: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PresentationPacket {
+    pub display_text: String,
+    pub response_text: String,
+    pub tts_text: String,
+    pub answer_class: String,
+    pub language: String,
+    pub source_chips: Vec<SourceChipPacket>,
+    pub source_cards: Vec<SourceCardPacket>,
+    pub image_cards: Vec<String>,
+    pub trace_id: String,
+    pub metadata_safe_for_user: bool,
+    pub response_style: String,
+    pub expandable_available: bool,
+    pub presentation_boundary_used: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -502,6 +538,7 @@ pub struct WebAnswerVerificationPacket {
     pub unsupported_claims_removed: Vec<String>,
     pub contradiction_result: String,
     pub final_answer_class: String,
+    pub presentation: PresentationPacket,
     pub response_text: String,
     pub source_dump_present: bool,
     pub rejected_sources_present_in_response_text: bool,
@@ -682,10 +719,111 @@ impl Validate for SourceChipPacket {
         validate_safe_url("source_chip.safe_click_url", &self.safe_click_url)?;
         validate_bounded_nonempty("source_chip.source_type", &self.source_type, 64)?;
         validate_short_vec("source_chip.claim_refs", &self.claim_refs, 20, 128)?;
+        if let Some(icon_key) = &self.icon_key {
+            validate_bounded_nonempty("source_chip.icon_key", icon_key, 64)?;
+        }
+        validate_bounded_nonempty(
+            "source_chip.tooltip_or_accessibility_label",
+            &self.tooltip_or_accessibility_label,
+            256,
+        )?;
         if !self.accepted || self.claim_refs.is_empty() {
             return Err(ContractViolation::InvalidValue {
                 field: "source_chip.accepted",
                 reason: "source chips must derive from accepted claim-supporting sources",
+            });
+        }
+        if !self.verified_for_claim {
+            return Err(ContractViolation::InvalidValue {
+                field: "source_chip.verified_for_claim",
+                reason: "source chips must be verified for at least one claim",
+            });
+        }
+        Ok(())
+    }
+}
+
+impl Validate for SourceCardPacket {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        validate_bounded_nonempty("source_card.source_id", &self.source_id, 128)?;
+        validate_bounded_nonempty("source_card.title", &self.title, 256)?;
+        validate_bounded_nonempty("source_card.domain", &self.domain, 256)?;
+        validate_safe_url("source_card.safe_click_url", &self.safe_click_url)?;
+        validate_bounded_nonempty("source_card.source_type", &self.source_type, 64)?;
+        validate_bounded_nonempty(
+            "source_card.short_excerpt_or_summary",
+            &self.short_excerpt_or_summary,
+            500,
+        )?;
+        validate_short_vec("source_card.claim_refs", &self.claim_refs, 20, 128)?;
+        if let Some(retrieved_at_human) = &self.retrieved_at_human {
+            validate_bounded_nonempty(
+                "source_card.retrieved_at_human",
+                retrieved_at_human,
+                128,
+            )?;
+        }
+        if !self.accepted || self.claim_refs.is_empty() || !self.metadata_safe_for_user {
+            return Err(ContractViolation::InvalidValue {
+                field: "source_card.accepted",
+                reason: "source cards must be accepted, claim-linked, and metadata-safe",
+            });
+        }
+        Ok(())
+    }
+}
+
+impl Validate for PresentationPacket {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        validate_bounded_nonempty("presentation.display_text", &self.display_text, 4096)?;
+        validate_bounded_nonempty("presentation.response_text", &self.response_text, 4096)?;
+        validate_bounded_nonempty("presentation.tts_text", &self.tts_text, 4096)?;
+        validate_stage1_token(
+            "presentation.answer_class",
+            &self.answer_class,
+            &[
+                "VERIFIED_DIRECT_ANSWER",
+                "PARTIAL_UNCERTAIN_ANSWER",
+                "UNSUPPORTED_SAFE_DEGRADE",
+                "CONTRADICTED_SAFE_DEGRADE",
+                "STALE_UNCERTAIN_SAFE_DEGRADE",
+                "PROTECTED_FAIL_CLOSED",
+            ],
+        )?;
+        validate_bounded_nonempty("presentation.language", &self.language, 32)?;
+        for chip in &self.source_chips {
+            chip.validate()?;
+        }
+        for card in &self.source_cards {
+            card.validate()?;
+        }
+        if !self.image_cards.is_empty() {
+            return Err(ContractViolation::InvalidValue {
+                field: "presentation.image_cards",
+                reason: "Stage 5 presentation must not display image cards",
+            });
+        }
+        validate_bounded_nonempty("presentation.trace_id", &self.trace_id, 128)?;
+        validate_stage1_token(
+            "presentation.response_style",
+            &self.response_style,
+            &["concise_default"],
+        )?;
+        validate_bounded_nonempty(
+            "presentation.presentation_boundary_used",
+            &self.presentation_boundary_used,
+            96,
+        )?;
+        if !self.metadata_safe_for_user {
+            return Err(ContractViolation::InvalidValue {
+                field: "presentation.metadata_safe_for_user",
+                reason: "presentation metadata must be safe for user payload transport",
+            });
+        }
+        if self.tts_text != self.response_text || self.display_text != self.response_text {
+            return Err(ContractViolation::InvalidValue {
+                field: "presentation.tts_text",
+                reason: "Stage 5 TTS/display text must equal clean response_text",
             });
         }
         Ok(())
@@ -1013,6 +1151,7 @@ impl Validate for WebAnswerVerificationPacket {
                 "PROTECTED_FAIL_CLOSED",
             ],
         )?;
+        self.presentation.validate()?;
         validate_bounded_nonempty(
             "web_answer_verification.response_text",
             &self.response_text,
@@ -1035,6 +1174,21 @@ impl Validate for WebAnswerVerificationPacket {
             return Err(ContractViolation::InvalidValue {
                 field: "web_answer_verification.tts_input_text",
                 reason: "must equal clean response_text for Stage 1",
+            });
+        }
+        if self.presentation.response_text != self.response_text
+            || self.presentation.tts_text != self.tts_input_text
+            || self.presentation.answer_class != self.final_answer_class
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "web_answer_verification.presentation",
+                reason: "presentation packet must preserve final answer text, TTS text, and answer class",
+            });
+        }
+        if self.presentation.source_chips != self.source_chips {
+            return Err(ContractViolation::InvalidValue {
+                field: "web_answer_verification.presentation.source_chips",
+                reason: "presentation source chips must match accepted verification source chips",
             });
         }
         if self.source_dump_present
