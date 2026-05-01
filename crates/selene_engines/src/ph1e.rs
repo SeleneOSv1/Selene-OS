@@ -1,6 +1,6 @@
 #![forbid(unsafe_code)]
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::fs;
 use std::hash::{Hash, Hasher};
@@ -19,8 +19,8 @@ use crate::ph1search::{Ph1SearchConfig, Ph1SearchRuntime};
 use selene_kernel_contracts::ph1e::{
     AcceptedSourcePacket, CacheStatus, ClaimEvidenceLink, ClaimRequestPacket,
     ClaimVerificationPacket, PresentationPacket, RejectedSourcePacket, RequestedEntityPacket,
-    SourceCardPacket, SourceChipPacket, SourceEvaluationPacket, SourceMetadata, SourceRef,
-    StrictBudget, ToolName, ToolRequest, ToolResponse, ToolResult, ToolStructuredField,
+    SearchImagePacket, SourceCardPacket, SourceChipPacket, SourceEvaluationPacket, SourceMetadata,
+    SourceRef, StrictBudget, ToolName, ToolRequest, ToolResponse, ToolResult, ToolStructuredField,
     ToolTextSnippet, WebAnswerVerificationPacket,
 };
 use selene_kernel_contracts::ph1j::{CorrelationId, TurnId};
@@ -2698,6 +2698,7 @@ fn stage1_web_answer_verified_metadata(
     let mut rejected_source_ids = Vec::new();
     let mut candidate_ids = Vec::new();
     let mut stage4_candidates = Vec::new();
+    let mut accepted_image_items = Vec::new();
 
     for (index, item) in items.iter().enumerate() {
         let source_id = format!("source_{:03}", index + 1);
@@ -2798,6 +2799,7 @@ fn stage1_web_answer_verified_metadata(
                 display_rank: source_chips.len().saturating_add(1) as u16,
                 tooltip_or_accessibility_label: format!("Open {label} from {domain}"),
             });
+            accepted_image_items.push((source_id.clone(), item.clone()));
             if let Some(person) = person {
                 stage4_candidates.push(Stage4SupportCandidate {
                     source_id: source_id.clone(),
@@ -2841,9 +2843,12 @@ fn stage1_web_answer_verified_metadata(
         chip.display_rank = index.saturating_add(1) as u16;
     }
     let presentation = stage5_presentation_packet(
+        query,
+        &requested,
         &stage4_decision,
         &source_chips,
         &accepted_sources,
+        &accepted_image_items,
     );
     let display_sources = accepted_refs
         .into_iter()
@@ -2895,9 +2900,12 @@ fn stage1_web_answer_verified_metadata(
 }
 
 fn stage5_presentation_packet(
+    query: &str,
+    requested: &RequestedEntityPacket,
     decision: &Stage4Decision,
     source_chips: &[SourceChipPacket],
     accepted_sources: &[AcceptedSourcePacket],
+    accepted_image_items: &[(String, ToolTextSnippet)],
 ) -> PresentationPacket {
     let displayed_source_ids = source_chips
         .iter()
@@ -2921,13 +2929,31 @@ fn stage5_presentation_packet(
             metadata_safe_for_user: true,
         })
         .collect::<Vec<_>>();
+    let image_cards = stage6_image_cards_for_presentation(
+        query,
+        requested,
+        decision,
+        source_chips,
+        accepted_sources,
+        accepted_image_items,
+    );
+    let (trace_prefix, presentation_boundary_used) = if image_cards.is_empty() {
+        ("stage5", "PH1E_STAGE5_PRESENTATION")
+    } else {
+        ("stage6", "PH1E_STAGE6_IMAGE_PRESENTATION")
+    };
     let trace_seed = format!(
-        "{}:{}:{}",
+        "{}:{}:{}:{}",
         decision.final_answer_class,
         decision.response_text,
         source_chips
             .iter()
             .map(|chip| chip.source_id.as_str())
+            .collect::<Vec<_>>()
+            .join("|"),
+        image_cards
+            .iter()
+            .map(|image| image.image_id.as_str())
             .collect::<Vec<_>>()
             .join("|")
     );
@@ -2939,13 +2965,208 @@ fn stage5_presentation_packet(
         language: "und".to_string(),
         source_chips: source_chips.to_vec(),
         source_cards,
-        image_cards: Vec::new(),
-        trace_id: format!("stage5_{}", short_fnv_hex(trace_seed.as_bytes())),
+        image_cards,
+        trace_id: format!("{trace_prefix}_{}", short_fnv_hex(trace_seed.as_bytes())),
         metadata_safe_for_user: true,
         response_style: "concise_default".to_string(),
         expandable_available: true,
-        presentation_boundary_used: "PH1E_STAGE5_PRESENTATION".to_string(),
+        presentation_boundary_used: presentation_boundary_used.to_string(),
     }
+}
+
+fn stage6_image_cards_for_presentation(
+    query: &str,
+    requested: &RequestedEntityPacket,
+    decision: &Stage4Decision,
+    source_chips: &[SourceChipPacket],
+    accepted_sources: &[AcceptedSourcePacket],
+    accepted_image_items: &[(String, ToolTextSnippet)],
+) -> Vec<SearchImagePacket> {
+    if decision.final_answer_class != "VERIFIED_DIRECT_ANSWER" {
+        return Vec::new();
+    }
+    let displayed_source_ids = source_chips
+        .iter()
+        .map(|chip| chip.source_id.as_str())
+        .collect::<BTreeSet<_>>();
+    let accepted_source_by_id = accepted_sources
+        .iter()
+        .map(|source| (source.source_id.as_str(), source))
+        .collect::<BTreeMap<_, _>>();
+    accepted_image_items
+        .iter()
+        .filter(|(source_id, _)| displayed_source_ids.contains(source_id.as_str()))
+        .filter_map(|(source_id, item)| {
+            let source = accepted_source_by_id.get(source_id.as_str())?;
+            stage6_image_card_from_fixture_metadata(query, requested, source, item)
+        })
+        .take(3)
+        .enumerate()
+        .map(|(index, mut image)| {
+            image.display_rank = index.saturating_add(1) as u16;
+            image
+        })
+        .collect()
+}
+
+fn stage6_image_card_from_fixture_metadata(
+    query: &str,
+    requested: &RequestedEntityPacket,
+    source: &AcceptedSourcePacket,
+    item: &ToolTextSnippet,
+) -> Option<SearchImagePacket> {
+    let metadata = stage6_parse_fixture_image_metadata(&item.snippet)?;
+    if metadata.get("stage6_image_display")?.trim() != "allow" {
+        return None;
+    }
+    if !matches!(
+        metadata.get("stage6_image_policy").map(String::as_str),
+        Some("fixture_approved" | "display_policy_approved")
+    ) {
+        return None;
+    }
+    if metadata
+        .get("stage6_image_remote_load")
+        .is_some_and(|value| value.trim() == "allow")
+    {
+        return None;
+    }
+    let image_entity = metadata.get("stage6_image_entity")?.trim();
+    if normalize_stage1_entity(image_entity) != requested.normalized_name {
+        return None;
+    }
+    let source_page = metadata
+        .get("stage6_image_source_page")
+        .map(|value| value.trim())
+        .unwrap_or("accepted_source");
+    if source_page != "accepted_source" {
+        return None;
+    }
+    let kind = metadata
+        .get("stage6_image_kind")
+        .map(|value| value.trim())
+        .unwrap_or("unknown");
+    if !matches!(
+        kind,
+        "logo"
+            | "person_photo"
+            | "building_or_place"
+            | "product"
+            | "brand_asset"
+            | "generic_entity_visual"
+            | "unknown"
+    ) {
+        return None;
+    }
+    let approved_asset_ref = metadata.get("stage6_image_asset")?.trim();
+    if !stage6_fixture_asset_ref_allowed(approved_asset_ref) {
+        return None;
+    }
+    let caption = truncate_ascii(metadata.get("stage6_image_caption")?.trim(), 220);
+    let alt_text = truncate_ascii(metadata.get("stage6_image_alt")?.trim(), 220);
+    let query_relevance_score = stage6_parse_score(metadata.get("stage6_image_relevance"), 9_000);
+    let entity_match_score = stage6_parse_score(metadata.get("stage6_image_entity_score"), 9_000);
+    if query_relevance_score < 7_500 || entity_match_score < 7_500 {
+        return None;
+    }
+    let requested_entity = requested.captured_text.trim();
+    if !stage6_text_mentions_entity(&caption, requested_entity)
+        && !stage6_text_mentions_entity(&alt_text, requested_entity)
+        && !stage6_text_mentions_entity(query, requested_entity)
+    {
+        return None;
+    }
+    let provider = metadata
+        .get("stage6_image_provider")
+        .map(|value| truncate_ascii(value.trim(), 64))
+        .unwrap_or_else(|| "stage6_fixture".to_string());
+    let provider_tier = metadata
+        .get("stage6_image_provider_tier")
+        .map(|value| truncate_ascii(value.trim(), 64))
+        .unwrap_or_else(|| "fixture".to_string());
+    let image_id_seed = format!("{}:{}:{}", source.source_id, approved_asset_ref, caption);
+    Some(SearchImagePacket {
+        image_id: format!("stage6_image_{}", short_fnv_hex(image_id_seed.as_bytes())),
+        image_kind: kind.to_string(),
+        approved_asset_ref: approved_asset_ref.to_string(),
+        safe_image_url: None,
+        thumbnail_url: None,
+        source_page_url: source.safe_click_url.clone(),
+        source_page_domain: source.domain.clone(),
+        source_label: source.label.clone(),
+        caption,
+        alt_text,
+        query_relevance_score,
+        entity_match_score,
+        source_id: source.source_id.clone(),
+        claim_refs: source.supported_claim_refs.clone(),
+        display_allowed: true,
+        display_denied_reason: None,
+        provider,
+        provider_tier,
+        metadata_only: false,
+        rights_or_policy_status: metadata
+            .get("stage6_image_policy")
+            .map(|value| value.trim().to_string())
+            .unwrap_or_else(|| "fixture_approved".to_string()),
+        retrieved_at: None,
+        metadata_safe_for_user: true,
+        remote_image_load_allowed: false,
+        fixture_or_local_asset: true,
+        display_rank: 1,
+        result_classes: vec![
+            "STAGE6_IMAGE_PACKET_PASS".to_string(),
+            "STAGE6_IMAGE_DISPLAY_GATE_PASS".to_string(),
+            "STAGE6_IMAGE_URL_SAFETY_PASS".to_string(),
+            "STAGE6_SOURCE_PAGE_LINK_PASS".to_string(),
+            "STAGE6_QUERY_RELEVANCE_PASS".to_string(),
+            "STAGE6_IMAGE_FETCH_OFF_ZERO_ATTEMPT_PASS".to_string(),
+            "STAGE6_NO_REMOTE_IMAGE_LOAD_WHEN_FETCH_DISABLED_PASS".to_string(),
+            "STAGE6_SOURCE_CHIP_PRESERVATION_PASS".to_string(),
+        ],
+    })
+}
+
+fn stage6_parse_fixture_image_metadata(text: &str) -> Option<BTreeMap<String, String>> {
+    if !text.contains("stage6_image_display=allow") {
+        return None;
+    }
+    let mut metadata = BTreeMap::new();
+    for part in text.split(';') {
+        let Some((key, value)) = part.trim().split_once('=') else {
+            continue;
+        };
+        let key = key.trim();
+        let value = value.trim();
+        if key.starts_with("stage6_image_") && !value.is_empty() {
+            metadata.insert(key.to_string(), value.to_string());
+        }
+    }
+    Some(metadata)
+}
+
+fn stage6_fixture_asset_ref_allowed(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 128
+        && value.starts_with("fixture-image-")
+        && value.ends_with(".png")
+        && !value.contains("..")
+        && value
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.'))
+}
+
+fn stage6_parse_score(value: Option<&String>, default: u16) -> u16 {
+    value
+        .and_then(|raw| raw.trim().parse::<u16>().ok())
+        .filter(|score| *score <= 10_000)
+        .unwrap_or(default)
+}
+
+fn stage6_text_mentions_entity(text: &str, entity: &str) -> bool {
+    let normalized_text = normalize_stage1_entity(text);
+    let normalized_entity = normalize_stage1_entity(entity);
+    !normalized_entity.is_empty() && normalized_text.contains(&normalized_entity)
 }
 
 fn stage1_requested_entity_packet(query: &str) -> RequestedEntityPacket {
@@ -14297,6 +14518,132 @@ mod tests {
         assert!(verification.source_chips.is_empty());
         assert!(verification.presentation.source_chips.is_empty());
         assert!(!verification.response_text.contains(".png"));
+    }
+
+    fn stage6_fixture_image_metadata() -> String {
+        "Test Person A is the CEO of Test Company A.; \
+         stage6_image_display=allow; \
+         stage6_image_kind=logo; \
+         stage6_image_asset=fixture-image-a.png; \
+         stage6_image_caption=Test Company A approved fixture image; \
+         stage6_image_alt=Test Company A approved fixture image; \
+         stage6_image_policy=fixture_approved; \
+         stage6_image_entity=Test Company A; \
+         stage6_image_source_page=accepted_source; \
+         stage6_image_provider=stage6_fixture; \
+         stage6_image_provider_tier=fixture; \
+         stage6_image_relevance=9500; \
+         stage6_image_entity_score=9500"
+            .to_string()
+    }
+
+    #[test]
+    fn stage6_approved_fixture_image_card_links_to_accepted_source_without_remote_load() {
+        let (_items, metadata) = stage1_web_answer_verified_metadata(
+            "Who is the CEO of Test Company A?",
+            vec![ToolTextSnippet {
+                title: "Test Company A official leadership".to_string(),
+                snippet: stage6_fixture_image_metadata(),
+                url: "https://test-company-a.test/leadership".to_string(),
+            }],
+            Some("stage6_fixture".to_string()),
+            1,
+        );
+
+        let verification = metadata.web_answer_verification.as_ref().unwrap();
+        assert_eq!(verification.final_answer_class, "VERIFIED_DIRECT_ANSWER");
+        assert_eq!(
+            verification.presentation.presentation_boundary_used,
+            "PH1E_STAGE6_IMAGE_PRESENTATION"
+        );
+        assert_eq!(verification.presentation.image_cards.len(), 1);
+        let image = &verification.presentation.image_cards[0];
+        assert_eq!(image.source_id, "source_001");
+        assert_eq!(image.source_page_url, "https://test-company-a.test/leadership");
+        assert_eq!(image.approved_asset_ref, "fixture-image-a.png");
+        assert!(image.display_allowed);
+        assert!(image.fixture_or_local_asset);
+        assert!(!image.remote_image_load_allowed);
+        assert!(image.safe_image_url.is_none());
+        assert!(image.thumbnail_url.is_none());
+        assert!(image.result_classes.contains(&"STAGE6_IMAGE_PACKET_PASS".to_string()));
+        assert!(image
+            .result_classes
+            .contains(&"STAGE6_NO_REMOTE_IMAGE_LOAD_WHEN_FETCH_DISABLED_PASS".to_string()));
+        assert_eq!(verification.presentation.source_chips.len(), 1);
+        assert!(!verification.response_text.contains("fixture-image-a.png"));
+        assert!(!verification.tts_input_text.contains("fixture-image-a.png"));
+    }
+
+    #[test]
+    fn stage6_wrong_entity_image_metadata_is_blocked_from_presentation() {
+        let wrong_entity_metadata = stage6_fixture_image_metadata()
+            .replace("stage6_image_entity=Test Company A", "stage6_image_entity=Test Company B");
+        let (_items, metadata) = stage1_web_answer_verified_metadata(
+            "Who is the CEO of Test Company A?",
+            vec![ToolTextSnippet {
+                title: "Test Company A official leadership".to_string(),
+                snippet: wrong_entity_metadata,
+                url: "https://test-company-a.test/leadership".to_string(),
+            }],
+            Some("stage6_fixture".to_string()),
+            1,
+        );
+
+        let verification = metadata.web_answer_verification.as_ref().unwrap();
+        assert_eq!(verification.final_answer_class, "VERIFIED_DIRECT_ANSWER");
+        assert!(verification.presentation.image_cards.is_empty());
+        assert_eq!(
+            verification.presentation.presentation_boundary_used,
+            "PH1E_STAGE5_PRESENTATION"
+        );
+    }
+
+    #[test]
+    fn stage6_unknown_policy_and_remote_image_metadata_are_blocked() {
+        for blocked_metadata in [
+            stage6_fixture_image_metadata()
+                .replace("stage6_image_policy=fixture_approved", "stage6_image_policy=unknown"),
+            format!(
+                "{}; stage6_image_remote_load=allow",
+                stage6_fixture_image_metadata()
+            ),
+        ] {
+            let (_items, metadata) = stage1_web_answer_verified_metadata(
+                "Who is the CEO of Test Company A?",
+                vec![ToolTextSnippet {
+                    title: "Test Company A official leadership".to_string(),
+                    snippet: blocked_metadata,
+                    url: "https://test-company-a.test/leadership".to_string(),
+                }],
+                Some("stage6_fixture".to_string()),
+                1,
+            );
+            let verification = metadata.web_answer_verification.as_ref().unwrap();
+            assert_eq!(verification.final_answer_class, "VERIFIED_DIRECT_ANSWER");
+            assert!(verification.presentation.image_cards.is_empty());
+            assert!(!verification.response_text.contains("stage6_image"));
+        }
+    }
+
+    #[test]
+    fn stage6_rejected_source_image_metadata_cannot_display() {
+        let (_items, metadata) = stage1_web_answer_verified_metadata(
+            "Who is the CEO of Test Company A?",
+            vec![ToolTextSnippet {
+                title: "Test Company A overview".to_string(),
+                snippet: stage6_fixture_image_metadata()
+                    .replace("Test Person A is the CEO of Test Company A.", "Test Company A exists."),
+                url: "https://test-company-a.test/about".to_string(),
+            }],
+            Some("stage6_fixture".to_string()),
+            1,
+        );
+
+        let verification = metadata.web_answer_verification.as_ref().unwrap();
+        assert_eq!(verification.final_answer_class, "UNSUPPORTED_SAFE_DEGRADE");
+        assert!(verification.source_chips.is_empty());
+        assert!(verification.presentation.image_cards.is_empty());
     }
 
     #[test]

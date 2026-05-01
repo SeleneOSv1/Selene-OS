@@ -71,7 +71,7 @@ use selene_kernel_contracts::ph1d::{
     SafetyTier, SchemaHash, PH1D_PROVIDER_NORMALIZED_OUTPUT_SCHEMA_HASH_V1,
 };
 use selene_kernel_contracts::ph1e::{
-    CacheStatus, ToolCatalogRef, ToolName, ToolResponse, ToolResult, ToolStatus,
+    CacheStatus, SearchImagePacket, ToolCatalogRef, ToolName, ToolResponse, ToolResult, ToolStatus,
 };
 use selene_kernel_contracts::ph1f::{
     ConversationRole, ConversationSource, ConversationTurnInput, PrivacyScope,
@@ -339,6 +339,8 @@ pub struct VoiceTurnAdapterResponse {
     pub source_chips: Vec<VoiceTurnWebSourceChip>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub source_cards: Vec<VoiceTurnWebSourceCard>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub image_cards: Vec<VoiceTurnSearchImageCard>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub answer_class: Option<String>,
     #[serde(default)]
@@ -390,6 +392,27 @@ pub struct VoiceTurnWebSourceCard {
     pub claim_refs: Vec<String>,
     pub display_rank: u16,
     pub metadata_safe_for_user: bool,
+}
+
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct VoiceTurnSearchImageCard {
+    pub image_id: String,
+    pub image_kind: String,
+    pub approved_asset_ref: String,
+    pub source_page_url: String,
+    pub source_page_domain: String,
+    pub source_label: String,
+    pub caption: String,
+    pub alt_text: String,
+    pub source_id: String,
+    pub claim_refs: Vec<String>,
+    pub display_allowed: bool,
+    pub metadata_safe_for_user: bool,
+    pub remote_image_load_allowed: bool,
+    pub fixture_or_local_asset: bool,
+    pub display_rank: u16,
+    pub result_classes: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
@@ -7698,6 +7721,7 @@ impl AdapterRuntime {
                             tts_text: response_text,
                             source_chips: Vec::new(),
                             source_cards: Vec::new(),
+                            image_cards: Vec::new(),
                             answer_class: None,
                             metadata_safe_for_user: true,
                             trace_id: None,
@@ -7872,6 +7896,7 @@ impl AdapterRuntime {
                         tts_text: h411_response.response_text,
                         source_chips: Vec::new(),
                         source_cards: Vec::new(),
+                        image_cards: Vec::new(),
                         answer_class: None,
                         metadata_safe_for_user: true,
                         trace_id: None,
@@ -7952,6 +7977,7 @@ impl AdapterRuntime {
                         tts_text: response_text,
                         source_chips: Vec::new(),
                         source_cards: Vec::new(),
+                        image_cards: Vec::new(),
                         answer_class: None,
                         metadata_safe_for_user: true,
                         trace_id: None,
@@ -15067,6 +15093,7 @@ fn stage5_web_presentation_from_tool_response(
 ) -> (
     Vec<VoiceTurnWebSourceChip>,
     Vec<VoiceTurnWebSourceCard>,
+    Vec<VoiceTurnSearchImageCard>,
     Option<String>,
     Option<String>,
 ) {
@@ -15074,7 +15101,7 @@ fn stage5_web_presentation_from_tool_response(
         .and_then(|response| response.source_metadata.as_ref())
         .and_then(|metadata| metadata.web_answer_verification.as_ref())
     else {
-        return (Vec::new(), Vec::new(), None, None);
+        return (Vec::new(), Vec::new(), Vec::new(), None, None);
     };
 
     let source_chips = verification
@@ -15138,12 +15165,85 @@ fn stage5_web_presentation_from_tool_response(
             metadata_safe_for_user: true,
         })
         .collect::<Vec<_>>();
+    let image_cards = verification
+        .presentation
+        .image_cards
+        .iter()
+        .filter_map(stage6_adapter_image_card_from_packet)
+        .collect::<Vec<_>>();
     (
         source_chips,
         source_cards,
+        image_cards,
         Some(verification.final_answer_class.clone()),
         Some(verification.presentation.trace_id.clone()),
     )
+}
+
+fn stage6_adapter_image_card_from_packet(
+    image: &SearchImagePacket,
+) -> Option<VoiceTurnSearchImageCard> {
+    if !image.display_allowed
+        || !image.metadata_safe_for_user
+        || image.metadata_only
+        || image.remote_image_load_allowed
+        || !image.fixture_or_local_asset
+        || image.safe_image_url.is_some()
+        || image.thumbnail_url.is_some()
+        || image.display_denied_reason.is_some()
+        || image.claim_refs.is_empty()
+        || !adapter_stage6_fixture_asset_ref_allowed(&image.approved_asset_ref)
+        || !adapter_source_link_public_http_url(&image.source_page_url)
+        || adapter_looks_like_raw_image_asset_url(&image.source_page_url)
+    {
+        return None;
+    }
+    let mut result_classes = image
+        .result_classes
+        .iter()
+        .take(32)
+        .map(|class| truncate_ascii(class, 128))
+        .collect::<Vec<_>>();
+    if !result_classes
+        .iter()
+        .any(|class| class == "STAGE6_ADAPTER_IMAGE_PAYLOAD_PASS")
+    {
+        result_classes.push("STAGE6_ADAPTER_IMAGE_PAYLOAD_PASS".to_string());
+    }
+    Some(VoiceTurnSearchImageCard {
+        image_id: truncate_ascii(&image.image_id, 128),
+        image_kind: truncate_ascii(&image.image_kind, 64),
+        approved_asset_ref: truncate_ascii(&image.approved_asset_ref, 128),
+        source_page_url: truncate_ascii(&image.source_page_url, 2048),
+        source_page_domain: truncate_ascii(&image.source_page_domain, 128),
+        source_label: truncate_utf8(&image.source_label, 120),
+        caption: truncate_utf8(&image.caption, 180),
+        alt_text: truncate_utf8(&image.alt_text, 180),
+        source_id: truncate_ascii(&image.source_id, 128),
+        claim_refs: image
+            .claim_refs
+            .iter()
+            .take(20)
+            .map(|claim| truncate_ascii(claim, 128))
+            .collect(),
+        display_allowed: true,
+        metadata_safe_for_user: true,
+        remote_image_load_allowed: false,
+        fixture_or_local_asset: true,
+        display_rank: image.display_rank,
+        result_classes,
+    })
+}
+
+fn adapter_stage6_fixture_asset_ref_allowed(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 128
+        && value.starts_with("fixture-image-")
+        && value.ends_with(".png")
+        && !value.contains("..")
+        && value
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.'))
 }
 
 fn adapter_looks_like_raw_image_asset_url(url: &str) -> bool {
@@ -15165,7 +15265,7 @@ fn execution_outcome_to_adapter_response(
     execution: AppVoiceTurnExecutionOutcome,
 ) -> VoiceTurnAdapterResponse {
     let response_text = execution.response_text.clone().unwrap_or_default();
-    let (source_chips, source_cards, answer_class, trace_id) =
+    let (source_chips, source_cards, image_cards, answer_class, trace_id) =
         stage5_web_presentation_from_tool_response(execution.tool_response.as_ref());
     VoiceTurnAdapterResponse {
         status: "ok".to_string(),
@@ -15192,6 +15292,7 @@ fn execution_outcome_to_adapter_response(
         tts_text: response_text,
         source_chips,
         source_cards,
+        image_cards,
         answer_class,
         metadata_safe_for_user: true,
         trace_id,
@@ -20540,6 +20641,7 @@ fn session_posture_evidence_response_returns_current_device_fields_for_session()
                 tts_text: "ready".to_string(),
                 source_chips: Vec::new(),
                 source_cards: Vec::new(),
+                image_cards: Vec::new(),
                 answer_class: None,
                 metadata_safe_for_user: true,
                 trace_id: None,
@@ -35909,6 +36011,129 @@ mod tests {
                 assert!(!out.response_text.contains("Sources:"));
                 assert!(!out.response_text.contains("provider_call_attempt_count"));
                 assert!(!out.tts_text.contains("provider_call_attempt_count"));
+            },
+        );
+    }
+
+    #[test]
+    fn stage6_adapter_transports_approved_fixture_image_cards_separately() {
+        let captured = Arc::new(Mutex::new(Vec::new()));
+        let endpoint = h409_spawn_brave_web_endpoint_sequence(
+            vec![r#"{"web":{"results":[
+                {"title":"Test Company B official leadership","url":"https://test-source-b.test/leadership","description":"Test Person B is the CEO of Test Company B.; stage6_image_display=allow; stage6_image_kind=logo; stage6_image_asset=fixture-image-a.png; stage6_image_caption=Test Company B approved fixture image; stage6_image_alt=Test Company B approved fixture image; stage6_image_policy=fixture_approved; stage6_image_entity=Test Company B; stage6_image_source_page=accepted_source; stage6_image_provider=stage6_fixture; stage6_image_provider_tier=fixture; stage6_image_relevance=9500; stage6_image_entity_score=9500"}
+            ]}}"#],
+            Arc::clone(&captured),
+        );
+
+        with_isolated_device_vault(
+            "stage6_adapter_fixture_image_payload",
+            &[("brave_search_api_key", "stage6-test-key")],
+            &[
+                ("BRAVE_SEARCH_WEB_URL", endpoint.as_str()),
+                ("BRAVE_SEARCH_NEWS_URL", endpoint.as_str()),
+                ("SELENE_PROXY_MODE", "off"),
+                ("SELENE_IMAGE_PROVIDERS_ENABLED", "0"),
+                ("SELENE_IMAGE_FETCH_ENABLED", "0"),
+                ("SELENE_IMAGE_DISPLAY_ENABLED", "1"),
+            ],
+            || {
+                let runtime = AdapterRuntime::default();
+                let mut req = base_request();
+                req.correlation_id = 6_601;
+                req.turn_id = 6_601;
+                req.device_turn_sequence = Some(6_601);
+                req.now_ns = Some(6_601);
+                req.thread_key = Some("stage6-adapter-image-card".to_string());
+                req.app_platform = "DESKTOP".to_string();
+                req.audio_capture_ref = None;
+                req.user_text_final = Some("Who is the CEO of Test Company B?".to_string());
+                seed_desktop_voice_profile_for_request(
+                    &runtime,
+                    &mut req,
+                    "stage6_fixture_image_payload",
+                );
+                let out = runtime
+                    .run_voice_turn(req)
+                    .expect("Stage 6 fixture image runtime turn should complete");
+                assert_eq!(out.status, "ok", "{out:?}");
+                assert_eq!(out.outcome, "FINAL_TOOL", "{out:?}");
+                assert_eq!(out.answer_class.as_deref(), Some("VERIFIED_DIRECT_ANSWER"));
+                assert_eq!(out.tts_text, out.response_text);
+                assert_eq!(out.source_chips.len(), 1, "{out:?}");
+                assert_eq!(out.image_cards.len(), 1, "{out:?}");
+                let image = &out.image_cards[0];
+                assert_eq!(image.approved_asset_ref, "fixture-image-a.png");
+                assert_eq!(image.source_page_url, "https://test-source-b.test/leadership");
+                assert!(image.display_allowed);
+                assert!(image.fixture_or_local_asset);
+                assert!(!image.remote_image_load_allowed);
+                assert!(image
+                    .result_classes
+                    .contains(&"STAGE6_ADAPTER_IMAGE_PAYLOAD_PASS".to_string())
+                    || image
+                        .result_classes
+                        .contains(&"STAGE6_IMAGE_PACKET_PASS".to_string()));
+                for forbidden in [
+                    "fixture-image-a.png",
+                    "stage6_image",
+                    "image_url",
+                    "thumbnail_url",
+                    "debug trace",
+                    "source dump",
+                ] {
+                    assert!(
+                        !out.response_text.contains(forbidden),
+                        "forbidden Stage 6 response token {forbidden:?}: {}",
+                        out.response_text
+                    );
+                    assert!(
+                        !out.tts_text.contains(forbidden),
+                        "forbidden Stage 6 TTS token {forbidden:?}: {}",
+                        out.tts_text
+                    );
+                }
+            },
+        );
+
+        let requests = captured.lock().expect("captured request lock").clone();
+        assert_eq!(requests.len(), 1, "{requests:?}");
+    }
+
+    #[test]
+    fn stage6_adapter_provider_off_keeps_image_cards_empty_and_non_billable() {
+        with_isolated_device_vault(
+            "stage6_adapter_provider_off",
+            &[("brave_search_api_key", "stage6-test-key")],
+            &[
+                ("SELENE_SEARCH_PROVIDERS_ENABLED", "0"),
+                ("SELENE_PAID_SEARCH_PROVIDERS_ENABLED", "0"),
+                ("SELENE_WEB_SEARCH_ENABLED", "0"),
+                ("SELENE_DEEP_RESEARCH_ENABLED", "0"),
+                ("SELENE_NEWS_SEARCH_ENABLED", "0"),
+                ("SELENE_URL_FETCH_ENABLED", "0"),
+                ("SELENE_IMAGE_PROVIDERS_ENABLED", "0"),
+                ("SELENE_IMAGE_FETCH_ENABLED", "0"),
+                ("SELENE_STARTUP_PROVIDER_PROBES_ENABLED", "0"),
+                ("SELENE_BRAVE_SEARCH_ENABLED", "0"),
+                ("SELENE_PROVIDER_CALL_MAX_PER_TURN", "0"),
+                ("SELENE_URL_FETCH_MAX_PER_TURN", "0"),
+            ],
+            || {
+                let runtime = AdapterRuntime::default();
+                let out = h411_run_desktop_typed_turn(
+                    &runtime,
+                    "stage6-adapter-provider-off",
+                    6_602,
+                    "Search the web for Test Company A",
+                );
+                assert_eq!(out.status, "ok", "{out:?}");
+                assert_eq!(out.outcome, "FINAL_TOOL", "{out:?}");
+                assert_eq!(out.tts_text, out.response_text);
+                assert!(out.source_chips.is_empty(), "{out:?}");
+                assert!(out.image_cards.is_empty(), "{out:?}");
+                assert!(!out.response_text.contains("image_provider_attempt_count"));
+                assert!(!out.response_text.contains("image_fetch_attempt_count"));
+                assert!(!out.tts_text.contains("image_fetch_attempt_count"));
             },
         );
     }

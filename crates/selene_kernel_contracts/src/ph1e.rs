@@ -447,6 +447,36 @@ pub struct SourceCardPacket {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SearchImagePacket {
+    pub image_id: String,
+    pub image_kind: String,
+    pub approved_asset_ref: String,
+    pub safe_image_url: Option<String>,
+    pub thumbnail_url: Option<String>,
+    pub source_page_url: String,
+    pub source_page_domain: String,
+    pub source_label: String,
+    pub caption: String,
+    pub alt_text: String,
+    pub query_relevance_score: u16,
+    pub entity_match_score: u16,
+    pub source_id: String,
+    pub claim_refs: Vec<String>,
+    pub display_allowed: bool,
+    pub display_denied_reason: Option<String>,
+    pub provider: String,
+    pub provider_tier: String,
+    pub metadata_only: bool,
+    pub rights_or_policy_status: String,
+    pub retrieved_at: Option<String>,
+    pub metadata_safe_for_user: bool,
+    pub remote_image_load_allowed: bool,
+    pub fixture_or_local_asset: bool,
+    pub display_rank: u16,
+    pub result_classes: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PresentationPacket {
     pub display_text: String,
     pub response_text: String,
@@ -455,7 +485,7 @@ pub struct PresentationPacket {
     pub language: String,
     pub source_chips: Vec<SourceChipPacket>,
     pub source_cards: Vec<SourceCardPacket>,
-    pub image_cards: Vec<String>,
+    pub image_cards: Vec<SearchImagePacket>,
     pub trace_id: String,
     pub metadata_safe_for_user: bool,
     pub response_style: String,
@@ -773,6 +803,123 @@ impl Validate for SourceCardPacket {
     }
 }
 
+impl Validate for SearchImagePacket {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        validate_bounded_nonempty("search_image.image_id", &self.image_id, 128)?;
+        validate_stage1_token(
+            "search_image.image_kind",
+            &self.image_kind,
+            &[
+                "logo",
+                "person_photo",
+                "building_or_place",
+                "product",
+                "brand_asset",
+                "generic_entity_visual",
+                "unknown",
+            ],
+        )?;
+        validate_stage6_fixture_asset_ref("search_image.approved_asset_ref", &self.approved_asset_ref)?;
+        if let Some(safe_image_url) = &self.safe_image_url {
+            validate_safe_url("search_image.safe_image_url", safe_image_url)?;
+            if !self.remote_image_load_allowed {
+                return Err(ContractViolation::InvalidValue {
+                    field: "search_image.safe_image_url",
+                    reason: "remote image URLs require explicit remote image load approval",
+                });
+            }
+        }
+        if let Some(thumbnail_url) = &self.thumbnail_url {
+            validate_safe_url("search_image.thumbnail_url", thumbnail_url)?;
+            if !self.remote_image_load_allowed {
+                return Err(ContractViolation::InvalidValue {
+                    field: "search_image.thumbnail_url",
+                    reason: "remote image thumbnails require explicit remote image load approval",
+                });
+            }
+        }
+        validate_safe_url("search_image.source_page_url", &self.source_page_url)?;
+        validate_bounded_nonempty(
+            "search_image.source_page_domain",
+            &self.source_page_domain,
+            256,
+        )?;
+        validate_bounded_nonempty("search_image.source_label", &self.source_label, 256)?;
+        validate_bounded_nonempty("search_image.caption", &self.caption, 220)?;
+        validate_bounded_nonempty("search_image.alt_text", &self.alt_text, 220)?;
+        validate_bounded_nonempty("search_image.source_id", &self.source_id, 128)?;
+        validate_short_vec("search_image.claim_refs", &self.claim_refs, 20, 128)?;
+        if let Some(display_denied_reason) = &self.display_denied_reason {
+            validate_bounded_nonempty(
+                "search_image.display_denied_reason",
+                display_denied_reason,
+                160,
+            )?;
+        }
+        validate_bounded_nonempty("search_image.provider", &self.provider, 64)?;
+        validate_bounded_nonempty("search_image.provider_tier", &self.provider_tier, 64)?;
+        validate_stage1_token(
+            "search_image.rights_or_policy_status",
+            &self.rights_or_policy_status,
+            &["fixture_approved", "display_policy_approved"],
+        )?;
+        if let Some(retrieved_at) = &self.retrieved_at {
+            validate_bounded_nonempty("search_image.retrieved_at", retrieved_at, 128)?;
+        }
+        validate_short_vec("search_image.result_classes", &self.result_classes, 32, 128)?;
+        for required in [
+            "STAGE6_IMAGE_PACKET_PASS",
+            "STAGE6_IMAGE_DISPLAY_GATE_PASS",
+            "STAGE6_IMAGE_URL_SAFETY_PASS",
+            "STAGE6_SOURCE_PAGE_LINK_PASS",
+            "STAGE6_QUERY_RELEVANCE_PASS",
+        ] {
+            if !self.result_classes.iter().any(|class| class == required) {
+                return Err(ContractViolation::InvalidValue {
+                    field: "search_image.result_classes",
+                    reason: "approved image cards must include Stage 6 result-class proof",
+                });
+            }
+        }
+        if self.query_relevance_score > 10_000 || self.entity_match_score > 10_000 {
+            return Err(ContractViolation::InvalidValue {
+                field: "search_image.relevance",
+                reason: "scores must be <= 10000",
+            });
+        }
+        if self.query_relevance_score < 7_500 || self.entity_match_score < 7_500 {
+            return Err(ContractViolation::InvalidValue {
+                field: "search_image.relevance",
+                reason: "displayed image cards require strong query and entity relevance",
+            });
+        }
+        if !self.display_allowed
+            || self.display_denied_reason.is_some()
+            || !self.metadata_safe_for_user
+            || self.metadata_only
+            || self.claim_refs.is_empty()
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "search_image.display_allowed",
+                reason: "normal image cards must be allowed, metadata-safe, and claim-linked",
+            });
+        }
+        if self.remote_image_load_allowed && !self.fixture_or_local_asset {
+            return Err(ContractViolation::InvalidValue {
+                field: "search_image.remote_image_load_allowed",
+                reason: "Stage 6 normal payload permits fixture/local rendering only",
+            });
+        }
+        if !self.fixture_or_local_asset {
+            return Err(ContractViolation::InvalidValue {
+                field: "search_image.fixture_or_local_asset",
+                reason: "Stage 6 displayed image cards must use approved fixture/local assets",
+            });
+        }
+        Ok(())
+    }
+}
+
 impl Validate for PresentationPacket {
     fn validate(&self) -> Result<(), ContractViolation> {
         validate_bounded_nonempty("presentation.display_text", &self.display_text, 4096)?;
@@ -797,11 +944,14 @@ impl Validate for PresentationPacket {
         for card in &self.source_cards {
             card.validate()?;
         }
-        if !self.image_cards.is_empty() {
+        if self.image_cards.len() > 3 {
             return Err(ContractViolation::InvalidValue {
                 field: "presentation.image_cards",
-                reason: "Stage 5 presentation must not display image cards",
+                reason: "Stage 6 presentation displays at most three image cards by default",
             });
+        }
+        for image_card in &self.image_cards {
+            image_card.validate()?;
         }
         validate_bounded_nonempty("presentation.trace_id", &self.trace_id, 128)?;
         validate_stage1_token(
@@ -1191,6 +1341,24 @@ impl Validate for WebAnswerVerificationPacket {
                 reason: "presentation source chips must match accepted verification source chips",
             });
         }
+        for image_card in &self.presentation.image_cards {
+            if !self.accepted_source_ids.contains(&image_card.source_id) {
+                return Err(ContractViolation::InvalidValue {
+                    field: "web_answer_verification.presentation.image_cards",
+                    reason: "image cards must be linked to accepted source ids",
+                });
+            }
+            if image_card
+                .claim_refs
+                .iter()
+                .any(|claim_ref| !self.claim_requests.iter().any(|claim| &claim.claim_id == claim_ref))
+            {
+                return Err(ContractViolation::InvalidValue {
+                    field: "web_answer_verification.presentation.image_cards",
+                    reason: "image card claim refs must be covered by final answer claims",
+                });
+            }
+        }
         if self.source_dump_present
             || self.rejected_sources_present_in_response_text
             || self.debug_trace_present_in_response_text
@@ -1312,6 +1480,27 @@ fn validate_safe_url(field: &'static str, value: &str) -> Result<(), ContractVio
         return Err(ContractViolation::InvalidValue {
             field,
             reason: "must be an http(s) URL without whitespace",
+        });
+    }
+    Ok(())
+}
+
+fn validate_stage6_fixture_asset_ref(
+    field: &'static str,
+    value: &str,
+) -> Result<(), ContractViolation> {
+    validate_bounded_nonempty(field, value, 128)?;
+    let allowed_chars = value
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.'));
+    if !allowed_chars
+        || value.contains("..")
+        || !value.starts_with("fixture-image-")
+        || !value.ends_with(".png")
+    {
+        return Err(ContractViolation::InvalidValue {
+            field,
+            reason: "must be an approved Stage 6 fixture/local image asset reference",
         });
     }
     Ok(())

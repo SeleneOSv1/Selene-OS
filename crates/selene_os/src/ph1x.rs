@@ -3724,8 +3724,9 @@ mod tests {
     use selene_kernel_contracts::ph1e::{
         AcceptedSourcePacket, CacheStatus, ClaimEvidenceLink, ClaimRequestPacket,
         ClaimVerificationPacket, PresentationPacket, RejectedSourcePacket, RequestedEntityPacket,
-        SourceCardPacket, SourceChipPacket, SourceEvaluationPacket, SourceMetadata, SourceRef,
-        ToolQueryHash, ToolRequestId, ToolStructuredField, ToolTextSnippet,
+        SearchImagePacket, SourceCardPacket, SourceChipPacket, SourceEvaluationPacket,
+        SourceMetadata, SourceRef, ToolQueryHash, ToolRequestId, ToolStructuredField,
+        ToolTextSnippet,
         WebAnswerVerificationPacket,
     };
     use selene_kernel_contracts::ph1k::{
@@ -4239,6 +4240,53 @@ mod tests {
             card.domain = "test-company-a.test".to_string();
             card.safe_click_url = "https://test-company-a.test/leadership".to_string();
         }
+        metadata
+    }
+
+    fn stage6_test_image_source_metadata() -> SourceMetadata {
+        let mut metadata = stage5_test_verified_source_metadata();
+        let Some(verification) = metadata.web_answer_verification.as_mut() else {
+            return metadata;
+        };
+        verification.presentation.presentation_boundary_used =
+            "PH1E_STAGE6_IMAGE_PRESENTATION".to_string();
+        verification.presentation.trace_id = "stage6_test_trace".to_string();
+        verification.presentation.image_cards = vec![SearchImagePacket {
+            image_id: "stage6_image_test_a".to_string(),
+            image_kind: "logo".to_string(),
+            approved_asset_ref: "fixture-image-a.png".to_string(),
+            safe_image_url: None,
+            thumbnail_url: None,
+            source_page_url: "https://test-company-a.test/leadership".to_string(),
+            source_page_domain: "test-company-a.test".to_string(),
+            source_label: "Test Company A official leadership".to_string(),
+            caption: "Test Company A approved fixture image".to_string(),
+            alt_text: "Test Company A approved fixture image".to_string(),
+            query_relevance_score: 9_500,
+            entity_match_score: 9_500,
+            source_id: "source_001".to_string(),
+            claim_refs: vec!["claim_001".to_string()],
+            display_allowed: true,
+            display_denied_reason: None,
+            provider: "stage6_fixture".to_string(),
+            provider_tier: "fixture".to_string(),
+            metadata_only: false,
+            rights_or_policy_status: "fixture_approved".to_string(),
+            retrieved_at: None,
+            metadata_safe_for_user: true,
+            remote_image_load_allowed: false,
+            fixture_or_local_asset: true,
+            display_rank: 1,
+            result_classes: vec![
+                "STAGE6_IMAGE_PACKET_PASS".to_string(),
+                "STAGE6_IMAGE_DISPLAY_GATE_PASS".to_string(),
+                "STAGE6_IMAGE_URL_SAFETY_PASS".to_string(),
+                "STAGE6_SOURCE_PAGE_LINK_PASS".to_string(),
+                "STAGE6_QUERY_RELEVANCE_PASS".to_string(),
+                "STAGE6_IMAGE_FETCH_OFF_ZERO_ATTEMPT_PASS".to_string(),
+                "STAGE6_NO_REMOTE_IMAGE_LOAD_WHEN_FETCH_DISABLED_PASS".to_string(),
+            ],
+        }];
         metadata
     }
 
@@ -5776,6 +5824,44 @@ mod tests {
         assert!(!text.contains("Sources:"));
         assert!(!text.contains("https://"));
         assert!(!text.contains("I found a web result"));
+    }
+
+    #[test]
+    fn stage6_ph1x_preserves_clean_text_while_image_cards_remain_metadata_only() {
+        let tool_ok = ToolResponse::ok_v1(
+            ToolRequestId(6_001),
+            ToolQueryHash(6_001),
+            ToolResult::WebSearch {
+                items: vec![ToolTextSnippet {
+                    title: "Test Company A official leadership".to_string(),
+                    snippet: "Test Person A is the CEO of Test Company A.".to_string(),
+                    url: "https://test-company-a.test/leadership".to_string(),
+                }],
+            },
+            stage6_test_image_source_metadata(),
+            None,
+            ReasonCodeId(1),
+            CacheStatus::Bypassed,
+        )
+        .unwrap();
+
+        let text = tool_ok_text(&tool_ok);
+        let verification = tool_ok
+            .source_metadata
+            .as_ref()
+            .and_then(|metadata| metadata.web_answer_verification.as_ref())
+            .expect("Stage 6 image metadata should ride with verified web answer");
+        assert_eq!(text, "Test Person A is the CEO of Test Company A.");
+        assert_eq!(verification.presentation.image_cards.len(), 1);
+        let image = &verification.presentation.image_cards[0];
+        assert!(image.display_allowed);
+        assert!(image.fixture_or_local_asset);
+        assert!(!image.remote_image_load_allowed);
+        assert_eq!(image.approved_asset_ref, "fixture-image-a.png");
+        assert_eq!(verification.tts_input_text, text);
+        assert!(!text.contains("fixture-image-a.png"));
+        assert!(!text.contains("stage6_image"));
+        assert!(!verification.tts_input_text.contains("fixture-image-a.png"));
     }
 
     #[test]

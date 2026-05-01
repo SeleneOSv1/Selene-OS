@@ -46,6 +46,23 @@ struct AuthoritativeSourceChip: Identifiable, Equatable {
     var id: String { sourceID }
 }
 
+struct AuthoritativeImageCard: Identifiable, Equatable {
+    let imageID: String
+    let imageKind: String
+    let approvedAssetRef: String
+    let caption: String
+    let altText: String
+    let sourceLabel: String
+    let sourceDomain: String
+    let clickableSourcePageURL: URL
+
+    var id: String { imageID }
+
+    var accessibilityOpenLabel: String {
+        "Open \(sourceLabel) from \(sourceDomain) for \(caption)"
+    }
+}
+
 struct DesktopRealtimeTranscriptionSessionState: Equatable {
     let id: String
     let endpoint: String
@@ -102,6 +119,7 @@ struct DesktopCanonicalRuntimeOutcomeState: Identifiable, Equatable {
     let authoritativeResponseText: String?
     let authoritativeResponseProvenance: AuthoritativeResponseProvenance?
     let sourceChips: [AuthoritativeSourceChip]
+    let imageCards: [AuthoritativeImageCard]
     let sourceLinkCitationCards: [AuthoritativeSourceLinkCitationCard]
 
     static func dispatching(
@@ -126,6 +144,7 @@ struct DesktopCanonicalRuntimeOutcomeState: Identifiable, Equatable {
             authoritativeResponseText: nil,
             authoritativeResponseProvenance: nil,
             sourceChips: [],
+            imageCards: [],
             sourceLinkCitationCards: []
         )
     }
@@ -152,6 +171,7 @@ struct DesktopCanonicalRuntimeOutcomeState: Identifiable, Equatable {
             authoritativeResponseText: nil,
             authoritativeResponseProvenance: nil,
             sourceChips: [],
+            imageCards: [],
             sourceLinkCitationCards: []
         )
     }
@@ -178,6 +198,7 @@ struct DesktopCanonicalRuntimeOutcomeState: Identifiable, Equatable {
             authoritativeResponseText: nil,
             authoritativeResponseProvenance: nil,
             sourceChips: [],
+            imageCards: [],
             sourceLinkCitationCards: []
         )
     }
@@ -205,6 +226,7 @@ struct DesktopCanonicalRuntimeOutcomeState: Identifiable, Equatable {
             authoritativeResponseText: boundedAuthoritativeResponseText(response.responseText),
             authoritativeResponseProvenance: boundedAuthoritativeResponseProvenance(response.provenance),
             sourceChips: boundedAuthoritativeSourceChips(response.sourceChips),
+            imageCards: boundedAuthoritativeImageCards(response.imageCards),
             sourceLinkCitationCards: boundedSourceLinkCitationCards(response.deepResearch?.sourceLinkCitationCards)
         )
     }
@@ -232,6 +254,7 @@ struct DesktopCanonicalRuntimeOutcomeState: Identifiable, Equatable {
             authoritativeResponseText: boundedAuthoritativeResponseText(response.responseText),
             authoritativeResponseProvenance: boundedAuthoritativeResponseProvenance(response.provenance),
             sourceChips: boundedAuthoritativeSourceChips(response.sourceChips),
+            imageCards: boundedAuthoritativeImageCards(response.imageCards),
             sourceLinkCitationCards: boundedSourceLinkCitationCards(response.deepResearch?.sourceLinkCitationCards)
         )
     }
@@ -259,6 +282,7 @@ struct DesktopCanonicalRuntimeOutcomeState: Identifiable, Equatable {
             authoritativeResponseText: boundedAuthoritativeResponseText(response.responseText),
             authoritativeResponseProvenance: boundedAuthoritativeResponseProvenance(response.provenance),
             sourceChips: boundedAuthoritativeSourceChips(response.sourceChips),
+            imageCards: boundedAuthoritativeImageCards(response.imageCards),
             sourceLinkCitationCards: boundedSourceLinkCitationCards(response.deepResearch?.sourceLinkCitationCards)
         )
     }
@@ -291,6 +315,7 @@ struct DesktopCanonicalRuntimeOutcomeState: Identifiable, Equatable {
             authoritativeResponseText: nil,
             authoritativeResponseProvenance: nil,
             sourceChips: [],
+            imageCards: [],
             sourceLinkCitationCards: []
         )
     }
@@ -323,6 +348,7 @@ struct DesktopCanonicalRuntimeOutcomeState: Identifiable, Equatable {
             authoritativeResponseText: nil,
             authoritativeResponseProvenance: nil,
             sourceChips: [],
+            imageCards: [],
             sourceLinkCitationCards: []
         )
     }
@@ -355,6 +381,7 @@ struct DesktopCanonicalRuntimeOutcomeState: Identifiable, Equatable {
             authoritativeResponseText: nil,
             authoritativeResponseProvenance: nil,
             sourceChips: [],
+            imageCards: [],
             sourceLinkCitationCards: []
         )
     }
@@ -3465,6 +3492,69 @@ private func boundedAuthoritativeSourceChips(
     }
 }
 
+private func boundedAuthoritativeImageCards(
+    _ cards: [DesktopCanonicalRuntimeBridge.VoiceTurnSearchImageCardPayload]?
+) -> [AuthoritativeImageCard] {
+    guard let cards else {
+        return []
+    }
+
+    return cards.prefix(3).compactMap { card in
+        guard card.displayAllowed,
+              card.metadataSafeForUser,
+              card.fixtureOrLocalAsset,
+              !card.remoteImageLoadAllowed,
+              !card.claimRefs.isEmpty,
+              desktopStage6FixtureAssetRefAllowed(card.approvedAssetRef)
+        else {
+            return nil
+        }
+
+        let caption = card.caption.trimmingCharacters(in: .whitespacesAndNewlines)
+        let altText = card.altText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let sourceLabel = card.sourceLabel.trimmingCharacters(in: .whitespacesAndNewlines)
+        let sourceDomain = card.sourcePageDomain.trimmingCharacters(in: .whitespacesAndNewlines)
+        let sourceURL = card.sourcePageURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !caption.isEmpty,
+              !altText.isEmpty,
+              !sourceLabel.isEmpty,
+              !sourceDomain.isEmpty,
+              !desktopLooksLikeRawImageAssetURL(sourceURL),
+              let clickableURL = desktopSafePublicSourcePageURL(sourceURL)
+        else {
+            return nil
+        }
+
+        return AuthoritativeImageCard(
+            imageID: boundedDesktopString(card.imageID, maxLength: 96),
+            imageKind: boundedDesktopString(card.imageKind, maxLength: 64),
+            approvedAssetRef: boundedDesktopString(card.approvedAssetRef, maxLength: 128),
+            caption: boundedDesktopString(caption, maxLength: 160),
+            altText: boundedDesktopString(altText, maxLength: 180),
+            sourceLabel: boundedDesktopString(sourceLabel, maxLength: 120),
+            sourceDomain: boundedDesktopString(sourceDomain, maxLength: 128),
+            clickableSourcePageURL: clickableURL
+        )
+    }
+}
+
+private func desktopStage6FixtureAssetRefAllowed(_ value: String) -> Bool {
+    let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard trimmed.hasPrefix("fixture-image-"),
+          trimmed.hasSuffix(".png"),
+          !trimmed.contains(".."),
+          trimmed.count <= 128
+    else {
+        return false
+    }
+    return trimmed.unicodeScalars.allSatisfy { scalar in
+        CharacterSet.alphanumerics.contains(scalar)
+            || scalar.value == 45
+            || scalar.value == 95
+            || scalar.value == 46
+    }
+}
+
 private func boundedSourceLinkCitationCards(
     _ cards: [DesktopCanonicalRuntimeBridge.VoiceTurnSourceLinkCitationCardPayload]?
 ) -> [AuthoritativeSourceLinkCitationCard] {
@@ -4123,6 +4213,40 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
         }
     }
 
+    struct VoiceTurnSearchImageCardPayload: Decodable {
+        let imageID: String
+        let imageKind: String
+        let approvedAssetRef: String
+        let sourcePageURL: String
+        let sourcePageDomain: String
+        let sourceLabel: String
+        let caption: String
+        let altText: String
+        let sourceID: String
+        let claimRefs: [String]
+        let displayAllowed: Bool
+        let metadataSafeForUser: Bool
+        let remoteImageLoadAllowed: Bool
+        let fixtureOrLocalAsset: Bool
+
+        private enum CodingKeys: String, CodingKey {
+            case imageID = "image_id"
+            case imageKind = "image_kind"
+            case approvedAssetRef = "approved_asset_ref"
+            case sourcePageURL = "source_page_url"
+            case sourcePageDomain = "source_page_domain"
+            case sourceLabel = "source_label"
+            case caption
+            case altText = "alt_text"
+            case sourceID = "source_id"
+            case claimRefs = "claim_refs"
+            case displayAllowed = "display_allowed"
+            case metadataSafeForUser = "metadata_safe_for_user"
+            case remoteImageLoadAllowed = "remote_image_load_allowed"
+            case fixtureOrLocalAsset = "fixture_or_local_asset"
+        }
+    }
+
     struct VoiceTurnAdapterResponsePayload: Decodable {
         let status: String
         let outcome: String
@@ -4137,6 +4261,7 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
         let reasonCode: String
         let provenance: VoiceTurnProvenancePayload?
         let sourceChips: [VoiceTurnWebSourceChipPayload]?
+        let imageCards: [VoiceTurnSearchImageCardPayload]?
         let deepResearch: VoiceTurnDeepResearchPayload?
 
         private enum CodingKeys: String, CodingKey {
@@ -4153,6 +4278,7 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
             case reasonCode = "reason_code"
             case provenance
             case sourceChips = "source_chips"
+            case imageCards = "image_cards"
             case deepResearch = "deep_research"
         }
     }

@@ -161,6 +161,34 @@ Public websearch remains read-only public answer work and does not require simul
 
 Protected execution remains simulation and authority gated.
 
+Rule: Safe Image-Backed Search Presentation
+
+Image-backed search answers may display images only from approved image metadata paths.
+
+Images must be relevant to the requested entity/query.
+
+Image display must pass safety, URL, source-page, display-policy, and relevance checks.
+
+Image cards must link to safe source pages, not raw image URLs.
+
+Raw image URLs must not be used as normal click targets.
+
+Images must not be fabricated or presented as real source images unless they come from approved source metadata.
+
+Image metadata must not be treated as claim verification unless supported by accepted evidence.
+
+If image display is not approved, Selene must degrade to text plus source chips.
+
+Tests must use synthetic fake entities and fixture/local images only.
+
+No live paid provider calls are allowed in normal tests.
+
+No remote image loading is allowed when image fetch is disabled.
+
+Public search remains read-only.
+
+Protected execution remains simulation and authority gated.
+
 Auto-Loaded Authority Order
 
 JD explicit in-thread instructions

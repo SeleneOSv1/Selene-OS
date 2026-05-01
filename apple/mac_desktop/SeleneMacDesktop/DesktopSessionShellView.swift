@@ -1326,11 +1326,26 @@ private struct DesktopAuthoritativeReplyProvenanceRenderState: Equatable {
         var id: String { sourceID }
     }
 
+    struct ImageCard: Identifiable, Equatable {
+        let imageID: String
+        let imageKind: String
+        let approvedAssetRef: String
+        let caption: String
+        let altText: String
+        let sourceLabel: String
+        let sourceDomain: String
+        let clickableSourcePageURL: URL
+        let accessibilityOpenLabel: String
+
+        var id: String { imageID }
+    }
+
     let title: String
     let summary: String
     let authoritativeResponseProvenance: AuthoritativeResponseProvenance?
     let sources: [Source]
     let sourceChips: [SourceChip]
+    let imageCards: [ImageCard]
     let sourceLinkCitationCards: [SourceLinkCitationCard]
     let retrievedAtLabel: String?
     let cacheStatusLabel: String?
@@ -17421,6 +17436,57 @@ struct DesktopSessionShellView: View {
                     Text(desktopAuthoritativeReplyProvenanceRenderState.summary)
                         .frame(maxWidth: .infinity, alignment: .leading)
 
+                    if !desktopAuthoritativeReplyProvenanceRenderState.imageCards.isEmpty {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Images")
+                                .font(.subheadline.weight(.semibold))
+
+                            LazyVGrid(
+                                columns: [GridItem(.adaptive(minimum: 168), spacing: 8, alignment: .leading)],
+                                alignment: .leading,
+                                spacing: 8
+                            ) {
+                                ForEach(desktopAuthoritativeReplyProvenanceRenderState.imageCards) { imageCard in
+                                    Link(destination: imageCard.clickableSourcePageURL) {
+                                        VStack(alignment: .leading, spacing: 6) {
+                                            ZStack {
+                                                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                                    .fill(Color(nsColor: .controlBackgroundColor))
+
+                                                Image(systemName: "photo")
+                                                    .font(.title2)
+                                                    .foregroundStyle(.secondary)
+                                            }
+                                            .frame(height: 74)
+                                            .accessibilityLabel(imageCard.altText)
+
+                                            Text(imageCard.caption)
+                                                .font(.caption.weight(.semibold))
+                                                .lineLimit(2)
+
+                                            Text(imageCard.sourceDomain)
+                                                .font(.caption2)
+                                                .foregroundStyle(.secondary)
+                                                .lineLimit(1)
+                                        }
+                                        .padding(8)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                        .background(
+                                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                                .fill(Color(nsColor: .textBackgroundColor))
+                                        )
+                                        .overlay(
+                                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                                .stroke(Color.secondary.opacity(0.18), lineWidth: 1)
+                                        )
+                                    }
+                                    .buttonStyle(.plain)
+                                    .accessibilityLabel(imageCard.accessibilityOpenLabel)
+                                }
+                            }
+                        }
+                    }
+
                     if !desktopAuthoritativeReplyProvenanceRenderState.sourceChips.isEmpty {
                         VStack(alignment: .leading, spacing: 8) {
                             Text("Accepted sources")
@@ -18963,6 +19029,19 @@ struct DesktopSessionShellView: View {
                             accessibilityLabel: $0.accessibilityLabel
                         )
                     },
+                    imageCards: outcomeState.imageCards.map {
+                        DesktopAuthoritativeReplyProvenanceRenderState.ImageCard(
+                            imageID: $0.imageID,
+                            imageKind: $0.imageKind,
+                            approvedAssetRef: $0.approvedAssetRef,
+                            caption: $0.caption,
+                            altText: $0.altText,
+                            sourceLabel: $0.sourceLabel,
+                            sourceDomain: $0.sourceDomain,
+                            clickableSourcePageURL: $0.clickableSourcePageURL,
+                            accessibilityOpenLabel: $0.accessibilityOpenLabel
+                        )
+                    },
                     sourceLinkCitationCards: outcomeState.sourceLinkCitationCards.map {
                         DesktopAuthoritativeReplyProvenanceRenderState.SourceLinkCitationCard(
                             cardID: $0.cardID,
@@ -19118,6 +19197,19 @@ struct DesktopSessionShellView: View {
                             accessibilityLabel: $0.accessibilityLabel
                         )
                     },
+                    imageCards: outcomeState.imageCards.map {
+                        DesktopAuthoritativeReplyProvenanceRenderState.ImageCard(
+                            imageID: $0.imageID,
+                            imageKind: $0.imageKind,
+                            approvedAssetRef: $0.approvedAssetRef,
+                            caption: $0.caption,
+                            altText: $0.altText,
+                            sourceLabel: $0.sourceLabel,
+                            sourceDomain: $0.sourceDomain,
+                            clickableSourcePageURL: $0.clickableSourcePageURL,
+                            accessibilityOpenLabel: $0.accessibilityOpenLabel
+                        )
+                    },
                     sourceLinkCitationCards: outcomeState.sourceLinkCitationCards.map {
                         DesktopAuthoritativeReplyProvenanceRenderState.SourceLinkCitationCard(
                             cardID: $0.cardID,
@@ -19248,6 +19340,19 @@ struct DesktopSessionShellView: View {
                             domain: $0.domain,
                             clickableSourcePageURL: $0.clickableSourcePageURL,
                             accessibilityLabel: $0.accessibilityLabel
+                        )
+                    },
+                    imageCards: outcomeState.imageCards.map {
+                        DesktopAuthoritativeReplyProvenanceRenderState.ImageCard(
+                            imageID: $0.imageID,
+                            imageKind: $0.imageKind,
+                            approvedAssetRef: $0.approvedAssetRef,
+                            caption: $0.caption,
+                            altText: $0.altText,
+                            sourceLabel: $0.sourceLabel,
+                            sourceDomain: $0.sourceDomain,
+                            clickableSourcePageURL: $0.clickableSourcePageURL,
+                            accessibilityOpenLabel: $0.accessibilityOpenLabel
                         )
                     },
                     sourceLinkCitationCards: outcomeState.sourceLinkCitationCards.map {
