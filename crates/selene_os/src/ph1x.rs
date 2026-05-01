@@ -3649,9 +3649,10 @@ mod tests {
     };
     use selene_kernel_contracts::ph1d::{PolicyContextRef, SafetyTier};
     use selene_kernel_contracts::ph1e::{
-        AcceptedSourcePacket, CacheStatus, RejectedSourcePacket, RequestedEntityPacket,
-        SourceChipPacket, SourceEvaluationPacket, SourceMetadata, SourceRef, ToolQueryHash,
-        ToolRequestId, ToolStructuredField, ToolTextSnippet, WebAnswerVerificationPacket,
+        AcceptedSourcePacket, CacheStatus, ClaimEvidenceLink, ClaimRequestPacket,
+        ClaimVerificationPacket, RejectedSourcePacket, RequestedEntityPacket, SourceChipPacket,
+        SourceEvaluationPacket, SourceMetadata, SourceRef, ToolQueryHash, ToolRequestId,
+        ToolStructuredField, ToolTextSnippet, WebAnswerVerificationPacket,
     };
     use selene_kernel_contracts::ph1k::{
         Confidence, DegradationClassBundle, InterruptCandidate, InterruptCandidateConfidenceBand,
@@ -3999,6 +4000,62 @@ mod tests {
                 }],
                 answer_claims: vec![response_text.clone()],
                 claim_to_source_map: vec![("claim_001".to_string(), "source_001".to_string())],
+                claim_requests: vec![ClaimRequestPacket {
+                    request_id: "stage4_req_h415b".to_string(),
+                    turn_id: "turn_h415b".to_string(),
+                    claim_id: "claim_001".to_string(),
+                    claim_type: "leadership_role".to_string(),
+                    requested_entity: "Aurora Vale Cellars".to_string(),
+                    normalized_entity: "aurora vale cellars".to_string(),
+                    claim_text: "Verify the CEO of Aurora Vale Cellars.".to_string(),
+                    expected_answer_shape: "person_role_entity".to_string(),
+                    freshness_required: true,
+                    source_requirements: vec![
+                        "accepted_source".to_string(),
+                        "person_role_entity_direct_support".to_string(),
+                    ],
+                    generated_from_user_prompt: true,
+                    protected_lane: false,
+                }],
+                claim_verifications: vec![ClaimVerificationPacket {
+                    claim_id: "claim_001".to_string(),
+                    claim_type: "leadership_role".to_string(),
+                    claim_text: "Verify the CEO of Aurora Vale Cellars.".to_string(),
+                    requested_entity: "Aurora Vale Cellars".to_string(),
+                    verification_status: "SUPPORTED".to_string(),
+                    confidence: 9_000,
+                    confidence_class: "HIGH".to_string(),
+                    supporting_sources: vec!["source_001".to_string()],
+                    contradicting_sources: vec![],
+                    insufficient_sources: vec![],
+                    rejected_sources: vec!["source_002".to_string()],
+                    evidence_links: vec![ClaimEvidenceLink {
+                        claim_id: "claim_001".to_string(),
+                        source_id: "source_001".to_string(),
+                        evidence_chunk_id: "source_001_evidence".to_string(),
+                        evidence_excerpt_hash: hash.clone(),
+                        entity_match: "ENTITY_MATCH_STRONG".to_string(),
+                        claim_term_match: "CLAIM_SUPPORT_DIRECT".to_string(),
+                        role_or_value_match: "CEO".to_string(),
+                        freshness_match: "FRESH_OR_EVERGREEN".to_string(),
+                        support_level: "DIRECT_SUPPORT".to_string(),
+                        contradiction_level: "no_conflict".to_string(),
+                        confidence: 9_000,
+                        confidence_class: "HIGH".to_string(),
+                        reason: "direct accepted evidence supports the material claim".to_string(),
+                    }],
+                    uncertainty_reason: None,
+                    selected_answer_value: Some("Mira Solen".to_string()),
+                    source_hierarchy_reason: None,
+                    freshness_reason: Some(
+                        "fresh or evergreen accepted evidence supported the current claim"
+                            .to_string(),
+                    ),
+                    safe_for_direct_answer: true,
+                    user_visible_summary: response_text.clone(),
+                }],
+                unsupported_claims_removed: vec![],
+                contradiction_result: "no_conflict".to_string(),
                 final_answer_class: "VERIFIED_DIRECT_ANSWER".to_string(),
                 response_text: response_text.clone(),
                 source_dump_present: false,
@@ -5460,6 +5517,47 @@ mod tests {
             verification.displayed_response_text_sha256,
             verification.tts_input_text_sha256
         );
+    }
+
+    #[test]
+    fn stage4_ph1x_preserves_claim_verification_and_clean_tts_text() {
+        let tool_ok = ToolResponse::ok_v1(
+            ToolRequestId(4_004),
+            ToolQueryHash(4_004),
+            ToolResult::WebSearch {
+                items: vec![ToolTextSnippet {
+                    title: "Raw source title should not drive answer".to_string(),
+                    snippet: "Raw source snippet should not be spoken.".to_string(),
+                    url: "https://example.invalid/raw-source".to_string(),
+                }],
+            },
+            h415b_verified_source_metadata(),
+            None,
+            ReasonCodeId(1),
+            CacheStatus::Bypassed,
+        )
+        .unwrap();
+
+        let text = tool_ok_text(&tool_ok);
+        let verification = tool_ok
+            .source_metadata
+            .as_ref()
+            .and_then(|metadata| metadata.web_answer_verification.as_ref())
+            .expect("Stage 4 verification metadata must be present");
+        assert_eq!(text, verification.response_text);
+        assert_eq!(verification.tts_input_text, verification.response_text);
+        assert_eq!(verification.claim_requests.len(), 1);
+        assert_eq!(verification.claim_verifications.len(), 1);
+        assert_eq!(
+            verification.claim_verifications[0].verification_status,
+            "SUPPORTED"
+        );
+        assert_eq!(verification.claim_verifications[0].confidence_class, "HIGH");
+        assert!(verification.claim_verifications[0].safe_for_direct_answer);
+        assert!(!text.contains("Raw source"));
+        assert!(!text.contains("Sources:"));
+        assert!(!text.contains("source:"));
+        assert!(!text.contains("provider_call_attempt_count"));
     }
 
     #[test]

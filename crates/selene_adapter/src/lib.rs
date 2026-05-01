@@ -24499,7 +24499,10 @@ mod tests {
             "at_adapter_03bc",
             &[("openai_api_key", "test_openai_key")],
             &[
-                ("BRAVE_SEARCH_WEB_URL", "http://127.0.0.1:9/res/v1/web/search"),
+                (
+                    "BRAVE_SEARCH_WEB_URL",
+                    "http://127.0.0.1:9/res/v1/web/search",
+                ),
                 (
                     "BRAVE_SEARCH_NEWS_URL",
                     "http://127.0.0.1:9/res/v1/news/search",
@@ -24773,6 +24776,85 @@ mod tests {
                     "{}",
                     protected_out.response_text
                 );
+            },
+        );
+    }
+
+    #[test]
+    fn stage4_adapter_provider_off_does_not_create_live_usage_or_tts_debug_text() {
+        with_isolated_device_vault(
+            "stage4_adapter_provider_off",
+            &[("brave_search_api_key", "stage4-test-key")],
+            &[
+                ("SELENE_SEARCH_PROVIDERS_ENABLED", "0"),
+                ("SELENE_PAID_SEARCH_PROVIDERS_ENABLED", "0"),
+                ("SELENE_WEB_SEARCH_ENABLED", "0"),
+                ("SELENE_DEEP_RESEARCH_ENABLED", "0"),
+                ("SELENE_NEWS_SEARCH_ENABLED", "0"),
+                ("SELENE_URL_FETCH_ENABLED", "0"),
+                ("SELENE_STARTUP_PROVIDER_PROBES_ENABLED", "0"),
+                ("SELENE_BRAVE_SEARCH_ENABLED", "0"),
+                ("SELENE_PROVIDER_CALL_MAX_PER_TURN", "0"),
+            ],
+            || {
+                let runtime = AdapterRuntime::default();
+
+                let mut web_req = base_request();
+                web_req.app_platform = "DESKTOP".to_string();
+                web_req.correlation_id = 44_004;
+                web_req.turn_id = 44_004;
+                web_req.device_id = Some("stage4_provider_off_device".to_string());
+                web_req.audio_capture_ref = None;
+                web_req.user_text_final =
+                    Some("Search the web for the CEO of Test Company A.".to_string());
+                seed_desktop_voice_profile_for_request(&runtime, &mut web_req, "stage4_web_off");
+                let web_out = runtime
+                    .run_voice_turn(web_req)
+                    .expect("provider-disabled Stage 4 turn should return cleanly");
+                assert_eq!(web_out.status, "ok", "{web_out:?}");
+                assert_eq!(
+                    web_out.response_text,
+                    selene_engines::ph1providerctl::PROVIDER_DISABLED_RESPONSE_TEXT
+                );
+                for forbidden in [
+                    "stage2_provider_control",
+                    "provider_call_attempt_count",
+                    "provider_network_dispatch_count",
+                    "brave_search_api_key",
+                    "Sources:",
+                    "EvidencePacket",
+                ] {
+                    assert!(
+                        !web_out.response_text.contains(forbidden),
+                        "{forbidden} leaked in {}",
+                        web_out.response_text
+                    );
+                }
+
+                let mut protected_req = base_request();
+                protected_req.app_platform = "DESKTOP".to_string();
+                protected_req.correlation_id = 44_005;
+                protected_req.turn_id = 44_005;
+                protected_req.device_id = Some("stage4_protected_device".to_string());
+                protected_req.audio_capture_ref = None;
+                protected_req.user_text_final =
+                    Some("Search the web and approve payroll for Test Employee A.".to_string());
+                seed_desktop_voice_profile_for_request(
+                    &runtime,
+                    &mut protected_req,
+                    "stage4_protected_off",
+                );
+                let protected_out = runtime
+                    .run_voice_turn(protected_req)
+                    .expect("protected mixed prompt should still fail closed");
+                assert!(
+                    protected_out
+                        .response_text
+                        .contains("NO_SIMULATION_NO_AUTHORITY_NO_PROTECTED_EXECUTION"),
+                    "{}",
+                    protected_out.response_text
+                );
+                assert!(protected_out.provenance.is_none());
             },
         );
     }

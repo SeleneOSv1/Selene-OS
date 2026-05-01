@@ -428,6 +428,61 @@ pub struct SourceChipPacket {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClaimRequestPacket {
+    pub request_id: String,
+    pub turn_id: String,
+    pub claim_id: String,
+    pub claim_type: String,
+    pub requested_entity: String,
+    pub normalized_entity: String,
+    pub claim_text: String,
+    pub expected_answer_shape: String,
+    pub freshness_required: bool,
+    pub source_requirements: Vec<String>,
+    pub generated_from_user_prompt: bool,
+    pub protected_lane: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClaimEvidenceLink {
+    pub claim_id: String,
+    pub source_id: String,
+    pub evidence_chunk_id: String,
+    pub evidence_excerpt_hash: String,
+    pub entity_match: String,
+    pub claim_term_match: String,
+    pub role_or_value_match: String,
+    pub freshness_match: String,
+    pub support_level: String,
+    pub contradiction_level: String,
+    pub confidence: u16,
+    pub confidence_class: String,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClaimVerificationPacket {
+    pub claim_id: String,
+    pub claim_type: String,
+    pub claim_text: String,
+    pub requested_entity: String,
+    pub verification_status: String,
+    pub confidence: u16,
+    pub confidence_class: String,
+    pub supporting_sources: Vec<String>,
+    pub contradicting_sources: Vec<String>,
+    pub insufficient_sources: Vec<String>,
+    pub rejected_sources: Vec<String>,
+    pub evidence_links: Vec<ClaimEvidenceLink>,
+    pub uncertainty_reason: Option<String>,
+    pub selected_answer_value: Option<String>,
+    pub source_hierarchy_reason: Option<String>,
+    pub freshness_reason: Option<String>,
+    pub safe_for_direct_answer: bool,
+    pub user_visible_summary: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WebAnswerVerificationPacket {
     pub requested_entity: RequestedEntityPacket,
     pub normalized_entity: String,
@@ -442,6 +497,10 @@ pub struct WebAnswerVerificationPacket {
     pub source_chips: Vec<SourceChipPacket>,
     pub answer_claims: Vec<String>,
     pub claim_to_source_map: Vec<(String, String)>,
+    pub claim_requests: Vec<ClaimRequestPacket>,
+    pub claim_verifications: Vec<ClaimVerificationPacket>,
+    pub unsupported_claims_removed: Vec<String>,
+    pub contradiction_result: String,
     pub final_answer_class: String,
     pub response_text: String,
     pub source_dump_present: bool,
@@ -633,6 +692,236 @@ impl Validate for SourceChipPacket {
     }
 }
 
+impl Validate for ClaimRequestPacket {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        validate_bounded_nonempty("claim_request.request_id", &self.request_id, 128)?;
+        validate_bounded_nonempty("claim_request.turn_id", &self.turn_id, 128)?;
+        validate_bounded_nonempty("claim_request.claim_id", &self.claim_id, 128)?;
+        validate_stage1_token(
+            "claim_request.claim_type",
+            &self.claim_type,
+            &[
+                "leadership_role",
+                "identity_or_title",
+                "company_fact",
+                "current_status",
+                "date_or_event",
+                "numeric_value",
+                "price_or_cost",
+                "location_or_address",
+                "ownership_or_affiliation",
+                "policy_or_rule",
+                "comparison",
+                "list_or_ranking",
+                "definition_or_explanation",
+                "unknown_factual",
+            ],
+        )?;
+        validate_bounded_nonempty(
+            "claim_request.requested_entity",
+            &self.requested_entity,
+            256,
+        )?;
+        validate_bounded_nonempty(
+            "claim_request.normalized_entity",
+            &self.normalized_entity,
+            256,
+        )?;
+        validate_bounded_nonempty("claim_request.claim_text", &self.claim_text, 512)?;
+        validate_bounded_nonempty(
+            "claim_request.expected_answer_shape",
+            &self.expected_answer_shape,
+            128,
+        )?;
+        validate_short_vec(
+            "claim_request.source_requirements",
+            &self.source_requirements,
+            20,
+            128,
+        )?;
+        if self.protected_lane {
+            return Err(ContractViolation::InvalidValue {
+                field: "claim_request.protected_lane",
+                reason: "public websearch claim verification must not be protected execution",
+            });
+        }
+        Ok(())
+    }
+}
+
+impl Validate for ClaimEvidenceLink {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        validate_bounded_nonempty("claim_evidence_link.claim_id", &self.claim_id, 128)?;
+        validate_bounded_nonempty("claim_evidence_link.source_id", &self.source_id, 128)?;
+        validate_bounded_nonempty(
+            "claim_evidence_link.evidence_chunk_id",
+            &self.evidence_chunk_id,
+            128,
+        )?;
+        validate_sha256_hex(
+            "claim_evidence_link.evidence_excerpt_hash",
+            &self.evidence_excerpt_hash,
+        )?;
+        validate_bounded_nonempty("claim_evidence_link.entity_match", &self.entity_match, 96)?;
+        validate_bounded_nonempty(
+            "claim_evidence_link.claim_term_match",
+            &self.claim_term_match,
+            96,
+        )?;
+        validate_bounded_nonempty(
+            "claim_evidence_link.role_or_value_match",
+            &self.role_or_value_match,
+            96,
+        )?;
+        validate_bounded_nonempty(
+            "claim_evidence_link.freshness_match",
+            &self.freshness_match,
+            96,
+        )?;
+        validate_stage1_token(
+            "claim_evidence_link.support_level",
+            &self.support_level,
+            &[
+                "DIRECT_SUPPORT",
+                "INDIRECT_SUPPORT",
+                "ENTITY_ONLY",
+                "MENTION_ONLY",
+                "NO_SUPPORT",
+                "CONTRADICTS",
+                "STALE_SUPPORT",
+                "WRONG_ENTITY",
+            ],
+        )?;
+        validate_stage1_token(
+            "claim_evidence_link.contradiction_level",
+            &self.contradiction_level,
+            &[
+                "resolved_by_higher_trust_source",
+                "resolved_by_freshness",
+                "unresolved_conflict",
+                "low_confidence_conflict",
+                "no_conflict",
+            ],
+        )?;
+        if self.confidence > 10_000 {
+            return Err(ContractViolation::InvalidValue {
+                field: "claim_evidence_link.confidence",
+                reason: "must be <= 10000",
+            });
+        }
+        validate_confidence_class(&self.confidence_class)?;
+        validate_bounded_nonempty("claim_evidence_link.reason", &self.reason, 512)?;
+        Ok(())
+    }
+}
+
+impl Validate for ClaimVerificationPacket {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        validate_bounded_nonempty("claim_verification.claim_id", &self.claim_id, 128)?;
+        validate_stage1_token(
+            "claim_verification.claim_type",
+            &self.claim_type,
+            &[
+                "leadership_role",
+                "identity_or_title",
+                "company_fact",
+                "current_status",
+                "date_or_event",
+                "numeric_value",
+                "price_or_cost",
+                "location_or_address",
+                "ownership_or_affiliation",
+                "policy_or_rule",
+                "comparison",
+                "list_or_ranking",
+                "definition_or_explanation",
+                "unknown_factual",
+            ],
+        )?;
+        validate_bounded_nonempty("claim_verification.claim_text", &self.claim_text, 512)?;
+        validate_bounded_nonempty(
+            "claim_verification.requested_entity",
+            &self.requested_entity,
+            256,
+        )?;
+        validate_stage1_token(
+            "claim_verification.verification_status",
+            &self.verification_status,
+            &[
+                "SUPPORTED",
+                "PARTIALLY_SUPPORTED",
+                "UNSUPPORTED",
+                "CONTRADICTED",
+                "CONFLICT_UNRESOLVED",
+                "STALE_UNCERTAIN",
+                "ENTITY_MISMATCH",
+                "INSUFFICIENT_EVIDENCE",
+                "PROTECTED_FAIL_CLOSED",
+            ],
+        )?;
+        if self.confidence > 10_000 {
+            return Err(ContractViolation::InvalidValue {
+                field: "claim_verification.confidence",
+                reason: "must be <= 10000",
+            });
+        }
+        validate_confidence_class(&self.confidence_class)?;
+        validate_short_vec(
+            "claim_verification.supporting_sources",
+            &self.supporting_sources,
+            20,
+            128,
+        )?;
+        validate_short_vec(
+            "claim_verification.contradicting_sources",
+            &self.contradicting_sources,
+            20,
+            128,
+        )?;
+        validate_short_vec(
+            "claim_verification.insufficient_sources",
+            &self.insufficient_sources,
+            20,
+            128,
+        )?;
+        validate_short_vec(
+            "claim_verification.rejected_sources",
+            &self.rejected_sources,
+            20,
+            128,
+        )?;
+        for link in &self.evidence_links {
+            link.validate()?;
+        }
+        if let Some(reason) = &self.uncertainty_reason {
+            validate_bounded_nonempty("claim_verification.uncertainty_reason", reason, 512)?;
+        }
+        if let Some(value) = &self.selected_answer_value {
+            validate_bounded_nonempty("claim_verification.selected_answer_value", value, 256)?;
+        }
+        if let Some(reason) = &self.source_hierarchy_reason {
+            validate_bounded_nonempty("claim_verification.source_hierarchy_reason", reason, 512)?;
+        }
+        if let Some(reason) = &self.freshness_reason {
+            validate_bounded_nonempty("claim_verification.freshness_reason", reason, 512)?;
+        }
+        validate_bounded_nonempty(
+            "claim_verification.user_visible_summary",
+            &self.user_visible_summary,
+            1024,
+        )?;
+        if self.safe_for_direct_answer
+            && (self.verification_status != "SUPPORTED" || self.supporting_sources.is_empty())
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "claim_verification.safe_for_direct_answer",
+                reason: "direct answers require supported claim-linked evidence",
+            });
+        }
+        Ok(())
+    }
+}
+
 impl Validate for WebAnswerVerificationPacket {
     fn validate(&self) -> Result<(), ContractViolation> {
         self.requested_entity.validate()?;
@@ -689,6 +978,29 @@ impl Validate for WebAnswerVerificationPacket {
             20,
             512,
         )?;
+        for request in &self.claim_requests {
+            request.validate()?;
+        }
+        for verification in &self.claim_verifications {
+            verification.validate()?;
+        }
+        validate_short_vec(
+            "web_answer_verification.unsupported_claims_removed",
+            &self.unsupported_claims_removed,
+            20,
+            512,
+        )?;
+        validate_stage1_token(
+            "web_answer_verification.contradiction_result",
+            &self.contradiction_result,
+            &[
+                "resolved_by_higher_trust_source",
+                "resolved_by_freshness",
+                "unresolved_conflict",
+                "low_confidence_conflict",
+                "no_conflict",
+            ],
+        )?;
         validate_stage1_token(
             "web_answer_verification.final_answer_class",
             &self.final_answer_class,
@@ -696,6 +1008,8 @@ impl Validate for WebAnswerVerificationPacket {
                 "VERIFIED_DIRECT_ANSWER",
                 "PARTIAL_UNCERTAIN_ANSWER",
                 "UNSUPPORTED_SAFE_DEGRADE",
+                "CONTRADICTED_SAFE_DEGRADE",
+                "STALE_UNCERTAIN_SAFE_DEGRADE",
                 "PROTECTED_FAIL_CLOSED",
             ],
         )?;
@@ -738,6 +1052,17 @@ impl Validate for WebAnswerVerificationPacket {
             return Err(ContractViolation::InvalidValue {
                 field: "web_answer_verification.accepted_source_ids",
                 reason: "verified answers require accepted source-backed claims",
+            });
+        }
+        if self.final_answer_class == "VERIFIED_DIRECT_ANSWER"
+            && !self
+                .claim_verifications
+                .iter()
+                .any(|claim| claim.safe_for_direct_answer)
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "web_answer_verification.claim_verifications",
+                reason: "verified direct answers require a safe direct claim verification",
             });
         }
         Ok(())
@@ -851,6 +1176,14 @@ fn validate_stage1_token(
         });
     }
     Ok(())
+}
+
+fn validate_confidence_class(value: &str) -> Result<(), ContractViolation> {
+    validate_stage1_token(
+        "confidence_class",
+        value,
+        &["HIGH", "MEDIUM", "LOW", "UNKNOWN"],
+    )
 }
 
 fn validate_reason_codes(codes: &[String]) -> Result<(), ContractViolation> {

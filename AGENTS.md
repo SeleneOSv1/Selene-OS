@@ -103,6 +103,36 @@ No real searched names may be used in page-read tests.
 
 OpenAI Realtime STT and OpenAI TTS must not be blocked by URL-fetch/search-provider gating.
 
+Rule: Claim-to-Source Verification
+
+Selene must not present factual websearch claims unless they are supported by accepted evidence.
+
+Source mentions entity does not prove the requested claim.
+
+Entity-only evidence is insufficient for role, numeric, date, current-status, ownership, legal, pricing, comparison, list, or ranking claims.
+
+Claim verification may use accepted sources and accepted evidence chunks only; rejected, wrong-entity, weak, entity-only, mention-only, and trace-only evidence must not support final answer claims.
+
+Contradictory evidence must be detected and resolved by source hierarchy/freshness or surfaced as uncertainty.
+
+Unsupported claims must be removed or safe-degraded before response_text or TTS output.
+
+Confidence must be evidence-derived, not guessed, provider-rank-derived, or inflated because multiple weak sources repeat the same unsupported claim.
+
+PH1.WRITE/current formatter must not invent facts, sources, citations, or confidence.
+
+Claim verification must not call external LLMs, web providers, search providers, page fetchers, verifier APIs, retries, fallbacks, or probes.
+
+Claim verification itself must not be marked as live provider usage or billable provider cost; fake fixture verification must be non-billable and test-only.
+
+Provider-off and URL-fetch-off counters must remain zero for provider/fetch attempts and network dispatches during claim verification.
+
+Tests must use synthetic fake entities only and must prove real answer-gate behavior, not only helper functions, enum constants, or unused packets.
+
+Public search remains read-only.
+
+Protected actions remain simulation and authority gated.
+
 Auto-Loaded Authority Order
 
 JD explicit in-thread instructions
