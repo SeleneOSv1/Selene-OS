@@ -3085,6 +3085,19 @@ fn stage6_image_card_from_fixture_metadata(
         .map(|value| truncate_ascii(value.trim(), 64))
         .unwrap_or_else(|| "fixture".to_string());
     let image_id_seed = format!("{}:{}:{}", source.source_id, approved_asset_ref, caption);
+    let mut result_classes = vec![
+        "STAGE6_IMAGE_PACKET_PASS".to_string(),
+        "STAGE6_IMAGE_DISPLAY_GATE_PASS".to_string(),
+        "STAGE6_IMAGE_URL_SAFETY_PASS".to_string(),
+        "STAGE6_SOURCE_PAGE_LINK_PASS".to_string(),
+        "STAGE6_QUERY_RELEVANCE_PASS".to_string(),
+        "STAGE6_IMAGE_FETCH_OFF_ZERO_ATTEMPT_PASS".to_string(),
+        "STAGE6_NO_REMOTE_IMAGE_LOAD_WHEN_FETCH_DISABLED_PASS".to_string(),
+        "STAGE6_SOURCE_CHIP_PRESERVATION_PASS".to_string(),
+    ];
+    if kind == "person_photo" {
+        result_classes.push("STAGE6_PERSON_IMAGE_SAFETY_PASS".to_string());
+    }
     Some(SearchImagePacket {
         image_id: format!("stage6_image_{}", short_fnv_hex(image_id_seed.as_bytes())),
         image_kind: kind.to_string(),
@@ -3114,16 +3127,7 @@ fn stage6_image_card_from_fixture_metadata(
         remote_image_load_allowed: false,
         fixture_or_local_asset: true,
         display_rank: 1,
-        result_classes: vec![
-            "STAGE6_IMAGE_PACKET_PASS".to_string(),
-            "STAGE6_IMAGE_DISPLAY_GATE_PASS".to_string(),
-            "STAGE6_IMAGE_URL_SAFETY_PASS".to_string(),
-            "STAGE6_SOURCE_PAGE_LINK_PASS".to_string(),
-            "STAGE6_QUERY_RELEVANCE_PASS".to_string(),
-            "STAGE6_IMAGE_FETCH_OFF_ZERO_ATTEMPT_PASS".to_string(),
-            "STAGE6_NO_REMOTE_IMAGE_LOAD_WHEN_FETCH_DISABLED_PASS".to_string(),
-            "STAGE6_SOURCE_CHIP_PRESERVATION_PASS".to_string(),
-        ],
+        result_classes,
     })
 }
 
@@ -14597,6 +14601,89 @@ mod tests {
             verification.presentation.presentation_boundary_used,
             "PH1E_STAGE5_PRESENTATION"
         );
+    }
+
+    #[test]
+    fn stage6_partial_name_overlap_image_metadata_is_blocked() {
+        let partial_overlap_metadata = stage6_fixture_image_metadata()
+            .replace("stage6_image_entity=Test Company A", "stage6_image_entity=Test Company");
+        let (_items, metadata) = stage1_web_answer_verified_metadata(
+            "Who is the CEO of Test Company A?",
+            vec![ToolTextSnippet {
+                title: "Test Company A official leadership".to_string(),
+                snippet: partial_overlap_metadata,
+                url: "https://test-company-a.test/leadership".to_string(),
+            }],
+            Some("stage6_fixture".to_string()),
+            1,
+        );
+
+        let verification = metadata.web_answer_verification.as_ref().unwrap();
+        assert_eq!(verification.final_answer_class, "VERIFIED_DIRECT_ANSWER");
+        assert!(verification.presentation.image_cards.is_empty());
+        assert!(!verification.response_text.contains("fixture-image-a.png"));
+    }
+
+    #[test]
+    fn stage6_generic_stock_image_metadata_is_blocked_by_relevance() {
+        let generic_stock_metadata = stage6_fixture_image_metadata()
+            .replace("stage6_image_kind=logo", "stage6_image_kind=generic_entity_visual")
+            .replace(
+                "stage6_image_caption=Test Company A approved fixture image",
+                "stage6_image_caption=Generic fixture skyline",
+            )
+            .replace(
+                "stage6_image_alt=Test Company A approved fixture image",
+                "stage6_image_alt=Generic fixture skyline",
+            )
+            .replace("stage6_image_relevance=9500", "stage6_image_relevance=1200");
+        let (_items, metadata) = stage1_web_answer_verified_metadata(
+            "Who is the CEO of Test Company A?",
+            vec![ToolTextSnippet {
+                title: "Test Company A official leadership".to_string(),
+                snippet: generic_stock_metadata,
+                url: "https://test-company-a.test/leadership".to_string(),
+            }],
+            Some("stage6_fixture".to_string()),
+            1,
+        );
+
+        let verification = metadata.web_answer_verification.as_ref().unwrap();
+        assert_eq!(verification.final_answer_class, "VERIFIED_DIRECT_ANSWER");
+        assert!(verification.presentation.image_cards.is_empty());
+        assert!(!verification.response_text.contains("Generic fixture skyline"));
+    }
+
+    #[test]
+    fn stage6_person_photo_requires_supported_entity_context() {
+        let person_photo_metadata = stage6_fixture_image_metadata()
+            .replace("stage6_image_kind=logo", "stage6_image_kind=person_photo")
+            .replace(
+                "stage6_image_caption=Test Company A approved fixture image",
+                "stage6_image_caption=Test Person A leadership photo for Test Company A",
+            )
+            .replace(
+                "stage6_image_alt=Test Company A approved fixture image",
+                "stage6_image_alt=Test Person A leadership photo for Test Company A",
+            );
+        let (_items, metadata) = stage1_web_answer_verified_metadata(
+            "Who is the CEO of Test Company A?",
+            vec![ToolTextSnippet {
+                title: "Test Company A official leadership".to_string(),
+                snippet: person_photo_metadata,
+                url: "https://test-company-a.test/leadership".to_string(),
+            }],
+            Some("stage6_fixture".to_string()),
+            1,
+        );
+
+        let verification = metadata.web_answer_verification.as_ref().unwrap();
+        assert_eq!(verification.final_answer_class, "VERIFIED_DIRECT_ANSWER");
+        assert_eq!(verification.presentation.image_cards.len(), 1);
+        assert_eq!(verification.presentation.image_cards[0].image_kind, "person_photo");
+        assert!(verification.presentation.image_cards[0]
+            .result_classes
+            .contains(&"STAGE6_PERSON_IMAGE_SAFETY_PASS".to_string()));
     }
 
     #[test]
