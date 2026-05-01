@@ -113,6 +113,36 @@
       "audit_required_fields": ["trace_id", "provider_id", "policy_snapshot_id"]
     },
     {
+      "code_id": "unsafe_url_blocked",
+      "owner_engine": "PH1.E",
+      "category": "policy",
+      "severity": "error",
+      "retry_class": "never",
+      "user_message_template": "URL fetch was blocked by safety policy.",
+      "introduced_in_version": "1.0.0",
+      "audit_required_fields": ["trace_id", "source_url"]
+    },
+    {
+      "code_id": "private_url_blocked",
+      "owner_engine": "PH1.E",
+      "category": "policy",
+      "severity": "error",
+      "retry_class": "never",
+      "user_message_template": "URL fetch was blocked for a private or internal address.",
+      "introduced_in_version": "1.0.0",
+      "audit_required_fields": ["trace_id", "source_url"]
+    },
+    {
+      "code_id": "dns_private_validation_unavailable",
+      "owner_engine": "PH1.E",
+      "category": "policy",
+      "severity": "warn",
+      "retry_class": "builder_action_required",
+      "user_message_template": "Live URL fetch is disabled until DNS/private-address validation is proven.",
+      "introduced_in_version": "1.0.0",
+      "audit_required_fields": ["trace_id", "source_url", "policy_snapshot_id"]
+    },
+    {
       "code_id": "proxy_misconfigured",
       "owner_engine": "PH1.E",
       "category": "retrieval",

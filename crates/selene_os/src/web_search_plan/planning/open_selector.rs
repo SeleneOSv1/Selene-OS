@@ -4,8 +4,8 @@ use crate::web_search_plan::cache::cache_key::{CacheKey, CacheMode};
 use crate::web_search_plan::cache::l1::L1Cache;
 use crate::web_search_plan::cache::ttl::ttl_ms_for;
 use crate::web_search_plan::cache::{lookup_typed, store_typed};
-use crate::web_search_plan::planning::{OpenFailure, OpenSuccess, SearchCandidate};
 use crate::web_search_plan::perf_cost::tiers::ImportanceTier;
+use crate::web_search_plan::planning::{OpenFailure, OpenSuccess, SearchCandidate};
 use crate::web_search_plan::proxy::proxy_config::ProxyConfig;
 use crate::web_search_plan::url::{fetch_url_to_evidence_packet, UrlFetchPolicy, UrlFetchRequest};
 
@@ -78,23 +78,24 @@ pub fn open_candidate_with_url_fetch(
         intended_consumers: context.intended_consumers.clone(),
         proxy_config: context.proxy_config.clone(),
         policy: context.url_fetch_policy.clone(),
+        test_fixture: None,
     };
 
     match fetch_url_to_evidence_packet(&request) {
         Ok(success) => {
             let open_success = OpenSuccess {
-            final_url: success
-                .audit
-                .final_url
-                .clone()
-                .unwrap_or_else(|| candidate.url.clone()),
-            title: if success.title.trim().is_empty() {
-                candidate.title.clone()
-            } else {
-                success.title
-            },
-            extracted_text: success.body_text,
-            extracted_chars: success.audit.extraction_chars,
+                final_url: success
+                    .audit
+                    .final_url
+                    .clone()
+                    .unwrap_or_else(|| candidate.url.clone()),
+                title: if success.title.trim().is_empty() {
+                    candidate.title.clone()
+                } else {
+                    success.title
+                },
+                extracted_text: success.body_text,
+                extracted_chars: success.audit.extraction_chars,
             };
 
             if context.cache_enabled {

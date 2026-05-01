@@ -40,7 +40,11 @@ pub fn extract_document(
 
 fn extract_html(input: &str) -> (String, String) {
     let without_script = strip_tag_block_case_insensitive(input, "script");
-    let sanitized = strip_tag_block_case_insensitive(&without_script, "style");
+    let without_style = strip_tag_block_case_insensitive(&without_script, "style");
+    let without_noscript = strip_tag_block_case_insensitive(&without_style, "noscript");
+    let without_nav = strip_tag_block_case_insensitive(&without_noscript, "nav");
+    let without_footer = strip_tag_block_case_insensitive(&without_nav, "footer");
+    let sanitized = strip_tag_block_case_insensitive(&without_footer, "aside");
     let title = capture_title_case_insensitive(&sanitized).unwrap_or_default();
     let body = strip_html_tags(&sanitized);
     (title, body)

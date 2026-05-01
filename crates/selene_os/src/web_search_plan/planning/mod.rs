@@ -7,7 +7,6 @@ pub mod scoring;
 pub mod snippet_fallback;
 pub mod tie_break;
 
-use crate::web_search_plan::chunk::chunker::ChunkPolicy;
 use crate::web_search_plan::chunk::{
     bounded_excerpt, build_hashed_chunks_for_document, ChunkBuildError,
 };
@@ -51,6 +50,8 @@ use crate::web_search_plan::planning::open_selector::{
 use crate::web_search_plan::planning::scoring::{score_with_policy, ScoreSignals, ScoringPolicy};
 use crate::web_search_plan::planning::snippet_fallback::build_snippet_fallback;
 use crate::web_search_plan::planning::tie_break::{sort_ranked_candidates, RankedCandidate};
+use crate::web_search_plan::url::fetch::stage3_chunk_policy;
+use crate::web_search_plan::url::STAGE3_MAX_EVIDENCE_EXCERPT_CHARS;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
@@ -364,8 +365,7 @@ where
                 decision.step,
                 Some(DegradeStep::ReduceMaxResultsFromSearchToTierMinimum)
             ) {
-                max_results_budget =
-                    max_results_budget.min(TierCaps::minimum_search_results());
+                max_results_budget = max_results_budget.min(TierCaps::minimum_search_results());
             }
             if decision.fail_closed {
                 return Err("deterministic degrade path exhausted; failing closed".to_string());
@@ -396,8 +396,7 @@ where
                 decision.step,
                 Some(DegradeStep::ReduceMaxResultsFromSearchToTierMinimum)
             ) {
-                max_results_budget =
-                    max_results_budget.min(TierCaps::minimum_search_results());
+                max_results_budget = max_results_budget.min(TierCaps::minimum_search_results());
             }
             if decision.fail_closed {
                 return Err("provider call budget exhausted after degrade path".to_string());
@@ -421,7 +420,7 @@ where
                     &candidate.canonical_url,
                     &open_success.final_url,
                     &open_success.extracted_text,
-                    ChunkPolicy::default(),
+                    stage3_chunk_policy(),
                 )
                 .map_err(|err| format_chunk_build_error(input, candidate, err))?;
 
@@ -454,7 +453,7 @@ where
                 sources.push(json!({
                     "title": open_success.title,
                     "url": open_success.final_url,
-                    "snippet": bounded_excerpt(&open_success.extracted_text, 280),
+                    "snippet": bounded_excerpt(&open_success.extracted_text, STAGE3_MAX_EVIDENCE_EXCERPT_CHARS),
                     "media_type": "web",
                     "provider_id": candidate.provider_id,
                     "rank": source_rank,
@@ -474,7 +473,7 @@ where
                         "source_url": source_url,
                         "canonical_url": hashed.canonical_url,
                         "chunk_index": hashed.chunk_index,
-                        "text_excerpt": bounded_excerpt(&hashed.normalized_text, 320),
+                        "text_excerpt": bounded_excerpt(&hashed.normalized_text, STAGE3_MAX_EVIDENCE_EXCERPT_CHARS),
                         "text_len_chars": hashed.text_len_chars,
                         "citation": {
                             "chunk_id": hashed.chunk_id,
@@ -590,11 +589,8 @@ where
         .iter()
         .map(|failure| failure.canonical_url.clone())
         .collect::<Vec<String>>();
-    let stitching_summary = build_stitching_summary(
-        &source_titles,
-        &open_failure_urls,
-        &reason_codes_vec,
-    );
+    let stitching_summary =
+        build_stitching_summary(&source_titles, &open_failure_urls, &reason_codes_vec);
     let freshness_watchdog = evaluate_freshness_watchdog(
         input.query.as_str(),
         input.importance_tier.as_str(),
@@ -700,7 +696,10 @@ where
             .entry("gap_closers".to_string())
             .or_insert_with(|| json!({}));
         if let Some(gap_obj) = gap_closers_entry.as_object_mut() {
-            gap_obj.insert("unknown_first".to_string(), unknown_first_to_json(&unknown_first));
+            gap_obj.insert(
+                "unknown_first".to_string(),
+                unknown_first_to_json(&unknown_first),
+            );
         }
     }
 
@@ -883,16 +882,14 @@ fn format_chunk_build_error(
                 candidate.canonical_url, chunk_id, first_index, second_index
             ),
         ),
-        ChunkBuildError::CitationAnchorInvalid(message) => {
-            (
-                "transport_failed",
-                "provider_upstream_failed",
-                format!(
-                    "invalid citation anchors for {}: {}",
-                    candidate.canonical_url, message
-                ),
-            )
-        }
+        ChunkBuildError::CitationAnchorInvalid(message) => (
+            "transport_failed",
+            "provider_upstream_failed",
+            format!(
+                "invalid citation anchors for {}: {}",
+                candidate.canonical_url, message
+            ),
+        ),
     };
 
     let transitions = default_failed_transitions(input.created_at_ms);

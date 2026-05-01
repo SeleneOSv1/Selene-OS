@@ -6,6 +6,7 @@ use crate::web_search_plan::chunk::{
     bounded_excerpt, build_hashed_chunks_for_document, ChunkBuildError,
     EVIDENCE_TRUNCATED_REASON_CODE, HASH_COLLISION_REASON_CODE,
 };
+use crate::web_search_plan::contract_hash::sha256_hex;
 use crate::web_search_plan::diag::{
     default_failed_transitions, try_build_debug_packet, DebugPacketContext, DebugStatus,
 };
@@ -18,7 +19,8 @@ use crate::web_search_plan::perf_cost::timeouts::{
 use crate::web_search_plan::proxy::proxy_redaction::redact_proxy_url;
 use crate::web_search_plan::proxy::proxy_self_check::run_startup_self_check;
 use crate::web_search_plan::proxy::{ProxyErrorKind, ProxyMode};
-use crate::web_search_plan::url::canonical::{canonicalize_url, CANON_VERSION};
+use crate::web_search_plan::url::admission::admit_public_fetch_url;
+use crate::web_search_plan::url::canonical::{canonicalize_url, CanonicalUrl, CANON_VERSION};
 use crate::web_search_plan::url::charset::{
     charset_from_content_type, select_charset, CHARSET_SNIFF_LIMIT_BYTES, CHARSET_VERSION,
     NORMALIZATION_VERSION,
@@ -37,21 +39,25 @@ use crate::web_search_plan::url::quality_gate::{
 };
 use crate::web_search_plan::url::redirect::RedirectState;
 use crate::web_search_plan::url::{
-    UrlFetchAudit, UrlFetchErrorKind, UrlFetchFailure, UrlFetchPolicy, UrlFetchRequest,
-    UrlFetchSuccess,
+    UrlFetchAudit, UrlFetchErrorKind, UrlFetchFailure, UrlFetchFixture, UrlFetchFixtureResponse,
+    UrlFetchPolicy, UrlFetchRequest, UrlFetchSuccess, STAGE3_MAX_EVIDENCE_CHUNKS_PER_SOURCE,
+    STAGE3_MAX_EVIDENCE_EXCERPT_CHARS, STAGE3_MAX_TRACE_PREVIEW_CHARS,
 };
 use selene_engines::ph1providerctl::{
-    disabled_provider_decision, fake_provider_decision, is_local_fake_endpoint,
-    ProviderControlProvider, ProviderControlRoute,
+    disabled_provider_decision, fake_provider_decision, ProviderControlProvider,
+    ProviderControlRoute,
 };
 use serde_json::{json, Value};
-use std::io::Read;
+use std::io::{Cursor, Read};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+#[allow(dead_code)]
 const FIXED_USER_AGENT: &str = "SeleneWebSearch/1.0";
+#[allow(dead_code)]
 const FIXED_ACCEPT: &str = "text/html,application/xhtml+xml,text/plain,application/pdf";
+#[allow(dead_code)]
 const FIXED_ACCEPT_ENCODING: &str = "gzip, br, deflate";
 
 #[derive(Debug)]
@@ -72,7 +78,7 @@ struct BodyOutcome {
 pub fn fetch_url_to_evidence_packet(
     request: &UrlFetchRequest,
 ) -> Result<UrlFetchSuccess, UrlFetchFailure> {
-    let stage2_gate = if is_local_fake_endpoint(&request.requested_url) {
+    let stage2_gate = if request.test_fixture.is_some() {
         fake_provider_decision(
             ProviderControlRoute::UrlFetch,
             ProviderControlProvider::UrlFetch,
@@ -108,6 +114,35 @@ pub fn fetch_url_to_evidence_packet(
         .map_err(|kind| build_failure_without_audit(request, kind, "failed to canonicalize url"))?;
 
     let mut audit = UrlFetchAudit::new(canonical.canonical_url.clone(), request.proxy_config.mode);
+    apply_admission_or_fail(request, &mut audit, &canonical.canonical_url)?;
+
+    if let Some(fixture) = request.test_fixture.as_ref() {
+        return fetch_fixture_to_evidence_packet(
+            request,
+            fixture,
+            canonical,
+            audit,
+            &effective_policy,
+        );
+    }
+
+    audit.url_fetch_blocked_count = audit.url_fetch_blocked_count.saturating_add(1);
+    audit.admission_denied_reason = Some("live_external_dns_validation_unavailable".to_string());
+    Err(build_failure(
+        request,
+        &audit,
+        UrlFetchErrorKind::DnsPrivateValidationUnavailable,
+        "live external URL fetch remains disabled because DNS/private-address validation is not proven",
+    ))
+}
+
+fn fetch_fixture_to_evidence_packet(
+    request: &UrlFetchRequest,
+    fixture: &UrlFetchFixture,
+    canonical: CanonicalUrl,
+    mut audit: UrlFetchAudit,
+    effective_policy: &UrlFetchPolicy,
+) -> Result<UrlFetchSuccess, UrlFetchFailure> {
     let mut redirect = RedirectState::new(
         &canonical.canonical_url,
         effective_policy.max_redirect_depth,
@@ -115,18 +150,18 @@ pub fn fetch_url_to_evidence_packet(
     );
 
     let mut current_url = canonical.canonical_url.clone();
-    loop {
+    audit.url_fetch_attempt_count = audit.url_fetch_attempt_count.saturating_add(1);
+    audit.url_fetch_fake_fixture_dispatch_count = audit
+        .url_fetch_fake_fixture_dispatch_count
+        .saturating_add(1);
+
+    for response in &fixture.responses {
         let step_start = Instant::now();
-        let response = send_get_request(request, &current_url, &mut audit, &effective_policy)
-            .map_err(|mut failure| {
-                failure.audit.canonical_url = canonical.canonical_url.clone();
-                failure
-            })?;
         audit.latency_ms = audit
             .latency_ms
             .saturating_add(step_start.elapsed().as_millis() as u64);
 
-        let status = response.status() as u16;
+        let status = response.status;
         audit.status_code = Some(status);
 
         if is_redirect_status(status) {
@@ -148,6 +183,7 @@ pub fn fetch_url_to_evidence_packet(
                         "redirect validation failed during url fetch",
                     )
                 })?;
+            apply_admission_or_fail(request, &mut audit, &next)?;
             current_url = next;
             continue;
         }
@@ -165,11 +201,11 @@ pub fn fetch_url_to_evidence_packet(
         let content_type_header = response.header("content-type").map(str::to_string);
         let content_encoding_header = response.header("content-encoding").map(str::to_string);
 
-        let body = read_response_body(
+        let body = read_fixture_body(
             response,
             content_type_header.as_deref(),
             content_encoding_header.as_deref(),
-            &effective_policy,
+            effective_policy,
         )
         .map_err(|kind| {
             build_failure(request, &audit, kind, "failed while reading response body")
@@ -187,7 +223,7 @@ pub fn fetch_url_to_evidence_packet(
             &audit.canonical_url,
             &final_url,
             &body.extracted.body_text,
-            ChunkPolicy::default(),
+            stage3_chunk_policy(),
         )
         .map_err(|err| map_chunk_error_to_fetch_failure(request, &audit, err))?;
         let evidence_packet = build_success_evidence_packet(request, &audit, &body, &chunk_output);
@@ -199,8 +235,52 @@ pub fn fetch_url_to_evidence_packet(
             audit,
         });
     }
+
+    Err(build_failure(
+        request,
+        &audit,
+        UrlFetchErrorKind::TransportFailed,
+        "fixture response chain ended before a terminal response",
+    ))
 }
 
+fn apply_admission_or_fail(
+    request: &UrlFetchRequest,
+    audit: &mut UrlFetchAudit,
+    url: &str,
+) -> Result<(), UrlFetchFailure> {
+    match admit_public_fetch_url(url) {
+        Ok(decision) => {
+            audit.safe_public_url = decision.safe_public_url;
+            audit.dns_private_address_validation_proven =
+                decision.dns_private_address_validation_proven;
+            Ok(())
+        }
+        Err(kind) => {
+            audit.url_fetch_blocked_count = audit.url_fetch_blocked_count.saturating_add(1);
+            audit.admission_denied_reason = Some(admission_reason(kind).to_string());
+            Err(build_failure(
+                request,
+                audit,
+                kind,
+                "URL admission blocked fetch before network dispatch",
+            ))
+        }
+    }
+}
+
+fn admission_reason(kind: UrlFetchErrorKind) -> &'static str {
+    match kind {
+        UrlFetchErrorKind::UnsupportedScheme => "unsupported_scheme",
+        UrlFetchErrorKind::InvalidUrl => "invalid_url",
+        UrlFetchErrorKind::UnsafeUrlBlocked => "unsafe_url_blocked",
+        UrlFetchErrorKind::PrivateUrlBlocked => "private_url_blocked",
+        UrlFetchErrorKind::DnsPrivateValidationUnavailable => "dns_private_validation_unavailable",
+        _ => kind.reason_code(),
+    }
+}
+
+#[allow(dead_code)]
 fn send_get_request(
     request: &UrlFetchRequest,
     current_url: &str,
@@ -258,6 +338,10 @@ fn send_get_request(
         .set("Pragma", "no-cache")
         .timeout(Duration::from_millis(policy.total_timeout_ms));
 
+    audit.url_fetch_attempt_count = audit.url_fetch_attempt_count.saturating_add(1);
+    audit.url_fetch_network_dispatch_count =
+        audit.url_fetch_network_dispatch_count.saturating_add(1);
+
     match req.call() {
         Ok(resp) => Ok(resp),
         Err(ureq::Error::Status(_, resp)) => Ok(resp),
@@ -285,6 +369,7 @@ fn send_get_request(
     }
 }
 
+#[allow(dead_code)]
 fn effective_fetch_policy(request: &UrlFetchRequest) -> UrlFetchPolicy {
     let tier = ImportanceTier::parse_or_default(request.importance_tier.as_str());
     let mut policy = request.policy.clone();
@@ -294,6 +379,7 @@ fn effective_fetch_policy(request: &UrlFetchRequest) -> UrlFetchPolicy {
     policy
 }
 
+#[allow(dead_code)]
 fn proxy_for_url<'a>(
     mode: &ProxyMode,
     current_url: &str,
@@ -312,6 +398,7 @@ fn proxy_for_url<'a>(
     }
 }
 
+#[allow(dead_code)]
 fn classify_proxy_error(kind: ProxyErrorKind) -> UrlFetchErrorKind {
     match kind {
         ProxyErrorKind::ProxyMisconfigured => UrlFetchErrorKind::ProxyMisconfigured,
@@ -323,6 +410,7 @@ fn classify_proxy_error(kind: ProxyErrorKind) -> UrlFetchErrorKind {
     }
 }
 
+#[allow(dead_code)]
 fn classify_transport_error(
     raw: &str,
     mode: ProxyMode,
@@ -353,6 +441,7 @@ fn classify_transport_error(
     UrlFetchErrorKind::TransportFailed
 }
 
+#[allow(dead_code)]
 fn proxy_error_kind_for_transport(kind: UrlFetchErrorKind) -> Option<&'static str> {
     match kind {
         UrlFetchErrorKind::ProxyMisconfigured
@@ -365,19 +454,44 @@ fn proxy_error_kind_for_transport(kind: UrlFetchErrorKind) -> Option<&'static st
     }
 }
 
+#[allow(dead_code)]
 fn read_response_body(
     response: ureq::Response,
     content_type_header: Option<&str>,
     content_encoding_header: Option<&str>,
     policy: &UrlFetchPolicy,
 ) -> Result<BodyOutcome, UrlFetchErrorKind> {
+    read_body_from_reader(
+        response.into_reader(),
+        content_type_header,
+        content_encoding_header,
+        policy,
+    )
+}
+
+fn read_fixture_body(
+    response: &UrlFetchFixtureResponse,
+    content_type_header: Option<&str>,
+    content_encoding_header: Option<&str>,
+    policy: &UrlFetchPolicy,
+) -> Result<BodyOutcome, UrlFetchErrorKind> {
+    read_body_from_reader(
+        Cursor::new(response.body.clone()),
+        content_type_header,
+        content_encoding_header,
+        policy,
+    )
+}
+
+fn read_body_from_reader<R: Read + 'static>(
+    reader: R,
+    content_type_header: Option<&str>,
+    content_encoding_header: Option<&str>,
+    policy: &UrlFetchPolicy,
+) -> Result<BodyOutcome, UrlFetchErrorKind> {
     let content_encoding = parse_content_encoding(content_encoding_header)?;
     let bytes_read = Arc::new(AtomicUsize::new(0));
-    let limited = LimitedReader::new(
-        response.into_reader(),
-        policy.max_response_bytes,
-        Arc::clone(&bytes_read),
-    );
+    let limited = LimitedReader::new(reader, policy.max_response_bytes, Arc::clone(&bytes_read));
     let mut decoded_reader = wrap_decoder(limited, content_encoding);
 
     let mut decompressed_bytes = 0usize;
@@ -554,6 +668,8 @@ fn build_failure_without_audit(
     let mut audit = UrlFetchAudit::new(request.requested_url.clone(), request.proxy_config.mode);
     audit.reason_code = Some(kind.reason_code().to_string());
     audit.error_kind = Some(kind.as_str().to_string());
+    audit.url_fetch_blocked_count = audit.url_fetch_blocked_count.saturating_add(1);
+    audit.admission_denied_reason = Some(kind.reason_code().to_string());
     let evidence_packet = build_failure_evidence_packet(request, &audit, kind, message);
     UrlFetchFailure {
         error_kind: kind,
@@ -613,7 +729,7 @@ fn build_success_evidence_packet(
                 "source_url": chunk.source_url,
                 "canonical_url": chunk.canonical_url,
                 "chunk_index": chunk.chunk_index,
-                "text_excerpt": bounded_excerpt(&chunk.normalized_text, 320),
+                "text_excerpt": bounded_excerpt(&chunk.normalized_text, STAGE3_MAX_EVIDENCE_EXCERPT_CHARS),
                 "text_len_chars": chunk.text_len_chars,
                 "citation": {
                     "chunk_id": citation.chunk_id,
@@ -670,7 +786,13 @@ fn build_success_evidence_packet(
                 "audit": {
                     "bytes_read": audit.bytes_read,
                     "bytes_decompressed": audit.bytes_decompressed,
-                    "extraction_chars": audit.extraction_chars
+                    "extraction_chars": audit.extraction_chars,
+                    "url_fetch_requested_count": audit.url_fetch_requested_count,
+                    "url_fetch_blocked_count": audit.url_fetch_blocked_count,
+                    "url_fetch_attempt_count": audit.url_fetch_attempt_count,
+                    "url_fetch_network_dispatch_count": audit.url_fetch_network_dispatch_count,
+                    "url_fetch_fake_fixture_dispatch_count": audit.url_fetch_fake_fixture_dispatch_count,
+                    "raw_page_stored": audit.raw_page_stored
                 }
             }
         ],
@@ -690,6 +812,31 @@ fn build_success_evidence_packet(
             "normalization_version": NORMALIZATION_VERSION,
             "extraction_version": EXTRACTION_VERSION,
             "quality_gate_version": QUALITY_GATE_VERSION,
+            "stage3_page_fetch": {
+                "page_fetch_requested": true,
+                "page_fetch_allowed": true,
+                "page_fetch_blocked_reason": audit.admission_denied_reason,
+                "safe_public_url": audit.safe_public_url,
+                "dns_private_address_validation_proven": audit.dns_private_address_validation_proven,
+                "url_fetch_requested_count": audit.url_fetch_requested_count,
+                "url_fetch_blocked_count": audit.url_fetch_blocked_count,
+                "url_fetch_attempt_count": audit.url_fetch_attempt_count,
+                "url_fetch_network_dispatch_count": audit.url_fetch_network_dispatch_count,
+                "url_fetch_fake_fixture_dispatch_count": audit.url_fetch_fake_fixture_dispatch_count,
+                "raw_page_stored": audit.raw_page_stored,
+                "max_excerpt_chars": STAGE3_MAX_EVIDENCE_EXCERPT_CHARS,
+                "max_evidence_chunks_per_source": STAGE3_MAX_EVIDENCE_CHUNKS_PER_SOURCE,
+                "max_trace_preview_chars": STAGE3_MAX_TRACE_PREVIEW_CHARS
+            },
+            "stage3_evidence_extraction": {
+                "extraction_status": "evidence_candidate",
+                "evidence_chunk_count": chunk_output.chunks.len(),
+                "evidence_hashes": chunk_output.chunks.iter().map(|chunk| chunk.chunk_id.clone()).collect::<Vec<String>>(),
+                "extracted_text_hash": sha256_hex(body.extracted.body_text.as_bytes()),
+                "trace_preview": bounded_trace_preview(&body.extracted.body_text),
+                "trace_preview_chars": bounded_trace_preview(&body.extracted.body_text).chars().count(),
+                "full_extracted_text_in_trace": false
+            },
             "chunking": {
                 "chunk_count": chunk_output.chunks.len(),
                 "truncated": chunk_output.truncated,
@@ -770,7 +917,13 @@ fn build_failure_evidence_packet(
                 "audit": {
                     "bytes_read": audit.bytes_read,
                     "bytes_decompressed": audit.bytes_decompressed,
-                    "extraction_chars": audit.extraction_chars
+                    "extraction_chars": audit.extraction_chars,
+                    "url_fetch_requested_count": audit.url_fetch_requested_count,
+                    "url_fetch_blocked_count": audit.url_fetch_blocked_count,
+                    "url_fetch_attempt_count": audit.url_fetch_attempt_count,
+                    "url_fetch_network_dispatch_count": audit.url_fetch_network_dispatch_count,
+                    "url_fetch_fake_fixture_dispatch_count": audit.url_fetch_fake_fixture_dispatch_count,
+                    "raw_page_stored": audit.raw_page_stored
                 },
                 "error": {
                     "error_kind": kind.as_str(),
@@ -787,6 +940,22 @@ fn build_failure_evidence_packet(
             "normalization_version": NORMALIZATION_VERSION,
             "extraction_version": EXTRACTION_VERSION,
             "quality_gate_version": QUALITY_GATE_VERSION,
+            "stage3_page_fetch": {
+                "page_fetch_requested": true,
+                "page_fetch_allowed": false,
+                "page_fetch_blocked_reason": audit.admission_denied_reason,
+                "safe_public_url": audit.safe_public_url,
+                "dns_private_address_validation_proven": audit.dns_private_address_validation_proven,
+                "url_fetch_requested_count": audit.url_fetch_requested_count,
+                "url_fetch_blocked_count": audit.url_fetch_blocked_count,
+                "url_fetch_attempt_count": audit.url_fetch_attempt_count,
+                "url_fetch_network_dispatch_count": audit.url_fetch_network_dispatch_count,
+                "url_fetch_fake_fixture_dispatch_count": audit.url_fetch_fake_fixture_dispatch_count,
+                "raw_page_stored": audit.raw_page_stored,
+                "max_excerpt_chars": STAGE3_MAX_EVIDENCE_EXCERPT_CHARS,
+                "max_evidence_chunks_per_source": STAGE3_MAX_EVIDENCE_CHUNKS_PER_SOURCE,
+                "max_trace_preview_chars": STAGE3_MAX_TRACE_PREVIEW_CHARS
+            },
             "failure": {
                 "error_kind": kind.as_str(),
                 "reason_code": kind.reason_code(),
@@ -839,6 +1008,26 @@ fn build_fetch_debug_packet_value(
 
 fn is_redirect_status(status: u16) -> bool {
     matches!(status, 301 | 302 | 303 | 307 | 308)
+}
+
+pub(crate) fn stage3_chunk_policy() -> ChunkPolicy {
+    let mut policy = ChunkPolicy::default();
+    policy.max_chunks_per_document = STAGE3_MAX_EVIDENCE_CHUNKS_PER_SOURCE;
+    policy
+}
+
+fn bounded_trace_preview(input: &str) -> String {
+    let char_count = input.chars().count();
+    if char_count <= 1 {
+        return String::new();
+    }
+    let cap = STAGE3_MAX_TRACE_PREVIEW_CHARS.min(STAGE3_MAX_EVIDENCE_EXCERPT_CHARS);
+    let take = if char_count <= cap {
+        char_count.saturating_sub(1)
+    } else {
+        cap
+    };
+    bounded_excerpt(input, take)
 }
 
 struct LimitedReader<R: Read> {

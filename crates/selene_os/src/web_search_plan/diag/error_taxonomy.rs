@@ -31,7 +31,12 @@ pub fn map_internal_failure(
         normalized
     } else {
         default_reason_code_for_error_kind(&canonical_error_kind)
-            .ok_or_else(|| format!("unknown error_kind taxonomy mapping: {}", canonical_error_kind))?
+            .ok_or_else(|| {
+                format!(
+                    "unknown error_kind taxonomy mapping: {}",
+                    canonical_error_kind
+                )
+            })?
             .to_string()
     };
 
@@ -49,7 +54,10 @@ pub fn ensure_reason_code_registered(reason_code: &str) -> Result<(), String> {
     if reason_codes.contains(reason_code) {
         Ok(())
     } else {
-        Err(format!("reason_code {} is not in REASON_CODES.json", reason_code))
+        Err(format!(
+            "reason_code {} is not in REASON_CODES.json",
+            reason_code
+        ))
     }
 }
 
@@ -130,6 +138,9 @@ fn default_reason_code_for_error_kind(error_kind: &str) -> Option<&'static str> 
         | "parse_failed"
         | "transport_failed"
         | "unsupported_scheme"
+        | "unsafe_url_blocked"
+        | "private_url_blocked"
+        | "dns_private_validation_unavailable"
         | "invalid_url"
         | "redirect_loop_detected"
         | "redirect_depth_exceeded"

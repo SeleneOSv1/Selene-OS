@@ -697,7 +697,10 @@ fn test_all_modes_route_through_orchestrator() {
     assert!(
         matches!(
             url_fetch_error.reason_code.as_str(),
-            "empty_results" | "insufficient_evidence" | "provider_upstream_failed"
+            "empty_results"
+                | "insufficient_evidence"
+                | "provider_disabled"
+                | "provider_upstream_failed"
         ),
         "unexpected url_fetch reason code {}",
         url_fetch_error.reason_code

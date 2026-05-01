@@ -29,8 +29,7 @@ pub fn canonicalize_url(input: &str) -> Result<CanonicalUrl, UrlFetchErrorKind> 
     }
 
     if parsed.username() != "" || parsed.password().is_some() {
-        let _ = parsed.set_username("");
-        let _ = parsed.set_password(None);
+        return Err(UrlFetchErrorKind::UnsafeUrlBlocked);
     }
 
     strip_default_port(&mut parsed)?;
@@ -46,7 +45,10 @@ pub fn canonicalize_url(input: &str) -> Result<CanonicalUrl, UrlFetchErrorKind> 
 
 fn strip_default_port(parsed: &mut Url) -> Result<(), UrlFetchErrorKind> {
     let port = parsed.port();
-    let should_strip = matches!((parsed.scheme(), port), ("http", Some(80)) | ("https", Some(443)));
+    let should_strip = matches!(
+        (parsed.scheme(), port),
+        ("http", Some(80)) | ("https", Some(443))
+    );
     if should_strip {
         parsed
             .set_port(None)

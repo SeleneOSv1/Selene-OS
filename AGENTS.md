@@ -75,6 +75,34 @@ Fake provider test usage must be non-billable and must not be marked as live pro
 
 Stage 2 captures usage/cost facts for future billing but must not implement final pricing, invoicing, subscription plans, tax/GST, payment collection, or commercial contract enforcement.
 
+Rule: Safe Page Fetch and Evidence Extraction
+
+Page fetch/read is a provider/network operation and must be gated by the global provider/url-fetch policy.
+
+URL fetch must default OFF unless explicitly enabled by safe config or test harness.
+
+URL fetch must block private, internal, local, metadata-service, credential-bearing, and unsafe-scheme URLs before network dispatch.
+
+If DNS/private-address validation cannot be safely implemented or proven for live external fetches, live external URL fetch must remain disabled.
+
+URL fetch must enforce timeout, redirect, byte, content-type, and extraction limits.
+
+Evidence excerpts are capped at 500 characters unless a repo constant deliberately lowers the limit; evidence chunks are capped at 5 per source unless a repo constant deliberately lowers the limit; trace preview is capped at 2,000 characters unless a repo constant deliberately lowers the limit.
+
+Raw full pages and full extracted text must not enter response_text, TTS, normal UI, or public trace.
+
+URL fetch must not execute JavaScript, use browser automation, send secrets/cookies/internal auth headers, bypass paywalls/access controls, or bypass Stage 2 budget/counter/usage metadata.
+
+Blocked URL fetch must be non-billable / zero provider cost.
+
+Fake/local fixture fetch must use in-memory fixture transport or repo fixture injection, not localhost HTTP as a fake external page; fake/local fixture usage must be test-only and non-billable.
+
+Extracted evidence may support answers, but extracted evidence does not automatically become accepted proof. Stage 1 accepted/rejected source rules still apply.
+
+No real searched names may be used in page-read tests.
+
+OpenAI Realtime STT and OpenAI TTS must not be blocked by URL-fetch/search-provider gating.
+
 Auto-Loaded Authority Order
 
 JD explicit in-thread instructions

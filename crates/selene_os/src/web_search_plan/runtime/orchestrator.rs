@@ -401,6 +401,7 @@ impl<'a, C: MonotonicClock> RuntimeOrchestrator<'a, C> {
                     ],
                     proxy_config: default_proxy_config(),
                     policy: UrlFetchPolicy::default(),
+                    test_fixture: None,
                 };
                 let success = fetch_url_to_evidence_packet(&request).map_err(|failure| {
                     self.fail_closed_from_provider(

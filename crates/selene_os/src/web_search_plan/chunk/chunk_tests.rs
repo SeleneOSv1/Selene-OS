@@ -14,115 +14,7 @@ use crate::web_search_plan::packet_validator::{validate_packet, validate_packet_
 use crate::web_search_plan::proxy::ProxyMode;
 use crate::web_search_plan::registry_loader::load_packet_schema_registry;
 use crate::web_search_plan::url::fetch_url_to_evidence_packet;
-use crate::web_search_plan::url::UrlFetchRequest;
-use std::collections::BTreeMap;
-use std::io::{BufRead, BufReader, Write};
-use std::net::{TcpListener, TcpStream};
-use std::sync::Arc;
-use std::thread;
-use std::time::{Duration, Instant};
-
-#[derive(Clone)]
-struct MockResponse {
-    status: u16,
-    headers: BTreeMap<String, String>,
-    body: Vec<u8>,
-}
-
-impl MockResponse {
-    fn new(status: u16, body: Vec<u8>) -> Self {
-        Self {
-            status,
-            headers: BTreeMap::new(),
-            body,
-        }
-    }
-
-    fn with_header(mut self, key: &str, value: &str) -> Self {
-        self.headers.insert(key.to_string(), value.to_string());
-        self
-    }
-}
-
-fn spawn_server<F>(handler: F, max_requests: usize) -> (String, thread::JoinHandle<()>)
-where
-    F: Fn(&str) -> MockResponse + Send + Sync + 'static,
-{
-    let listener = TcpListener::bind("127.0.0.1:0").expect("test server bind should succeed");
-    listener
-        .set_nonblocking(true)
-        .expect("nonblocking setup should succeed");
-    let addr = format!(
-        "http://{}",
-        listener.local_addr().expect("local addr exists")
-    );
-    let handler = Arc::new(handler);
-
-    let join = thread::spawn(move || {
-        let deadline = Instant::now() + Duration::from_secs(5);
-        let mut served = 0usize;
-        while served < max_requests && Instant::now() < deadline {
-            match listener.accept() {
-                Ok((mut stream, _)) => {
-                    let path = read_request_path(&mut stream);
-                    let response = handler(&path);
-                    write_http_response(&mut stream, &response);
-                    served = served.saturating_add(1);
-                }
-                Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
-                    thread::sleep(Duration::from_millis(10));
-                }
-                Err(_) => break,
-            }
-        }
-    });
-
-    (addr, join)
-}
-
-fn read_request_path(stream: &mut TcpStream) -> String {
-    let mut reader = BufReader::new(stream);
-    let mut first_line = String::new();
-    let _ = reader.read_line(&mut first_line);
-
-    loop {
-        let mut line = String::new();
-        if reader.read_line(&mut line).is_err() {
-            break;
-        }
-        if line == "\r\n" || line.is_empty() {
-            break;
-        }
-    }
-
-    first_line
-        .split_whitespace()
-        .nth(1)
-        .unwrap_or("/")
-        .to_string()
-}
-
-fn write_http_response(stream: &mut TcpStream, response: &MockResponse) {
-    let status_text = match response.status {
-        200 => "OK",
-        _ => "Status",
-    };
-
-    let mut head = format!(
-        "HTTP/1.1 {} {}\r\nContent-Length: {}\r\nConnection: close\r\n",
-        response.status,
-        status_text,
-        response.body.len()
-    );
-    for (key, value) in &response.headers {
-        head.push_str(&format!("{}: {}\r\n", key, value));
-    }
-    head.push_str("\r\n");
-
-    let _ = stream.write_all(head.as_bytes());
-    let _ = stream.write_all(&response.body);
-    let _ = stream.flush();
-}
+use crate::web_search_plan::url::{UrlFetchFixture, UrlFetchFixtureResponse, UrlFetchRequest};
 
 fn base_url_fetch_request(url: &str) -> UrlFetchRequest {
     UrlFetchRequest::new(
@@ -138,6 +30,14 @@ fn base_url_fetch_request(url: &str) -> UrlFetchRequest {
         ],
         ProxyMode::Off,
     )
+}
+
+fn fixture_request(url: &str, body: &[u8]) -> UrlFetchRequest {
+    let mut request = base_url_fetch_request(url);
+    request.test_fixture = Some(UrlFetchFixture::single(
+        UrlFetchFixtureResponse::new(200, body.to_vec()).with_header("Content-Type", "text/html"),
+    ));
+    request
 }
 
 #[test]
@@ -333,12 +233,7 @@ fn test_chunk_id_materialization_includes_versions() {
 #[test]
 fn test_evidence_packet_contains_chunk_fields() {
     let html = b"<html><head><title>Chunk Test</title></head><body>Paragraph one has deterministic content for chunk fields validation.\n\nParagraph two continues to ensure multiple chunks can appear with stable ids and citations.</body></html>".to_vec();
-    let (base, join) = spawn_server(
-        move |_| MockResponse::new(200, html.clone()).with_header("Content-Type", "text/html"),
-        2,
-    );
-
-    let mut req = base_url_fetch_request(&base);
+    let mut req = fixture_request("https://fixture.stage3.test/chunks", &html);
     req.policy.min_text_length = 20;
     let result = fetch_url_to_evidence_packet(&req).expect("fetch should succeed");
 
@@ -380,19 +275,12 @@ fn test_evidence_packet_contains_chunk_fields() {
             .and_then(|v| v.as_str())
             .is_some());
     }
-
-    let _ = join.join();
 }
 
 #[test]
 fn test_evidence_packet_content_chunk_order_is_deterministic() {
     let html = b"<html><head><title>Chunk Order</title></head><body>Paragraph one has deterministic content for ordering checks.\n\nParagraph two has additional deterministic content for ordering checks.</body></html>".to_vec();
-    let (base, join) = spawn_server(
-        move |_| MockResponse::new(200, html.clone()).with_header("Content-Type", "text/html"),
-        4,
-    );
-
-    let mut req = base_url_fetch_request(&base);
+    let mut req = fixture_request("https://fixture.stage3.test/chunk-order", &html);
     req.policy.min_text_length = 20;
 
     let first = fetch_url_to_evidence_packet(&req).expect("first fetch should succeed");
@@ -430,8 +318,6 @@ fn test_evidence_packet_content_chunk_order_is_deterministic() {
     let mut sorted_indexes = first_indexes.clone();
     sorted_indexes.sort_unstable();
     assert_eq!(first_indexes, sorted_indexes);
-
-    let _ = join.join();
 }
 
 #[test]

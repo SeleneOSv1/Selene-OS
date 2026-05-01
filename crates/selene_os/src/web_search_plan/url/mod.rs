@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 
+pub mod admission;
 pub mod canonical;
 pub mod charset;
 pub mod decompress;
@@ -14,6 +15,11 @@ pub use fetch::fetch_url_to_evidence_packet;
 use crate::web_search_plan::proxy::proxy_config::ProxyConfig;
 use crate::web_search_plan::proxy::ProxyMode;
 use serde_json::Value;
+use std::collections::BTreeMap;
+
+pub const STAGE3_MAX_EVIDENCE_EXCERPT_CHARS: usize = 500;
+pub const STAGE3_MAX_EVIDENCE_CHUNKS_PER_SOURCE: usize = 5;
+pub const STAGE3_MAX_TRACE_PREVIEW_CHARS: usize = 2_000;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UrlFetchRequest {
@@ -29,6 +35,7 @@ pub struct UrlFetchRequest {
     pub intended_consumers: Vec<String>,
     pub proxy_config: ProxyConfig,
     pub policy: UrlFetchPolicy,
+    pub test_fixture: Option<UrlFetchFixture>,
 }
 
 impl UrlFetchRequest {
@@ -58,6 +65,7 @@ impl UrlFetchRequest {
                 https_proxy_url: None,
             },
             policy: UrlFetchPolicy::default(),
+            test_fixture: None,
         }
     }
 }
@@ -95,12 +103,61 @@ impl Default for UrlFetchPolicy {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UrlFetchFixture {
+    pub responses: Vec<UrlFetchFixtureResponse>,
+}
+
+impl UrlFetchFixture {
+    pub fn single(response: UrlFetchFixtureResponse) -> Self {
+        Self {
+            responses: vec![response],
+        }
+    }
+
+    pub fn chain(responses: Vec<UrlFetchFixtureResponse>) -> Self {
+        Self { responses }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UrlFetchFixtureResponse {
+    pub status: u16,
+    pub headers: BTreeMap<String, String>,
+    pub body: Vec<u8>,
+}
+
+impl UrlFetchFixtureResponse {
+    pub fn new(status: u16, body: Vec<u8>) -> Self {
+        Self {
+            status,
+            headers: BTreeMap::new(),
+            body,
+        }
+    }
+
+    pub fn with_header(mut self, key: &str, value: &str) -> Self {
+        self.headers
+            .insert(key.to_ascii_lowercase(), value.to_string());
+        self
+    }
+
+    pub fn header(&self, key: &str) -> Option<&str> {
+        self.headers
+            .get(key.to_ascii_lowercase().as_str())
+            .map(String::as_str)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UrlFetchErrorKind {
     BudgetExhausted,
     ProviderDisabled,
     UnsupportedScheme,
     InvalidUrl,
+    UnsafeUrlBlocked,
+    PrivateUrlBlocked,
+    DnsPrivateValidationUnavailable,
     HttpNon200,
     RedirectLoopDetected,
     RedirectDepthExceeded,
@@ -134,6 +191,9 @@ impl UrlFetchErrorKind {
             Self::ProviderDisabled => "provider_disabled",
             Self::UnsupportedScheme => "unsupported_scheme",
             Self::InvalidUrl => "invalid_url",
+            Self::UnsafeUrlBlocked => "unsafe_url_blocked",
+            Self::PrivateUrlBlocked => "private_url_blocked",
+            Self::DnsPrivateValidationUnavailable => "dns_private_validation_unavailable",
             Self::HttpNon200 => "http_non_200",
             Self::RedirectLoopDetected => "redirect_loop_detected",
             Self::RedirectDepthExceeded => "redirect_depth_exceeded",
@@ -165,6 +225,9 @@ impl UrlFetchErrorKind {
         match self {
             Self::BudgetExhausted => "budget_exhausted",
             Self::ProviderDisabled => "provider_disabled",
+            Self::UnsafeUrlBlocked => "unsafe_url_blocked",
+            Self::PrivateUrlBlocked => "private_url_blocked",
+            Self::DnsPrivateValidationUnavailable => "dns_private_validation_unavailable",
             Self::TimeoutExceeded | Self::ProxyTimeout => "timeout_exceeded",
             Self::ProxyMisconfigured
             | Self::ProxyAuthFailed
@@ -193,6 +256,15 @@ pub struct UrlFetchAudit {
     pub proxy_mode: String,
     pub proxy_redacted_endpoint: Option<String>,
     pub proxy_error_kind: Option<String>,
+    pub safe_public_url: bool,
+    pub url_fetch_requested_count: usize,
+    pub url_fetch_blocked_count: usize,
+    pub url_fetch_attempt_count: usize,
+    pub url_fetch_network_dispatch_count: usize,
+    pub url_fetch_fake_fixture_dispatch_count: usize,
+    pub raw_page_stored: bool,
+    pub dns_private_address_validation_proven: bool,
+    pub admission_denied_reason: Option<String>,
 }
 
 impl UrlFetchAudit {
@@ -211,6 +283,15 @@ impl UrlFetchAudit {
             proxy_mode: proxy_mode.as_str().to_string(),
             proxy_redacted_endpoint: None,
             proxy_error_kind: None,
+            safe_public_url: false,
+            url_fetch_requested_count: 1,
+            url_fetch_blocked_count: 0,
+            url_fetch_attempt_count: 0,
+            url_fetch_network_dispatch_count: 0,
+            url_fetch_fake_fixture_dispatch_count: 0,
+            raw_page_stored: false,
+            dns_private_address_validation_proven: false,
+            admission_denied_reason: None,
         }
     }
 }

@@ -533,3 +533,48 @@ fn test_t8_budget_exhaustion_deterministic() {
         true
     );
 }
+
+#[test]
+fn stage3_planning_prefers_extracted_evidence_over_provider_snippet() {
+    let candidates = vec![candidate(
+        "Synthetic Source",
+        "https://synthetic-source.stage3.test/page",
+        "https://synthetic-source.stage3.test/page",
+        1,
+        9,
+        9,
+        9,
+        1,
+        0,
+    )];
+    let input = planning_input(candidates.clone());
+    let mut policy = PlanningPolicy::default();
+    policy.open_budget.max_urls_opened_per_query = 1;
+
+    let result = execute_search_topk_pipeline_with_opener(&input, &policy, |c| {
+        Ok(OpenSuccess {
+            final_url: c.url.clone(),
+            title: c.title.clone(),
+            extracted_text:
+                "Extracted evidence for the synthetic stage three entity supports the page-read path."
+                    .to_string(),
+            extracted_chars: 84,
+        })
+    })
+    .expect("stage3 planning run should pass");
+
+    let source_snippet = result
+        .evidence_packet
+        .pointer("/sources/0/snippet")
+        .and_then(Value::as_str)
+        .expect("source snippet should exist");
+    assert!(source_snippet.contains("Extracted evidence"));
+    assert!(!source_snippet.contains("Synthetic Source snippet"));
+
+    let chunk_excerpt = result
+        .evidence_packet
+        .pointer("/content_chunks/0/text_excerpt")
+        .and_then(Value::as_str)
+        .expect("content chunk excerpt should exist");
+    assert!(chunk_excerpt.contains("Extracted evidence"));
+}
