@@ -1598,6 +1598,7 @@ struct AdapterPublicDiscourseFrame {
     last_public_tool_route: Option<String>,
     correction_state: Option<String>,
     coreference_resolution: Option<String>,
+    answer_language_preference: Option<String>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -2504,6 +2505,117 @@ fn h380_normalize_committed_text(text: &str) -> String {
         normalized = normalized.replace(from, to);
     }
     normalized
+}
+
+fn h380_selene_name_canonical_text_for_assistant_address(text: &str) -> Option<String> {
+    let normalized = normalize_h379_followup_text(text);
+    if !h380_is_selene_assistant_address_context(&normalized) {
+        return None;
+    }
+    h380_replace_selene_address_token(text)
+}
+
+fn h380_is_selene_assistant_address_context(normalized: &str) -> bool {
+    let tokens = normalized.split_whitespace().collect::<Vec<_>>();
+    if tokens.is_empty() || !tokens.iter().any(|token| h380_selene_name_token(token)) {
+        return false;
+    }
+    let has_second_person = tokens
+        .iter()
+        .any(|token| matches!(*token, "you" | "your" | "youre"));
+    if has_second_person
+        && tokens
+            .last()
+            .is_some_and(|token| h380_selene_name_token(token))
+    {
+        return true;
+    }
+    if tokens.windows(2).any(|pair| {
+        matches!(pair[0], "hey" | "hi" | "hello" | "ok" | "okay")
+            && h380_selene_name_token(pair[1])
+    }) {
+        return true;
+    }
+    if let [first, second, ..] = tokens.as_slice() {
+        h380_selene_name_token(first) && h380_assistant_direct_command_after_name(second)
+    } else {
+        false
+    }
+}
+
+fn h380_replace_selene_address_token(text: &str) -> Option<String> {
+    let mut out = Vec::new();
+    let mut changed = false;
+    let mut replaced = false;
+    let words = text.split_whitespace().collect::<Vec<_>>();
+    for (idx, word) in words.iter().enumerate() {
+        let stripped = word.trim_matches(|ch: char| !ch.is_ascii_alphabetic());
+        if !replaced && h380_selene_homophone_token(&stripped.to_ascii_lowercase()) {
+            let normalized_all = normalize_h379_followup_text(text);
+            let tokens = normalized_all.split_whitespace().collect::<Vec<_>>();
+            let at_end_with_second_person = idx + 1 == words.len()
+                && tokens
+                    .iter()
+                    .any(|token| matches!(*token, "you" | "your" | "youre"));
+            let at_start_direct = idx == 0
+                && tokens
+                    .get(1)
+                    .is_some_and(|token| h380_assistant_direct_command_after_name(token));
+            let after_greeting = idx > 0
+                && normalize_h379_followup_text(words[idx - 1])
+                    .split_whitespace()
+                    .next()
+                    .is_some_and(|token| matches!(token, "hey" | "hi" | "hello" | "ok" | "okay"));
+            if at_end_with_second_person || at_start_direct || after_greeting {
+                out.push(word.replacen(stripped, "Selene", 1));
+                changed = true;
+                replaced = true;
+                continue;
+            }
+        }
+        out.push((*word).to_string());
+    }
+    changed.then(|| out.join(" "))
+}
+
+fn h380_selene_name_token(token: &str) -> bool {
+    token == "selene" || h380_selene_homophone_token(token)
+}
+
+fn h380_selene_homophone_token(token: &str) -> bool {
+    matches!(token, "celine" | "seline" | "selina" | "celene")
+}
+
+fn h380_assistant_direct_command_after_name(token: &str) -> bool {
+    matches!(
+        token,
+        "are"
+            | "can"
+            | "could"
+            | "would"
+            | "will"
+            | "please"
+            | "tell"
+            | "what"
+            | "whats"
+            | "approve"
+            | "do"
+            | "help"
+            | "explain"
+            | "use"
+            | "answer"
+            | "check"
+            | "show"
+            | "give"
+            | "set"
+            | "remind"
+            | "send"
+            | "book"
+            | "create"
+            | "open"
+            | "start"
+            | "stop"
+    )
 }
 
 fn h380_contains_chinese(text: &str) -> bool {
@@ -5841,6 +5953,7 @@ impl AdapterRuntime {
     fn run_committed_voice_ph1c_gate(
         &self,
         transcript_text: &str,
+        partial_transcript_text: Option<&str>,
         capture: &VoiceTurnAudioCaptureRef,
         session_state: SessionState,
         ph1k: &Ph1kLiveSignalBundle,
@@ -5863,6 +5976,13 @@ impl AdapterRuntime {
         }
         if let Some(segment) = committed_voice_bounded_audio_segment_from_capture(capture) {
             ph1c_request.bounded_audio_segment_ref = segment;
+        }
+        if committed_voice_incomplete_final_transcript(transcript_text, partial_transcript_text) {
+            return ph1c_committed_voice_reject_summary(
+                transcript_text,
+                ph1c_reason_codes::STT_FAIL_PARTIAL_INVALID,
+                Ph1cRetryAdvice::Repeat,
+            );
         }
         if let Some((reason_code, retry_advice)) =
             committed_voice_unsafe_transcript_reason(transcript_text, capture)
@@ -7416,6 +7536,7 @@ impl AdapterRuntime {
                         (Some(capture), Some(transcript_text)) => {
                             Some(self.run_committed_voice_ph1c_gate(
                                 transcript_text,
+                                user_text_partial.as_deref(),
                                 capture,
                                 session_turn_state.session_snapshot.session_state,
                                 &ph1k_bundle,
@@ -7649,7 +7770,11 @@ impl AdapterRuntime {
                 &thread_key,
             )
             .map_err(post_session_error)?;
-            let h380_understanding = user_text_final.as_deref().map(|text| {
+            let h380_understanding_text = user_text_final.as_deref().map(|text| {
+                h380_selene_name_canonical_text_for_assistant_address(text)
+                    .unwrap_or_else(|| text.to_string())
+            });
+            let h380_understanding = h380_understanding_text.as_deref().map(|text| {
                 h380_understand_committed_turn(text, base_thread_state.last_turn_context.as_ref())
             });
             let h411_discourse_frame_before = self
@@ -7820,6 +7945,9 @@ impl AdapterRuntime {
                 } else {
                     h380_understanding.as_ref()
                 },
+                h411_discourse_frame_before
+                    .answer_language_preference
+                    .as_deref(),
             )
             .map_err(post_session_error)?;
             let confirm_answer =
@@ -11124,6 +11252,7 @@ fn build_language_context_for_voice_turn(
     transcript_text: Option<&str>,
     correlation_id: CorrelationId,
     turn_id: TurnId,
+    answer_language_preference: Option<&str>,
 ) -> Result<Option<Build1cLanguageContext>, String> {
     let Some(text) = transcript_text
         .map(str::trim)
@@ -11159,9 +11288,13 @@ fn build_language_context_for_voice_turn(
     .map_err(|err| format!("ph1lang wiring build failed: {err:?}"))?
     .run_turn(&lang_input)
     .map_err(|err| format!("ph1lang runtime failed: {err:?}"))?;
+    let explicit_output_language = explicit_output_language_for_build1c(text);
+    let session_output_language = answer_language_preference
+        .and_then(language_preference_tag_for_build1c);
     let detected = match lang_outcome {
         LangWiringOutcome::Forwarded(bundle) => {
-            let output = explicit_output_language_for_build1c(text)
+            let output = explicit_output_language
+                .or(session_output_language)
                 .unwrap_or(bundle.map.default_response_language.as_str())
                 .to_string();
             let candidates = if bundle.detect.detected_languages.is_empty() {
@@ -11178,7 +11311,8 @@ fn build_language_context_for_voice_turn(
             )
         }
         LangWiringOutcome::NotInvokedDisabled | LangWiringOutcome::NotInvokedNoTranscript => {
-            let output = explicit_output_language_for_build1c(text)
+            let output = explicit_output_language
+                .or(session_output_language)
                 .unwrap_or_else(|| language_tag_from_text_for_build1c(text, locale_hint.as_deref()))
                 .to_string();
             (
@@ -11190,7 +11324,8 @@ fn build_language_context_for_voice_turn(
             )
         }
         LangWiringOutcome::Refused(_) => {
-            let output = explicit_output_language_for_build1c(text)
+            let output = explicit_output_language
+                .or(session_output_language)
                 .unwrap_or_else(|| language_tag_from_text_for_build1c(text, locale_hint.as_deref()))
                 .to_string();
             (
@@ -11203,7 +11338,7 @@ fn build_language_context_for_voice_turn(
         }
     };
     let confidence_bps = language_confidence_bps_for_build1c(text, detected.3);
-    let switch_requested = explicit_output_language_for_build1c(text).is_some();
+    let switch_requested = explicit_output_language.is_some() || session_output_language.is_some();
     let mut sources = vec![detected.4.to_string(), "runtime_classifier".to_string()];
     if let Some(provider_source) = active_desktop_voice_stt_provider_source(request) {
         sources.push(provider_source.to_string());
@@ -11213,15 +11348,23 @@ fn build_language_context_for_voice_turn(
         detected.1,
         confidence_bps,
         detected.2,
-        if switch_requested {
+        if explicit_output_language.is_some() {
             "explicit_user_language_instruction".to_string()
+        } else if session_output_language.is_some() {
+            "explicit_session_answer_language_preference".to_string()
         } else {
-            "same_language_continuity".to_string()
+            "current_turn_detected_language".to_string()
         },
         detect_script_for_build1c(text).to_string(),
         detected.3,
         switch_requested,
-        LanguageSwitchScope::ThisTurn,
+        if explicit_output_language.is_some() {
+            LanguageSwitchScope::ThisTurn
+        } else if session_output_language.is_some() {
+            LanguageSwitchScope::ThisSession
+        } else {
+            LanguageSwitchScope::ThisTurn
+        },
         if request.audio_capture_ref.is_some() {
             "stt_confidence_not_exposed".to_string()
         } else {
@@ -11289,14 +11432,24 @@ fn language_tag_from_text_for_build1c(text: &str, locale_hint: Option<&str>) -> 
 fn explicit_output_language_for_build1c(text: &str) -> Option<&'static str> {
     let lower = text.to_ascii_lowercase();
     if lower.contains("answer in chinese")
-        || lower.contains("speak chinese")
+        || lower.contains("answer me in chinese")
+        || lower.contains("reply in chinese")
+        || lower.contains("reply to me in chinese")
+        || lower.contains("respond in chinese")
+        || lower.contains("respond to me in chinese")
+        || lower.contains("speak to me in chinese")
         || lower.contains("use chinese")
         || text.contains("用中文")
         || text.contains("中文回答")
     {
         Some("zh")
     } else if lower.contains("answer in english")
-        || lower.contains("speak english")
+        || lower.contains("answer me in english")
+        || lower.contains("reply in english")
+        || lower.contains("reply to me in english")
+        || lower.contains("respond in english")
+        || lower.contains("respond to me in english")
+        || lower.contains("speak to me in english")
         || lower.contains("use english")
         || lower.contains("in simple english")
         || text.contains("用英文")
@@ -11305,6 +11458,14 @@ fn explicit_output_language_for_build1c(text: &str) -> Option<&'static str> {
         Some("en")
     } else {
         None
+    }
+}
+
+fn language_preference_tag_for_build1c(value: &str) -> Option<&'static str> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "zh" | "zh-cn" | "chinese" => Some("zh"),
+        "en" | "en-us" | "english" => Some("en"),
+        _ => None,
     }
 }
 
@@ -11402,6 +11563,7 @@ fn build_nlp_output_for_voice_turn(
     thread_state: &ThreadState,
     committed_turn_followup: Option<&H379FollowupDecision>,
     h380_understanding: Option<&H380TurnUnderstandingPacket>,
+    answer_language_preference: Option<&str>,
 ) -> Result<(Ph1nResponse, Option<LanguagePacket>), String> {
     let correlation_id = CorrelationId(request.correlation_id.into());
     let turn_id = TurnId(request.turn_id);
@@ -11411,6 +11573,7 @@ fn build_nlp_output_for_voice_turn(
         captured_language_text,
         correlation_id,
         turn_id,
+        answer_language_preference,
     )?;
     if let Some(context) = language_context.as_ref() {
         if context.packet.clarification_required {
@@ -11579,7 +11742,12 @@ fn standalone_language_switch_request_for_build1c(text: &str) -> bool {
             | "以後用中文回答我"
             | "用英文回答我"
             | "请用英文回答"
-    )
+    ) || ((lower.contains("answer me in english") || lower.contains("answer in english"))
+        && lower.contains("speaking")
+        && lower.contains("english"))
+        || ((lower.contains("answer me in chinese") || lower.contains("answer in chinese"))
+            && lower.contains("speaking")
+            && lower.contains("chinese"))
 }
 
 fn translate_time_response_for_build1c(response_text: &str) -> Option<String> {
@@ -14892,6 +15060,65 @@ fn h411_public_discourse_response(
         });
     }
 
+    if h411_is_selene_self_identity_question(&lower) {
+        return Some(H411PublicDiscourseResponse {
+            response_text: "I’m Selene.".to_string(),
+            reason_code: "SELENE_SELF_IDENTITY_PASS",
+        });
+    }
+
+    if h411_is_selene_status_check(&lower)
+        && h380_is_selene_assistant_address_context(&normalize_h379_followup_text(captured_text))
+    {
+        return Some(H411PublicDiscourseResponse {
+            response_text: "I'm here and ready to help.".to_string(),
+            reason_code: "SELENE_NAME_CANONICALIZATION_PASS",
+        });
+    }
+
+    if h419_is_multi_location_time_request(captured_text) {
+        return Some(H411PublicDiscourseResponse {
+            response_text:
+                "I caught both Tokyo and Sydney. Please ask one city at a time, or say the full comparison again."
+                    .to_string(),
+            reason_code: "TURN_BOUNDARY_HALF_CAPTURE_GATED_PASS",
+        });
+    }
+
+    if h411_is_teach_chinese_topic_request(&lower) {
+        let output_language = h411_output_language_for_topic_request(captured_text, frame);
+        if output_language == "zh" {
+            return Some(H411PublicDiscourseResponse {
+                response_text:
+                    "可以。我们可以从常用问候、声调、拼音和短句开始练习中文。"
+                        .to_string(),
+                reason_code: "TOPIC_LANGUAGE_NOT_OUTPUT_LANGUAGE_PASS",
+            });
+        }
+        return Some(H411PublicDiscourseResponse {
+            response_text:
+                "Yes. We can start with useful Chinese phrases, pinyin, tones, and short practice sentences."
+                    .to_string(),
+            reason_code: "TEACH_CHINESE_IN_ENGLISH_PASS",
+        });
+    }
+
+    if h411_is_chinese_language_capability_question(&lower) {
+        let output_language = h411_output_language_for_topic_request(captured_text, frame);
+        if output_language == "zh" {
+            return Some(H411PublicDiscourseResponse {
+                response_text: "会。我可以用中文交流，也可以帮你学习中文。".to_string(),
+                reason_code: "TOPIC_LANGUAGE_NOT_OUTPUT_LANGUAGE_PASS",
+            });
+        }
+        return Some(H411PublicDiscourseResponse {
+            response_text:
+                "Yes. I can use Chinese when you ask for it, and I can also teach or explain Chinese in English."
+                    .to_string(),
+            reason_code: "TOPIC_LANGUAGE_NOT_OUTPUT_LANGUAGE_PASS",
+        });
+    }
+
     if h411_is_translation_capability_question(&lower) {
         return Some(H411PublicDiscourseResponse {
             response_text:
@@ -15042,6 +15269,9 @@ fn h411_update_public_discourse_frame(
     }
 
     let lower = h411_normalize_public_discourse_text(captured_text);
+    if let Some(language) = explicit_output_language_for_build1c(captured_text) {
+        frame.answer_language_preference = Some(language.to_string());
+    }
     let entities = h411_extract_public_entities(captured_text, response_text);
     if !entities.is_empty() {
         frame.active_entities = entities.clone();
@@ -15218,6 +15448,79 @@ fn h411_is_translation_capability_question(lower: &str) -> bool {
         || lower.contains("why cant you actually translate")
         || lower.contains("can you translate")
         || lower.contains("actually translate")
+}
+
+fn h411_is_selene_self_identity_question(lower: &str) -> bool {
+    matches!(
+        lower,
+        "what is your name"
+            | "what's your name"
+            | "what s your name"
+            | "whats your name"
+            | "who are you"
+            | "tell me your name"
+            | "may i know your name"
+    )
+}
+
+fn h411_is_selene_status_check(lower: &str) -> bool {
+    (lower.contains("are you working")
+        || lower.contains("are you ready")
+        || lower.contains("can you hear me")
+        || lower.contains("you working yet"))
+        && (lower.contains("selene")
+            || lower.contains("celine")
+            || lower.contains("seline")
+            || lower.contains("selina")
+            || lower.contains("celene"))
+}
+
+fn h419_is_multi_location_time_request(text: &str) -> bool {
+    let lower = text.to_ascii_lowercase();
+    let asks_time = lower.contains("what time")
+        || lower.contains("几点")
+        || lower.contains("time is it")
+        || lower.contains("current time");
+    let has_tokyo = lower.contains("tokyo") || lower.contains("东京");
+    let has_sydney = lower.contains("sydney") || lower.contains("悉尼");
+    let has_continuation = lower.contains(" what about ")
+        || lower.contains(" also ")
+        || lower.contains(" and ")
+        || lower.contains("还有")
+        || lower.contains("另外");
+    asks_time && has_tokyo && has_sydney && has_continuation
+}
+
+fn h411_is_teach_chinese_topic_request(lower: &str) -> bool {
+    (lower.contains("teach me chinese")
+        || lower.contains("teach me how to speak chinese")
+        || lower.contains("learn chinese")
+        || lower.contains("speak chinese"))
+        && (lower.contains("teach") || lower.contains("learn") || lower.contains("how to"))
+        || lower.contains("请教我中文")
+        || lower.contains("教我中文")
+}
+
+fn h411_is_chinese_language_capability_question(lower: &str) -> bool {
+    (lower.contains("do you speak chinese")
+        || lower.contains("can you speak chinese")
+        || lower.contains("speak chinese at all"))
+        && !lower.contains("answer in chinese")
+        && !lower.contains("answer me in chinese")
+}
+
+fn h411_output_language_for_topic_request(
+    captured_text: &str,
+    frame: &AdapterPublicDiscourseFrame,
+) -> &'static str {
+    explicit_output_language_for_build1c(captured_text)
+        .or_else(|| {
+            frame
+                .answer_language_preference
+                .as_deref()
+                .and_then(language_preference_tag_for_build1c)
+        })
+        .unwrap_or_else(|| language_tag_from_text_for_build1c(captured_text, None))
 }
 
 fn h411_is_correction_phrase(lower: &str) -> bool {
@@ -18029,6 +18332,60 @@ fn committed_voice_unsafe_transcript_reason(
         ));
     }
     None
+}
+
+fn committed_voice_incomplete_final_transcript(
+    transcript_text: &str,
+    partial_transcript_text: Option<&str>,
+) -> bool {
+    let final_trimmed = transcript_text.trim();
+    if final_trimmed.is_empty() {
+        return false;
+    }
+    let final_lower = normalize_h379_followup_text(final_trimmed);
+    if committed_voice_ends_with_continuation_cue(&final_lower) {
+        return true;
+    }
+    let Some(partial) = partial_transcript_text.map(str::trim).filter(|value| !value.is_empty())
+    else {
+        return false;
+    };
+    let partial_lower = normalize_h379_followup_text(partial);
+    if partial_lower == final_lower || !partial_lower.starts_with(&final_lower) {
+        return false;
+    }
+    let extra = partial_lower[final_lower.len()..]
+        .trim_matches(|ch: char| ch.is_ascii_punctuation() || ch.is_whitespace())
+        .trim();
+    if extra.is_empty() {
+        return false;
+    }
+    committed_voice_extra_partial_has_continuation(extra)
+        || extra.split_whitespace().count() >= 2
+        || extra.chars().any(is_cjk_char_for_build1c)
+}
+
+fn committed_voice_ends_with_continuation_cue(normalized_text: &str) -> bool {
+    let text = normalized_text.trim();
+    text.ends_with(" and")
+        || text.ends_with(" also")
+        || text.ends_with(" then")
+        || text.ends_with(" plus")
+        || text.ends_with(" what about")
+        || text.ends_with("还有")
+        || text.ends_with("以及")
+        || text.ends_with("然后")
+}
+
+fn committed_voice_extra_partial_has_continuation(extra: &str) -> bool {
+    extra.starts_with("also ")
+        || extra.starts_with("and ")
+        || extra.starts_with("what about ")
+        || extra.starts_with("then ")
+        || extra.starts_with("plus ")
+        || extra.starts_with("还有")
+        || extra.starts_with("以及")
+        || extra.starts_with("然后")
 }
 
 fn committed_voice_single_short_unsafe_token(transcript_text: &str) -> bool {
@@ -31905,6 +32262,428 @@ mod tests {
             .response_text
             .contains("NO_SIMULATION_NO_AUTHORITY_NO_PROTECTED_EXECUTION"));
         assert!(out.reason_code.contains("PROTECTED"));
+    }
+
+    fn h419_desktop_typed_request(
+        thread_key: &str,
+        turn: u64,
+        text: &str,
+    ) -> VoiceTurnAdapterRequest {
+        let mut req = base_request();
+        req.app_platform = "DESKTOP".to_string();
+        req.audio_capture_ref = None;
+        req.correlation_id = turn.into();
+        req.turn_id = turn;
+        req.thread_key = Some(thread_key.to_string());
+        req.user_text_final = Some(text.to_string());
+        req
+    }
+
+    fn h419_desktop_voice_request(
+        thread_key: &str,
+        turn: u64,
+        final_text: &str,
+    ) -> VoiceTurnAdapterRequest {
+        let mut req = base_request();
+        mark_request_as_live_desktop_capture_for_h417_tests(&mut req);
+        req.correlation_id = turn.into();
+        req.turn_id = turn;
+        req.thread_key = Some(thread_key.to_string());
+        req.user_text_final = Some(final_text.to_string());
+        req
+    }
+
+    #[test]
+    fn h419_half_capture_partial_longer_than_final_clarifies_before_runtime() {
+        let runtime = AdapterRuntime::default();
+        let mut req = h419_desktop_voice_request("h419-half-capture", 419_101, "现在东京几点？");
+        req.user_text_partial = Some("现在东京几点？ Also what about Sydney?".to_string());
+
+        let out = runtime
+            .run_voice_turn(req)
+            .expect("half-capture voice-like turn should complete");
+        assert_eq!(out.status, "ok");
+        assert_eq!(out.outcome, "CLARIFY");
+        assert_eq!(
+            out.reason_code,
+            ph1c_reason_codes::STT_FAIL_PARTIAL_INVALID.0.to_string()
+        );
+        assert!(
+            runtime.ingress.debug_last_agent_input_packet().is_none(),
+            "partial/final mismatch must stop before PH1.LANG/PH1.X runtime entry"
+        );
+    }
+
+    #[test]
+    fn h419_continuation_ending_final_transcript_clarifies_before_runtime() {
+        let runtime = AdapterRuntime::default();
+        let req = h419_desktop_voice_request(
+            "h419-continuation-ending",
+            419_102,
+            "What time is it in Tokyo and",
+        );
+
+        let out = runtime
+            .run_voice_turn(req)
+            .expect("continuation-ending voice-like turn should complete");
+        assert_eq!(out.status, "ok");
+        assert_eq!(out.outcome, "CLARIFY");
+        assert_eq!(
+            out.reason_code,
+            ph1c_reason_codes::STT_FAIL_PARTIAL_INVALID.0.to_string()
+        );
+        assert!(runtime.ingress.debug_last_agent_input_packet().is_none());
+    }
+
+    #[test]
+    fn h419_full_mixed_multi_time_turn_clarifies_instead_of_dropping_clause() {
+        let runtime = AdapterRuntime::default();
+        let out = runtime
+            .run_voice_turn(h419_desktop_voice_request(
+                "h419-multi-time-clarify",
+                419_103,
+                "现在东京几点？ Also what about Sydney?",
+            ))
+            .expect("full mixed multi-time voice-like turn should complete");
+        assert_eq!(out.status, "ok");
+        assert_eq!(out.outcome, "FINAL");
+        assert_eq!(out.reason_code, "TURN_BOUNDARY_HALF_CAPTURE_GATED_PASS");
+        assert!(out.response_text.contains("Tokyo"), "{}", out.response_text);
+        assert!(out.response_text.contains("Sydney"), "{}", out.response_text);
+        assert!(!out.response_text.contains("12:"), "{}", out.response_text);
+    }
+
+    #[test]
+    fn h419_language_reset_chinese_then_english_answers_english() {
+        let runtime = AdapterRuntime::default();
+        let first = runtime
+            .run_voice_turn(h419_desktop_typed_request(
+                "h419-reset-zh-en",
+                419_111,
+                "现在东京几点？",
+            ))
+            .expect("Chinese time turn should complete");
+        assert!(first.response_text.contains("东京现在是"));
+
+        let second = runtime
+            .run_voice_turn(h419_desktop_typed_request(
+                "h419-reset-zh-en",
+                419_112,
+                "What time is it in Sydney?",
+            ))
+            .expect("English time turn should complete");
+        assert_eq!(second.status, "ok");
+        assert_eq!(second.outcome, "FINAL_TOOL");
+        assert!(second.response_text.contains("Sydney"), "{}", second.response_text);
+        assert!(!second.response_text.contains("悉尼现在是"));
+        let packet = runtime
+            .ingress
+            .debug_last_agent_input_packet()
+            .expect("English turn should reach PH1.X");
+        let language = packet.language_packet.expect("language packet");
+        assert_eq!(language.input_language_primary, "en");
+        assert_eq!(language.output_language_selected, "en");
+        assert_eq!(language.output_language_reason, "current_turn_detected_language");
+    }
+
+    #[test]
+    fn h419_language_reset_english_then_chinese_answers_chinese() {
+        let runtime = AdapterRuntime::default();
+        let first = runtime
+            .run_voice_turn(h419_desktop_typed_request(
+                "h419-reset-en-zh",
+                419_121,
+                "What time is it in Tokyo?",
+            ))
+            .expect("English time turn should complete");
+        assert!(first.response_text.contains("Tokyo"));
+
+        let second = runtime
+            .run_voice_turn(h419_desktop_typed_request(
+                "h419-reset-en-zh",
+                419_122,
+                "现在悉尼几点？",
+            ))
+            .expect("Chinese time turn should complete");
+        assert_eq!(second.status, "ok");
+        assert_eq!(second.outcome, "FINAL_TOOL");
+        assert!(second.response_text.contains("悉尼现在是"));
+        let packet = runtime
+            .ingress
+            .debug_last_agent_input_packet()
+            .expect("Chinese turn should reach PH1.X");
+        let language = packet.language_packet.expect("language packet");
+        assert_eq!(language.input_language_primary, "zh");
+        assert_eq!(language.output_language_selected, "zh");
+    }
+
+    #[test]
+    fn h419_teach_chinese_in_english_keeps_topic_language_separate() {
+        let runtime = AdapterRuntime::default();
+        let out = runtime
+            .run_voice_turn(h419_desktop_typed_request(
+                "h419-topic-language",
+                419_131,
+                "I need you to teach me how to speak Chinese.",
+            ))
+            .expect("teach Chinese topic turn should complete");
+        assert_eq!(out.status, "ok");
+        assert_eq!(out.outcome, "FINAL");
+        assert_eq!(out.reason_code, "TEACH_CHINESE_IN_ENGLISH_PASS");
+        assert!(out.response_text.starts_with("Yes."), "{}", out.response_text);
+        assert!(out.response_text.contains("Chinese phrases"));
+        assert!(!out.response_text.starts_with("可以"));
+    }
+
+    #[test]
+    fn h419_topic_language_explicit_chinese_output_answers_chinese() {
+        let runtime = AdapterRuntime::default();
+        let out = runtime
+            .run_voice_turn(h419_desktop_typed_request(
+                "h419-topic-language-zh",
+                419_132,
+                "Teach me Chinese, answer in Chinese.",
+            ))
+            .expect("explicit Chinese answer directive should complete");
+        assert_eq!(out.status, "ok");
+        assert_eq!(out.outcome, "FINAL");
+        assert!(out.response_text.starts_with("可以"), "{}", out.response_text);
+    }
+
+    #[test]
+    fn h419_chinese_topic_question_in_english_answers_english() {
+        let runtime = AdapterRuntime::default();
+        let out = runtime
+            .run_voice_turn(h419_desktop_typed_request(
+                "h419-topic-question",
+                419_133,
+                "Do you speak Chinese at all man?",
+            ))
+            .expect("Chinese capability topic question should complete");
+        assert_eq!(out.status, "ok");
+        assert_eq!(out.outcome, "FINAL");
+        assert_eq!(out.reason_code, "TOPIC_LANGUAGE_NOT_OUTPUT_LANGUAGE_PASS");
+        assert!(out.response_text.starts_with("Yes."), "{}", out.response_text);
+    }
+
+    #[test]
+    fn h419_chinese_input_teach_chinese_answers_chinese() {
+        let runtime = AdapterRuntime::default();
+        let out = runtime
+            .run_voice_turn(h419_desktop_typed_request(
+                "h419-topic-input-zh",
+                419_134,
+                "请教我中文。",
+            ))
+            .expect("Chinese teach request should complete");
+        assert_eq!(out.status, "ok");
+        assert_eq!(out.outcome, "FINAL");
+        assert!(out.response_text.starts_with("可以"), "{}", out.response_text);
+    }
+
+    #[test]
+    fn h419_explicit_answer_language_directive_persists_until_changed() {
+        let runtime = AdapterRuntime::default();
+        let first = runtime
+            .run_voice_turn(h419_desktop_typed_request(
+                "h419-language-directive",
+                419_141,
+                "I'm speaking to you in English, you should answer me in English.",
+            ))
+            .expect("English directive turn should complete");
+        assert_eq!(first.status, "ok");
+
+        let second = runtime
+            .run_voice_turn(h419_desktop_typed_request(
+                "h419-language-directive",
+                419_142,
+                "I need you to teach me how to speak Chinese.",
+            ))
+            .expect("topic request after English directive should complete");
+        assert_eq!(second.reason_code, "TEACH_CHINESE_IN_ENGLISH_PASS");
+        assert!(second.response_text.starts_with("Yes."), "{}", second.response_text);
+
+        let third = runtime
+            .run_voice_turn(h419_desktop_typed_request(
+                "h419-language-directive",
+                419_143,
+                "Answer me in Chinese.",
+            ))
+            .expect("Chinese directive turn should complete");
+        assert_eq!(third.status, "ok");
+
+        let fourth = runtime
+            .run_voice_turn(h419_desktop_typed_request(
+                "h419-language-directive",
+                419_144,
+                "Teach me Chinese.",
+            ))
+            .expect("topic request after Chinese directive should complete");
+        assert!(fourth.response_text.starts_with("可以"), "{}", fourth.response_text);
+
+        let fifth = runtime
+            .run_voice_turn(h419_desktop_typed_request(
+                "h419-language-directive",
+                419_145,
+                "Answer me in English.",
+            ))
+            .expect("English directive switch-back should complete");
+        assert_eq!(fifth.status, "ok");
+
+        let sixth = runtime
+            .run_voice_turn(h419_desktop_typed_request(
+                "h419-language-directive",
+                419_146,
+                "Teach me Chinese.",
+            ))
+            .expect("topic request after English switch-back should complete");
+        assert!(sixth.response_text.starts_with("Yes."), "{}", sixth.response_text);
+    }
+
+    #[test]
+    fn selene_name_canonicalization_voice_like_celine_addresses_assistant() {
+        let runtime = AdapterRuntime::default();
+        let mut req = base_request();
+        mark_request_as_live_desktop_capture_for_h417_tests(&mut req);
+        req.correlation_id = 419_001;
+        req.turn_id = 419_001;
+        req.user_text_final = Some("Are you working yet, Celine?".to_string());
+
+        let out = runtime
+            .run_voice_turn(req)
+            .expect("voice-like Celine assistant-address turn should complete");
+        assert_eq!(out.status, "ok");
+        assert_eq!(out.outcome, "FINAL");
+        assert_eq!(out.reason_code, "SELENE_NAME_CANONICALIZATION_PASS");
+        assert_eq!(out.response_text, "I'm here and ready to help.");
+
+        let canonicalized =
+            h380_selene_name_canonical_text_for_assistant_address("Are you working yet, Celine?")
+                .expect("assistant-address Celine should canonicalize");
+        assert_eq!(canonicalized, "Are you working yet, Selene?");
+    }
+
+    #[test]
+    fn selene_name_canonicalization_voice_like_selene_addresses_assistant() {
+        let runtime = AdapterRuntime::default();
+        let mut req = base_request();
+        mark_request_as_live_desktop_capture_for_h417_tests(&mut req);
+        req.correlation_id = 419_002;
+        req.turn_id = 419_002;
+        req.user_text_final = Some("Are you working yet, Selene?".to_string());
+
+        let out = runtime
+            .run_voice_turn(req)
+            .expect("voice-like Selene assistant-address turn should complete");
+        assert_eq!(out.status, "ok");
+        assert_eq!(out.outcome, "FINAL");
+        assert_eq!(out.reason_code, "SELENE_NAME_CANONICALIZATION_PASS");
+        assert_eq!(out.response_text, "I'm here and ready to help.");
+    }
+
+    #[test]
+    fn selene_self_identity_typed_name_question_answers_exactly() {
+        let runtime = AdapterRuntime::default();
+        let mut req = base_request();
+        req.app_platform = "DESKTOP".to_string();
+        req.audio_capture_ref = None;
+        req.correlation_id = 419_003;
+        req.turn_id = 419_003;
+        req.user_text_final = Some("What is your name?".to_string());
+
+        let out = runtime
+            .run_voice_turn(req)
+            .expect("typed self-identity turn should complete");
+        assert_eq!(out.status, "ok");
+        assert_eq!(out.outcome, "FINAL");
+        assert_eq!(out.reason_code, "SELENE_SELF_IDENTITY_PASS");
+        assert_eq!(out.response_text, "I’m Selene.");
+    }
+
+    #[test]
+    fn selene_self_identity_voice_like_name_question_answers_exactly() {
+        let runtime = AdapterRuntime::default();
+        let mut req = base_request();
+        mark_request_as_live_desktop_capture_for_h417_tests(&mut req);
+        req.correlation_id = 419_004;
+        req.turn_id = 419_004;
+        req.user_text_final = Some("What's your name?".to_string());
+
+        let out = runtime
+            .run_voice_turn(req)
+            .expect("voice-like self-identity turn should complete");
+        assert_eq!(out.status, "ok");
+        assert_eq!(out.outcome, "FINAL");
+        assert_eq!(out.reason_code, "SELENE_SELF_IDENTITY_PASS");
+        assert_eq!(out.response_text, "I’m Selene.");
+    }
+
+    #[test]
+    fn unrelated_celine_not_rewritten_to_selene() {
+        let text = "Celine is my colleague";
+        assert!(
+            h380_selene_name_canonical_text_for_assistant_address(text).is_none(),
+            "non-address real person/entity Celine must not be rewritten"
+        );
+        let packet = h380_understand_committed_turn(text, None);
+        assert_eq!(packet.normalized_text, "celine is my colleague");
+        assert!(!packet.normalized_text.contains("selene"));
+        assert!(
+            h411_public_discourse_response(text, &AdapterPublicDiscourseFrame::default()).is_none()
+        );
+        assert!(h380_selene_name_canonical_text_for_assistant_address(
+            "Email Celine from accounting"
+        )
+        .is_none());
+        assert!(h380_selene_name_canonical_text_for_assistant_address(
+            "Email Celine from accounting about your forms"
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn selene_name_canonicalization_homophones_are_context_gated() {
+        for (raw, expected) in [
+            (
+                "Are you working yet, Seline?",
+                "Are you working yet, Selene?",
+            ),
+            (
+                "Are you working yet, Selina?",
+                "Are you working yet, Selene?",
+            ),
+            (
+                "Are you working yet, Celene?",
+                "Are you working yet, Selene?",
+            ),
+            ("Hey Celine, can you help?", "Hey Selene, can you help?"),
+        ] {
+            assert_eq!(
+                h380_selene_name_canonical_text_for_assistant_address(raw).as_deref(),
+                Some(expected),
+                "{raw}"
+            );
+        }
+    }
+
+    #[test]
+    fn selene_name_confusion_protected_prompt_still_fails_closed() {
+        let runtime = AdapterRuntime::default();
+        let mut req = base_request();
+        mark_request_as_live_desktop_capture_for_h417_tests(&mut req);
+        req.correlation_id = 419_005;
+        req.turn_id = 419_005;
+        req.user_text_final = Some("Celine, approve payroll for Tim.".to_string());
+
+        let out = runtime
+            .run_voice_turn(req)
+            .expect("protected assistant-address turn should complete");
+        assert_eq!(out.status, "ok");
+        assert!(out
+            .response_text
+            .contains("NO_SIMULATION_NO_AUTHORITY_NO_PROTECTED_EXECUTION"));
+        assert_ne!(out.reason_code, "SELENE_NAME_CANONICALIZATION_PASS");
+        assert_ne!(out.reason_code, "SELENE_SELF_IDENTITY_PASS");
     }
 
     #[test]

@@ -6595,6 +6595,11 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
         )
         let boundedProjectID = Self.boundedSessionProjectID(projectID)
         let boundedPinnedContextRefs = Self.boundedSessionPinnedContextRefs(pinnedContextRefs)
+        let partialTranscript = preparedRequest.partialTranscript?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let boundedPartialTranscript = partialTranscript.flatMap { value in
+            (!value.isEmpty && value.utf8.count <= 16_384) ? value : nil
+        }
 
         let payload = VoiceTurnAdapterRequestPayload(
             correlationID: correlationID,
@@ -6618,7 +6623,7 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
             projectID: boundedProjectID,
             pinnedContextRefs: boundedPinnedContextRefs.isEmpty ? nil : boundedPinnedContextRefs,
             threadPolicyFlags: threadPolicyFlags,
-            userTextPartial: nil,
+            userTextPartial: boundedPartialTranscript,
             userTextFinal: transcript,
             seleneTextPartial: nil,
             seleneTextFinal: nil,

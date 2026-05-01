@@ -1143,6 +1143,7 @@ struct ExplicitVoiceTurnRequestState: Identifiable {
     let id: String
     let deviceTurnSequence: UInt64
     let transcript: String
+    let partialTranscript: String?
     let byteCount: Int
     let audioCaptureRefState: DesktopVoiceTurnAudioCaptureRefState
 
@@ -1944,6 +1945,7 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
             id: "desktop_voice_turn_request_\(deviceTurnSequence)",
             deviceTurnSequence: deviceTurnSequence,
             transcript: trimmedTranscript,
+            partialTranscript: trimmedTranscript,
             byteCount: trimmedTranscript.utf8.count,
             audioCaptureRefState: audioCaptureRefState
         )
@@ -2349,10 +2351,12 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
         let deviceTurnSequence = nextDeviceTurnSequence()
         realtimeCommittedTranscript = trimmedTranscript
         transcriptPreview = trimmedTranscript
+        let trimmedPartialTranscript = realtimePartialTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
         pendingRequest = ExplicitVoiceTurnRequestState(
             id: "desktop_realtime_voice_turn_request_\(deviceTurnSequence)",
             deviceTurnSequence: deviceTurnSequence,
             transcript: trimmedTranscript,
+            partialTranscript: trimmedPartialTranscript.isEmpty ? nil : trimmedPartialTranscript,
             byteCount: trimmedTranscript.utf8.count,
             audioCaptureRefState: audioCaptureRefState
         )
