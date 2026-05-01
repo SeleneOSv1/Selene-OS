@@ -5420,6 +5420,8 @@ struct DesktopSessionShellView: View {
     @State private var desktopRealtimeTranscriptionStartInFlight = false
     @State private var desktopRealtimeTranscriptionStartGeneration: UInt64 = 0
     @State private var desktopOpenAITtsPlaybackGeneration: UInt64 = 0
+    @State private var desktopOpenAITtsSelfEchoGateGeneration: UInt64 = 0
+    @State private var desktopOpenAITtsSelfEchoGateActive = false
     @State private var desktopCanonicalRuntimeOutcomeState: DesktopCanonicalRuntimeOutcomeState?
     @State private var desktopInviteOpenRuntimeOutcomeState: DesktopInviteOpenRuntimeOutcomeState?
     @State private var desktopOnboardingContinueRuntimeOutcomeState: DesktopOnboardingContinueRuntimeOutcomeState?
@@ -5571,9 +5573,10 @@ struct DesktopSessionShellView: View {
         .onReceive(desktopAuthoritativeReplyPlaybackController.$playbackState) { playbackState in
             desktopAuthoritativeReplyPlaybackState = playbackState
             if playbackState.phase != .speaking,
-               desktopComposerVoiceModeAwaitingReplyPlaybackCompletion {
-                desktopComposerVoiceModeAwaitingReplyPlaybackCompletion = false
-                desktopAttemptResumeComposerVoiceMode()
+               playbackState.phase != .requesting,
+               (desktopOpenAITtsSelfEchoGateActive
+                    || desktopComposerVoiceModeAwaitingReplyPlaybackCompletion) {
+                releaseDesktopOpenAITtsSelfEchoGateAfterCooldown(reason: "playback_state_\(playbackState.phase.rawValue)")
             }
         }
         .onDisappear {
@@ -7605,6 +7608,7 @@ struct DesktopSessionShellView: View {
               explicitVoiceController.pendingRequest == nil,
               desktopTypedTurnPendingRequest == nil,
               !desktopRealtimeTranscriptionStartInFlight,
+              !desktopOpenAITtsSelfEchoGateActive,
               !desktopWakeListenerController.listenerState.isActiveForMicrophone,
               desktopWakeListenerController.listenerState != .dispatching,
               desktopWakeListenerController.pendingRequest == nil,
@@ -7619,6 +7623,13 @@ struct DesktopSessionShellView: View {
     }
 
     private func startDesktopComposerVoiceTurn() {
+        guard !desktopOpenAITtsSelfEchoGateActive else {
+            desktopAppendRuntimeBridgeDebugLog(
+                "desktop voice capture start blocked reason=openai_tts_self_echo_gate"
+            )
+            return
+        }
+
         let wakeDispatchInFlight = desktopWakeListenerController.listenerState == .dispatching
         desktopWakeListenerController.haltCaptureSession()
         if !wakeDispatchInFlight {
@@ -7645,6 +7656,13 @@ struct DesktopSessionShellView: View {
     }
 
     private func startDesktopExplicitVoiceTurn() {
+        guard !desktopOpenAITtsSelfEchoGateActive else {
+            desktopAppendRuntimeBridgeDebugLog(
+                "desktop explicit voice capture start blocked reason=openai_tts_self_echo_gate"
+            )
+            return
+        }
+
         let featureFlagEnabled = DesktopRealtimeTranscriptionFeatureFlag.isEnabled
         desktopAppendRuntimeBridgeDebugLog(
             "desktop realtime transcription flag name=\(DesktopRealtimeTranscriptionFeatureFlag.name) enabled=\(featureFlagEnabled)"
@@ -14064,6 +14082,7 @@ struct DesktopSessionShellView: View {
                             desktopAuthoritativeReplyRenderState?.authoritativeResponseText?
                                 .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false
                                 || desktopAuthoritativeReplyPlaybackState.phase == .speaking
+                                || desktopAuthoritativeReplyPlaybackState.phase == .requesting
                         )
 
                         Button("Stop reply playback") {
@@ -14171,6 +14190,7 @@ struct DesktopSessionShellView: View {
                     .disabled(
                         state.authoritativeResponseText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                             || state.playbackPhase == DesktopAuthoritativeReplyPlaybackState.Phase.speaking.rawValue
+                            || state.playbackPhase == DesktopAuthoritativeReplyPlaybackState.Phase.requesting.rawValue
                     )
 
                     Button("Stop reply playback") {
@@ -14282,6 +14302,7 @@ struct DesktopSessionShellView: View {
                     .disabled(
                         state.authoritativeResponseText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                             || state.playbackPhase == DesktopAuthoritativeReplyPlaybackState.Phase.speaking.rawValue
+                            || state.playbackPhase == DesktopAuthoritativeReplyPlaybackState.Phase.requesting.rawValue
                     )
 
                     Button("Stop reply playback") {
@@ -17511,11 +17532,9 @@ struct DesktopSessionShellView: View {
     }
 
     private func playAuthoritativeReply() {
-        desktopAuthoritativeReplyPlaybackState = desktopAuthoritativeReplyPlaybackController
-            .failClosedWithoutNativePlayback(
-                authoritativeResponseText: desktopAuthoritativeReplyRenderState?.authoritativeResponseText,
-                fallbackReason: "manual_play_requires_openai_tts"
-            )
+        Task { @MainActor in
+            await playCurrentAuthoritativeReply()
+        }
     }
 
     @MainActor
@@ -17525,6 +17544,57 @@ struct DesktopSessionShellView: View {
         guard let authoritativeResponseText = outcomeState.authoritativeResponseText?
             .trimmingCharacters(in: .whitespacesAndNewlines),
               !authoritativeResponseText.isEmpty else {
+            return false
+        }
+
+        return await playAuthoritativeReplyViaOpenAITTS(
+            authoritativeResponseText: authoritativeResponseText,
+            sessionID: outcomeState.sessionID,
+            turnID: outcomeState.turnID,
+            runtimeRequestID: outcomeState.requestID
+        )
+    }
+
+    @MainActor
+    private func playCurrentAuthoritativeReply() async {
+        guard let authoritativeResponseText = desktopAuthoritativeReplyRenderState?.authoritativeResponseText?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+              !authoritativeResponseText.isEmpty else {
+            desktopAuthoritativeReplyPlaybackState = desktopAuthoritativeReplyPlaybackController
+                .failClosedWithoutNativePlayback(
+                    authoritativeResponseText: desktopAuthoritativeReplyRenderState?.authoritativeResponseText,
+                    fallbackReason: "missing_completed_runtime_outcome_for_openai_tts"
+                )
+            return
+        }
+
+        await playManualAuthoritativeReply(authoritativeResponseText)
+    }
+
+    @MainActor
+    private func playManualAuthoritativeReply(_ authoritativeResponseText: String) async {
+        let trimmedAuthoritativeResponseText = authoritativeResponseText
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedAuthoritativeResponseText.isEmpty else {
+            return
+        }
+
+        _ = await playAuthoritativeReplyViaOpenAITTS(
+            authoritativeResponseText: trimmedAuthoritativeResponseText,
+            sessionID: nil,
+            turnID: nil,
+            runtimeRequestID: "desktop_manual_openai_tts_replay_\(UUID().uuidString)"
+        )
+    }
+
+    @MainActor
+    private func playAuthoritativeReplyViaOpenAITTS(
+        authoritativeResponseText: String,
+        sessionID: String?,
+        turnID: String?,
+        runtimeRequestID: String?
+    ) async -> Bool {
+        guard !authoritativeResponseText.isEmpty else {
             return false
         }
 
@@ -17540,14 +17610,15 @@ struct DesktopSessionShellView: View {
             return desktopAuthoritativeReplyPlaybackState.phase == .speaking
         }
 
+        beginDesktopOpenAITtsSelfEchoGate(reason: "openai_tts_request_start")
         desktopOpenAITtsPlaybackGeneration &+= 1
         let playbackGeneration = desktopOpenAITtsPlaybackGeneration
         let answerTextSHA256 = desktopSessionSHA256Hex(Data(authoritativeResponseText.utf8))
         let token = DesktopOpenAITtsPlaybackToken(
             ttsRequestID: nil,
-            sessionID: outcomeState.sessionID,
-            turnID: outcomeState.turnID,
-            runtimeRequestID: outcomeState.requestID,
+            sessionID: sessionID,
+            turnID: turnID,
+            runtimeRequestID: runtimeRequestID,
             answerTextSHA256: answerTextSHA256
         )
         desktopAuthoritativeReplyPlaybackState = desktopAuthoritativeReplyPlaybackController
@@ -17559,9 +17630,9 @@ struct DesktopSessionShellView: View {
         do {
             let speechState = try await desktopCanonicalRuntimeBridge.createDesktopOpenAITtsSpeech(
                 responseText: authoritativeResponseText,
-                sessionID: outcomeState.sessionID,
-                turnID: outcomeState.turnID,
-                runtimeRequestID: outcomeState.requestID,
+                sessionID: sessionID,
+                turnID: turnID,
+                runtimeRequestID: runtimeRequestID,
                 featureFlagName: DesktopOpenAITtsFeatureFlag.name,
                 featureFlagEnabled: true,
                 voice: nil,
@@ -17571,6 +17642,7 @@ struct DesktopSessionShellView: View {
                 desktopAppendRuntimeBridgeDebugLog(
                     "desktop openai tts stale audio discarded reason=newer_turn_started audio_sha256=\(speechState.audioSHA256)"
                 )
+                releaseDesktopOpenAITtsSelfEchoGateAfterCooldown(reason: "stale_audio_discarded")
                 return false
             }
             desktopAppendRuntimeBridgeDebugLog(
@@ -17581,12 +17653,16 @@ struct DesktopSessionShellView: View {
             desktopAppendRuntimeBridgeDebugLog(
                 "desktop openai tts state=PLAYING_OPENAI tts_provider_id=\(DesktopVoiceProviderLane.ttsProviderID) fallback_used=false request=\(speechState.requestID)"
             )
+            if desktopAuthoritativeReplyPlaybackState.phase != .speaking {
+                releaseDesktopOpenAITtsSelfEchoGateAfterCooldown(reason: "playback_not_started")
+            }
             return desktopAuthoritativeReplyPlaybackState.phase == .speaking
         } catch {
             guard desktopOpenAITtsPlaybackGeneration == playbackGeneration else {
                 desktopAppendRuntimeBridgeDebugLog(
                     "desktop openai tts request failure absorbed reason=newer_turn_started"
                 )
+                releaseDesktopOpenAITtsSelfEchoGateAfterCooldown(reason: "request_failure_absorbed")
                 return false
             }
             let fallbackReason = boundedFailureLogToken(error.localizedDescription)
@@ -17598,12 +17674,56 @@ struct DesktopSessionShellView: View {
                     authoritativeResponseText: authoritativeResponseText,
                     fallbackReason: fallbackReason
                 )
+            releaseDesktopOpenAITtsSelfEchoGateAfterCooldown(reason: "request_failed")
             return false
+        }
+    }
+
+    private func beginDesktopOpenAITtsSelfEchoGate(reason: String) {
+        desktopOpenAITtsSelfEchoGateGeneration &+= 1
+        desktopOpenAITtsSelfEchoGateActive = true
+        cancelDesktopRealtimeTranscriptionStartIfNeeded()
+
+        if explicitVoiceController.isListening {
+            explicitVoiceController.discardCurrentVoiceTurn()
+        }
+
+        desktopAppendRuntimeBridgeDebugLog(
+            "desktop voice self echo gate active=true reason=\(boundedFailureLogToken(reason)) capture_paused=true"
+        )
+    }
+
+    private func releaseDesktopOpenAITtsSelfEchoGateAfterCooldown(reason: String) {
+        desktopOpenAITtsSelfEchoGateGeneration &+= 1
+        let gateGeneration = desktopOpenAITtsSelfEchoGateGeneration
+        desktopAppendRuntimeBridgeDebugLog(
+            "desktop voice self echo gate release scheduled reason=\(boundedFailureLogToken(reason)) cooldown_ms=900"
+        )
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 900_000_000)
+            guard desktopOpenAITtsSelfEchoGateGeneration == gateGeneration,
+                  desktopAuthoritativeReplyPlaybackState.phase != .speaking,
+                  desktopAuthoritativeReplyPlaybackState.phase != .requesting else {
+                return
+            }
+
+            desktopOpenAITtsSelfEchoGateActive = false
+            desktopAppendRuntimeBridgeDebugLog(
+                "desktop voice self echo gate active=false reason=cooldown_elapsed"
+            )
+
+            if desktopComposerVoiceModeAwaitingReplyPlaybackCompletion {
+                desktopComposerVoiceModeAwaitingReplyPlaybackCompletion = false
+                desktopAttemptResumeComposerVoiceMode()
+            }
         }
     }
 
     private func cancelOpenAITtsPlaybackForNewTurn(reason: String) {
         desktopOpenAITtsPlaybackGeneration &+= 1
+        desktopOpenAITtsSelfEchoGateGeneration &+= 1
+        desktopOpenAITtsSelfEchoGateActive = false
+        desktopComposerVoiceModeAwaitingReplyPlaybackCompletion = false
         desktopAppendRuntimeBridgeDebugLog(
             "desktop openai tts playback cancelled reason=\(boundedFailureLogToken(reason))"
         )
@@ -17614,6 +17734,7 @@ struct DesktopSessionShellView: View {
     private func stopAuthoritativeReplyPlayback() {
         desktopOpenAITtsPlaybackGeneration &+= 1
         desktopAuthoritativeReplyPlaybackState = desktopAuthoritativeReplyPlaybackController.stop()
+        releaseDesktopOpenAITtsSelfEchoGateAfterCooldown(reason: "manual_stop")
     }
 
     @MainActor
