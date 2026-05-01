@@ -9,6 +9,12 @@ use std::process::Command;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::device_vault;
+use crate::ph1providerctl::{
+    disabled_provider_decision, evaluate_provider_gate, fake_provider_decision,
+    is_local_fake_endpoint, ProviderCallCounter, ProviderControlMode, ProviderControlProvider,
+    ProviderControlRoute, ProviderGateDecision, ProviderNetworkPolicy, ProviderUsageContext,
+    UNAVAILABLE,
+};
 use crate::ph1search::{Ph1SearchConfig, Ph1SearchRuntime};
 use selene_kernel_contracts::ph1e::{
     AcceptedSourcePacket, CacheStatus, RejectedSourcePacket, RequestedEntityPacket,
@@ -396,8 +402,11 @@ struct GdeltCorroborationDecision {
     proof_id: &'static str,
 }
 
+#[cfg(test)]
 const STARTUP_CONNECTIVITY_TIMEOUT_MS: u32 = 2_000;
+#[cfg(test)]
 const BRAVE_CONNECTIVITY_PROBE_URL: &str = "https://api.search.brave.com/res/v1/web/search";
+#[cfg(test)]
 const OPENAI_CONNECTIVITY_PROBE_URL: &str = "https://api.openai.com/";
 const CLASH_EXPLICIT_HINT: &str =
     "If using Clash, set SELENE_PROXY_MODE=explicit and SELENE_HTTP_PROXY_URL=http://127.0.0.1:<port>";
@@ -836,9 +845,14 @@ impl Ph1eRuntime {
                 &req.query,
                 req.strict_budget.max_results.min(self.config.max_results),
             ),
-            ToolName::DeepResearch => match self.run_deep_research(req) {
-                Ok(result) => result,
-                Err(fail) => {
+            ToolName::DeepResearch => {
+                if let Some(fail) = self.stage2_blocked_provider_payload(
+                    req,
+                    ProviderControlRoute::DeepResearch,
+                    ProviderControlProvider::BraveWebSearch,
+                    self.brave_fixture_json_for(false).is_some()
+                        || is_local_fake_endpoint(&self.provider_config.brave_web_url),
+                ) {
                     return fail_response_with_detail(
                         req,
                         fail.reason_code,
@@ -846,7 +860,18 @@ impl Ph1eRuntime {
                         fail.fail_detail.as_deref(),
                     );
                 }
-            },
+                match self.run_deep_research(req) {
+                    Ok(result) => result,
+                    Err(fail) => {
+                        return fail_response_with_detail(
+                            req,
+                            fail.reason_code,
+                            CacheStatus::Miss,
+                            fail.fail_detail.as_deref(),
+                        );
+                    }
+                }
+            }
             ToolName::RecordMode => ToolResult::RecordMode {
                 summary: format!("Recording summary for '{}'", truncate_ascii(&req.query, 80)),
                 action_items: vec![
@@ -970,6 +995,48 @@ impl Ph1eRuntime {
         req: &ToolRequest,
     ) -> Result<(ToolResult, SourceMetadata), ToolFailPayload> {
         self.run_live_search(req, ToolName::News)
+    }
+
+    fn stage2_provider_gate_for_request(
+        &self,
+        req: &ToolRequest,
+        route: ProviderControlRoute,
+        provider: ProviderControlProvider,
+        fixture_or_local: bool,
+    ) -> ProviderGateDecision {
+        let mode = if fixture_or_local {
+            ProviderControlMode::TestFake
+        } else {
+            ProviderControlMode::Live
+        };
+        let policy = if fixture_or_local {
+            ProviderNetworkPolicy::fake_test_allowing(req.strict_budget.max_results.max(1) as u32)
+        } else {
+            ProviderNetworkPolicy::from_env()
+        };
+        let mut context = ProviderUsageContext::unknown(route, provider, &req.query);
+        context.request_id = req.request_id.0.to_string();
+        context.turn_id = req.query_hash.0.to_string();
+        context.session_id = UNAVAILABLE.to_string();
+        evaluate_provider_gate(&policy, context, mode, ProviderCallCounter::default())
+    }
+
+    fn stage2_blocked_provider_payload(
+        &self,
+        req: &ToolRequest,
+        route: ProviderControlRoute,
+        provider: ProviderControlProvider,
+        fixture_or_local: bool,
+    ) -> Option<ToolFailPayload> {
+        let decision =
+            self.stage2_provider_gate_for_request(req, route, provider, fixture_or_local);
+        if decision.allowed {
+            return None;
+        }
+        Some(ToolFailPayload::with_detail(
+            reason_codes::E_FAIL_POLICY_BLOCK,
+            decision.disabled_trace_line(),
+        ))
     }
 
     fn build_deep_research_ph1_search_plan(
@@ -1731,6 +1798,23 @@ impl Ph1eRuntime {
         let timeout_ms = self.config.max_timeout_ms.min(GDELT_TIMEOUT_MS).max(100);
         let (gdelt_proxy_config, gdelt_proxy_route_proof) =
             gdelt_proxy_route_config_from_env(&self.provider_config.proxy_config);
+        let gdelt_gate = disabled_provider_decision(
+            ProviderControlRoute::NewsSearch,
+            ProviderControlProvider::GdeltNewsAssist,
+            query,
+        );
+        if !gdelt_gate.allowed {
+            return gdelt_corroboration_decision_with_route_proof(
+                query,
+                retrieved_at_unix_ms,
+                "provider_disabled".to_string(),
+                Vec::new(),
+                &primary_domains,
+                Some(gdelt_gate.disabled_trace_line()),
+                "external_probe_blocked".to_string(),
+                gdelt_proxy_route_proof,
+            );
+        }
         if gdelt_proxy_route_proof.explicit_proxy_credentials_rejected {
             return gdelt_corroboration_decision_with_route_proof(
                 query,
@@ -1817,6 +1901,43 @@ impl Ph1eRuntime {
                 candidate: None,
                 provider_call_attempted: false,
                 provider_error: Some("private_query_blocked"),
+            };
+        }
+
+        let image_gate = if self.brave_image_fixture_json().is_some() {
+            fake_provider_decision(
+                ProviderControlRoute::ImageSearch,
+                ProviderControlProvider::BraveImageSearch,
+                query,
+                1,
+            )
+        } else {
+            disabled_provider_decision(
+                ProviderControlRoute::ImageSearch,
+                ProviderControlProvider::BraveImageSearch,
+                query,
+            )
+        };
+        if !image_gate.allowed {
+            return BraveImageMetadataDecision {
+                selected_outcome: "NO_APPROVED_IMAGE_PROVIDER_PATH",
+                path_status: "WEB_IMAGE_METADATA_PROVIDER_PATH_BLOCKED_BY_PROVIDER_CONTROL",
+                source_card_status: "WEB_IMAGE_SOURCE_CARD_DEFERRED:provider_disabled",
+                display_status: "WEB_IMAGE_SOURCE_CARD_DISPLAY_DEFERRED",
+                display_deferred_reason: "provider_disabled",
+                blocker: Some("provider_disabled"),
+                supports_image_url: false,
+                supports_thumbnail_url: false,
+                supports_source_page_url: false,
+                supports_source_domain: false,
+                supports_retrieved_at: false,
+                supports_display_safety: false,
+                supports_license_or_usage_note: false,
+                supports_image_source_verified: false,
+                candidate_count: 0,
+                candidate: None,
+                provider_call_attempted: false,
+                provider_error: Some("provider_disabled"),
             };
         }
 
@@ -2070,6 +2191,28 @@ impl Ph1eRuntime {
                 reason.to_string(),
             ));
         }
+        let is_news = matches!(kind, ToolName::News);
+        let primary_url = if is_news {
+            &self.provider_config.brave_news_url
+        } else {
+            &self.provider_config.brave_web_url
+        };
+        if let Some(fail) = self.stage2_blocked_provider_payload(
+            req,
+            if is_news {
+                ProviderControlRoute::NewsSearch
+            } else {
+                ProviderControlRoute::WebSearch
+            },
+            if is_news {
+                ProviderControlProvider::BraveNewsSearch
+            } else {
+                ProviderControlProvider::BraveWebSearch
+            },
+            self.brave_fixture_json_for(is_news).is_some() || is_local_fake_endpoint(primary_url),
+        ) {
+            return Err(fail);
+        }
         let max_results = req.strict_budget.max_results.min(self.config.max_results);
         let brave_api_key = self.resolve_brave_api_key();
         let openai_api_key = self.resolve_openai_api_key();
@@ -2240,6 +2383,14 @@ impl Ph1eRuntime {
         &self,
         req: &ToolRequest,
     ) -> Result<(ToolResult, SourceMetadata), ToolFailPayload> {
+        if let Some(fail) = self.stage2_blocked_provider_payload(
+            req,
+            ProviderControlRoute::UrlFetch,
+            ProviderControlProvider::UrlFetch,
+            self.url_fetch_fixture_html().is_some(),
+        ) {
+            return Err(fail);
+        }
         let url = first_http_url_in_text(&req.query)
             .ok_or_else(|| ToolFailPayload::new(reason_codes::E_FAIL_QUERY_PARSE))?;
         if let Some(reason) = url_fetch_safety_block_reason(&url) {
@@ -2271,13 +2422,21 @@ impl Ph1eRuntime {
 }
 
 pub fn startup_outbound_self_check_logs() -> Vec<String> {
-    let provider_config = Ph1eProviderConfig::from_env();
-    run_startup_outbound_self_check_with_probe(&provider_config, probe_provider_connectivity)
-        .into_iter()
-        .map(|failure| failure.safe_log_line())
-        .collect()
+    let decision = disabled_provider_decision(
+        ProviderControlRoute::StartupProbe,
+        ProviderControlProvider::StartupProbe,
+        "startup provider probe",
+    );
+    if !decision.allowed {
+        return vec![decision.disabled_trace_line()];
+    }
+    vec![
+        "stage2_provider_control=1 route=StartupProbe provider=startup_provider_probe allowed=false deny_reason=STARTUP_PROVIDER_PROBES_DEFERRED provider_blocked_count=1 provider_call_attempt_count=0 provider_network_dispatch_count=0 billing_scope=NON_BILLABLE billable_class=BLOCKED_NOT_BILLABLE"
+            .to_string(),
+    ]
 }
 
+#[cfg(test)]
 fn run_startup_outbound_self_check_with_probe<F>(
     provider_config: &Ph1eProviderConfig,
     mut probe: F,
@@ -2315,24 +2474,6 @@ where
         }
     }
     failures
-}
-
-fn probe_provider_connectivity(
-    provider: &'static str,
-    endpoint: &'static str,
-    timeout_ms: u32,
-    user_agent: &str,
-    proxy_config: &Ph1eProxyConfig,
-) -> Result<(), ProviderCallError> {
-    let agent = build_http_agent(timeout_ms, user_agent, proxy_config)
-        .map_err(|_| ProviderCallError::new(provider, "config_invalid", None))?;
-    match agent.head(endpoint).call() {
-        Ok(_) => Ok(()),
-        Err(ureq::Error::Status(_, _)) => Ok(()),
-        Err(ureq::Error::Transport(transport)) => {
-            Err(provider_error_from_transport(provider, transport))
-        }
-    }
 }
 
 trait ToolResultWithSource {
@@ -6558,13 +6699,19 @@ fn run_openai_search_fallback(
     });
     let agent = build_http_agent(timeout_ms, user_agent, proxy_config)
         .map_err(|_| ProviderCallError::new("openai", "config_invalid", None))?;
-    let response = post_json(agent.clone(), endpoint, api_key, &payload).or_else(|_| {
-        // Fallback when the account/model does not support tool invocation.
-        if let Some(obj) = payload.as_object_mut() {
-            obj.remove("tools");
+    let response = match post_json(agent.clone(), endpoint, api_key, &payload) {
+        Ok(response) => response,
+        Err(err) => {
+            if ProviderNetworkPolicy::from_env().max_retries == 0 {
+                return Err(err);
+            }
+            // Fallback when the account/model does not support tool invocation.
+            if let Some(obj) = payload.as_object_mut() {
+                obj.remove("tools");
+            }
+            post_json(agent, endpoint, api_key, &payload)?
         }
-        post_json(agent, endpoint, api_key, &payload)
-    })?;
+    };
 
     let items = extract_tool_snippets(&response, usize::from(max_results), false)
         .or_else(|| extract_openai_results(&response, usize::from(max_results)))
@@ -8672,6 +8819,20 @@ mod tests {
             ),
         )
         .unwrap()
+    }
+
+    fn stage2_default_provider_off_env() -> Vec<ScopedEnvVar> {
+        vec![
+            ScopedEnvVar::unset(crate::ph1providerctl::SELENE_SEARCH_PROVIDERS_ENABLED),
+            ScopedEnvVar::unset(crate::ph1providerctl::SELENE_PAID_SEARCH_PROVIDERS_ENABLED),
+            ScopedEnvVar::unset(crate::ph1providerctl::SELENE_WEB_SEARCH_ENABLED),
+            ScopedEnvVar::unset(crate::ph1providerctl::SELENE_DEEP_RESEARCH_ENABLED),
+            ScopedEnvVar::unset(crate::ph1providerctl::SELENE_NEWS_SEARCH_ENABLED),
+            ScopedEnvVar::unset(crate::ph1providerctl::SELENE_URL_FETCH_ENABLED),
+            ScopedEnvVar::unset(crate::ph1providerctl::SELENE_STARTUP_PROVIDER_PROBES_ENABLED),
+            ScopedEnvVar::unset(crate::ph1providerctl::SELENE_BRAVE_SEARCH_ENABLED),
+            ScopedEnvVar::unset(crate::ph1providerctl::SELENE_PROVIDER_CALL_MAX_PER_TURN),
+        ]
     }
 
     #[derive(Debug, Clone)]
@@ -12466,10 +12627,7 @@ mod tests {
                 false,
             ));
             assert_eq!(out.tool_status, ToolStatus::Fail);
-            assert_eq!(
-                out.reason_code,
-                reason_codes::E_FAIL_PROVIDER_MISSING_CONFIG
-            );
+            assert_eq!(out.reason_code, reason_codes::E_FAIL_POLICY_BLOCK);
         });
     }
 
@@ -12571,8 +12729,8 @@ mod tests {
                 Ph1eConfig::mvp_v1(),
                 Ph1eProviderConfig {
                     brave_api_key: None,
-                    brave_web_url: "https://api.search.brave.com/res/v1/web/search".to_string(),
-                    brave_news_url: "https://api.search.brave.com/res/v1/news/search".to_string(),
+                    brave_web_url: "http://127.0.0.1:9/res/v1/web/search".to_string(),
+                    brave_news_url: "http://127.0.0.1:9/res/v1/news/search".to_string(),
                     brave_image_url: BRAVE_IMAGE_DEFAULT_URL.to_string(),
                     brave_web_fixture_json: None,
                     brave_news_fixture_json: None,
@@ -13160,6 +13318,7 @@ mod tests {
     #[test]
     fn h415b_stage1_provider_disabled_proves_zero_call_without_live_search() {
         with_isolated_empty_device_vault("h415b-provider-disabled", || {
+            let _provider_env = stage2_default_provider_off_env();
             let fixture = spawn_test_http_fixture();
             let mut provider_config = provider_config_for_fixture(&fixture);
             provider_config.brave_api_key = None;
@@ -13184,6 +13343,75 @@ mod tests {
             assert!(out.tool_result.is_none());
             assert!(out.source_metadata.is_none());
         });
+    }
+
+    #[test]
+    fn stage2_ph1e_global_off_blocks_web_news_deep_url_before_provider_attempt() {
+        let _provider_env = stage2_default_provider_off_env();
+        let rt = Ph1eRuntime::new(Ph1eConfig::mvp_v1());
+        for (tool, query, expected_provider) in [
+            (
+                ToolName::WebSearch,
+                "search the web for the leader of synthetic acorn delta works",
+                "brave_web_search",
+            ),
+            (
+                ToolName::News,
+                "latest news about synthetic acorn delta works",
+                "brave_news_search",
+            ),
+            (
+                ToolName::DeepResearch,
+                "deep research the leadership of synthetic acorn delta works",
+                "brave_web_search",
+            ),
+            (
+                ToolName::UrlFetchAndCite,
+                "fetch https://synthetic-acorn-delta.invalid/report",
+                "url_fetch",
+            ),
+        ] {
+            let out = rt.run(&req(tool, query, false, false));
+            assert_eq!(out.tool_status, ToolStatus::Fail, "{query}");
+            assert_eq!(
+                out.reason_code,
+                reason_codes::E_FAIL_POLICY_BLOCK,
+                "{query}"
+            );
+            let detail = out.fail_detail.as_deref().unwrap_or_default();
+            assert!(detail.contains("stage2_provider_control=1"), "{detail}");
+            assert!(
+                detail.contains("deny_reason=WEB_ADMIN_DISABLED"),
+                "{detail}"
+            );
+            assert!(detail.contains(expected_provider), "{detail}");
+            assert!(detail.contains("provider_call_attempt_count=0"), "{detail}");
+            assert!(
+                detail.contains("provider_network_dispatch_count=0"),
+                "{detail}"
+            );
+            assert!(
+                detail.contains("billable_class=BLOCKED_NOT_BILLABLE"),
+                "{detail}"
+            );
+            assert!(detail.contains("billing_scope=NON_BILLABLE"), "{detail}");
+            assert!(out.tool_result.is_none());
+            assert!(out.source_metadata.is_none());
+        }
+    }
+
+    #[test]
+    fn stage2_startup_provider_probe_default_off_returns_no_network_trace() {
+        let _provider_env = stage2_default_provider_off_env();
+        let logs = startup_outbound_self_check_logs();
+        assert_eq!(logs.len(), 1);
+        let line = &logs[0];
+        assert!(line.contains("stage2_provider_control=1"), "{line}");
+        assert!(line.contains("route=StartupProbe"), "{line}");
+        assert!(line.contains("provider_call_attempt_count=0"), "{line}");
+        assert!(line.contains("provider_network_dispatch_count=0"), "{line}");
+        assert!(!line.contains("api.search.brave"));
+        assert!(!line.contains("api.openai.com"));
     }
 
     #[test]

@@ -1,15 +1,13 @@
 #![forbid(unsafe_code)]
 
 use crate::web_search_plan::packet_validator::{validate_packet, validate_packet_schema_registry};
+use crate::web_search_plan::proxy::ProxyMode;
 use crate::web_search_plan::registry_loader::load_packet_schema_registry;
 use crate::web_search_plan::url::canonical::canonicalize_url;
 use crate::web_search_plan::url::extract::extract_document;
 use crate::web_search_plan::url::fetch_url_to_evidence_packet;
 use crate::web_search_plan::url::mime::AllowedMime;
-use crate::web_search_plan::url::{
-    UrlFetchErrorKind, UrlFetchPolicy, UrlFetchRequest,
-};
-use crate::web_search_plan::proxy::ProxyMode;
+use crate::web_search_plan::url::{UrlFetchErrorKind, UrlFetchPolicy, UrlFetchRequest};
 use flate2::write::GzEncoder;
 use flate2::Compression;
 use std::collections::BTreeMap;
@@ -49,7 +47,10 @@ where
     listener
         .set_nonblocking(true)
         .expect("nonblocking setup should succeed");
-    let addr = format!("http://{}", listener.local_addr().expect("local addr exists"));
+    let addr = format!(
+        "http://{}",
+        listener.local_addr().expect("local addr exists")
+    );
     let handler = Arc::new(handler);
 
     let join = thread::spawn(move || {
@@ -149,11 +150,26 @@ fn base_request(url: &str) -> UrlFetchRequest {
 }
 
 #[test]
+fn stage2_url_fetch_global_off_blocks_external_before_network() {
+    let err = fetch_url_to_evidence_packet(&base_request(
+        "https://synthetic-acorn-delta.invalid/report",
+    ))
+    .expect_err("default provider-off policy must block external URL fetch");
+
+    assert_eq!(err.error_kind, UrlFetchErrorKind::ProviderDisabled);
+    assert_eq!(err.reason_code, "provider_disabled");
+    assert!(err.message.contains("stage2_provider_control=1"));
+    assert!(err.message.contains("provider_call_attempt_count=0"));
+    assert!(err.message.contains("provider_network_dispatch_count=0"));
+    assert!(err.message.contains("billable_class=BLOCKED_NOT_BILLABLE"));
+    assert!(err.message.contains("billing_scope=NON_BILLABLE"));
+}
+
+#[test]
 fn test_canonicalization_determinism() {
-    let canonical = canonicalize_url(
-        "HTTPS://Example.COM:443/path/?utm_source=a&gclid=abc&keep=1#section",
-    )
-    .expect("canonicalization should succeed");
+    let canonical =
+        canonicalize_url("HTTPS://Example.COM:443/path/?utm_source=a&gclid=abc&keep=1#section")
+            .expect("canonicalization should succeed");
     assert_eq!(canonical.canonical_url, "https://example.com/path?keep=1");
 
     let again = canonicalize_url(&canonical.canonical_url).expect("idempotent canonicalization");
@@ -182,7 +198,8 @@ fn test_redirect_loop_detection() {
 fn test_mime_allowlist_enforcement() {
     let (base, join) = spawn_server(
         |_| {
-            MockResponse::new(200, vec![0, 1, 2, 3, 4]).with_header("Content-Type", "application/octet-stream")
+            MockResponse::new(200, vec![0, 1, 2, 3, 4])
+                .with_header("Content-Type", "application/octet-stream")
         },
         2,
     );
@@ -241,19 +258,21 @@ fn test_decompression_cap_abort() {
 #[test]
 fn test_charset_normalization_stability() {
     let html_iso_bytes: Vec<u8> = vec![
-        0x3c, 0x68, 0x74, 0x6d, 0x6c, 0x3e, 0x3c, 0x68, 0x65, 0x61, 0x64, 0x3e, 0x3c, 0x6d,
-        0x65, 0x74, 0x61, 0x20, 0x63, 0x68, 0x61, 0x72, 0x73, 0x65, 0x74, 0x3d, 0x22, 0x69,
-        0x73, 0x6f, 0x2d, 0x38, 0x38, 0x35, 0x39, 0x2d, 0x31, 0x22, 0x3e, 0x3c, 0x74, 0x69,
-        0x74, 0x6c, 0x65, 0x3e, 0x43, 0x61, 0x66, 0xe9, 0x3c, 0x2f, 0x74, 0x69, 0x74, 0x6c,
-        0x65, 0x3e, 0x3c, 0x2f, 0x68, 0x65, 0x61, 0x64, 0x3e, 0x3c, 0x62, 0x6f, 0x64, 0x79,
-        0x3e, 0x43, 0x61, 0x66, 0xe9, 0x20, 0x74, 0x65, 0x78, 0x74, 0x20, 0x77, 0x69, 0x74,
-        0x68, 0x20, 0x73, 0x74, 0x61, 0x62, 0x6c, 0x65, 0x20, 0x6e, 0x6f, 0x72, 0x6d, 0x61,
-        0x6c, 0x69, 0x7a, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x2e, 0x3c, 0x2f, 0x62, 0x6f, 0x64,
-        0x79, 0x3e, 0x3c, 0x2f, 0x68, 0x74, 0x6d, 0x6c, 0x3e,
+        0x3c, 0x68, 0x74, 0x6d, 0x6c, 0x3e, 0x3c, 0x68, 0x65, 0x61, 0x64, 0x3e, 0x3c, 0x6d, 0x65,
+        0x74, 0x61, 0x20, 0x63, 0x68, 0x61, 0x72, 0x73, 0x65, 0x74, 0x3d, 0x22, 0x69, 0x73, 0x6f,
+        0x2d, 0x38, 0x38, 0x35, 0x39, 0x2d, 0x31, 0x22, 0x3e, 0x3c, 0x74, 0x69, 0x74, 0x6c, 0x65,
+        0x3e, 0x43, 0x61, 0x66, 0xe9, 0x3c, 0x2f, 0x74, 0x69, 0x74, 0x6c, 0x65, 0x3e, 0x3c, 0x2f,
+        0x68, 0x65, 0x61, 0x64, 0x3e, 0x3c, 0x62, 0x6f, 0x64, 0x79, 0x3e, 0x43, 0x61, 0x66, 0xe9,
+        0x20, 0x74, 0x65, 0x78, 0x74, 0x20, 0x77, 0x69, 0x74, 0x68, 0x20, 0x73, 0x74, 0x61, 0x62,
+        0x6c, 0x65, 0x20, 0x6e, 0x6f, 0x72, 0x6d, 0x61, 0x6c, 0x69, 0x7a, 0x61, 0x74, 0x69, 0x6f,
+        0x6e, 0x2e, 0x3c, 0x2f, 0x62, 0x6f, 0x64, 0x79, 0x3e, 0x3c, 0x2f, 0x68, 0x74, 0x6d, 0x6c,
+        0x3e,
     ];
 
     let (base, join) = spawn_server(
-        move |_| MockResponse::new(200, html_iso_bytes.clone()).with_header("Content-Type", "text/html"),
+        move |_| {
+            MockResponse::new(200, html_iso_bytes.clone()).with_header("Content-Type", "text/html")
+        },
         3,
     );
 

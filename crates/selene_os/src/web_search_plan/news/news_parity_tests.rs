@@ -2,7 +2,7 @@
 
 use crate::web_search_plan::news::{
     execute_news_provider_ladder_from_tool_request as execute_news_from_tool_request,
-    NewsRuntimeConfig,
+    NewsProviderErrorKind, NewsRuntimeConfig, DEFAULT_BRAVE_NEWS_ENDPOINT, DEFAULT_GDELT_ENDPOINT,
 };
 use crate::web_search_plan::proxy::proxy_config::ProxyConfig;
 use crate::web_search_plan::proxy::ProxyMode;
@@ -14,6 +14,24 @@ use std::net::{TcpListener, TcpStream};
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
+
+#[test]
+fn stage2_news_provider_global_off_blocks_external_before_network() {
+    let config = runtime(DEFAULT_BRAVE_NEWS_ENDPOINT, DEFAULT_GDELT_ENDPOINT);
+    let request = tool_request_packet("synthetic acorn delta works update", "medium");
+
+    let mut health = ProviderHealthTracker::default();
+    let err = execute_news_from_tool_request(&request, 1_772_496_000_000i64, &mut health, &config)
+        .expect_err("default provider-off policy must block external news providers");
+
+    assert_eq!(err.kind, NewsProviderErrorKind::PolicyViolation);
+    assert!(err.message.contains("stage2_provider_control=1"));
+    assert!(err.message.contains("deny_reason=WEB_ADMIN_DISABLED"));
+    assert!(err.message.contains("provider_call_attempt_count=0"));
+    assert!(err.message.contains("provider_network_dispatch_count=0"));
+    assert!(err.message.contains("billable_class=BLOCKED_NOT_BILLABLE"));
+    assert!(err.message.contains("billing_scope=NON_BILLABLE"));
+}
 
 #[derive(Clone)]
 struct MockResponse {
@@ -231,8 +249,9 @@ fn test_parity_sources_ordering_and_recency_filtering() {
     let request = tool_request_packet("market update", "high");
 
     let mut health = ProviderHealthTracker::default();
-    let result = execute_news_from_tool_request(&request, 1_772_496_000_000i64, &mut health, &config)
-        .expect("news run should pass");
+    let result =
+        execute_news_from_tool_request(&request, 1_772_496_000_000i64, &mut health, &config)
+            .expect("news run should pass");
 
     assert_eq!(
         source_urls(&result.evidence_packet),
@@ -285,8 +304,9 @@ fn test_parity_diversity_rule_and_assist_usage() {
     let request = tool_request_packet("diversity check", "high");
 
     let mut health = ProviderHealthTracker::default();
-    let result = execute_news_from_tool_request(&request, 1_772_496_000_000i64, &mut health, &config)
-        .expect("news run should pass");
+    let result =
+        execute_news_from_tool_request(&request, 1_772_496_000_000i64, &mut health, &config)
+            .expect("news run should pass");
 
     assert_eq!(result.audit_metrics.distinct_domain_count, 2);
     assert!(result.audit_metrics.diversity_threshold_met);
@@ -333,8 +353,9 @@ fn test_parity_conflict_clustering() {
     let request = tool_request_packet("acme merger talks", "medium");
 
     let mut health = ProviderHealthTracker::default();
-    let result = execute_news_from_tool_request(&request, 1_772_496_000_000i64, &mut health, &config)
-        .expect("news run should pass");
+    let result =
+        execute_news_from_tool_request(&request, 1_772_496_000_000i64, &mut health, &config)
+            .expect("news run should pass");
 
     assert_eq!(result.audit_metrics.contradiction_clusters_detected, 1);
     let clusters = result

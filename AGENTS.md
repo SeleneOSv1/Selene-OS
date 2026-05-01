@@ -41,6 +41,40 @@ Any real searched-name hardcoding in code is a build blocker.
 
 Docs and ledger may mention historical real examples only to describe what happened, not to drive runtime behavior.
 
+Rule: Search Provider Cost, Kill-Switch, and Billing-Grade Usage Control
+
+No search provider call may happen unless the global provider kill switch allows it.
+
+No paid provider call may happen unless paid providers are explicitly enabled.
+
+No provider call may happen without a ProviderCallBudgetPacket or approved equivalent.
+
+Every provider call must increment a pre-network call counter before network execution.
+
+Disabled providers must result in zero provider call attempts and zero provider network dispatches.
+
+Startup and health checks must not call external providers.
+
+Normal tests must not call paid providers.
+
+Live provider tests must be ignored by default and require explicit env opt-in.
+
+Provider-off must return a safe disabled result, not call a fallback provider.
+
+Public websearch remains read-only public.
+
+Protected execution remains simulation/authority gated.
+
+No real searched-name hardcoding is allowed.
+
+Usage/cost events must identify account layer, tenant/company/private-user ownership, actor user, service/module, provider, route, operation type, cost owner, billing scope, and billable class where runtime context is available.
+
+Blocked provider usage must be non-billable / zero provider cost.
+
+Fake provider test usage must be non-billable and must not be marked as live provider cost.
+
+Stage 2 captures usage/cost facts for future billing but must not implement final pricing, invoicing, subscription plans, tax/GST, payment collection, or commercial contract enforcement.
+
 Auto-Loaded Authority Order
 
 JD explicit in-thread instructions

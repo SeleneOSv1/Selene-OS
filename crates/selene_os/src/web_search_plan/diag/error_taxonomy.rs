@@ -117,6 +117,7 @@ fn default_reason_code_for_error_kind(error_kind: &str) -> Option<&'static str> 
         "citation_mismatch" => Some("citation_mismatch"),
         "unsupported_claim" => Some("unsupported_claim"),
         "budget_exhausted" => Some("budget_exhausted"),
+        "provider_disabled" => Some("provider_disabled"),
         "policy_violation" => Some("policy_violation"),
         "hash_collision_detected" => Some("hash_collision_detected"),
         "invalid_session" => Some("invalid_session"),

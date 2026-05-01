@@ -103,6 +103,16 @@
       "audit_required_fields": ["trace_id", "provider_id"]
     },
     {
+      "code_id": "provider_disabled",
+      "owner_engine": "PH1.E",
+      "category": "policy",
+      "severity": "warn",
+      "retry_class": "builder_action_required",
+      "user_message_template": "Provider is disabled by policy.",
+      "introduced_in_version": "1.0.0",
+      "audit_required_fields": ["trace_id", "provider_id", "policy_snapshot_id"]
+    },
+    {
       "code_id": "proxy_misconfigured",
       "owner_engine": "PH1.E",
       "category": "retrieval",

@@ -19,9 +19,6 @@ use crate::web_search_plan::diag::{
     default_degraded_transitions, default_failed_transitions, try_build_debug_packet,
     DebugPacketContext, DebugStatus, HealthStatusBeforeFallback,
 };
-use crate::web_search_plan::perf_cost::budgets::ProviderCallBudget;
-use crate::web_search_plan::perf_cost::tiers::{caps_for_tier, ImportanceTier as PerfImportanceTier};
-use crate::web_search_plan::perf_cost::timeouts::clamp_provider_timeout;
 use crate::web_search_plan::news::conflict::{
     build_conflict_clusters, cluster_lookup_by_canonical_url,
 };
@@ -31,13 +28,22 @@ use crate::web_search_plan::news::recency::{
     freshness_score, normalize_published_at, recency_window_days, within_recency_window,
     ImportanceTier,
 };
+use crate::web_search_plan::perf_cost::budgets::ProviderCallBudget;
+use crate::web_search_plan::perf_cost::tiers::{
+    caps_for_tier, ImportanceTier as PerfImportanceTier,
+};
+use crate::web_search_plan::perf_cost::timeouts::clamp_provider_timeout;
 use crate::web_search_plan::proxy::proxy_config::{ProxyConfig, SystemEnvProvider};
 use crate::web_search_plan::proxy::ProxyMode;
 use crate::web_search_plan::web_provider::health_state::{
     HealthPolicy, ProviderHealthState, ProviderHealthTracker,
 };
-use serde::{Deserialize, Serialize};
+use selene_engines::ph1providerctl::{
+    disabled_provider_decision, fake_provider_decision, is_local_fake_endpoint,
+    ProviderControlProvider, ProviderControlRoute, ProviderGateDecision,
+};
 use selene_kernel_contracts::provider_secrets::ProviderSecretId;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use std::collections::BTreeMap;
 
@@ -420,10 +426,17 @@ fn execute_news_provider_ladder(
     health_tracker: &mut ProviderHealthTracker,
     config: &NewsRuntimeConfig,
 ) -> Result<NewsProviderLadderResult, NewsProviderError> {
+    if let Some(blocked) = stage2_news_provider_block(&request, config) {
+        return Err(stage2_news_provider_error(
+            NewsProviderId::NewsProviderLadder,
+            blocked,
+        ));
+    }
     let window_days = recency_window_days(request.importance_tier);
     let tier_caps = caps_for_tier(request.perf_importance_tier);
     let effective_max_results = config.max_results.min(tier_caps.max_results_from_search);
-    let effective_timeout_ms = clamp_provider_timeout(config.timeout_ms, request.perf_importance_tier);
+    let effective_timeout_ms =
+        clamp_provider_timeout(config.timeout_ms, request.perf_importance_tier);
     let mut provider_call_budget = ProviderCallBudget::for_tier(request.perf_importance_tier);
     let mut provider_runs = Vec::new();
     let mut l1_cache = L1Cache::default();
@@ -874,6 +887,42 @@ fn execute_news_provider_ladder(
         evidence_packet,
         audit_metrics,
     })
+}
+
+fn stage2_news_provider_block(
+    request: &ParsedToolRequest,
+    config: &NewsRuntimeConfig,
+) -> Option<ProviderGateDecision> {
+    let fake_endpoint = is_local_fake_endpoint(&config.brave_news_endpoint)
+        && is_local_fake_endpoint(&config.gdelt_endpoint);
+    let decision = if fake_endpoint {
+        fake_provider_decision(
+            ProviderControlRoute::NewsSearch,
+            ProviderControlProvider::BraveNewsSearch,
+            &request.query,
+            1,
+        )
+    } else {
+        disabled_provider_decision(
+            ProviderControlRoute::NewsSearch,
+            ProviderControlProvider::BraveNewsSearch,
+            &request.query,
+        )
+    };
+    (!decision.allowed).then_some(decision)
+}
+
+fn stage2_news_provider_error(
+    provider_id: NewsProviderId,
+    decision: ProviderGateDecision,
+) -> NewsProviderError {
+    NewsProviderError {
+        provider_id,
+        kind: NewsProviderErrorKind::PolicyViolation,
+        status_code: None,
+        message: decision.disabled_trace_line(),
+        latency_ms: 0,
+    }
 }
 
 fn normalize_and_filter_results(

@@ -9,6 +9,7 @@ use crate::web_search_plan::web_provider::provider_merge::merge_results;
 use crate::web_search_plan::web_provider::{
     append_web_provider_audit_fields, execute_web_provider_ladder_from_tool_request,
     NormalizedSearchResult, ProviderErrorKind, ProviderId, WebProviderRuntimeConfig,
+    DEFAULT_BRAVE_WEB_ENDPOINT, DEFAULT_OPENAI_RESPONSES_ENDPOINT,
 };
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
@@ -17,6 +18,30 @@ use std::net::{TcpListener, TcpStream};
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
+
+#[test]
+fn stage2_web_provider_global_off_blocks_external_before_network() {
+    let config = base_runtime(
+        DEFAULT_BRAVE_WEB_ENDPOINT,
+        DEFAULT_OPENAI_RESPONSES_ENDPOINT,
+    );
+    let mut health = ProviderHealthTracker::default();
+    let err = execute_web_provider_ladder_from_tool_request(
+        &tool_request_packet("synthetic acorn delta works leadership"),
+        1_700_000_800_000i64,
+        &mut health,
+        &config,
+    )
+    .expect_err("default provider-off policy must block external web providers");
+
+    assert_eq!(err.kind, ProviderErrorKind::PolicyViolation);
+    assert!(err.message.contains("stage2_provider_control=1"));
+    assert!(err.message.contains("deny_reason=WEB_ADMIN_DISABLED"));
+    assert!(err.message.contains("provider_call_attempt_count=0"));
+    assert!(err.message.contains("provider_network_dispatch_count=0"));
+    assert!(err.message.contains("billable_class=BLOCKED_NOT_BILLABLE"));
+    assert!(err.message.contains("billing_scope=NON_BILLABLE"));
+}
 
 #[derive(Clone)]
 struct MockResponse {

@@ -3,18 +3,18 @@
 use crate::web_search_plan::chunk::chunker::ChunkPolicy;
 use crate::web_search_plan::chunk::citation::build_citation_anchors;
 use crate::web_search_plan::chunk::{
-    build_hashed_chunks_for_document, bounded_excerpt, ChunkBuildError,
+    bounded_excerpt, build_hashed_chunks_for_document, ChunkBuildError,
     EVIDENCE_TRUNCATED_REASON_CODE, HASH_COLLISION_REASON_CODE,
 };
-use crate::web_search_plan::gap_closers::injection_defense::sanitize_fetched_content;
 use crate::web_search_plan::diag::{
     default_failed_transitions, try_build_debug_packet, DebugPacketContext, DebugStatus,
 };
+use crate::web_search_plan::gap_closers::injection_defense::sanitize_fetched_content;
+use crate::web_search_plan::perf_cost::enforce_url_open_cap;
 use crate::web_search_plan::perf_cost::tiers::ImportanceTier;
 use crate::web_search_plan::perf_cost::timeouts::{
     clamp_provider_timeout, clamp_url_fetch_total_timeout,
 };
-use crate::web_search_plan::perf_cost::enforce_url_open_cap;
 use crate::web_search_plan::proxy::proxy_redaction::redact_proxy_url;
 use crate::web_search_plan::proxy::proxy_self_check::run_startup_self_check;
 use crate::web_search_plan::proxy::{ProxyErrorKind, ProxyMode};
@@ -26,8 +26,12 @@ use crate::web_search_plan::url::charset::{
 use crate::web_search_plan::url::decompress::{
     parse_content_encoding, wrap_decoder, ContentEncoding,
 };
-use crate::web_search_plan::url::extract::{extract_document, ExtractedDocument, EXTRACTION_VERSION};
-use crate::web_search_plan::url::mime::{detect_allowed_mime, AllowedMime, MIME_SNIFF_PREFIX_BYTES};
+use crate::web_search_plan::url::extract::{
+    extract_document, ExtractedDocument, EXTRACTION_VERSION,
+};
+use crate::web_search_plan::url::mime::{
+    detect_allowed_mime, AllowedMime, MIME_SNIFF_PREFIX_BYTES,
+};
 use crate::web_search_plan::url::quality_gate::{
     evaluate_text_quality, QualityMetrics, QUALITY_GATE_VERSION,
 };
@@ -35,6 +39,10 @@ use crate::web_search_plan::url::redirect::RedirectState;
 use crate::web_search_plan::url::{
     UrlFetchAudit, UrlFetchErrorKind, UrlFetchFailure, UrlFetchPolicy, UrlFetchRequest,
     UrlFetchSuccess,
+};
+use selene_engines::ph1providerctl::{
+    disabled_provider_decision, fake_provider_decision, is_local_fake_endpoint,
+    ProviderControlProvider, ProviderControlRoute,
 };
 use serde_json::{json, Value};
 use std::io::Read;
@@ -64,6 +72,28 @@ struct BodyOutcome {
 pub fn fetch_url_to_evidence_packet(
     request: &UrlFetchRequest,
 ) -> Result<UrlFetchSuccess, UrlFetchFailure> {
+    let stage2_gate = if is_local_fake_endpoint(&request.requested_url) {
+        fake_provider_decision(
+            ProviderControlRoute::UrlFetch,
+            ProviderControlProvider::UrlFetch,
+            &request.query,
+            1,
+        )
+    } else {
+        disabled_provider_decision(
+            ProviderControlRoute::UrlFetch,
+            ProviderControlProvider::UrlFetch,
+            &request.query,
+        )
+    };
+    if !stage2_gate.allowed {
+        return Err(build_failure_without_audit(
+            request,
+            UrlFetchErrorKind::ProviderDisabled,
+            &stage2_gate.disabled_trace_line(),
+        ));
+    }
+
     if let Err(reason_code) = enforce_url_open_cap(request.url_open_ordinal, request.url_open_cap) {
         return Err(build_failure_without_audit(
             request,
@@ -87,13 +117,11 @@ pub fn fetch_url_to_evidence_packet(
     let mut current_url = canonical.canonical_url.clone();
     loop {
         let step_start = Instant::now();
-        let response =
-            send_get_request(request, &current_url, &mut audit, &effective_policy).map_err(
-                |mut failure| {
-                    failure.audit.canonical_url = canonical.canonical_url.clone();
-                    failure
-                },
-            )?;
+        let response = send_get_request(request, &current_url, &mut audit, &effective_policy)
+            .map_err(|mut failure| {
+                failure.audit.canonical_url = canonical.canonical_url.clone();
+                failure
+            })?;
         audit.latency_ms = audit
             .latency_ms
             .saturating_add(step_start.elapsed().as_millis() as u64);
@@ -102,24 +130,24 @@ pub fn fetch_url_to_evidence_packet(
         audit.status_code = Some(status);
 
         if is_redirect_status(status) {
-            let location = response
-                .header("location")
-                .ok_or_else(|| {
-                    build_failure(
-                        request,
-                        &audit,
-                        UrlFetchErrorKind::RedirectMissingLocation,
-                        "redirect status without location header",
-                    )
-                })?;
-            let next = redirect.resolve_next(&current_url, location).map_err(|kind| {
+            let location = response.header("location").ok_or_else(|| {
                 build_failure(
                     request,
                     &audit,
-                    kind,
-                    "redirect validation failed during url fetch",
+                    UrlFetchErrorKind::RedirectMissingLocation,
+                    "redirect status without location header",
                 )
             })?;
+            let next = redirect
+                .resolve_next(&current_url, location)
+                .map_err(|kind| {
+                    build_failure(
+                        request,
+                        &audit,
+                        kind,
+                        "redirect validation failed during url fetch",
+                    )
+                })?;
             current_url = next;
             continue;
         }
@@ -143,7 +171,9 @@ pub fn fetch_url_to_evidence_packet(
             content_encoding_header.as_deref(),
             &effective_policy,
         )
-        .map_err(|kind| build_failure(request, &audit, kind, "failed while reading response body"))?;
+        .map_err(|kind| {
+            build_failure(request, &audit, kind, "failed while reading response body")
+        })?;
 
         audit.bytes_read = body.bytes_read;
         audit.bytes_decompressed = body.bytes_decompressed;
@@ -238,8 +268,10 @@ fn send_get_request(
                 request.proxy_config.mode,
                 audit.proxy_redacted_endpoint.as_ref(),
             );
-            if matches!(kind, UrlFetchErrorKind::TimeoutExceeded | UrlFetchErrorKind::ProxyTimeout)
-            {
+            if matches!(
+                kind,
+                UrlFetchErrorKind::TimeoutExceeded | UrlFetchErrorKind::ProxyTimeout
+            ) {
                 audit.timeout_hit = true;
             }
             audit.proxy_error_kind = proxy_error_kind_for_transport(kind).map(ToString::to_string);
@@ -270,9 +302,7 @@ fn proxy_for_url<'a>(
     match mode {
         ProxyMode::Off => Ok(None),
         ProxyMode::Env | ProxyMode::Explicit => {
-            let is_https = current_url
-                .to_ascii_lowercase()
-                .starts_with("https://");
+            let is_https = current_url.to_ascii_lowercase().starts_with("https://");
             if is_https {
                 Ok(request.proxy_config.https_proxy_url.as_deref())
             } else {
@@ -499,7 +529,10 @@ fn decode_append(
     Ok(())
 }
 
-fn classify_stream_read_error(error: std::io::Error, encoding: ContentEncoding) -> UrlFetchErrorKind {
+fn classify_stream_read_error(
+    error: std::io::Error,
+    encoding: ContentEncoding,
+) -> UrlFetchErrorKind {
     let lower = error.to_string().to_ascii_lowercase();
     if lower.contains("response byte cap exceeded") {
         return UrlFetchErrorKind::ResponseTooLarge;
@@ -540,7 +573,10 @@ fn build_failure(
     let mut next_audit = audit.clone();
     next_audit.reason_code = Some(kind.reason_code().to_string());
     next_audit.error_kind = Some(kind.as_str().to_string());
-    if matches!(kind, UrlFetchErrorKind::TimeoutExceeded | UrlFetchErrorKind::ProxyTimeout) {
+    if matches!(
+        kind,
+        UrlFetchErrorKind::TimeoutExceeded | UrlFetchErrorKind::ProxyTimeout
+    ) {
         next_audit.timeout_hit = true;
     }
     let evidence_packet = build_failure_evidence_packet(request, &next_audit, kind, message);

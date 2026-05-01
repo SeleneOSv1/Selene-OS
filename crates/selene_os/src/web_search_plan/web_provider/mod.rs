@@ -30,8 +30,12 @@ use crate::web_search_plan::web_provider::health_state::{
     HealthPolicy, ProviderHealthState, ProviderHealthTracker,
 };
 use crate::web_search_plan::web_provider::provider_merge::merge_results;
-use serde::{Deserialize, Serialize};
+use selene_engines::ph1providerctl::{
+    disabled_provider_decision, fake_provider_decision, is_local_fake_endpoint,
+    ProviderControlProvider, ProviderControlRoute, ProviderGateDecision,
+};
 use selene_kernel_contracts::provider_secrets::ProviderSecretId;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use std::collections::BTreeMap;
 
@@ -371,6 +375,12 @@ fn execute_web_provider_ladder(
     health_tracker: &mut ProviderHealthTracker,
     config: &WebProviderRuntimeConfig,
 ) -> Result<WebProviderLadderResult, ProviderError> {
+    if let Some(blocked) = stage2_web_provider_block(&request, config) {
+        return Err(stage2_provider_error(
+            ProviderId::WebProviderLadder,
+            blocked,
+        ));
+    }
     let brave_state = health_tracker.snapshot(
         ProviderId::BraveWebSearch.as_str(),
         now_ms,
@@ -720,6 +730,39 @@ fn execute_web_provider_ladder(
     })
 }
 
+fn stage2_web_provider_block(
+    request: &ParsedToolRequest,
+    config: &WebProviderRuntimeConfig,
+) -> Option<ProviderGateDecision> {
+    let fake_endpoint = is_local_fake_endpoint(&config.brave_endpoint)
+        && is_local_fake_endpoint(&config.openai_endpoint);
+    let decision = if fake_endpoint {
+        fake_provider_decision(
+            ProviderControlRoute::WebSearch,
+            ProviderControlProvider::BraveWebSearch,
+            &request.query,
+            1,
+        )
+    } else {
+        disabled_provider_decision(
+            ProviderControlRoute::WebSearch,
+            ProviderControlProvider::BraveWebSearch,
+            &request.query,
+        )
+    };
+    (!decision.allowed).then_some(decision)
+}
+
+fn stage2_provider_error(provider_id: ProviderId, decision: ProviderGateDecision) -> ProviderError {
+    ProviderError {
+        provider_id,
+        kind: ProviderErrorKind::PolicyViolation,
+        status_code: None,
+        message: decision.disabled_trace_line(),
+        latency_ms: 0,
+    }
+}
+
 fn build_content_chunks(results: &[NormalizedSearchResult]) -> Result<Vec<Value>, ProviderError> {
     let mut chunks = Vec::new();
     let mut seen_chunk_text: BTreeMap<String, String> = BTreeMap::new();
@@ -828,7 +871,13 @@ fn run_provider_call_with_cache<F>(
     policy_snapshot_id: &str,
     now_ms: i64,
     call: F,
-) -> Result<(ProviderCallSuccess, Option<CacheLookupHit<ProviderCallSuccess>>), ProviderError>
+) -> Result<
+    (
+        ProviderCallSuccess,
+        Option<CacheLookupHit<ProviderCallSuccess>>,
+    ),
+    ProviderError,
+>
 where
     F: FnOnce() -> Result<ProviderCallSuccess, ProviderError>,
 {

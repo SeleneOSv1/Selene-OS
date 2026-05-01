@@ -2975,6 +2975,12 @@ fn field_original<'a>(d: &'a IntentDraft, key: FieldKey) -> Option<&'a str> {
 
 fn retry_message_for_failure(rc: ReasonCodeId, fail_detail: Option<&str>) -> String {
     if let Some(detail) = fail_detail {
+        if detail.contains("stage2_provider_control=1")
+            || detail.contains("WEB_ADMIN_DISABLED")
+            || detail.contains("PROVIDER_DISABLED")
+        {
+            return selene_engines::ph1providerctl::PROVIDER_DISABLED_RESPONSE_TEXT.to_string();
+        }
         if detail.contains("weather_realtime_provider_error") {
             return "I couldn't get the weather for that place right now.".to_string();
         }
@@ -5049,6 +5055,21 @@ mod tests {
         );
         assert!(!text.contains("raw"));
         assert!(!text.contains("Retrieved at"));
+    }
+
+    #[test]
+    fn stage2_disabled_provider_failure_renders_clean_no_search_response_for_tts() {
+        let text = retry_message_for_failure(
+            selene_engines::ph1e::reason_codes::E_FAIL_POLICY_BLOCK,
+            Some("stage2_provider_control=1 route=WebSearch provider=brave_web_search allowed=false deny_reason=WEB_ADMIN_DISABLED provider_call_attempt_count=0 provider_network_dispatch_count=0"),
+        );
+        assert_eq!(
+            text,
+            selene_engines::ph1providerctl::PROVIDER_DISABLED_RESPONSE_TEXT
+        );
+        assert!(!text.contains("stage2_provider_control"));
+        assert!(!text.contains("brave_web_search"));
+        assert!(!text.contains("provider_call_attempt_count"));
     }
 
     #[test]

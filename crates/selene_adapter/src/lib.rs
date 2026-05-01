@@ -11817,6 +11817,11 @@ fn translate_weather_response_for_build1c(response_text: &str) -> Option<String>
 }
 
 fn translate_web_response_for_build1d(response_text: &str) -> Option<String> {
+    if response_text == selene_engines::ph1providerctl::PROVIDER_DISABLED_RESPONSE_TEXT
+        || response_text.contains("Search providers are disabled")
+    {
+        return Some("我现在无法访问实时网页搜索。搜索提供方已禁用。".to_string());
+    }
     if response_text.contains("Brave API key not configured") {
         return Some(
             "实时网页搜索还没有配置 Brave Search 密钥（brave_search_api_key），所以我不能核验当前网页证据或给出引用。"
@@ -24448,10 +24453,11 @@ mod tests {
                 selene_os::ph1x::reason_codes::X_TOOL_FAIL.0.to_string()
             );
             let response_text = out.response_text.as_str();
-            assert!(
-                response_text.contains("selene vault set brave_search_api_key"),
-                "unexpected response_text: {response_text}"
+            assert_eq!(
+                response_text,
+                selene_engines::ph1providerctl::PROVIDER_DISABLED_RESPONSE_TEXT
             );
+            assert!(!response_text.contains("brave_search_api_key"));
         });
     }
 
@@ -24492,7 +24498,14 @@ mod tests {
         with_isolated_device_vault(
             "at_adapter_03bc",
             &[("openai_api_key", "test_openai_key")],
-            &[("OPENAI_RESPONSES_URL", "http://127.0.0.1:9/v1/responses")],
+            &[
+                ("BRAVE_SEARCH_WEB_URL", "http://127.0.0.1:9/res/v1/web/search"),
+                (
+                    "BRAVE_SEARCH_NEWS_URL",
+                    "http://127.0.0.1:9/res/v1/news/search",
+                ),
+                ("OPENAI_RESPONSES_URL", "http://127.0.0.1:9/v1/responses"),
+            ],
             || {
                 let runtime = AdapterRuntime::default();
                 let mut req = base_request();
@@ -24527,9 +24540,10 @@ mod tests {
                 out.reason_code,
                 selene_os::ph1x::reason_codes::X_TOOL_FAIL.0.to_string()
             );
-            assert!(out
-                .response_text
-                .contains("selene vault set brave_search_api_key"));
+            assert_eq!(
+                out.response_text,
+                selene_engines::ph1providerctl::PROVIDER_DISABLED_RESPONSE_TEXT
+            );
             assert!(!out.response_text.contains("Sources:"));
             assert!(!out.response_text.contains("Sam Altman"));
         });
@@ -24552,8 +24566,9 @@ mod tests {
             assert_eq!(out.status, "ok");
             assert_eq!(out.outcome, "FINAL_TOOL");
             assert!(out.response_text.contains("实时网页搜索"));
-            assert!(out.response_text.contains("brave_search_api_key"));
+            assert!(out.response_text.contains("搜索提供方已禁用"));
             assert!(!out.response_text.contains("Brave API key not configured"));
+            assert!(!out.response_text.contains("brave_search_api_key"));
             assert!(!out.response_text.contains("Sources:"));
         });
     }
@@ -24577,9 +24592,10 @@ mod tests {
             assert!(!out
                 .response_text
                 .contains("previous provider-backed result"));
-            assert!(out
-                .response_text
-                .contains("selene vault set brave_search_api_key"));
+            assert_eq!(
+                out.response_text,
+                selene_engines::ph1providerctl::PROVIDER_DISABLED_RESPONSE_TEXT
+            );
             if let Some(provenance) = out.provenance {
                 assert!(provenance.sources.iter().all(|source| {
                     !source.url.contains("research.selene.ai")
@@ -24621,7 +24637,8 @@ mod tests {
                 out.response_text
             );
             assert!(
-                out.response_text.contains("brave_search_api_key")
+                out.response_text
+                    == selene_engines::ph1providerctl::PROVIDER_DISABLED_RESPONSE_TEXT
                     || out.deep_research.is_some(),
                 "public research should either answer with deep-research metadata or fail only on public provider availability: {}",
                 out.response_text
@@ -24687,6 +24704,77 @@ mod tests {
                 );
             }
         });
+    }
+
+    #[test]
+    fn stage2_voice_turn_search_disabled_is_clean_and_protected_still_fails_closed() {
+        with_isolated_device_vault(
+            "stage2_adapter_provider_off",
+            &[("brave_search_api_key", "stage2-test-key")],
+            &[
+                ("SELENE_SEARCH_PROVIDERS_ENABLED", "0"),
+                ("SELENE_PAID_SEARCH_PROVIDERS_ENABLED", "0"),
+                ("SELENE_WEB_SEARCH_ENABLED", "0"),
+                ("SELENE_DEEP_RESEARCH_ENABLED", "0"),
+                ("SELENE_NEWS_SEARCH_ENABLED", "0"),
+                ("SELENE_URL_FETCH_ENABLED", "0"),
+                ("SELENE_STARTUP_PROVIDER_PROBES_ENABLED", "0"),
+                ("SELENE_BRAVE_SEARCH_ENABLED", "0"),
+                ("SELENE_PROVIDER_CALL_MAX_PER_TURN", "0"),
+            ],
+            || {
+                let runtime = AdapterRuntime::default();
+
+                let mut web_req = base_request();
+                web_req.app_platform = "DESKTOP".to_string();
+                web_req.correlation_id = 42_001;
+                web_req.turn_id = 42_001;
+                web_req.device_id = Some("stage2_provider_off_device".to_string());
+                web_req.audio_capture_ref = None;
+                web_req.user_text_final = Some(
+                    "Search the web for the leader of Synthetic Acorn Delta Works.".to_string(),
+                );
+                seed_desktop_voice_profile_for_request(&runtime, &mut web_req, "stage2_web_off");
+                let web_out = runtime
+                    .run_voice_turn(web_req)
+                    .expect("provider-disabled web turn should return a clean response");
+                assert_eq!(web_out.status, "ok", "{web_out:?}");
+                assert_eq!(
+                    web_out.response_text,
+                    selene_engines::ph1providerctl::PROVIDER_DISABLED_RESPONSE_TEXT
+                );
+                assert!(!web_out.response_text.contains("stage2_provider_control"));
+                assert!(!web_out.response_text.contains("brave_search_api_key"));
+                assert!(!web_out
+                    .response_text
+                    .contains("provider_call_attempt_count"));
+                assert!(!web_out.response_text.contains("Sources:"));
+
+                let mut protected_req = base_request();
+                protected_req.app_platform = "DESKTOP".to_string();
+                protected_req.correlation_id = 42_002;
+                protected_req.turn_id = 42_002;
+                protected_req.device_id = Some("stage2_protected_device".to_string());
+                protected_req.audio_capture_ref = None;
+                protected_req.user_text_final =
+                    Some("Search the web and approve payroll for Test Employee A.".to_string());
+                seed_desktop_voice_profile_for_request(
+                    &runtime,
+                    &mut protected_req,
+                    "stage2_protected_off",
+                );
+                let protected_out = runtime
+                    .run_voice_turn(protected_req)
+                    .expect("protected mixed prompt should fail closed");
+                assert!(
+                    protected_out
+                        .response_text
+                        .contains("NO_SIMULATION_NO_AUTHORITY_NO_PROTECTED_EXECUTION"),
+                    "{}",
+                    protected_out.response_text
+                );
+            },
+        );
     }
 
     #[test]

@@ -98,6 +98,7 @@ impl Default for UrlFetchPolicy {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UrlFetchErrorKind {
     BudgetExhausted,
+    ProviderDisabled,
     UnsupportedScheme,
     InvalidUrl,
     HttpNon200,
@@ -130,6 +131,7 @@ impl UrlFetchErrorKind {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::BudgetExhausted => "budget_exhausted",
+            Self::ProviderDisabled => "provider_disabled",
             Self::UnsupportedScheme => "unsupported_scheme",
             Self::InvalidUrl => "invalid_url",
             Self::HttpNon200 => "http_non_200",
@@ -162,6 +164,7 @@ impl UrlFetchErrorKind {
     pub const fn reason_code(self) -> &'static str {
         match self {
             Self::BudgetExhausted => "budget_exhausted",
+            Self::ProviderDisabled => "provider_disabled",
             Self::TimeoutExceeded | Self::ProxyTimeout => "timeout_exceeded",
             Self::ProxyMisconfigured
             | Self::ProxyAuthFailed

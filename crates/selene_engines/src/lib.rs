@@ -43,6 +43,7 @@ pub mod ph1persona;
 pub mod ph1policy;
 pub mod ph1prefetch;
 pub mod ph1pron;
+pub mod ph1providerctl;
 pub mod ph1prune;
 pub mod ph1quota;
 pub mod ph1rll;
