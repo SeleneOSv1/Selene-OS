@@ -491,6 +491,14 @@ fn execute_news_provider_ladder(
         provider_call_budget
             .record_fallback_call()
             .map_err(|reason| budget_exhausted_error(reason))?;
+        if let Some(blocked) =
+            stage8_news_provider_block(&request, config, ProviderControlProvider::GdeltNewsAssist)
+        {
+            return Err(stage2_news_provider_error(
+                NewsProviderId::GdeltNewsAssist,
+                blocked,
+            ));
+        }
         let (gdelt, cache_hit) = run_news_provider_call_with_cache(
             &mut l1_cache,
             cache_enabled,
@@ -614,6 +622,16 @@ fn execute_news_provider_ladder(
                     provider_call_budget
                         .record_fallback_call()
                         .map_err(|reason| budget_exhausted_error(reason))?;
+                    if let Some(blocked) = stage8_news_provider_block(
+                        &request,
+                        config,
+                        ProviderControlProvider::GdeltNewsAssist,
+                    ) {
+                        return Err(stage2_news_provider_error(
+                            NewsProviderId::GdeltNewsAssist,
+                            blocked,
+                        ));
+                    }
                     match run_news_provider_call_with_cache(
                         &mut l1_cache,
                         cache_enabled,
@@ -703,6 +721,16 @@ fn execute_news_provider_ladder(
             provider_call_budget
                 .record_fallback_call()
                 .map_err(|reason| budget_exhausted_error(reason))?;
+            if let Some(blocked) = stage8_news_provider_block(
+                &request,
+                config,
+                ProviderControlProvider::GdeltNewsAssist,
+            ) {
+                return Err(stage2_news_provider_error(
+                    NewsProviderId::GdeltNewsAssist,
+                    blocked,
+                ));
+            }
             match run_news_provider_call_with_cache(
                 &mut l1_cache,
                 cache_enabled,
@@ -906,21 +934,25 @@ fn stage2_news_provider_block(
     request: &ParsedToolRequest,
     config: &NewsRuntimeConfig,
 ) -> Option<ProviderGateDecision> {
+    stage8_news_provider_block(request, config, ProviderControlProvider::BraveNewsSearch)
+}
+
+fn stage8_news_provider_block(
+    request: &ParsedToolRequest,
+    config: &NewsRuntimeConfig,
+    provider: ProviderControlProvider,
+) -> Option<ProviderGateDecision> {
     let fake_endpoint = is_local_fake_endpoint(&config.brave_news_endpoint)
         && is_local_fake_endpoint(&config.gdelt_endpoint);
     let decision = if fake_endpoint {
         fake_provider_decision(
             ProviderControlRoute::NewsSearch,
-            ProviderControlProvider::BraveNewsSearch,
+            provider,
             &request.query,
             1,
         )
     } else {
-        disabled_provider_decision(
-            ProviderControlRoute::NewsSearch,
-            ProviderControlProvider::BraveNewsSearch,
-            &request.query,
-        )
+        disabled_provider_decision(ProviderControlRoute::NewsSearch, provider, &request.query)
     };
     (!decision.allowed).then_some(decision)
 }

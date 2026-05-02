@@ -457,6 +457,11 @@ fn execute_web_provider_ladder(
         provider_call_budget
             .record_fallback_call()
             .map_err(|reason| budget_exhausted_error(reason))?;
+        if let Some(blocked) =
+            stage8_web_provider_block(&request, config, ProviderControlProvider::OpenAiWebSearch)
+        {
+            return Err(stage2_provider_error(ProviderId::OpenAiWebSearch, blocked));
+        }
         let (openai, cache_hit) = run_provider_call_with_cache(
             &mut l1_cache,
             cache_enabled,
@@ -573,6 +578,13 @@ fn execute_web_provider_ladder(
                     provider_call_budget
                         .record_fallback_call()
                         .map_err(|reason| budget_exhausted_error(reason))?;
+                    if let Some(blocked) = stage8_web_provider_block(
+                        &request,
+                        config,
+                        ProviderControlProvider::OpenAiWebSearch,
+                    ) {
+                        return Err(stage2_provider_error(ProviderId::OpenAiWebSearch, blocked));
+                    }
                     match run_provider_call_with_cache(
                         &mut l1_cache,
                         cache_enabled,
@@ -747,21 +759,20 @@ fn stage2_web_provider_block(
     request: &ParsedToolRequest,
     config: &WebProviderRuntimeConfig,
 ) -> Option<ProviderGateDecision> {
+    stage8_web_provider_block(request, config, ProviderControlProvider::BraveWebSearch)
+}
+
+fn stage8_web_provider_block(
+    request: &ParsedToolRequest,
+    config: &WebProviderRuntimeConfig,
+    provider: ProviderControlProvider,
+) -> Option<ProviderGateDecision> {
     let fake_endpoint = is_local_fake_endpoint(&config.brave_endpoint)
         && is_local_fake_endpoint(&config.openai_endpoint);
     let decision = if fake_endpoint {
-        fake_provider_decision(
-            ProviderControlRoute::WebSearch,
-            ProviderControlProvider::BraveWebSearch,
-            &request.query,
-            1,
-        )
+        fake_provider_decision(ProviderControlRoute::WebSearch, provider, &request.query, 1)
     } else {
-        disabled_provider_decision(
-            ProviderControlRoute::WebSearch,
-            ProviderControlProvider::BraveWebSearch,
-            &request.query,
-        )
+        disabled_provider_decision(ProviderControlRoute::WebSearch, provider, &request.query)
     };
     (!decision.allowed).then_some(decision)
 }

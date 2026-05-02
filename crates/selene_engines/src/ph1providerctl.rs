@@ -25,6 +25,12 @@ pub const SELENE_BRAVE_IMAGE_SEARCH_ENABLED: &str = "SELENE_BRAVE_IMAGE_SEARCH_E
 pub const SELENE_BRAVE_MAX_CALLS_PER_TEST_RUN: &str = "SELENE_BRAVE_MAX_CALLS_PER_TEST_RUN";
 pub const SELENE_BRAVE_MAX_CALLS_PER_DAY_TEST: &str = "SELENE_BRAVE_MAX_CALLS_PER_DAY_TEST";
 pub const SELENE_RUN_LIVE_BRAVE_PROOF: &str = "SELENE_RUN_LIVE_BRAVE_PROOF";
+pub const SELENE_OPENAI_WEB_SEARCH_ENABLED: &str = "SELENE_OPENAI_WEB_SEARCH_ENABLED";
+pub const SELENE_GDELT_NEWS_SEARCH_ENABLED: &str = "SELENE_GDELT_NEWS_SEARCH_ENABLED";
+pub const SELENE_CHEAP_SEARCH_PROVIDER_ENABLED: &str = "SELENE_CHEAP_SEARCH_PROVIDER_ENABLED";
+pub const SELENE_NEWS_CURRENT_EVENTS_PROVIDER_ENABLED: &str =
+    "SELENE_NEWS_CURRENT_EVENTS_PROVIDER_ENABLED";
+pub const SELENE_PROVIDER_FALLBACK_MAX_PER_TURN: &str = "SELENE_PROVIDER_FALLBACK_MAX_PER_TURN";
 
 pub const WEB_ADMIN_DISABLED: &str = "WEB_ADMIN_DISABLED";
 pub const PROVIDER_DISABLED: &str = "PROVIDER_DISABLED";
@@ -36,6 +42,12 @@ pub const PROVIDER_BUDGET_EXHAUSTED: &str = "PROVIDER_BUDGET_EXHAUSTED";
 pub const STARTUP_PROVIDER_PROBES_DISABLED: &str = "STARTUP_PROVIDER_PROBES_DISABLED";
 pub const PROVIDER_FALLBACK_DISABLED: &str = "PROVIDER_FALLBACK_DISABLED";
 pub const PROVIDER_FANOUT_DISABLED: &str = "PROVIDER_FANOUT_DISABLED";
+pub const PROVIDER_SECRET_MISSING: &str = "PROVIDER_SECRET_MISSING";
+pub const CACHE_HIT: &str = "CACHE_HIT";
+pub const CACHE_MISS: &str = "CACHE_MISS";
+pub const CACHE_STALE: &str = "CACHE_STALE";
+pub const NO_SEARCH_NEEDED: &str = "NO_SEARCH_NEEDED";
+pub const CHEAP_PROVIDER_UNAVAILABLE: &str = "CHEAP_PROVIDER_UNAVAILABLE";
 pub const TEST_FAKE_PROVIDER: &str = "TEST_FAKE_PROVIDER";
 pub const BLOCKED_NOT_BILLABLE: &str = "BLOCKED_NOT_BILLABLE";
 pub const NON_BILLABLE: &str = "NON_BILLABLE";
@@ -92,6 +104,9 @@ impl ProviderControlRoute {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum ProviderControlProvider {
+    CacheOnly,
+    CheapGeneralSearch,
+    NewsCurrentEvents,
     BraveWebSearch,
     BraveNewsSearch,
     BraveImageSearch,
@@ -104,6 +119,9 @@ pub enum ProviderControlProvider {
 impl ProviderControlProvider {
     pub const fn as_str(self) -> &'static str {
         match self {
+            Self::CacheOnly => "cache_only",
+            Self::CheapGeneralSearch => "cheap_general_search",
+            Self::NewsCurrentEvents => "news_current_events",
             Self::BraveWebSearch => "brave_web_search",
             Self::BraveNewsSearch => "brave_news_search",
             Self::BraveImageSearch => "brave_image_search",
@@ -116,6 +134,9 @@ impl ProviderControlProvider {
 
     pub const fn tier(self) -> &'static str {
         match self {
+            Self::CacheOnly => "cache",
+            Self::CheapGeneralSearch => "cheap",
+            Self::NewsCurrentEvents => "free_or_internal_news",
             Self::BraveWebSearch
             | Self::BraveNewsSearch
             | Self::BraveImageSearch
@@ -167,6 +188,7 @@ pub struct ProviderNetworkPolicy {
     pub max_calls_this_tenant: u32,
     pub max_retries: u32,
     pub fallback_enabled: bool,
+    pub max_fallback_calls_this_turn: u32,
     pub provider_fanout_enabled: bool,
     pub brave_max_calls_per_test_run: u32,
     pub brave_max_calls_per_day_test: u32,
@@ -178,6 +200,10 @@ impl Default for ProviderNetworkPolicy {
         let mut provider_specific_enabled = BTreeMap::new();
         provider_specific_enabled.insert("brave".to_string(), false);
         provider_specific_enabled.insert("brave_image".to_string(), false);
+        provider_specific_enabled.insert("openai_web".to_string(), false);
+        provider_specific_enabled.insert("gdelt_news".to_string(), false);
+        provider_specific_enabled.insert("cheap_general".to_string(), false);
+        provider_specific_enabled.insert("news_current_events".to_string(), false);
         Self {
             global_search_providers_enabled: false,
             paid_search_providers_enabled: false,
@@ -194,6 +220,7 @@ impl Default for ProviderNetworkPolicy {
             max_calls_this_tenant: 0,
             max_retries: 0,
             fallback_enabled: false,
+            max_fallback_calls_this_turn: 0,
             provider_fanout_enabled: false,
             brave_max_calls_per_test_run: 0,
             brave_max_calls_per_day_test: 0,
@@ -212,6 +239,22 @@ impl ProviderNetworkPolicy {
         provider_specific_enabled.insert(
             "brave_image".to_string(),
             env_flag_enabled(SELENE_BRAVE_IMAGE_SEARCH_ENABLED),
+        );
+        provider_specific_enabled.insert(
+            "openai_web".to_string(),
+            env_flag_enabled(SELENE_OPENAI_WEB_SEARCH_ENABLED),
+        );
+        provider_specific_enabled.insert(
+            "gdelt_news".to_string(),
+            env_flag_enabled(SELENE_GDELT_NEWS_SEARCH_ENABLED),
+        );
+        provider_specific_enabled.insert(
+            "cheap_general".to_string(),
+            env_flag_enabled(SELENE_CHEAP_SEARCH_PROVIDER_ENABLED),
+        );
+        provider_specific_enabled.insert(
+            "news_current_events".to_string(),
+            env_flag_enabled(SELENE_NEWS_CURRENT_EVENTS_PROVIDER_ENABLED),
         );
         Self {
             global_search_providers_enabled: env_flag_enabled(SELENE_SEARCH_PROVIDERS_ENABLED),
@@ -236,6 +279,8 @@ impl ProviderNetworkPolicy {
             max_calls_this_tenant: env_u32(SELENE_PROVIDER_CALL_MAX_PER_TENANT).unwrap_or(0),
             max_retries: env_u32(SELENE_PROVIDER_RETRY_MAX).unwrap_or(0),
             fallback_enabled: env_flag_enabled(SELENE_PROVIDER_FALLBACK_ENABLED),
+            max_fallback_calls_this_turn: env_u32(SELENE_PROVIDER_FALLBACK_MAX_PER_TURN)
+                .unwrap_or(0),
             provider_fanout_enabled: env_flag_enabled(SELENE_PROVIDER_FANOUT_ENABLED),
             brave_max_calls_per_test_run: env_u32(SELENE_BRAVE_MAX_CALLS_PER_TEST_RUN).unwrap_or(0),
             brave_max_calls_per_day_test: env_u32(SELENE_BRAVE_MAX_CALLS_PER_DAY_TEST).unwrap_or(0),
@@ -247,6 +292,10 @@ impl ProviderNetworkPolicy {
         let mut provider_specific_enabled = BTreeMap::new();
         provider_specific_enabled.insert("brave".to_string(), true);
         provider_specific_enabled.insert("brave_image".to_string(), true);
+        provider_specific_enabled.insert("openai_web".to_string(), true);
+        provider_specific_enabled.insert("gdelt_news".to_string(), true);
+        provider_specific_enabled.insert("cheap_general".to_string(), true);
+        provider_specific_enabled.insert("news_current_events".to_string(), true);
         Self {
             global_search_providers_enabled: true,
             paid_search_providers_enabled: true,
@@ -263,6 +312,7 @@ impl ProviderNetworkPolicy {
             max_calls_this_tenant: max_calls,
             max_retries: 0,
             fallback_enabled: false,
+            max_fallback_calls_this_turn: 1,
             provider_fanout_enabled: false,
             brave_max_calls_per_test_run: max_calls,
             brave_max_calls_per_day_test: max_calls,
@@ -290,6 +340,34 @@ impl ProviderNetworkPolicy {
                 .copied()
                 .unwrap_or(false);
         }
+        if matches!(provider, ProviderControlProvider::OpenAiWebSearch) {
+            return self
+                .provider_specific_enabled
+                .get("openai_web")
+                .copied()
+                .unwrap_or(false);
+        }
+        if matches!(provider, ProviderControlProvider::GdeltNewsAssist) {
+            return self
+                .provider_specific_enabled
+                .get("gdelt_news")
+                .copied()
+                .unwrap_or(false);
+        }
+        if matches!(provider, ProviderControlProvider::CheapGeneralSearch) {
+            return self
+                .provider_specific_enabled
+                .get("cheap_general")
+                .copied()
+                .unwrap_or(false);
+        }
+        if matches!(provider, ProviderControlProvider::NewsCurrentEvents) {
+            return self
+                .provider_specific_enabled
+                .get("news_current_events")
+                .copied()
+                .unwrap_or(false);
+        }
         true
     }
 }
@@ -299,14 +377,21 @@ pub fn provider_fallback_enabled_from_env() -> bool {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct ProviderCallCounter {
     pub logical_search_intent_count: u32,
+    pub provider_route_selected_count: u32,
     pub provider_blocked_count: u32,
+    pub provider_budget_denied_count: u32,
+    pub provider_secret_missing_count: u32,
     pub provider_call_attempt_count: u32,
     pub provider_network_dispatch_count: u32,
     pub provider_success_count: u32,
     pub provider_failure_count: u32,
     pub provider_retry_count: u32,
+    pub provider_fallback_count: u32,
+    pub provider_cache_hit_count: u32,
+    pub provider_cache_miss_count: u32,
     pub per_turn_count: u32,
     pub per_provider_count: BTreeMap<String, u32>,
     pub per_route_count: BTreeMap<String, u32>,
@@ -324,6 +409,10 @@ pub struct ProviderCallCounter {
 }
 
 impl ProviderCallCounter {
+    pub fn record_route_selected(&mut self) {
+        self.provider_route_selected_count = self.provider_route_selected_count.saturating_add(1);
+    }
+
     pub fn record_logical_intent(&mut self) {
         self.logical_search_intent_count = self.logical_search_intent_count.saturating_add(1);
     }
@@ -340,6 +429,14 @@ impl ProviderCallCounter {
             &mut self.per_service_type_count,
             event.service_type.as_str(),
         );
+    }
+
+    pub fn record_budget_denied(&mut self) {
+        self.provider_budget_denied_count = self.provider_budget_denied_count.saturating_add(1);
+    }
+
+    pub fn record_secret_missing(&mut self) {
+        self.provider_secret_missing_count = self.provider_secret_missing_count.saturating_add(1);
     }
 
     pub fn record_attempt(&mut self, event: &ProviderUsageEvent) {
@@ -376,6 +473,30 @@ impl ProviderCallCounter {
     pub fn record_network_dispatch(&mut self) {
         self.provider_network_dispatch_count =
             self.provider_network_dispatch_count.saturating_add(1);
+    }
+
+    pub fn record_success(&mut self) {
+        self.provider_success_count = self.provider_success_count.saturating_add(1);
+    }
+
+    pub fn record_failure(&mut self) {
+        self.provider_failure_count = self.provider_failure_count.saturating_add(1);
+    }
+
+    pub fn record_retry(&mut self) {
+        self.provider_retry_count = self.provider_retry_count.saturating_add(1);
+    }
+
+    pub fn record_fallback(&mut self) {
+        self.provider_fallback_count = self.provider_fallback_count.saturating_add(1);
+    }
+
+    pub fn record_cache_hit(&mut self) {
+        self.provider_cache_hit_count = self.provider_cache_hit_count.saturating_add(1);
+    }
+
+    pub fn record_cache_miss(&mut self) {
+        self.provider_cache_miss_count = self.provider_cache_miss_count.saturating_add(1);
     }
 }
 
@@ -509,12 +630,812 @@ impl ProviderGateDecision {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum ProviderLane {
+    NoSearch,
+    CacheOnly,
+    CheapGeneralSearch,
+    NewsCurrentEvents,
+    PremiumFallback,
+    DeepResearchCapped,
+    UrlFetchRead,
+    ImageMetadata,
+    Disabled,
+}
+
+impl ProviderLane {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::NoSearch => "NO_SEARCH",
+            Self::CacheOnly => "CACHE_ONLY",
+            Self::CheapGeneralSearch => "CHEAP_GENERAL_SEARCH",
+            Self::NewsCurrentEvents => "NEWS_CURRENT_EVENTS",
+            Self::PremiumFallback => "PREMIUM_FALLBACK",
+            Self::DeepResearchCapped => "DEEP_RESEARCH_CAPPED",
+            Self::UrlFetchRead => "URL_FETCH_READ",
+            Self::ImageMetadata => "IMAGE_METADATA",
+            Self::Disabled => "DISABLED",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum ProviderTier {
+    FreeOrInternal,
+    Cache,
+    Cheap,
+    Standard,
+    Premium,
+    ExpensiveDeepResearch,
+    Disabled,
+}
+
+impl ProviderTier {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::FreeOrInternal => "FREE_OR_INTERNAL",
+            Self::Cache => "CACHE",
+            Self::Cheap => "CHEAP",
+            Self::Standard => "STANDARD",
+            Self::Premium => "PREMIUM",
+            Self::ExpensiveDeepResearch => "EXPENSIVE_DEEP_RESEARCH",
+            Self::Disabled => "DISABLED",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum ProviderClass {
+    GeneralWeb,
+    News,
+    OfficialSiteTargeting,
+    PageFetch,
+    ImageMetadata,
+    DeepResearch,
+    FallbackOnly,
+}
+
+impl ProviderClass {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::GeneralWeb => "general_web",
+            Self::News => "news",
+            Self::OfficialSiteTargeting => "official_site_targeting",
+            Self::PageFetch => "page_fetch",
+            Self::ImageMetadata => "image_metadata",
+            Self::DeepResearch => "deep_research",
+            Self::FallbackOnly => "fallback_only",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum ProviderCostClass {
+    ZeroCache,
+    FreeOrInternal,
+    LowCost,
+    StandardCost,
+    PremiumCost,
+    DeepResearchCost,
+    Disabled,
+}
+
+impl ProviderCostClass {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::ZeroCache => "ZERO_CACHE",
+            Self::FreeOrInternal => "FREE_OR_INTERNAL",
+            Self::LowCost => "LOW_COST",
+            Self::StandardCost => "STANDARD_COST",
+            Self::PremiumCost => "PREMIUM_COST",
+            Self::DeepResearchCost => "DEEP_RESEARCH_COST",
+            Self::Disabled => "DISABLED",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum ProviderCacheStatus {
+    Disabled,
+    Hit,
+    Miss,
+    Stale,
+}
+
+impl ProviderCacheStatus {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Disabled => "DISABLED",
+            Self::Hit => CACHE_HIT,
+            Self::Miss => CACHE_MISS,
+            Self::Stale => CACHE_STALE,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProviderCacheDecisionPacket {
+    pub cache_enabled: bool,
+    pub cache_key_hash: String,
+    pub freshness_tier: String,
+    pub max_age_ms: u64,
+    pub source_policy: String,
+    pub claim_type: String,
+    pub requested_entity: String,
+    pub language: String,
+    pub provider_result_hash: String,
+    pub answer_packet_hash: String,
+    pub accepted_source_ids: Vec<String>,
+    pub evidence_hashes: Vec<String>,
+    pub created_at_ms: u64,
+    pub expires_at_ms: u64,
+    pub cache_retention_class: String,
+    pub status: ProviderCacheStatus,
+}
+
+impl ProviderCacheDecisionPacket {
+    pub fn disabled(trace_seed: &str) -> Self {
+        let hash = stable_hash_hex(trace_seed);
+        Self {
+            cache_enabled: false,
+            cache_key_hash: hash.clone(),
+            freshness_tier: "uncached".to_string(),
+            max_age_ms: 0,
+            source_policy: "accepted_sources_required".to_string(),
+            claim_type: "unknown".to_string(),
+            requested_entity: "synthetic".to_string(),
+            language: "und".to_string(),
+            provider_result_hash: hash.clone(),
+            answer_packet_hash: hash,
+            accepted_source_ids: Vec::new(),
+            evidence_hashes: Vec::new(),
+            created_at_ms: 0,
+            expires_at_ms: 0,
+            cache_retention_class: "no_cache".to_string(),
+            status: ProviderCacheStatus::Disabled,
+        }
+    }
+
+    pub fn fixture_hit(trace_seed: &str, now_ms: u64, max_age_ms: u64) -> Self {
+        let hash = stable_hash_hex(trace_seed);
+        Self {
+            cache_enabled: true,
+            cache_key_hash: hash.clone(),
+            freshness_tier: "stable_reference".to_string(),
+            max_age_ms,
+            source_policy: "accepted_sources_required".to_string(),
+            claim_type: "stable_reference".to_string(),
+            requested_entity: "Synthetic Entity A".to_string(),
+            language: "en".to_string(),
+            provider_result_hash: hash.clone(),
+            answer_packet_hash: hash.clone(),
+            accepted_source_ids: vec!["source_001".to_string()],
+            evidence_hashes: vec![hash],
+            created_at_ms: now_ms,
+            expires_at_ms: now_ms.saturating_add(max_age_ms),
+            cache_retention_class: "AUDIT_METADATA_ONLY".to_string(),
+            status: ProviderCacheStatus::Hit,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProviderRegistryEntry {
+    pub provider_id: String,
+    pub provider_name: String,
+    pub provider_lane: ProviderLane,
+    pub provider_tier: ProviderTier,
+    pub enabled: bool,
+    pub paid_provider: bool,
+    pub secret_id: Option<String>,
+    pub live_test_allowed: bool,
+    pub test_fake_provider: bool,
+    pub supports_web: bool,
+    pub supports_news: bool,
+    pub supports_images: bool,
+    pub supports_page_fetch: bool,
+    pub supports_deep_research: bool,
+    pub default_max_calls: u32,
+    pub default_retry_max: u32,
+    pub cost_estimate_unit: ProviderCostClass,
+    pub trust_notes: String,
+    pub data_retention_notes: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProviderRouteRequest {
+    pub search_needed: bool,
+    pub route: ProviderControlRoute,
+    pub query: String,
+    pub cache_allowed: bool,
+    pub cache_status: ProviderCacheStatus,
+    pub cheap_provider_available: bool,
+    pub news_provider_available: bool,
+    pub fallback_allowed: bool,
+    pub official_source_targeting: bool,
+    pub trace_id: String,
+}
+
+impl ProviderRouteRequest {
+    pub fn public_web(query: &str) -> Self {
+        Self {
+            search_needed: true,
+            route: ProviderControlRoute::WebSearch,
+            query: query.to_string(),
+            cache_allowed: true,
+            cache_status: ProviderCacheStatus::Miss,
+            cheap_provider_available: false,
+            news_provider_available: false,
+            fallback_allowed: false,
+            official_source_targeting: false,
+            trace_id: stable_hash_hex(query),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProviderRouteDecision {
+    pub search_needed: bool,
+    pub selected_lane: ProviderLane,
+    pub selected_provider: Option<ProviderControlProvider>,
+    pub fallback_provider: Option<ProviderControlProvider>,
+    pub fallback_allowed: bool,
+    pub fanout_allowed: bool,
+    pub cache_allowed: bool,
+    pub budget_required: bool,
+    pub user_approval_required: bool,
+    pub deny_reason: Option<String>,
+    pub route_reason: String,
+    pub max_calls: u32,
+    pub max_retries: u32,
+    pub estimated_cost_tier: ProviderCostClass,
+    pub trace_id: String,
+}
+
+impl ProviderRouteDecision {
+    pub fn provider_id(&self) -> &'static str {
+        self.selected_provider
+            .map(ProviderControlProvider::as_str)
+            .unwrap_or("none")
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProviderRawResultFixture {
+    pub title: String,
+    pub url: String,
+    pub snippet: String,
+    pub published_at: Option<String>,
+    pub source_type: Option<String>,
+    pub provider_rank: u16,
+    pub provider_confidence: Option<u16>,
+    pub raw_provider_metadata_redacted_hash: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NormalizedSourceCandidatePacket {
+    pub source_id: String,
+    pub provider_id: String,
+    pub title: String,
+    pub domain: String,
+    pub url: String,
+    pub snippet: String,
+    pub published_at: Option<String>,
+    pub source_type: Option<String>,
+    pub provider_rank: u16,
+    pub provider_confidence: Option<u16>,
+    pub provider_tier: ProviderTier,
+    pub retrieved_at_ms: u64,
+    pub raw_provider_metadata_redacted_hash: String,
+}
+
+pub fn normalize_provider_result_fixture(
+    provider: ProviderControlProvider,
+    provider_tier: ProviderTier,
+    result: ProviderRawResultFixture,
+    retrieved_at_ms: u64,
+) -> Result<NormalizedSourceCandidatePacket, String> {
+    let title = result.title.trim();
+    let url = result.url.trim();
+    let snippet = result.snippet.trim();
+    if title.is_empty() {
+        return Err("title_missing".to_string());
+    }
+    if !(url.starts_with("https://") || url.starts_with("http://")) {
+        return Err("url_not_public_http".to_string());
+    }
+    if snippet.is_empty() {
+        return Err("snippet_missing".to_string());
+    }
+    let domain = domain_from_url(url).ok_or_else(|| "domain_missing".to_string())?;
+    let source_id = format!(
+        "source_{}_{:03}",
+        stable_hash_hex(url).chars().take(8).collect::<String>(),
+        result.provider_rank
+    );
+    Ok(NormalizedSourceCandidatePacket {
+        source_id,
+        provider_id: provider.as_str().to_string(),
+        title: title.to_string(),
+        domain,
+        url: url.to_string(),
+        snippet: snippet.to_string(),
+        published_at: result.published_at,
+        source_type: result.source_type,
+        provider_rank: result.provider_rank,
+        provider_confidence: result.provider_confidence,
+        provider_tier,
+        retrieved_at_ms,
+        raw_provider_metadata_redacted_hash: result.raw_provider_metadata_redacted_hash,
+    })
+}
+
+fn domain_from_url(url: &str) -> Option<String> {
+    let without_scheme = url
+        .strip_prefix("https://")
+        .or_else(|| url.strip_prefix("http://"))?;
+    let host = without_scheme
+        .split('/')
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase();
+    if host.is_empty() || host.contains('@') || host.contains(' ') {
+        return None;
+    }
+    Some(host)
+}
+
+pub fn provider_registry(policy: &ProviderNetworkPolicy) -> Vec<ProviderRegistryEntry> {
+    vec![
+        ProviderRegistryEntry {
+            provider_id: ProviderControlProvider::CacheOnly.as_str().to_string(),
+            provider_name: "Verified cache".to_string(),
+            provider_lane: ProviderLane::CacheOnly,
+            provider_tier: ProviderTier::Cache,
+            enabled: true,
+            paid_provider: false,
+            secret_id: None,
+            live_test_allowed: true,
+            test_fake_provider: false,
+            supports_web: true,
+            supports_news: true,
+            supports_images: false,
+            supports_page_fetch: false,
+            supports_deep_research: false,
+            default_max_calls: 0,
+            default_retry_max: 0,
+            cost_estimate_unit: ProviderCostClass::ZeroCache,
+            trust_notes: "requires accepted source proof on cached answer".to_string(),
+            data_retention_notes: "audit metadata only unless a durable cache law says otherwise"
+                .to_string(),
+        },
+        ProviderRegistryEntry {
+            provider_id: ProviderControlProvider::CheapGeneralSearch
+                .as_str()
+                .to_string(),
+            provider_name: "Cheap/default general search lane".to_string(),
+            provider_lane: ProviderLane::CheapGeneralSearch,
+            provider_tier: ProviderTier::Cheap,
+            enabled: policy.is_provider_enabled(ProviderControlProvider::CheapGeneralSearch),
+            paid_provider: false,
+            secret_id: None,
+            live_test_allowed: false,
+            test_fake_provider: true,
+            supports_web: true,
+            supports_news: false,
+            supports_images: false,
+            supports_page_fetch: false,
+            supports_deep_research: false,
+            default_max_calls: policy.max_calls_this_turn,
+            default_retry_max: policy.max_retries,
+            cost_estimate_unit: ProviderCostClass::LowCost,
+            trust_notes: "Stage 8 fake/default lane; live provider candidates are deferred"
+                .to_string(),
+            data_retention_notes: "normal tests use fake transport only".to_string(),
+        },
+        ProviderRegistryEntry {
+            provider_id: ProviderControlProvider::NewsCurrentEvents
+                .as_str()
+                .to_string(),
+            provider_name: "News/current-events lane".to_string(),
+            provider_lane: ProviderLane::NewsCurrentEvents,
+            provider_tier: ProviderTier::FreeOrInternal,
+            enabled: policy.is_provider_enabled(ProviderControlProvider::NewsCurrentEvents),
+            paid_provider: false,
+            secret_id: None,
+            live_test_allowed: false,
+            test_fake_provider: true,
+            supports_web: false,
+            supports_news: true,
+            supports_images: false,
+            supports_page_fetch: false,
+            supports_deep_research: false,
+            default_max_calls: policy.max_calls_this_turn,
+            default_retry_max: policy.max_retries,
+            cost_estimate_unit: ProviderCostClass::FreeOrInternal,
+            trust_notes: "Stage 8 fake news lane; GDELT live use remains gated/deferred"
+                .to_string(),
+            data_retention_notes: "normal tests use fake transport only".to_string(),
+        },
+        ProviderRegistryEntry {
+            provider_id: ProviderControlProvider::BraveWebSearch.as_str().to_string(),
+            provider_name: "Brave Search premium fallback".to_string(),
+            provider_lane: ProviderLane::PremiumFallback,
+            provider_tier: ProviderTier::Premium,
+            enabled: policy.is_provider_enabled(ProviderControlProvider::BraveWebSearch),
+            paid_provider: true,
+            secret_id: Some("brave_search_api_key".to_string()),
+            live_test_allowed: policy.live_brave_proof_enabled,
+            test_fake_provider: false,
+            supports_web: true,
+            supports_news: false,
+            supports_images: false,
+            supports_page_fetch: false,
+            supports_deep_research: false,
+            default_max_calls: policy.max_calls_this_turn,
+            default_retry_max: policy.max_retries,
+            cost_estimate_unit: ProviderCostClass::PremiumCost,
+            trust_notes: "fallback-only unless explicit policy and budget select it".to_string(),
+            data_retention_notes: "no raw provider JSON in normal output".to_string(),
+        },
+        ProviderRegistryEntry {
+            provider_id: ProviderControlProvider::BraveNewsSearch
+                .as_str()
+                .to_string(),
+            provider_name: "Brave News premium fallback".to_string(),
+            provider_lane: ProviderLane::PremiumFallback,
+            provider_tier: ProviderTier::Premium,
+            enabled: policy.is_provider_enabled(ProviderControlProvider::BraveNewsSearch),
+            paid_provider: true,
+            secret_id: Some("brave_search_api_key".to_string()),
+            live_test_allowed: policy.live_brave_proof_enabled,
+            test_fake_provider: false,
+            supports_web: false,
+            supports_news: true,
+            supports_images: false,
+            supports_page_fetch: false,
+            supports_deep_research: false,
+            default_max_calls: policy.max_calls_this_turn,
+            default_retry_max: policy.max_retries,
+            cost_estimate_unit: ProviderCostClass::PremiumCost,
+            trust_notes: "premium news fallback; not default news lane".to_string(),
+            data_retention_notes: "no raw provider JSON in normal output".to_string(),
+        },
+    ]
+}
+
+pub fn route_provider(
+    policy: &ProviderNetworkPolicy,
+    request: &ProviderRouteRequest,
+) -> ProviderRouteDecision {
+    if !request.search_needed {
+        return ProviderRouteDecision {
+            search_needed: false,
+            selected_lane: ProviderLane::NoSearch,
+            selected_provider: None,
+            fallback_provider: None,
+            fallback_allowed: false,
+            fanout_allowed: false,
+            cache_allowed: request.cache_allowed,
+            budget_required: false,
+            user_approval_required: false,
+            deny_reason: None,
+            route_reason: NO_SEARCH_NEEDED.to_string(),
+            max_calls: 0,
+            max_retries: 0,
+            estimated_cost_tier: ProviderCostClass::Disabled,
+            trace_id: request.trace_id.clone(),
+        };
+    }
+
+    if request.cache_allowed && matches!(request.cache_status, ProviderCacheStatus::Hit) {
+        return ProviderRouteDecision {
+            search_needed: true,
+            selected_lane: ProviderLane::CacheOnly,
+            selected_provider: Some(ProviderControlProvider::CacheOnly),
+            fallback_provider: None,
+            fallback_allowed: false,
+            fanout_allowed: false,
+            cache_allowed: true,
+            budget_required: false,
+            user_approval_required: false,
+            deny_reason: None,
+            route_reason: CACHE_HIT.to_string(),
+            max_calls: 0,
+            max_retries: 0,
+            estimated_cost_tier: ProviderCostClass::ZeroCache,
+            trace_id: request.trace_id.clone(),
+        };
+    }
+
+    let cache_reason = if request.cache_allowed {
+        request.cache_status.as_str()
+    } else {
+        "CACHE_DISABLED"
+    };
+
+    match request.route {
+        ProviderControlRoute::WebSearch => {
+            if request.cheap_provider_available
+                && policy.is_provider_enabled(ProviderControlProvider::CheapGeneralSearch)
+            {
+                return ProviderRouteDecision {
+                    search_needed: true,
+                    selected_lane: ProviderLane::CheapGeneralSearch,
+                    selected_provider: Some(ProviderControlProvider::CheapGeneralSearch),
+                    fallback_provider: Some(ProviderControlProvider::BraveWebSearch),
+                    fallback_allowed: false,
+                    fanout_allowed: policy.provider_fanout_enabled,
+                    cache_allowed: request.cache_allowed,
+                    budget_required: true,
+                    user_approval_required: false,
+                    deny_reason: None,
+                    route_reason: format!("{cache_reason}:cheap_provider_selected"),
+                    max_calls: policy.max_calls_this_turn,
+                    max_retries: policy.max_retries,
+                    estimated_cost_tier: ProviderCostClass::LowCost,
+                    trace_id: request.trace_id.clone(),
+                };
+            }
+
+            if request.fallback_allowed
+                && policy.fallback_enabled
+                && policy.max_fallback_calls_this_turn > 0
+                && policy.is_provider_enabled(ProviderControlProvider::BraveWebSearch)
+            {
+                return ProviderRouteDecision {
+                    search_needed: true,
+                    selected_lane: ProviderLane::PremiumFallback,
+                    selected_provider: Some(ProviderControlProvider::BraveWebSearch),
+                    fallback_provider: Some(ProviderControlProvider::BraveWebSearch),
+                    fallback_allowed: true,
+                    fanout_allowed: false,
+                    cache_allowed: request.cache_allowed,
+                    budget_required: true,
+                    user_approval_required: false,
+                    deny_reason: None,
+                    route_reason: format!("{cache_reason}:premium_fallback_selected"),
+                    max_calls: policy.max_calls_this_turn,
+                    max_retries: policy.max_retries,
+                    estimated_cost_tier: ProviderCostClass::PremiumCost,
+                    trace_id: request.trace_id.clone(),
+                };
+            }
+
+            disabled_route_decision(
+                request,
+                CHEAP_PROVIDER_UNAVAILABLE,
+                Some(ProviderControlProvider::BraveWebSearch),
+            )
+        }
+        ProviderControlRoute::NewsSearch => {
+            if request.news_provider_available
+                && policy.is_provider_enabled(ProviderControlProvider::NewsCurrentEvents)
+            {
+                return ProviderRouteDecision {
+                    search_needed: true,
+                    selected_lane: ProviderLane::NewsCurrentEvents,
+                    selected_provider: Some(ProviderControlProvider::NewsCurrentEvents),
+                    fallback_provider: Some(ProviderControlProvider::BraveNewsSearch),
+                    fallback_allowed: false,
+                    fanout_allowed: policy.provider_fanout_enabled,
+                    cache_allowed: request.cache_allowed,
+                    budget_required: true,
+                    user_approval_required: false,
+                    deny_reason: None,
+                    route_reason: format!("{cache_reason}:news_provider_selected"),
+                    max_calls: policy.max_calls_this_turn,
+                    max_retries: policy.max_retries,
+                    estimated_cost_tier: ProviderCostClass::FreeOrInternal,
+                    trace_id: request.trace_id.clone(),
+                };
+            }
+
+            if request.fallback_allowed
+                && policy.fallback_enabled
+                && policy.max_fallback_calls_this_turn > 0
+                && policy.is_provider_enabled(ProviderControlProvider::BraveNewsSearch)
+            {
+                return ProviderRouteDecision {
+                    search_needed: true,
+                    selected_lane: ProviderLane::PremiumFallback,
+                    selected_provider: Some(ProviderControlProvider::BraveNewsSearch),
+                    fallback_provider: Some(ProviderControlProvider::BraveNewsSearch),
+                    fallback_allowed: true,
+                    fanout_allowed: false,
+                    cache_allowed: request.cache_allowed,
+                    budget_required: true,
+                    user_approval_required: false,
+                    deny_reason: None,
+                    route_reason: format!("{cache_reason}:premium_news_fallback_selected"),
+                    max_calls: policy.max_calls_this_turn,
+                    max_retries: policy.max_retries,
+                    estimated_cost_tier: ProviderCostClass::PremiumCost,
+                    trace_id: request.trace_id.clone(),
+                };
+            }
+
+            disabled_route_decision(
+                request,
+                NEWS_SEARCH_DISABLED,
+                Some(ProviderControlProvider::BraveNewsSearch),
+            )
+        }
+        ProviderControlRoute::DeepResearch => {
+            if policy.deep_research_enabled {
+                ProviderRouteDecision {
+                    search_needed: true,
+                    selected_lane: ProviderLane::DeepResearchCapped,
+                    selected_provider: Some(ProviderControlProvider::BraveWebSearch),
+                    fallback_provider: None,
+                    fallback_allowed: false,
+                    fanout_allowed: policy.provider_fanout_enabled,
+                    cache_allowed: request.cache_allowed,
+                    budget_required: true,
+                    user_approval_required: true,
+                    deny_reason: None,
+                    route_reason: format!("{cache_reason}:deep_research_capped"),
+                    max_calls: policy.max_calls_this_turn,
+                    max_retries: policy.max_retries,
+                    estimated_cost_tier: ProviderCostClass::DeepResearchCost,
+                    trace_id: request.trace_id.clone(),
+                }
+            } else {
+                disabled_route_decision(request, DEEP_RESEARCH_DISABLED, None)
+            }
+        }
+        ProviderControlRoute::UrlFetch => {
+            if policy.url_fetch_enabled {
+                ProviderRouteDecision {
+                    search_needed: true,
+                    selected_lane: ProviderLane::UrlFetchRead,
+                    selected_provider: Some(ProviderControlProvider::UrlFetch),
+                    fallback_provider: None,
+                    fallback_allowed: false,
+                    fanout_allowed: false,
+                    cache_allowed: request.cache_allowed,
+                    budget_required: true,
+                    user_approval_required: false,
+                    deny_reason: None,
+                    route_reason: format!("{cache_reason}:url_fetch_read"),
+                    max_calls: policy.max_calls_this_turn,
+                    max_retries: policy.max_retries,
+                    estimated_cost_tier: ProviderCostClass::StandardCost,
+                    trace_id: request.trace_id.clone(),
+                }
+            } else {
+                disabled_route_decision(request, URL_FETCH_DISABLED, None)
+            }
+        }
+        ProviderControlRoute::ImageSearch => {
+            if policy.is_provider_enabled(ProviderControlProvider::BraveImageSearch) {
+                ProviderRouteDecision {
+                    search_needed: true,
+                    selected_lane: ProviderLane::ImageMetadata,
+                    selected_provider: Some(ProviderControlProvider::BraveImageSearch),
+                    fallback_provider: None,
+                    fallback_allowed: false,
+                    fanout_allowed: false,
+                    cache_allowed: request.cache_allowed,
+                    budget_required: true,
+                    user_approval_required: false,
+                    deny_reason: None,
+                    route_reason: format!("{cache_reason}:image_metadata"),
+                    max_calls: policy.max_calls_this_turn,
+                    max_retries: policy.max_retries,
+                    estimated_cost_tier: ProviderCostClass::PremiumCost,
+                    trace_id: request.trace_id.clone(),
+                }
+            } else {
+                disabled_route_decision(request, PROVIDER_DISABLED, None)
+            }
+        }
+        ProviderControlRoute::StartupProbe => disabled_route_decision(
+            request,
+            STARTUP_PROVIDER_PROBES_DISABLED,
+            Some(ProviderControlProvider::StartupProbe),
+        ),
+    }
+}
+
+pub fn apply_route_decision_to_counter(
+    counter: &mut ProviderCallCounter,
+    decision: &ProviderRouteDecision,
+) {
+    counter.record_route_selected();
+    match decision.selected_lane {
+        ProviderLane::CacheOnly => counter.record_cache_hit(),
+        ProviderLane::Disabled => {
+            counter.record_blocked(&ProviderUsageEvent {
+                request_id: UNAVAILABLE.to_string(),
+                turn_id: UNAVAILABLE.to_string(),
+                session_id: UNAVAILABLE.to_string(),
+                route: "Stage8Router".to_string(),
+                provider: decision.provider_id().to_string(),
+                provider_tier: decision.estimated_cost_tier.as_str().to_string(),
+                operation_type: "provider_route".to_string(),
+                service_type: "ProviderRouter".to_string(),
+                module_id: "PH1.PROVIDERCTL".to_string(),
+                account_layer: UNKNOWN.to_string(),
+                tenant_id: UNAVAILABLE.to_string(),
+                customer_id: UNAVAILABLE.to_string(),
+                company_id: UNAVAILABLE.to_string(),
+                private_user_id: UNAVAILABLE.to_string(),
+                actor_user_id: UNAVAILABLE.to_string(),
+                role_id: UNAVAILABLE.to_string(),
+                department_id: UNAVAILABLE.to_string(),
+                team_id: UNAVAILABLE.to_string(),
+                cost_owner_id: UNKNOWN.to_string(),
+                billing_scope: NON_BILLABLE.to_string(),
+                plan_id: UNAVAILABLE.to_string(),
+                billing_period_id: UNAVAILABLE.to_string(),
+                billable_class: BLOCKED_NOT_BILLABLE.to_string(),
+                allowed: false,
+                deny_reason: decision.deny_reason.clone(),
+                estimated_unit_cost_micros: Some(0),
+                estimated_total_cost_micros: Some(0),
+                estimated_cost_currency: Some("USD".to_string()),
+                actual_unit_cost_micros: Some(0),
+                actual_total_cost_micros: Some(0),
+                actual_cost_currency: Some("USD".to_string()),
+                max_call_limit: decision.max_calls,
+                current_call_count: counter.provider_call_attempt_count,
+                remaining_call_budget: decision.max_calls,
+                timestamp_unix_ms: now_unix_ms(),
+                redacted_query_hash: decision.trace_id.clone(),
+            });
+            if matches!(
+                decision.deny_reason.as_deref(),
+                Some(PROVIDER_BUDGET_EXHAUSTED)
+            ) {
+                counter.record_budget_denied();
+            }
+        }
+        _ => {
+            if matches!(decision.cache_allowed, true)
+                && !matches!(decision.selected_lane, ProviderLane::NoSearch)
+            {
+                counter.record_cache_miss();
+            }
+            if decision.fallback_allowed {
+                counter.record_fallback();
+            }
+        }
+    }
+}
+
+fn disabled_route_decision(
+    request: &ProviderRouteRequest,
+    reason: &str,
+    fallback_provider: Option<ProviderControlProvider>,
+) -> ProviderRouteDecision {
+    ProviderRouteDecision {
+        search_needed: request.search_needed,
+        selected_lane: ProviderLane::Disabled,
+        selected_provider: None,
+        fallback_provider,
+        fallback_allowed: false,
+        fanout_allowed: false,
+        cache_allowed: request.cache_allowed,
+        budget_required: false,
+        user_approval_required: false,
+        deny_reason: Some(reason.to_string()),
+        route_reason: reason.to_string(),
+        max_calls: 0,
+        max_retries: 0,
+        estimated_cost_tier: ProviderCostClass::Disabled,
+        trace_id: request.trace_id.clone(),
+    }
+}
+
 pub fn evaluate_provider_gate(
     policy: &ProviderNetworkPolicy,
     context: ProviderUsageContext,
     mode: ProviderControlMode,
     mut counter: ProviderCallCounter,
 ) -> ProviderGateDecision {
+    counter.record_route_selected();
     counter.record_logical_intent();
     let deny_reason = deny_reason(policy, &context, mode, &counter);
     let allowed = deny_reason.is_none();
@@ -534,6 +1455,9 @@ pub fn evaluate_provider_gate(
             .saturating_sub(counter.provider_call_attempt_count);
     } else {
         counter.record_blocked(&event);
+        if matches!(deny_reason.as_deref(), Some(PROVIDER_BUDGET_EXHAUSTED)) {
+            counter.record_budget_denied();
+        }
     }
     ProviderGateDecision {
         allowed,
@@ -611,7 +1535,7 @@ fn deny_reason(
     if matches!(context.route, ProviderControlRoute::UrlFetch) && !policy.url_fetch_enabled {
         return Some(URL_FETCH_DISABLED.to_string());
     }
-    if context.provider.is_brave() && !policy.is_provider_enabled(context.provider) {
+    if !policy.is_provider_enabled(context.provider) {
         return Some(PROVIDER_DISABLED.to_string());
     }
     if context.provider.is_paid() && !policy.paid_search_providers_enabled {
@@ -1122,5 +2046,399 @@ mod tests {
             ProviderCallCounter::default(),
         );
         assert!(allowed.allowed, "{allowed:?}");
+    }
+
+    #[test]
+    fn stage8_no_search_default_selects_no_provider() {
+        let policy = ProviderNetworkPolicy::default();
+        let mut request = ProviderRouteRequest::public_web("explain a stable synthetic concept");
+        request.search_needed = false;
+
+        let decision = route_provider(&policy, &request);
+
+        assert_eq!(decision.selected_lane, ProviderLane::NoSearch);
+        assert_eq!(decision.selected_provider, None);
+        assert!(!decision.budget_required);
+        assert_eq!(decision.route_reason, NO_SEARCH_NEEDED);
+    }
+
+    #[test]
+    fn stage8_cache_hit_zero_provider_call_path() {
+        let policy = ProviderNetworkPolicy::default();
+        let mut request = ProviderRouteRequest::public_web("Synthetic Entity A profile");
+        request.cache_status = ProviderCacheStatus::Hit;
+        let cache_packet = ProviderCacheDecisionPacket::fixture_hit(&request.query, 1_000, 60_000);
+
+        let decision = route_provider(&policy, &request);
+        let mut counter = ProviderCallCounter::default();
+        apply_route_decision_to_counter(&mut counter, &decision);
+
+        assert!(cache_packet.cache_enabled);
+        assert_eq!(decision.selected_lane, ProviderLane::CacheOnly);
+        assert_eq!(
+            decision.selected_provider,
+            Some(ProviderControlProvider::CacheOnly)
+        );
+        assert_eq!(counter.provider_cache_hit_count, 1);
+        assert_eq!(counter.provider_call_attempt_count, 0);
+        assert_eq!(counter.provider_network_dispatch_count, 0);
+    }
+
+    #[test]
+    fn stage8_stale_cache_does_not_return_cached_current_claim() {
+        let mut policy = ProviderNetworkPolicy::fake_test_allowing(1);
+        policy
+            .provider_specific_enabled
+            .insert("cheap_general".to_string(), true);
+        let mut request = ProviderRouteRequest::public_web("latest Synthetic Entity A status");
+        request.cache_status = ProviderCacheStatus::Stale;
+        request.cheap_provider_available = true;
+
+        let decision = route_provider(&policy, &request);
+
+        assert_eq!(decision.selected_lane, ProviderLane::CheapGeneralSearch);
+        assert_eq!(
+            decision.selected_provider,
+            Some(ProviderControlProvider::CheapGeneralSearch)
+        );
+        assert!(decision.route_reason.contains(CACHE_STALE));
+    }
+
+    #[test]
+    fn stage8_cheap_provider_preferred_over_premium() {
+        let mut policy = ProviderNetworkPolicy::fake_test_allowing(1);
+        policy
+            .provider_specific_enabled
+            .insert("cheap_general".to_string(), true);
+        policy
+            .provider_specific_enabled
+            .insert("brave".to_string(), true);
+        policy.fallback_enabled = true;
+        policy.max_fallback_calls_this_turn = 1;
+        let mut request = ProviderRouteRequest::public_web("Synthetic Entity A official page");
+        request.cheap_provider_available = true;
+        request.fallback_allowed = true;
+
+        let decision = route_provider(&policy, &request);
+
+        assert_eq!(decision.selected_lane, ProviderLane::CheapGeneralSearch);
+        assert_eq!(
+            decision.selected_provider,
+            Some(ProviderControlProvider::CheapGeneralSearch)
+        );
+        assert_eq!(
+            decision.fallback_provider,
+            Some(ProviderControlProvider::BraveWebSearch)
+        );
+        assert!(!decision.fallback_allowed);
+        assert_eq!(decision.estimated_cost_tier, ProviderCostClass::LowCost);
+    }
+
+    #[test]
+    fn stage8_premium_fallback_disabled_safe_degrades() {
+        let mut policy = ProviderNetworkPolicy::fake_test_allowing(1);
+        policy.fallback_enabled = false;
+        let mut request = ProviderRouteRequest::public_web("Synthetic Entity A official page");
+        request.cheap_provider_available = false;
+        request.fallback_allowed = true;
+
+        let decision = route_provider(&policy, &request);
+        let mut counter = ProviderCallCounter::default();
+        apply_route_decision_to_counter(&mut counter, &decision);
+
+        assert_eq!(decision.selected_lane, ProviderLane::Disabled);
+        assert_eq!(
+            decision.deny_reason.as_deref(),
+            Some(CHEAP_PROVIDER_UNAVAILABLE)
+        );
+        assert_eq!(counter.provider_blocked_count, 1);
+        assert_eq!(counter.provider_network_dispatch_count, 0);
+    }
+
+    #[test]
+    fn stage8_premium_fallback_enabled_uses_brave_as_fallback_only() {
+        let mut policy = ProviderNetworkPolicy::fake_test_allowing(1);
+        policy.fallback_enabled = true;
+        policy.max_fallback_calls_this_turn = 1;
+        policy
+            .provider_specific_enabled
+            .insert("brave".to_string(), true);
+        let mut request = ProviderRouteRequest::public_web("Synthetic Entity A official page");
+        request.cheap_provider_available = false;
+        request.fallback_allowed = true;
+
+        let decision = route_provider(&policy, &request);
+        let mut counter = ProviderCallCounter::default();
+        apply_route_decision_to_counter(&mut counter, &decision);
+
+        assert_eq!(decision.selected_lane, ProviderLane::PremiumFallback);
+        assert_eq!(
+            decision.selected_provider,
+            Some(ProviderControlProvider::BraveWebSearch)
+        );
+        assert!(decision.fallback_allowed);
+        assert_eq!(counter.provider_fallback_count, 1);
+        assert_eq!(counter.provider_network_dispatch_count, 0);
+    }
+
+    #[test]
+    fn stage8_paid_provider_disabled_blocks_brave() {
+        let mut policy = ProviderNetworkPolicy::default();
+        policy.global_search_providers_enabled = true;
+        policy.web_search_enabled = true;
+        policy.max_calls_this_turn = 1;
+        policy.max_calls_this_route = 1;
+        policy.brave_max_calls_per_test_run = 1;
+        policy.brave_max_calls_per_day_test = 1;
+        policy
+            .provider_specific_enabled
+            .insert("brave".to_string(), true);
+
+        let decision = evaluate_provider_gate(
+            &policy,
+            ProviderUsageContext::unknown(
+                ProviderControlRoute::WebSearch,
+                ProviderControlProvider::BraveWebSearch,
+                "Synthetic Entity A",
+            ),
+            ProviderControlMode::Live,
+            ProviderCallCounter::default(),
+        );
+
+        assert!(!decision.allowed);
+        assert_eq!(
+            decision.deny_reason.as_deref(),
+            Some(PAID_PROVIDER_DISABLED)
+        );
+        assert_eq!(decision.counter.provider_call_attempt_count, 0);
+    }
+
+    #[test]
+    fn stage8_provider_specific_disabled_blocks_brave() {
+        let mut policy = ProviderNetworkPolicy::default();
+        policy.global_search_providers_enabled = true;
+        policy.paid_search_providers_enabled = true;
+        policy.web_search_enabled = true;
+        policy.max_calls_this_turn = 1;
+        policy.max_calls_this_route = 1;
+        policy.brave_max_calls_per_test_run = 1;
+        policy.brave_max_calls_per_day_test = 1;
+
+        let decision = evaluate_provider_gate(
+            &policy,
+            ProviderUsageContext::unknown(
+                ProviderControlRoute::WebSearch,
+                ProviderControlProvider::BraveWebSearch,
+                "Synthetic Entity A",
+            ),
+            ProviderControlMode::Live,
+            ProviderCallCounter::default(),
+        );
+
+        assert!(!decision.allowed);
+        assert_eq!(decision.deny_reason.as_deref(), Some(PROVIDER_DISABLED));
+        assert_eq!(decision.counter.provider_call_attempt_count, 0);
+    }
+
+    #[test]
+    fn stage8_fallback_cap_required_before_premium_fallback() {
+        let mut policy = ProviderNetworkPolicy::fake_test_allowing(1);
+        policy.fallback_enabled = true;
+        policy.max_fallback_calls_this_turn = 0;
+        policy
+            .provider_specific_enabled
+            .insert("brave".to_string(), true);
+        let mut request = ProviderRouteRequest::public_web("Synthetic Entity A official page");
+        request.fallback_allowed = true;
+
+        let decision = route_provider(&policy, &request);
+
+        assert_eq!(decision.selected_lane, ProviderLane::Disabled);
+        assert_eq!(
+            decision.deny_reason.as_deref(),
+            Some(CHEAP_PROVIDER_UNAVAILABLE)
+        );
+    }
+
+    #[test]
+    fn stage8_retry_cap_zero_records_no_retry() {
+        let policy = ProviderNetworkPolicy::fake_test_allowing(1);
+        let mut counter = ProviderCallCounter::default();
+
+        if policy.max_retries > 0 {
+            counter.record_retry();
+        }
+
+        assert_eq!(policy.max_retries, 0);
+        assert_eq!(counter.provider_retry_count, 0);
+    }
+
+    #[test]
+    fn stage8_news_lane_selects_fake_news_provider() {
+        let mut policy = ProviderNetworkPolicy::fake_test_allowing(1);
+        policy
+            .provider_specific_enabled
+            .insert("news_current_events".to_string(), true);
+        let mut request = ProviderRouteRequest::public_web("latest Synthetic Entity A update");
+        request.route = ProviderControlRoute::NewsSearch;
+        request.news_provider_available = true;
+
+        let decision = route_provider(&policy, &request);
+
+        assert_eq!(decision.selected_lane, ProviderLane::NewsCurrentEvents);
+        assert_eq!(
+            decision.selected_provider,
+            Some(ProviderControlProvider::NewsCurrentEvents)
+        );
+        assert_eq!(
+            decision.estimated_cost_tier,
+            ProviderCostClass::FreeOrInternal
+        );
+    }
+
+    #[test]
+    fn stage8_news_lane_missing_provider_safe_degrades() {
+        let policy = ProviderNetworkPolicy::fake_test_allowing(1);
+        let mut request = ProviderRouteRequest::public_web("today Synthetic Entity A update");
+        request.route = ProviderControlRoute::NewsSearch;
+        request.news_provider_available = false;
+
+        let decision = route_provider(&policy, &request);
+
+        assert_eq!(decision.selected_lane, ProviderLane::Disabled);
+        assert_eq!(decision.deny_reason.as_deref(), Some(NEWS_SEARCH_DISABLED));
+    }
+
+    #[test]
+    fn stage8_deep_research_not_triggered_for_simple_search() {
+        let policy = ProviderNetworkPolicy::fake_test_allowing(1);
+        let request = ProviderRouteRequest::public_web("Synthetic Entity A public profile");
+
+        let decision = route_provider(&policy, &request);
+
+        assert_ne!(decision.selected_lane, ProviderLane::DeepResearchCapped);
+        assert!(!decision.user_approval_required);
+    }
+
+    #[test]
+    fn stage8_deep_research_explicit_but_disabled() {
+        let policy = ProviderNetworkPolicy::default();
+        let mut request = ProviderRouteRequest::public_web("deep research Synthetic Entity A");
+        request.route = ProviderControlRoute::DeepResearch;
+
+        let decision = route_provider(&policy, &request);
+
+        assert_eq!(decision.selected_lane, ProviderLane::Disabled);
+        assert_eq!(
+            decision.deny_reason.as_deref(),
+            Some(DEEP_RESEARCH_DISABLED)
+        );
+    }
+
+    #[test]
+    fn stage8_url_fetch_not_auto_triggered_by_provider_result() {
+        let policy = ProviderNetworkPolicy::default();
+        let mut request = ProviderRouteRequest::public_web("Synthetic Entity A with result URL");
+        request.route = ProviderControlRoute::UrlFetch;
+
+        let decision = route_provider(&policy, &request);
+
+        assert_eq!(decision.selected_lane, ProviderLane::Disabled);
+        assert_eq!(decision.deny_reason.as_deref(), Some(URL_FETCH_DISABLED));
+    }
+
+    #[test]
+    fn stage8_image_lane_not_auto_triggered() {
+        let policy = ProviderNetworkPolicy::default();
+        let mut request = ProviderRouteRequest::public_web("Synthetic Entity A logo");
+        request.route = ProviderControlRoute::ImageSearch;
+
+        let decision = route_provider(&policy, &request);
+
+        assert_eq!(decision.selected_lane, ProviderLane::Disabled);
+        assert_eq!(decision.deny_reason.as_deref(), Some(PROVIDER_DISABLED));
+    }
+
+    #[test]
+    fn stage8_provider_result_normalization_redacts_raw_metadata() {
+        let normalized = normalize_provider_result_fixture(
+            ProviderControlProvider::CheapGeneralSearch,
+            ProviderTier::Cheap,
+            ProviderRawResultFixture {
+                title: " Synthetic Source A ".to_string(),
+                url: "https://source-a.synthetic.example/path".to_string(),
+                snippet: "Synthetic Entity A has a supported public profile.".to_string(),
+                published_at: Some("2026-01-01T00:00:00Z".to_string()),
+                source_type: Some("official_site_targeting".to_string()),
+                provider_rank: 1,
+                provider_confidence: Some(90),
+                raw_provider_metadata_redacted_hash: "hash_only_no_json".to_string(),
+            },
+            1_772_000_000_000,
+        )
+        .expect("normalization should succeed");
+
+        assert_eq!(normalized.provider_id, "cheap_general_search");
+        assert_eq!(normalized.domain, "source-a.synthetic.example");
+        assert_eq!(normalized.provider_tier, ProviderTier::Cheap);
+        assert_eq!(
+            normalized.raw_provider_metadata_redacted_hash,
+            "hash_only_no_json"
+        );
+        assert!(!normalized.snippet.contains('{'));
+    }
+
+    #[test]
+    fn stage8_registry_marks_brave_premium_fallback_not_default() {
+        let policy = ProviderNetworkPolicy::default();
+        let registry = provider_registry(&policy);
+        let brave = registry
+            .iter()
+            .find(|entry| entry.provider_id == "brave_web_search")
+            .expect("Brave registry entry must exist");
+        let cheap = registry
+            .iter()
+            .find(|entry| entry.provider_id == "cheap_general_search")
+            .expect("cheap registry entry must exist");
+
+        assert_eq!(brave.provider_lane, ProviderLane::PremiumFallback);
+        assert_eq!(brave.provider_tier, ProviderTier::Premium);
+        assert!(brave.paid_provider);
+        assert!(!brave.enabled);
+        assert_eq!(cheap.provider_lane, ProviderLane::CheapGeneralSearch);
+        assert!(cheap.test_fake_provider);
+    }
+
+    #[test]
+    fn stage8_provider_off_all_lanes_block_before_attempt_or_dispatch() {
+        for route in [
+            ProviderControlRoute::WebSearch,
+            ProviderControlRoute::NewsSearch,
+            ProviderControlRoute::DeepResearch,
+            ProviderControlRoute::UrlFetch,
+            ProviderControlRoute::ImageSearch,
+        ] {
+            let provider = match route {
+                ProviderControlRoute::NewsSearch => ProviderControlProvider::BraveNewsSearch,
+                ProviderControlRoute::UrlFetch => ProviderControlProvider::UrlFetch,
+                ProviderControlRoute::ImageSearch => ProviderControlProvider::BraveImageSearch,
+                _ => ProviderControlProvider::BraveWebSearch,
+            };
+            let decision = disabled_provider_decision(route, provider, "Synthetic Entity A");
+
+            assert!(!decision.allowed);
+            assert_eq!(decision.counter.provider_call_attempt_count, 0);
+            assert_eq!(decision.counter.provider_network_dispatch_count, 0);
+        }
+    }
+
+    #[test]
+    fn stage8_missing_secret_is_counted_without_startup_failure() {
+        let mut counter = ProviderCallCounter::default();
+        counter.record_secret_missing();
+
+        assert_eq!(counter.provider_secret_missing_count, 1);
+        assert_eq!(counter.provider_call_attempt_count, 0);
+        assert_eq!(counter.provider_network_dispatch_count, 0);
     }
 }

@@ -11,6 +11,11 @@ use crate::web_search_plan::web_provider::{
     NormalizedSearchResult, ProviderErrorKind, ProviderId, WebProviderRuntimeConfig,
     DEFAULT_BRAVE_WEB_ENDPOINT, DEFAULT_OPENAI_RESPONSES_ENDPOINT,
 };
+use selene_engines::ph1providerctl::{
+    apply_route_decision_to_counter, provider_registry, route_provider, ProviderCacheStatus,
+    ProviderCallCounter, ProviderControlProvider, ProviderLane, ProviderNetworkPolicy,
+    ProviderRouteRequest,
+};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Write};
@@ -172,6 +177,38 @@ fn base_runtime(brave_endpoint: &str, openai_endpoint: &str) -> WebProviderRunti
         brave_api_key_override: Some("test_brave_key".to_string()),
         openai_api_key_override: Some("test_openai_key".to_string()),
     }
+}
+
+#[test]
+fn stage8_os_cache_first_and_cheap_lane_use_router_without_network_dispatch() {
+    let mut policy = ProviderNetworkPolicy::fake_test_allowing(1);
+    policy
+        .provider_specific_enabled
+        .insert("cheap_general".to_string(), true);
+    let registry = provider_registry(&policy);
+    assert!(registry
+        .iter()
+        .any(|entry| entry.provider_id == "cheap_general_search"
+            && entry.provider_lane == ProviderLane::CheapGeneralSearch));
+
+    let mut cache_hit_request = ProviderRouteRequest::public_web("Synthetic Entity B overview");
+    cache_hit_request.cache_status = ProviderCacheStatus::Hit;
+    let cache_hit = route_provider(&policy, &cache_hit_request);
+    let mut counter = ProviderCallCounter::default();
+    apply_route_decision_to_counter(&mut counter, &cache_hit);
+    assert_eq!(cache_hit.selected_lane, ProviderLane::CacheOnly);
+    assert_eq!(counter.provider_call_attempt_count, 0);
+    assert_eq!(counter.provider_network_dispatch_count, 0);
+
+    let mut cache_miss_request = ProviderRouteRequest::public_web("Synthetic Entity B overview");
+    cache_miss_request.cache_status = ProviderCacheStatus::Miss;
+    cache_miss_request.cheap_provider_available = true;
+    let cheap = route_provider(&policy, &cache_miss_request);
+    assert_eq!(
+        cheap.selected_provider,
+        Some(ProviderControlProvider::CheapGeneralSearch)
+    );
+    assert_eq!(cheap.selected_lane, ProviderLane::CheapGeneralSearch);
 }
 
 fn brave_success_payload(items: &[(&str, &str, &str)]) -> Value {

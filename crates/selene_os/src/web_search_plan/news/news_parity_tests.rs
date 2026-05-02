@@ -7,6 +7,10 @@ use crate::web_search_plan::news::{
 use crate::web_search_plan::proxy::proxy_config::ProxyConfig;
 use crate::web_search_plan::proxy::ProxyMode;
 use crate::web_search_plan::web_provider::health_state::{HealthPolicy, ProviderHealthTracker};
+use selene_engines::ph1providerctl::{
+    route_provider, ProviderControlProvider, ProviderControlRoute, ProviderLane,
+    ProviderNetworkPolicy, ProviderRouteRequest,
+};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Write};
@@ -129,6 +133,37 @@ fn write_http_response(stream: &mut TcpStream, response: &MockResponse) {
     let _ = stream.write_all(head.as_bytes());
     let _ = stream.write_all(&response.body);
     let _ = stream.flush();
+}
+
+#[test]
+fn stage8_os_news_lane_selects_fake_news_provider_before_premium_fallback() {
+    let mut policy = ProviderNetworkPolicy::fake_test_allowing(1);
+    policy
+        .provider_specific_enabled
+        .insert("news_current_events".to_string(), true);
+    policy
+        .provider_specific_enabled
+        .insert("brave".to_string(), true);
+    policy.fallback_enabled = true;
+    policy.max_fallback_calls_this_turn = 1;
+
+    let mut request = ProviderRouteRequest::public_web("latest Synthetic Entity C update");
+    request.route = ProviderControlRoute::NewsSearch;
+    request.news_provider_available = true;
+    request.fallback_allowed = true;
+
+    let decision = route_provider(&policy, &request);
+
+    assert_eq!(decision.selected_lane, ProviderLane::NewsCurrentEvents);
+    assert_eq!(
+        decision.selected_provider,
+        Some(ProviderControlProvider::NewsCurrentEvents)
+    );
+    assert_eq!(
+        decision.fallback_provider,
+        Some(ProviderControlProvider::BraveNewsSearch)
+    );
+    assert!(!decision.fallback_allowed);
 }
 
 fn tool_request_packet(query: &str, importance_tier: &str) -> Value {

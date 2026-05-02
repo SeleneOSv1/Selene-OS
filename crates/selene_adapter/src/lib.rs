@@ -36239,6 +36239,113 @@ mod tests {
         );
     }
 
+    #[test]
+    fn stage8_adapter_provider_router_boundary_and_protected_fail_closed() {
+        use selene_engines::ph1providerctl::{
+            provider_registry, route_provider, ProviderCacheStatus, ProviderControlProvider,
+            ProviderLane, ProviderNetworkPolicy, ProviderRouteRequest,
+        };
+
+        let mut policy = ProviderNetworkPolicy::fake_test_allowing(1);
+        policy
+            .provider_specific_enabled
+            .insert("cheap_general".to_string(), true);
+        let registry = provider_registry(&policy);
+        assert!(registry.iter().any(|entry| {
+            entry.provider_id == "brave_web_search"
+                && entry.provider_lane == ProviderLane::PremiumFallback
+                && entry.paid_provider
+        }));
+
+        let mut request = ProviderRouteRequest::public_web("Synthetic Entity D public profile");
+        request.cache_status = ProviderCacheStatus::Miss;
+        request.cheap_provider_available = true;
+        request.fallback_allowed = true;
+        let decision = route_provider(&policy, &request);
+        assert_eq!(decision.selected_lane, ProviderLane::CheapGeneralSearch);
+        assert_eq!(
+            decision.selected_provider,
+            Some(ProviderControlProvider::CheapGeneralSearch)
+        );
+
+        with_isolated_device_vault(
+            "stage8_adapter_provider_router_boundary",
+            &[("brave_search_api_key", "stage8-test-key")],
+            &[
+                ("SELENE_SEARCH_PROVIDERS_ENABLED", "0"),
+                ("SELENE_PAID_SEARCH_PROVIDERS_ENABLED", "0"),
+                ("SELENE_WEB_SEARCH_ENABLED", "0"),
+                ("SELENE_DEEP_RESEARCH_ENABLED", "0"),
+                ("SELENE_NEWS_SEARCH_ENABLED", "0"),
+                ("SELENE_URL_FETCH_ENABLED", "0"),
+                ("SELENE_STARTUP_PROVIDER_PROBES_ENABLED", "0"),
+                ("SELENE_BRAVE_SEARCH_ENABLED", "0"),
+                ("SELENE_BRAVE_IMAGE_SEARCH_ENABLED", "0"),
+                ("SELENE_OPENAI_WEB_SEARCH_ENABLED", "0"),
+                ("SELENE_GDELT_NEWS_SEARCH_ENABLED", "0"),
+                ("SELENE_CHEAP_SEARCH_PROVIDER_ENABLED", "0"),
+                ("SELENE_NEWS_CURRENT_EVENTS_PROVIDER_ENABLED", "0"),
+                ("SELENE_PROVIDER_FALLBACK_ENABLED", "0"),
+                ("SELENE_PROVIDER_FANOUT_ENABLED", "0"),
+                ("SELENE_PROVIDER_CALL_MAX_PER_TURN", "0"),
+                ("SELENE_PROVIDER_CALL_MAX_PER_ROUTE", "0"),
+                ("SELENE_PROVIDER_RETRY_MAX", "0"),
+            ],
+            || {
+                let runtime = AdapterRuntime::default();
+                let mut protected_req = base_request();
+                protected_req.app_platform = "DESKTOP".to_string();
+                protected_req.correlation_id = 8_801;
+                protected_req.turn_id = 8_801;
+                protected_req.device_turn_sequence = Some(8_801);
+                protected_req.now_ns = Some(8_801);
+                protected_req.device_id = Some("stage8_protected_device".to_string());
+                protected_req.audio_capture_ref = None;
+                protected_req.user_text_final =
+                    Some("Search the web and approve payroll for SampleEmployee01.".to_string());
+                seed_desktop_voice_profile_for_request(
+                    &runtime,
+                    &mut protected_req,
+                    "stage8_protected_off",
+                );
+                let protected_out = runtime
+                    .run_voice_turn(protected_req)
+                    .expect("Stage 8 protected mixed prompt should fail closed");
+                assert_eq!(protected_out.status, "ok", "{protected_out:?}");
+                assert!(
+                    protected_out
+                        .response_text
+                        .contains("NO_SIMULATION_NO_AUTHORITY_NO_PROTECTED_EXECUTION"),
+                    "{}",
+                    protected_out.response_text
+                );
+                assert_eq!(protected_out.response_text, protected_out.tts_text);
+                assert!(protected_out.source_chips.is_empty());
+                assert!(protected_out.image_cards.is_empty());
+                for forbidden in [
+                    "provider_call_attempt_count",
+                    "provider_network_dispatch_count",
+                    "provider json",
+                    "source dump",
+                    "debug trace",
+                    "brave_search_api_key",
+                    "raw_provider",
+                ] {
+                    assert!(
+                        !protected_out.response_text.contains(forbidden),
+                        "{forbidden} leaked in {}",
+                        protected_out.response_text
+                    );
+                    assert!(
+                        !protected_out.tts_text.contains(forbidden),
+                        "{forbidden} leaked in {}",
+                        protected_out.tts_text
+                    );
+                }
+            },
+        );
+    }
+
     fn assert_h411_public_answer_clean(out: &VoiceTurnAdapterResponse) {
         assert_eq!(out.status, "ok", "{out:?}");
         assert!(

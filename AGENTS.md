@@ -215,6 +215,46 @@ Public websearch remains read-only public answer work and does not require simul
 
 Protected execution remains simulation and authority gated.
 
+Rule: Provider Lane Routing and Cheap-First Search
+
+Search providers must be selected through the provider router, not scattered uncontrolled direct calls.
+
+No-search remains default for prompts that do not need current, external, or source-backed information.
+
+Cache must be checked before provider calls where policy allows, and valid cache hits must produce zero provider attempts and zero provider network dispatches.
+
+Cheap/default providers must be preferred for normal public search when available and allowed.
+
+News/current-event providers must be preferred for news/current-event queries when available and allowed.
+
+Premium providers, including Brave, must be fallback-only unless explicitly selected by policy and budget.
+
+Provider fanout must be OFF by default.
+
+DeepResearch must remain approval/cap gated.
+
+Every provider call must pass the global kill switch, provider-specific enable flag, budget gate, call counter, retry cap, and route cap.
+
+Missing provider secrets must safe-degrade and must not break startup or normal tests.
+
+Normal tests must use fake providers.
+
+Live provider tests must be ignored by default and require explicit env opt-in.
+
+Provider routing must never bypass Stage 1-6 source verification, presentation, image safety, TTS separation, or protected fail-closed law.
+
+Stage 8 must extend the existing approved Selene search/provider/control surfaces.
+
+Stage 8 must not create a parallel provider system, parallel search planner, or parallel websearch stack unless repo truth proves no existing approved surface can safely support Stage 8.
+
+Prefer wiring through existing PH1.N, PH1.SEARCH, PH1.E, PH1.X, app_ingress, web_search_plan, and provider-control surfaces.
+
+Desktop must never become provider-authoritative and must never hold or use provider secrets.
+
+Public websearch remains read-only and must not require simulation authority.
+
+Protected execution remains simulation/authority gated and fail-closed.
+
 Auto-Loaded Authority Order
 
 JD explicit in-thread instructions
