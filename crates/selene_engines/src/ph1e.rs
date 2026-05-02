@@ -3091,7 +3091,10 @@ fn stage6_image_cards_for_presentation(
     accepted_sources: &[AcceptedSourcePacket],
     accepted_image_items: &[(String, ToolTextSnippet)],
 ) -> Vec<SearchImagePacket> {
-    if decision.final_answer_class != "VERIFIED_DIRECT_ANSWER" {
+    if !matches!(
+        decision.final_answer_class.as_str(),
+        "VERIFIED_DIRECT_ANSWER" | "CLOSEST_SOURCE_BACKED_ANSWER"
+    ) {
         return Vec::new();
     }
     let displayed_source_ids = source_chips
@@ -3484,10 +3487,19 @@ fn stage1_requested_entity(query: &str) -> Option<String> {
         " ceo of ",
         " ceo for ",
         " ceo at ",
+        " chief executive officer of ",
+        " chief executive officer for ",
+        " chief executive officer at ",
         " founder of ",
         " owner of ",
         " director of ",
         " managing director of ",
+        " president of ",
+        " president for ",
+        " president at ",
+        " head of ",
+        " head for ",
+        " head at ",
         " leadership of ",
     ] {
         if let Some(index) = lower.find(marker) {
@@ -3515,10 +3527,15 @@ fn stage1_clean_entity(value: &str) -> Option<String> {
                 | "the"
                 | "an"
                 | "ceo"
+                | "chief"
+                | "executive"
+                | "officer"
                 | "director"
                 | "managing"
                 | "founder"
                 | "owner"
+                | "president"
+                | "head"
                 | "leadership"
                 | "of"
                 | "for"
@@ -3587,6 +3604,8 @@ fn stage1_live_provider_query(query: &str) -> String {
         "founder" => format!("{entity} founder leadership official"),
         "owner" => format!("{entity} owner leadership official"),
         "director" => format!("{entity} director leadership official"),
+        "president" => format!("{entity} president leadership official"),
+        "head" => format!("{entity} head leadership official"),
         _ => query.to_string(),
     }
 }
@@ -3629,6 +3648,10 @@ fn stage1_requested_role(query: &str) -> Option<&'static str> {
         Some("CEO")
     } else if lower.contains("managing director") {
         Some("managing director")
+    } else if lower.contains("president") {
+        Some("president")
+    } else if lower.contains("head of") {
+        Some("head")
     } else if lower.contains("founder") {
         Some("founder")
     } else if lower.contains("owner") {
@@ -3913,6 +3936,8 @@ fn stage1_role_aliases(role: &str) -> Vec<&'static str> {
     match role.to_ascii_lowercase().as_str() {
         "ceo" => vec!["ceo", "chief executive officer"],
         "managing director" => vec!["managing director"],
+        "president" => vec!["president"],
+        "head" => vec!["head of", "head"],
         "founder" => vec!["founder"],
         "owner" => vec!["owner"],
         "director" => vec!["director"],
@@ -3929,6 +3954,9 @@ fn stage1_alternative_role_alias(
         ("managing director", "managing director"),
         ("chief executive officer", "chief executive officer"),
         ("CEO", "ceo"),
+        ("president", "president"),
+        ("head", "head of"),
+        ("head", "head"),
         ("founder", "founder"),
         ("owner", "owner"),
         ("director", "director"),
@@ -15503,6 +15531,64 @@ mod tests {
     }
 
     #[test]
+    fn role_policy_preserves_president_and_head_aliases_for_official_sources() {
+        assert_eq!(
+            stage1_requested_entity("Who is the president of Test Company D?").as_deref(),
+            Some("Test Company D")
+        );
+        assert_eq!(
+            stage1_live_provider_query("Who is the president of Test Company D?"),
+            "Test Company D president leadership official"
+        );
+        let (_items, president_metadata) = stage1_web_answer_verified_metadata(
+            "Who is the president of Test Company D?",
+            vec![ToolTextSnippet {
+                title: "Test Company D official leadership".to_string(),
+                snippet: "Test Person D is the President of Test Company D.".to_string(),
+                url: "https://test-company-d.test/leadership".to_string(),
+            }],
+            Some("stage4_role_fixture".to_string()),
+            1,
+        );
+        let president = president_metadata.web_answer_verification.as_ref().unwrap();
+        assert_eq!(president.final_answer_class, "VERIFIED_DIRECT_ANSWER");
+        assert_eq!(
+            president.response_text,
+            "Test Person D is the president of Test Company D."
+        );
+        assert_eq!(president.source_chips.len(), 1);
+        assert_eq!(president.source_chips[0].source_id, "source_001");
+
+        assert_eq!(
+            stage1_requested_entity("Who is the head of Test Company E?").as_deref(),
+            Some("Test Company E")
+        );
+        assert_eq!(
+            stage1_live_provider_query("Who is the head of Test Company E?"),
+            "Test Company E head leadership official"
+        );
+        let (_items, head_metadata) = stage1_web_answer_verified_metadata(
+            "Who is the head of Test Company E?",
+            vec![ToolTextSnippet {
+                title: "Test Company E official leadership".to_string(),
+                snippet: "Test Person E is Head of Test Company E.".to_string(),
+                url: "https://test-company-e.test/leadership".to_string(),
+            }],
+            Some("stage4_role_fixture".to_string()),
+            1,
+        );
+        let head = head_metadata.web_answer_verification.as_ref().unwrap();
+        assert_eq!(head.final_answer_class, "VERIFIED_DIRECT_ANSWER");
+        assert_eq!(
+            head.response_text,
+            "Test Person E is the head of Test Company E."
+        );
+        assert_eq!(head.source_chips.len(), 1);
+        assert!(!head.response_text.contains("Confidence:"));
+        assert!(!head.response_text.contains("https://"));
+    }
+
+    #[test]
     fn stage4_rejected_weak_and_wrong_entity_evidence_cannot_support_claims() {
         let (_items, metadata) = stage1_web_answer_verified_metadata(
             "Who is the CEO of Test Company A?",
@@ -15698,6 +15784,45 @@ mod tests {
             .result_classes
             .contains(&"STAGE6_NO_REMOTE_IMAGE_LOAD_WHEN_FETCH_DISABLED_PASS".to_string()));
         assert_eq!(verification.presentation.source_chips.len(), 1);
+        assert!(!verification.response_text.contains("fixture-image-a.png"));
+        assert!(!verification.tts_input_text.contains("fixture-image-a.png"));
+    }
+
+    #[test]
+    fn closest_role_answer_can_carry_approved_fixture_image_from_accepted_source() {
+        let closest_role_metadata = stage6_fixture_image_metadata().replace(
+            "Test Person A is the CEO of Test Company A.",
+            "Test Person A is listed as Managing Director of Test Company A.",
+        );
+        let (_items, metadata) = stage1_web_answer_verified_metadata(
+            "Who is the CEO of Test Company A?",
+            vec![ToolTextSnippet {
+                title: "Test Company A official leadership".to_string(),
+                snippet: closest_role_metadata,
+                url: "https://test-company-a.test/leadership".to_string(),
+            }],
+            Some("stage6_closest_role_fixture".to_string()),
+            1,
+        );
+
+        let verification = metadata.web_answer_verification.as_ref().unwrap();
+        assert_eq!(
+            verification.final_answer_class,
+            "CLOSEST_SOURCE_BACKED_ANSWER"
+        );
+        assert_eq!(verification.source_chips.len(), 1);
+        assert_eq!(
+            verification.presentation.presentation_boundary_used,
+            "PH1E_STAGE6_IMAGE_PRESENTATION"
+        );
+        assert_eq!(verification.presentation.image_cards.len(), 1);
+        let image = &verification.presentation.image_cards[0];
+        assert_eq!(image.source_id, "source_001");
+        assert_eq!(image.approved_asset_ref, "fixture-image-a.png");
+        assert!(image.display_allowed);
+        assert!(image.fixture_or_local_asset);
+        assert!(!image.remote_image_load_allowed);
+        assert!(!verification.response_text.contains("stage6_image"));
         assert!(!verification.response_text.contains("fixture-image-a.png"));
         assert!(!verification.tts_input_text.contains("fixture-image-a.png"));
     }
