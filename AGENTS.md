@@ -255,6 +255,30 @@ Public websearch remains read-only and must not require simulation authority.
 
 Protected execution remains simulation/authority gated and fail-closed.
 
+Rule: Search Evaluation, Corroboration, and Voice Certification
+
+Selene search quality must be evaluated with synthetic fixtures and approved live smoke only.
+
+Normal tests must not call live providers.
+
+Real public live prompts may appear only in proof reports, never in code, tests, fixtures, or proof hooks.
+
+Search quality must be scored on accuracy, source support, wrong-source rejection, freshness, directness, source display, cost, latency, and voice behavior.
+
+Multi-provider corroboration must remain gated, capped, and OFF by default unless explicitly enabled.
+
+Deep Research must require explicit user intent or approved escalation and cost cap.
+
+Source agreement scoring must support claim verification and must not override it.
+
+PH1.WRITE must not make unsupported claims sound certain.
+
+Real Desktop voice testing must record captured transcript, normalized intent, route, query plan, sources, answer, TTS text, and provider counts.
+
+Public search is read-only and does not require simulation authority.
+
+Protected execution remains simulation and authority gated.
+
 Auto-Loaded Authority Order
 
 JD explicit in-thread instructions

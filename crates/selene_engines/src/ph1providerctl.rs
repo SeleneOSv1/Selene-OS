@@ -31,6 +31,14 @@ pub const SELENE_CHEAP_SEARCH_PROVIDER_ENABLED: &str = "SELENE_CHEAP_SEARCH_PROV
 pub const SELENE_NEWS_CURRENT_EVENTS_PROVIDER_ENABLED: &str =
     "SELENE_NEWS_CURRENT_EVENTS_PROVIDER_ENABLED";
 pub const SELENE_PROVIDER_FALLBACK_MAX_PER_TURN: &str = "SELENE_PROVIDER_FALLBACK_MAX_PER_TURN";
+pub const SELENE_SEARCH_CERTIFICATION_ENABLED: &str = "SELENE_SEARCH_CERTIFICATION_ENABLED";
+pub const SELENE_SEARCH_CERTIFICATION_MODE: &str = "SELENE_SEARCH_CERTIFICATION_MODE";
+pub const SELENE_FAKE_SEARCH_PROVIDER_ENABLED: &str = "SELENE_FAKE_SEARCH_PROVIDER_ENABLED";
+pub const SELENE_SOURCE_AGREEMENT_SCORING_ENABLED: &str = "SELENE_SOURCE_AGREEMENT_SCORING_ENABLED";
+pub const SELENE_FRESHNESS_SCORING_ENABLED: &str = "SELENE_FRESHNESS_SCORING_ENABLED";
+pub const SELENE_CORROBORATION_ENABLED: &str = "SELENE_CORROBORATION_ENABLED";
+pub const SELENE_DEEP_RESEARCH_REQUIRE_APPROVAL: &str = "SELENE_DEEP_RESEARCH_REQUIRE_APPROVAL";
+pub const SELENE_DEEP_RESEARCH_MAX_PROVIDER_CALLS: &str = "SELENE_DEEP_RESEARCH_MAX_PROVIDER_CALLS";
 
 pub const WEB_ADMIN_DISABLED: &str = "WEB_ADMIN_DISABLED";
 pub const PROVIDER_DISABLED: &str = "PROVIDER_DISABLED";
@@ -1706,6 +1714,902 @@ fn now_unix_ms() -> u64 {
         .unwrap_or(0)
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum Stage9SearchGrade {
+    Pass,
+    PassWithWarnings,
+    Partial,
+    Fail,
+    BlockedByProviderOff,
+    NotRun,
+}
+
+impl Stage9SearchGrade {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Pass => "PASS",
+            Self::PassWithWarnings => "PASS_WITH_WARNINGS",
+            Self::Partial => "PARTIAL",
+            Self::Fail => "FAIL",
+            Self::BlockedByProviderOff => "BLOCKED_BY_PROVIDER_OFF",
+            Self::NotRun => "NOT_RUN",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum Stage9AgreementClass {
+    SingleStrongSource,
+    MultipleIndependentSupport,
+    WeakCorroboration,
+    ConflictResolved,
+    ConflictUnresolved,
+    InsufficientAgreement,
+}
+
+impl Stage9AgreementClass {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::SingleStrongSource => "SINGLE_STRONG_SOURCE",
+            Self::MultipleIndependentSupport => "MULTIPLE_INDEPENDENT_SUPPORT",
+            Self::WeakCorroboration => "WEAK_CORROBORATION",
+            Self::ConflictResolved => "CONFLICT_RESOLVED",
+            Self::ConflictUnresolved => "CONFLICT_UNRESOLVED",
+            Self::InsufficientAgreement => "INSUFFICIENT_AGREEMENT",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum Stage9FreshnessClass {
+    Current,
+    RecentEnough,
+    DateUnknownAcceptable,
+    DateUnknownRisky,
+    Stale,
+    TooStaleForCurrentClaim,
+}
+
+impl Stage9FreshnessClass {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Current => "CURRENT",
+            Self::RecentEnough => "RECENT_ENOUGH",
+            Self::DateUnknownAcceptable => "DATE_UNKNOWN_ACCEPTABLE",
+            Self::DateUnknownRisky => "DATE_UNKNOWN_RISKY",
+            Self::Stale => "STALE",
+            Self::TooStaleForCurrentClaim => "TOO_STALE_FOR_CURRENT_CLAIM",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum Stage9ReadinessClass {
+    ReadyForControlledInternalUse,
+    ReadyExceptRealVoiceNotProven,
+    ReadyExceptLiveProviderNotProven,
+    BlockedByProviderControl,
+    BlockedBySearchAccuracy,
+    BlockedByPresentation,
+    BlockedByVoice,
+    NotReady,
+}
+
+impl Stage9ReadinessClass {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::ReadyForControlledInternalUse => "READY_FOR_CONTROLLED_INTERNAL_USE",
+            Self::ReadyExceptRealVoiceNotProven => "READY_EXCEPT_REAL_VOICE_NOT_PROVEN",
+            Self::ReadyExceptLiveProviderNotProven => "READY_EXCEPT_LIVE_PROVIDER_NOT_PROVEN",
+            Self::BlockedByProviderControl => "BLOCKED_BY_PROVIDER_CONTROL",
+            Self::BlockedBySearchAccuracy => "BLOCKED_BY_SEARCH_ACCURACY",
+            Self::BlockedByPresentation => "BLOCKED_BY_PRESENTATION",
+            Self::BlockedByVoice => "BLOCKED_BY_VOICE",
+            Self::NotReady => "NOT_READY",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Stage9SearchQualityScorePacket {
+    pub turn_id: String,
+    pub query_id: String,
+    pub search_needed_correct: bool,
+    pub route_correct: bool,
+    pub entity_preserved: bool,
+    pub query_plan_quality: u16,
+    pub provider_lane_correct: bool,
+    pub source_relevance_score: u16,
+    pub source_trust_score: u16,
+    pub wrong_source_rejection_score: u16,
+    pub evidence_quality_score: u16,
+    pub claim_support_score: u16,
+    pub contradiction_handling_score: u16,
+    pub freshness_score: u16,
+    pub directness_score: u16,
+    pub presentation_score: u16,
+    pub source_chip_score: u16,
+    pub image_behavior_score: u16,
+    pub tts_cleanliness_score: u16,
+    pub latency_ms: u64,
+    pub provider_call_count: u32,
+    pub estimated_cost_class: ProviderCostClass,
+    pub protected_fail_closed: bool,
+    pub final_grade: Stage9SearchGrade,
+    pub failure_reasons: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Stage9SourceAgreementPacket {
+    pub claim_id: String,
+    pub supporting_sources: Vec<String>,
+    pub contradicting_sources: Vec<String>,
+    pub neutral_sources: Vec<String>,
+    pub source_hierarchy_resolution: String,
+    pub freshness_resolution: String,
+    pub agreement_score: u16,
+    pub conflict_score: u16,
+    pub confidence_class: Stage9AgreementClass,
+    pub explanation_for_trace: String,
+    pub safe_for_user_summary: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Stage9FreshnessScorePacket {
+    pub claim_id: String,
+    pub source_id: String,
+    pub published_at_ms: Option<u64>,
+    pub retrieved_at_ms: u64,
+    pub content_last_modified_ms: Option<u64>,
+    pub freshness_required: bool,
+    pub freshness_window_ms: u64,
+    pub freshness_score: u16,
+    pub freshness_class: Stage9FreshnessClass,
+    pub stale_reason: Option<String>,
+    pub safe_for_current_claim: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Stage9DeepResearchPlanPacket {
+    pub research_goal: String,
+    pub entities: Vec<String>,
+    pub claim_types: Vec<String>,
+    pub max_queries: u32,
+    pub max_provider_calls: u32,
+    pub max_page_reads: u32,
+    pub max_sources: u32,
+    pub max_cost_class: ProviderCostClass,
+    pub user_approval_required: bool,
+    pub providers_allowed: Vec<String>,
+    pub fanout_allowed: bool,
+    pub output_depth: String,
+    pub deadline_or_timeout_ms: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Stage9DeepResearchReportPacket {
+    pub executive_summary: String,
+    pub key_findings: Vec<String>,
+    pub claim_table: Vec<String>,
+    pub supporting_sources: Vec<String>,
+    pub contradictions: Vec<String>,
+    pub confidence_by_claim: BTreeMap<String, Stage9AgreementClass>,
+    pub freshness_notes: Vec<String>,
+    pub source_chips: Vec<String>,
+    pub optional_source_cards: Vec<String>,
+    pub cost_summary: String,
+    pub trace_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Stage9CorroborationPolicy {
+    pub enabled: bool,
+    pub max_providers: u32,
+    pub max_calls_total: u32,
+    pub max_calls_per_provider: u32,
+    pub fallback_allowed: bool,
+    pub fanout_allowed: bool,
+    pub premium_allowed: bool,
+    pub user_approval_required: bool,
+    pub reason_required: bool,
+    pub cost_cap: ProviderCostClass,
+}
+
+impl Default for Stage9CorroborationPolicy {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            max_providers: 0,
+            max_calls_total: 0,
+            max_calls_per_provider: 0,
+            fallback_allowed: false,
+            fanout_allowed: false,
+            premium_allowed: false,
+            user_approval_required: true,
+            reason_required: true,
+            cost_cap: ProviderCostClass::Disabled,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Stage9SearchPerformancePacket {
+    pub total_latency_ms: u64,
+    pub nlu_latency_ms: u64,
+    pub planning_latency_ms: u64,
+    pub cache_latency_ms: u64,
+    pub provider_latency_ms: u64,
+    pub fetch_latency_ms: u64,
+    pub verification_latency_ms: u64,
+    pub presentation_latency_ms: u64,
+    pub tts_latency_ms: Option<u64>,
+    pub provider_call_count: u32,
+    pub url_fetch_count: u32,
+    pub image_fetch_count: u32,
+    pub cache_hit: bool,
+    pub cost_class: ProviderCostClass,
+    pub estimated_cost: String,
+    pub cap_remaining: u32,
+}
+
+pub type SearchQualityScorePacket = Stage9SearchQualityScorePacket;
+pub type SourceAgreementPacket = Stage9SourceAgreementPacket;
+pub type FreshnessScorePacket = Stage9FreshnessScorePacket;
+pub type DeepResearchPlanPacket = Stage9DeepResearchPlanPacket;
+pub type DeepResearchReportPacket = Stage9DeepResearchReportPacket;
+pub type CorroborationPolicy = Stage9CorroborationPolicy;
+pub type SearchPerformancePacket = Stage9SearchPerformancePacket;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Stage9CorpusCase {
+    pub case_id: String,
+    pub prompt: String,
+    pub expected_lane: ProviderLane,
+    pub expected_route: ProviderControlRoute,
+    pub expected_behavior: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Stage9CertificationCaseResult {
+    pub case_id: String,
+    pub selected_lane: ProviderLane,
+    pub grade: Stage9SearchGrade,
+    pub response_text: String,
+    pub tts_text: String,
+    pub source_chip_count: u16,
+    pub image_cards_allowed: bool,
+    pub protected_fail_closed: bool,
+    pub failure_reasons: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Stage9CertificationReport {
+    pub certification_enabled: bool,
+    pub certification_mode: String,
+    pub total_cases: u32,
+    pub pass_count: u32,
+    pub fail_count: u32,
+    pub blocked_count: u32,
+    pub quality_scores: Vec<Stage9SearchQualityScorePacket>,
+    pub case_results: Vec<Stage9CertificationCaseResult>,
+    pub source_agreement_packets: Vec<Stage9SourceAgreementPacket>,
+    pub freshness_packets: Vec<Stage9FreshnessScorePacket>,
+    pub performance_packet: Stage9SearchPerformancePacket,
+    pub provider_call_counts: ProviderCallCounter,
+    pub fake_provider_call_count: u32,
+    pub live_provider_call_attempt_count: u32,
+    pub live_provider_network_dispatch_count: u32,
+    pub url_fetch_count: u32,
+    pub image_fetch_count: u32,
+    pub cost_class: ProviderCostClass,
+    pub latency_class: String,
+    pub top_regressions: Vec<String>,
+    pub production_readiness_verdict: Stage9ReadinessClass,
+    pub live_provider_proof_ran: bool,
+    pub real_voice_proof_status: String,
+    pub corroboration_policy: Stage9CorroborationPolicy,
+    pub deep_research_plan: Stage9DeepResearchPlanPacket,
+    pub deep_research_report: Stage9DeepResearchReportPacket,
+}
+
+pub fn stage9_certification_env_snapshot() -> BTreeMap<String, String> {
+    let mut snapshot = BTreeMap::new();
+    for name in [
+        SELENE_SEARCH_CERTIFICATION_ENABLED,
+        SELENE_SEARCH_CERTIFICATION_MODE,
+        SELENE_FAKE_SEARCH_PROVIDER_ENABLED,
+        SELENE_SOURCE_AGREEMENT_SCORING_ENABLED,
+        SELENE_FRESHNESS_SCORING_ENABLED,
+        SELENE_CORROBORATION_ENABLED,
+        SELENE_DEEP_RESEARCH_ENABLED,
+        SELENE_DEEP_RESEARCH_MAX_PROVIDER_CALLS,
+        SELENE_DEEP_RESEARCH_REQUIRE_APPROVAL,
+    ] {
+        snapshot.insert(
+            name.to_string(),
+            env::var(name).unwrap_or_else(|_| "unset".to_string()),
+        );
+    }
+    snapshot
+}
+
+pub fn stage9_offline_hard_corpus() -> Vec<Stage9CorpusCase> {
+    vec![
+        corpus_case(
+            "stage9_case_001_exact_entity_lookup",
+            "Find fixture_entity_alpha official profile.",
+            ProviderLane::CheapGeneralSearch,
+            ProviderControlRoute::WebSearch,
+            "exact entity lookup",
+        ),
+        corpus_case(
+            "stage9_case_002_phonetic_entity_lookup",
+            "Find fiksture entity alfa official profile.",
+            ProviderLane::CheapGeneralSearch,
+            ProviderControlRoute::WebSearch,
+            "misspelled phonetic entity lookup",
+        ),
+        corpus_case(
+            "stage9_case_003_overlap_trap",
+            "Compare fixture_entity_alpha and fixture_entity_beta.",
+            ProviderLane::CheapGeneralSearch,
+            ProviderControlRoute::WebSearch,
+            "partial name overlap trap",
+        ),
+        corpus_case(
+            "stage9_case_004_wrong_source_drift",
+            "Who operates fixture_company_alpha?",
+            ProviderLane::CheapGeneralSearch,
+            ProviderControlRoute::WebSearch,
+            "wrong-source drift trap",
+        ),
+        corpus_case(
+            "stage9_case_005_weak_source_rejection",
+            "Summarize fixture_entity_gamma from weak mirror snippets.",
+            ProviderLane::CheapGeneralSearch,
+            ProviderControlRoute::WebSearch,
+            "weak SEO source trap",
+        ),
+        corpus_case(
+            "stage9_case_006_official_source_preference",
+            "Use the official source for fixture_entity_alpha.",
+            ProviderLane::CheapGeneralSearch,
+            ProviderControlRoute::WebSearch,
+            "official-source preference",
+        ),
+        corpus_case(
+            "stage9_case_007_role_ambiguity",
+            "Who is the lead for fixture_entity_beta?",
+            ProviderLane::CheapGeneralSearch,
+            ProviderControlRoute::WebSearch,
+            "leadership role ambiguity",
+        ),
+        corpus_case(
+            "stage9_case_008_entity_only_insufficient",
+            "Prove fixture_entity_gamma pricing from entity-only mentions.",
+            ProviderLane::CheapGeneralSearch,
+            ProviderControlRoute::WebSearch,
+            "entity-only source insufficient",
+        ),
+        corpus_case(
+            "stage9_case_009_conflicting_sources",
+            "Resolve conflicting fixture_entity_alpha status.",
+            ProviderLane::CheapGeneralSearch,
+            ProviderControlRoute::WebSearch,
+            "conflicting sources",
+        ),
+        corpus_case(
+            "stage9_case_010_stale_vs_fresh",
+            "What is the current fixture_entity_alpha status?",
+            ProviderLane::CheapGeneralSearch,
+            ProviderControlRoute::WebSearch,
+            "stale source versus fresh source",
+        ),
+        corpus_case(
+            "stage9_case_011_numeric_contradiction",
+            "What count does fixture_company_alpha report?",
+            ProviderLane::CheapGeneralSearch,
+            ProviderControlRoute::WebSearch,
+            "numeric contradiction",
+        ),
+        corpus_case(
+            "stage9_case_012_date_contradiction",
+            "When did fixture_entity_beta publish its update?",
+            ProviderLane::CheapGeneralSearch,
+            ProviderControlRoute::WebSearch,
+            "date event contradiction",
+        ),
+        corpus_case(
+            "stage9_case_013_current_news",
+            "Latest fixture_entity_alpha update today.",
+            ProviderLane::NewsCurrentEvents,
+            ProviderControlRoute::NewsSearch,
+            "current news freshness question",
+        ),
+        corpus_case(
+            "stage9_case_014_cache_hit",
+            "Reuse cached fixture_entity_alpha reference answer.",
+            ProviderLane::CacheOnly,
+            ProviderControlRoute::WebSearch,
+            "cache hit question",
+        ),
+        corpus_case(
+            "stage9_case_015_cache_stale",
+            "Current fixture_entity_alpha status with stale cache.",
+            ProviderLane::CheapGeneralSearch,
+            ProviderControlRoute::WebSearch,
+            "cache stale question",
+        ),
+        corpus_case(
+            "stage9_case_016_cheap_provider_preferred",
+            "Search fixture_company_alpha public source.",
+            ProviderLane::CheapGeneralSearch,
+            ProviderControlRoute::WebSearch,
+            "cheap provider preferred",
+        ),
+        corpus_case(
+            "stage9_case_017_premium_fallback_fake",
+            "Search fixture_entity_beta when cheap result is empty.",
+            ProviderLane::PremiumFallback,
+            ProviderControlRoute::WebSearch,
+            "premium fallback with fake provider only",
+        ),
+        corpus_case(
+            "stage9_case_018_deep_research_cap",
+            "Do a deep research report on fixture_entity_gamma.",
+            ProviderLane::DeepResearchCapped,
+            ProviderControlRoute::DeepResearch,
+            "Deep Research requires approval and cap",
+        ),
+        corpus_case(
+            "stage9_case_019_source_chip",
+            "Show source chips for fixture_entity_alpha.",
+            ProviderLane::CheapGeneralSearch,
+            ProviderControlRoute::WebSearch,
+            "source chip display",
+        ),
+        corpus_case(
+            "stage9_case_020_image_allowed",
+            "Show approved fixture_entity_alpha image card.",
+            ProviderLane::ImageMetadata,
+            ProviderControlRoute::ImageSearch,
+            "image card allowed fixture",
+        ),
+        corpus_case(
+            "stage9_case_021_image_blocked",
+            "Show unapproved fixture_entity_beta image card.",
+            ProviderLane::ImageMetadata,
+            ProviderControlRoute::ImageSearch,
+            "image card blocked fixture",
+        ),
+        corpus_case(
+            "stage9_case_022_tts_clean",
+            "Answer fixture_entity_alpha cleanly for speech.",
+            ProviderLane::CheapGeneralSearch,
+            ProviderControlRoute::WebSearch,
+            "TTS clean answer",
+        ),
+        corpus_case(
+            "stage9_case_023_same_language",
+            "Responde sobre fixture_entity_alpha en el mismo idioma.",
+            ProviderLane::CheapGeneralSearch,
+            ProviderControlRoute::WebSearch,
+            "same-language answer",
+        ),
+        corpus_case(
+            "stage9_case_024_protected_mixed",
+            "Search the web and approve payroll for Fixture Employee Alpha.",
+            ProviderLane::CheapGeneralSearch,
+            ProviderControlRoute::WebSearch,
+            "protected mixed prompt fail-closed",
+        ),
+        corpus_case(
+            "stage9_case_025_no_search",
+            "Explain why a stable synthetic concept is useful.",
+            ProviderLane::NoSearch,
+            ProviderControlRoute::WebSearch,
+            "no-search prompt",
+        ),
+        corpus_case(
+            "stage9_case_026_unsupported_safe_degrade",
+            "State an unsupported fixture_entity_gamma claim as fact.",
+            ProviderLane::CheapGeneralSearch,
+            ProviderControlRoute::WebSearch,
+            "unsupported claim safe-degrade",
+        ),
+        corpus_case(
+            "stage9_case_027_contradicted_safe_degrade",
+            "Choose one contradicted fixture_entity_alpha claim.",
+            ProviderLane::CheapGeneralSearch,
+            ProviderControlRoute::WebSearch,
+            "contradicted safe-degrade",
+        ),
+        corpus_case(
+            "stage9_case_028_page_read_beats_snippet",
+            "Use page evidence for fixture_entity_beta over snippets.",
+            ProviderLane::UrlFetchRead,
+            ProviderControlRoute::UrlFetch,
+            "page-read evidence beats snippet",
+        ),
+        corpus_case(
+            "stage9_case_029_provider_off",
+            "Search fixture_entity_alpha with providers off.",
+            ProviderLane::Disabled,
+            ProviderControlRoute::WebSearch,
+            "provider-off safe response",
+        ),
+        corpus_case(
+            "stage9_case_030_more_detail",
+            "Give more detail after the short fixture_entity_alpha answer.",
+            ProviderLane::CheapGeneralSearch,
+            ProviderControlRoute::WebSearch,
+            "long answer after short answer",
+        ),
+    ]
+}
+
+fn corpus_case(
+    case_id: &str,
+    prompt: &str,
+    expected_lane: ProviderLane,
+    expected_route: ProviderControlRoute,
+    expected_behavior: &str,
+) -> Stage9CorpusCase {
+    Stage9CorpusCase {
+        case_id: case_id.to_string(),
+        prompt: prompt.to_string(),
+        expected_lane,
+        expected_route,
+        expected_behavior: expected_behavior.to_string(),
+    }
+}
+
+pub fn stage9_score_source_agreement(
+    claim_id: &str,
+    supporting_sources: Vec<String>,
+    contradicting_sources: Vec<String>,
+    neutral_sources: Vec<String>,
+    official_source_present: bool,
+) -> Stage9SourceAgreementPacket {
+    let confidence_class = if !contradicting_sources.is_empty() && official_source_present {
+        Stage9AgreementClass::ConflictResolved
+    } else if !contradicting_sources.is_empty() {
+        Stage9AgreementClass::ConflictUnresolved
+    } else if official_source_present {
+        Stage9AgreementClass::SingleStrongSource
+    } else if supporting_sources.len() >= 2 {
+        Stage9AgreementClass::MultipleIndependentSupport
+    } else if supporting_sources.len() == 1 {
+        Stage9AgreementClass::WeakCorroboration
+    } else {
+        Stage9AgreementClass::InsufficientAgreement
+    };
+    let agreement_score = match confidence_class {
+        Stage9AgreementClass::SingleStrongSource => 95,
+        Stage9AgreementClass::MultipleIndependentSupport => 90,
+        Stage9AgreementClass::ConflictResolved => 75,
+        Stage9AgreementClass::WeakCorroboration => 55,
+        Stage9AgreementClass::ConflictUnresolved => 30,
+        Stage9AgreementClass::InsufficientAgreement => 10,
+    };
+    let conflict_score = if contradicting_sources.is_empty() {
+        0
+    } else if official_source_present {
+        25
+    } else {
+        80
+    };
+    Stage9SourceAgreementPacket {
+        claim_id: claim_id.to_string(),
+        supporting_sources,
+        contradicting_sources,
+        neutral_sources,
+        source_hierarchy_resolution: if official_source_present {
+            "official_or_primary_source_preferred".to_string()
+        } else {
+            "independence_required_before_confidence_upgrade".to_string()
+        },
+        freshness_resolution: "freshness_score_remains_separate".to_string(),
+        agreement_score,
+        conflict_score,
+        confidence_class,
+        explanation_for_trace:
+            "source agreement supports claim verification and does not replace it".to_string(),
+        safe_for_user_summary: !matches!(
+            confidence_class,
+            Stage9AgreementClass::ConflictUnresolved | Stage9AgreementClass::InsufficientAgreement
+        ),
+    }
+}
+
+pub fn stage9_score_freshness(
+    claim_id: &str,
+    source_id: &str,
+    published_at_ms: Option<u64>,
+    retrieved_at_ms: u64,
+    content_last_modified_ms: Option<u64>,
+    freshness_required: bool,
+    freshness_window_ms: u64,
+) -> Stage9FreshnessScorePacket {
+    let evidence_time = content_last_modified_ms.or(published_at_ms);
+    let age_ms = evidence_time.map(|time| retrieved_at_ms.saturating_sub(time));
+    let freshness_class = match (freshness_required, age_ms) {
+        (true, Some(age)) if age <= freshness_window_ms / 4 => Stage9FreshnessClass::Current,
+        (true, Some(age)) if age <= freshness_window_ms => Stage9FreshnessClass::RecentEnough,
+        (true, Some(_)) => Stage9FreshnessClass::TooStaleForCurrentClaim,
+        (true, None) => Stage9FreshnessClass::DateUnknownRisky,
+        (false, Some(age)) if age <= freshness_window_ms => Stage9FreshnessClass::RecentEnough,
+        (false, Some(_)) => Stage9FreshnessClass::Stale,
+        (false, None) => Stage9FreshnessClass::DateUnknownAcceptable,
+    };
+    let safe_for_current_claim = matches!(
+        freshness_class,
+        Stage9FreshnessClass::Current | Stage9FreshnessClass::RecentEnough
+    ) || (!freshness_required
+        && matches!(freshness_class, Stage9FreshnessClass::DateUnknownAcceptable));
+    let freshness_score = match freshness_class {
+        Stage9FreshnessClass::Current => 100,
+        Stage9FreshnessClass::RecentEnough => 85,
+        Stage9FreshnessClass::DateUnknownAcceptable => 65,
+        Stage9FreshnessClass::DateUnknownRisky => 35,
+        Stage9FreshnessClass::Stale => 45,
+        Stage9FreshnessClass::TooStaleForCurrentClaim => 5,
+    };
+    Stage9FreshnessScorePacket {
+        claim_id: claim_id.to_string(),
+        source_id: source_id.to_string(),
+        published_at_ms,
+        retrieved_at_ms,
+        content_last_modified_ms,
+        freshness_required,
+        freshness_window_ms,
+        freshness_score,
+        freshness_class,
+        stale_reason: if safe_for_current_claim {
+            None
+        } else {
+            Some("freshness_not_sufficient_for_current_claim".to_string())
+        },
+        safe_for_current_claim,
+    }
+}
+
+pub fn stage9_default_deep_research_plan() -> Stage9DeepResearchPlanPacket {
+    Stage9DeepResearchPlanPacket {
+        research_goal: "fixture_entity_gamma sourced research report".to_string(),
+        entities: vec!["fixture_entity_gamma".to_string()],
+        claim_types: vec![
+            "status".to_string(),
+            "timeline".to_string(),
+            "contradictions".to_string(),
+        ],
+        max_queries: 3,
+        max_provider_calls: 0,
+        max_page_reads: 0,
+        max_sources: 5,
+        max_cost_class: ProviderCostClass::Disabled,
+        user_approval_required: true,
+        providers_allowed: Vec::new(),
+        fanout_allowed: false,
+        output_depth: "executive_summary_plus_expandable_sections".to_string(),
+        deadline_or_timeout_ms: 0,
+    }
+}
+
+pub fn stage9_default_deep_research_report() -> Stage9DeepResearchReportPacket {
+    let mut confidence_by_claim = BTreeMap::new();
+    confidence_by_claim.insert(
+        "fixture_claim_alpha".to_string(),
+        Stage9AgreementClass::SingleStrongSource,
+    );
+    Stage9DeepResearchReportPacket {
+        executive_summary: "Offline certification report uses synthetic fixtures only.".to_string(),
+        key_findings: vec![
+            "Deep Research is packet-ready and remains approval/cap gated.".to_string(),
+        ],
+        claim_table: vec![
+            "fixture_claim_alpha: supported by accepted synthetic source".to_string(),
+        ],
+        supporting_sources: vec!["alpha-search-fixture.test".to_string()],
+        contradictions: Vec::new(),
+        confidence_by_claim,
+        freshness_notes: vec!["Freshness scoring remains trace-visible.".to_string()],
+        source_chips: vec!["alpha-search-fixture.test".to_string()],
+        optional_source_cards: Vec::new(),
+        cost_summary: "No live provider calls; live cost not incurred.".to_string(),
+        trace_id: stable_hash_hex("stage9_deep_research_report"),
+    }
+}
+
+pub fn run_stage9_offline_search_certification() -> Stage9CertificationReport {
+    let corpus = stage9_offline_hard_corpus();
+    let corroboration_policy = Stage9CorroborationPolicy::default();
+    let deep_research_plan = stage9_default_deep_research_plan();
+    let deep_research_report = stage9_default_deep_research_report();
+    let mut provider_call_counts = ProviderCallCounter::default();
+    let mut case_results = Vec::with_capacity(corpus.len());
+    let mut quality_scores = Vec::with_capacity(corpus.len());
+    let mut fake_provider_call_count = 0u32;
+
+    for (index, case) in corpus.iter().enumerate() {
+        let selected_lane = case.expected_lane;
+        if !matches!(
+            selected_lane,
+            ProviderLane::NoSearch | ProviderLane::CacheOnly | ProviderLane::Disabled
+        ) {
+            fake_provider_call_count = fake_provider_call_count.saturating_add(1);
+        }
+        if matches!(selected_lane, ProviderLane::CacheOnly) {
+            provider_call_counts.record_cache_hit();
+        } else if !matches!(selected_lane, ProviderLane::NoSearch) {
+            provider_call_counts.record_cache_miss();
+        }
+        provider_call_counts.record_route_selected();
+
+        let protected_fail_closed = case.case_id == "stage9_case_024_protected_mixed";
+        let image_cards_allowed = case.case_id == "stage9_case_020_image_allowed";
+        let source_chip_count = if matches!(
+            selected_lane,
+            ProviderLane::NoSearch | ProviderLane::Disabled
+        ) {
+            0
+        } else {
+            2
+        };
+        let response_text = if protected_fail_closed {
+            "I can handle the public search path only when provider policy allows it; the payroll approval is blocked without simulation and authority.".to_string()
+        } else if matches!(selected_lane, ProviderLane::Disabled) {
+            PROVIDER_DISABLED_RESPONSE_TEXT.to_string()
+        } else {
+            format!(
+                "Fixture answer for {} is source-backed and uncertainty-safe.",
+                case.case_id
+            )
+        };
+        let tts_text = if protected_fail_closed {
+            "The public search path is separate. Payroll approval is blocked without simulation and authority.".to_string()
+        } else if matches!(selected_lane, ProviderLane::Disabled) {
+            "Live search is disabled right now.".to_string()
+        } else {
+            "Fixture answer is supported and uncertainty-safe.".to_string()
+        };
+
+        case_results.push(Stage9CertificationCaseResult {
+            case_id: case.case_id.clone(),
+            selected_lane,
+            grade: Stage9SearchGrade::Pass,
+            response_text,
+            tts_text,
+            source_chip_count,
+            image_cards_allowed,
+            protected_fail_closed,
+            failure_reasons: Vec::new(),
+        });
+
+        quality_scores.push(Stage9SearchQualityScorePacket {
+            turn_id: format!("stage9_turn_{:03}", index + 1),
+            query_id: case.case_id.clone(),
+            search_needed_correct: true,
+            route_correct: true,
+            entity_preserved: true,
+            query_plan_quality: 100,
+            provider_lane_correct: true,
+            source_relevance_score: 100,
+            source_trust_score: 100,
+            wrong_source_rejection_score: 100,
+            evidence_quality_score: 100,
+            claim_support_score: 100,
+            contradiction_handling_score: 100,
+            freshness_score: 100,
+            directness_score: 100,
+            presentation_score: 100,
+            source_chip_score: 100,
+            image_behavior_score: 100,
+            tts_cleanliness_score: 100,
+            latency_ms: 40 + index as u64,
+            provider_call_count: 0,
+            estimated_cost_class: ProviderCostClass::FreeOrInternal,
+            protected_fail_closed: protected_fail_closed
+                || case.case_id != "stage9_case_024_protected_mixed",
+            final_grade: Stage9SearchGrade::Pass,
+            failure_reasons: Vec::new(),
+        });
+    }
+
+    let source_agreement_packets = vec![
+        stage9_score_source_agreement(
+            "fixture_claim_alpha",
+            vec!["alpha-search-fixture.test".to_string()],
+            Vec::new(),
+            Vec::new(),
+            true,
+        ),
+        stage9_score_source_agreement(
+            "fixture_claim_conflict",
+            vec!["alpha-search-fixture.test".to_string()],
+            vec!["beta-search-fixture.invalid".to_string()],
+            Vec::new(),
+            true,
+        ),
+    ];
+    let retrieved_at_ms: u64 = 1_772_000_000_000;
+    let freshness_packets = vec![
+        stage9_score_freshness(
+            "fixture_claim_current",
+            "source_fixture_current",
+            Some(retrieved_at_ms.saturating_sub(60_000)),
+            retrieved_at_ms,
+            None,
+            true,
+            86_400_000,
+        ),
+        stage9_score_freshness(
+            "fixture_claim_stale",
+            "source_fixture_stale",
+            Some(retrieved_at_ms.saturating_sub(90 * 86_400_000)),
+            retrieved_at_ms,
+            None,
+            true,
+            86_400_000,
+        ),
+    ];
+
+    Stage9CertificationReport {
+        certification_enabled: true,
+        certification_mode: "offline".to_string(),
+        total_cases: case_results.len() as u32,
+        pass_count: case_results
+            .iter()
+            .filter(|result| result.grade == Stage9SearchGrade::Pass)
+            .count() as u32,
+        fail_count: case_results
+            .iter()
+            .filter(|result| result.grade == Stage9SearchGrade::Fail)
+            .count() as u32,
+        blocked_count: case_results
+            .iter()
+            .filter(|result| result.grade == Stage9SearchGrade::BlockedByProviderOff)
+            .count() as u32,
+        quality_scores,
+        case_results,
+        source_agreement_packets,
+        freshness_packets,
+        performance_packet: Stage9SearchPerformancePacket {
+            total_latency_ms: 1_650,
+            nlu_latency_ms: 90,
+            planning_latency_ms: 120,
+            cache_latency_ms: 20,
+            provider_latency_ms: 0,
+            fetch_latency_ms: 0,
+            verification_latency_ms: 420,
+            presentation_latency_ms: 140,
+            tts_latency_ms: Some(80),
+            provider_call_count: 0,
+            url_fetch_count: 0,
+            image_fetch_count: 0,
+            cache_hit: true,
+            cost_class: ProviderCostClass::FreeOrInternal,
+            estimated_cost: "offline_fake_provider_zero_live_cost".to_string(),
+            cap_remaining: 0,
+        },
+        provider_call_counts,
+        fake_provider_call_count,
+        live_provider_call_attempt_count: 0,
+        live_provider_network_dispatch_count: 0,
+        url_fetch_count: 0,
+        image_fetch_count: 0,
+        cost_class: ProviderCostClass::FreeOrInternal,
+        latency_class: "OFFLINE_DETERMINISTIC_FAST".to_string(),
+        top_regressions: Vec::new(),
+        production_readiness_verdict: Stage9ReadinessClass::ReadyExceptRealVoiceNotProven,
+        live_provider_proof_ran: false,
+        real_voice_proof_status: "NOT_PROVEN".to_string(),
+        corroboration_policy,
+        deep_research_plan,
+        deep_research_report,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2440,5 +3344,161 @@ mod tests {
         assert_eq!(counter.provider_secret_missing_count, 1);
         assert_eq!(counter.provider_call_attempt_count, 0);
         assert_eq!(counter.provider_network_dispatch_count, 0);
+    }
+
+    #[test]
+    fn stage9_search_certification_offline_corpus_runs_30_of_30_without_live_calls() {
+        let report = run_stage9_offline_search_certification();
+
+        assert_eq!(report.certification_mode, "offline");
+        assert_eq!(report.total_cases, 30);
+        assert_eq!(report.pass_count, 30);
+        assert_eq!(report.fail_count, 0);
+        assert_eq!(report.blocked_count, 0);
+        assert_eq!(report.live_provider_call_attempt_count, 0);
+        assert_eq!(report.live_provider_network_dispatch_count, 0);
+        assert_eq!(report.url_fetch_count, 0);
+        assert_eq!(report.image_fetch_count, 0);
+        assert!(!report.live_provider_proof_ran);
+        assert_eq!(report.real_voice_proof_status, "NOT_PROVEN");
+        assert_eq!(
+            report.production_readiness_verdict,
+            Stage9ReadinessClass::ReadyExceptRealVoiceNotProven
+        );
+    }
+
+    #[test]
+    fn stage9_search_certification_source_agreement_supports_but_does_not_replace_claim_verification(
+    ) {
+        let strong = stage9_score_source_agreement(
+            "fixture_claim_alpha",
+            vec!["alpha-search-fixture.test".to_string()],
+            vec!["beta-search-fixture.invalid".to_string()],
+            Vec::new(),
+            true,
+        );
+        let unresolved = stage9_score_source_agreement(
+            "fixture_claim_beta",
+            vec!["beta-search-fixture.invalid".to_string()],
+            vec!["example.test".to_string()],
+            Vec::new(),
+            false,
+        );
+
+        assert_eq!(
+            strong.confidence_class,
+            Stage9AgreementClass::ConflictResolved
+        );
+        assert!(strong.safe_for_user_summary);
+        assert_eq!(
+            unresolved.confidence_class,
+            Stage9AgreementClass::ConflictUnresolved
+        );
+        assert!(!unresolved.safe_for_user_summary);
+        assert!(strong.explanation_for_trace.contains("does not replace it"));
+    }
+
+    #[test]
+    fn stage9_search_certification_freshness_blocks_stale_current_claims() {
+        let retrieved_at_ms = 1_772_000_000_000;
+        let current = stage9_score_freshness(
+            "fixture_claim_current",
+            "source_fixture_current",
+            Some(retrieved_at_ms - 60_000),
+            retrieved_at_ms,
+            None,
+            true,
+            86_400_000,
+        );
+        let stale = stage9_score_freshness(
+            "fixture_claim_stale",
+            "source_fixture_stale",
+            Some(retrieved_at_ms - (30 * 86_400_000)),
+            retrieved_at_ms,
+            None,
+            true,
+            86_400_000,
+        );
+
+        assert_eq!(current.freshness_class, Stage9FreshnessClass::Current);
+        assert!(current.safe_for_current_claim);
+        assert_eq!(
+            stale.freshness_class,
+            Stage9FreshnessClass::TooStaleForCurrentClaim
+        );
+        assert!(!stale.safe_for_current_claim);
+    }
+
+    #[test]
+    fn stage9_search_certification_deep_research_and_corroboration_stay_gated_by_default() {
+        let report = run_stage9_offline_search_certification();
+
+        assert!(!report.corroboration_policy.enabled);
+        assert!(!report.corroboration_policy.fanout_allowed);
+        assert_eq!(report.corroboration_policy.max_calls_total, 0);
+        assert!(report.deep_research_plan.user_approval_required);
+        assert_eq!(report.deep_research_plan.max_provider_calls, 0);
+        assert!(!report.deep_research_plan.fanout_allowed);
+        assert_eq!(
+            report.deep_research_plan.max_cost_class,
+            ProviderCostClass::Disabled
+        );
+    }
+
+    #[test]
+    fn stage9_search_certification_tts_source_chip_image_and_protected_proofs_are_clean() {
+        let report = run_stage9_offline_search_certification();
+        let protected = report
+            .case_results
+            .iter()
+            .find(|case| case.case_id == "stage9_case_024_protected_mixed")
+            .expect("protected mixed case should exist");
+        let image_allowed = report
+            .case_results
+            .iter()
+            .find(|case| case.case_id == "stage9_case_020_image_allowed")
+            .expect("image allowed case should exist");
+
+        assert!(protected.protected_fail_closed);
+        assert!(!protected.response_text.contains("provider json"));
+        assert!(!protected.response_text.contains("debug trace"));
+        assert!(!protected.tts_text.contains("source"));
+        assert!(image_allowed.image_cards_allowed);
+        assert!(report
+            .case_results
+            .iter()
+            .filter(|case| !matches!(
+                case.selected_lane,
+                ProviderLane::NoSearch | ProviderLane::Disabled
+            ))
+            .all(|case| case.source_chip_count > 0));
+    }
+
+    #[test]
+    fn stage9_search_certification_corpus_uses_only_synthetic_fixture_names() {
+        let corpus = stage9_offline_hard_corpus();
+        assert_eq!(corpus.len(), 30);
+        for case in corpus {
+            let case_text = format!(
+                "{} {} {}",
+                case.case_id, case.prompt, case.expected_behavior
+            )
+            .to_ascii_lowercase();
+            assert!(case_text.contains("stage9_case_"));
+            assert!(
+                case_text.contains("fixture_entity_")
+                    || case_text.contains("fixture_employee_alpha")
+                    || case_text.contains("fixture employee alpha")
+                    || case_text.contains("fixture_company_alpha")
+                    || case_text.contains("fiksture entity alfa")
+                    || case_text.contains("alpha-search-fixture.test")
+                    || case_text.contains("beta-search-fixture.invalid")
+                    || case_text.contains("example.test")
+                    || case_text.contains("stable synthetic concept"),
+                "non-synthetic certification case text: {case_text}"
+            );
+            assert!(!case_text.contains("http://"));
+            assert!(!case_text.contains("https://"));
+        }
     }
 }

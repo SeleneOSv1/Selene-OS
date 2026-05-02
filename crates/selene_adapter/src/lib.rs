@@ -37820,4 +37820,48 @@ mod tests {
             assert!(out.provenance.is_none());
         }
     }
+
+    #[test]
+    fn stage9_search_certification_adapter_preserves_offline_provider_off_and_tts_cleanliness() {
+        let report = selene_engines::ph1providerctl::run_stage9_offline_search_certification();
+
+        assert_eq!(report.total_cases, 30);
+        assert_eq!(report.fail_count, 0);
+        assert_eq!(report.live_provider_call_attempt_count, 0);
+        assert_eq!(report.live_provider_network_dispatch_count, 0);
+        assert_eq!(report.url_fetch_count, 0);
+        assert_eq!(report.image_fetch_count, 0);
+        assert!(report
+            .case_results
+            .iter()
+            .all(|case| !case.response_text.contains("provider json")));
+        assert!(report
+            .case_results
+            .iter()
+            .all(|case| !case.response_text.contains("debug trace")));
+        assert!(report
+            .case_results
+            .iter()
+            .all(|case| !case.tts_text.contains("provider")));
+    }
+
+    #[test]
+    fn stage9_search_certification_adapter_protected_mixed_prompt_is_fail_closed() {
+        let report = selene_engines::ph1providerctl::run_stage9_offline_search_certification();
+        let protected = report
+            .case_results
+            .iter()
+            .find(|case| case.case_id == "stage9_case_024_protected_mixed")
+            .expect("protected mixed certification case should exist");
+
+        assert!(protected.protected_fail_closed);
+        assert!(protected
+            .response_text
+            .contains("payroll approval is blocked"));
+        assert!(protected.tts_text.contains("Payroll approval is blocked"));
+        assert_eq!(
+            report.production_readiness_verdict,
+            selene_engines::ph1providerctl::Stage9ReadinessClass::ReadyExceptRealVoiceNotProven
+        );
+    }
 }

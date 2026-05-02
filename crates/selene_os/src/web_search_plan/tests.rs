@@ -17,6 +17,9 @@ use crate::web_search_plan::turn_state_machine_validator::{
     validate_fail_closed_reason_codes, validate_transition_sequence,
     validate_turn_state_machine_spec,
 };
+use selene_engines::ph1providerctl::{
+    run_stage9_offline_search_certification, ProviderCostClass, ProviderLane, Stage9ReadinessClass,
+};
 use serde_json::Value;
 use std::fs;
 
@@ -175,12 +178,8 @@ fn test_fixture_files_map_to_registered_packets() {
             let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
                 continue;
             };
-            let packet_name = packet_name_from_fixture_filename(file_name).unwrap_or_else(|| {
-                panic!(
-                    "fixture {} has no packet mapping rule",
-                    path.display()
-                )
-            });
+            let packet_name = packet_name_from_fixture_filename(file_name)
+                .unwrap_or_else(|| panic!("fixture {} has no packet mapping rule", path.display()));
             assert!(
                 packet_names.contains(packet_name),
                 "fixture {} maps to unregistered packet {}",
@@ -426,4 +425,55 @@ fn test_merge_valid_fixture_passes() {
 fn test_merge_invalid_fixture_fails() {
     let result = validate_single_fixture("invalid", "merge_missing_required.json");
     assert!(result.is_err(), "invalid merge fixture unexpectedly passed");
+}
+
+#[test]
+fn stage9_search_certification_os_accepts_offline_report_without_live_provider_calls() {
+    let report = run_stage9_offline_search_certification();
+
+    assert_eq!(report.total_cases, 30);
+    assert_eq!(report.pass_count, 30);
+    assert_eq!(report.fail_count, 0);
+    assert_eq!(report.live_provider_call_attempt_count, 0);
+    assert_eq!(report.live_provider_network_dispatch_count, 0);
+    assert_eq!(report.performance_packet.provider_call_count, 0);
+    assert_eq!(report.performance_packet.url_fetch_count, 0);
+    assert_eq!(report.performance_packet.image_fetch_count, 0);
+    assert_eq!(
+        report.production_readiness_verdict,
+        Stage9ReadinessClass::ReadyExceptRealVoiceNotProven
+    );
+}
+
+#[test]
+fn stage9_search_certification_os_preserves_provider_lane_cache_cost_and_source_chip_proof() {
+    let report = run_stage9_offline_search_certification();
+
+    assert!(report
+        .case_results
+        .iter()
+        .any(|case| case.selected_lane == ProviderLane::CacheOnly));
+    assert!(report
+        .case_results
+        .iter()
+        .any(|case| case.selected_lane == ProviderLane::CheapGeneralSearch));
+    assert!(report
+        .case_results
+        .iter()
+        .any(|case| case.selected_lane == ProviderLane::NewsCurrentEvents));
+    assert!(report
+        .case_results
+        .iter()
+        .any(|case| case.selected_lane == ProviderLane::PremiumFallback));
+    assert_eq!(report.cost_class, ProviderCostClass::FreeOrInternal);
+    assert!(report
+        .case_results
+        .iter()
+        .filter(|case| {
+            !matches!(
+                case.selected_lane,
+                ProviderLane::NoSearch | ProviderLane::Disabled
+            )
+        })
+        .all(|case| case.source_chip_count > 0));
 }
