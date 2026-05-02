@@ -465,6 +465,10 @@ fn clean_public_search_entity(value: &str) -> Option<String> {
 }
 
 fn looks_like_web_search(lower: &str) -> bool {
+    if looks_like_search_concept_explanation(lower) {
+        return false;
+    }
+
     (contains_word(lower, "search")
         && (contains_word(lower, "web")
             || contains_word(lower, "internet")
@@ -510,11 +514,59 @@ fn looks_like_web_search(lower: &str) -> bool {
         || lower.contains("最新")
         || lower.contains("当前")
         || lower.contains("現任")
+        || (lower.contains("搜索") && lower.contains("网页"))
+        || lower.contains("搜索网页")
+        || lower.contains("查找")
+        || lower.contains("搜一下")
         || lower.contains("查一下")
         || lower.contains("网上")
         || lower.contains("網上")
         || lower.contains("来源")
         || lower.contains("來源")
+}
+
+fn looks_like_search_concept_explanation(lower: &str) -> bool {
+    if (lower.contains("解释") || lower.contains("說明") || lower.contains("说明"))
+        && (lower.contains("网页搜索")
+            || lower.contains("網頁搜索")
+            || lower.contains("搜索路由")
+            || lower.contains("搜索提供方"))
+        && (lower.contains("意思") || lower.contains("是什么") || lower.contains("路由"))
+    {
+        return true;
+    }
+
+    let asks_for_explanation = lower.starts_with("explain ")
+        || lower.starts_with("define ")
+        || lower.starts_with("what does ")
+        || lower.starts_with("what is ")
+        || lower.starts_with("what are ");
+    if !asks_for_explanation {
+        return false;
+    }
+
+    let refers_to_search_concept = lower.contains("web search")
+        || lower.contains("search provider")
+        || lower.contains("provider routing")
+        || lower.contains("provider route")
+        || lower.contains("search routing")
+        || lower.contains("search route");
+    if !refers_to_search_concept {
+        return false;
+    }
+
+    let asks_for_live_lookup = lower.contains("search the web for")
+        || lower.starts_with("search for ")
+        || lower.starts_with("look up ")
+        || lower.contains(" look up ")
+        || lower.contains("find sources for")
+        || lower.contains("source this")
+        || lower.contains("cite this")
+        || lower.contains("latest")
+        || lower.contains("current")
+        || lower.contains("recent");
+
+    !asks_for_live_lookup
 }
 
 fn looks_like_news_query(lower: &str) -> bool {
@@ -3953,6 +4005,40 @@ mod tests {
     }
 
     #[test]
+    fn final_e2e_search_concept_explanation_does_not_route_to_web_search() {
+        let rt = Ph1nRuntime::new(Ph1nConfig::mvp_v1());
+        let out = rt
+            .run(&req(
+                "Explain what web search provider routing means.",
+                "en",
+            ))
+            .unwrap();
+        match out {
+            Ph1nResponse::Chat(_) => {}
+            other => panic!("expected public chat bypass, got {other:?}"),
+        }
+
+        let zh_out = rt.run(&req("解释一下网页搜索路由是什么意思。", "zh")).unwrap();
+        match zh_out {
+            Ph1nResponse::Chat(_) => {}
+            other => panic!("expected Chinese public chat bypass, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn final_e2e_chinese_web_search_routes_to_tool_lane() {
+        let rt = Ph1nRuntime::new(Ph1nConfig::mvp_v1());
+        let out = rt.run(&req("搜索网页查找人工智能研究。", "zh")).unwrap();
+        match out {
+            Ph1nResponse::IntentDraft(d) => {
+                assert_eq!(d.intent_type, IntentType::WebSearchQuery);
+                assert_eq!(d.required_fields_missing, Vec::<FieldKey>::new());
+            }
+            other => panic!("expected Chinese web search intent, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn at_n_19_news_normalizes_from_common_phrase() {
         let rt = Ph1nRuntime::new(Ph1nConfig::mvp_v1());
         let out = rt
@@ -3992,11 +4078,11 @@ mod tests {
     fn at_n_build_1d_web_needed_classification_covers_current_source_and_chinese_queries() {
         let rt = Ph1nRuntime::new(Ph1nConfig::mvp_v1());
         for text in [
-            "Who is the current CEO of OpenAI?",
-            "Find sources for the latest OpenAI release",
-            "Search the web for OpenAI news this week",
-            "OpenAI 最新新闻是什么",
-            "Did OpenAI have recent news? source this",
+            "Who is the current CEO of fixture_company_alpha?",
+            "Find sources for the latest fixture_entity_alpha release",
+            "Search the web for fixture_entity_alpha news this week",
+            "fixture_entity_alpha 最新新闻是什么",
+            "Did fixture_entity_alpha have recent news? source this",
         ] {
             let out = rt.run(&req(text, "en")).unwrap();
             match out {
@@ -4020,8 +4106,8 @@ mod tests {
     fn h384_deep_research_current_source_wording_prefers_deep_research_over_adjacent_web_news() {
         let rt = Ph1nRuntime::new(Ph1nConfig::mvp_v1());
         for text in [
-            "Do deep research on the latest OpenAI news today and compare sources.",
-            "Create a research report on the current OpenAI news with sources.",
+            "Do deep research on the latest fixture_topic_alpha news today and compare sources.",
+            "Create a research report on the current fixture_topic_alpha news with sources.",
         ] {
             let out = rt.run(&req(text, "en")).unwrap();
             match out {
@@ -4499,7 +4585,10 @@ mod tests {
     fn h409_synthetic_noisy_ceo_search_routes_to_public_lookup() {
         let rt = Ph1nRuntime::new(Ph1nConfig::mvp_v1());
         for (prompt, expected_task) in [
-            ("Who is the CEO of Auroa Vale Cellars?", "Auroa Vale Cellars CEO"),
+            (
+                "Who is the CEO of Auroa Vale Cellars?",
+                "Auroa Vale Cellars CEO",
+            ),
             (
                 "Do a deep web search and find me the CEO for Aura Lane Cellars.",
                 "Aura Lane Cellars CEO",

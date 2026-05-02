@@ -2725,8 +2725,13 @@ fn stage1_web_answer_verified_metadata(
         candidate_ids.push(source_id.clone());
         let domain =
             domain_from_http_url(&item.url).unwrap_or_else(|| "unknown.invalid".to_string());
-        let (entity_match_result, mut rejection_reasons) =
-            stage1_entity_match_result(&normalized_entity, item);
+        let source_discovery_allowed =
+            requested_role.is_none() && stage1_entity_only_source_discovery_allowed(query);
+        let (entity_match_result, mut rejection_reasons) = if source_discovery_allowed {
+            stage1_source_discovery_match_result(&normalized_entity, item)
+        } else {
+            stage1_entity_match_result(&normalized_entity, item)
+        };
         let weak_reason = stage1_weak_source_reason(item);
         if let Some(reason) = weak_reason {
             rejection_reasons.push(reason.to_string());
@@ -2736,7 +2741,11 @@ fn stage1_web_answer_verified_metadata(
         }
         let (claim_support_result, person) =
             stage1_claim_support_result(&requested_role, &entity_match_result, item);
-        if !matches!(claim_support_result.as_str(), "CLAIM_SUPPORT_DIRECT") {
+        let entity_only_source_discovery =
+            source_discovery_allowed && claim_support_result == "CLAIM_SUPPORT_ENTITY_ONLY";
+        if !matches!(claim_support_result.as_str(), "CLAIM_SUPPORT_DIRECT")
+            && !entity_only_source_discovery
+        {
             rejection_reasons.push(match claim_support_result.as_str() {
                 "CLAIM_SUPPORT_ENTITY_ONLY" => "MENTIONS_ENTITY_ONLY".to_string(),
                 _ => "CLAIM_NOT_SUPPORTED".to_string(),
@@ -2760,7 +2769,7 @@ fn stage1_web_answer_verified_metadata(
                 entity_match_result.as_str(),
                 "ENTITY_MATCH_STRONG" | "ENTITY_MATCH_MEDIUM"
             )
-            && claim_support_result == "CLAIM_SUPPORT_DIRECT";
+            && (claim_support_result == "CLAIM_SUPPORT_DIRECT" || entity_only_source_discovery);
         let claim_refs = if accepted {
             vec!["claim_001".to_string()]
         } else {
@@ -2806,19 +2815,21 @@ fn stage1_web_answer_verified_metadata(
                 claim_support_result: claim_support_result.clone(),
                 accepted: true,
             });
-            source_chips.push(SourceChipPacket {
-                source_id: source_id.clone(),
-                label: label.clone(),
-                domain: domain.clone(),
-                safe_click_url: item.url.clone(),
-                source_type: "WEB_RESULT".to_string(),
-                accepted: true,
-                claim_refs,
-                icon_key: Some("source_link".to_string()),
-                verified_for_claim: true,
-                display_rank: source_chips.len().saturating_add(1) as u16,
-                tooltip_or_accessibility_label: format!("Open {label} from {domain}"),
-            });
+            if !entity_only_source_discovery {
+                source_chips.push(SourceChipPacket {
+                    source_id: source_id.clone(),
+                    label: label.clone(),
+                    domain: domain.clone(),
+                    safe_click_url: item.url.clone(),
+                    source_type: "WEB_RESULT".to_string(),
+                    accepted: true,
+                    claim_refs,
+                    icon_key: Some("source_link".to_string()),
+                    verified_for_claim: true,
+                    display_rank: source_chips.len().saturating_add(1) as u16,
+                    tooltip_or_accessibility_label: format!("Open {label} from {domain}"),
+                });
+            }
             accepted_image_items.push((source_id.clone(), item.clone()));
             if let Some(person) = person {
                 stage4_candidates.push(Stage4SupportCandidate {
@@ -3240,13 +3251,14 @@ fn stage1_requested_entity(query: &str) -> Option<String> {
 }
 
 fn stage1_clean_entity(value: &str) -> Option<String> {
+    let cleaned_value = stage1_strip_generic_cjk_search_markers(value);
     let mut tokens = Vec::new();
-    for token in value
+    for token in cleaned_value
         .trim()
-        .trim_matches(|ch: char| ch.is_ascii_punctuation() || ch.is_whitespace())
+        .trim_matches(stage1_entity_boundary_punctuation)
         .split_whitespace()
     {
-        let cleaned = token.trim_matches(|ch: char| ch.is_ascii_punctuation());
+        let cleaned = token.trim_matches(stage1_entity_boundary_punctuation);
         let lower = cleaned.to_ascii_lowercase();
         if matches!(
             lower.as_str(),
@@ -3266,8 +3278,13 @@ fn stage1_clean_entity(value: &str) -> Option<String> {
                 | "find"
                 | "search"
                 | "web"
+                | "what"
                 | "latest"
                 | "current"
+                | "recent"
+                | "news"
+                | "today"
+                | "about"
         ) {
             continue;
         }
@@ -3284,6 +3301,35 @@ fn stage1_clean_entity(value: &str) -> Option<String> {
     } else {
         Some(entity)
     }
+}
+
+fn stage1_strip_generic_cjk_search_markers(value: &str) -> String {
+    let mut cleaned = value.to_string();
+    for marker in [
+        "搜索一下",
+        "搜索网页",
+        "搜索",
+        "查一下",
+        "查找",
+        "网页",
+        "网络",
+        "最新消息",
+        "最新新闻",
+        "最新",
+        "新闻",
+        "消息",
+        "是什么",
+        "有什么",
+    ] {
+        cleaned = cleaned.replace(marker, " ");
+    }
+    cleaned
+}
+
+fn stage1_entity_boundary_punctuation(ch: char) -> bool {
+    ch.is_ascii_punctuation()
+        || ch.is_whitespace()
+        || matches!(ch, '。' | '，' | '、' | '？' | '！' | '：' | '；' | '“' | '”' | '‘' | '’')
 }
 
 fn stage1_requested_role(query: &str) -> Option<&'static str> {
@@ -3345,6 +3391,87 @@ fn stage1_entity_match_result(
     )
 }
 
+fn stage1_source_discovery_match_result(
+    normalized_entity: &str,
+    item: &ToolTextSnippet,
+) -> (String, Vec<String>) {
+    if normalized_entity.is_empty() {
+        return (
+            "ENTITY_MATCH_UNKNOWN".to_string(),
+            vec!["ENTITY_MISMATCH".to_string()],
+        );
+    }
+    let source_text =
+        normalize_stage1_entity(&format!("{} {} {}", item.title, item.snippet, item.url));
+    if source_text.contains(normalized_entity) {
+        return ("ENTITY_MATCH_STRONG".to_string(), vec![]);
+    }
+
+    let entity_tokens = stage1_source_discovery_topic_tokens(normalized_entity);
+    if entity_tokens.is_empty() {
+        return (
+            "ENTITY_MATCH_REJECT".to_string(),
+            vec!["ENTITY_MISMATCH".to_string()],
+        );
+    }
+    let matched = entity_tokens
+        .iter()
+        .filter(|token| stage1_source_discovery_token_matches(token, &source_text))
+        .count();
+    let required = if entity_tokens.len() <= 2 {
+        entity_tokens.len()
+    } else {
+        2
+    };
+    if matched >= required {
+        return ("ENTITY_MATCH_MEDIUM".to_string(), vec![]);
+    }
+
+    (
+        "ENTITY_MATCH_REJECT".to_string(),
+        vec!["TOPIC_SOURCE_OVERLAP_INSUFFICIENT".to_string()],
+    )
+}
+
+fn stage1_source_discovery_topic_tokens(normalized_entity: &str) -> Vec<String> {
+    normalized_entity
+        .split_whitespace()
+        .map(str::trim)
+        .filter(|token| {
+            !token.is_empty()
+                && !matches!(
+                    *token,
+                    "search"
+                        | "web"
+                        | "for"
+                        | "the"
+                        | "a"
+                        | "an"
+                        | "public"
+                        | "latest"
+                        | "current"
+                        | "recent"
+                        | "news"
+                )
+        })
+        .map(ToString::to_string)
+        .collect()
+}
+
+fn stage1_source_discovery_token_matches(token: &str, source_text: &str) -> bool {
+    source_text.split_whitespace().any(|source| source == token)
+        || (token == "ai"
+            && (source_text.contains("artificial intelligence")
+                || source_text.split_whitespace().any(|source| source == "ai")))
+        || (token.contains("人工智能")
+            && (source_text.contains("人工智能")
+                || source_text.contains("artificial intelligence")
+                || source_text.split_whitespace().any(|source| source == "ai")))
+        || (token.contains("研究")
+            && (source_text.contains("研究")
+                || source_text.split_whitespace().any(|source| source == "research")))
+}
+
 fn stage1_claim_support_result(
     requested_role: &Option<&'static str>,
     entity_match_result: &str,
@@ -3372,6 +3499,11 @@ fn stage1_claim_support_result(
     } else {
         ("CLAIM_SUPPORT_IMPLIED".to_string(), None)
     }
+}
+
+fn stage1_entity_only_source_discovery_allowed(query: &str) -> bool {
+    let lower = query.to_ascii_lowercase();
+    !lower.trim().is_empty()
 }
 
 fn stage1_role_aliases(role: &str) -> Vec<&'static str> {
@@ -3415,13 +3547,19 @@ fn stage4_verify_answer(
     rejected_source_ids: &[String],
 ) -> Stage4Decision {
     let claim_id = "claim_001".to_string();
+    let source_discovery_only =
+        requested_role.is_none() && stage1_entity_only_source_discovery_allowed(query);
     let claim_type = if requested_role.is_some() {
         "leadership_role"
+    } else if source_discovery_only {
+        "source_discovery"
     } else {
         "unknown_factual"
     };
     let expected_answer_shape = if requested_role.is_some() {
         "person_role_entity"
+    } else if source_discovery_only {
+        "source_backed_results"
     } else {
         "short_factual_answer"
     };
@@ -3443,6 +3581,42 @@ fn stage4_verify_answer(
     }];
 
     if requested_role.is_none() {
+        if source_discovery_only && !accepted_source_ids.is_empty() {
+            let summary = format!(
+                "I found source-backed web results about {}.",
+                requested.captured_text.trim()
+            );
+            return Stage4Decision {
+                response_text: summary.clone(),
+                final_answer_class: "SOURCE_DISCOVERY_ONLY".to_string(),
+                answer_claims: Vec::new(),
+                claim_to_source_map: Vec::new(),
+                claim_requests,
+                claim_verifications: vec![stage4_claim_verification(
+                    claim_id,
+                    claim_type,
+                    claim_text,
+                    requested,
+                    "PARTIALLY_SUPPORTED",
+                    6_500,
+                    "MEDIUM",
+                    accepted_source_ids.to_vec(),
+                    Vec::new(),
+                    Vec::new(),
+                    rejected_source_ids.to_vec(),
+                    Vec::new(),
+                    Some("source discovery only; no direct factual claim was asserted".to_string()),
+                    None,
+                    Some("accepted sources mention the requested entity".to_string()),
+                    None,
+                    false,
+                    summary,
+                )],
+                unsupported_claims_removed: Vec::new(),
+                contradiction_result: "no_conflict".to_string(),
+                display_source_ids: accepted_source_ids.to_vec(),
+            };
+        }
         let summary = format!(
             "I could not verify that information about {} from accepted sources.",
             requested.captured_text.trim()
@@ -3747,6 +3921,11 @@ fn stage4_source_requirements(claim_type: &str) -> Vec<String> {
             "entity_match".to_string(),
             "numeric_value_direct_support".to_string(),
         ],
+        "source_discovery" => vec![
+            "accepted_source".to_string(),
+            "entity_match".to_string(),
+            "no_direct_factual_claim".to_string(),
+        ],
         _ => vec![
             "accepted_source".to_string(),
             "entity_match".to_string(),
@@ -3979,6 +4158,8 @@ fn normalize_stage1_entity(value: &str) -> String {
         .map(|ch| {
             if ch.is_ascii_alphanumeric() {
                 ch.to_ascii_lowercase()
+            } else if stage1_is_cjk_unified_ideograph(ch) {
+                ch
             } else {
                 ' '
             }
@@ -3987,6 +4168,19 @@ fn normalize_stage1_entity(value: &str) -> String {
         .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+fn stage1_is_cjk_unified_ideograph(ch: char) -> bool {
+    matches!(
+        ch,
+        '\u{4E00}'..='\u{9FFF}'
+            | '\u{3400}'..='\u{4DBF}'
+            | '\u{F900}'..='\u{FAFF}'
+            | '\u{20000}'..='\u{2A6DF}'
+            | '\u{2A700}'..='\u{2B73F}'
+            | '\u{2B740}'..='\u{2B81F}'
+            | '\u{2B820}'..='\u{2CEAF}'
+    )
 }
 
 fn stage1_sound_skeleton(value: &str) -> String {
@@ -9603,6 +9797,69 @@ mod tests {
         }
     }
 
+    #[test]
+    fn final_e2e_news_entity_extraction_removes_question_and_freshness_words() {
+        let requested =
+            stage1_requested_entity_packet("What is the latest Fixture Entity Alpha news today?");
+        assert_eq!(requested.captured_text, "Fixture Entity Alpha");
+        assert_eq!(requested.normalized_name, "fixture entity alpha");
+    }
+
+    #[test]
+    fn final_e2e_chinese_search_topic_preserves_cjk_entity_text() {
+        let requested = stage1_requested_entity_packet("搜索网页查找人工智能研究。");
+        assert_eq!(requested.captured_text, "人工智能研究");
+        assert_eq!(requested.normalized_name, "人工智能研究");
+    }
+
+    #[test]
+    fn final_e2e_source_discovery_uses_topic_overlap_without_weakening_role_claims() {
+        let topic = ToolTextSnippet {
+            title: "Artificial intelligence research overview".to_string(),
+            snippet: "A public source about model evaluation methods.".to_string(),
+            url: "https://fixture-topic-alpha.test/artificial-intelligence".to_string(),
+        };
+        let (discovery_match, discovery_reasons) =
+            stage1_source_discovery_match_result("ai research", &topic);
+        assert_eq!(discovery_match, "ENTITY_MATCH_MEDIUM");
+        assert!(discovery_reasons.is_empty());
+
+        let (claim_match, claim_reasons) = stage1_entity_match_result("ai research", &topic);
+        assert_eq!(claim_match, "ENTITY_MATCH_REJECT");
+        assert!(!claim_reasons.is_empty());
+    }
+
+    #[test]
+    fn final_e2e_source_discovery_displays_entity_matched_sources_without_overclaiming() {
+        let (_items, metadata) = stage1_web_answer_verified_metadata(
+            "What is the latest Fixture Entity Alpha news today?",
+            vec![ToolTextSnippet {
+                title: "Fixture Entity Alpha update".to_string(),
+                snippet: "Fixture Entity Alpha published a public update.".to_string(),
+                url: "https://fixture-entity-alpha.test/news".to_string(),
+            }],
+            Some("fixture_source_discovery".to_string()),
+            1,
+        );
+        let verification = metadata
+            .web_answer_verification
+            .expect("verification metadata");
+        assert_eq!(verification.final_answer_class, "SOURCE_DISCOVERY_ONLY");
+        assert!(verification.source_chips.is_empty());
+        assert_eq!(verification.accepted_source_ids, vec!["source_001"]);
+        assert!(verification.answer_claims.is_empty());
+        assert!(verification.unsupported_claims_removed.is_empty());
+        assert_eq!(
+            verification.claim_verifications[0].verification_status,
+            "PARTIALLY_SUPPORTED"
+        );
+        assert!(!verification.claim_verifications[0].safe_for_direct_answer);
+        assert!(verification
+            .presentation
+            .response_text
+            .contains("source-backed web results"));
+    }
+
     fn h402_socks_route_proof() -> GdeltApprovedProxyRouteProof {
         GdeltApprovedProxyRouteProof {
             policy: "gdelt_explicit_env_socks_proxy",
@@ -14924,7 +15181,7 @@ mod tests {
 
     #[test]
     #[ignore = "requires a real Brave Search secret in the local Selene vault and live network access"]
-    fn h383_live_brave_news_query_returns_verified_sources() {
+    fn h383_live_brave_web_query_returns_verified_sources() {
         assert!(
             device_vault::resolve_secret(ProviderSecretId::BraveSearchApiKey.as_str())
                 .ok()
@@ -14935,8 +15192,8 @@ mod tests {
         );
         let rt = Ph1eRuntime::new(Ph1eConfig::mvp_v1());
         let out = rt.run(&req(
-            ToolName::News,
-            "What is the latest OpenAI news today?",
+            ToolName::WebSearch,
+            "Search the web for AI research.",
             false,
             false,
         ));

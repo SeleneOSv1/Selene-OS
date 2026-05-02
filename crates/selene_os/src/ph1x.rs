@@ -2128,6 +2128,14 @@ fn stage5_chinese_web_presentation_text(
             }
             Some(format!("{value} 是 {entity} 的 {role}。"))
         }
+        "SOURCE_DISCOVERY_ONLY" => {
+            let entity = verification.requested_entity.captured_text.trim();
+            if entity.is_empty() {
+                Some("我找到了可引用的网页结果。".to_string())
+            } else {
+                Some(format!("我找到了关于 {entity} 的可引用网页结果。"))
+            }
+        }
         "PARTIAL_UNCERTAIN_ANSWER" => {
             Some("我找到部分证据，但无法有把握地验证当前答案。".to_string())
         }
@@ -4238,6 +4246,22 @@ mod tests {
             card.safe_click_url = "https://test-company-a.test/leadership".to_string();
         }
         metadata
+    }
+
+    #[test]
+    fn final_e2e_chinese_source_discovery_presentation_uses_chinese() {
+        let mut metadata = stage5_test_verified_source_metadata();
+        let verification = metadata
+            .web_answer_verification
+            .as_mut()
+            .expect("verification packet");
+        verification.final_answer_class = "SOURCE_DISCOVERY_ONLY".to_string();
+        verification.presentation.answer_class = "SOURCE_DISCOVERY_ONLY".to_string();
+        verification.requested_entity.captured_text = "人工智能研究".to_string();
+
+        let text = stage5_chinese_web_presentation_text(verification)
+            .expect("source discovery class should have Chinese presentation");
+        assert_eq!(text, "我找到了关于 人工智能研究 的可引用网页结果。");
     }
 
     fn stage6_test_image_source_metadata() -> SourceMetadata {

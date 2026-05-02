@@ -15409,6 +15409,15 @@ fn h411_public_discourse_response(
         });
     }
 
+    if h411_is_search_provider_routing_explanation_question(&lower) {
+        return Some(H411PublicDiscourseResponse {
+            response_text:
+                "Web search provider routing is the decision layer that decides whether a request needs live search, checks cache and policy gates first, then chooses an allowed provider under budget before returning source-backed results."
+                    .to_string(),
+            reason_code: "H411_PUBLIC_SEARCH_ROUTING_EXPLANATION_ANSWER",
+        });
+    }
+
     if lower.contains("tell me about payroll rules generally") {
         return Some(H411PublicDiscourseResponse {
             response_text:
@@ -15713,6 +15722,40 @@ fn h411_is_memory_capability_question(lower: &str) -> bool {
         || lower.contains("hows your memory")
         || (lower.contains("can you remember") && lower.contains("long time"))
         || (lower.contains("remember things") && lower.contains("long time"))
+}
+
+fn h411_is_search_provider_routing_explanation_question(lower: &str) -> bool {
+    let asks_for_explanation = lower.starts_with("explain ")
+        || lower.starts_with("define ")
+        || lower.starts_with("what does ")
+        || lower.starts_with("what is ")
+        || lower.starts_with("what are ");
+    if !asks_for_explanation {
+        return false;
+    }
+
+    let refers_to_search_routing = lower.contains("web search")
+        || lower.contains("search provider")
+        || lower.contains("provider routing")
+        || lower.contains("provider route")
+        || lower.contains("search routing")
+        || lower.contains("search route");
+    if !refers_to_search_routing {
+        return false;
+    }
+
+    let asks_for_live_lookup = lower.contains("search the web for")
+        || lower.starts_with("search for ")
+        || lower.starts_with("look up ")
+        || lower.contains(" look up ")
+        || lower.contains("find sources for")
+        || lower.contains("source this")
+        || lower.contains("cite this")
+        || lower.contains("latest")
+        || lower.contains("current")
+        || lower.contains("recent");
+
+    !asks_for_live_lookup
 }
 
 fn h411_is_translation_capability_question(lower: &str) -> bool {
@@ -24807,7 +24850,8 @@ mod tests {
         with_isolated_empty_device_vault("at_adapter_build_1d_web_missing", || {
             let runtime = AdapterRuntime::default();
             let mut req = base_request();
-            req.user_text_final = Some("Who is the current CEO of OpenAI?".to_string());
+            req.user_text_final =
+                Some("Who is the current CEO of fixture_company_alpha?".to_string());
             seed_desktop_voice_profile_for_request(&runtime, &mut req, "at_adapter_build_1d_web");
             let out = runtime
                 .run_voice_turn(req)
@@ -24824,7 +24868,7 @@ mod tests {
                 selene_engines::ph1providerctl::PROVIDER_DISABLED_RESPONSE_TEXT
             );
             assert!(!out.response_text.contains("Sources:"));
-            assert!(!out.response_text.contains("Sam Altman"));
+            assert!(!out.response_text.contains("Fixture Leader Alpha"));
         });
     }
 
@@ -24833,7 +24877,7 @@ mod tests {
         with_isolated_empty_device_vault("at_adapter_build_1d_chinese_web_missing", || {
             let runtime = AdapterRuntime::default();
             let mut req = base_request();
-            req.user_text_final = Some("当前 OpenAI CEO 是谁？".to_string());
+            req.user_text_final = Some("当前示例公司甲 CEO 是谁？".to_string());
             seed_desktop_voice_profile_for_request(
                 &runtime,
                 &mut req,
@@ -24858,7 +24902,8 @@ mod tests {
             let runtime = AdapterRuntime::default();
             let mut req = base_request();
             req.user_text_final = Some(
-                "Do deep research on the latest OpenAI news today and compare sources.".to_string(),
+                "Do deep research on the latest fixture_topic_alpha news today and compare sources."
+                    .to_string(),
             );
             seed_desktop_voice_profile_for_request(&runtime, &mut req, "h384_deep_research");
             let out = runtime
@@ -25590,9 +25635,10 @@ mod tests {
     #[test]
     fn h385_deep_search_production_depth_response_metadata_is_evidence_backed() {
         let citation = selene_kernel_contracts::ph1e::ToolTextSnippet {
-            title: "Official OpenAI news".to_string(),
-            snippet: "OpenAI published a sourced update used as bounded evidence.".to_string(),
-            url: "https://openai.com/news/example".to_string(),
+            title: "Official fixture_entity_alpha news".to_string(),
+            snippet: "fixture_entity_alpha published a sourced update used as bounded evidence."
+                .to_string(),
+            url: "https://alpha-search-fixture.test/news/example".to_string(),
         };
         let tool_response = ToolResponse::ok_v1(
             selene_kernel_contracts::ph1e::ToolRequestId(385),
@@ -25646,8 +25692,8 @@ mod tests {
                 provider_hint: Some("brave".to_string()),
                 retrieved_at_unix_ms: 1_770_000_000_000,
                 sources: vec![selene_kernel_contracts::ph1e::SourceRef {
-                    title: "Official OpenAI news".to_string(),
-                    url: "https://openai.com/news/example".to_string(),
+                    title: "Official fixture_entity_alpha news".to_string(),
+                    url: "https://alpha-search-fixture.test/news/example".to_string(),
                 }],
                 web_answer_verification: None,
             },
@@ -25668,8 +25714,14 @@ mod tests {
             .contains(&"DEEP_RESEARCH_RESPONSE_METADATA_PASS".to_string()));
         assert_eq!(metadata.source_chips.len(), 1);
         assert_eq!(metadata.citation_cards.len(), 1);
-        assert_eq!(metadata.source_chips[0].primary_domain, "openai.com");
-        assert_eq!(metadata.citation_cards[0].domain, "openai.com");
+        assert_eq!(
+            metadata.source_chips[0].primary_domain,
+            "alpha-search-fixture.test"
+        );
+        assert_eq!(
+            metadata.citation_cards[0].domain,
+            "alpha-search-fixture.test"
+        );
         assert!(metadata.citation_cards[0].display_safe);
         assert!(
             metadata.image_metadata_provider_path_status
@@ -25697,14 +25749,15 @@ mod tests {
     fn h386_search_planner_boundary_and_fanout_metadata_is_truthful() {
         let citations = vec![
             selene_kernel_contracts::ph1e::ToolTextSnippet {
-                title: "Official OpenAI news".to_string(),
-                snippet: "OpenAI published a sourced update used as bounded evidence.".to_string(),
-                url: "https://openai.com/news/example".to_string(),
+                title: "Official fixture_entity_alpha news".to_string(),
+                snippet: "fixture_entity_alpha published a sourced update used as bounded evidence."
+                    .to_string(),
+                url: "https://alpha-search-fixture.test/news/example".to_string(),
             },
             selene_kernel_contracts::ph1e::ToolTextSnippet {
-                title: "OpenAI policy note".to_string(),
+                title: "fixture_entity_alpha policy note".to_string(),
                 snippet: "A second public source is used for source fanout proof.".to_string(),
-                url: "https://openai.com/policies/example".to_string(),
+                url: "https://beta-search-fixture.invalid/policies/example".to_string(),
             },
         ];
         let tool_response = ToolResponse::ok_v1(
@@ -25819,9 +25872,10 @@ mod tests {
     #[test]
     fn h387_image_metadata_provider_path_and_layout_metadata_are_safe() {
         let citation = selene_kernel_contracts::ph1e::ToolTextSnippet {
-            title: "Official OpenAI news".to_string(),
-            snippet: "OpenAI published a sourced update used as bounded evidence.".to_string(),
-            url: "https://openai.com/news/example".to_string(),
+            title: "Official fixture_entity_alpha news".to_string(),
+            snippet: "fixture_entity_alpha published a sourced update used as bounded evidence."
+                .to_string(),
+            url: "https://alpha-search-fixture.test/news/example".to_string(),
         };
         let tool_response = ToolResponse::ok_v1(
             selene_kernel_contracts::ph1e::ToolRequestId(387),
@@ -27076,6 +27130,111 @@ mod tests {
 
     #[test]
     #[ignore = "requires a real Brave Search secret in the local Selene vault and live network access"]
+    fn final_e2e_live_brave_one_call_public_search_respects_caps() {
+        assert_eq!(
+            env::var("SELENE_RUN_LIVE_BRAVE_PROOF").ok().as_deref(),
+            Some("1"),
+            "live Brave proof requires explicit opt-in"
+        );
+        assert_eq!(
+            env::var("SELENE_PROVIDER_CALL_MAX_PER_TURN")
+                .ok()
+                .as_deref(),
+            Some("1"),
+            "live Brave proof must cap each turn to one provider call"
+        );
+        assert_eq!(
+            env::var("SELENE_PROVIDER_RETRY_MAX").ok().as_deref(),
+            Some("0"),
+            "live Brave proof must disable retries"
+        );
+        assert!(
+            env::var("SELENE_BRAVE_MAX_CALLS_PER_TEST_RUN")
+                .ok()
+                .and_then(|value| value.parse::<u32>().ok())
+                .is_some_and(|value| value > 0),
+            "live Brave proof must set a positive per-run Brave cap"
+        );
+        assert!(
+            env::var("SELENE_BRAVE_MAX_CALLS_PER_DAY_TEST")
+                .ok()
+                .and_then(|value| value.parse::<u32>().ok())
+                .is_some_and(|value| value > 0),
+            "live Brave proof must set a positive per-day Brave cap"
+        );
+        assert!(
+            device_vault::resolve_secret(ProviderSecretId::BraveSearchApiKey.as_str())
+                .ok()
+                .flatten()
+                .map(|secret| !secret.trim().is_empty())
+                .unwrap_or(false),
+            "brave_search_api_key must be present in the local Selene vault for live proof"
+        );
+
+        let runtime = AdapterRuntime::default();
+        let mut req = base_request();
+        req.turn_id = 951_001;
+        req.correlation_id = 951_101;
+        req.thread_key = Some("final_e2e_live_brave_one_call".to_string());
+        req.user_text_final = Some("Search the web for public AI research.".to_string());
+        seed_desktop_voice_profile_for_request(&runtime, &mut req, "final_e2e_live_brave");
+
+        let out = runtime
+            .run_voice_turn(req)
+            .expect("controlled live Brave route must return an adapter response");
+        assert_eq!(out.status, "ok", "{out:?}");
+        assert_eq!(out.outcome, "FINAL_TOOL", "{out:?}");
+        assert_eq!(out.next_move, "dispatch_tool", "{out:?}");
+        assert!(
+            out.response_text
+                .contains("I found supporting web evidence")
+                || out.response_text.contains("I found a web result")
+                || out.response_text.contains("source"),
+            "{}",
+            out.response_text
+        );
+        assert!(!out.response_text.contains("provider_call_attempt_count"));
+        assert!(!out
+            .response_text
+            .contains("provider_network_dispatch_count"));
+        assert!(out.deep_research.is_none());
+        assert!(out.image_cards.is_empty());
+        let provenance_sources = out
+            .provenance
+            .as_ref()
+            .map(|provenance| provenance.sources.as_slice())
+            .unwrap_or(&[]);
+        let has_source_metadata = !provenance_sources.is_empty()
+            || !out.source_chips.is_empty()
+            || !out.source_cards.is_empty();
+        if !has_source_metadata {
+            assert_eq!(
+                out.answer_class.as_deref(),
+                Some("UNSUPPORTED_SAFE_DEGRADE"),
+                "live route without accepted source metadata must safe-degrade: {out:?}"
+            );
+            assert!(
+                out.response_text.contains("could not verify"),
+                "{}",
+                out.response_text
+            );
+        }
+        assert!(provenance_sources.iter().all(|source| {
+            (source.url.starts_with("https://") || source.url.starts_with("http://"))
+                && !source.url.contains("example.com")
+        }));
+        assert!(
+            out.source_chips
+                .iter()
+                .all(|chip| chip.safe_click_url.starts_with("https://")
+                    || chip.safe_click_url.starts_with("http://")),
+            "{:?}",
+            out.source_chips
+        );
+    }
+
+    #[test]
+    #[ignore = "requires a real Brave Search secret in the local Selene vault and live network access"]
     fn h383_live_brave_provider_desktop_route_returns_real_citation_metadata() {
         assert!(
             device_vault::resolve_secret(ProviderSecretId::BraveSearchApiKey.as_str())
@@ -27087,10 +27246,9 @@ mod tests {
         );
         let runtime = AdapterRuntime::default();
         for (idx, (query, expected_language)) in [
-            ("What is the latest OpenAI news today?", "en"),
-            ("Who is the current CEO of OpenAI?", "en"),
-            ("今天 OpenAI 有什么最新消息？", "zh"),
-            ("Search the web for OpenAI 最新 news today.", "mixed"),
+            ("Search the web for AI research.", "en"),
+            ("Search the web for machine learning research.", "en"),
+            ("搜索网页查找人工智能研究。", "zh"),
         ]
         .into_iter()
         .enumerate()
@@ -27115,9 +27273,11 @@ mod tests {
                 out.response_text
                     .contains("I found supporting web evidence")
                     || out.response_text.contains("I found a web result")
+                    || out.response_text.contains("source-backed web results")
                     || out.response_text.contains("可引用的网页证据")
                     || out.response_text.contains("找到一个网页结果")
-                    || out.response_text.contains("找到网页证据"),
+                    || out.response_text.contains("找到网页证据")
+                    || out.response_text.contains("可引用网页结果"),
                 "{query}: status={} outcome={} next_move={} reason_code={} text={}",
                 out.status,
                 out.outcome,
@@ -27139,6 +27299,7 @@ mod tests {
                     out.response_text.contains("可引用的网页证据")
                         || out.response_text.contains("找到网页证据")
                         || out.response_text.contains("找到一个网页结果")
+                        || out.response_text.contains("可引用网页结果")
                         || out.response_text.contains("引用"),
                     "{query}: {}",
                     out.response_text
@@ -27175,7 +27336,7 @@ mod tests {
         req.correlation_id = 940_384;
         req.thread_key = Some("h384_live_deep_research_thread".to_string());
         req.user_text_final = Some(
-            "Do deep research on the latest OpenAI news today and compare sources.".to_string(),
+            "Do deep research on a public AI research topic today and compare sources.".to_string(),
         );
         seed_desktop_voice_profile_for_request(&runtime, &mut req, "h384_live_deep_research");
         let out = runtime
@@ -27225,7 +27386,7 @@ mod tests {
         req.correlation_id = 940_385;
         req.thread_key = Some("h385_live_deep_research_thread".to_string());
         req.user_text_final = Some(
-            "Do deep research on the latest OpenAI news today and compare sources.".to_string(),
+            "Do deep research on a public AI research topic today and compare sources.".to_string(),
         );
         seed_desktop_voice_profile_for_request(&runtime, &mut req, "h385_live_deep_research");
         let out = runtime
@@ -36619,6 +36780,31 @@ mod tests {
                 .contains("I couldn't answer that just now"),
             "{}",
             memory.response_text
+        );
+
+        let routing = h411_run_desktop_typed_turn(
+            &runtime,
+            "h411-public-capabilities",
+            411_043,
+            "Explain what web search provider routing means.",
+        );
+        assert_h411_public_answer_clean(&routing);
+        assert!(
+            routing.response_text.contains("decision layer"),
+            "{}",
+            routing.response_text
+        );
+        assert!(
+            !routing
+                .response_text
+                .contains("I couldn't answer that just now"),
+            "{}",
+            routing.response_text
+        );
+        assert!(
+            routing.source_chips.is_empty(),
+            "{:?}",
+            routing.source_chips
         );
     }
 

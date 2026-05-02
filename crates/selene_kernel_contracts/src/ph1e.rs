@@ -787,11 +787,7 @@ impl Validate for SourceCardPacket {
         )?;
         validate_short_vec("source_card.claim_refs", &self.claim_refs, 20, 128)?;
         if let Some(retrieved_at_human) = &self.retrieved_at_human {
-            validate_bounded_nonempty(
-                "source_card.retrieved_at_human",
-                retrieved_at_human,
-                128,
-            )?;
+            validate_bounded_nonempty("source_card.retrieved_at_human", retrieved_at_human, 128)?;
         }
         if !self.accepted || self.claim_refs.is_empty() || !self.metadata_safe_for_user {
             return Err(ContractViolation::InvalidValue {
@@ -819,7 +815,10 @@ impl Validate for SearchImagePacket {
                 "unknown",
             ],
         )?;
-        validate_stage6_fixture_asset_ref("search_image.approved_asset_ref", &self.approved_asset_ref)?;
+        validate_stage6_fixture_asset_ref(
+            "search_image.approved_asset_ref",
+            &self.approved_asset_ref,
+        )?;
         if let Some(safe_image_url) = &self.safe_image_url {
             validate_safe_url("search_image.safe_image_url", safe_image_url)?;
             if !self.remote_image_load_allowed {
@@ -930,6 +929,7 @@ impl Validate for PresentationPacket {
             &self.answer_class,
             &[
                 "VERIFIED_DIRECT_ANSWER",
+                "SOURCE_DISCOVERY_ONLY",
                 "PARTIAL_UNCERTAIN_ANSWER",
                 "UNSUPPORTED_SAFE_DEGRADE",
                 "CONTRADICTED_SAFE_DEGRADE",
@@ -1002,6 +1002,7 @@ impl Validate for ClaimRequestPacket {
                 "comparison",
                 "list_or_ranking",
                 "definition_or_explanation",
+                "source_discovery",
                 "unknown_factual",
             ],
         )?;
@@ -1123,6 +1124,7 @@ impl Validate for ClaimVerificationPacket {
                 "comparison",
                 "list_or_ranking",
                 "definition_or_explanation",
+                "source_discovery",
                 "unknown_factual",
             ],
         )?;
@@ -1294,6 +1296,7 @@ impl Validate for WebAnswerVerificationPacket {
             &self.final_answer_class,
             &[
                 "VERIFIED_DIRECT_ANSWER",
+                "SOURCE_DISCOVERY_ONLY",
                 "PARTIAL_UNCERTAIN_ANSWER",
                 "UNSUPPORTED_SAFE_DEGRADE",
                 "CONTRADICTED_SAFE_DEGRADE",
@@ -1348,11 +1351,12 @@ impl Validate for WebAnswerVerificationPacket {
                     reason: "image cards must be linked to accepted source ids",
                 });
             }
-            if image_card
-                .claim_refs
-                .iter()
-                .any(|claim_ref| !self.claim_requests.iter().any(|claim| &claim.claim_id == claim_ref))
-            {
+            if image_card.claim_refs.iter().any(|claim_ref| {
+                !self
+                    .claim_requests
+                    .iter()
+                    .any(|claim| &claim.claim_id == claim_ref)
+            }) {
                 return Err(ContractViolation::InvalidValue {
                     field: "web_answer_verification.presentation.image_cards",
                     reason: "image card claim refs must be covered by final answer claims",
@@ -1540,6 +1544,7 @@ fn validate_reason_codes(codes: &[String]) -> Result<(), ContractViolation> {
                 "SIMILAR_SOUNDING_NAME_ONLY",
                 "MENTIONS_ENTITY_ONLY",
                 "CLAIM_NOT_SUPPORTED",
+                "TOPIC_SOURCE_OVERLAP_INSUFFICIENT",
                 "WEAK_SEO_SOURCE",
                 "SCRAPED_PROFILE_SOURCE",
                 "THIN_DIRECTORY_SOURCE",

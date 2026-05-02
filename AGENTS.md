@@ -279,6 +279,32 @@ Public search is read-only and does not require simulation authority.
 
 Protected execution remains simulation and authority gated.
 
+Rule: End-to-End Search Certification and Root-Cause Repair
+
+Search failures must be fixed at the responsible engine or runtime layer.
+
+No company-specific or real searched-name fixes are allowed.
+
+Real public names may appear only in manual proof reports, never in code, tests, fixtures, or proof hooks.
+
+Voice proof must show the exact captured transcript and may not be replaced by typed proof.
+
+English and Chinese voice smoke are required where technically possible.
+
+Brave live proof may run only in controlled capped mode with JD-approved opt-in, a fresh configured key, and explicit caps.
+
+If the configured Brave key is missing or invalid, stop and ask JD for a new key; never create, print, or infer a key.
+
+The total live Brave budget applies across first proof, live series, English voice, Chinese voice, multilingual reset, and Deep Research control combined.
+
+Normal tests must not call live providers.
+
+If a live test fails, Codex must report and fix the responsible code path, not suppress the test.
+
+Protected execution remains simulation and authority gated.
+
+No surface patching, pretend fixing, or docs-only masking of broken runtime code is allowed.
+
 Auto-Loaded Authority Order
 
 JD explicit in-thread instructions
