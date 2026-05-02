@@ -2685,6 +2685,7 @@ struct Stage4SupportCandidate {
     claim_support_result: String,
     source_trust_score: u16,
     stale: bool,
+    exact_role_match: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -2739,11 +2740,12 @@ fn stage1_web_answer_verified_metadata(
         if !citation_url_allowed(&item.url) {
             rejection_reasons.push("UNSAFE_CLICK_URL".to_string());
         }
-        let (claim_support_result, person) =
+        let (claim_support_result, person, supported_role) =
             stage1_claim_support_result(&requested_role, &entity_match_result, item);
         let entity_only_source_discovery =
             source_discovery_allowed && claim_support_result == "CLAIM_SUPPORT_ENTITY_ONLY";
         if !matches!(claim_support_result.as_str(), "CLAIM_SUPPORT_DIRECT")
+            && !matches!(claim_support_result.as_str(), "CLAIM_SUPPORT_CLOSEST")
             && !entity_only_source_discovery
         {
             rejection_reasons.push(match claim_support_result.as_str() {
@@ -2764,12 +2766,17 @@ fn stage1_web_answer_verified_metadata(
         }
         rejection_reasons.sort();
         rejection_reasons.dedup();
+        let entity_match_accepted = matches!(
+            entity_match_result.as_str(),
+            "ENTITY_MATCH_STRONG" | "ENTITY_MATCH_MEDIUM"
+        ) || (entity_only_source_discovery
+            && entity_match_result == "ENTITY_MATCH_WEAK");
         let accepted = rejection_reasons.is_empty()
-            && matches!(
-                entity_match_result.as_str(),
-                "ENTITY_MATCH_STRONG" | "ENTITY_MATCH_MEDIUM"
-            )
-            && (claim_support_result == "CLAIM_SUPPORT_DIRECT" || entity_only_source_discovery);
+            && entity_match_accepted
+            && (matches!(
+                claim_support_result.as_str(),
+                "CLAIM_SUPPORT_DIRECT" | "CLAIM_SUPPORT_CLOSEST"
+            ) || entity_only_source_discovery);
         let claim_refs = if accepted {
             vec!["claim_001".to_string()]
         } else {
@@ -2784,7 +2791,15 @@ fn stage1_web_answer_verified_metadata(
             entity_match_result: entity_match_result.clone(),
             claim_support_result: claim_support_result.clone(),
             source_strength: if accepted {
-                "ACCEPTED_DIRECT".to_string()
+                if entity_only_source_discovery && entity_match_result == "ENTITY_MATCH_WEAK" {
+                    "ACCEPTED_CLOSEST".to_string()
+                } else if entity_only_source_discovery {
+                    "ACCEPTED_SOURCE_DISCOVERY".to_string()
+                } else if claim_support_result == "CLAIM_SUPPORT_CLOSEST" {
+                    "ACCEPTED_CLOSEST".to_string()
+                } else {
+                    "ACCEPTED_DIRECT".to_string()
+                }
             } else {
                 "REJECTED".to_string()
             },
@@ -2815,27 +2830,30 @@ fn stage1_web_answer_verified_metadata(
                 claim_support_result: claim_support_result.clone(),
                 accepted: true,
             });
-            if !entity_only_source_discovery {
-                source_chips.push(SourceChipPacket {
-                    source_id: source_id.clone(),
-                    label: label.clone(),
-                    domain: domain.clone(),
-                    safe_click_url: item.url.clone(),
-                    source_type: "WEB_RESULT".to_string(),
-                    accepted: true,
-                    claim_refs,
-                    icon_key: Some("source_link".to_string()),
-                    verified_for_claim: true,
-                    display_rank: source_chips.len().saturating_add(1) as u16,
-                    tooltip_or_accessibility_label: format!("Open {label} from {domain}"),
-                });
-            }
+            source_chips.push(SourceChipPacket {
+                source_id: source_id.clone(),
+                label: label.clone(),
+                domain: domain.clone(),
+                safe_click_url: item.url.clone(),
+                source_type: "WEB_RESULT".to_string(),
+                accepted: true,
+                claim_refs,
+                icon_key: Some("source_link".to_string()),
+                verified_for_claim: true,
+                display_rank: source_chips.len().saturating_add(1) as u16,
+                tooltip_or_accessibility_label: format!("Open {label} from {domain}"),
+            });
             accepted_image_items.push((source_id.clone(), item.clone()));
             if let Some(person) = person {
+                let role_or_metric = supported_role
+                    .or(requested_role)
+                    .unwrap_or("claim")
+                    .to_string();
+                let exact_role_match = claim_support_result == "CLAIM_SUPPORT_DIRECT";
                 stage4_candidates.push(Stage4SupportCandidate {
                     source_id: source_id.clone(),
                     person_or_value: person,
-                    role_or_metric: requested_role.unwrap_or("claim").to_string(),
+                    role_or_metric,
                     evidence_text: truncate_ascii(&format!("{} {}", item.title, item.snippet), 512),
                     evidence_hash: sha256_hex(
                         format!("{} {}", item.title, item.snippet).as_bytes(),
@@ -2844,6 +2862,22 @@ fn stage1_web_answer_verified_metadata(
                     claim_support_result: claim_support_result.clone(),
                     source_trust_score: stage4_source_trust_score(item),
                     stale: stage4_source_is_stale_for_current_claim(query, item),
+                    exact_role_match,
+                });
+            } else if entity_only_source_discovery {
+                stage4_candidates.push(Stage4SupportCandidate {
+                    source_id: source_id.clone(),
+                    person_or_value: label,
+                    role_or_metric: "source result".to_string(),
+                    evidence_text: truncate_ascii(&format!("{} {}", item.title, item.snippet), 512),
+                    evidence_hash: sha256_hex(
+                        format!("{} {}", item.title, item.snippet).as_bytes(),
+                    ),
+                    entity_match_result: entity_match_result.clone(),
+                    claim_support_result: claim_support_result.clone(),
+                    source_trust_score: stage4_source_trust_score(item),
+                    stale: stage4_source_is_stale_for_current_claim(query, item),
+                    exact_role_match: false,
                 });
             }
         } else {
@@ -3329,7 +3363,10 @@ fn stage1_strip_generic_cjk_search_markers(value: &str) -> String {
 fn stage1_entity_boundary_punctuation(ch: char) -> bool {
     ch.is_ascii_punctuation()
         || ch.is_whitespace()
-        || matches!(ch, '。' | '，' | '、' | '？' | '！' | '：' | '；' | '“' | '”' | '‘' | '’')
+        || matches!(
+            ch,
+            '。' | '，' | '、' | '？' | '！' | '：' | '；' | '“' | '”' | '‘' | '’'
+        )
 }
 
 fn stage1_requested_role(query: &str) -> Option<&'static str> {
@@ -3426,6 +3463,9 @@ fn stage1_source_discovery_match_result(
     if matched >= required {
         return ("ENTITY_MATCH_MEDIUM".to_string(), vec![]);
     }
+    if matched > 0 {
+        return ("ENTITY_MATCH_WEAK".to_string(), vec![]);
+    }
 
     (
         "ENTITY_MATCH_REJECT".to_string(),
@@ -3469,35 +3509,60 @@ fn stage1_source_discovery_token_matches(token: &str, source_text: &str) -> bool
                 || source_text.split_whitespace().any(|source| source == "ai")))
         || (token.contains("研究")
             && (source_text.contains("研究")
-                || source_text.split_whitespace().any(|source| source == "research")))
+                || source_text
+                    .split_whitespace()
+                    .any(|source| source == "research")))
 }
 
 fn stage1_claim_support_result(
     requested_role: &Option<&'static str>,
     entity_match_result: &str,
     item: &ToolTextSnippet,
-) -> (String, Option<String>) {
+) -> (String, Option<String>, Option<&'static str>) {
+    if !matches!(
+        entity_match_result,
+        "ENTITY_MATCH_STRONG" | "ENTITY_MATCH_MEDIUM" | "ENTITY_MATCH_WEAK"
+    ) {
+        return ("CLAIM_SUPPORT_NONE".to_string(), None, None);
+    }
+    let Some(role) = requested_role else {
+        return ("CLAIM_SUPPORT_ENTITY_ONLY".to_string(), None, None);
+    };
     if !matches!(
         entity_match_result,
         "ENTITY_MATCH_STRONG" | "ENTITY_MATCH_MEDIUM"
     ) {
-        return ("CLAIM_SUPPORT_NONE".to_string(), None);
+        return ("CLAIM_SUPPORT_NONE".to_string(), None, None);
     }
-    let Some(role) = requested_role else {
-        return ("CLAIM_SUPPORT_ENTITY_ONLY".to_string(), None);
-    };
     let text = format!("{} {}", item.title, item.snippet);
     let matched_role = stage1_role_aliases(role)
         .into_iter()
         .find(|alias| text.to_ascii_lowercase().contains(alias));
     let Some(matched_role) = matched_role else {
-        return ("CLAIM_SUPPORT_ENTITY_ONLY".to_string(), None);
+        if let Some((supported_role, supported_alias)) = stage1_alternative_role_alias(&text, role)
+        {
+            let person = stage1_extract_person_near_role(&text, supported_alias);
+            return if person.is_some() {
+                (
+                    "CLAIM_SUPPORT_CLOSEST".to_string(),
+                    person,
+                    Some(supported_role),
+                )
+            } else {
+                (
+                    "CLAIM_SUPPORT_IMPLIED".to_string(),
+                    None,
+                    Some(supported_role),
+                )
+            };
+        }
+        return ("CLAIM_SUPPORT_ENTITY_ONLY".to_string(), None, None);
     };
     let person = stage1_extract_person_near_role(&text, matched_role);
     if person.is_some() {
-        ("CLAIM_SUPPORT_DIRECT".to_string(), person)
+        ("CLAIM_SUPPORT_DIRECT".to_string(), person, Some(role))
     } else {
-        ("CLAIM_SUPPORT_IMPLIED".to_string(), None)
+        ("CLAIM_SUPPORT_IMPLIED".to_string(), None, Some(role))
     }
 }
 
@@ -3515,6 +3580,29 @@ fn stage1_role_aliases(role: &str) -> Vec<&'static str> {
         "director" => vec!["director"],
         _ => vec!["claim"],
     }
+}
+
+fn stage1_alternative_role_alias(
+    text: &str,
+    requested_role: &str,
+) -> Option<(&'static str, &'static str)> {
+    let lower = text.to_ascii_lowercase();
+    for (role, alias) in [
+        ("managing director", "managing director"),
+        ("chief executive officer", "chief executive officer"),
+        ("CEO", "ceo"),
+        ("founder", "founder"),
+        ("owner", "owner"),
+        ("director", "director"),
+    ] {
+        if role.eq_ignore_ascii_case(requested_role) {
+            continue;
+        }
+        if lower.contains(alias) {
+            return Some((role, alias));
+        }
+    }
+    None
 }
 
 fn stage1_weak_source_reason(item: &ToolTextSnippet) -> Option<&'static str> {
@@ -3582,9 +3670,19 @@ fn stage4_verify_answer(
 
     if requested_role.is_none() {
         if source_discovery_only && !accepted_source_ids.is_empty() {
-            let summary = format!(
-                "I found source-backed web results about {}.",
-                requested.captured_text.trim()
+            let summary = candidates.first().map_or_else(
+                || {
+                    format!(
+                        "I found source-backed web results about {}.",
+                        requested.captured_text.trim()
+                    )
+                },
+                |best| {
+                    format!(
+                        "The closest source-backed result I found is {}.",
+                        best.person_or_value
+                    )
+                },
             );
             return Stage4Decision {
                 response_text: summary.clone(),
@@ -3618,7 +3716,7 @@ fn stage4_verify_answer(
             };
         }
         let summary = format!(
-            "I could not verify that information about {} from accepted sources.",
+            "I did not find accepted source-backed information about {}.",
             requested.captured_text.trim()
         );
         return Stage4Decision {
@@ -3665,19 +3763,28 @@ fn stage4_verify_answer(
             .then_with(|| a.source_id.cmp(&b.source_id))
     });
 
-    let stale_candidates: Vec<Stage4SupportCandidate> = candidates
+    let mut stale_candidates: Vec<Stage4SupportCandidate> = candidates
         .iter()
         .filter(|candidate| candidate.stale)
         .cloned()
         .collect();
+    stale_candidates.sort_by(|a, b| {
+        b.source_trust_score
+            .cmp(&a.source_trust_score)
+            .then_with(|| a.source_id.cmp(&b.source_id))
+    });
 
     if fresh_candidates.is_empty() && !stale_candidates.is_empty() && freshness_required {
-        let summary =
-            "The available evidence appears stale, so I cannot verify the current answer."
-                .to_string();
+        let best_stale = stale_candidates[0].clone();
+        let answer_value = stage4_normalized_answer_value(&best_stale.person_or_value);
+        let summary = format!(
+            "The only accepted source I found appears stale; it listed {answer_value} as the {} of {}, so I would not treat that as current.",
+            best_stale.role_or_metric,
+            requested.captured_text.trim()
+        );
         let links = stage4_evidence_links(
             &claim_id,
-            &stale_candidates,
+            std::slice::from_ref(&best_stale),
             "STALE_SUPPORT",
             "no_conflict",
             2_500,
@@ -3686,9 +3793,9 @@ fn stage4_verify_answer(
         );
         return Stage4Decision {
             response_text: summary.clone(),
-            final_answer_class: "STALE_UNCERTAIN_SAFE_DEGRADE".to_string(),
-            answer_claims: Vec::new(),
-            claim_to_source_map: Vec::new(),
+            final_answer_class: "STALE_SOURCE_BACKED_ANSWER".to_string(),
+            answer_claims: vec![summary.clone()],
+            claim_to_source_map: vec![(claim_id.clone(), best_stale.source_id.clone())],
             claim_requests,
             claim_verifications: vec![stage4_claim_verification(
                 claim_id,
@@ -3698,7 +3805,7 @@ fn stage4_verify_answer(
                 "STALE_UNCERTAIN",
                 2_500,
                 "LOW",
-                Vec::new(),
+                vec![best_stale.source_id.clone()],
                 Vec::new(),
                 stale_candidates
                     .iter()
@@ -3707,7 +3814,7 @@ fn stage4_verify_answer(
                 rejected_source_ids.to_vec(),
                 links,
                 Some("only stale accepted evidence supports this current claim".to_string()),
-                None,
+                Some(answer_value),
                 None,
                 Some("stale dated evidence cannot produce a current answer".to_string()),
                 false,
@@ -3715,13 +3822,13 @@ fn stage4_verify_answer(
             )],
             unsupported_claims_removed: vec![stage4_claim_text(requested, requested_role)],
             contradiction_result: "no_conflict".to_string(),
-            display_source_ids: Vec::new(),
+            display_source_ids: vec![best_stale.source_id],
         };
     }
 
     if fresh_candidates.is_empty() {
         let summary = format!(
-            "I could not verify the {role} of {} from accepted sources.",
+            "I did not find an accepted source naming the {role} of {}.",
             requested.captured_text.trim()
         );
         let links = stage4_evidence_links(
@@ -3765,8 +3872,72 @@ fn stage4_verify_answer(
         };
     }
 
-    let best = fresh_candidates[0].clone();
-    let contradictions: Vec<Stage4SupportCandidate> = fresh_candidates
+    let exact_candidates: Vec<Stage4SupportCandidate> = fresh_candidates
+        .iter()
+        .filter(|candidate| candidate.exact_role_match)
+        .cloned()
+        .collect();
+    if exact_candidates.is_empty() {
+        let best = fresh_candidates[0].clone();
+        let answer_value = stage4_normalized_answer_value(&best.person_or_value);
+        let summary = format!(
+            "I did not find a source naming the {role}. The closest source I found lists {answer_value} as {}.",
+            best.role_or_metric
+        );
+        let links = stage4_evidence_links(
+            &claim_id,
+            std::slice::from_ref(&best),
+            "CLOSEST_SUPPORTED",
+            "no_conflict",
+            5_000,
+            "MEDIUM",
+            "accepted evidence supports a nearby public role, but not the exact requested role",
+        );
+        return Stage4Decision {
+            response_text: summary.clone(),
+            final_answer_class: "CLOSEST_SOURCE_BACKED_ANSWER".to_string(),
+            answer_claims: vec![summary.clone()],
+            claim_to_source_map: vec![(claim_id.clone(), best.source_id.clone())],
+            claim_requests,
+            claim_verifications: vec![stage4_claim_verification(
+                claim_id,
+                claim_type,
+                claim_text,
+                requested,
+                "PARTIALLY_SUPPORTED",
+                5_000,
+                "MEDIUM",
+                vec![best.source_id.clone()],
+                Vec::new(),
+                fresh_candidates
+                    .iter()
+                    .skip(1)
+                    .map(|c| c.source_id.clone())
+                    .collect(),
+                rejected_source_ids.to_vec(),
+                links,
+                Some("exact requested role was not found in accepted evidence".to_string()),
+                Some(answer_value),
+                Some("closest accepted source-backed leadership role selected".to_string()),
+                if freshness_required {
+                    Some(
+                        "fresh or evergreen accepted evidence supported the closest answer"
+                            .to_string(),
+                    )
+                } else {
+                    None
+                },
+                false,
+                summary,
+            )],
+            unsupported_claims_removed: vec![stage4_claim_text(requested, requested_role)],
+            contradiction_result: "no_conflict".to_string(),
+            display_source_ids: vec![best.source_id],
+        };
+    }
+
+    let best = exact_candidates[0].clone();
+    let contradictions: Vec<Stage4SupportCandidate> = exact_candidates
         .iter()
         .skip(1)
         .filter(|candidate| {
@@ -3776,8 +3947,10 @@ fn stage4_verify_answer(
         .collect();
 
     if !contradictions.is_empty() && !stage4_best_source_resolves_conflict(&best, &contradictions) {
-        let summary =
-            "I found conflicting evidence and cannot verify this confidently.".to_string();
+        let answer_value = stage4_normalized_answer_value(&best.person_or_value);
+        let summary = format!(
+            "The clearest accepted source I found lists {answer_value} as the {role}. Another accepted source lists a different value, so I would not treat the {role} title as fully settled."
+        );
         let mut conflict_sources = vec![best.clone()];
         conflict_sources.extend(contradictions.clone());
         let links = stage4_evidence_links(
@@ -3791,9 +3964,9 @@ fn stage4_verify_answer(
         );
         return Stage4Decision {
             response_text: summary.clone(),
-            final_answer_class: "CONTRADICTED_SAFE_DEGRADE".to_string(),
-            answer_claims: Vec::new(),
-            claim_to_source_map: Vec::new(),
+            final_answer_class: "MIXED_EVIDENCE_ANSWER".to_string(),
+            answer_claims: vec![summary.clone()],
+            claim_to_source_map: vec![(claim_id.clone(), best.source_id.clone())],
             claim_requests,
             claim_verifications: vec![stage4_claim_verification(
                 claim_id,
@@ -3809,15 +3982,18 @@ fn stage4_verify_answer(
                 rejected_source_ids.to_vec(),
                 links,
                 Some("unresolved accepted-source contradiction".to_string()),
-                None,
+                Some(answer_value),
                 None,
                 None,
                 false,
                 summary,
             )],
-            unsupported_claims_removed: vec![stage4_claim_text(requested, requested_role)],
+            unsupported_claims_removed: Vec::new(),
             contradiction_result: "unresolved_conflict".to_string(),
-            display_source_ids: Vec::new(),
+            display_source_ids: conflict_sources
+                .iter()
+                .map(|candidate| candidate.source_id.clone())
+                .collect(),
         };
     }
 
@@ -9827,6 +10003,16 @@ mod tests {
         let (claim_match, claim_reasons) = stage1_entity_match_result("ai research", &topic);
         assert_eq!(claim_match, "ENTITY_MATCH_REJECT");
         assert!(!claim_reasons.is_empty());
+
+        let closest = ToolTextSnippet {
+            title: "Fixture Entity Alpha public update".to_string(),
+            snippet: "A public source with a nearby topic result.".to_string(),
+            url: "https://fixture-topic-alpha.test/public-update".to_string(),
+        };
+        let (closest_match, closest_reasons) =
+            stage1_source_discovery_match_result("alpha parity omega", &closest);
+        assert_eq!(closest_match, "ENTITY_MATCH_WEAK");
+        assert!(closest_reasons.is_empty());
     }
 
     #[test]
@@ -9845,7 +10031,7 @@ mod tests {
             .web_answer_verification
             .expect("verification metadata");
         assert_eq!(verification.final_answer_class, "SOURCE_DISCOVERY_ONLY");
-        assert!(verification.source_chips.is_empty());
+        assert_eq!(verification.source_chips.len(), 1);
         assert_eq!(verification.accepted_source_ids, vec!["source_001"]);
         assert!(verification.answer_claims.is_empty());
         assert!(verification.unsupported_claims_removed.is_empty());
@@ -9857,7 +10043,7 @@ mod tests {
         assert!(verification
             .presentation
             .response_text
-            .contains("source-backed web results"));
+            .contains("The closest source-backed result I found is Fixture Entity Alpha update."));
     }
 
     fn h402_socks_route_proof() -> GdeltApprovedProxyRouteProof {
@@ -14481,7 +14667,7 @@ mod tests {
         assert_eq!(verification.final_answer_class, "UNSUPPORTED_SAFE_DEGRADE");
         assert_eq!(
             verification.response_text,
-            "I could not verify the CEO of Lumen Orchard Labs from accepted sources."
+            "I did not find an accepted source naming the CEO of Lumen Orchard Labs."
         );
         assert!(verification.accepted_source_ids.is_empty());
         assert!(verification.accepted_sources.is_empty());
@@ -14577,7 +14763,7 @@ mod tests {
         assert_eq!(verification.final_answer_class, "UNSUPPORTED_SAFE_DEGRADE");
         assert_eq!(
             verification.response_text,
-            "I could not verify the CEO of Test Company A from accepted sources."
+            "I did not find an accepted source naming the CEO of Test Company A."
         );
         assert!(verification.answer_claims.is_empty());
         assert!(verification.source_chips.is_empty());
@@ -14593,7 +14779,47 @@ mod tests {
     }
 
     #[test]
-    fn stage4_contradictory_equal_trust_sources_block_confident_answer() {
+    fn best_available_exact_role_absent_returns_closest_source_backed_answer() {
+        let (_items, metadata) = stage1_web_answer_verified_metadata(
+            "Who is the CEO of Test Company A?",
+            vec![ToolTextSnippet {
+                title: "Test Company A official leadership".to_string(),
+                snippet: "Test Person A is listed as Managing Director of Test Company A."
+                    .to_string(),
+                url: "https://test-company-a.test/leadership".to_string(),
+            }],
+            Some("stage4_fixture".to_string()),
+            1,
+        );
+
+        let verification = metadata.web_answer_verification.as_ref().unwrap();
+        assert_eq!(
+            verification.final_answer_class,
+            "CLOSEST_SOURCE_BACKED_ANSWER"
+        );
+        assert_eq!(
+            verification.response_text,
+            "I did not find a source naming the CEO. The closest source I found lists Test Person A as managing director."
+        );
+        assert_eq!(verification.source_chips.len(), 1);
+        assert_eq!(metadata.sources.len(), 1);
+        assert!(!verification.response_text.contains("Confidence:"));
+        assert!(!verification.response_text.contains("Sources:"));
+        let claim = &verification.claim_verifications[0];
+        assert_eq!(claim.verification_status, "PARTIALLY_SUPPORTED");
+        assert!(!claim.safe_for_direct_answer);
+        assert_eq!(claim.supporting_sources, vec!["source_001"]);
+        assert_eq!(
+            claim.selected_answer_value.as_deref(),
+            Some("Test Person A")
+        );
+        assert!(verification
+            .unsupported_claims_removed
+            .contains(&"Verify the CEO of Test Company A.".to_string()));
+    }
+
+    #[test]
+    fn best_available_equal_trust_conflict_returns_clearest_answer() {
         let (_items, metadata) = stage1_web_answer_verified_metadata(
             "Who is the CEO of Test Company A?",
             vec![
@@ -14613,27 +14839,29 @@ mod tests {
         );
 
         let verification = metadata.web_answer_verification.as_ref().unwrap();
-        assert_eq!(verification.final_answer_class, "CONTRADICTED_SAFE_DEGRADE");
+        assert_eq!(verification.final_answer_class, "MIXED_EVIDENCE_ANSWER");
         assert_eq!(
             verification.response_text,
-            "I found conflicting evidence and cannot verify this confidently."
+            "The clearest accepted source I found lists Test Person A as the CEO. Another accepted source lists a different value, so I would not treat the CEO title as fully settled."
         );
         assert_eq!(verification.contradiction_result, "unresolved_conflict");
-        assert!(verification.answer_claims.is_empty());
-        assert!(verification.source_chips.is_empty());
-        assert!(metadata.sources.is_empty());
+        assert_eq!(
+            verification.answer_claims,
+            vec![verification.response_text.clone()]
+        );
+        assert_eq!(verification.source_chips.len(), 2);
+        assert_eq!(metadata.sources.len(), 2);
         let claim = &verification.claim_verifications[0];
         assert_eq!(claim.verification_status, "CONTRADICTED");
         assert_eq!(claim.confidence_class, "LOW");
         assert!(!claim.safe_for_direct_answer);
         assert_eq!(claim.supporting_sources, vec!["source_001"]);
         assert_eq!(claim.contradicting_sources, vec!["source_002"]);
-        assert!(!verification
+        assert!(verification
             .response_text
-            .contains("Test Person A is the CEO"));
-        assert!(!verification
-            .response_text
-            .contains("Test Person B is the CEO"));
+            .contains("Test Person A as the CEO"));
+        assert!(!verification.response_text.contains("Test Person B"));
+        assert!(!verification.response_text.contains("Confidence:"));
     }
 
     #[test]
@@ -14693,23 +14921,25 @@ mod tests {
         let verification = metadata.web_answer_verification.as_ref().unwrap();
         assert_eq!(
             verification.final_answer_class,
-            "STALE_UNCERTAIN_SAFE_DEGRADE"
+            "STALE_SOURCE_BACKED_ANSWER"
         );
         assert_eq!(
             verification.response_text,
-            "The available evidence appears stale, so I cannot verify the current answer."
+            "The only accepted source I found appears stale; it listed Test Person A as the CEO of Test Company A, so I would not treat that as current."
         );
-        assert!(verification.answer_claims.is_empty());
-        assert!(verification.source_chips.is_empty());
-        assert!(metadata.sources.is_empty());
+        assert_eq!(
+            verification.answer_claims,
+            vec![verification.response_text.clone()]
+        );
+        assert_eq!(verification.source_chips.len(), 1);
+        assert_eq!(metadata.sources.len(), 1);
         let claim = &verification.claim_verifications[0];
         assert_eq!(claim.verification_status, "STALE_UNCERTAIN");
         assert_eq!(claim.confidence_class, "LOW");
         assert!(claim.freshness_reason.is_some());
         assert!(!claim.safe_for_direct_answer);
-        assert!(!verification
-            .response_text
-            .contains("Test Person A is the CEO"));
+        assert!(verification.response_text.contains("Test Person A"));
+        assert!(!verification.response_text.contains("Confidence:"));
     }
 
     #[test]
@@ -14782,7 +15012,9 @@ mod tests {
         assert!(verification.claim_verifications[0]
             .supporting_sources
             .is_empty());
-        assert!(verification.response_text.contains("could not verify"));
+        assert!(verification
+            .response_text
+            .contains("I did not find an accepted source naming the CEO"));
         assert!(!verification
             .response_text
             .contains("Test Person A is the CEO"));

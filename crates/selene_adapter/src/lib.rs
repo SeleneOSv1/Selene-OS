@@ -16012,13 +16012,13 @@ fn h410_source_summary_parts(
 
 fn h410_public_ceo_safe_degrade(answer: &str) -> bool {
     let lower = answer.to_ascii_lowercase();
-    (lower.contains("couldn't verify") && lower.contains("publicly listed ceo"))
-        || (lower.contains("could not verify the ceo") && lower.contains("accepted sources"))
+    (lower.contains("did not find") && lower.contains("source naming") && lower.contains("ceo"))
+        || (lower.contains("did not find") && lower.contains("public source naming a ceo"))
 }
 
 fn h414_public_direct_leadership_answer(answer: &str) -> bool {
     let lower = answer.to_ascii_lowercase();
-    lower.contains("managing director") && lower.contains("not the same as a verified ceo")
+    lower.contains("closest source") && lower.contains("managing director")
 }
 
 fn h414_source_accepted_for_public_leadership(
@@ -25750,8 +25750,9 @@ mod tests {
         let citations = vec![
             selene_kernel_contracts::ph1e::ToolTextSnippet {
                 title: "Official fixture_entity_alpha news".to_string(),
-                snippet: "fixture_entity_alpha published a sourced update used as bounded evidence."
-                    .to_string(),
+                snippet:
+                    "fixture_entity_alpha published a sourced update used as bounded evidence."
+                        .to_string(),
                 url: "https://alpha-search-fixture.test/news/example".to_string(),
             },
             selene_kernel_contracts::ph1e::ToolTextSnippet {
@@ -27214,7 +27215,7 @@ mod tests {
                 "live route without accepted source metadata must safe-degrade: {out:?}"
             );
             assert!(
-                out.response_text.contains("could not verify"),
+                out.response_text.contains("did not find"),
                 "{}",
                 out.response_text
             );
@@ -36101,7 +36102,7 @@ mod tests {
                 assert_eq!(out.outcome, "FINAL_TOOL", "{out:?}");
                 assert_eq!(
                     out.response_text,
-                    "I could not verify the CEO of Auroa Vale Cellars from accepted sources."
+                    "I did not find an accepted source naming the CEO of Auroa Vale Cellars."
                 );
                 assert!(!out.response_text.contains("Dr Rowan Vale"));
                 assert!(!out.response_text.contains("Southern Wine Board"));
@@ -36128,7 +36129,7 @@ mod tests {
                 assert_eq!(deep_out.outcome, "FINAL_TOOL", "{deep_out:?}");
                 assert_eq!(
                     deep_out.response_text,
-                    "I couldn't verify a publicly listed CEO from reliable public sources."
+                    "I did not find a reliable public source naming a CEO."
                 );
                 assert!(!deep_out.response_text.contains("Dr Rowan Vale"));
                 assert!(!deep_out.response_text.contains("Southern Wine Board"));
@@ -37631,7 +37632,7 @@ mod tests {
                 assert_h412_public_answer_clean(&noisy_followup);
                 assert_eq!(
                     noisy_followup.response_text,
-                    "I could not verify the CEO of Auroa Vale Cellars from accepted sources."
+                    "I did not find an accepted source naming the CEO of Auroa Vale Cellars."
                 );
                 assert!(!noisy_followup.response_text.contains("Dr Rowan Vale"));
                 assert!(!noisy_followup.response_text.contains("Southern Wine Board"));
@@ -37645,7 +37646,7 @@ mod tests {
                 assert_h412_public_answer_clean(&deep);
                 assert_eq!(
                     deep.response_text,
-                    "I couldn't verify a publicly listed CEO from reliable public sources."
+                    "I did not find a reliable public source naming a CEO."
                 );
                 assert!(!deep.response_text.contains("Dr Rowan Vale"));
                 assert!(!deep.response_text.contains("Southern Wine Board"));
@@ -37746,7 +37747,7 @@ mod tests {
                 assert_h412_public_answer_clean(&ceo_out);
                 assert_eq!(
                     ceo_out.response_text,
-                    "I could not verify the CEO of glowcap cellars from accepted sources."
+                    "I did not find an accepted source naming the CEO of glowcap cellars."
                 );
                 assert!(!ceo_out.response_text.contains("Dr Rowan Vale"));
                 assert!(!ceo_out.response_text.contains("Southern Wine Board"));
@@ -37785,7 +37786,7 @@ mod tests {
     }
 
     #[test]
-    fn h414_search_source_truth_safe_degrade_and_trace_proof() {
+    fn h414_best_available_search_source_truth_and_trace_proof() {
         let captured = Arc::new(Mutex::new(Vec::new()));
         const H414_BODY: &str = r#"{"web":{"results":[
             {"title":"Our CEO and executive management team | Southern Wine Board","url":"https://regional-wine-board.test/about-us/our-ceo-and-executive-management-team","description":"Dr Rowan Vale is the CEO of Southern Wine Board."},
@@ -37823,12 +37824,13 @@ mod tests {
                 assert_h412_public_answer_clean(&simple);
                 assert_eq!(
                     simple.response_text,
-                    "I could not verify the CEO of Aurora Vale Cellars from accepted sources."
+                    "I did not find a source naming the CEO. The closest source I found lists Mira Solen as managing director."
                 );
                 assert!(!simple.response_text.contains("I found a web result"));
                 assert!(!simple.response_text.contains("Sources:\n1."));
                 assert!(!simple.response_text.contains("Source:"));
-                assert!(!simple.response_text.contains("Mira Solen"));
+                assert!(simple.response_text.contains("Mira Solen"));
+                assert!(simple.response_text.contains("managing director"));
                 assert!(!simple.response_text.contains("leadership-rankings.test"));
                 assert!(!simple.response_text.contains("Dr Rowan Vale"));
 
@@ -37841,7 +37843,7 @@ mod tests {
                 assert_h412_public_answer_clean(&deep);
                 assert_eq!(
                     deep.response_text,
-                    "I couldn't verify a publicly listed CEO from reliable public sources. I did find Mira Solen listed as Managing Director / Head of Grape and Wine Production, but that is not the same as a verified CEO listing."
+                    "I did not find a reliable source naming a CEO. The closest source I found lists Mira Solen as Managing Director / Head of Grape and Wine Production."
                 );
                 assert!(deep.response_text.contains("Mira Solen"));
                 assert!(deep.response_text.contains("Managing Director"));
@@ -37863,7 +37865,7 @@ mod tests {
                     simple_trace.search_query_text.as_deref(),
                     Some("Aurora Vale Cellars CEO")
                 );
-                assert_eq!(simple_trace.sources_accepted_count, 0, "{simple_trace:?}");
+                assert!(simple_trace.sources_accepted_count >= 1, "{simple_trace:?}");
                 assert!(simple_trace.sources_rejected_count >= 1, "{simple_trace:?}");
                 assert_eq!(
                     simple_trace.engine_layer_responsible,
@@ -38053,7 +38055,7 @@ mod tests {
                     .expect("noisy public CEO prompt should complete");
                 assert_eq!(
                     out.response_text,
-                    "I couldn't verify a publicly listed CEO from reliable public sources."
+                    "I did not find a reliable public source naming a CEO."
                 );
 
                 let report = runtime.ui_public_brain_trace_report(Some(410_199));

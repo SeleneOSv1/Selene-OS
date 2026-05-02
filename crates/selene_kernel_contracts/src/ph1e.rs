@@ -648,6 +648,7 @@ impl Validate for SourceEvaluationPacket {
             &self.claim_support_result,
             &[
                 "CLAIM_SUPPORT_DIRECT",
+                "CLAIM_SUPPORT_CLOSEST",
                 "CLAIM_SUPPORT_IMPLIED",
                 "CLAIM_SUPPORT_ENTITY_ONLY",
                 "CLAIM_SUPPORT_NONE",
@@ -929,6 +930,9 @@ impl Validate for PresentationPacket {
             &self.answer_class,
             &[
                 "VERIFIED_DIRECT_ANSWER",
+                "MIXED_EVIDENCE_ANSWER",
+                "CLOSEST_SOURCE_BACKED_ANSWER",
+                "STALE_SOURCE_BACKED_ANSWER",
                 "SOURCE_DISCOVERY_ONLY",
                 "PARTIAL_UNCERTAIN_ANSWER",
                 "UNSUPPORTED_SAFE_DEGRADE",
@@ -1072,6 +1076,7 @@ impl Validate for ClaimEvidenceLink {
             &self.support_level,
             &[
                 "DIRECT_SUPPORT",
+                "CLOSEST_SUPPORTED",
                 "INDIRECT_SUPPORT",
                 "ENTITY_ONLY",
                 "MENTION_ONLY",
@@ -1296,6 +1301,9 @@ impl Validate for WebAnswerVerificationPacket {
             &self.final_answer_class,
             &[
                 "VERIFIED_DIRECT_ANSWER",
+                "MIXED_EVIDENCE_ANSWER",
+                "CLOSEST_SOURCE_BACKED_ANSWER",
+                "STALE_SOURCE_BACKED_ANSWER",
                 "SOURCE_DISCOVERY_ONLY",
                 "PARTIAL_UNCERTAIN_ANSWER",
                 "UNSUPPORTED_SAFE_DEGRADE",

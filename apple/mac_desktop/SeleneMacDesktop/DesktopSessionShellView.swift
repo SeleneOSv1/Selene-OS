@@ -5430,6 +5430,43 @@ private struct DesktopSourceLinkCitationCardView: View {
     }
 }
 
+private func desktopCompactSourceChipGrid(
+    _ chips: [DesktopAuthoritativeReplyProvenanceRenderState.SourceChip]
+) -> some View {
+    LazyVGrid(
+        columns: [GridItem(.adaptive(minimum: 58), spacing: 6, alignment: .leading)],
+        alignment: .leading,
+        spacing: 6
+    ) {
+        ForEach(chips) { chip in
+            Link(destination: chip.clickableSourcePageURL) {
+                Text(desktopCompactSourceChipLabel(chip))
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(Color.secondary.opacity(0.10), in: Capsule())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(chip.accessibilityLabel)
+        }
+    }
+}
+
+private func desktopCompactSourceChipLabel(
+    _ chip: DesktopAuthoritativeReplyProvenanceRenderState.SourceChip
+) -> String {
+    let domain = chip.domain
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+        .replacingOccurrences(of: "www.", with: "")
+    let label = domain.isEmpty ? chip.label.trimmingCharacters(in: .whitespacesAndNewlines) : domain
+    guard !label.isEmpty else {
+        return "Source"
+    }
+    return label.count <= 18 ? label : "\(label.prefix(15))..."
+}
+
 struct DesktopSessionShellView: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var latestSessionHeaderContext: DesktopSessionHeaderContext?
@@ -17407,6 +17444,11 @@ struct DesktopSessionShellView: View {
                         Text(authoritativeResponseText)
                             .textSelection(.enabled)
                             .frame(maxWidth: .infinity, alignment: .leading)
+
+                        if let provenance = desktopAuthoritativeReplyProvenanceRenderState,
+                           !provenance.sourceChips.isEmpty {
+                            desktopCompactSourceChipGrid(provenance.sourceChips)
+                        }
                     } else {
                         Text("No cloud-authored reply text is available for this completed canonical runtime outcome. This shell stays read-only and does not fabricate local answer content.")
                             .foregroundStyle(.secondary)
@@ -17489,42 +17531,10 @@ struct DesktopSessionShellView: View {
 
                     if !desktopAuthoritativeReplyProvenanceRenderState.sourceChips.isEmpty {
                         VStack(alignment: .leading, spacing: 8) {
-                            Text("Accepted sources")
+                            Text("Sources")
                                 .font(.subheadline.weight(.semibold))
 
-                            LazyVGrid(
-                                columns: [GridItem(.adaptive(minimum: 132), spacing: 8, alignment: .leading)],
-                                alignment: .leading,
-                                spacing: 8
-                            ) {
-                                ForEach(desktopAuthoritativeReplyProvenanceRenderState.sourceChips) { chip in
-                                    Link(destination: chip.clickableSourcePageURL) {
-                                        VStack(alignment: .leading, spacing: 2) {
-                                            Text(chip.label)
-                                                .font(.caption.weight(.semibold))
-                                                .lineLimit(1)
-
-                                            Text(chip.domain)
-                                                .font(.caption2)
-                                                .foregroundStyle(.secondary)
-                                                .lineLimit(1)
-                                        }
-                                        .padding(.horizontal, 10)
-                                        .padding(.vertical, 7)
-                                        .frame(maxWidth: .infinity, alignment: .leading)
-                                        .background(
-                                            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                                .fill(Color(nsColor: .controlBackgroundColor))
-                                        )
-                                        .overlay(
-                                            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                                .stroke(Color.secondary.opacity(0.18), lineWidth: 1)
-                                        )
-                                    }
-                                    .buttonStyle(.plain)
-                                    .accessibilityLabel(chip.accessibilityLabel)
-                                }
-                            }
+                            desktopCompactSourceChipGrid(desktopAuthoritativeReplyProvenanceRenderState.sourceChips)
                         }
                     }
 

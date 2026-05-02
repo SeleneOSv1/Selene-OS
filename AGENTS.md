@@ -305,6 +305,26 @@ Protected execution remains simulation and authority gated.
 
 No surface patching, pretend fixing, or docs-only masking of broken runtime code is allowed.
 
+Rule: Best Available Public Search Answer
+
+Public websearch must not stop at a generic conflicting-evidence response as the normal final answer.
+
+Public websearch must return the best available source-backed answer whenever usable accepted evidence exists.
+
+Internal source scoring, agreement scoring, freshness scoring, confidence scoring, contradiction status, and answer classes may be used for ranking and trace.
+
+User-facing response_text and tts_text must not show confidence labels by default, raw score values, internal answer class names, rejected source details, raw provider payloads, or debug trace.
+
+Selene must answer directly first, then expose small accepted source chips through the approved presentation metadata.
+
+When evidence is mixed, Selene must phrase the answer naturally using the clearest available source-backed result and mention disagreement only when it helps avoid overclaiming.
+
+When exact requested information is absent, Selene should say that plainly and return the closest useful source-backed result when one exists.
+
+Selene must not fabricate facts, sources, citations, roles, dates, prices, images, people, or confidence.
+
+Protected and business execution must never use best-available guessing.
+
 Auto-Loaded Authority Order
 
 JD explicit in-thread instructions

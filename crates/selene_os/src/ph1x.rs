@@ -2139,6 +2139,54 @@ fn stage5_chinese_web_presentation_text(
         "PARTIAL_UNCERTAIN_ANSWER" => {
             Some("我找到部分证据，但无法有把握地验证当前答案。".to_string())
         }
+        "MIXED_EVIDENCE_ANSWER" => {
+            let claim = verification.claim_verifications.first()?;
+            let value = claim.selected_answer_value.as_deref()?.trim();
+            let entity = claim.requested_entity.trim();
+            let role = stage5_role_from_claim_text(&claim.claim_text).unwrap_or("信息");
+            if value.is_empty() || entity.is_empty() {
+                return None;
+            }
+            Some(format!(
+                "我找到的最清楚来源列出 {value} 是 {entity} 的 {role}，但另一个已接受来源有不同说法，所以不应把这个称谓视为完全确定。"
+            ))
+        }
+        "CLOSEST_SOURCE_BACKED_ANSWER" => {
+            let claim = verification.claim_verifications.first()?;
+            let value = claim.selected_answer_value.as_deref()?.trim();
+            let entity = claim.requested_entity.trim();
+            let requested_role = stage5_role_from_claim_text(&claim.claim_text).unwrap_or("信息");
+            let closest_role = claim
+                .evidence_links
+                .first()
+                .map(|link| link.role_or_value_match.trim())
+                .filter(|role| !role.is_empty())
+                .unwrap_or("相关职务");
+            if value.is_empty() || entity.is_empty() {
+                return None;
+            }
+            Some(format!(
+                "我没有找到来源列出 {entity} 的 {requested_role}。最接近的来源列出 {value} 是 {closest_role}。"
+            ))
+        }
+        "STALE_SOURCE_BACKED_ANSWER" => {
+            let claim = verification.claim_verifications.first()?;
+            let value = claim.selected_answer_value.as_deref()?.trim();
+            let entity = claim.requested_entity.trim();
+            let role = claim
+                .evidence_links
+                .first()
+                .map(|link| link.role_or_value_match.trim())
+                .filter(|role| !role.is_empty())
+                .or_else(|| stage5_role_from_claim_text(&claim.claim_text))
+                .unwrap_or("信息");
+            if value.is_empty() || entity.is_empty() {
+                return None;
+            }
+            Some(format!(
+                "我找到的已接受来源似乎已经过时；它曾列出 {value} 是 {entity} 的 {role}，所以不应把它当作当前信息。"
+            ))
+        }
         "UNSUPPORTED_SAFE_DEGRADE" => {
             let claim = verification.claim_verifications.first();
             let role = claim
@@ -2403,10 +2451,14 @@ fn web_search_without_verification_safe_degrade(
     items: &[selene_kernel_contracts::ph1e::ToolTextSnippet],
 ) -> String {
     if items.is_empty() {
-        "I could not verify this from accepted sources.".to_string()
+        "I did not find a usable source-backed answer.".to_string()
     } else {
-        "I found search candidates, but I could not verify the requested claim from accepted sources."
-            .to_string()
+        let title = items
+            .first()
+            .map(|item| h409_public_answer_fragment(&item.title))
+            .filter(|title| !title.trim().is_empty())
+            .unwrap_or_else(|| "a relevant search result".to_string());
+        format!("The closest search result I found is {title}.")
     }
 }
 
@@ -2446,7 +2498,7 @@ fn h414_public_leadership_answer(tr: &ToolResponse) -> Option<String> {
         Some((item, role, person))
     }) {
         return Some(format!(
-            "I couldn't verify a publicly listed CEO from reliable public sources. I did find {person} listed as {role}, but that is not the same as a verified CEO listing."
+            "I did not find a reliable source naming a CEO. The closest source I found lists {person} as {role}."
         ));
     }
 
@@ -2465,9 +2517,7 @@ fn h414_public_leadership_answer(tr: &ToolResponse) -> Option<String> {
     }
 
     if combined.contains("ceo") {
-        return Some(
-            "I couldn't verify a publicly listed CEO from reliable public sources.".to_string(),
-        );
+        return Some("I did not find a reliable public source naming a CEO.".to_string());
     }
 
     None
@@ -5561,6 +5611,24 @@ mod tests {
     }
 
     #[test]
+    fn best_available_web_search_without_verification_returns_closest_result_without_dump() {
+        let text = web_search_without_verification_safe_degrade(&[ToolTextSnippet {
+            title: "Fixture Entity Alpha official update".to_string(),
+            snippet: "This snippet must stay out of response_text.".to_string(),
+            url: "https://alpha-search-fixture.test/update".to_string(),
+        }]);
+
+        assert_eq!(
+            text,
+            "The closest search result I found is Fixture Entity Alpha official update."
+        );
+        assert!(!text.contains("This snippet"));
+        assert!(!text.contains("https://"));
+        assert!(!text.contains("Confidence:"));
+        assert!(!text.contains("Sources:"));
+    }
+
+    #[test]
     fn at_x_tool_ok_web_search_renders_clean_answer_with_sources_without_raw_timestamp() {
         let rt = Ph1xRuntime::new(Ph1xConfig::mvp_v1());
 
@@ -5634,7 +5702,7 @@ mod tests {
             Ph1xDirective::Respond(r) => {
                 assert!(r
                     .response_text
-                    .contains("I found search candidates, but I could not verify"));
+                    .contains("The closest search result I found is Result."));
                 assert!(!r.response_text.contains("I found a web result"));
                 assert!(!r.response_text.contains("Snippet"));
                 assert!(!r.response_text.contains("https://example.invalid"));
@@ -5718,7 +5786,7 @@ mod tests {
             Ph1xDirective::Respond(r) => {
                 assert!(r
                     .response_text
-                    .contains("I found search candidates, but I could not verify"));
+                    .contains("The closest search result I found is Headline."));
                 assert!(!r.response_text.contains("I found a web result"));
                 assert!(!r.response_text.contains("Snippet"));
                 assert!(!r.response_text.contains("https://example.invalid"));
@@ -5953,7 +6021,7 @@ mod tests {
         let text = tool_ok_text(&tool_ok);
         assert_eq!(
             text,
-            "I couldn't verify a publicly listed CEO from reliable public sources."
+            "I did not find a reliable public source naming a CEO."
         );
         for forbidden in [
             "Dr Rowan Vale",
@@ -6014,7 +6082,7 @@ mod tests {
         let text = tool_ok_text(&tool_ok);
         assert_eq!(
             text,
-            "I couldn't verify a publicly listed CEO from reliable public sources."
+            "I did not find a reliable public source naming a CEO."
         );
         for forbidden in [
             "Dr Rowan Vale",
@@ -6084,11 +6152,11 @@ mod tests {
         .unwrap();
 
         let text = tool_ok_text(&tool_ok);
-        assert!(text.starts_with("I couldn't verify a publicly listed CEO"));
+        assert!(text.starts_with("I did not find a reliable source naming a CEO"));
         assert!(text.contains(
-            "Mira Solen listed as Managing Director / Head of Grape and Wine Production"
+            "closest source I found lists Mira Solen as Managing Director / Head of Grape and Wine Production"
         ));
-        assert!(text.contains("not the same as a verified CEO listing"));
+        assert!(!text.contains("Confidence:"));
         assert!(!text.contains("Source:"));
         assert!(!text.contains("https://aurora-vale-cellars.test/"));
         assert!(!text.contains("I found a web result"));
@@ -6141,7 +6209,7 @@ mod tests {
         let text = tool_ok_text(&tool_ok);
         assert_eq!(
             text,
-            "I couldn't verify a publicly listed CEO from reliable public sources."
+            "I did not find a reliable public source naming a CEO."
         );
         assert!(!text.contains("Mira Solen is the CEO"));
         assert!(!text.contains("leadership-rankings"));

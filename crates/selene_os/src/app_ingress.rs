@@ -24733,7 +24733,8 @@ mod tests {
         assert_eq!(out.next_move, AppVoiceTurnNextMove::Respond);
         let response_text = out.response_text.expect("respond output must include text");
         assert!(
-            response_text.contains("I could not verify that information"),
+            response_text
+                .contains("The closest source-backed result I found is Selene web result."),
             "{response_text}"
         );
         assert!(!response_text.contains("https://search.selene.ai/result-1"));
@@ -24792,7 +24793,8 @@ mod tests {
         assert_eq!(out.next_move, AppVoiceTurnNextMove::Respond);
         let response_text = out.response_text.expect("respond output must include text");
         assert!(
-            response_text.contains("I could not verify that information"),
+            response_text
+                .contains("The closest source-backed result I found is Selene web result."),
             "{response_text}"
         );
         assert!(!response_text.contains("https://search.selene.ai/result-1"));
@@ -24851,7 +24853,8 @@ mod tests {
         assert_eq!(out.next_move, AppVoiceTurnNextMove::Respond);
         let response_text = out.response_text.expect("respond output must include text");
         assert!(
-            response_text.contains("I could not verify that information"),
+            response_text
+                .contains("The closest source-backed result I found is Selene news result."),
             "{response_text}"
         );
         assert!(!response_text.contains("https://news.selene.ai/story-1"));
