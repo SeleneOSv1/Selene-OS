@@ -2238,10 +2238,11 @@ impl Ph1eRuntime {
             } else {
                 &self.provider_config.brave_web_url
             };
+            let provider_query = stage1_live_provider_query(&req.query);
             let brave_response = run_brave_search(
                 url,
                 brave_key,
-                &req.query,
+                &provider_query,
                 max_results,
                 req.strict_budget.timeout_ms,
                 &self.provider_config.user_agent,
@@ -2258,6 +2259,15 @@ impl Ph1eRuntime {
                         Some("ph1search_brave".to_string()),
                         now_unix_ms(),
                     );
+                    let source_metadata = stage1_preserve_provider_sources_when_unverified(
+                        verified_metadata,
+                        sources,
+                    );
+                    let source_metadata = if matches!(kind, ToolName::News) {
+                        source_metadata
+                    } else {
+                        self.stage6_augment_with_brave_image_card(&provider_query, source_metadata)
+                    };
                     return Ok((
                         if matches!(kind, ToolName::News) {
                             ToolResult::News {
@@ -2268,10 +2278,7 @@ impl Ph1eRuntime {
                                 items: verified_items,
                             }
                         },
-                        stage1_preserve_provider_sources_when_unverified(
-                            verified_metadata,
-                            sources,
-                        ),
+                        source_metadata,
                     ));
                 }
                 Err(err) => {
@@ -2398,6 +2405,40 @@ impl Ph1eRuntime {
         } else {
             Err(ToolFailPayload::new(reason_codes::E_FAIL_PROVIDER_UPSTREAM))
         }
+    }
+
+    fn stage6_augment_with_brave_image_card(
+        &self,
+        query: &str,
+        mut metadata: SourceMetadata,
+    ) -> SourceMetadata {
+        if !env_flag_enabled("SELENE_REMOTE_IMAGE_DISPLAY_ENABLED")
+            || !env_flag_enabled("SELENE_BRAVE_IMAGE_SEARCH_ENABLED")
+        {
+            return metadata;
+        }
+        let Some(verification) = metadata.web_answer_verification.as_mut() else {
+            return metadata;
+        };
+        if !verification.presentation.image_cards.is_empty()
+            || verification.accepted_sources.is_empty()
+            || verification.answer_claims.is_empty()
+        {
+            return metadata;
+        }
+
+        let decision = self.brave_image_metadata_decision_for_query(query);
+        if let Some(image_card) = stage6_image_card_from_brave_metadata_decision(
+            query,
+            &verification.requested_entity,
+            &verification.accepted_sources,
+            &decision,
+        ) {
+            verification.presentation.presentation_boundary_used =
+                "PH1E_STAGE6_IMAGE_PRESENTATION".to_string();
+            verification.presentation.image_cards = vec![image_card];
+        }
+        metadata
     }
 
     fn run_url_fetch_and_cite(
@@ -3087,16 +3128,29 @@ fn stage6_image_card_from_fixture_metadata(
     if metadata.get("stage6_image_display")?.trim() != "allow" {
         return None;
     }
-    if !matches!(
-        metadata.get("stage6_image_policy").map(String::as_str),
-        Some("fixture_approved" | "display_policy_approved")
-    ) {
+    let image_policy = metadata.get("stage6_image_policy")?.trim();
+    if !matches!(image_policy, "fixture_approved" | "display_policy_approved") {
         return None;
     }
-    if metadata
+    let remote_image_load_allowed = metadata
         .get("stage6_image_remote_load")
-        .is_some_and(|value| value.trim() == "allow")
-    {
+        .is_some_and(|value| value.trim() == "allow");
+    let safe_image_url = metadata
+        .get("stage6_image_safe_url")
+        .or_else(|| metadata.get("stage6_image_url"))
+        .and_then(|value| verified_public_url(value));
+    let thumbnail_url = metadata
+        .get("stage6_image_thumbnail_url")
+        .or_else(|| metadata.get("stage6_image_thumb_url"))
+        .or_else(|| metadata.get("stage6_image_thumbnail"))
+        .and_then(|value| verified_public_url(value));
+    if remote_image_load_allowed && image_policy != "display_policy_approved" {
+        return None;
+    }
+    if remote_image_load_allowed && safe_image_url.is_none() && thumbnail_url.is_none() {
+        return None;
+    }
+    if !remote_image_load_allowed && (safe_image_url.is_some() || thumbnail_url.is_some()) {
         return None;
     }
     let image_entity = metadata.get("stage6_image_entity")?.trim();
@@ -3126,9 +3180,18 @@ fn stage6_image_card_from_fixture_metadata(
     ) {
         return None;
     }
-    let approved_asset_ref = metadata.get("stage6_image_asset")?.trim();
-    if !stage6_fixture_asset_ref_allowed(approved_asset_ref) {
-        return None;
+    let approved_asset_ref = metadata
+        .get("stage6_image_asset")
+        .map(|value| value.trim())
+        .unwrap_or_default();
+    if remote_image_load_allowed {
+        if !approved_asset_ref.is_empty() && !stage6_fixture_asset_ref_allowed(approved_asset_ref) {
+            return None;
+        }
+    } else {
+        if approved_asset_ref.is_empty() || !stage6_fixture_asset_ref_allowed(approved_asset_ref) {
+            return None;
+        }
     }
     let caption = truncate_ascii(metadata.get("stage6_image_caption")?.trim(), 220);
     let alt_text = truncate_ascii(metadata.get("stage6_image_alt")?.trim(), 220);
@@ -3152,17 +3215,31 @@ fn stage6_image_card_from_fixture_metadata(
         .get("stage6_image_provider_tier")
         .map(|value| truncate_ascii(value.trim(), 64))
         .unwrap_or_else(|| "fixture".to_string());
-    let image_id_seed = format!("{}:{}:{}", source.source_id, approved_asset_ref, caption);
+    let image_id_seed = format!(
+        "{}:{}:{}:{}",
+        source.source_id,
+        approved_asset_ref,
+        safe_image_url
+            .as_deref()
+            .or(thumbnail_url.as_deref())
+            .unwrap_or("local"),
+        caption
+    );
     let mut result_classes = vec![
         "STAGE6_IMAGE_PACKET_PASS".to_string(),
         "STAGE6_IMAGE_DISPLAY_GATE_PASS".to_string(),
         "STAGE6_IMAGE_URL_SAFETY_PASS".to_string(),
         "STAGE6_SOURCE_PAGE_LINK_PASS".to_string(),
         "STAGE6_QUERY_RELEVANCE_PASS".to_string(),
-        "STAGE6_IMAGE_FETCH_OFF_ZERO_ATTEMPT_PASS".to_string(),
-        "STAGE6_NO_REMOTE_IMAGE_LOAD_WHEN_FETCH_DISABLED_PASS".to_string(),
         "STAGE6_SOURCE_CHIP_PRESERVATION_PASS".to_string(),
     ];
+    if remote_image_load_allowed {
+        result_classes.push("STAGE6_REMOTE_IMAGE_DISPLAY_POLICY_PASS".to_string());
+        result_classes.push("STAGE6_REMOTE_IMAGE_SOURCE_PAGE_SAFETY_PASS".to_string());
+    } else {
+        result_classes.push("STAGE6_IMAGE_FETCH_OFF_ZERO_ATTEMPT_PASS".to_string());
+        result_classes.push("STAGE6_NO_REMOTE_IMAGE_LOAD_WHEN_FETCH_DISABLED_PASS".to_string());
+    }
     if kind == "person_photo" {
         result_classes.push("STAGE6_PERSON_IMAGE_SAFETY_PASS".to_string());
     }
@@ -3170,8 +3247,8 @@ fn stage6_image_card_from_fixture_metadata(
         image_id: format!("stage6_image_{}", short_fnv_hex(image_id_seed.as_bytes())),
         image_kind: kind.to_string(),
         approved_asset_ref: approved_asset_ref.to_string(),
-        safe_image_url: None,
-        thumbnail_url: None,
+        safe_image_url,
+        thumbnail_url,
         source_page_url: source.safe_click_url.clone(),
         source_page_domain: source.domain.clone(),
         source_label: source.label.clone(),
@@ -3186,17 +3263,153 @@ fn stage6_image_card_from_fixture_metadata(
         provider,
         provider_tier,
         metadata_only: false,
-        rights_or_policy_status: metadata
-            .get("stage6_image_policy")
-            .map(|value| value.trim().to_string())
-            .unwrap_or_else(|| "fixture_approved".to_string()),
+        rights_or_policy_status: image_policy.to_string(),
         retrieved_at: None,
         metadata_safe_for_user: true,
-        remote_image_load_allowed: false,
-        fixture_or_local_asset: true,
+        remote_image_load_allowed,
+        fixture_or_local_asset: !remote_image_load_allowed,
         display_rank: 1,
         result_classes,
     })
+}
+
+fn stage6_image_card_from_brave_metadata_decision(
+    query: &str,
+    requested: &RequestedEntityPacket,
+    accepted_sources: &[AcceptedSourcePacket],
+    decision: &BraveImageMetadataDecision,
+) -> Option<SearchImagePacket> {
+    if decision.provider_error.is_some() {
+        return None;
+    }
+    let candidate = decision.candidate.as_ref()?;
+    if !candidate.image_source_verified {
+        return None;
+    }
+    let source_domain = candidate.source_domain.as_deref()?;
+    let source_page_url = candidate.source_page_url.as_deref()?;
+    let accepted_source = accepted_sources.iter().find(|source| {
+        stage6_domains_compatible(&source.domain, source_domain)
+            || stage6_domains_compatible(
+                source
+                    .safe_click_url
+                    .as_str()
+                    .split_once("://")
+                    .map(|(_, rest)| rest)
+                    .and_then(|rest| rest.split(['/', '?', '#']).next())
+                    .unwrap_or_default(),
+                source_domain,
+            )
+    })?;
+    if looks_like_raw_image_asset_url(source_page_url) {
+        return None;
+    }
+    let image_url = candidate
+        .image_url
+        .as_deref()
+        .or(candidate.thumbnail_url.as_deref())?;
+    let verified_image_url = verified_public_url(image_url)?;
+    let thumbnail_url = candidate
+        .thumbnail_url
+        .as_deref()
+        .and_then(verified_public_url);
+    let title_or_alt = candidate
+        .title_or_alt_text
+        .as_deref()
+        .unwrap_or(&accepted_source.label);
+    let requested_entity = requested.captured_text.trim();
+    if !stage6_text_mentions_entity(title_or_alt, requested_entity)
+        && !stage6_text_mentions_entity(&accepted_source.label, requested_entity)
+        && !stage6_text_mentions_entity(query, requested_entity)
+    {
+        return None;
+    }
+    let caption = truncate_ascii(title_or_alt.trim(), 180);
+    let caption = if caption.is_empty() {
+        truncate_ascii(
+            &format!("{} visual from {}", requested_entity, accepted_source.label),
+            180,
+        )
+    } else {
+        caption
+    };
+    let image_kind = stage6_image_kind_for_query(query);
+    let image_id_seed = format!(
+        "{}:{}:{}:{}",
+        accepted_source.source_id, source_page_url, verified_image_url, caption
+    );
+    let mut result_classes = vec![
+        "STAGE6_IMAGE_PACKET_PASS".to_string(),
+        "STAGE6_IMAGE_DISPLAY_GATE_PASS".to_string(),
+        "STAGE6_IMAGE_URL_SAFETY_PASS".to_string(),
+        "STAGE6_SOURCE_PAGE_LINK_PASS".to_string(),
+        "STAGE6_QUERY_RELEVANCE_PASS".to_string(),
+        "STAGE6_SOURCE_CHIP_PRESERVATION_PASS".to_string(),
+        "STAGE6_REMOTE_IMAGE_DISPLAY_POLICY_PASS".to_string(),
+        "STAGE6_REMOTE_IMAGE_SOURCE_PAGE_SAFETY_PASS".to_string(),
+        "STAGE6_BRAVE_IMAGE_PROVIDER_GATE_PASS".to_string(),
+    ];
+    if image_kind == "person_photo" {
+        result_classes.push("STAGE6_PERSON_IMAGE_SAFETY_PASS".to_string());
+    }
+    Some(SearchImagePacket {
+        image_id: format!("stage6_image_{}", short_fnv_hex(image_id_seed.as_bytes())),
+        image_kind: image_kind.to_string(),
+        approved_asset_ref: String::new(),
+        safe_image_url: Some(verified_image_url),
+        thumbnail_url,
+        source_page_url: source_page_url.to_string(),
+        source_page_domain: source_domain.to_string(),
+        source_label: accepted_source.label.clone(),
+        caption,
+        alt_text: truncate_ascii(title_or_alt.trim(), 180),
+        query_relevance_score: 8_250,
+        entity_match_score: 8_250,
+        source_id: accepted_source.source_id.clone(),
+        claim_refs: accepted_source.supported_claim_refs.clone(),
+        display_allowed: true,
+        display_denied_reason: None,
+        provider: candidate.provider.to_string(),
+        provider_tier: "premium".to_string(),
+        metadata_only: false,
+        rights_or_policy_status: "display_policy_approved".to_string(),
+        retrieved_at: None,
+        metadata_safe_for_user: true,
+        remote_image_load_allowed: true,
+        fixture_or_local_asset: false,
+        display_rank: 1,
+        result_classes,
+    })
+}
+
+fn stage6_domains_compatible(left: &str, right: &str) -> bool {
+    let left = left.trim().trim_start_matches("www.").to_ascii_lowercase();
+    let right = right.trim().trim_start_matches("www.").to_ascii_lowercase();
+    !left.is_empty()
+        && !right.is_empty()
+        && (left == right
+            || left.ends_with(&format!(".{right}"))
+            || right.ends_with(&format!(".{left}")))
+}
+
+fn stage6_image_kind_for_query(query: &str) -> &'static str {
+    let lower = query.to_ascii_lowercase();
+    if lower.contains("ceo")
+        || lower.contains("person")
+        || lower.contains("founder")
+        || lower.contains("leader")
+    {
+        "person_photo"
+    } else if lower.contains("product") {
+        "product"
+    } else if lower.contains("winery") || lower.contains("storefront") || lower.contains("building")
+    {
+        "building_or_place"
+    } else if lower.contains("company") || lower.contains("brand") {
+        "logo"
+    } else {
+        "generic_entity_visual"
+    }
 }
 
 fn stage6_parse_fixture_image_metadata(text: &str) -> Option<BTreeMap<String, String>> {
@@ -3286,6 +3499,7 @@ fn stage1_requested_entity(query: &str) -> Option<String> {
 
 fn stage1_clean_entity(value: &str) -> Option<String> {
     let cleaned_value = stage1_strip_generic_cjk_search_markers(value);
+    let cleaned_value = stage1_strip_trailing_location_qualifier(&cleaned_value);
     let mut tokens = Vec::new();
     for token in cleaned_value
         .trim()
@@ -3334,6 +3548,46 @@ fn stage1_clean_entity(value: &str) -> Option<String> {
         None
     } else {
         Some(entity)
+    }
+}
+
+fn stage1_strip_trailing_location_qualifier(value: &str) -> String {
+    let trimmed = value.trim();
+    for marker in [" in ", " near ", " from "] {
+        let lower = trimmed.to_ascii_lowercase();
+        if let Some(index) = lower.rfind(marker) {
+            let prefix = trimmed[..index].trim();
+            let suffix = trimmed[index + marker.len()..].trim();
+            let prefix_tokens = prefix.split_whitespace().count();
+            let suffix_tokens = suffix.split_whitespace().count();
+            if prefix_tokens >= 2 && (1..=4).contains(&suffix_tokens) {
+                return prefix.to_string();
+            }
+        }
+    }
+    trimmed.to_string()
+}
+
+fn stage1_live_provider_query(query: &str) -> String {
+    let Some(role) = stage1_requested_role(query) else {
+        return query.to_string();
+    };
+    let Some(entity) = stage1_requested_entity(query) else {
+        return query.to_string();
+    };
+    let entity = entity.trim();
+    if entity.is_empty() {
+        return query.to_string();
+    }
+    match role.to_ascii_lowercase().as_str() {
+        "ceo" => {
+            format!("{entity} CEO chief executive officer managing director leadership official")
+        }
+        "managing director" => format!("{entity} managing director leadership official"),
+        "founder" => format!("{entity} founder leadership official"),
+        "owner" => format!("{entity} owner leadership official"),
+        "director" => format!("{entity} director leadership official"),
+        _ => query.to_string(),
     }
 }
 
@@ -3410,6 +3664,25 @@ fn stage1_entity_match_result(
                 .any(|source| source == **token)
         })
         .count();
+    let core_tokens = stage1_entity_match_core_tokens(normalized_entity);
+    if !core_tokens.is_empty()
+        && stage1_entity_distinctive_token_matches(&core_tokens, &source_text)
+    {
+        let matching_core = core_tokens
+            .iter()
+            .filter(|token| stage1_source_has_exact_token(&source_text, token))
+            .count();
+        let required_core_matches = if core_tokens.len() <= 2 {
+            core_tokens.len()
+        } else {
+            2
+        };
+        let match_ratio_bp =
+            ((matching_core as u32).saturating_mul(10_000)) / (core_tokens.len() as u32);
+        if matching_core >= required_core_matches && match_ratio_bp >= 6_000 {
+            return ("ENTITY_MATCH_MEDIUM".to_string(), vec![]);
+        }
+    }
     if stage1_sound_skeleton(&source_text).contains(&stage1_sound_skeleton(normalized_entity)) {
         return (
             "ENTITY_MATCH_REJECT".to_string(),
@@ -3426,6 +3699,71 @@ fn stage1_entity_match_result(
         "ENTITY_MATCH_REJECT".to_string(),
         vec!["ENTITY_MISMATCH".to_string()],
     )
+}
+
+fn stage1_entity_match_core_tokens(normalized_entity: &str) -> Vec<&str> {
+    normalized_entity
+        .split_whitespace()
+        .filter(|token| token.len() > 1 && !stage1_entity_match_qualifier_token(token))
+        .collect()
+}
+
+fn stage1_entity_match_qualifier_token(token: &str) -> bool {
+    matches!(
+        token,
+        "in" | "at"
+            | "from"
+            | "near"
+            | "around"
+            | "based"
+            | "located"
+            | "public"
+            | "current"
+            | "latest"
+            | "today"
+    )
+}
+
+fn stage1_entity_distinctive_token_matches(core_tokens: &[&str], source_text: &str) -> bool {
+    core_tokens
+        .iter()
+        .filter(|token| !stage1_entity_generic_category_token(token))
+        .next()
+        .is_some_and(|token| stage1_source_has_exact_token(source_text, token))
+}
+
+fn stage1_entity_generic_category_token(token: &str) -> bool {
+    matches!(
+        token,
+        "test"
+            | "fixture"
+            | "synthetic"
+            | "company"
+            | "co"
+            | "inc"
+            | "llc"
+            | "ltd"
+            | "limited"
+            | "group"
+            | "holdings"
+            | "corp"
+            | "corporation"
+            | "wines"
+            | "wine"
+            | "winery"
+            | "organic"
+            | "cellars"
+            | "labs"
+            | "technologies"
+            | "technology"
+            | "systems"
+            | "brand"
+            | "brands"
+    )
+}
+
+fn stage1_source_has_exact_token(source_text: &str, token: &str) -> bool {
+    source_text.split_whitespace().any(|source| source == token)
 }
 
 fn stage1_source_discovery_match_result(
@@ -3609,6 +3947,13 @@ fn stage1_weak_source_reason(item: &ToolTextSnippet) -> Option<&'static str> {
     let combined = format!("{} {} {}", item.title, item.snippet, item.url).to_ascii_lowercase();
     if combined.contains("scraped") {
         Some("SCRAPED_PROFILE_SOURCE")
+    } else if combined.contains("phone number")
+        || combined.contains("email:")
+        || combined.contains("contact ")
+        || combined.contains("people directory")
+        || combined.contains("business contacts")
+    {
+        Some("THIN_DIRECTORY_SOURCE")
     } else if combined.contains("directory") {
         Some("THIN_DIRECTORY_SOURCE")
     } else if combined.contains("ranking")
@@ -4285,7 +4630,13 @@ fn stage1_extract_person_near_role(text: &str, role: &str) -> Option<String> {
     let role_lower = role.to_ascii_lowercase();
     let index = lower.find(&role_lower)?;
     let prefix = &text[..index];
-    stage1_last_capitalized_phrase(prefix)
+    if let Some(person) =
+        stage1_last_capitalized_phrase(prefix).filter(|phrase| stage1_person_phrase_allowed(phrase))
+    {
+        return Some(person);
+    }
+    let suffix = &text[index + role.len()..];
+    stage1_first_capitalized_phrase(suffix).filter(|phrase| stage1_person_phrase_allowed(phrase))
 }
 
 fn stage1_last_capitalized_phrase(prefix: &str) -> Option<String> {
@@ -4311,6 +4662,101 @@ fn stage1_last_capitalized_phrase(prefix: &str) -> Option<String> {
     } else {
         Some(words.join(" "))
     }
+}
+
+fn stage1_first_capitalized_phrase(suffix: &str) -> Option<String> {
+    let mut words = Vec::new();
+    for raw in suffix.split_whitespace() {
+        let word = raw.trim_matches(|ch: char| !ch.is_alphanumeric());
+        if word.len() < 2 && !first_char_is_uppercase(word) {
+            if words.is_empty() {
+                continue;
+            }
+            break;
+        }
+        let Some(first) = word.chars().next() else {
+            continue;
+        };
+        if first.is_uppercase() {
+            words.push(word.to_string());
+            if words.len() >= 3 {
+                break;
+            }
+        } else if !words.is_empty() {
+            break;
+        }
+    }
+    if words.is_empty() {
+        None
+    } else {
+        Some(words.join(" "))
+    }
+}
+
+fn stage1_person_phrase_allowed(phrase: &str) -> bool {
+    let words = phrase
+        .split_whitespace()
+        .map(|word| word.trim_matches(|ch: char| !ch.is_alphanumeric()))
+        .filter(|word| !word.is_empty())
+        .collect::<Vec<_>>();
+    if words.len() < 2 || words.len() > 4 {
+        return false;
+    }
+    let mut substantive_words = 0usize;
+    for word in &words {
+        let lower = word.to_ascii_lowercase();
+        if stage1_non_person_phrase_token(&lower) {
+            return false;
+        }
+        if word.chars().filter(|ch| ch.is_alphabetic()).count() >= 2 {
+            substantive_words = substantive_words.saturating_add(1);
+        }
+    }
+    substantive_words >= 2
+}
+
+fn stage1_non_person_phrase_token(token: &str) -> bool {
+    matches!(
+        token,
+        "official"
+            | "contact"
+            | "email"
+            | "phone"
+            | "number"
+            | "executive"
+            | "leadership"
+            | "profile"
+            | "about"
+            | "team"
+            | "store"
+            | "shop"
+            | "company"
+            | "co"
+            | "inc"
+            | "llc"
+            | "ltd"
+            | "limited"
+            | "group"
+            | "holdings"
+            | "corp"
+            | "corporation"
+            | "wine"
+            | "wines"
+            | "winery"
+            | "organic"
+            | "cellars"
+            | "technology"
+            | "technologies"
+            | "systems"
+            | "in"
+            | "at"
+            | "from"
+            | "for"
+            | "of"
+            | "the"
+            | "and"
+            | "or"
+    )
 }
 
 fn first_char_is_uppercase(word: &str) -> bool {
@@ -14747,6 +15193,90 @@ mod tests {
     }
 
     #[test]
+    fn stage1_entity_match_accepts_trailing_location_qualifier_without_wrong_entity_drift() {
+        assert_eq!(
+            stage1_requested_entity("Who is the CEO of Auroa Vale Cellars in Canada?").as_deref(),
+            Some("Auroa Vale Cellars")
+        );
+        assert_eq!(
+            stage1_live_provider_query("Who is the CEO of Auroa Vale Cellars in Canada?"),
+            "Auroa Vale Cellars CEO chief executive officer managing director leadership official"
+        );
+        assert_eq!(
+            stage1_extract_person_near_role(
+                "Mira Solen is the managing director of Auroa Vale Cellars.",
+                "managing director",
+            )
+            .as_deref(),
+            Some("Mira Solen")
+        );
+        assert_eq!(
+            stage1_extract_person_near_role(
+                "Auroa Vale Cellars CEO Mira Solen discusses the organization.",
+                "CEO",
+            )
+            .as_deref(),
+            Some("Mira Solen")
+        );
+        assert!(stage1_extract_person_near_role(
+            "Auroa Vale Organic Wine Store In managing director profile.",
+            "managing director",
+        )
+        .is_none());
+        let (_items, metadata) = stage1_web_answer_verified_metadata(
+            "Who is the CEO of Auroa Vale Cellars in Canada?",
+            vec![
+                ToolTextSnippet {
+                    title: "Auroa Vale Cellars official leadership".to_string(),
+                    snippet: "Mira Solen is the managing director of Auroa Vale Cellars."
+                        .to_string(),
+                    url: "https://auroa-vale-cellars.test/leadership".to_string(),
+                },
+                ToolTextSnippet {
+                    title: "Nova Vale Cellars leadership".to_string(),
+                    snippet: "Jordan Hale is the CEO of Nova Vale Cellars.".to_string(),
+                    url: "https://nova-vale-cellars.test/leadership".to_string(),
+                },
+                ToolTextSnippet {
+                    title: "Contact Mira Solen, Email: hidden & Phone Number | Executive Director"
+                        .to_string(),
+                    snippet: "Business contacts page for Auroa Vale Cellars.".to_string(),
+                    url: "https://people-directory.test/mira-solen".to_string(),
+                },
+            ],
+            Some("stage1_location_qualifier_fixture".to_string()),
+            1,
+        );
+
+        let verification = metadata.web_answer_verification.as_ref().unwrap();
+        assert_eq!(
+            verification.final_answer_class,
+            "CLOSEST_SOURCE_BACKED_ANSWER"
+        );
+        assert_eq!(
+            verification.response_text,
+            "I did not find a source naming the CEO. The closest source I found lists Mira Solen as managing director."
+        );
+        assert_eq!(verification.accepted_source_ids, vec!["source_001"]);
+        assert_eq!(verification.source_chips.len(), 1);
+        assert_eq!(verification.source_chips[0].source_id, "source_001");
+        assert_eq!(
+            verification.rejected_source_ids,
+            vec!["source_002", "source_003"]
+        );
+        assert!(verification.rejected_sources.iter().any(|source| source
+            .rejection_reasons
+            .iter()
+            .any(|reason| reason == "PARTIAL_NAME_OVERLAP_ONLY")));
+        assert!(verification.rejected_sources.iter().any(|source| source
+            .rejection_reasons
+            .iter()
+            .any(|reason| reason == "THIN_DIRECTORY_SOURCE")));
+        assert!(!verification.response_text.contains("Confidence:"));
+        assert!(!verification.response_text.contains("https://"));
+    }
+
+    #[test]
     fn stage4_entity_only_evidence_safe_degrades_and_has_no_source_chip() {
         let (_items, metadata) = stage1_web_answer_verified_metadata(
             "Who is the CEO of Test Company A?",
@@ -15170,6 +15700,63 @@ mod tests {
         assert_eq!(verification.presentation.source_chips.len(), 1);
         assert!(!verification.response_text.contains("fixture-image-a.png"));
         assert!(!verification.tts_input_text.contains("fixture-image-a.png"));
+    }
+
+    #[test]
+    fn stage6_display_policy_approved_remote_image_card_uses_safe_source_page() {
+        let remote_metadata = format!(
+            "{}; stage6_image_policy=display_policy_approved; \
+             stage6_image_remote_load=allow; \
+             stage6_image_safe_url=https://cdn.test-company-a.test/images/leadership.jpg; \
+             stage6_image_thumbnail_url=https://cdn.test-company-a.test/thumbs/leadership.jpg",
+            stage6_fixture_image_metadata().replace(
+                "stage6_image_policy=fixture_approved",
+                "stage6_image_policy=display_policy_approved",
+            )
+        );
+        let (_items, metadata) = stage1_web_answer_verified_metadata(
+            "Who is the CEO of Test Company A?",
+            vec![ToolTextSnippet {
+                title: "Test Company A official leadership".to_string(),
+                snippet: remote_metadata,
+                url: "https://test-company-a.test/leadership".to_string(),
+            }],
+            Some("stage6_remote_display_fixture".to_string()),
+            1,
+        );
+
+        let verification = metadata.web_answer_verification.as_ref().unwrap();
+        verification.validate().expect("remote image card contract");
+        assert_eq!(verification.presentation.image_cards.len(), 1);
+        let image = &verification.presentation.image_cards[0];
+        assert!(image.display_allowed);
+        assert!(image.remote_image_load_allowed);
+        assert!(!image.fixture_or_local_asset);
+        assert_eq!(image.rights_or_policy_status, "display_policy_approved");
+        assert_eq!(
+            image.safe_image_url.as_deref(),
+            Some("https://cdn.test-company-a.test/images/leadership.jpg")
+        );
+        assert_eq!(
+            image.thumbnail_url.as_deref(),
+            Some("https://cdn.test-company-a.test/thumbs/leadership.jpg")
+        );
+        assert_eq!(
+            image.source_page_url,
+            "https://test-company-a.test/leadership"
+        );
+        assert!(image
+            .result_classes
+            .contains(&"STAGE6_REMOTE_IMAGE_DISPLAY_POLICY_PASS".to_string()));
+        for forbidden in [
+            "https://cdn.test-company-a.test",
+            "stage6_image",
+            "thumbnail_url",
+            "safe_image_url",
+        ] {
+            assert!(!verification.response_text.contains(forbidden));
+            assert!(!verification.tts_input_text.contains(forbidden));
+        }
     }
 
     #[test]

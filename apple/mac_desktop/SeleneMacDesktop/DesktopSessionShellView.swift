@@ -1330,6 +1330,7 @@ private struct DesktopAuthoritativeReplyProvenanceRenderState: Equatable {
         let imageID: String
         let imageKind: String
         let approvedAssetRef: String
+        let displayImageURL: URL?
         let caption: String
         let altText: String
         let sourceLabel: String
@@ -5434,19 +5435,27 @@ private func desktopCompactSourceChipGrid(
     _ chips: [DesktopAuthoritativeReplyProvenanceRenderState.SourceChip]
 ) -> some View {
     LazyVGrid(
-        columns: [GridItem(.adaptive(minimum: 58), spacing: 6, alignment: .leading)],
+        columns: [GridItem(.adaptive(minimum: 46), spacing: 5, alignment: .leading)],
         alignment: .leading,
-        spacing: 6
+        spacing: 5
     ) {
         ForEach(chips) { chip in
             Link(destination: chip.clickableSourcePageURL) {
                 Text(desktopCompactSourceChipLabel(chip))
-                    .font(.caption.weight(.medium))
+                    .font(.caption2.weight(.medium))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
-                    .background(Color.secondary.opacity(0.10), in: Capsule())
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 4)
+                    .background(
+                        Capsule()
+                            .fill(Color(nsColor: .controlBackgroundColor).opacity(0.92))
+                    )
+                    .overlay(
+                        Capsule()
+                            .stroke(Color.secondary.opacity(0.08), lineWidth: 0.75)
+                    )
+                    .shadow(color: Color.black.opacity(0.055), radius: 1.5, x: 0, y: 1)
             }
             .buttonStyle(.plain)
             .accessibilityLabel(chip.accessibilityLabel)
@@ -5465,6 +5474,93 @@ private func desktopCompactSourceChipLabel(
         return "Source"
     }
     return label.count <= 18 ? label : "\(label.prefix(15))..."
+}
+
+private struct DesktopSearchImageCardView: View {
+    let imageCard: DesktopAuthoritativeReplyProvenanceRenderState.ImageCard
+
+    var body: some View {
+        Link(destination: imageCard.clickableSourcePageURL) {
+            VStack(alignment: .leading, spacing: 7) {
+                imageBody
+                    .frame(height: 108)
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .accessibilityLabel(imageCard.altText)
+
+                Text(imageCard.caption)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.primary)
+                    .lineLimit(2)
+
+                Text(imageCard.sourceDomain)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            .padding(8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(Color(nsColor: .textBackgroundColor))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .stroke(Color.secondary.opacity(0.14), lineWidth: 1)
+            )
+            .shadow(color: Color.black.opacity(0.045), radius: 2, x: 0, y: 1)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(imageCard.accessibilityOpenLabel)
+    }
+
+    @ViewBuilder
+    private var imageBody: some View {
+        if let displayImageURL = imageCard.displayImageURL {
+            AsyncImage(url: displayImageURL, transaction: Transaction(animation: .easeInOut(duration: 0.18))) { phase in
+                switch phase {
+                case .success(let image):
+                    image
+                        .resizable()
+                        .scaledToFill()
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                case .failure:
+                    DesktopImageUnavailablePlaceholder(text: "Image unavailable")
+                case .empty:
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .fill(Color(nsColor: .controlBackgroundColor))
+                        ProgressView()
+                            .controlSize(.small)
+                    }
+                @unknown default:
+                    DesktopImageUnavailablePlaceholder(text: "Image unavailable")
+                }
+            }
+        } else {
+            DesktopImageUnavailablePlaceholder(text: "Approved image asset unavailable")
+        }
+    }
+}
+
+private struct DesktopImageUnavailablePlaceholder: View {
+    let text: String
+
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(Color(nsColor: .controlBackgroundColor))
+
+            VStack(spacing: 5) {
+                Image(systemName: "photo")
+                    .font(.title3)
+                    .foregroundStyle(.secondary)
+                Text(text)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+        }
+    }
 }
 
 struct DesktopSessionShellView: View {
@@ -17489,41 +17585,7 @@ struct DesktopSessionShellView: View {
                                 spacing: 8
                             ) {
                                 ForEach(desktopAuthoritativeReplyProvenanceRenderState.imageCards) { imageCard in
-                                    Link(destination: imageCard.clickableSourcePageURL) {
-                                        VStack(alignment: .leading, spacing: 6) {
-                                            ZStack {
-                                                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                                    .fill(Color(nsColor: .controlBackgroundColor))
-
-                                                Image(systemName: "photo")
-                                                    .font(.title2)
-                                                    .foregroundStyle(.secondary)
-                                            }
-                                            .frame(height: 74)
-                                            .accessibilityLabel(imageCard.altText)
-
-                                            Text(imageCard.caption)
-                                                .font(.caption.weight(.semibold))
-                                                .lineLimit(2)
-
-                                            Text(imageCard.sourceDomain)
-                                                .font(.caption2)
-                                                .foregroundStyle(.secondary)
-                                                .lineLimit(1)
-                                        }
-                                        .padding(8)
-                                        .frame(maxWidth: .infinity, alignment: .leading)
-                                        .background(
-                                            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                                .fill(Color(nsColor: .textBackgroundColor))
-                                        )
-                                        .overlay(
-                                            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                                .stroke(Color.secondary.opacity(0.18), lineWidth: 1)
-                                        )
-                                    }
-                                    .buttonStyle(.plain)
-                                    .accessibilityLabel(imageCard.accessibilityOpenLabel)
+                                    DesktopSearchImageCardView(imageCard: imageCard)
                                 }
                             }
                         }
@@ -17559,37 +17621,6 @@ struct DesktopSessionShellView: View {
                                 Text(row.1)
                                     .font(.body.monospaced())
                                     .frame(maxWidth: .infinity, alignment: .leading)
-                            }
-                        }
-
-                        if desktopAuthoritativeReplyProvenanceRenderState.sources.isEmpty {
-                            Text("Canonical runtime returned provenance posture without source rows. This shell stays read-only and does not claim that search executed locally.")
-                                .foregroundStyle(.secondary)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                        } else {
-                            VStack(alignment: .leading, spacing: 8) {
-                                Text("Cloud-authored sources")
-                                    .font(.subheadline.weight(.semibold))
-
-                                ForEach(desktopAuthoritativeReplyProvenanceRenderState.sources) { source in
-                                    VStack(alignment: .leading, spacing: 4) {
-                                        Text(source.title)
-                                            .font(.body.weight(.medium))
-                                            .frame(maxWidth: .infinity, alignment: .leading)
-
-                                        if let sourceURL = URL(string: source.url) {
-                                            Link(source.url, destination: sourceURL)
-                                                .font(.footnote)
-                                        } else {
-                                            Text(source.url)
-                                                .font(.footnote)
-                                                .foregroundStyle(.secondary)
-                                                .textSelection(.enabled)
-                                                .frame(maxWidth: .infinity, alignment: .leading)
-                                        }
-                                    }
-                                    .padding(.vertical, 2)
-                                }
                             }
                         }
 
@@ -19044,6 +19075,7 @@ struct DesktopSessionShellView: View {
                             imageID: $0.imageID,
                             imageKind: $0.imageKind,
                             approvedAssetRef: $0.approvedAssetRef,
+                            displayImageURL: $0.displayImageURL,
                             caption: $0.caption,
                             altText: $0.altText,
                             sourceLabel: $0.sourceLabel,
@@ -19212,6 +19244,7 @@ struct DesktopSessionShellView: View {
                             imageID: $0.imageID,
                             imageKind: $0.imageKind,
                             approvedAssetRef: $0.approvedAssetRef,
+                            displayImageURL: $0.displayImageURL,
                             caption: $0.caption,
                             altText: $0.altText,
                             sourceLabel: $0.sourceLabel,
@@ -19357,6 +19390,7 @@ struct DesktopSessionShellView: View {
                             imageID: $0.imageID,
                             imageKind: $0.imageKind,
                             approvedAssetRef: $0.approvedAssetRef,
+                            displayImageURL: $0.displayImageURL,
                             caption: $0.caption,
                             altText: $0.altText,
                             sourceLabel: $0.sourceLabel,

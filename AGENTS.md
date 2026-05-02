@@ -189,6 +189,26 @@ Public search remains read-only.
 
 Protected execution remains simulation and authority gated.
 
+Rule: Visual Search Presentation and Live Voice Proof
+
+Entity, company, person, product, winery, brand, organization, and public-entity search results must display relevant approved photos or images when available.
+
+Image cards must come from approved SearchImagePacket data and must not be fabricated.
+
+Placeholder-only image cards must not be presented as real photos.
+
+Small source pills must be compact, clickable, rounded, gray/shadow style, and visually close to JD's uploaded reference.
+
+Source pills must use accepted sources only and must not expose raw URLs, unix_ms, provider JSON, rejected sources, or trace/debug.
+
+Desktop must render approved packets only and must not call Brave, choose images, hold provider secrets, rank sources, or transform provider metadata into facts.
+
+TTS must speak clean answer text only, not source or image metadata.
+
+Real Desktop voice proof must record the exact captured transcript and cannot be replaced by typed proof.
+
+Protected execution must remain simulation and authority gated.
+
 Rule: Controlled Brave Re-Enable and Low-Volume Billing Proof
 
 Brave must remain OFF by default and may only be enabled by explicit controlled configuration.

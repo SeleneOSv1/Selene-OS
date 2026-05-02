@@ -400,6 +400,8 @@ pub struct VoiceTurnSearchImageCard {
     pub image_id: String,
     pub image_kind: String,
     pub approved_asset_ref: String,
+    pub safe_image_url: Option<String>,
+    pub thumbnail_url: Option<String>,
     pub source_page_url: String,
     pub source_page_domain: String,
     pub source_label: String,
@@ -15183,18 +15185,30 @@ fn stage5_web_presentation_from_tool_response(
 fn stage6_adapter_image_card_from_packet(
     image: &SearchImagePacket,
 ) -> Option<VoiceTurnSearchImageCard> {
+    let remote_display_enabled = parse_bool_env("SELENE_REMOTE_IMAGE_DISPLAY_ENABLED", false);
+    let remote_image_url = image
+        .thumbnail_url
+        .as_deref()
+        .or(image.safe_image_url.as_deref())
+        .filter(|url| adapter_source_link_public_http_url(url));
+    let fixture_display_allowed = !image.remote_image_load_allowed
+        && image.fixture_or_local_asset
+        && image.safe_image_url.is_none()
+        && image.thumbnail_url.is_none()
+        && adapter_stage6_fixture_asset_ref_allowed(&image.approved_asset_ref);
+    let remote_display_allowed = remote_display_enabled
+        && image.remote_image_load_allowed
+        && !image.fixture_or_local_asset
+        && image.rights_or_policy_status == "display_policy_approved"
+        && remote_image_url.is_some();
     if !image.display_allowed
         || !image.metadata_safe_for_user
         || image.metadata_only
-        || image.remote_image_load_allowed
-        || !image.fixture_or_local_asset
-        || image.safe_image_url.is_some()
-        || image.thumbnail_url.is_some()
         || image.display_denied_reason.is_some()
         || image.claim_refs.is_empty()
-        || !adapter_stage6_fixture_asset_ref_allowed(&image.approved_asset_ref)
         || !adapter_source_link_public_http_url(&image.source_page_url)
         || adapter_looks_like_raw_image_asset_url(&image.source_page_url)
+        || (!fixture_display_allowed && !remote_display_allowed)
     {
         return None;
     }
@@ -15210,10 +15224,27 @@ fn stage6_adapter_image_card_from_packet(
     {
         result_classes.push("STAGE6_ADAPTER_IMAGE_PAYLOAD_PASS".to_string());
     }
+    if remote_display_allowed
+        && !result_classes
+            .iter()
+            .any(|class| class == "STAGE6_ADAPTER_REMOTE_IMAGE_PAYLOAD_PASS")
+    {
+        result_classes.push("STAGE6_ADAPTER_REMOTE_IMAGE_PAYLOAD_PASS".to_string());
+    }
     Some(VoiceTurnSearchImageCard {
         image_id: truncate_ascii(&image.image_id, 128),
         image_kind: truncate_ascii(&image.image_kind, 64),
         approved_asset_ref: truncate_ascii(&image.approved_asset_ref, 128),
+        safe_image_url: image
+            .safe_image_url
+            .as_deref()
+            .filter(|url| remote_display_allowed && adapter_source_link_public_http_url(url))
+            .map(|url| truncate_ascii(url, 2048)),
+        thumbnail_url: image
+            .thumbnail_url
+            .as_deref()
+            .filter(|url| remote_display_allowed && adapter_source_link_public_http_url(url))
+            .map(|url| truncate_ascii(url, 2048)),
         source_page_url: truncate_ascii(&image.source_page_url, 2048),
         source_page_domain: truncate_ascii(&image.source_page_domain, 128),
         source_label: truncate_utf8(&image.source_label, 120),
@@ -15228,8 +15259,8 @@ fn stage6_adapter_image_card_from_packet(
             .collect(),
         display_allowed: true,
         metadata_safe_for_user: true,
-        remote_image_load_allowed: false,
-        fixture_or_local_asset: true,
+        remote_image_load_allowed: remote_display_allowed,
+        fixture_or_local_asset: fixture_display_allowed,
         display_rank: image.display_rank,
         result_classes,
     })
@@ -36362,6 +36393,98 @@ mod tests {
                 );
                 for forbidden in [
                     "fixture-image-a.png",
+                    "stage6_image",
+                    "image_url",
+                    "thumbnail_url",
+                    "debug trace",
+                    "source dump",
+                ] {
+                    assert!(
+                        !out.response_text.contains(forbidden),
+                        "forbidden Stage 6 response token {forbidden:?}: {}",
+                        out.response_text
+                    );
+                    assert!(
+                        !out.tts_text.contains(forbidden),
+                        "forbidden Stage 6 TTS token {forbidden:?}: {}",
+                        out.tts_text
+                    );
+                }
+            },
+        );
+
+        let requests = captured.lock().expect("captured request lock").clone();
+        assert_eq!(requests.len(), 1, "{requests:?}");
+    }
+
+    #[test]
+    fn stage6_adapter_transports_policy_approved_remote_image_cards_separately() {
+        let captured = Arc::new(Mutex::new(Vec::new()));
+        let endpoint = h409_spawn_brave_web_endpoint_sequence(
+            vec![
+                r#"{"web":{"results":[
+                {"title":"Test Company C official leadership","url":"https://test-source-c.test/leadership","description":"Test Person C is the CEO of Test Company C.; stage6_image_display=allow; stage6_image_kind=person_photo; stage6_image_asset=fixture-image-c.png; stage6_image_caption=Test Company C approved leadership image; stage6_image_alt=Test Company C approved leadership image; stage6_image_policy=display_policy_approved; stage6_image_entity=Test Company C; stage6_image_source_page=accepted_source; stage6_image_provider=stage6_fixture; stage6_image_provider_tier=fixture; stage6_image_relevance=9500; stage6_image_entity_score=9500; stage6_image_remote_load=allow; stage6_image_safe_url=https://cdn.test-source-c.test/images/leadership.jpg; stage6_image_thumbnail_url=https://cdn.test-source-c.test/thumbs/leadership.jpg"}
+            ]}}"#,
+            ],
+            Arc::clone(&captured),
+        );
+
+        with_isolated_device_vault(
+            "stage6_adapter_remote_image_payload",
+            &[("brave_search_api_key", "stage6-test-key")],
+            &[
+                ("BRAVE_SEARCH_WEB_URL", endpoint.as_str()),
+                ("BRAVE_SEARCH_NEWS_URL", endpoint.as_str()),
+                ("SELENE_PROXY_MODE", "off"),
+                ("SELENE_IMAGE_PROVIDERS_ENABLED", "0"),
+                ("SELENE_IMAGE_FETCH_ENABLED", "0"),
+                ("SELENE_REMOTE_IMAGE_DISPLAY_ENABLED", "1"),
+            ],
+            || {
+                let runtime = AdapterRuntime::default();
+                let mut req = base_request();
+                req.correlation_id = 6_603;
+                req.turn_id = 6_603;
+                req.device_turn_sequence = Some(6_603);
+                req.now_ns = Some(6_603);
+                req.thread_key = Some("stage6-adapter-remote-image-card".to_string());
+                req.app_platform = "DESKTOP".to_string();
+                req.audio_capture_ref = None;
+                req.user_text_final = Some("Who is the CEO of Test Company C?".to_string());
+                seed_desktop_voice_profile_for_request(
+                    &runtime,
+                    &mut req,
+                    "stage6_remote_image_payload",
+                );
+                let out = runtime
+                    .run_voice_turn(req)
+                    .expect("Stage 6 remote image runtime turn should complete");
+                assert_eq!(out.status, "ok", "{out:?}");
+                assert_eq!(out.outcome, "FINAL_TOOL", "{out:?}");
+                assert_eq!(out.tts_text, out.response_text);
+                assert_eq!(out.source_chips.len(), 1, "{out:?}");
+                assert_eq!(out.image_cards.len(), 1, "{out:?}");
+                let image = &out.image_cards[0];
+                assert!(image.display_allowed);
+                assert!(!image.fixture_or_local_asset);
+                assert!(image.remote_image_load_allowed);
+                assert_eq!(
+                    image.safe_image_url.as_deref(),
+                    Some("https://cdn.test-source-c.test/images/leadership.jpg")
+                );
+                assert_eq!(
+                    image.thumbnail_url.as_deref(),
+                    Some("https://cdn.test-source-c.test/thumbs/leadership.jpg")
+                );
+                assert_eq!(
+                    image.source_page_url,
+                    "https://test-source-c.test/leadership"
+                );
+                assert!(image
+                    .result_classes
+                    .contains(&"STAGE6_ADAPTER_REMOTE_IMAGE_PAYLOAD_PASS".to_string()));
+                for forbidden in [
+                    "https://cdn.test-source-c.test",
                     "stage6_image",
                     "image_url",
                     "thumbnail_url",

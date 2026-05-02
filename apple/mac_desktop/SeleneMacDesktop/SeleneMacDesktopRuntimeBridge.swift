@@ -50,6 +50,7 @@ struct AuthoritativeImageCard: Identifiable, Equatable {
     let imageID: String
     let imageKind: String
     let approvedAssetRef: String
+    let displayImageURL: URL?
     let caption: String
     let altText: String
     let sourceLabel: String
@@ -3500,12 +3501,23 @@ private func boundedAuthoritativeImageCards(
     }
 
     return cards.prefix(3).compactMap { card in
+        let localAssetURL = desktopApprovedLocalImageAssetURL(card.approvedAssetRef)
+        let localAssetAllowed = card.fixtureOrLocalAsset
+            && !card.remoteImageLoadAllowed
+            && desktopStage6FixtureAssetRefAllowed(card.approvedAssetRef)
+            && localAssetURL != nil
+        let remoteImageURL = desktopSafePublicImageURL(
+            (card.thumbnailURL ?? card.safeImageURL ?? "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        )
+        let remoteAssetAllowed = card.remoteImageLoadAllowed
+            && !card.fixtureOrLocalAsset
+            && remoteImageURL != nil
+
         guard card.displayAllowed,
               card.metadataSafeForUser,
-              card.fixtureOrLocalAsset,
-              !card.remoteImageLoadAllowed,
               !card.claimRefs.isEmpty,
-              desktopStage6FixtureAssetRefAllowed(card.approvedAssetRef)
+              (localAssetAllowed || remoteAssetAllowed)
         else {
             return nil
         }
@@ -3529,6 +3541,7 @@ private func boundedAuthoritativeImageCards(
             imageID: boundedDesktopString(card.imageID, maxLength: 96),
             imageKind: boundedDesktopString(card.imageKind, maxLength: 64),
             approvedAssetRef: boundedDesktopString(card.approvedAssetRef, maxLength: 128),
+            displayImageURL: remoteImageURL ?? localAssetURL,
             caption: boundedDesktopString(caption, maxLength: 160),
             altText: boundedDesktopString(altText, maxLength: 180),
             sourceLabel: boundedDesktopString(sourceLabel, maxLength: 120),
@@ -3553,6 +3566,17 @@ private func desktopStage6FixtureAssetRefAllowed(_ value: String) -> Bool {
             || scalar.value == 95
             || scalar.value == 46
     }
+}
+
+private func desktopApprovedLocalImageAssetURL(_ value: String) -> URL? {
+    let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard desktopStage6FixtureAssetRefAllowed(trimmed) else {
+        return nil
+    }
+    let resourceName = trimmed.hasSuffix(".png")
+        ? String(trimmed.dropLast(4))
+        : trimmed
+    return Bundle.main.url(forResource: resourceName, withExtension: "png")
 }
 
 private func boundedSourceLinkCitationCards(
@@ -3611,6 +3635,14 @@ private func desktopLooksLikeRawImageAssetURL(_ rawURL: String) -> Bool {
     }
     return ["jpg", "jpeg", "png", "gif", "webp", "avif", "svg", "bmp", "tiff", "ico"]
         .contains(String(extensionText))
+}
+
+private func desktopSafePublicImageURL(_ rawURL: String) -> URL? {
+    let trimmed = rawURL.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else {
+        return nil
+    }
+    return desktopSafePublicSourcePageURL(trimmed)
 }
 
 private func desktopSafePublicSourcePageURL(_ rawURL: String) -> URL? {
@@ -4217,6 +4249,8 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
         let imageID: String
         let imageKind: String
         let approvedAssetRef: String
+        let safeImageURL: String?
+        let thumbnailURL: String?
         let sourcePageURL: String
         let sourcePageDomain: String
         let sourceLabel: String
@@ -4233,6 +4267,8 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
             case imageID = "image_id"
             case imageKind = "image_kind"
             case approvedAssetRef = "approved_asset_ref"
+            case safeImageURL = "safe_image_url"
+            case thumbnailURL = "thumbnail_url"
             case sourcePageURL = "source_page_url"
             case sourcePageDomain = "source_page_domain"
             case sourceLabel = "source_label"

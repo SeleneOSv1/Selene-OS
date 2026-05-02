@@ -816,10 +816,32 @@ impl Validate for SearchImagePacket {
                 "unknown",
             ],
         )?;
-        validate_stage6_fixture_asset_ref(
-            "search_image.approved_asset_ref",
-            &self.approved_asset_ref,
-        )?;
+        let has_remote_image_url = self.safe_image_url.is_some() || self.thumbnail_url.is_some();
+        if self.remote_image_load_allowed {
+            if self.fixture_or_local_asset {
+                return Err(ContractViolation::InvalidValue {
+                    field: "search_image.fixture_or_local_asset",
+                    reason: "remote image cards must not be marked as fixture/local assets",
+                });
+            }
+            if !has_remote_image_url {
+                return Err(ContractViolation::InvalidValue {
+                    field: "search_image.safe_image_url",
+                    reason: "remote image display requires an approved image or thumbnail URL",
+                });
+            }
+            if !self.approved_asset_ref.is_empty() {
+                validate_stage6_fixture_asset_ref(
+                    "search_image.approved_asset_ref",
+                    &self.approved_asset_ref,
+                )?;
+            }
+        } else {
+            validate_stage6_fixture_asset_ref(
+                "search_image.approved_asset_ref",
+                &self.approved_asset_ref,
+            )?;
+        }
         if let Some(safe_image_url) = &self.safe_image_url {
             validate_safe_url("search_image.safe_image_url", safe_image_url)?;
             if !self.remote_image_load_allowed {
@@ -839,6 +861,12 @@ impl Validate for SearchImagePacket {
             }
         }
         validate_safe_url("search_image.source_page_url", &self.source_page_url)?;
+        if looks_like_raw_image_asset_url(&self.source_page_url) {
+            return Err(ContractViolation::InvalidValue {
+                field: "search_image.source_page_url",
+                reason: "image cards must link to a source page, not a raw image asset",
+            });
+        }
         validate_bounded_nonempty(
             "search_image.source_page_domain",
             &self.source_page_domain,
@@ -904,16 +932,18 @@ impl Validate for SearchImagePacket {
                 reason: "normal image cards must be allowed, metadata-safe, and claim-linked",
             });
         }
-        if self.remote_image_load_allowed && !self.fixture_or_local_asset {
+        if self.remote_image_load_allowed
+            && self.rights_or_policy_status != "display_policy_approved"
+        {
             return Err(ContractViolation::InvalidValue {
-                field: "search_image.remote_image_load_allowed",
-                reason: "Stage 6 normal payload permits fixture/local rendering only",
+                field: "search_image.rights_or_policy_status",
+                reason: "remote image display requires explicit display-policy approval",
             });
         }
-        if !self.fixture_or_local_asset {
+        if !self.remote_image_load_allowed && !self.fixture_or_local_asset {
             return Err(ContractViolation::InvalidValue {
                 field: "search_image.fixture_or_local_asset",
-                reason: "Stage 6 displayed image cards must use approved fixture/local assets",
+                reason: "image cards must use either approved fixture/local assets or explicitly approved remote image display",
             });
         }
         Ok(())
@@ -1495,6 +1525,21 @@ fn validate_safe_url(field: &'static str, value: &str) -> Result<(), ContractVio
         });
     }
     Ok(())
+}
+
+fn looks_like_raw_image_asset_url(url: &str) -> bool {
+    let path = url
+        .split_once("://")
+        .map(|(_, rest)| rest)
+        .unwrap_or(url)
+        .split(['?', '#'])
+        .next()
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    matches!(
+        path.rsplit('.').next().unwrap_or_default(),
+        "jpg" | "jpeg" | "png" | "gif" | "webp" | "avif" | "svg" | "bmp" | "tiff" | "ico"
+    )
 }
 
 fn validate_stage6_fixture_asset_ref(
