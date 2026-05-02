@@ -5,6 +5,7 @@
 2. `Build Sections 01–11` -> [docs/BUILD_SECTIONS/](BUILD_SECTIONS/)
 3. `Build Execution Order` -> [docs/SELENE_BUILD_EXECUTION_ORDER.md](SELENE_BUILD_EXECUTION_ORDER.md)
 4. `Authoritative Engine Inventory` -> [docs/SELENE_AUTHORITATIVE_ENGINE_INVENTORY.md](SELENE_AUTHORITATIVE_ENGINE_INVENTORY.md)
+5. `Canonical Master Build Plan` -> [docs/SELENE_CANONICAL_MASTER_BUILD_PLAN.md](SELENE_CANONICAL_MASTER_BUILD_PLAN.md)
 
 ## LEGACY ARCHITECTURE (ARCHIVED REFERENCE)
 The Option-B documentation listed below is retained as archived reference and is no longer the canonical Selene architecture law stack.
@@ -36,6 +37,7 @@ The Option-B documentation listed below is retained as archived reference and is
 - [BUILD_SECTIONS/](BUILD_SECTIONS/)
 - [SELENE_BUILD_EXECUTION_ORDER.md](SELENE_BUILD_EXECUTION_ORDER.md)
 - [SELENE_AUTHORITATIVE_ENGINE_INVENTORY.md](SELENE_AUTHORITATIVE_ENGINE_INVENTORY.md)
+- [SELENE_CANONICAL_MASTER_BUILD_PLAN.md](SELENE_CANONICAL_MASTER_BUILD_PLAN.md)
 - [01_ARCHITECTURE.md](01_ARCHITECTURE.md)
 - [00_DESIGN_TRUTH_OPTION_B.md](00_DESIGN_TRUTH_OPTION_B.md)
 - [02_BUILD_PLAN.md](02_BUILD_PLAN.md)
