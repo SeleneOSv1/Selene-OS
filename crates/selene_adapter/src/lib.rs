@@ -27234,6 +27234,125 @@ mod tests {
     }
 
     #[test]
+    fn final_e2e_voice_like_public_websearch_with_unverified_voice_identity_stays_public_read_only()
+    {
+        let captured = Arc::new(Mutex::new(Vec::new()));
+        let endpoint = h409_spawn_brave_web_endpoint_sequence(
+            vec![
+                r#"{"web":{"results":[
+                {"title":"fixture_company_alpha official public profile","url":"https://alpha-search-fixture.test/profile","description":"fixture_company_alpha is a synthetic public search fixture with a current public profile."}
+            ]}}"#,
+            ],
+            Arc::clone(&captured),
+        );
+
+        with_isolated_device_vault(
+            "final-e2e-public-voice-search-identity",
+            &[("brave_search_api_key", "final-e2e-fixture-key")],
+            &[
+                ("BRAVE_SEARCH_WEB_URL", endpoint.as_str()),
+                ("BRAVE_SEARCH_NEWS_URL", endpoint.as_str()),
+                ("SELENE_PROXY_MODE", "off"),
+                ("SELENE_PROVIDER_FANOUT_ENABLED", "0"),
+                ("SELENE_PROVIDER_RETRY_MAX", "0"),
+            ],
+            || {
+                let runtime = AdapterRuntime::default();
+                let mut req = base_request();
+                mark_request_as_live_desktop_capture_for_h417_tests(&mut req);
+                req.correlation_id = 951_201;
+                req.turn_id = 951_201;
+                req.device_turn_sequence = Some(951_201);
+                req.now_ns = Some(951_201);
+                req.thread_key = Some("final-e2e-public-voice-search-identity".to_string());
+                req.user_text_final =
+                    Some("Search the web for fixture_company_alpha public profile.".to_string());
+
+                let out = runtime
+                    .run_voice_turn(req)
+                    .expect("voice-like public websearch should complete");
+
+                assert_eq!(out.status, "ok", "{out:?}");
+                assert_eq!(out.outcome, "FINAL_TOOL", "{out:?}");
+                assert_no_h406_public_refusal(&out.response_text);
+                assert!(
+                    !out.response_text.contains("couldn't verify your identity"),
+                    "{}",
+                    out.response_text
+                );
+                assert_eq!(out.tts_text, out.response_text);
+                assert!(
+                    out.provenance.is_some() || !out.source_chips.is_empty(),
+                    "{out:?}"
+                );
+                assert!(out.deep_research.is_none());
+                assert!(out.image_cards.is_empty());
+            },
+        );
+
+        let requests = captured.lock().expect("captured request lock").clone();
+        assert_eq!(requests.len(), 1, "{requests:?}");
+    }
+
+    #[test]
+    fn final_e2e_voice_like_provider_off_public_websearch_does_not_become_identity_refusal() {
+        with_isolated_device_vault(
+            "final-e2e-public-voice-provider-off-identity",
+            &[],
+            &[
+                ("SELENE_SEARCH_PROVIDERS_ENABLED", "0"),
+                ("SELENE_PAID_SEARCH_PROVIDERS_ENABLED", "0"),
+                ("SELENE_WEB_SEARCH_ENABLED", "0"),
+                ("SELENE_DEEP_RESEARCH_ENABLED", "0"),
+                ("SELENE_NEWS_SEARCH_ENABLED", "0"),
+                ("SELENE_URL_FETCH_ENABLED", "0"),
+                ("SELENE_STARTUP_PROVIDER_PROBES_ENABLED", "0"),
+                ("SELENE_BRAVE_SEARCH_ENABLED", "0"),
+                ("SELENE_BRAVE_IMAGE_SEARCH_ENABLED", "0"),
+                ("SELENE_PROVIDER_FANOUT_ENABLED", "0"),
+                ("SELENE_PROVIDER_CALL_MAX_PER_TURN", "0"),
+                ("SELENE_PROVIDER_CALL_MAX_PER_ROUTE", "0"),
+                ("SELENE_PROVIDER_RETRY_MAX", "0"),
+            ],
+            || {
+                let runtime = AdapterRuntime::default();
+                let mut req = base_request();
+                mark_request_as_live_desktop_capture_for_h417_tests(&mut req);
+                req.correlation_id = 951_202;
+                req.turn_id = 951_202;
+                req.device_turn_sequence = Some(951_202);
+                req.now_ns = Some(951_202);
+                req.thread_key = Some("final-e2e-public-voice-provider-off-identity".to_string());
+                req.user_text_final =
+                    Some("Search the web for fixture_company_alpha public profile.".to_string());
+
+                let out = runtime
+                    .run_voice_turn(req)
+                    .expect("voice-like provider-off public websearch should complete");
+
+                assert_eq!(out.status, "ok", "{out:?}");
+                assert_eq!(out.outcome, "FINAL_TOOL", "{out:?}");
+                assert_no_h406_public_refusal(&out.response_text);
+                assert!(
+                    !out.response_text.contains("couldn't verify your identity"),
+                    "{}",
+                    out.response_text
+                );
+                assert_eq!(out.tts_text, out.response_text);
+                assert!(
+                    out.provenance
+                        .as_ref()
+                        .is_none_or(|provenance| provenance.sources.is_empty()),
+                    "{out:?}"
+                );
+                assert!(out.source_chips.is_empty(), "{out:?}");
+                assert!(out.deep_research.is_none());
+                assert!(out.image_cards.is_empty());
+            },
+        );
+    }
+
+    #[test]
     #[ignore = "requires a real Brave Search secret in the local Selene vault and live network access"]
     fn h383_live_brave_provider_desktop_route_returns_real_citation_metadata() {
         assert!(

@@ -7607,6 +7607,10 @@ fn low_risk_public_tool_response(out: &AppVoiceTurnExecutionOutcome) -> bool {
                 | "google_time_zone"
                 | "timezonedb"
                 | "brave"
+                | "ph1search_brave"
+                | "ph1search_brave_news_web_fallback"
+                | "ph1search_openai_fallback"
+                | "ph1search_deep_research_multi_query"
                 | "ph1search_url_fetch"
                 | "ph1e_builtin"
         )
@@ -10825,7 +10829,7 @@ fn build_tool_followup_ph1x_request(
         base_request.policy_context_ref,
         base_request.memory_candidates.clone(),
         None,
-        None,
+        base_request.nlp_output.clone(),
         Some(tool_response),
         None,
         base_request.locale.clone(),
@@ -21116,6 +21120,47 @@ mod tests {
             reason_code: Some(ReasonCodeId(0x4500_0412)),
         };
 
+        assert!(low_risk_public_deterministic_turn_answer(&out));
+
+        let source_metadata = SourceMetadata {
+            schema_version: selene_kernel_contracts::ph1e::PH1E_CONTRACT_VERSION,
+            provider_hint: Some("ph1search_brave".to_string()),
+            retrieved_at_unix_ms: 1,
+            sources: vec![SourceRef {
+                title: "fixture_company_alpha official profile".to_string(),
+                url: "https://alpha-search-fixture.test/profile".to_string(),
+            }],
+            web_answer_verification: None,
+        };
+        let tool_response = ToolResponse::ok_v1(
+            selene_kernel_contracts::ph1e::ToolRequestId(2),
+            selene_kernel_contracts::ph1e::ToolQueryHash(2),
+            ToolResult::WebSearch {
+                items: vec![ToolTextSnippet {
+                    title: "fixture_company_alpha official profile".to_string(),
+                    snippet: "fixture_company_alpha is a synthetic public search fixture."
+                        .to_string(),
+                    url: "https://alpha-search-fixture.test/profile".to_string(),
+                }],
+            },
+            source_metadata,
+            None,
+            ReasonCodeId(0x4500_0413),
+            CacheStatus::Miss,
+        )
+        .expect("public websearch tool response should build");
+        let out = AppVoiceTurnExecutionOutcome {
+            runtime_execution_envelope: out.runtime_execution_envelope.clone(),
+            voice_outcome: OsVoiceLiveTurnOutcome::NotInvokedDisabled,
+            session_state: SessionState::Active,
+            next_move: AppVoiceTurnNextMove::Respond,
+            ph1x_request: None,
+            ph1x_response: None,
+            dispatch_outcome: None,
+            tool_response: Some(tool_response),
+            response_text: Some("I found a public fixture result.".to_string()),
+            reason_code: Some(ReasonCodeId(0x4500_0413)),
+        };
         assert!(low_risk_public_deterministic_turn_answer(&out));
     }
 
