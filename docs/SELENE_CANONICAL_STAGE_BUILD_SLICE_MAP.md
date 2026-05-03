@@ -24,7 +24,7 @@ Large stages are build families. A future Codex build must select one exact slic
 
 | Slice | Focus | Input | Output | Proof |
 |---|---|---|---|---|
-| 8A | Audio substrate and listen-state reconciliation | ActivationPacket, SessionPacket | AudioScenePacket, ResponsivenessStatePacket | no execution from audio substrate |
+| 8A | Audio substrate and listen-state reconciliation | Stage7ActivationContextPacket, Stage5TurnAuthorityPacket where final commit is requested | Stage8TranscriptGatePacket, partial transcript preview, final transcript commit boundary | PROVEN_COMPLETE: audio/listen/partial transcript state cannot execute/search/speak/call providers/identify/authorize/route tools/connector-write/protected-mutate; final transcript commit requires Stage 5 current-turn authority; background/self-echo/non-user audio is blocked; record audio remains artifact-only. |
 | 8B | VAD/endpointing/partial-vs-final transcript | AudioScenePacket | TurnCandidatePacket, CommittedTurnPacket | partial transcript no-execution, final transcript commit |
 | 8C | Listening lab scene/noise/echo/diarization | AudioScenePacket | ForegroundSpeakerPacket, AddressedToSelenePacket | background/non-user speech block |
 | 8D | Transcript confidence, alternatives, protected slot gate | CommittedTurnPacket | ProtectedSlotConfidencePacket, ClarificationQuestionPacket | no protected audio guessing |
@@ -105,10 +105,10 @@ Large stages are build families. A future Codex build must select one exact slic
 | 30E | Custom assistant builder/store | AssistantDefinitionPacket | assistant release artifact | governance proof |
 | 30F | Self-heal/dev lane | dev route | proposal artifact | no uncontrolled shell/tool bypass |
 
-## Next Slice After Stage 7A
+## Next Slice After Stage 8A
 
 ```text
-Stage 8A - Voice I/O, Listen State, Transcript Gate, And Turn Boundary Reconciliation
+Stage 8B - VAD, Endpointing, Partial-Versus-Final Transcript Commit, And Confidence Gate Reconciliation
 ```
 
-Stage 7A is PROVEN_COMPLETE. It added the minimal runtime-owned `Stage7ActivationContextPacket` carrier, preserved `PH1.W`, `ph1wake_training`, Stage 4 activation packets, Stage 5 session/current-turn authority, and Stage 6 access-context references as repo truth, and did not build live STT, TTS, Voice ID matching, search, native UI redesign, protected execution, or provider/model routing.
+Stage 8A is PROVEN_COMPLETE. It added the minimal runtime-owned `Stage8TranscriptGatePacket` carrier, preserved PH1.K, PH1.C, PH1.LISTEN, Stage 7 activation, Stage 5 current-turn authority, and adapter voice surfaces as repo truth, and did not build live mic capture, live STT/TTS, Voice ID matching, understanding, routing, search, native UI redesign, protected execution, or provider/model routing.

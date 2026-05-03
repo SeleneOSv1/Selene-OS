@@ -79,9 +79,9 @@ After every build, update this section before final reporting.
 | Field | Current Value |
 |---|---|
 | Current active stage | Stage 8 |
-| Current active build | Stage 8A - Voice I/O, Listen State, Transcript Gate, And Turn Boundary Reconciliation |
-| Next build after current stage passes | Stage 9 - Voice ID |
-| Last completed stage | Stage 7A - Wake, Side Button, And Activation Stack Reconciliation |
+| Current active build | Stage 8B - VAD, Endpointing, Partial-Versus-Final Transcript Commit, And Confidence Gate Reconciliation |
+| Next build after current stage passes | Stage 8C - Listening Lab Scene, Noise, Echo, Diarization, Foreground Speaker, And Addressed-To-Selene Reconciliation |
+| Last completed stage | Stage 8A - Voice I/O, Listen State, Transcript Gate, And Turn Boundary Reconciliation |
 | Stages blocked | None yet |
 | Plan drift allowed | No |
 
@@ -1813,6 +1813,8 @@ Next if passed:
 
 Status: PARTIALLY_BUILT
 
+Stage 8A status: PROVEN_COMPLETE
+
 Build:
 
 - `PH1.K` voice runtime audio substrate;
@@ -1927,9 +1929,19 @@ Proof:
 - TTS self-echo false-trigger-rate proof;
 - English and Chinese voice smoke where required by build.
 
+Stage 8A proof update:
+
+- Existing PH1.K, PH1.C, PH1.LISTEN, PH1.LANG, PH1.PRON, PH1.VOICE.ID posture, Desktop mic producer, voice ingress proto, capture bundle tests, Stage 4 activation, Stage 5 current-turn authority, Stage 6 access context, and Stage 7 activation context were crosswalked and not rebuilt as duplicate voice/listen/STT engines.
+- `Stage8TranscriptGatePacket`, `Stage8TranscriptGateKind`, and `Stage8VoiceWorkAuthority` now provide the minimal runtime-owned audio/listen/transcript boundary carrier in `runtime_ingress_turn_foundation.rs`.
+- Stage 8A proves audio substrate can update listen state only; partial transcripts are preview-only and cannot commit or enter understanding; final transcript commit requires Stage 5 current committed-turn authority and Stage 7 activation context; background/non-user/TTS self-echo audio cannot create a user turn; and record-mode audio remains artifact-only.
+- Stage 8A did not add live microphone capture, live STT, live TTS, Voice ID matching, understanding, routing, search, native UI redesign, provider calls, connector writes, protected execution, or raw-audio retention.
+- Instruction path reconciliation: `crates/selene_adapter/src/bin/desktop_mic_producer.rs` was requested for inspection/allowlisting, but repo truth has `crates/selene_adapter/src/desktop_mic_producer.rs`; no duplicate binary file was created.
+- Full STT WER/CER, noisy/far-field/overlap/diarization/accent benchmarks, VAD/endpointing confidence gates, listening lab corpus, and word-level timestamp calibration remain deferred to later Stage 8 slices.
+- Stage 8B is required before Stage 9A.
+
 Next if passed:
 
-- Stage 9 - Voice ID Stack.
+- Stage 8B - VAD, Endpointing, Partial-Versus-Final Transcript Commit, And Confidence Gate Reconciliation.
 
 ## Stage 9 - Voice ID Stack
 

@@ -25,7 +25,7 @@ use crate::runtime_request_foundation::{
 use crate::runtime_session_foundation::{
     RuntimeSessionFoundation, SessionAccessClass, SessionFoundationError,
     SessionFoundationErrorKind, SessionRuntimeProjection, SessionTurnDeferred, SessionTurnPermit,
-    SessionTurnResolution,
+    SessionTurnResolution, Stage5TurnAuthorityDisposition, Stage5TurnAuthorityPacket,
 };
 
 const MAX_AUTHORIZATION_LEN: usize = 512;
@@ -45,6 +45,14 @@ mod reason_codes {
     pub const STAGE7_EXPLICIT_ACTIVATION_ONLY: &str = "stage7_explicit_activation_only";
     pub const STAGE7_SIDE_BUTTON_EXPLICIT_ONLY: &str = "stage7_side_button_explicit_only";
     pub const STAGE7_RECORD_ARTIFACT_DEFERRED: &str = "stage7_record_artifact_deferred";
+    pub const STAGE8_AUDIO_SUBSTRATE_ONLY: &str = "stage8_audio_substrate_only";
+    pub const STAGE8_PARTIAL_TRANSCRIPT_PREVIEW_ONLY: &str =
+        "stage8_partial_transcript_preview_only";
+    pub const STAGE8_FINAL_TRANSCRIPT_COMMIT_BOUNDARY: &str =
+        "stage8_final_transcript_commit_boundary";
+    pub const STAGE8_BACKGROUND_OR_SELF_ECHO_BLOCKED: &str =
+        "stage8_background_or_self_echo_blocked";
+    pub const STAGE8_RECORD_AUDIO_ARTIFACT_ONLY: &str = "stage8_record_audio_artifact_only";
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -754,6 +762,621 @@ impl Validate for Stage7ActivationContextPacket {
                     return Err(ContractViolation::InvalidValue {
                         field: "stage7_activation_context_packet",
                         reason: "record activation remains deferred to the artifact lane",
+                    });
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stage8TranscriptGateKind {
+    AudioSubstrateOnly,
+    PartialTranscriptPreviewOnly,
+    FinalTranscriptCommitBoundary,
+    BackgroundOrSelfEchoBlocked,
+    RecordAudioArtifactOnly,
+}
+
+impl Stage8TranscriptGateKind {
+    pub const fn default_reason_code(self) -> &'static str {
+        match self {
+            Stage8TranscriptGateKind::AudioSubstrateOnly => {
+                reason_codes::STAGE8_AUDIO_SUBSTRATE_ONLY
+            }
+            Stage8TranscriptGateKind::PartialTranscriptPreviewOnly => {
+                reason_codes::STAGE8_PARTIAL_TRANSCRIPT_PREVIEW_ONLY
+            }
+            Stage8TranscriptGateKind::FinalTranscriptCommitBoundary => {
+                reason_codes::STAGE8_FINAL_TRANSCRIPT_COMMIT_BOUNDARY
+            }
+            Stage8TranscriptGateKind::BackgroundOrSelfEchoBlocked => {
+                reason_codes::STAGE8_BACKGROUND_OR_SELF_ECHO_BLOCKED
+            }
+            Stage8TranscriptGateKind::RecordAudioArtifactOnly => {
+                reason_codes::STAGE8_RECORD_AUDIO_ARTIFACT_ONLY
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Stage8VoiceWorkAuthority {
+    pub can_update_listen_state: bool,
+    pub can_update_preview: bool,
+    pub can_emit_committed_turn: bool,
+    pub can_enter_understanding: bool,
+    pub can_understand_intent: bool,
+    pub can_answer: bool,
+    pub can_search: bool,
+    pub can_call_providers: bool,
+    pub can_trigger_voice_id_matching: bool,
+    pub can_authorize: bool,
+    pub can_route_tools: bool,
+    pub can_emit_tts: bool,
+    pub can_execute_protected_mutation: bool,
+    pub can_connector_write: bool,
+    pub can_update_memory_persona_emotion: bool,
+}
+
+impl Stage8VoiceWorkAuthority {
+    pub const fn listen_state_only() -> Self {
+        Self {
+            can_update_listen_state: true,
+            can_update_preview: false,
+            can_emit_committed_turn: false,
+            can_enter_understanding: false,
+            can_understand_intent: false,
+            can_answer: false,
+            can_search: false,
+            can_call_providers: false,
+            can_trigger_voice_id_matching: false,
+            can_authorize: false,
+            can_route_tools: false,
+            can_emit_tts: false,
+            can_execute_protected_mutation: false,
+            can_connector_write: false,
+            can_update_memory_persona_emotion: false,
+        }
+    }
+
+    pub const fn preview_only() -> Self {
+        Self {
+            can_update_listen_state: true,
+            can_update_preview: true,
+            can_emit_committed_turn: false,
+            can_enter_understanding: false,
+            can_understand_intent: false,
+            can_answer: false,
+            can_search: false,
+            can_call_providers: false,
+            can_trigger_voice_id_matching: false,
+            can_authorize: false,
+            can_route_tools: false,
+            can_emit_tts: false,
+            can_execute_protected_mutation: false,
+            can_connector_write: false,
+            can_update_memory_persona_emotion: false,
+        }
+    }
+
+    pub const fn final_transcript_boundary() -> Self {
+        Self {
+            can_update_listen_state: true,
+            can_update_preview: false,
+            can_emit_committed_turn: true,
+            can_enter_understanding: true,
+            can_understand_intent: false,
+            can_answer: false,
+            can_search: false,
+            can_call_providers: false,
+            can_trigger_voice_id_matching: false,
+            can_authorize: false,
+            can_route_tools: false,
+            can_emit_tts: false,
+            can_execute_protected_mutation: false,
+            can_connector_write: false,
+            can_update_memory_persona_emotion: false,
+        }
+    }
+
+    pub const fn blocked_or_artifact_only() -> Self {
+        Self {
+            can_update_listen_state: false,
+            can_update_preview: false,
+            can_emit_committed_turn: false,
+            can_enter_understanding: false,
+            can_understand_intent: false,
+            can_answer: false,
+            can_search: false,
+            can_call_providers: false,
+            can_trigger_voice_id_matching: false,
+            can_authorize: false,
+            can_route_tools: false,
+            can_emit_tts: false,
+            can_execute_protected_mutation: false,
+            can_connector_write: false,
+            can_update_memory_persona_emotion: false,
+        }
+    }
+
+    pub const fn can_route_or_mutate(self) -> bool {
+        self.can_understand_intent
+            || self.can_answer
+            || self.can_search
+            || self.can_call_providers
+            || self.can_trigger_voice_id_matching
+            || self.can_authorize
+            || self.can_route_tools
+            || self.can_emit_tts
+            || self.can_execute_protected_mutation
+            || self.can_connector_write
+            || self.can_update_memory_persona_emotion
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Stage8TranscriptGatePacket {
+    pub activation_context: Stage7ActivationContextPacket,
+    pub boundary_kind: Stage8TranscriptGateKind,
+    pub reason_code: &'static str,
+    pub audio_scene_id: String,
+    pub transcript_id: Option<String>,
+    pub transcript_text: Option<String>,
+    pub exact_transcript_hash: Option<String>,
+    pub partial_revision_id: Option<u32>,
+    pub confidence_bp: Option<u16>,
+    pub language_tag: Option<String>,
+    pub session_id: Option<SessionId>,
+    pub turn_id: Option<TurnId>,
+    pub consent_state_id: Option<String>,
+    pub device_trust_id: Option<String>,
+    pub provider_budget_id: Option<String>,
+    pub access_context_id: Option<String>,
+    pub audit_id: Option<String>,
+    pub candidate_preview: Option<Stage4TurnBoundaryPacket>,
+    pub committed_turn: Option<Stage4TurnBoundaryPacket>,
+    pub stage5_turn_authority: Option<Stage5TurnAuthorityPacket>,
+    pub tts_self_echo_active: bool,
+    pub background_speech_detected: bool,
+    pub foreground_user_speech: bool,
+    pub addressed_to_selene: bool,
+    pub record_mode_audio: bool,
+    pub work_authority: Stage8VoiceWorkAuthority,
+}
+
+impl Stage8TranscriptGatePacket {
+    pub fn audio_substrate_only(
+        activation_context: Stage7ActivationContextPacket,
+        audio_scene_id: impl Into<String>,
+    ) -> Result<Self, ContractViolation> {
+        let packet = Self::base(
+            activation_context,
+            Stage8TranscriptGateKind::AudioSubstrateOnly,
+            audio_scene_id.into(),
+            Stage8VoiceWorkAuthority::listen_state_only(),
+        );
+        packet.validate()?;
+        Ok(packet)
+    }
+
+    pub fn partial_transcript_preview(
+        activation_context: Stage7ActivationContextPacket,
+        audio_scene_id: impl Into<String>,
+        transcript_id: impl Into<String>,
+        transcript_text: impl Into<String>,
+        confidence_bp: u16,
+        partial_revision_id: u32,
+    ) -> Result<Self, ContractViolation> {
+        let candidate_preview = Stage4TurnBoundaryPacket::candidate_preview(
+            activation_context.activation.clone(),
+            Some(CanonicalTurnModality::Voice),
+        )?;
+        let transcript_text = transcript_text.into();
+        let packet = Self {
+            transcript_id: Some(transcript_id.into()),
+            transcript_text: Some(transcript_text.clone()),
+            exact_transcript_hash: Some(stage8_exact_transcript_hash(&transcript_text)),
+            partial_revision_id: Some(partial_revision_id),
+            confidence_bp: Some(confidence_bp),
+            candidate_preview: Some(candidate_preview),
+            ..Self::base(
+                activation_context,
+                Stage8TranscriptGateKind::PartialTranscriptPreviewOnly,
+                audio_scene_id.into(),
+                Stage8VoiceWorkAuthority::preview_only(),
+            )
+        };
+        packet.validate()?;
+        Ok(packet)
+    }
+
+    pub fn final_transcript_commit(
+        activation_context: Stage7ActivationContextPacket,
+        stage5_turn_authority: Stage5TurnAuthorityPacket,
+        audio_scene_id: impl Into<String>,
+        transcript_id: impl Into<String>,
+        transcript_text: impl Into<String>,
+        language_tag: impl Into<String>,
+        confidence_bp: u16,
+    ) -> Result<Self, ContractViolation> {
+        let turn_id = stage5_turn_authority
+            .turn_id
+            .ok_or(ContractViolation::InvalidValue {
+                field: "stage8_transcript_gate_packet.stage5_turn_authority.turn_id",
+                reason: "final transcript commit requires current turn id",
+            })?;
+        let device_turn_sequence =
+            stage5_turn_authority
+                .device_turn_sequence
+                .ok_or(ContractViolation::InvalidValue {
+                    field:
+                        "stage8_transcript_gate_packet.stage5_turn_authority.device_turn_sequence",
+                    reason: "final transcript commit requires device turn sequence",
+                })?;
+        let committed_turn = Stage4TurnBoundaryPacket::committed_live_turn(
+            activation_context.activation.clone(),
+            turn_id,
+            device_turn_sequence,
+            CanonicalTurnModality::Voice,
+        )?;
+        let transcript_text = transcript_text.into();
+        let packet = Self {
+            transcript_id: Some(transcript_id.into()),
+            transcript_text: Some(transcript_text.clone()),
+            exact_transcript_hash: Some(stage8_exact_transcript_hash(&transcript_text)),
+            confidence_bp: Some(confidence_bp),
+            language_tag: Some(language_tag.into()),
+            session_id: Some(stage5_turn_authority.session_id),
+            turn_id: Some(turn_id),
+            committed_turn: Some(committed_turn),
+            stage5_turn_authority: Some(stage5_turn_authority),
+            ..Self::base(
+                activation_context,
+                Stage8TranscriptGateKind::FinalTranscriptCommitBoundary,
+                audio_scene_id.into(),
+                Stage8VoiceWorkAuthority::final_transcript_boundary(),
+            )
+        };
+        packet.validate()?;
+        Ok(packet)
+    }
+
+    pub fn blocked_background_or_self_echo(
+        activation_context: Stage7ActivationContextPacket,
+        audio_scene_id: impl Into<String>,
+        tts_self_echo_active: bool,
+        background_speech_detected: bool,
+        foreground_user_speech: bool,
+        addressed_to_selene: bool,
+    ) -> Result<Self, ContractViolation> {
+        let packet = Self {
+            tts_self_echo_active,
+            background_speech_detected,
+            foreground_user_speech,
+            addressed_to_selene,
+            ..Self::base(
+                activation_context,
+                Stage8TranscriptGateKind::BackgroundOrSelfEchoBlocked,
+                audio_scene_id.into(),
+                Stage8VoiceWorkAuthority::blocked_or_artifact_only(),
+            )
+        };
+        packet.validate()?;
+        Ok(packet)
+    }
+
+    pub fn record_audio_artifact_only(
+        activation_context: Stage7ActivationContextPacket,
+        audio_scene_id: impl Into<String>,
+    ) -> Result<Self, ContractViolation> {
+        let packet = Self {
+            record_mode_audio: true,
+            foreground_user_speech: false,
+            addressed_to_selene: false,
+            ..Self::base(
+                activation_context,
+                Stage8TranscriptGateKind::RecordAudioArtifactOnly,
+                audio_scene_id.into(),
+                Stage8VoiceWorkAuthority::blocked_or_artifact_only(),
+            )
+        };
+        packet.validate()?;
+        Ok(packet)
+    }
+
+    pub const fn can_route_or_mutate(&self) -> bool {
+        self.work_authority.can_route_or_mutate()
+    }
+
+    pub const fn can_emit_committed_turn(&self) -> bool {
+        self.work_authority.can_emit_committed_turn
+    }
+
+    pub const fn is_preview_only(&self) -> bool {
+        matches!(
+            self.boundary_kind,
+            Stage8TranscriptGateKind::PartialTranscriptPreviewOnly
+        ) && self.candidate_preview.is_some()
+            && self.committed_turn.is_none()
+            && !self.work_authority.can_emit_committed_turn
+            && !self.work_authority.can_enter_understanding
+    }
+
+    fn base(
+        activation_context: Stage7ActivationContextPacket,
+        boundary_kind: Stage8TranscriptGateKind,
+        audio_scene_id: String,
+        work_authority: Stage8VoiceWorkAuthority,
+    ) -> Self {
+        Self {
+            session_id: activation_context.session_id,
+            turn_id: None,
+            consent_state_id: activation_context.consent_state_id.clone(),
+            device_trust_id: activation_context.device_trust_id.clone(),
+            provider_budget_id: activation_context.provider_budget_id.clone(),
+            access_context_id: activation_context.access_context_id.clone(),
+            audit_id: activation_context.audit_id.clone(),
+            reason_code: boundary_kind.default_reason_code(),
+            boundary_kind,
+            audio_scene_id,
+            transcript_id: None,
+            transcript_text: None,
+            exact_transcript_hash: None,
+            partial_revision_id: None,
+            confidence_bp: None,
+            language_tag: None,
+            candidate_preview: None,
+            committed_turn: None,
+            stage5_turn_authority: None,
+            tts_self_echo_active: false,
+            background_speech_detected: false,
+            foreground_user_speech: true,
+            addressed_to_selene: true,
+            record_mode_audio: false,
+            work_authority,
+            activation_context,
+        }
+    }
+}
+
+impl Validate for Stage8TranscriptGatePacket {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        self.activation_context.validate()?;
+        validate_stage4_ref(
+            "stage8_transcript_gate_packet.audio_scene_id",
+            &self.audio_scene_id,
+        )?;
+        validate_stage4_optional_ref(
+            "stage8_transcript_gate_packet.transcript_id",
+            self.transcript_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage8_transcript_gate_packet.exact_transcript_hash",
+            self.exact_transcript_hash.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage8_transcript_gate_packet.consent_state_id",
+            self.consent_state_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage8_transcript_gate_packet.device_trust_id",
+            self.device_trust_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage8_transcript_gate_packet.provider_budget_id",
+            self.provider_budget_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage8_transcript_gate_packet.access_context_id",
+            self.access_context_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage8_transcript_gate_packet.audit_id",
+            self.audit_id.as_deref(),
+        )?;
+        if self.reason_code != self.boundary_kind.default_reason_code() {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage8_transcript_gate_packet.reason_code",
+                reason: "must match boundary kind",
+            });
+        }
+        if self.work_authority.can_route_or_mutate() {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage8_transcript_gate_packet.work_authority",
+                reason: "voice/listen/transcript boundary cannot route tools, search, providers, TTS, identity, authority, memory, connector writes, or protected execution",
+            });
+        }
+        if matches!(self.confidence_bp, Some(confidence_bp) if confidence_bp > 10_000) {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage8_transcript_gate_packet.confidence_bp",
+                reason: "must be <= 10000",
+            });
+        }
+        if matches!(self.partial_revision_id, Some(0)) {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage8_transcript_gate_packet.partial_revision_id",
+                reason: "must be > 0 when present",
+            });
+        }
+        if let Some(language_tag) = self.language_tag.as_ref() {
+            if language_tag.trim().is_empty() || language_tag.len() > 32 || !language_tag.is_ascii()
+            {
+                return Err(ContractViolation::InvalidValue {
+                    field: "stage8_transcript_gate_packet.language_tag",
+                    reason: "must be bounded non-empty ASCII",
+                });
+            }
+        }
+        if let Some(text) = self.transcript_text.as_ref() {
+            if text.trim().is_empty() || text.len() > MAX_TEXT_BYTES {
+                return Err(ContractViolation::InvalidValue {
+                    field: "stage8_transcript_gate_packet.transcript_text",
+                    reason: "must be bounded non-empty text",
+                });
+            }
+            let Some(hash) = self.exact_transcript_hash.as_ref() else {
+                return Err(ContractViolation::InvalidValue {
+                    field: "stage8_transcript_gate_packet.exact_transcript_hash",
+                    reason: "transcript text requires exact transcript hash",
+                });
+            };
+            if hash != &stage8_exact_transcript_hash(text) {
+                return Err(ContractViolation::InvalidValue {
+                    field: "stage8_transcript_gate_packet.exact_transcript_hash",
+                    reason: "must match exact transcript text",
+                });
+            }
+        }
+        if !matches!(
+            self.boundary_kind,
+            Stage8TranscriptGateKind::BackgroundOrSelfEchoBlocked
+                | Stage8TranscriptGateKind::RecordAudioArtifactOnly
+        ) && (self.tts_self_echo_active
+            || self.background_speech_detected
+            || !self.foreground_user_speech
+            || !self.addressed_to_selene)
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage8_transcript_gate_packet.audio_posture",
+                reason:
+                    "background, non-user, or TTS self-echo posture must use the blocked boundary",
+            });
+        }
+        if !matches!(
+            self.boundary_kind,
+            Stage8TranscriptGateKind::RecordAudioArtifactOnly
+        ) && self.record_mode_audio
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage8_transcript_gate_packet.record_mode_audio",
+                reason: "record-mode audio must use the artifact-only boundary",
+            });
+        }
+
+        match self.boundary_kind {
+            Stage8TranscriptGateKind::AudioSubstrateOnly => {
+                if !self.work_authority.can_update_listen_state
+                    || self.transcript_id.is_some()
+                    || self.transcript_text.is_some()
+                    || self.candidate_preview.is_some()
+                    || self.committed_turn.is_some()
+                    || self.stage5_turn_authority.is_some()
+                    || self.record_mode_audio
+                {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "stage8_transcript_gate_packet",
+                        reason: "audio substrate may update listen state only",
+                    });
+                }
+                validate_stage8_voice_activation(&self.activation_context)?;
+            }
+            Stage8TranscriptGateKind::PartialTranscriptPreviewOnly => {
+                validate_stage8_voice_activation(&self.activation_context)?;
+                let Some(candidate_preview) = self.candidate_preview.as_ref() else {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "stage8_transcript_gate_packet.candidate_preview",
+                        reason: "partial transcript preview requires candidate preview boundary",
+                    });
+                };
+                candidate_preview.validate()?;
+                if candidate_preview.is_committed_live_turn()
+                    || self.committed_turn.is_some()
+                    || self.stage5_turn_authority.is_some()
+                    || self.transcript_id.is_none()
+                    || self.transcript_text.is_none()
+                    || self.partial_revision_id.is_none()
+                    || !self.work_authority.can_update_preview
+                    || self.work_authority.can_emit_committed_turn
+                    || self.work_authority.can_enter_understanding
+                {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "stage8_transcript_gate_packet",
+                        reason: "partial transcripts are preview-only and cannot commit or enter understanding",
+                    });
+                }
+            }
+            Stage8TranscriptGateKind::FinalTranscriptCommitBoundary => {
+                validate_stage8_voice_activation(&self.activation_context)?;
+                let Some(authority) = self.stage5_turn_authority.as_ref() else {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "stage8_transcript_gate_packet.stage5_turn_authority",
+                        reason: "final transcript commit requires Stage 5 current-turn authority",
+                    });
+                };
+                authority.validate()?;
+                let Some(committed_turn) = self.committed_turn.as_ref() else {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "stage8_transcript_gate_packet.committed_turn",
+                        reason: "final transcript commit requires committed live turn boundary",
+                    });
+                };
+                committed_turn.validate()?;
+                if authority.disposition != Stage5TurnAuthorityDisposition::CurrentCommittedTurn
+                    || !authority.can_enter_understanding()
+                    || authority.can_route_any_work()
+                    || self.session_id != Some(authority.session_id)
+                    || self.turn_id != authority.turn_id
+                    || self.activation_context.session_id != Some(authority.session_id)
+                    || self.activation_context.activation.session_hint != Some(authority.session_id)
+                    || !committed_turn.is_committed_live_turn()
+                    || committed_turn.turn_id != authority.turn_id
+                    || committed_turn.device_turn_sequence != authority.device_turn_sequence
+                    || committed_turn.modality != Some(CanonicalTurnModality::Voice)
+                    || self.candidate_preview.is_some()
+                    || self.transcript_id.is_none()
+                    || self.transcript_text.is_none()
+                    || self.language_tag.is_none()
+                    || self.confidence_bp.is_none()
+                    || !self.work_authority.can_emit_committed_turn
+                    || !self.work_authority.can_enter_understanding
+                {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "stage8_transcript_gate_packet",
+                        reason: "final transcript commit must be the only voice path to a current committed live turn",
+                    });
+                }
+            }
+            Stage8TranscriptGateKind::BackgroundOrSelfEchoBlocked => {
+                if !(self.tts_self_echo_active
+                    || self.background_speech_detected
+                    || !self.foreground_user_speech
+                    || !self.addressed_to_selene)
+                    || self.transcript_id.is_some()
+                    || self.transcript_text.is_some()
+                    || self.candidate_preview.is_some()
+                    || self.committed_turn.is_some()
+                    || self.stage5_turn_authority.is_some()
+                    || self.work_authority.can_update_listen_state
+                    || self.work_authority.can_emit_committed_turn
+                    || self.work_authority.can_enter_understanding
+                {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "stage8_transcript_gate_packet",
+                        reason: "background, non-user, or TTS self-echo audio must be blocked before turns",
+                    });
+                }
+            }
+            Stage8TranscriptGateKind::RecordAudioArtifactOnly => {
+                if self.activation_context.disposition
+                    != Stage7ActivationDisposition::RecordArtifactDeferred
+                    || !self.record_mode_audio
+                    || self.foreground_user_speech
+                    || self.addressed_to_selene
+                    || self.transcript_id.is_some()
+                    || self.transcript_text.is_some()
+                    || self.candidate_preview.is_some()
+                    || self.committed_turn.is_some()
+                    || self.stage5_turn_authority.is_some()
+                    || self.work_authority.can_update_listen_state
+                    || self.work_authority.can_emit_committed_turn
+                    || self.work_authority.can_enter_understanding
+                {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "stage8_transcript_gate_packet",
+                        reason:
+                            "record-mode audio remains artifact-only and cannot become live chat",
                     });
                 }
             }
@@ -3007,6 +3630,33 @@ fn revalidate_onboarding_continue_request(
     .map(|_| ())
 }
 
+fn stage8_exact_transcript_hash(text: &str) -> String {
+    let mut hash = 0xcbf29ce484222325_u64;
+    for byte in text.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    format!("stage8fnv64-{hash:016x}")
+}
+
+fn validate_stage8_voice_activation(
+    activation_context: &Stage7ActivationContextPacket,
+) -> Result<(), ContractViolation> {
+    if activation_context.disposition == Stage7ActivationDisposition::RecordArtifactDeferred {
+        return Err(ContractViolation::InvalidValue {
+            field: "stage8_transcript_gate_packet.activation_context",
+            reason: "record activation cannot start live voice/listen state",
+        });
+    }
+    if activation_context.can_perform_downstream_work() {
+        return Err(ContractViolation::InvalidValue {
+            field: "stage8_transcript_gate_packet.activation_context",
+            reason: "Stage 7 activation context must remain non-authoritative",
+        });
+    }
+    Ok(())
+}
+
 fn validate_stage4_optional_ref(
     field: &'static str,
     value: Option<&str>,
@@ -4063,6 +4713,201 @@ mod tests {
         assert!(packet
             .with_wake_refs("wake-event-stage7", "wake-artifact-stage7")
             .is_err());
+    }
+
+    fn stage8_explicit_mic_activation(
+        session_id: Option<SessionId>,
+    ) -> Stage7ActivationContextPacket {
+        let mut activation = stage4_activation(
+            Stage4ActivationSource::ExplicitMic,
+            RuntimeEntryTrigger::Explicit,
+        );
+        activation.session_hint = session_id;
+        activation.validate().expect("stage 8 activation");
+        Stage7ActivationContextPacket::from_activation(activation, "activation-stage8-explicit")
+            .expect("stage 8 activation context")
+            .with_access_context_id("access-context-stage8")
+            .expect("access context")
+    }
+
+    fn stage8_record_activation() -> Stage7ActivationContextPacket {
+        Stage7ActivationContextPacket::from_activation(
+            stage4_activation(
+                Stage4ActivationSource::RecordButton,
+                RuntimeEntryTrigger::Explicit,
+            ),
+            "activation-stage8-record",
+        )
+        .expect("stage 8 record activation context")
+    }
+
+    fn stage8_current_authority() -> Stage5TurnAuthorityPacket {
+        Stage5TurnAuthorityPacket::current_committed(
+            SessionId(88),
+            TurnId(8),
+            "device-stage8",
+            4,
+            SessionState::Active,
+        )
+        .expect("stage 8 current turn authority")
+    }
+
+    #[test]
+    fn stage_8a_audio_substrate_consumes_stage7_activation_without_downstream_work() {
+        let packet = Stage8TranscriptGatePacket::audio_substrate_only(
+            stage8_explicit_mic_activation(None),
+            "audio-scene-stage8",
+        )
+        .expect("audio substrate packet");
+
+        assert_eq!(
+            packet.boundary_kind,
+            Stage8TranscriptGateKind::AudioSubstrateOnly
+        );
+        assert!(packet.work_authority.can_update_listen_state);
+        assert!(!packet.can_route_or_mutate());
+        assert!(!packet.can_emit_committed_turn());
+        assert!(packet.transcript_id.is_none());
+        assert!(packet.candidate_preview.is_none());
+        assert!(packet.committed_turn.is_none());
+        assert_eq!(packet.consent_state_id.as_deref(), Some("consent-stage4"));
+        assert_eq!(
+            packet.provider_budget_id.as_deref(),
+            Some("provider-budget-stage4")
+        );
+        assert_eq!(
+            packet.access_context_id.as_deref(),
+            Some("access-context-stage8")
+        );
+    }
+
+    #[test]
+    fn stage_8a_partial_transcript_is_preview_only_and_cannot_commit() {
+        let packet = Stage8TranscriptGatePacket::partial_transcript_preview(
+            stage8_explicit_mic_activation(None),
+            "audio-scene-stage8",
+            "transcript-stage8-partial",
+            "partially heard words",
+            8_800,
+            1,
+        )
+        .expect("partial transcript preview");
+
+        assert_eq!(
+            packet.boundary_kind,
+            Stage8TranscriptGateKind::PartialTranscriptPreviewOnly
+        );
+        assert!(packet.is_preview_only());
+        assert!(!packet.can_route_or_mutate());
+        assert!(!packet.can_emit_committed_turn());
+        assert!(packet.committed_turn.is_none());
+        assert!(packet.stage5_turn_authority.is_none());
+        assert!(packet.candidate_preview.is_some());
+        assert_eq!(packet.partial_revision_id, Some(1));
+        assert_eq!(packet.confidence_bp, Some(8_800));
+    }
+
+    #[test]
+    fn stage_8a_final_transcript_commit_requires_stage5_current_turn_authority() {
+        let current = stage8_current_authority();
+        let packet = Stage8TranscriptGatePacket::final_transcript_commit(
+            stage8_explicit_mic_activation(Some(current.session_id)),
+            current.clone(),
+            "audio-scene-stage8",
+            "transcript-stage8-final",
+            "final exact transcript",
+            "en-US",
+            9_600,
+        )
+        .expect("final transcript commit boundary");
+
+        assert_eq!(
+            packet.boundary_kind,
+            Stage8TranscriptGateKind::FinalTranscriptCommitBoundary
+        );
+        assert!(packet.can_emit_committed_turn());
+        assert!(!packet.can_route_or_mutate());
+        assert_eq!(packet.session_id, Some(SessionId(88)));
+        assert_eq!(packet.turn_id, Some(TurnId(8)));
+        assert!(packet.candidate_preview.is_none());
+        let committed_turn = packet.committed_turn.as_ref().expect("committed turn");
+        assert!(committed_turn.is_committed_live_turn());
+        assert_eq!(committed_turn.modality, Some(CanonicalTurnModality::Voice));
+
+        let stale = Stage5TurnAuthorityPacket::quarantined(
+            SessionId(88),
+            Some(TurnId(8)),
+            Some("device-stage8".to_string()),
+            Some(4),
+            SessionState::Active,
+            Stage5TurnAuthorityDisposition::SupersededTurnQuarantined,
+        )
+        .expect("stale authority");
+        let rejected = Stage8TranscriptGatePacket::final_transcript_commit(
+            stage8_explicit_mic_activation(Some(SessionId(88))),
+            stale,
+            "audio-scene-stage8",
+            "transcript-stage8-final",
+            "final exact transcript",
+            "en-US",
+            9_600,
+        );
+        assert!(rejected.is_err());
+    }
+
+    #[test]
+    fn stage_8a_background_and_tts_self_echo_cannot_create_turns() {
+        let packet = Stage8TranscriptGatePacket::blocked_background_or_self_echo(
+            stage8_explicit_mic_activation(None),
+            "audio-scene-stage8",
+            true,
+            false,
+            false,
+            false,
+        )
+        .expect("self-echo blocked");
+
+        assert_eq!(
+            packet.boundary_kind,
+            Stage8TranscriptGateKind::BackgroundOrSelfEchoBlocked
+        );
+        assert!(!packet.work_authority.can_update_listen_state);
+        assert!(!packet.can_emit_committed_turn());
+        assert!(!packet.can_route_or_mutate());
+        assert!(packet.transcript_id.is_none());
+        assert!(packet.candidate_preview.is_none());
+        assert!(packet.committed_turn.is_none());
+    }
+
+    #[test]
+    fn stage_8a_record_mode_audio_remains_artifact_only() {
+        let packet = Stage8TranscriptGatePacket::record_audio_artifact_only(
+            stage8_record_activation(),
+            "audio-scene-stage8-record",
+        )
+        .expect("record-mode artifact-only audio");
+
+        assert_eq!(
+            packet.boundary_kind,
+            Stage8TranscriptGateKind::RecordAudioArtifactOnly
+        );
+        assert!(packet.record_mode_audio);
+        assert!(!packet.work_authority.can_update_listen_state);
+        assert!(!packet.can_emit_committed_turn());
+        assert!(!packet.can_route_or_mutate());
+        assert!(packet.transcript_id.is_none());
+        assert!(packet.candidate_preview.is_none());
+        assert!(packet.committed_turn.is_none());
+
+        let rejected = Stage8TranscriptGatePacket::partial_transcript_preview(
+            stage8_record_activation(),
+            "audio-scene-stage8-record",
+            "transcript-stage8-record-partial",
+            "recorded words",
+            8_000,
+            1,
+        );
+        assert!(rejected.is_err());
     }
 
     fn invite_click_request(
