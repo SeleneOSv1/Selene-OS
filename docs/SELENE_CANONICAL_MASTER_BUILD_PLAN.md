@@ -79,9 +79,9 @@ After every build, update this section before final reporting.
 | Field | Current Value |
 |---|---|
 | Current active stage | Stage 8 |
-| Current active build | Stage 8D - Listening Lab Numeric Benchmarks, STT WER, Noise, Diarization, Endpoint Latency, And Calibration Reconciliation |
-| Next build after current stage passes | Stage 8D - Listening Lab Numeric Benchmarks, STT WER, Noise, Diarization, Endpoint Latency, And Calibration Reconciliation |
-| Last completed stage | Stage 8C - Listening Lab Scene, Noise, Echo, Diarization, Foreground Speaker, And Addressed-To-Selene Reconciliation |
+| Current active build | Stage 8E - Accent, Mixed-Language, Domain Vocabulary, Alternative Transcript, And Second-Pass Repair Benchmark Reconciliation |
+| Next build after current stage passes | Stage 8E - Accent, Mixed-Language, Domain Vocabulary, Alternative Transcript, And Second-Pass Repair Benchmark Reconciliation |
+| Last completed stage | Stage 8D - Listening Lab Numeric Benchmarks, STT WER, Noise, Diarization, Endpoint Latency, And Calibration Reconciliation |
 | Stages blocked | None yet |
 | Plan drift allowed | No |
 
@@ -1832,6 +1832,8 @@ Stage 8B status: PROVEN_COMPLETE
 
 Stage 8C status: PROVEN_COMPLETE
 
+Stage 8D status: PROVEN_COMPLETE
+
 Build:
 
 - `PH1.K` voice runtime audio substrate;
@@ -1977,9 +1979,19 @@ Stage 8C proof update:
 - Numeric listening-lab benchmarks, STT WER/CER, noisy-room/far-field/overlap/diarization/accent benchmarks, endpoint latency, word-level timestamp calibration, alternatives, accent/domain-glossary proof, second-pass repair, and live STT quality proof remain deferred to Stage 8D or later slices.
 - Stage 8D is required before Stage 9A.
 
+Stage 8D proof update:
+
+- Existing PH1.J `BenchmarkTargetPacket`/`BenchmarkResultPacket`, PH1.F storage/replay-safe benchmark rows, PH1.K, PH1.C, PH1.LISTEN, PH1.LANG, PH1.PRON, PH1.VOICE.ID-adjacent evidence, Stage 8A transcript gate, Stage 8B endpoint/confidence gate, and Stage 8C audio-scene evidence were inspected and crosswalked rather than rebuilt as duplicate benchmark, listening, STT, diarization, or calibration engines.
+- `Stage8DTranscriptFixture`, `Stage8DTranscriptMetricPacket`, `Stage8DEndpointLatencyMetricPacket`, `Stage8DSceneCalibrationMetricPacket`, `Stage8DListeningBenchmarkPacket`, `Stage8DEditCounts`, `Stage8DConfidenceBucket`, `Stage8DEndpointLatencyClass`, and `Stage8DBenchmarkWorkAuthority` now provide deterministic fixture-only listening-lab scoring on top of Stage 2 benchmark envelopes.
+- Stage 8D proves WER/CER-style edit counts, protected-token mismatch counts, exact/normalized transcript match, empty/garbled transcript handling, mixed-language token preservation, slang/filler preservation, endpoint latency classification, noise/echo/overlap/foreground/addressed confidence buckets, and diarization segment mismatch placeholders without live audio or provider output.
+- Stage 8D benchmark packets/results are evidence only. They cannot understand, answer, search, call providers, capture microphone audio, transcribe live audio, trigger Voice ID matching, authorize, emit TTS, route tools, connector-write, execute protected mutations, or update memory/persona/emotion.
+- Deterministic fixture WER/CER, endpoint latency packet scoring, and noise/echo/overlap/addressed confidence calibration are certified for Stage 8D. Live STT WER, far-field, noisy-room, accent, real diarization error rate, provider latency, production listening lab, transcript alternatives, domain vocabulary, and second-pass repair benchmarks remain deferred to Stage 8E or later live/native-lab stages.
+- Stage 8D did not add live microphone capture, live STT, live TTS, provider calls, live search, Voice ID matching, understanding, routing, native UI redesign, protected execution, connector writes, raw-audio retention, or duplicate benchmark/listening/STT/calibration engines.
+- Stage 8E is required before Stage 9A.
+
 Next if passed:
 
-- Stage 8D - Listening Lab Numeric Benchmarks, STT WER, Noise, Diarization, Endpoint Latency, And Calibration Reconciliation.
+- Stage 8E - Accent, Mixed-Language, Domain Vocabulary, Alternative Transcript, And Second-Pass Repair Benchmark Reconciliation.
 
 ## Stage 9 - Voice ID Stack
 

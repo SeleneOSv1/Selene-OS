@@ -1917,24 +1917,11 @@ enum H380ConfidenceTier {
     Low,
 }
 
-impl H380ConfidenceTier {
-    fn score(self) -> u16 {
-        match self {
-            H380ConfidenceTier::High => 9500,
-            H380ConfidenceTier::Medium => 7600,
-            H380ConfidenceTier::Low => 4200,
-        }
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum H380ReasonCode {
     UnderstandingOk,
-    UnderstandingAmbiguous,
     UnderstandingLowConfidence,
     UnderstandingReferenceUnresolved,
-    UnderstandingSlotMissing,
-    UnderstandingSlotConflict,
     UnderstandingNegationDetected,
     UnderstandingReplacementDetected,
     UnderstandingMultiIntentDetected,
@@ -1942,7 +1929,6 @@ enum H380ReasonCode {
     UnderstandingProvenanceRequest,
     UnderstandingMeaningRequest,
     UnderstandingRephraseRequest,
-    UnderstandingAdjacentQuestionBlocked,
     UnderstandingStaleReplayBlocked,
     UnderstandingClarificationRequired,
     UnderstandingProtectedFailClosed,
@@ -1952,13 +1938,10 @@ impl H380ReasonCode {
     fn as_str(self) -> &'static str {
         match self {
             H380ReasonCode::UnderstandingOk => "UNDERSTANDING_OK",
-            H380ReasonCode::UnderstandingAmbiguous => "UNDERSTANDING_AMBIGUOUS",
             H380ReasonCode::UnderstandingLowConfidence => "UNDERSTANDING_LOW_CONFIDENCE",
             H380ReasonCode::UnderstandingReferenceUnresolved => {
                 "UNDERSTANDING_REFERENCE_UNRESOLVED"
             }
-            H380ReasonCode::UnderstandingSlotMissing => "UNDERSTANDING_SLOT_MISSING",
-            H380ReasonCode::UnderstandingSlotConflict => "UNDERSTANDING_SLOT_CONFLICT",
             H380ReasonCode::UnderstandingNegationDetected => "UNDERSTANDING_NEGATION_DETECTED",
             H380ReasonCode::UnderstandingReplacementDetected => {
                 "UNDERSTANDING_REPLACEMENT_DETECTED"
@@ -1970,9 +1953,6 @@ impl H380ReasonCode {
             H380ReasonCode::UnderstandingProvenanceRequest => "UNDERSTANDING_PROVENANCE_REQUEST",
             H380ReasonCode::UnderstandingMeaningRequest => "UNDERSTANDING_MEANING_REQUEST",
             H380ReasonCode::UnderstandingRephraseRequest => "UNDERSTANDING_REPHRASE_REQUEST",
-            H380ReasonCode::UnderstandingAdjacentQuestionBlocked => {
-                "UNDERSTANDING_ADJACENT_QUESTION_BLOCKED"
-            }
             H380ReasonCode::UnderstandingStaleReplayBlocked => "UNDERSTANDING_STALE_REPLAY_BLOCKED",
             H380ReasonCode::UnderstandingClarificationRequired => {
                 "UNDERSTANDING_CLARIFICATION_REQUIRED"

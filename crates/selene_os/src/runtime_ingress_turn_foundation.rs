@@ -2,7 +2,10 @@
 
 use crate::app_ingress::{AppOnboardingContinueAction, AppOnboardingContinueRequest};
 use selene_kernel_contracts::ph1_voice_id::UserId;
-use selene_kernel_contracts::ph1j::{CorrelationId, DeviceId, TurnId};
+use selene_kernel_contracts::ph1j::{
+    BenchmarkComparisonOutcome, BenchmarkResultPacket, BenchmarkTargetPacket,
+    BenchmarkTargetStatus, CorrelationId, DeviceId, TurnId,
+};
 use selene_kernel_contracts::ph1l::SessionId;
 use selene_kernel_contracts::ph1link::{AppPlatform, InviteOpenActivateCommitRequest, TokenId};
 use selene_kernel_contracts::ph1onb::{OnboardingSessionId, SenderVerifyDecision};
@@ -1223,6 +1226,587 @@ impl Validate for Stage8AudioScenePacket {
             return Err(ContractViolation::InvalidValue {
                 field: "stage8_audio_scene_packet.record_mode_audio",
                 reason: "record artifact block requires record-mode audio",
+            });
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Stage8DEditCounts {
+    pub substitutions: u16,
+    pub insertions: u16,
+    pub deletions: u16,
+    pub reference_len: u16,
+    pub observed_len: u16,
+}
+
+impl Stage8DEditCounts {
+    pub const fn total_errors(self) -> u16 {
+        self.substitutions
+            .saturating_add(self.insertions)
+            .saturating_add(self.deletions)
+    }
+
+    pub const fn error_rate_bp(self) -> u16 {
+        let denominator = if self.reference_len == 0 {
+            1
+        } else {
+            self.reference_len
+        };
+        let value = (self.total_errors() as u32)
+            .saturating_mul(10_000)
+            .saturating_div(denominator as u32);
+        if value > 10_000 {
+            10_000
+        } else {
+            value as u16
+        }
+    }
+
+    fn candidate(
+        substitutions: u16,
+        insertions: u16,
+        deletions: u16,
+        reference_len: u16,
+        observed_len: u16,
+    ) -> Self {
+        Self {
+            substitutions,
+            insertions,
+            deletions,
+            reference_len,
+            observed_len,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stage8DConfidenceBucket {
+    NotMeasured,
+    High,
+    Medium,
+    Low,
+    Rejected,
+}
+
+impl Stage8DConfidenceBucket {
+    pub const fn from_confidence_bp(confidence_bp: Option<u16>, rejected: bool) -> Self {
+        if rejected {
+            return Self::Rejected;
+        }
+        match confidence_bp {
+            Some(value) if value >= 9_000 => Self::High,
+            Some(value) if value >= 8_000 => Self::Medium,
+            Some(_) => Self::Low,
+            None => Self::NotMeasured,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stage8DEndpointLatencyClass {
+    OnTime,
+    Late,
+    Premature,
+    TimeoutOrDegraded,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stage8DSignalBucket {
+    NotMeasured,
+    Low,
+    Medium,
+    High,
+    Rejected,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Stage8DTranscriptFixture {
+    pub fixture_id: String,
+    pub reference_transcript: String,
+    pub observed_transcript: String,
+    pub protected_tokens: Vec<String>,
+    pub mixed_language_tokens: Vec<String>,
+    pub slang_filler_tokens: Vec<String>,
+}
+
+impl Stage8DTranscriptFixture {
+    pub fn v1(
+        fixture_id: impl Into<String>,
+        reference_transcript: impl Into<String>,
+        observed_transcript: impl Into<String>,
+        protected_tokens: Vec<String>,
+        mixed_language_tokens: Vec<String>,
+        slang_filler_tokens: Vec<String>,
+    ) -> Result<Self, ContractViolation> {
+        let fixture = Self {
+            fixture_id: fixture_id.into(),
+            reference_transcript: reference_transcript.into(),
+            observed_transcript: observed_transcript.into(),
+            protected_tokens,
+            mixed_language_tokens,
+            slang_filler_tokens,
+        };
+        fixture.validate()?;
+        Ok(fixture)
+    }
+
+    pub fn score(
+        &self,
+        metric_id: impl Into<String>,
+    ) -> Result<Stage8DTranscriptMetricPacket, ContractViolation> {
+        let metric_id = metric_id.into();
+        let normalized_reference = stage8d_normalize_transcript(&self.reference_transcript);
+        let normalized_observed = stage8d_normalize_transcript(&self.observed_transcript);
+        let reference_words = stage8d_words(&normalized_reference);
+        let observed_words = stage8d_words(&normalized_observed);
+        let word_edits = stage8d_edit_counts(&reference_words, &observed_words)?;
+        let reference_chars: Vec<char> = normalized_reference.chars().collect();
+        let observed_chars: Vec<char> = normalized_observed.chars().collect();
+        let char_edits = stage8d_edit_counts(&reference_chars, &observed_chars)?;
+        let protected_token_mismatch_count =
+            stage8d_token_mismatch_count(&self.protected_tokens, &normalized_observed)?;
+        let mixed_language_preserved =
+            stage8d_all_tokens_present(&self.mixed_language_tokens, &normalized_observed)?;
+        let slang_filler_preserved =
+            stage8d_all_tokens_present(&self.slang_filler_tokens, &normalized_observed)?;
+        let metric = Stage8DTranscriptMetricPacket {
+            metric_id,
+            fixture_id: self.fixture_id.clone(),
+            exact_match: self.reference_transcript == self.observed_transcript,
+            normalized_match: normalized_reference == normalized_observed,
+            reference_word_count: reference_words.len() as u16,
+            observed_word_count: observed_words.len() as u16,
+            word_edits,
+            char_edits,
+            protected_token_mismatch_count,
+            empty_transcript: normalized_observed.is_empty(),
+            garbled_transcript: stage8d_is_garbled(&self.observed_transcript),
+            mixed_language_preserved,
+            slang_filler_preserved,
+            reason_code: "stage8d_transcript_fixture_scored".to_string(),
+        };
+        metric.validate()?;
+        Ok(metric)
+    }
+}
+
+impl Validate for Stage8DTranscriptFixture {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        validate_stage4_ref("stage8d_transcript_fixture.fixture_id", &self.fixture_id)?;
+        validate_stage8d_text(
+            "stage8d_transcript_fixture.reference_transcript",
+            &self.reference_transcript,
+        )?;
+        validate_stage8d_text(
+            "stage8d_transcript_fixture.observed_transcript",
+            &self.observed_transcript,
+        )?;
+        validate_stage8d_token_list(
+            "stage8d_transcript_fixture.protected_tokens",
+            &self.protected_tokens,
+        )?;
+        validate_stage8d_token_list(
+            "stage8d_transcript_fixture.mixed_language_tokens",
+            &self.mixed_language_tokens,
+        )?;
+        validate_stage8d_token_list(
+            "stage8d_transcript_fixture.slang_filler_tokens",
+            &self.slang_filler_tokens,
+        )?;
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Stage8DTranscriptMetricPacket {
+    pub metric_id: String,
+    pub fixture_id: String,
+    pub exact_match: bool,
+    pub normalized_match: bool,
+    pub reference_word_count: u16,
+    pub observed_word_count: u16,
+    pub word_edits: Stage8DEditCounts,
+    pub char_edits: Stage8DEditCounts,
+    pub protected_token_mismatch_count: u16,
+    pub empty_transcript: bool,
+    pub garbled_transcript: bool,
+    pub mixed_language_preserved: bool,
+    pub slang_filler_preserved: bool,
+    pub reason_code: String,
+}
+
+impl Stage8DTranscriptMetricPacket {
+    pub const fn word_error_rate_bp(&self) -> u16 {
+        self.word_edits.error_rate_bp()
+    }
+
+    pub const fn character_error_rate_bp(&self) -> u16 {
+        self.char_edits.error_rate_bp()
+    }
+}
+
+impl Validate for Stage8DTranscriptMetricPacket {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        validate_stage4_ref("stage8d_transcript_metric.metric_id", &self.metric_id)?;
+        validate_stage4_ref("stage8d_transcript_metric.fixture_id", &self.fixture_id)?;
+        validate_stage4_ref("stage8d_transcript_metric.reason_code", &self.reason_code)?;
+        if self.word_edits.reference_len != self.reference_word_count
+            || self.word_edits.observed_len != self.observed_word_count
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage8d_transcript_metric.word_edits",
+                reason: "word edit counts must match word counters",
+            });
+        }
+        if self.empty_transcript && self.normalized_match {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage8d_transcript_metric.empty_transcript",
+                reason: "empty observed transcript cannot be a normalized match",
+            });
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Stage8DEndpointLatencyMetricPacket {
+    pub metric_id: String,
+    pub speech_start_ms: u32,
+    pub speech_end_ms: u32,
+    pub endpoint_candidate_ms: u32,
+    pub endpoint_final_ms: u32,
+    pub endpoint_latency_ms: u32,
+    pub classification: Stage8DEndpointLatencyClass,
+    pub reason_code: String,
+}
+
+impl Stage8DEndpointLatencyMetricPacket {
+    pub fn v1(
+        metric_id: impl Into<String>,
+        speech_start_ms: u32,
+        speech_end_ms: u32,
+        endpoint_candidate_ms: u32,
+        endpoint_final_ms: u32,
+    ) -> Result<Self, ContractViolation> {
+        let endpoint_latency_ms = endpoint_final_ms.saturating_sub(speech_end_ms);
+        let classification = if endpoint_final_ms < speech_end_ms {
+            Stage8DEndpointLatencyClass::Premature
+        } else if endpoint_latency_ms > 3_000 {
+            Stage8DEndpointLatencyClass::TimeoutOrDegraded
+        } else if endpoint_latency_ms > 800 {
+            Stage8DEndpointLatencyClass::Late
+        } else {
+            Stage8DEndpointLatencyClass::OnTime
+        };
+        let packet = Self {
+            metric_id: metric_id.into(),
+            speech_start_ms,
+            speech_end_ms,
+            endpoint_candidate_ms,
+            endpoint_final_ms,
+            endpoint_latency_ms,
+            classification,
+            reason_code: "stage8d_endpoint_latency_scored".to_string(),
+        };
+        packet.validate()?;
+        Ok(packet)
+    }
+}
+
+impl Validate for Stage8DEndpointLatencyMetricPacket {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        validate_stage4_ref("stage8d_endpoint_latency.metric_id", &self.metric_id)?;
+        validate_stage4_ref("stage8d_endpoint_latency.reason_code", &self.reason_code)?;
+        if self.speech_start_ms >= self.speech_end_ms {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage8d_endpoint_latency.speech_window",
+                reason: "speech_start_ms must be < speech_end_ms",
+            });
+        }
+        if self.endpoint_candidate_ms < self.speech_start_ms
+            || self.endpoint_candidate_ms > self.endpoint_final_ms
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage8d_endpoint_latency.endpoint_candidate_ms",
+                reason: "candidate timestamp must be within speech start and endpoint final",
+            });
+        }
+        if self.endpoint_final_ms >= self.speech_end_ms
+            && self.endpoint_latency_ms != self.endpoint_final_ms.saturating_sub(self.speech_end_ms)
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage8d_endpoint_latency.endpoint_latency_ms",
+                reason: "latency must equal endpoint_final_ms - speech_end_ms",
+            });
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Stage8DSceneCalibrationMetricPacket {
+    pub metric_id: String,
+    pub audio_scene_id: String,
+    pub noise_degradation: Stage8NoiseDegradationClass,
+    pub echo_suspect_count: u16,
+    pub self_echo_suspect_count: u16,
+    pub background_speech_suspect_count: u16,
+    pub overlapping_speaker_bucket: Stage8DSignalBucket,
+    pub foreground_confidence_bucket: Stage8DConfidenceBucket,
+    pub addressed_confidence_bucket: Stage8DConfidenceBucket,
+    pub diarization_segment_mismatch_count: u16,
+    pub reason_code: String,
+}
+
+impl Stage8DSceneCalibrationMetricPacket {
+    pub fn from_scene(
+        metric_id: impl Into<String>,
+        scene: &Stage8AudioScenePacket,
+        expected_speaker_segments: u16,
+        observed_speaker_segments: u16,
+    ) -> Result<Self, ContractViolation> {
+        let diarization_segment_mismatch_count =
+            expected_speaker_segments.abs_diff(observed_speaker_segments);
+        let packet = Self {
+            metric_id: metric_id.into(),
+            audio_scene_id: scene.audio_scene_id.clone(),
+            noise_degradation: scene.noise_degradation,
+            echo_suspect_count: u16::from(scene.echo_suspect),
+            self_echo_suspect_count: u16::from(scene.self_echo_suspect),
+            background_speech_suspect_count: u16::from(scene.background_speech),
+            overlapping_speaker_bucket: if scene.overlapping_speakers {
+                Stage8DSignalBucket::High
+            } else {
+                Stage8DSignalBucket::Low
+            },
+            foreground_confidence_bucket: Stage8DConfidenceBucket::from_confidence_bp(
+                scene
+                    .foreground_speaker
+                    .as_ref()
+                    .map(|foreground| foreground.foreground_confidence_bp),
+                scene.unknown_or_non_user_speaker,
+            ),
+            addressed_confidence_bucket: Stage8DConfidenceBucket::from_confidence_bp(
+                scene
+                    .addressed_to_selene
+                    .as_ref()
+                    .map(|addressed| addressed.confidence_bp),
+                matches!(
+                    scene.disposition,
+                    Stage8AudioSceneDisposition::BlockedLowAddressingConfidence
+                ),
+            ),
+            diarization_segment_mismatch_count,
+            reason_code: "stage8d_scene_calibration_scored".to_string(),
+        };
+        packet.validate()?;
+        Ok(packet)
+    }
+}
+
+impl Validate for Stage8DSceneCalibrationMetricPacket {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        validate_stage4_ref("stage8d_scene_calibration.metric_id", &self.metric_id)?;
+        validate_stage4_ref(
+            "stage8d_scene_calibration.audio_scene_id",
+            &self.audio_scene_id,
+        )?;
+        validate_stage4_ref("stage8d_scene_calibration.reason_code", &self.reason_code)?;
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Stage8DBenchmarkWorkAuthority {
+    pub can_understand_intent: bool,
+    pub can_answer: bool,
+    pub can_search: bool,
+    pub can_call_providers: bool,
+    pub can_capture_microphone_audio: bool,
+    pub can_transcribe_live_audio: bool,
+    pub can_trigger_voice_id_matching: bool,
+    pub can_authorize: bool,
+    pub can_emit_tts: bool,
+    pub can_route_tools: bool,
+    pub can_connector_write: bool,
+    pub can_execute_protected_mutation: bool,
+    pub can_update_memory_persona_emotion: bool,
+}
+
+impl Stage8DBenchmarkWorkAuthority {
+    pub const fn benchmark_evidence_only() -> Self {
+        Self {
+            can_understand_intent: false,
+            can_answer: false,
+            can_search: false,
+            can_call_providers: false,
+            can_capture_microphone_audio: false,
+            can_transcribe_live_audio: false,
+            can_trigger_voice_id_matching: false,
+            can_authorize: false,
+            can_emit_tts: false,
+            can_route_tools: false,
+            can_connector_write: false,
+            can_execute_protected_mutation: false,
+            can_update_memory_persona_emotion: false,
+        }
+    }
+
+    pub const fn can_route_or_mutate(self) -> bool {
+        self.can_understand_intent
+            || self.can_answer
+            || self.can_search
+            || self.can_call_providers
+            || self.can_capture_microphone_audio
+            || self.can_transcribe_live_audio
+            || self.can_trigger_voice_id_matching
+            || self.can_authorize
+            || self.can_emit_tts
+            || self.can_route_tools
+            || self.can_connector_write
+            || self.can_execute_protected_mutation
+            || self.can_update_memory_persona_emotion
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Stage8DListeningBenchmarkPacket {
+    pub benchmark_target_id: String,
+    pub benchmark_result_id: String,
+    pub fixture_id: String,
+    pub metric_id: String,
+    pub replay_id: String,
+    pub audit_id: String,
+    pub reason_code: String,
+    pub target_status: BenchmarkTargetStatus,
+    pub comparison_outcome: BenchmarkComparisonOutcome,
+    pub transcript_metric: Option<Stage8DTranscriptMetricPacket>,
+    pub endpoint_metric: Option<Stage8DEndpointLatencyMetricPacket>,
+    pub scene_metric: Option<Stage8DSceneCalibrationMetricPacket>,
+    pub confidence_bucket: Stage8DConfidenceBucket,
+    pub work_authority: Stage8DBenchmarkWorkAuthority,
+}
+
+impl Stage8DListeningBenchmarkPacket {
+    #[allow(clippy::too_many_arguments)]
+    pub fn from_stage2_envelope(
+        target: &BenchmarkTargetPacket,
+        result: &BenchmarkResultPacket,
+        fixture_id: impl Into<String>,
+        metric_id: impl Into<String>,
+        replay_id: impl Into<String>,
+        audit_id: impl Into<String>,
+        transcript_metric: Option<Stage8DTranscriptMetricPacket>,
+        endpoint_metric: Option<Stage8DEndpointLatencyMetricPacket>,
+        scene_metric: Option<Stage8DSceneCalibrationMetricPacket>,
+        confidence_bucket: Stage8DConfidenceBucket,
+    ) -> Result<Self, ContractViolation> {
+        target.validate()?;
+        result.validate()?;
+        let packet = Self {
+            benchmark_target_id: target.benchmark_target_id.clone(),
+            benchmark_result_id: result.benchmark_result_id.clone(),
+            fixture_id: fixture_id.into(),
+            metric_id: metric_id.into(),
+            replay_id: replay_id.into(),
+            audit_id: audit_id.into(),
+            reason_code: "stage8d_listening_benchmark_envelope".to_string(),
+            target_status: result.target_status,
+            comparison_outcome: result.comparison_outcome,
+            transcript_metric,
+            endpoint_metric,
+            scene_metric,
+            confidence_bucket,
+            work_authority: Stage8DBenchmarkWorkAuthority::benchmark_evidence_only(),
+        };
+        if result.benchmark_target_id != target.benchmark_target_id
+            || result.target_status != target.target_status
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage8d_listening_benchmark_packet.stage2_envelope",
+                reason: "benchmark result must match target id and target status",
+            });
+        }
+        if target.target_status == BenchmarkTargetStatus::CertificationTargetPassed
+            && !result.certifies_target(target)
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage8d_listening_benchmark_packet.stage2_envelope",
+                reason: "certification packet requires a passing Stage 2 benchmark result",
+            });
+        }
+        packet.validate()?;
+        Ok(packet)
+    }
+
+    pub const fn can_route_or_mutate(&self) -> bool {
+        self.work_authority.can_route_or_mutate()
+    }
+}
+
+impl Validate for Stage8DListeningBenchmarkPacket {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        validate_stage4_ref(
+            "stage8d_listening_benchmark_packet.benchmark_target_id",
+            &self.benchmark_target_id,
+        )?;
+        validate_stage4_ref(
+            "stage8d_listening_benchmark_packet.benchmark_result_id",
+            &self.benchmark_result_id,
+        )?;
+        validate_stage4_ref(
+            "stage8d_listening_benchmark_packet.fixture_id",
+            &self.fixture_id,
+        )?;
+        validate_stage4_ref(
+            "stage8d_listening_benchmark_packet.metric_id",
+            &self.metric_id,
+        )?;
+        validate_stage4_ref(
+            "stage8d_listening_benchmark_packet.replay_id",
+            &self.replay_id,
+        )?;
+        validate_stage4_ref(
+            "stage8d_listening_benchmark_packet.audit_id",
+            &self.audit_id,
+        )?;
+        validate_stage4_ref(
+            "stage8d_listening_benchmark_packet.reason_code",
+            &self.reason_code,
+        )?;
+        if let Some(metric) = self.transcript_metric.as_ref() {
+            metric.validate()?;
+        }
+        if let Some(metric) = self.endpoint_metric.as_ref() {
+            metric.validate()?;
+        }
+        if let Some(metric) = self.scene_metric.as_ref() {
+            metric.validate()?;
+        }
+        if self.work_authority.can_route_or_mutate() {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage8d_listening_benchmark_packet.work_authority",
+                reason: "benchmark evidence cannot execute, route, speak, capture, call providers, identify, authorize, or mutate",
+            });
+        }
+        if self.target_status == BenchmarkTargetStatus::CertificationTargetPassed
+            && (self.transcript_metric.is_none()
+                && self.endpoint_metric.is_none()
+                && self.scene_metric.is_none())
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage8d_listening_benchmark_packet.metrics",
+                reason: "certification requires at least one deterministic metric packet",
+            });
+        }
+        if self.target_status == BenchmarkTargetStatus::BlockedWithOwnerAndNextAction
+            && self.comparison_outcome != BenchmarkComparisonOutcome::Blocked
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage8d_listening_benchmark_packet.comparison_outcome",
+                reason: "blocked benchmark status requires blocked comparison outcome",
             });
         }
         Ok(())
@@ -4434,6 +5018,203 @@ fn stage8_exact_transcript_hash(text: &str) -> String {
     format!("stage8fnv64-{hash:016x}")
 }
 
+fn stage8d_normalize_transcript(text: &str) -> String {
+    let mut normalized = String::new();
+    let mut previous_space = false;
+    for ch in text.chars() {
+        if ch.is_ascii_alphanumeric() {
+            normalized.push(ch.to_ascii_lowercase());
+            previous_space = false;
+        } else if ch.is_ascii_whitespace() || ch.is_ascii_punctuation() {
+            if !previous_space && !normalized.is_empty() {
+                normalized.push(' ');
+                previous_space = true;
+            }
+        }
+    }
+    normalized.trim().to_string()
+}
+
+fn stage8d_words(text: &str) -> Vec<String> {
+    text.split_whitespace().map(ToString::to_string).collect()
+}
+
+fn stage8d_edit_counts<T: Eq>(
+    reference: &[T],
+    observed: &[T],
+) -> Result<Stage8DEditCounts, ContractViolation> {
+    if reference.len() > 512 || observed.len() > 512 {
+        return Err(ContractViolation::InvalidValue {
+            field: "stage8d_edit_counts.sequence_len",
+            reason: "must be <= 512",
+        });
+    }
+    let reference_len = reference.len() as u16;
+    let observed_len = observed.len() as u16;
+    let columns = observed.len() + 1;
+    let empty = Stage8DEditCounts::candidate(0, 0, 0, reference_len, observed_len);
+    let mut matrix = vec![empty; (reference.len() + 1) * columns];
+    for i in 1..=reference.len() {
+        let previous = matrix[(i - 1) * columns];
+        matrix[i * columns] = Stage8DEditCounts::candidate(
+            previous.substitutions,
+            previous.insertions,
+            previous.deletions.saturating_add(1),
+            reference_len,
+            observed_len,
+        );
+    }
+    for j in 1..=observed.len() {
+        let previous = matrix[j - 1];
+        matrix[j] = Stage8DEditCounts::candidate(
+            previous.substitutions,
+            previous.insertions.saturating_add(1),
+            previous.deletions,
+            reference_len,
+            observed_len,
+        );
+    }
+    for i in 1..=reference.len() {
+        for j in 1..=observed.len() {
+            let diagonal = matrix[(i - 1) * columns + (j - 1)];
+            let deletion = matrix[(i - 1) * columns + j];
+            let insertion = matrix[i * columns + (j - 1)];
+            matrix[i * columns + j] = if reference[i - 1] == observed[j - 1] {
+                diagonal
+            } else {
+                stage8d_best_edit_count([
+                    Stage8DEditCounts::candidate(
+                        diagonal.substitutions.saturating_add(1),
+                        diagonal.insertions,
+                        diagonal.deletions,
+                        reference_len,
+                        observed_len,
+                    ),
+                    Stage8DEditCounts::candidate(
+                        insertion.substitutions,
+                        insertion.insertions.saturating_add(1),
+                        insertion.deletions,
+                        reference_len,
+                        observed_len,
+                    ),
+                    Stage8DEditCounts::candidate(
+                        deletion.substitutions,
+                        deletion.insertions,
+                        deletion.deletions.saturating_add(1),
+                        reference_len,
+                        observed_len,
+                    ),
+                ])
+            };
+        }
+    }
+    Ok(matrix[reference.len() * columns + observed.len()])
+}
+
+fn stage8d_best_edit_count(candidates: [Stage8DEditCounts; 3]) -> Stage8DEditCounts {
+    let mut best = candidates[0];
+    for candidate in candidates.iter().skip(1) {
+        if stage8d_edit_count_sort_key(*candidate) < stage8d_edit_count_sort_key(best) {
+            best = *candidate;
+        }
+    }
+    best
+}
+
+fn stage8d_edit_count_sort_key(counts: Stage8DEditCounts) -> (u16, u16, u16, u16) {
+    (
+        counts.total_errors(),
+        counts.substitutions,
+        counts.insertions,
+        counts.deletions,
+    )
+}
+
+fn stage8d_token_mismatch_count(
+    protected_tokens: &[String],
+    normalized_observed: &str,
+) -> Result<u16, ContractViolation> {
+    let observed_words = stage8d_words(normalized_observed);
+    let mut mismatches = 0_u16;
+    for token in protected_tokens {
+        let normalized = stage8d_normalize_transcript(token);
+        if normalized.is_empty() {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage8d_token_mismatch_count.protected_token",
+                reason: "protected tokens must normalize to non-empty text",
+            });
+        }
+        if !observed_words
+            .iter()
+            .any(|observed| observed == &normalized)
+        {
+            mismatches = mismatches.saturating_add(1);
+        }
+    }
+    Ok(mismatches)
+}
+
+fn stage8d_all_tokens_present(
+    tokens: &[String],
+    normalized_observed: &str,
+) -> Result<bool, ContractViolation> {
+    let observed_words = stage8d_words(normalized_observed);
+    for token in tokens {
+        let normalized = stage8d_normalize_transcript(token);
+        if normalized.is_empty() {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage8d_all_tokens_present.token",
+                reason: "tokens must normalize to non-empty text",
+            });
+        }
+        if !observed_words
+            .iter()
+            .any(|observed| observed == &normalized)
+        {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+fn stage8d_is_garbled(text: &str) -> bool {
+    let trimmed = text.trim();
+    !trimmed.is_empty() && !trimmed.chars().any(|ch| ch.is_ascii_alphanumeric())
+}
+
+fn validate_stage8d_text(field: &'static str, value: &str) -> Result<(), ContractViolation> {
+    let trimmed = value.trim();
+    if trimmed.len() > 2_048 || !trimmed.is_ascii() {
+        return Err(ContractViolation::InvalidValue {
+            field,
+            reason: "must be bounded ASCII fixture text",
+        });
+    }
+    Ok(())
+}
+
+fn validate_stage8d_token_list(
+    field: &'static str,
+    values: &[String],
+) -> Result<(), ContractViolation> {
+    if values.len() > 32 {
+        return Err(ContractViolation::InvalidValue {
+            field,
+            reason: "must contain <= 32 tokens",
+        });
+    }
+    for value in values {
+        validate_stage8d_text(field, value)?;
+        if stage8d_normalize_transcript(value).is_empty() {
+            return Err(ContractViolation::InvalidValue {
+                field,
+                reason: "tokens must normalize to non-empty text",
+            });
+        }
+    }
+    Ok(())
+}
+
 fn validate_stage8_voice_activation(
     activation_context: &Stage7ActivationContextPacket,
 ) -> Result<(), ContractViolation> {
@@ -5699,6 +6480,409 @@ mod tests {
             "stage8c-blocked",
         )
         .expect("blocked stage 8c scene")
+    }
+
+    fn stage8d_target(
+        target_id: &str,
+        metric_name: &str,
+        status: BenchmarkTargetStatus,
+    ) -> BenchmarkTargetPacket {
+        let status_reason = match status {
+            BenchmarkTargetStatus::BlockedWithOwnerAndNextAction => {
+                Some("stage8d_live_lab_deferred_to_later_slice".to_string())
+            }
+            _ => None,
+        };
+        let replay_corpus_ref = match status {
+            BenchmarkTargetStatus::CertificationTargetPassed
+            | BenchmarkTargetStatus::BaselineMeasured => {
+                Some("stage8d_fixture_corpus_v1".to_string())
+            }
+            _ => None,
+        };
+        let certification_target_ref = match status {
+            BenchmarkTargetStatus::CertificationTargetPassed => {
+                Some("stage8d_deterministic_cert_target_v1".to_string())
+            }
+            _ => None,
+        };
+        BenchmarkTargetPacket::v1(
+            target_id.to_string(),
+            "stage8d_listening_lab".to_string(),
+            "stage8d".to_string(),
+            metric_name.to_string(),
+            "stage8d_replay_fixture_threshold".to_string(),
+            status,
+            status_reason,
+            replay_corpus_ref,
+            certification_target_ref,
+            MonotonicTimeNs(1),
+        )
+        .expect("stage8d benchmark target")
+    }
+
+    fn stage8d_result(
+        result_id: &str,
+        target: &BenchmarkTargetPacket,
+        outcome: BenchmarkComparisonOutcome,
+        status: BenchmarkTargetStatus,
+    ) -> BenchmarkResultPacket {
+        let (measured_value, replay_artifact_ref, evidence_hash, blocked_owner, next_action) =
+            match status {
+                BenchmarkTargetStatus::CertificationTargetPassed
+                | BenchmarkTargetStatus::BaselineMeasured => (
+                    Some("passed_stage8d_fixture_metric".to_string()),
+                    Some("stage8d_replay_artifact_v1".to_string()),
+                    Some(
+                        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+                            .to_string(),
+                    ),
+                    None,
+                    None,
+                ),
+                BenchmarkTargetStatus::BlockedWithOwnerAndNextAction => (
+                    None,
+                    None,
+                    None,
+                    Some("stage8_live_listening_lab".to_string()),
+                    Some("measure_live_provider_native_lab_after_explicit_allowance".to_string()),
+                ),
+                BenchmarkTargetStatus::NotApplicableWithReason => (None, None, None, None, None),
+                BenchmarkTargetStatus::DraftTarget => unreachable!(),
+            };
+        BenchmarkResultPacket::v1(
+            result_id.to_string(),
+            target.benchmark_target_id.clone(),
+            "stage8d_run_v1".to_string(),
+            measured_value,
+            outcome,
+            status,
+            None,
+            replay_artifact_ref,
+            evidence_hash,
+            blocked_owner,
+            next_action,
+            MonotonicTimeNs(2),
+        )
+        .expect("stage8d benchmark result")
+    }
+
+    #[test]
+    fn stage_8d_transcript_fixture_scores_exact_wer_cer_and_preserves_tokens() {
+        let fixture = Stage8DTranscriptFixture::v1(
+            "fixture-stage8d-exact",
+            "selene hola set alpha timer yeah",
+            "selene hola set alpha timer yeah",
+            vec!["alpha".to_string()],
+            vec!["hola".to_string()],
+            vec!["yeah".to_string()],
+        )
+        .expect("stage8d transcript fixture");
+        let metric = fixture
+            .score("metric-stage8d-exact")
+            .expect("stage8d transcript metric");
+
+        assert!(metric.exact_match);
+        assert!(metric.normalized_match);
+        assert_eq!(metric.word_edits.total_errors(), 0);
+        assert_eq!(metric.char_edits.total_errors(), 0);
+        assert_eq!(metric.word_error_rate_bp(), 0);
+        assert_eq!(metric.character_error_rate_bp(), 0);
+        assert_eq!(metric.protected_token_mismatch_count, 0);
+        assert!(metric.mixed_language_preserved);
+        assert!(metric.slang_filler_preserved);
+        assert!(!metric.empty_transcript);
+        assert!(!metric.garbled_transcript);
+    }
+
+    #[test]
+    fn stage_8d_transcript_fixture_counts_errors_and_protected_token_mismatch() {
+        let fixture = Stage8DTranscriptFixture::v1(
+            "fixture-stage8d-errors",
+            "selene send token alpha amount nine",
+            "selene send token beta amount nine",
+            vec!["alpha".to_string()],
+            Vec::new(),
+            Vec::new(),
+        )
+        .expect("stage8d transcript fixture");
+        let metric = fixture
+            .score("metric-stage8d-errors")
+            .expect("stage8d transcript metric");
+
+        assert!(!metric.exact_match);
+        assert!(!metric.normalized_match);
+        assert_eq!(metric.word_edits.substitutions, 1);
+        assert_eq!(metric.word_edits.insertions, 0);
+        assert_eq!(metric.word_edits.deletions, 0);
+        assert_eq!(metric.protected_token_mismatch_count, 1);
+        assert!(metric.word_error_rate_bp() > 0);
+
+        let garbled = Stage8DTranscriptFixture::v1(
+            "fixture-stage8d-garbled",
+            "selene repeat alpha",
+            "###",
+            vec!["alpha".to_string()],
+            Vec::new(),
+            Vec::new(),
+        )
+        .expect("stage8d garbled fixture")
+        .score("metric-stage8d-garbled")
+        .expect("stage8d garbled metric");
+        assert!(garbled.garbled_transcript);
+        assert!(garbled.protected_token_mismatch_count > 0);
+    }
+
+    #[test]
+    fn stage_8d_endpoint_latency_classifies_deterministically() {
+        let on_time = Stage8DEndpointLatencyMetricPacket::v1(
+            "metric-stage8d-latency-on-time",
+            1_000,
+            2_000,
+            2_050,
+            2_240,
+        )
+        .expect("on-time endpoint metric");
+        assert_eq!(on_time.endpoint_latency_ms, 240);
+        assert_eq!(on_time.classification, Stage8DEndpointLatencyClass::OnTime);
+
+        let late = Stage8DEndpointLatencyMetricPacket::v1(
+            "metric-stage8d-latency-late",
+            1_000,
+            2_000,
+            2_200,
+            3_100,
+        )
+        .expect("late endpoint metric");
+        assert_eq!(late.classification, Stage8DEndpointLatencyClass::Late);
+
+        let premature = Stage8DEndpointLatencyMetricPacket::v1(
+            "metric-stage8d-latency-premature",
+            1_000,
+            2_000,
+            1_700,
+            1_900,
+        )
+        .expect("premature endpoint metric");
+        assert_eq!(
+            premature.classification,
+            Stage8DEndpointLatencyClass::Premature
+        );
+
+        let timeout = Stage8DEndpointLatencyMetricPacket::v1(
+            "metric-stage8d-latency-timeout",
+            1_000,
+            2_000,
+            2_500,
+            5_500,
+        )
+        .expect("timeout endpoint metric");
+        assert_eq!(
+            timeout.classification,
+            Stage8DEndpointLatencyClass::TimeoutOrDegraded
+        );
+    }
+
+    #[test]
+    fn stage_8d_scene_metrics_are_benchmark_evidence_only() {
+        let clean = stage8c_clean_scene("audio-scene-stage8d-clean");
+        let metric = Stage8DSceneCalibrationMetricPacket::from_scene(
+            "metric-stage8d-scene-clean",
+            &clean,
+            1,
+            1,
+        )
+        .expect("clean scene metric");
+        assert_eq!(
+            metric.foreground_confidence_bucket,
+            Stage8DConfidenceBucket::High
+        );
+        assert_eq!(
+            metric.addressed_confidence_bucket,
+            Stage8DConfidenceBucket::High
+        );
+        assert_eq!(metric.diarization_segment_mismatch_count, 0);
+
+        let overlap = stage8c_blocked_scene(
+            "audio-scene-stage8d-overlap",
+            Stage8AudioSceneDisposition::BlockedOverlappingSpeakers,
+        );
+        let overlap_metric = Stage8DSceneCalibrationMetricPacket::from_scene(
+            "metric-stage8d-scene-overlap",
+            &overlap,
+            1,
+            3,
+        )
+        .expect("overlap scene metric");
+        assert_eq!(
+            overlap_metric.overlapping_speaker_bucket,
+            Stage8DSignalBucket::High
+        );
+        assert_eq!(overlap_metric.diarization_segment_mismatch_count, 2);
+    }
+
+    #[test]
+    fn stage_8d_benchmark_packet_reuses_stage2_envelope_and_cannot_route() {
+        let target = stage8d_target(
+            "stage8d-target-deterministic",
+            "wer_cer_endpoint_scene",
+            BenchmarkTargetStatus::CertificationTargetPassed,
+        );
+        let result = stage8d_result(
+            "stage8d-result-deterministic",
+            &target,
+            BenchmarkComparisonOutcome::Passed,
+            BenchmarkTargetStatus::CertificationTargetPassed,
+        );
+        let transcript_metric = Stage8DTranscriptFixture::v1(
+            "fixture-stage8d-envelope",
+            "selene set alpha timer",
+            "selene set alpha timer",
+            vec!["alpha".to_string()],
+            Vec::new(),
+            Vec::new(),
+        )
+        .expect("stage8d fixture")
+        .score("metric-stage8d-envelope-transcript")
+        .expect("stage8d transcript metric");
+        let endpoint_metric = Stage8DEndpointLatencyMetricPacket::v1(
+            "metric-stage8d-envelope-endpoint",
+            1_000,
+            2_000,
+            2_010,
+            2_200,
+        )
+        .expect("stage8d endpoint metric");
+        let scene_metric = Stage8DSceneCalibrationMetricPacket::from_scene(
+            "metric-stage8d-envelope-scene",
+            &stage8c_clean_scene("audio-scene-stage8d-envelope"),
+            1,
+            1,
+        )
+        .expect("stage8d scene metric");
+
+        let packet = Stage8DListeningBenchmarkPacket::from_stage2_envelope(
+            &target,
+            &result,
+            "fixture-stage8d-envelope",
+            "metric-stage8d-envelope",
+            "replay-stage8d-envelope",
+            "audit-stage8d-envelope",
+            Some(transcript_metric),
+            Some(endpoint_metric),
+            Some(scene_metric),
+            Stage8DConfidenceBucket::High,
+        )
+        .expect("stage8d benchmark packet");
+
+        assert_eq!(
+            packet.target_status,
+            BenchmarkTargetStatus::CertificationTargetPassed
+        );
+        assert!(!packet.can_route_or_mutate());
+        assert!(!packet.work_authority.can_capture_microphone_audio);
+        assert!(!packet.work_authority.can_transcribe_live_audio);
+        assert!(!packet.work_authority.can_call_providers);
+        assert!(!packet.work_authority.can_emit_tts);
+
+        let invalid = Stage8DListeningBenchmarkPacket::from_stage2_envelope(
+            &target,
+            &result,
+            "fixture-stage8d-envelope",
+            "metric-stage8d-envelope-empty",
+            "replay-stage8d-envelope",
+            "audit-stage8d-envelope",
+            None,
+            None,
+            None,
+            Stage8DConfidenceBucket::NotMeasured,
+        );
+        assert!(invalid.is_err());
+    }
+
+    #[test]
+    fn stage_8d_blocked_live_benchmark_records_owner_without_metrics() {
+        let target = stage8d_target(
+            "stage8d-target-live-blocked",
+            "live_far_field_stt_wer",
+            BenchmarkTargetStatus::BlockedWithOwnerAndNextAction,
+        );
+        let result = stage8d_result(
+            "stage8d-result-live-blocked",
+            &target,
+            BenchmarkComparisonOutcome::Blocked,
+            BenchmarkTargetStatus::BlockedWithOwnerAndNextAction,
+        );
+
+        let packet = Stage8DListeningBenchmarkPacket::from_stage2_envelope(
+            &target,
+            &result,
+            "fixture-stage8d-live-blocked",
+            "metric-stage8d-live-blocked",
+            "replay-stage8d-live-blocked",
+            "audit-stage8d-live-blocked",
+            None,
+            None,
+            None,
+            Stage8DConfidenceBucket::NotMeasured,
+        )
+        .expect("blocked live benchmark packet");
+
+        assert_eq!(
+            packet.target_status,
+            BenchmarkTargetStatus::BlockedWithOwnerAndNextAction
+        );
+        assert_eq!(
+            packet.comparison_outcome,
+            BenchmarkComparisonOutcome::Blocked
+        );
+        assert!(!packet.can_route_or_mutate());
+    }
+
+    #[test]
+    fn stage_8d_benchmark_packet_rejects_mismatched_stage2_result() {
+        let target = stage8d_target(
+            "stage8d-target-match-a",
+            "wer_cer",
+            BenchmarkTargetStatus::CertificationTargetPassed,
+        );
+        let other_target = stage8d_target(
+            "stage8d-target-match-b",
+            "wer_cer",
+            BenchmarkTargetStatus::CertificationTargetPassed,
+        );
+        let result = stage8d_result(
+            "stage8d-result-mismatch",
+            &other_target,
+            BenchmarkComparisonOutcome::Passed,
+            BenchmarkTargetStatus::CertificationTargetPassed,
+        );
+        let transcript_metric = Stage8DTranscriptFixture::v1(
+            "fixture-stage8d-mismatch",
+            "selene set beta timer",
+            "selene set beta timer",
+            vec!["beta".to_string()],
+            Vec::new(),
+            Vec::new(),
+        )
+        .expect("stage8d mismatch fixture")
+        .score("metric-stage8d-mismatch")
+        .expect("stage8d mismatch metric");
+
+        let packet = Stage8DListeningBenchmarkPacket::from_stage2_envelope(
+            &target,
+            &result,
+            "fixture-stage8d-mismatch",
+            "metric-stage8d-mismatch",
+            "replay-stage8d-mismatch",
+            "audit-stage8d-mismatch",
+            Some(transcript_metric),
+            None,
+            None,
+            Stage8DConfidenceBucket::High,
+        );
+
+        assert!(packet.is_err());
     }
 
     #[test]

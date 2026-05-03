@@ -176,7 +176,8 @@ impl CaptureState {
             if self.callback_count == 0 {
                 self.timing_jitter_ema_ms = deviation_ms;
             } else {
-                self.timing_jitter_ema_ms = (self.timing_jitter_ema_ms * 0.9) + (deviation_ms * 0.1);
+                self.timing_jitter_ema_ms =
+                    (self.timing_jitter_ema_ms * 0.9) + (deviation_ms * 0.1);
             }
             if deviation_ms > 120.0 {
                 self.stream_gap_detected = true;
@@ -203,7 +204,8 @@ impl CaptureState {
                 .total_output_samples
                 .saturating_mul(1_000_000_000)
                 .saturating_div(TARGET_SAMPLE_RATE_HZ as u64);
-            let drift_ppm = ((expected_ns as f64 - elapsed_ns as f64) / elapsed_ns as f64) * 1_000_000.0;
+            let drift_ppm =
+                ((expected_ns as f64 - elapsed_ns as f64) / elapsed_ns as f64) * 1_000_000.0;
             if self.callback_count == 1 {
                 self.timing_drift_ema_ppm = drift_ppm;
             } else {
@@ -218,7 +220,8 @@ impl CaptureState {
             self.resample_accumulator -= self.source_sample_rate_hz as f64;
             let pcm = (mono * i16::MAX as f32).round() as i16;
             self.total_output_samples = self.total_output_samples.saturating_add(1);
-            self.output_samples_seen_for_metrics = self.output_samples_seen_for_metrics.saturating_add(1);
+            self.output_samples_seen_for_metrics =
+                self.output_samples_seen_for_metrics.saturating_add(1);
             if pcm.abs() >= (i16::MAX - 8) {
                 self.clipped_output_samples = self.clipped_output_samples.saturating_add(1);
             }
@@ -231,7 +234,8 @@ impl CaptureState {
                 self.speech_likeness_ema = sample_abs;
             } else {
                 self.rms_ema = (self.rms_ema * 0.995) + (sample_sq * 0.005);
-                self.noise_floor_ema = ((self.noise_floor_ema * 0.999) + (sample_sq * 0.001)).min(self.rms_ema.max(1e-8));
+                self.noise_floor_ema = ((self.noise_floor_ema * 0.999) + (sample_sq * 0.001))
+                    .min(self.rms_ema.max(1e-8));
                 self.speech_likeness_ema = (self.speech_likeness_ema * 0.99) + (sample_abs * 0.01);
             }
 
@@ -244,10 +248,10 @@ impl CaptureState {
             self.frame_energy_accum += sample_sq;
             self.frame_sample_count = self.frame_sample_count.saturating_add(1);
 
-            let frame_samples_target =
-                ((TARGET_SAMPLE_RATE_HZ as usize).saturating_mul(FRAME_DURATION_MS as usize))
-                    .saturating_div(1_000)
-                    .max(1);
+            let frame_samples_target = ((TARGET_SAMPLE_RATE_HZ as usize)
+                .saturating_mul(FRAME_DURATION_MS as usize))
+            .saturating_div(1_000)
+            .max(1);
             if self.frame_sample_count >= frame_samples_target {
                 self.consume_frame_energy();
             }
@@ -285,8 +289,8 @@ impl CaptureState {
             } else {
                 0.002
             };
-            self.noise_floor_reference_energy = (self.noise_floor_reference_energy * (1.0 - alpha))
-                + (frame_energy * alpha);
+            self.noise_floor_reference_energy =
+                (self.noise_floor_reference_energy * (1.0 - alpha)) + (frame_energy * alpha);
         }
 
         let noise_floor_energy = self.noise_floor_reference_energy.max(1e-10);
@@ -327,7 +331,8 @@ impl CaptureState {
         if !self.is_pre_roll_ready() {
             return Err(format!(
                 "desktop mic producer pre-roll not ready: have={} need={} samples",
-                self.ring.len(), self.pre_roll_samples
+                self.ring.len(),
+                self.pre_roll_samples
             ));
         }
         if self.total_output_samples == 0 {
@@ -358,7 +363,8 @@ impl CaptureState {
         let speech_energy = self.speech_energy_ema.max(noise_floor * noise_floor);
         let snr_db = 10.0 * (speech_energy / (noise_floor * noise_floor)).log10();
         let snr_db = snr_db.clamp(0.0, 45.0);
-        let vad_conf = ((self.vad_confidence_ema * 0.75) + (((snr_db - 1.0) / 10.0).clamp(0.0, 1.0) * 0.25))
+        let vad_conf = ((self.vad_confidence_ema * 0.75)
+            + (((snr_db - 1.0) / 10.0).clamp(0.0, 1.0) * 0.25))
             .clamp(0.0, 1.0);
         let speech_likeness = ((self.speech_likeness_ema - 0.01) / 0.3).clamp(0.0, 1.0);
 
@@ -406,7 +412,11 @@ impl CaptureState {
             acoustic_confidence_bp: Some(to_bp(((vad_conf * 0.95).clamp(0.0, 1.0)) as f32)),
             prosody_confidence_bp: Some(to_bp(((speech_likeness * 0.90).clamp(0.0, 1.0)) as f32)),
             speech_likeness_bp: Some(to_bp(speech_likeness as f32)),
-            echo_safe_confidence_bp: Some(to_bp(if self.stream_gap_detected { 0.55 } else { 0.90 })),
+            echo_safe_confidence_bp: Some(to_bp(if self.stream_gap_detected {
+                0.55
+            } else {
+                0.90
+            })),
             nearfield_confidence_bp: Some(to_bp(((speech_likeness * 0.92).clamp(0.0, 1.0)) as f32)),
             capture_degraded: Some(self.capture_degraded),
             stream_gap_detected: Some(self.stream_gap_detected),
@@ -439,7 +449,8 @@ pub struct DesktopMicProducer {
 impl DesktopMicProducer {
     pub fn start(config: DesktopMicProducerConfig) -> Result<Self, String> {
         let host = cpal::default_host();
-        let input_device = resolve_input_device(&host, config.input_device_name_substring.as_deref())?;
+        let input_device =
+            resolve_input_device(&host, config.input_device_name_substring.as_deref())?;
         let output_device = host.default_output_device();
 
         let mic_name = input_device
