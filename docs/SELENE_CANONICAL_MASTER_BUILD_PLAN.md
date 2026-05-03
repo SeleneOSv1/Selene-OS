@@ -78,10 +78,10 @@ After every build, update this section before final reporting.
 
 | Field | Current Value |
 |---|---|
-| Current active stage | Stage 3 |
-| Current active build | Provider, Secret, KMS, Cost, Quota, Vault, Provider-Off Proof, And Early Consent Baseline Reconciliation |
-| Next build after current stage passes | Stage 4 - Activation, Session, Turn, And Packet Foundation |
-| Last completed stage | Stage 2A - Runtime Kernel, Storage, Proof Ledger, Law Foundation, And Minimal Benchmark Envelope Inventory Reconciliation |
+| Current active stage | Stage 4 |
+| Current active build | Stage 4A - Activation, Session, Turn, And Packet Foundation Reconciliation |
+| Next build after current stage passes | Stage 5 - Session Open, Resume, Close, And Runtime Turn Spine |
+| Last completed stage | Stage 3A - Provider, Secret, KMS, Cost, Quota, Vault, Provider-Off Proof, And Early Consent Baseline Reconciliation |
 | Stages blocked | None yet |
 | Plan drift allowed | No |
 
@@ -1446,7 +1446,9 @@ Next if passed:
 
 ## Stage 3 - Provider, Secret, KMS, Cost, Quota, Vault, And Early Consent Baseline
 
-Status: EXISTS_BUT_NEEDS_RECONCILIATION
+Status: PARTIALLY_BUILT
+
+Stage 3A status: PROVEN_COMPLETE
 
 Build:
 
@@ -1527,6 +1529,18 @@ Proof:
 - retention class registry contract proof;
 - admin disable-policy contract proof;
 - consent revocation propagation proof.
+
+Stage 3A completion proof:
+
+- `PH1.KMS`, `provider_secrets`, `PH1.COST`, `PH1.QUOTA`, `PH1.PROVIDERCTL`, runtime bootstrap health/readiness/startup behavior, vault CLI surfaces, and PH1.F storage were reconciled as the repo-truth Stage 3A carriers.
+- `ConsentStatePacket`, `ConsentScope`, and `ConsentDecisionState` now provide the minimal early consent baseline for wake training, Voice ID enrollment/matching, record mode, memory capture/recall, and provider-capable voice processing.
+- PH1.F now stores consent state packets append-only with idempotency, current-by-subject/scope lookup, by-id lookup, and revocation-aware grant checks through `ConsentStateRepo`.
+- Provider-off proof remains deterministic: disabled providers block before provider attempts and before network dispatch, startup probes are disabled before attempts/dispatches, and health/startup endpoint proof does not fetch provider secrets.
+- `ProviderBudgetPacket` remains a roadmap alias crosswalked to existing provider network policy, provider counters, PH1.COST, and PH1.QUOTA carriers instead of a duplicate budget engine.
+- `DeviceTrustPacket` remains a roadmap alias for existing device-trust/runtime/access carriers and is not duplicated in Stage 3A.
+- Broad provider/model governance items remain deferred to Stage 3B or Stage 30: prompt/model registries, approved model profile registry, provider championship router, STT/TTS provider routers, privacy/latency/offline routing modes, live eval, fallback/rollback, and cost-quality scoring.
+- Stage 3A benchmark status is `CERTIFICATION_TARGET_PASSED` for provider-off, startup no-probe, and early consent baseline proof. Product provider/model championship benchmarks remain blocked by Stage 3B/Stage 30.
+- Stage 4A is ready to start because activation/session/turn packets can now depend on runtime, proof, KMS/provider-off, budget, and early consent baselines without live-provider calls.
 
 Next if passed:
 

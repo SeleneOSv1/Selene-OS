@@ -33,13 +33,16 @@ use selene_kernel_contracts::ph1selfheal::{
     ProblemCard, ProblemCardState, PromotionDecision, PromotionDecisionAction,
     SelfHealValidationStatus,
 };
+use selene_kernel_contracts::provider_secrets::{
+    ConsentDecisionState, ConsentScope, ConsentStatePacket,
+};
 use selene_kernel_contracts::{MonotonicTimeNs, ReasonCodeId, SchemaVersion, SessionState};
 use selene_storage::ph1f::{
     AgentExecutionLedgerRowInput, BuilderProposalLedgerRowInput, DeviceRecord, IdentityRecord,
     IdentityStatus, Ph1fStore, SessionRecord, StorageError, TenantCompanyLifecycleState,
     TenantCompanyRecord,
 };
-use selene_storage::repo::{Ph1fFoundationRepo, Ph1jAuditRepo};
+use selene_storage::repo::{ConsentStateRepo, Ph1fFoundationRepo, Ph1jAuditRepo};
 
 fn user() -> UserId {
     UserId::new("dbw_user_1").unwrap()
@@ -84,6 +87,73 @@ fn store_with_identity_device_session() -> Ph1fStore {
     )
     .unwrap();
     s
+}
+
+#[test]
+fn stage3a_consent_state_registry_is_append_only_idempotent_and_revocation_aware() {
+    let mut s = store_with_identity_device_session();
+    let grant = ConsentStatePacket::v1(
+        "consent_stage3a_voice_provider_1".to_string(),
+        "user:dbw_user_1".to_string(),
+        Some("tenant_stage3a".to_string()),
+        Some("workspace_stage3a".to_string()),
+        ConsentScope::ProviderCapableVoiceProcessing,
+        ConsentDecisionState::Granted,
+        "policy:provider-voice:v1".to_string(),
+        Some("audit:evidence:grant:1".to_string()),
+        MonotonicTimeNs(10),
+        MonotonicTimeNs(11),
+        None,
+    )
+    .unwrap();
+
+    let grant_row = s
+        .append_consent_state_row(grant.clone(), Some("consent_idem_1".to_string()))
+        .unwrap();
+    let grant_retry_row = s
+        .append_consent_state_row(grant.clone(), Some("consent_idem_1".to_string()))
+        .unwrap();
+    assert_eq!(grant_row, grant_retry_row);
+    assert_eq!(s.consent_state_rows().len(), 1);
+    assert!(s.consent_scope_is_granted(
+        "user:dbw_user_1",
+        ConsentScope::ProviderCapableVoiceProcessing
+    ));
+
+    let revoke = ConsentStatePacket::v1(
+        "consent_stage3a_voice_provider_2".to_string(),
+        "user:dbw_user_1".to_string(),
+        Some("tenant_stage3a".to_string()),
+        Some("workspace_stage3a".to_string()),
+        ConsentScope::ProviderCapableVoiceProcessing,
+        ConsentDecisionState::Revoked,
+        "policy:provider-voice:v1".to_string(),
+        Some("audit:evidence:revoke:1".to_string()),
+        MonotonicTimeNs(10),
+        MonotonicTimeNs(20),
+        Some(MonotonicTimeNs(20)),
+    )
+    .unwrap();
+    s.append_consent_state_row(revoke.clone(), Some("consent_idem_2".to_string()))
+        .unwrap();
+    assert_eq!(s.consent_state_rows().len(), 2);
+    assert!(!s.consent_scope_is_granted(
+        "user:dbw_user_1",
+        ConsentScope::ProviderCapableVoiceProcessing
+    ));
+    assert_eq!(
+        s.current_consent_state_for_subject_scope(
+            "user:dbw_user_1",
+            ConsentScope::ProviderCapableVoiceProcessing
+        )
+        .map(|packet| packet.state),
+        Some(ConsentDecisionState::Revoked)
+    );
+
+    assert!(matches!(
+        s.append_consent_state_row(revoke, None),
+        Err(StorageError::DuplicateKey { table, .. }) if table == "consent_state_ledger"
+    ));
 }
 
 fn mem_event(
@@ -1234,7 +1304,10 @@ fn at_f_db_13_agent_execution_ledger_current_rebuild_and_idempotency() {
     assert!(current.active_simulation_proof_ref.is_none());
     assert!(current.simulation_idempotency_key.is_none());
     assert!(current.dispatch_outcome_proof_ref.is_none());
-    assert_eq!(current.dev_intake_audit_event_id, Some(selene_kernel_contracts::ph1j::AuditEventId(41)));
+    assert_eq!(
+        current.dev_intake_audit_event_id,
+        Some(selene_kernel_contracts::ph1j::AuditEventId(41))
+    );
 
     let before = s.agent_execution_current_rows().clone();
     s.rebuild_agent_execution_current_from_ledger().unwrap();

@@ -98,8 +98,8 @@ Large stages are build families. A future Codex build must select one exact slic
 | 30E | Custom assistant builder/store | AssistantDefinitionPacket | assistant release artifact | governance proof |
 | 30F | Self-heal/dev lane | dev route | proposal artifact | no uncontrolled shell/tool bypass |
 
-## Next Slice After Stage 2A
+## Next Slice After Stage 3A
 
 ```text
-Stage 3A - Provider, Secret, KMS, Cost, Quota, Vault, Provider-Off Proof, And Early Consent Baseline Reconciliation
+Stage 4A - Activation, Session, Turn, And Packet Foundation Reconciliation
 ```

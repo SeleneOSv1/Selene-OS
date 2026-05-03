@@ -3347,6 +3347,33 @@ mod tests {
     }
 
     #[test]
+    fn stage3a_startup_probe_disabled_blocks_before_attempt_or_dispatch() {
+        let mut policy = ProviderNetworkPolicy::default();
+        policy.global_search_providers_enabled = true;
+        policy.max_calls_this_turn = 1;
+        policy.max_calls_this_route = 1;
+        let decision = evaluate_provider_gate(
+            &policy,
+            ProviderUsageContext::unknown(
+                ProviderControlRoute::StartupProbe,
+                ProviderControlProvider::StartupProbe,
+                "startup provider probe",
+            ),
+            ProviderControlMode::Live,
+            ProviderCallCounter::default(),
+        );
+
+        assert!(!decision.allowed);
+        assert_eq!(
+            decision.deny_reason.as_deref(),
+            Some(STARTUP_PROVIDER_PROBES_DISABLED)
+        );
+        assert_eq!(decision.counter.provider_call_attempt_count, 0);
+        assert_eq!(decision.counter.provider_network_dispatch_count, 0);
+        assert_eq!(decision.usage_event.billable_class, BLOCKED_NOT_BILLABLE);
+    }
+
+    #[test]
     fn stage9_search_certification_offline_corpus_runs_30_of_30_without_live_calls() {
         let report = run_stage9_offline_search_certification();
 

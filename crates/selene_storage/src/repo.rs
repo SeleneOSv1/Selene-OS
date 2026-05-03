@@ -68,6 +68,7 @@ use selene_kernel_contracts::ph1simcat::{
 use selene_kernel_contracts::ph1work::{
     WorkOrderCurrentRecord, WorkOrderId, WorkOrderLedgerEvent, WorkOrderLedgerEventInput,
 };
+use selene_kernel_contracts::provider_secrets::{ConsentScope, ConsentStatePacket};
 use selene_kernel_contracts::{MonotonicTimeNs, ReasonCodeId};
 
 use crate::ph1f::{
@@ -80,20 +81,21 @@ use crate::ph1f::{
     AccessSchemaScope, AccessVerificationLevel, BuilderApprovalStateLedgerRow,
     BuilderPostDeployJudgeResultLedgerRow, BuilderProposalLedgerRow, BuilderProposalLedgerRowInput,
     BuilderReleaseStateLedgerRow, BuilderValidationGateResultLedgerRow,
-    BuilderValidationRunLedgerRow, DeviceRecord, IdentityRecord, LinkGenerateResultParts,
-    MemoryArchiveIndexRecord, MemoryCurrentRecord, MemoryEmotionalThreadCurrentRecord,
-    MemoryEmotionalThreadLedgerRow, MemoryGraphEdgeRecord, MemoryGraphNodeRecord, MemoryLedgerRow,
-    MemoryMetricLedgerRow, MemoryRetentionPreferenceRecord, MemorySuppressionRuleRecord,
-    MemoryThreadCurrentRecord, MemoryThreadEventKind, MemoryThreadLedgerRow, MemoryThreadRefRecord,
-    MobileArtifactSyncQueueRecord, MobileArtifactSyncState, OnboardingSessionRecord,
-    Ph1cTranscriptOkCommitResult, Ph1cTranscriptRejectCommitResult, Ph1fStore, Ph1kDeviceHealth,
-    Ph1kFeedbackCaptureInput, Ph1kFeedbackCaptureRecord, Ph1kInterruptCandidateExtendedFields,
-    Ph1kRuntimeCurrentRecord, Ph1kRuntimeEventKind, Ph1kRuntimeEventRecord,
-    PositionLifecycleEventRecord, SelfHealFailureEventLedgerRow, SelfHealFixCardLedgerRow,
-    SelfHealProblemCardLedgerRow, SelfHealPromotionDecisionLedgerRow, SessionRecord, StorageError,
-    TenantCompanyRecord, VoiceEnrollmentSampleRecord, VoiceEnrollmentSessionRecord,
-    VoiceProfileRecord, WakeEnrollmentSampleRecord, WakeEnrollmentSessionRecord,
-    WakeRuntimeEventRecord, WakeSampleResult,
+    BuilderValidationRunLedgerRow, ConsentStateRecord, DeviceRecord, IdentityRecord,
+    LinkGenerateResultParts, MemoryArchiveIndexRecord, MemoryCurrentRecord,
+    MemoryEmotionalThreadCurrentRecord, MemoryEmotionalThreadLedgerRow, MemoryGraphEdgeRecord,
+    MemoryGraphNodeRecord, MemoryLedgerRow, MemoryMetricLedgerRow, MemoryRetentionPreferenceRecord,
+    MemorySuppressionRuleRecord, MemoryThreadCurrentRecord, MemoryThreadEventKind,
+    MemoryThreadLedgerRow, MemoryThreadRefRecord, MobileArtifactSyncQueueRecord,
+    MobileArtifactSyncState, OnboardingSessionRecord, Ph1cTranscriptOkCommitResult,
+    Ph1cTranscriptRejectCommitResult, Ph1fStore, Ph1kDeviceHealth, Ph1kFeedbackCaptureInput,
+    Ph1kFeedbackCaptureRecord, Ph1kInterruptCandidateExtendedFields, Ph1kRuntimeCurrentRecord,
+    Ph1kRuntimeEventKind, Ph1kRuntimeEventRecord, PositionLifecycleEventRecord,
+    SelfHealFailureEventLedgerRow, SelfHealFixCardLedgerRow, SelfHealProblemCardLedgerRow,
+    SelfHealPromotionDecisionLedgerRow, SessionRecord, StorageError, TenantCompanyRecord,
+    VoiceEnrollmentSampleRecord, VoiceEnrollmentSessionRecord, VoiceProfileRecord,
+    WakeEnrollmentSampleRecord, WakeEnrollmentSessionRecord, WakeRuntimeEventRecord,
+    WakeSampleResult,
 };
 
 /// Typed repository interface for PH1.F foundational storage wiring.
@@ -180,6 +182,22 @@ pub trait BenchmarkResultRepo {
         &self,
         benchmark_target_id: &str,
     ) -> Option<&BenchmarkResultPacket>;
+}
+
+/// Stage 3A consent baseline repository surface for governed consent-scoped carriers.
+pub trait ConsentStateRepo {
+    fn append_consent_state_row(
+        &mut self,
+        packet: ConsentStatePacket,
+        idempotency_key: Option<String>,
+    ) -> Result<u64, StorageError>;
+    fn consent_state_rows(&self) -> &[ConsentStateRecord];
+    fn current_consent_state_for_subject_scope(
+        &self,
+        subject_user_ref: &str,
+        scope: ConsentScope,
+    ) -> Option<&ConsentStatePacket>;
+    fn consent_scope_is_granted(&self, subject_user_ref: &str, scope: ConsentScope) -> bool;
 }
 
 /// Typed repository interface for Selene OS core WorkOrder persistence wiring.
@@ -2132,6 +2150,32 @@ impl BenchmarkResultRepo for Ph1fStore {
         benchmark_target_id: &str,
     ) -> Option<&BenchmarkResultPacket> {
         Ph1fStore::latest_benchmark_result_for_target(self, benchmark_target_id)
+    }
+}
+
+impl ConsentStateRepo for Ph1fStore {
+    fn append_consent_state_row(
+        &mut self,
+        packet: ConsentStatePacket,
+        idempotency_key: Option<String>,
+    ) -> Result<u64, StorageError> {
+        self.append_consent_state_packet(packet, idempotency_key)
+    }
+
+    fn consent_state_rows(&self) -> &[ConsentStateRecord] {
+        Ph1fStore::consent_state_rows(self)
+    }
+
+    fn current_consent_state_for_subject_scope(
+        &self,
+        subject_user_ref: &str,
+        scope: ConsentScope,
+    ) -> Option<&ConsentStatePacket> {
+        Ph1fStore::current_consent_state_for_subject_scope(self, subject_user_ref, scope)
+    }
+
+    fn consent_scope_is_granted(&self, subject_user_ref: &str, scope: ConsentScope) -> bool {
+        Ph1fStore::consent_scope_is_granted(self, subject_user_ref, scope)
     }
 }
 

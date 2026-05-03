@@ -493,6 +493,7 @@ mod tests {
                 title: "t".to_string(),
                 url: "https://example.invalid".to_string(),
             }],
+            web_answer_verification: None,
         }
     }
 

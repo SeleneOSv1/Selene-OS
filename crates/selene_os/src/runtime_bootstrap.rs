@@ -917,6 +917,24 @@ mod tests {
         }
     }
 
+    #[derive(Debug, Clone, Default)]
+    struct CountingSecretsProvider {
+        call_count: std::rc::Rc<Cell<u32>>,
+    }
+
+    impl CountingSecretsProvider {
+        fn calls(&self) -> u32 {
+            self.call_count.get()
+        }
+    }
+
+    impl RuntimeSecretsProvider for CountingSecretsProvider {
+        fn get_secret(&self, _secret_id: ProviderSecretId) -> Option<RuntimeSecretValue> {
+            self.call_count.set(self.call_count.get() + 1);
+            None
+        }
+    }
+
     fn build_metadata() -> RuntimeBuildMetadata {
         RuntimeBuildMetadata {
             node_id: "node-a".to_string(),
@@ -976,6 +994,24 @@ mod tests {
         assert_eq!(runtime.log_events().len(), 2);
         assert_eq!(runtime.log_events()[0].node_id, "node-a");
         assert_eq!(runtime.log_events()[0].build_version, "build-1");
+    }
+
+    #[test]
+    fn stage3a_health_and_startup_endpoints_do_not_probe_provider_secrets() {
+        let clock = FixedClock::new(1250);
+        let secrets = CountingSecretsProvider::default();
+        let services = RuntimeServiceContainer::with_startup_foundation(clock, secrets.clone())
+            .expect("services");
+        let mut runtime = RuntimeProcess::new(config(Vec::new()), services);
+
+        runtime
+            .start()
+            .expect("startup should not need provider secrets");
+        assert_eq!(secrets.calls(), 0);
+        assert!(runtime.liveness_endpoint().live);
+        assert!(runtime.readiness_endpoint().ready);
+        assert!(runtime.startup_endpoint().succeeded);
+        assert_eq!(secrets.calls(), 0);
     }
 
     #[test]

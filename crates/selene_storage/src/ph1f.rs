@@ -116,6 +116,7 @@ use selene_kernel_contracts::ph1work::{
     WorkOrderCurrentRecord, WorkOrderId, WorkOrderLedgerEvent, WorkOrderLedgerEventInput,
 };
 use selene_kernel_contracts::ph1x::ThreadState;
+use selene_kernel_contracts::provider_secrets::{ConsentScope, ConsentStatePacket};
 use selene_kernel_contracts::{
     ContractViolation, MonotonicTimeNs, ReasonCodeId, SchemaVersion, SessionState, Validate,
 };
@@ -1450,6 +1451,13 @@ pub struct SelfHealPromotionDecisionLedgerRow {
     pub promotion_decision: PromotionDecision,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConsentStateRecord {
+    pub schema_version: SchemaVersion,
+    pub row_id: u64,
+    pub packet: ConsentStatePacket,
+}
+
 #[derive(Debug, Clone)]
 pub struct Ph1fStore {
     identities: BTreeMap<UserId, IdentityRecord>,
@@ -1971,6 +1979,10 @@ pub struct Ph1fStore {
     proof_request_index: BTreeMap<String, Vec<ProofEventId>>,
     proof_session_turn_index: BTreeMap<(SessionId, TurnId), Vec<ProofEventId>>,
     proof_idempotency_index: BTreeMap<String, ProofEventId>,
+    consent_state_ledger: Vec<ConsentStateRecord>,
+    consent_state_current: BTreeMap<(String, ConsentScope), usize>,
+    consent_state_id_index: BTreeMap<String, usize>,
+    consent_state_idempotency_index: BTreeMap<String, usize>,
     benchmark_target_packets: Vec<BenchmarkTargetPacket>,
     benchmark_result_packets: Vec<BenchmarkResultPacket>,
     benchmark_target_id_index: BTreeMap<String, usize>,
@@ -3665,6 +3677,10 @@ impl Ph1fStore {
             proof_request_index: BTreeMap::new(),
             proof_session_turn_index: BTreeMap::new(),
             proof_idempotency_index: BTreeMap::new(),
+            consent_state_ledger: Vec::new(),
+            consent_state_current: BTreeMap::new(),
+            consent_state_id_index: BTreeMap::new(),
+            consent_state_idempotency_index: BTreeMap::new(),
             benchmark_target_packets: Vec::new(),
             benchmark_result_packets: Vec::new(),
             benchmark_target_id_index: BTreeMap::new(),
@@ -6339,6 +6355,98 @@ impl Ph1fStore {
         Err(StorageError::AppendOnlyViolation {
             table: "proof_ledger",
         })
+    }
+
+    fn validate_consent_idempotency_key(
+        field: &'static str,
+        idempotency_key: &str,
+    ) -> Result<(), StorageError> {
+        if idempotency_key.trim().is_empty()
+            || idempotency_key.len() > 128
+            || !idempotency_key.is_ascii()
+        {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field,
+                    reason: "must be ASCII and <= 128 chars when provided",
+                },
+            ));
+        }
+        Ok(())
+    }
+
+    pub(crate) fn append_consent_state_packet(
+        &mut self,
+        packet: ConsentStatePacket,
+        idempotency_key: Option<String>,
+    ) -> Result<u64, StorageError> {
+        packet.validate()?;
+        if let Some(idempotency_key) = idempotency_key.as_ref() {
+            Self::validate_consent_idempotency_key(
+                "consent_state_ledger.idempotency_key",
+                idempotency_key,
+            )?;
+            if let Some(existing_idx) = self
+                .consent_state_idempotency_index
+                .get(idempotency_key)
+                .copied()
+            {
+                return Ok(existing_idx as u64 + 1);
+            }
+        }
+        if self
+            .consent_state_id_index
+            .contains_key(&packet.consent_state_id)
+        {
+            return Err(StorageError::DuplicateKey {
+                table: "consent_state_ledger",
+                key: packet.consent_state_id,
+            });
+        }
+
+        let row_id = self.consent_state_ledger.len() as u64 + 1;
+        let idx = self.consent_state_ledger.len();
+        let current_key = (packet.subject_user_ref.clone(), packet.scope);
+        self.consent_state_id_index
+            .insert(packet.consent_state_id.clone(), idx);
+        self.consent_state_current.insert(current_key, idx);
+        self.consent_state_ledger.push(ConsentStateRecord {
+            schema_version: SchemaVersion(1),
+            row_id,
+            packet,
+        });
+        if let Some(idempotency_key) = idempotency_key {
+            self.consent_state_idempotency_index
+                .insert(idempotency_key, idx);
+        }
+        Ok(row_id)
+    }
+
+    pub fn consent_state_rows(&self) -> &[ConsentStateRecord] {
+        &self.consent_state_ledger
+    }
+
+    pub fn current_consent_state_for_subject_scope(
+        &self,
+        subject_user_ref: &str,
+        scope: ConsentScope,
+    ) -> Option<&ConsentStatePacket> {
+        self.consent_state_current
+            .get(&(subject_user_ref.to_string(), scope))
+            .and_then(|idx| self.consent_state_ledger.get(*idx))
+            .map(|row| &row.packet)
+    }
+
+    pub fn consent_state_by_id(&self, consent_state_id: &str) -> Option<&ConsentStatePacket> {
+        self.consent_state_id_index
+            .get(consent_state_id)
+            .and_then(|idx| self.consent_state_ledger.get(*idx))
+            .map(|row| &row.packet)
+    }
+
+    pub fn consent_scope_is_granted(&self, subject_user_ref: &str, scope: ConsentScope) -> bool {
+        self.current_consent_state_for_subject_scope(subject_user_ref, scope)
+            .is_some_and(|packet| packet.is_active_grant_for_scope(scope))
     }
 
     fn validate_benchmark_idempotency_key(

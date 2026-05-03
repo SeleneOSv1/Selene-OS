@@ -20,7 +20,7 @@ This graph converts the 34-stage roadmap into build-control dependencies. The nu
 |---|---|---|---|---|---|
 | 1 Canonical Inventory And Wiring Map | repo files and docs authority stack | inventory docs, dependency DAG, slice map, benchmark matrix | clean repo and canonical 34-stage plan | all later stages | PROVEN_COMPLETE before Stage 2. |
 | 2 Runtime Kernel, Storage, Proof Ledger, And Law Foundation | Stage 1 docs | runtime/proof/replay/benchmark envelopes, trace/audit crosswalk | Stage 1 | Stages 3-34 | PROVEN_COMPLETE by narrowed Stage 2A; must stay complete before provider/feature work. |
-| 3 Provider, Secret, KMS, Cost, Quota, Vault, And Early Consent | Stage 2 envelopes | provider/model/prompt governance, budget, consent, KMS, provider-off proof | Stages 1-2 | Stages 7-8, 11-17, 24, 28, 30, 34 | Cannot use live providers before provider-off proof. |
+| 3 Provider, Secret, KMS, Cost, Quota, Vault, And Early Consent | Stage 2 envelopes | provider/model/prompt governance, budget, consent, KMS, provider-off proof | Stages 1-2 | Stages 7-8, 11-17, 24, 28, 30, 34 | Stage 3A PROVEN_COMPLETE for provider-off, startup no-probe, KMS/cost/quota crosswalk, and early consent baseline; broad model/champion routing remains deferred to Stage 3B/Stage 30. |
 | 4 Activation, Session, Turn, And Packet Foundation | runtime envelope, consent/device/provider budget packets | activation, turn candidate, committed-turn boundary fields | Stages 2-3 | Stages 5, 7, 8, 20, 27 | Record/live chat discriminator blocks record drift. |
 | 5 Session Open, Resume, Close, And Runtime Turn Spine | activation/session/turn packets | current committed turn, conversation goal/open-loop state | Stage 4 | Stages 6, 8-12, 15, 21, 29, 34 | Conversation control may be sliced with no provider calls. |
 | 6 Master Access, Tenant, Policy, And Authority Context | session/current turn, identity hints | access context, tenant/workspace policy | Stages 3-5 | Stages 9, 12, 21, 24-27, 31 | Protected ambiguity fails closed. |
@@ -65,7 +65,7 @@ The following can be prepared in parallel after Stage 2 and Stage 3 contracts ex
 
 ## Must-Not-Start-Early Slice Families
 
-- Stage 13 live provider work must not start before Stage 3 provider-off proof and explicit live-provider allowance.
+- Stage 13 live provider work must not start before Stage 3A provider-off proof and explicit live-provider allowance.
 - Stage 24 connector writes must not start before Stage 12 protected closure.
 - Stage 28 generated media provider calls must not start before Stage 3 provider gates and Stage 31 retention policy.
 - Stage 30 provider/model promotion cannot start before Stage 3 contracts and relevant benchmark result envelopes.
