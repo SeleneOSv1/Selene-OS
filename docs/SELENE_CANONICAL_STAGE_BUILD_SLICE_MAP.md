@@ -13,6 +13,13 @@ Large stages are build families. A future Codex build must select one exact slic
 - Do not combine unrelated runtime, UI, provider, and benchmark work in one slice.
 - Update benchmark target status before marking the slice complete.
 
+## Stage 3 - Provider, Secret, KMS, Cost, Quota, Vault, Consent, And Provider Routing
+
+| Slice | Focus | Input | Output | Proof |
+|---|---|---|---|---|
+| 3A | Provider safety, KMS/secret, cost/quota, provider-off, startup no-probe, early consent | Stage2 proof/benchmark envelope | ConsentStatePacket, provider-off proof, KMS/cost/quota crosswalk | PROVEN_COMPLETE: disabled providers produce zero attempts/dispatches; startup/health make no provider probes; secrets stay behind KMS/vault; early consent is revocation-aware. |
+| 3B | STT/TTS provider router contracts, Apple/OpenAI/local profiles, fallback reasons | Stage3A provider safety plus Stage8A transcript boundary when present | SttProviderProfilePacket, TtsProviderProfilePacket, VoiceProviderRouteDecisionPacket, VoiceProviderFallbackReason | PROVEN_COMPLETE: route decisions are inert, provider-off zero-attempt/zero-dispatch, Apple/OpenAI/local profiles are contracts only, and no live STT/TTS/mic/native/provider behavior is added. |
+
 ## Stage 5 - Session Open, Resume, Close, Runtime Turn Spine
 
 | Slice | Focus | Input | Output | Proof |
@@ -112,3 +119,5 @@ Stage 8B - VAD, Endpointing, Partial-Versus-Final Transcript Commit, And Confide
 ```
 
 Stage 8A is PROVEN_COMPLETE. It added the minimal runtime-owned `Stage8TranscriptGatePacket` carrier, preserved PH1.K, PH1.C, PH1.LISTEN, Stage 7 activation, Stage 5 current-turn authority, and adapter voice surfaces as repo truth, and did not build live mic capture, live STT/TTS, Voice ID matching, understanding, routing, search, native UI redesign, protected execution, or provider/model routing.
+
+Stage 3B is also PROVEN_COMPLETE as a Stage 3 contract slice after Stage 8A. It added inert STT/TTS provider profile and route-decision contracts for Apple/OpenAI/local fallback policy without changing the Stage 8 next-build order. Stage 8B remains the next exact build.

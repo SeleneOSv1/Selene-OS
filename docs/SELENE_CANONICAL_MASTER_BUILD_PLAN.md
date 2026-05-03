@@ -81,7 +81,7 @@ After every build, update this section before final reporting.
 | Current active stage | Stage 8 |
 | Current active build | Stage 8B - VAD, Endpointing, Partial-Versus-Final Transcript Commit, And Confidence Gate Reconciliation |
 | Next build after current stage passes | Stage 8C - Listening Lab Scene, Noise, Echo, Diarization, Foreground Speaker, And Addressed-To-Selene Reconciliation |
-| Last completed stage | Stage 8A - Voice I/O, Listen State, Transcript Gate, And Turn Boundary Reconciliation |
+| Last completed stage | Stage 3B - STT/TTS Provider Router, Apple/OpenAI Profiles, And Fallback Policy Foundation |
 | Stages blocked | None yet |
 | Plan drift allowed | No |
 
@@ -1450,6 +1450,8 @@ Status: PARTIALLY_BUILT
 
 Stage 3A status: PROVEN_COMPLETE
 
+Stage 3B status: PROVEN_COMPLETE
+
 Build:
 
 - `PH1.KMS`;
@@ -1538,13 +1540,24 @@ Stage 3A completion proof:
 - Provider-off proof remains deterministic: disabled providers block before provider attempts and before network dispatch, startup probes are disabled before attempts/dispatches, and health/startup endpoint proof does not fetch provider secrets.
 - `ProviderBudgetPacket` remains a roadmap alias crosswalked to existing provider network policy, provider counters, PH1.COST, and PH1.QUOTA carriers instead of a duplicate budget engine.
 - `DeviceTrustPacket` remains a roadmap alias for existing device-trust/runtime/access carriers and is not duplicated in Stage 3A.
-- Broad provider/model governance items remain deferred to Stage 3B or Stage 30: prompt/model registries, approved model profile registry, provider championship router, STT/TTS provider routers, privacy/latency/offline routing modes, live eval, fallback/rollback, and cost-quality scoring.
-- Stage 3A benchmark status is `CERTIFICATION_TARGET_PASSED` for provider-off, startup no-probe, and early consent baseline proof. Product provider/model championship benchmarks remain blocked by Stage 3B/Stage 30.
+- Broad provider/model governance items after Stage 3A remain split: Stage 3B owns STT/TTS provider-router contract closure, while Stage 30 owns prompt/model registries, approved model profile registry, provider championship router promotion, live eval, fallback/rollback, and cost-quality scoring.
+- Stage 3A benchmark status is `CERTIFICATION_TARGET_PASSED` for provider-off, startup no-probe, and early consent baseline proof. Product provider/model championship benchmarks remain blocked by Stage 30.
 - Stage 4A is ready to start because activation/session/turn packets can now depend on runtime, proof, KMS/provider-off, budget, and early consent baselines without live-provider calls.
+
+Stage 3B completion proof:
+
+- `SttProviderProfilePacket`, `TtsProviderProfilePacket`, `VoiceProviderRouteDecisionPacket`, `VoiceProviderSelection`, `VoiceProviderQualitySignal`, and `VoiceProviderFallbackReason` now provide the minimal STT/TTS provider-router contract foundation in `crates/selene_kernel_contracts/src/ph1c.rs`.
+- Apple platform and OpenAI STT/TTS/realtime profile contracts are represented as inert provider profiles. Apple/platform candidates can be selected for Mac/iPhone local/platform paths where policy allows; OpenAI realtime/transcription/speech candidates can be selected only as cloud/profile contracts where policy allows.
+- Route decisions are contract-only and cannot call providers, capture audio, transcribe, synthesize, speak, identify, authorize, search, route tools, connector-write, or execute protected mutations.
+- Provider-off proof remains deterministic: contract route decisions keep `provider_call_attempt_count=0` and `provider_network_dispatch_count=0`, require an explicit fallback reason, and cannot select cloud providers under provider-off.
+- Missing-secret, budget, privacy, latency, confidence, language, platform, consent, offline, and protected-slot fallback reasons are explicit and auditable. Apple/local fallback remains a contract decision only and does not call Apple APIs.
+- Live Apple Speech, Apple AVSpeechSynthesizer, OpenAI STT/TTS/realtime sessions, live provider/model routing, live STT/TTS, native Swift implementation, model championship routing, prompt/model promotion, live eval, rollback, and cost-quality scoring remain deferred to Stage 8, Stage 17, Stage 30, and Stage 34 as appropriate.
+- Stage 3B benchmark status is `CERTIFICATION_TARGET_PASSED` for STT/TTS provider-router contracts and provider-off zero-attempt/zero-dispatch proof. Live STT WER/noise/accent benchmarks remain deferred to Stage 8 slices; live TTS MOS/prosody/pronunciation benchmarks remain deferred to Stage 17 slices.
+- Stage 8B remains the next exact build because Stage 8A has passed and the voice transcript boundary now has provider-router contract support without live-provider behavior.
 
 Next if passed:
 
-- Stage 4 - Activation, Session, Turn, And Packet Foundation.
+- Stage 8B - VAD, Endpointing, Partial-Versus-Final Transcript Commit, And Confidence Gate Reconciliation.
 
 ## Stage 4 - Activation, Session, Turn, And Packet Foundation
 
