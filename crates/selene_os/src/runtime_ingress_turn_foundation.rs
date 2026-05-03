@@ -41,6 +41,10 @@ mod reason_codes {
     pub const INGRESS_TRIGGER_INVALID: &str = "runtime_turn_ingress_trigger_invalid";
     pub const INGRESS_ENVELOPE_INVALID: &str = "runtime_turn_ingress_envelope_invalid";
     pub const INGRESS_STAGE_INVALID: &str = "runtime_turn_ingress_stage_invalid";
+    pub const STAGE7_WAKE_ATTENTION_ONLY: &str = "stage7_wake_attention_only";
+    pub const STAGE7_EXPLICIT_ACTIVATION_ONLY: &str = "stage7_explicit_activation_only";
+    pub const STAGE7_SIDE_BUTTON_EXPLICIT_ONLY: &str = "stage7_side_button_explicit_only";
+    pub const STAGE7_RECORD_ARTIFACT_DEFERRED: &str = "stage7_record_artifact_deferred";
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -425,6 +429,333 @@ impl Validate for Stage4TurnBoundaryPacket {
                     });
                 };
                 record_boundary.validate()?;
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stage7ActivationDisposition {
+    WakeAttentionOnly,
+    ExplicitActivationOnly,
+    SideButtonExplicitOnly,
+    RecordArtifactDeferred,
+}
+
+impl Stage7ActivationDisposition {
+    pub const fn default_reason_code(self) -> &'static str {
+        match self {
+            Stage7ActivationDisposition::WakeAttentionOnly => {
+                reason_codes::STAGE7_WAKE_ATTENTION_ONLY
+            }
+            Stage7ActivationDisposition::ExplicitActivationOnly => {
+                reason_codes::STAGE7_EXPLICIT_ACTIVATION_ONLY
+            }
+            Stage7ActivationDisposition::SideButtonExplicitOnly => {
+                reason_codes::STAGE7_SIDE_BUTTON_EXPLICIT_ONLY
+            }
+            Stage7ActivationDisposition::RecordArtifactDeferred => {
+                reason_codes::STAGE7_RECORD_ARTIFACT_DEFERRED
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Stage7ActivationWorkAuthority {
+    pub can_open_or_resume_session: bool,
+    pub can_update_attention_state: bool,
+    pub can_understand_intent: bool,
+    pub can_answer: bool,
+    pub can_search: bool,
+    pub can_call_providers: bool,
+    pub can_trigger_voice_id_matching: bool,
+    pub can_authorize: bool,
+    pub can_route_tools: bool,
+    pub can_emit_tts: bool,
+    pub can_execute_protected_mutation: bool,
+    pub can_connector_write: bool,
+}
+
+impl Stage7ActivationWorkAuthority {
+    pub const fn session_attention_only() -> Self {
+        Self {
+            can_open_or_resume_session: true,
+            can_update_attention_state: true,
+            can_understand_intent: false,
+            can_answer: false,
+            can_search: false,
+            can_call_providers: false,
+            can_trigger_voice_id_matching: false,
+            can_authorize: false,
+            can_route_tools: false,
+            can_emit_tts: false,
+            can_execute_protected_mutation: false,
+            can_connector_write: false,
+        }
+    }
+
+    pub const fn deferred_artifact_only() -> Self {
+        Self {
+            can_open_or_resume_session: false,
+            can_update_attention_state: false,
+            can_understand_intent: false,
+            can_answer: false,
+            can_search: false,
+            can_call_providers: false,
+            can_trigger_voice_id_matching: false,
+            can_authorize: false,
+            can_route_tools: false,
+            can_emit_tts: false,
+            can_execute_protected_mutation: false,
+            can_connector_write: false,
+        }
+    }
+
+    pub const fn can_perform_downstream_work(self) -> bool {
+        self.can_understand_intent
+            || self.can_answer
+            || self.can_search
+            || self.can_call_providers
+            || self.can_trigger_voice_id_matching
+            || self.can_authorize
+            || self.can_route_tools
+            || self.can_emit_tts
+            || self.can_execute_protected_mutation
+            || self.can_connector_write
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Stage7ActivationContextPacket {
+    pub activation: Stage4ActivationPacket,
+    pub disposition: Stage7ActivationDisposition,
+    pub reason_code: &'static str,
+    pub session_id: Option<SessionId>,
+    pub turn_id: Option<TurnId>,
+    pub activation_id: String,
+    pub wake_event_id: Option<String>,
+    pub wake_artifact_id: Option<String>,
+    pub consent_state_id: Option<String>,
+    pub device_trust_id: Option<String>,
+    pub provider_budget_id: Option<String>,
+    pub access_context_id: Option<String>,
+    pub audit_id: Option<String>,
+    pub iphone_always_listening_attempt: bool,
+    pub work_authority: Stage7ActivationWorkAuthority,
+}
+
+impl Stage7ActivationContextPacket {
+    pub fn from_activation(
+        activation: Stage4ActivationPacket,
+        activation_id: impl Into<String>,
+    ) -> Result<Self, ContractViolation> {
+        let disposition = Self::disposition_for_source(activation.source);
+        let work_authority = Self::work_authority_for(disposition);
+        let packet = Self {
+            session_id: activation.session_hint,
+            turn_id: None,
+            activation_id: activation_id.into(),
+            wake_event_id: None,
+            wake_artifact_id: None,
+            consent_state_id: activation.consent_state_id.clone(),
+            device_trust_id: activation.device_trust_ref.clone(),
+            provider_budget_id: activation.provider_budget_ref.clone(),
+            access_context_id: None,
+            audit_id: activation.audit_id.clone(),
+            reason_code: disposition.default_reason_code(),
+            disposition,
+            iphone_always_listening_attempt: false,
+            work_authority,
+            activation,
+        };
+        packet.validate()?;
+        Ok(packet)
+    }
+
+    pub fn with_access_context_id(
+        mut self,
+        access_context_id: impl Into<String>,
+    ) -> Result<Self, ContractViolation> {
+        self.access_context_id = Some(access_context_id.into());
+        self.validate()?;
+        Ok(self)
+    }
+
+    pub fn with_wake_refs(
+        mut self,
+        wake_event_id: impl Into<String>,
+        wake_artifact_id: impl Into<String>,
+    ) -> Result<Self, ContractViolation> {
+        self.wake_event_id = Some(wake_event_id.into());
+        self.wake_artifact_id = Some(wake_artifact_id.into());
+        self.validate()?;
+        Ok(self)
+    }
+
+    pub const fn can_perform_downstream_work(&self) -> bool {
+        self.work_authority.can_perform_downstream_work()
+    }
+
+    pub const fn can_only_open_or_resume_session(&self) -> bool {
+        self.work_authority.can_open_or_resume_session
+            && self.work_authority.can_update_attention_state
+            && !self.work_authority.can_perform_downstream_work()
+    }
+
+    const fn disposition_for_source(source: Stage4ActivationSource) -> Stage7ActivationDisposition {
+        match source {
+            Stage4ActivationSource::WakeCandidate => Stage7ActivationDisposition::WakeAttentionOnly,
+            Stage4ActivationSource::SideButton => {
+                Stage7ActivationDisposition::SideButtonExplicitOnly
+            }
+            Stage4ActivationSource::TypedInput | Stage4ActivationSource::ExplicitMic => {
+                Stage7ActivationDisposition::ExplicitActivationOnly
+            }
+            Stage4ActivationSource::RecordButton => {
+                Stage7ActivationDisposition::RecordArtifactDeferred
+            }
+        }
+    }
+
+    const fn work_authority_for(
+        disposition: Stage7ActivationDisposition,
+    ) -> Stage7ActivationWorkAuthority {
+        match disposition {
+            Stage7ActivationDisposition::WakeAttentionOnly
+            | Stage7ActivationDisposition::ExplicitActivationOnly
+            | Stage7ActivationDisposition::SideButtonExplicitOnly => {
+                Stage7ActivationWorkAuthority::session_attention_only()
+            }
+            Stage7ActivationDisposition::RecordArtifactDeferred => {
+                Stage7ActivationWorkAuthority::deferred_artifact_only()
+            }
+        }
+    }
+}
+
+impl Validate for Stage7ActivationContextPacket {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        self.activation.validate()?;
+        validate_stage4_ref(
+            "stage7_activation_context_packet.activation_id",
+            &self.activation_id,
+        )?;
+        validate_stage4_optional_ref(
+            "stage7_activation_context_packet.wake_event_id",
+            self.wake_event_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage7_activation_context_packet.wake_artifact_id",
+            self.wake_artifact_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage7_activation_context_packet.consent_state_id",
+            self.consent_state_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage7_activation_context_packet.device_trust_id",
+            self.device_trust_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage7_activation_context_packet.provider_budget_id",
+            self.provider_budget_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage7_activation_context_packet.access_context_id",
+            self.access_context_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage7_activation_context_packet.audit_id",
+            self.audit_id.as_deref(),
+        )?;
+        if self.reason_code != self.disposition.default_reason_code() {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage7_activation_context_packet.reason_code",
+                reason: "must match disposition",
+            });
+        }
+        if self.iphone_always_listening_attempt {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage7_activation_context_packet.iphone_always_listening_attempt",
+                reason: "iPhone always-listening wake attempts are not allowed",
+            });
+        }
+        if self.turn_id.is_some() {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage7_activation_context_packet.turn_id",
+                reason: "activation alone cannot create a turn",
+            });
+        }
+        if self.work_authority.can_perform_downstream_work() {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage7_activation_context_packet.work_authority",
+                reason: "activation cannot understand, answer, search, call providers, identify, authorize, speak, or execute",
+            });
+        }
+        match self.disposition {
+            Stage7ActivationDisposition::WakeAttentionOnly => {
+                if self.activation.source != Stage4ActivationSource::WakeCandidate
+                    || self.activation.platform_context.platform_type == AppPlatform::Ios
+                    || self.activation.platform_context.requested_trigger
+                        != RuntimeEntryTrigger::WakeWord
+                    || !self.work_authority.can_open_or_resume_session
+                    || !self.work_authority.can_update_attention_state
+                {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "stage7_activation_context_packet",
+                        reason: "wake activation can only open/resume attention on non-iPhone wake surfaces",
+                    });
+                }
+                if self.wake_artifact_id.is_some() && self.consent_state_id.is_none() {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "stage7_activation_context_packet.consent_state_id",
+                        reason: "wake artifact references require consent state",
+                    });
+                }
+            }
+            Stage7ActivationDisposition::SideButtonExplicitOnly => {
+                if self.activation.source != Stage4ActivationSource::SideButton
+                    || self.activation.platform_context.platform_type != AppPlatform::Ios
+                    || self.activation.platform_context.requested_trigger
+                        != RuntimeEntryTrigger::Explicit
+                    || self.wake_event_id.is_some()
+                    || self.wake_artifact_id.is_some()
+                {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "stage7_activation_context_packet",
+                        reason: "side-button activation must be explicit iPhone activation with no wake artifacts",
+                    });
+                }
+            }
+            Stage7ActivationDisposition::ExplicitActivationOnly => {
+                if !matches!(
+                    self.activation.source,
+                    Stage4ActivationSource::TypedInput | Stage4ActivationSource::ExplicitMic
+                ) || self.activation.platform_context.requested_trigger
+                    != RuntimeEntryTrigger::Explicit
+                    || self.wake_event_id.is_some()
+                    || self.wake_artifact_id.is_some()
+                {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "stage7_activation_context_packet",
+                        reason: "explicit activation cannot carry wake event or artifact state",
+                    });
+                }
+            }
+            Stage7ActivationDisposition::RecordArtifactDeferred => {
+                if self.activation.source != Stage4ActivationSource::RecordButton
+                    || self.work_authority.can_open_or_resume_session
+                    || self.work_authority.can_update_attention_state
+                    || self.wake_event_id.is_some()
+                    || self.wake_artifact_id.is_some()
+                {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "stage7_activation_context_packet",
+                        reason: "record activation remains deferred to the artifact lane",
+                    });
+                }
             }
         }
         Ok(())
@@ -3487,9 +3818,16 @@ mod tests {
         source: Stage4ActivationSource,
         trigger: RuntimeEntryTrigger,
     ) -> Stage4ActivationPacket {
-        let mut packet =
-            Stage4ActivationPacket::new(source, platform_context(AppPlatform::Desktop, trigger))
-                .expect("stage 4 activation packet");
+        stage4_activation_for_platform(AppPlatform::Desktop, source, trigger)
+    }
+
+    fn stage4_activation_for_platform(
+        platform: AppPlatform,
+        source: Stage4ActivationSource,
+        trigger: RuntimeEntryTrigger,
+    ) -> Stage4ActivationPacket {
+        let mut packet = Stage4ActivationPacket::new(source, platform_context(platform, trigger))
+            .expect("stage 4 activation packet");
         packet.consent_state_id = Some("consent-stage4".to_string());
         packet.device_trust_ref = Some("device-trust-stage4".to_string());
         packet.provider_budget_ref = Some("provider-budget-stage4".to_string());
@@ -3610,6 +3948,121 @@ mod tests {
         assert!(packet.device_turn_sequence.is_none());
         assert!(packet.modality.is_none());
         assert!(packet.record_boundary.is_some());
+    }
+
+    #[test]
+    fn stage_7a_wake_candidate_is_attention_only_and_non_authoritative() {
+        let packet = Stage7ActivationContextPacket::from_activation(
+            stage4_activation(
+                Stage4ActivationSource::WakeCandidate,
+                RuntimeEntryTrigger::WakeWord,
+            ),
+            "activation-stage7-wake",
+        )
+        .expect("stage 7 wake packet")
+        .with_wake_refs("wake-event-stage7", "wake-artifact-stage7")
+        .expect("wake refs are consent-bound");
+
+        assert_eq!(
+            packet.disposition,
+            Stage7ActivationDisposition::WakeAttentionOnly
+        );
+        assert!(packet.can_only_open_or_resume_session());
+        assert!(!packet.can_perform_downstream_work());
+        assert_eq!(packet.consent_state_id.as_deref(), Some("consent-stage4"));
+        assert_eq!(
+            packet.provider_budget_id.as_deref(),
+            Some("provider-budget-stage4")
+        );
+    }
+
+    #[test]
+    fn stage_7a_side_button_is_explicit_iphone_activation_only() {
+        let packet = Stage7ActivationContextPacket::from_activation(
+            stage4_activation_for_platform(
+                AppPlatform::Ios,
+                Stage4ActivationSource::SideButton,
+                RuntimeEntryTrigger::Explicit,
+            ),
+            "activation-stage7-side-button",
+        )
+        .expect("stage 7 side-button packet");
+
+        assert_eq!(
+            packet.disposition,
+            Stage7ActivationDisposition::SideButtonExplicitOnly
+        );
+        assert!(packet.can_only_open_or_resume_session());
+        assert!(!packet.can_perform_downstream_work());
+        assert!(!packet.iphone_always_listening_attempt);
+        assert!(packet.wake_event_id.is_none());
+        assert!(packet.wake_artifact_id.is_none());
+
+        let desktop_side_button = Stage7ActivationContextPacket::from_activation(
+            stage4_activation(
+                Stage4ActivationSource::SideButton,
+                RuntimeEntryTrigger::Explicit,
+            ),
+            "activation-stage7-desktop-side-button",
+        );
+        assert!(desktop_side_button.is_err());
+    }
+
+    #[test]
+    fn stage_7a_iphone_wake_candidate_is_blocked_before_activation_packet() {
+        let ios_wake = Stage4ActivationPacket::new(
+            Stage4ActivationSource::WakeCandidate,
+            platform_context(AppPlatform::Ios, RuntimeEntryTrigger::WakeWord),
+        );
+
+        assert!(ios_wake.is_err());
+    }
+
+    #[test]
+    fn stage_7a_access_context_ref_remains_non_authoritative() {
+        let packet = Stage7ActivationContextPacket::from_activation(
+            stage4_activation(
+                Stage4ActivationSource::ExplicitMic,
+                RuntimeEntryTrigger::Explicit,
+            ),
+            "activation-stage7-explicit",
+        )
+        .expect("stage 7 explicit packet")
+        .with_access_context_id("access-context-stage6")
+        .expect("access context ref");
+
+        assert_eq!(
+            packet.disposition,
+            Stage7ActivationDisposition::ExplicitActivationOnly
+        );
+        assert_eq!(
+            packet.access_context_id.as_deref(),
+            Some("access-context-stage6")
+        );
+        assert!(packet.can_only_open_or_resume_session());
+        assert!(!packet.can_perform_downstream_work());
+    }
+
+    #[test]
+    fn stage_7a_wake_artifact_requires_consent_reference() {
+        let mut activation = stage4_activation(
+            Stage4ActivationSource::WakeCandidate,
+            RuntimeEntryTrigger::WakeWord,
+        );
+        activation.consent_state_id = None;
+        activation
+            .validate()
+            .expect("activation without consent is valid");
+
+        let packet = Stage7ActivationContextPacket::from_activation(
+            activation,
+            "activation-stage7-no-consent",
+        )
+        .expect("wake packet without artifact");
+
+        assert!(packet
+            .with_wake_refs("wake-event-stage7", "wake-artifact-stage7")
+            .is_err());
     }
 
     fn invite_click_request(

@@ -78,10 +78,10 @@ After every build, update this section before final reporting.
 
 | Field | Current Value |
 |---|---|
-| Current active stage | Stage 7 |
-| Current active build | Stage 7A - Wake, Side Button, And Activation Stack Reconciliation |
-| Next build after current stage passes | Stage 8 - Voice I/O, Listen State, Transcript Gate, And Turn Boundary |
-| Last completed stage | Stage 6A - Master Access, Tenant, Policy, And Per-User Authority Context Reconciliation |
+| Current active stage | Stage 8 |
+| Current active build | Stage 8A - Voice I/O, Listen State, Transcript Gate, And Turn Boundary Reconciliation |
+| Next build after current stage passes | Stage 9 - Voice ID |
+| Last completed stage | Stage 7A - Wake, Side Button, And Activation Stack Reconciliation |
 | Stages blocked | None yet |
 | Plan drift allowed | No |
 
@@ -1754,7 +1754,9 @@ Next if passed:
 
 ## Stage 7 - Wake, Side Button, And Activation Stack
 
-Status: PARTIALLY_BUILT
+Status: PROVEN_COMPLETE
+
+Stage 7A status: PROVEN_COMPLETE
 
 Build:
 
@@ -1793,6 +1795,15 @@ Proof:
 - false wake safe-degrades;
 - side button path opens session without always-listening wake;
 - wake training artifact requires consent and policy.
+
+Stage 7A proof update:
+
+- `Stage7ActivationContextPacket`, `Stage7ActivationDisposition`, and `Stage7ActivationWorkAuthority` now provide the minimal runtime-owned wake/side-button activation boundary in `runtime_ingress_turn_foundation.rs`.
+- Wake candidates can only open/resume session attention state, carry bounded consent/device/provider-budget/access/audit references, and emit wake event/artifact references. They cannot understand, answer, search, call providers, trigger Voice ID matching, authorize, route tools, speak TTS, execute protected mutations, or perform connector writes.
+- iPhone side-button activation is represented as explicit activation only. iPhone wake-word activation remains blocked before an activation packet can be created because iOS has explicit-only trigger policy and no negotiated wake-word capability.
+- `WakeTrainingConsentBoundaryV1` in `ph1wake_training.rs` preserves the repo-truth wake-training lane while proving wake training/artifact use requires granted, non-revoked consent, policy context, device scope, and no raw-audio retention by default.
+- Canonical `wake candidate packet`, `wake decision packet`, `side-button activation packet`, and `explicit activation packet` names are crosswalked to Stage 4 activation carriers plus the Stage 7A context packet. `DeviceTrustPacket`, `ConsentStatePacket`, and `ProviderBudgetPacket` remain Stage 3/4 references, not duplicate engines.
+- Native Swift surfaces were inspected only by repo-truth path references and were not redesigned. Desktop wake-life remains proof/client transport, not the Selene brain. Android and Windows wake surfaces remain documented future/client surfaces where not present in this repo.
 
 Next if passed:
 
