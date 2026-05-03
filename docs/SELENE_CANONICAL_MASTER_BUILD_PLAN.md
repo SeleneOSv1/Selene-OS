@@ -78,10 +78,10 @@ After every build, update this section before final reporting.
 
 | Field | Current Value |
 |---|---|
-| Current active stage | Stage 6 |
-| Current active build | Stage 6A - Master Access, Tenant, Policy, And Per-User Authority Context Reconciliation |
-| Next build after current stage passes | Stage 7 - Wake, Side Button, And Activation Stack |
-| Last completed stage | Stage 5B - Conversation Control, Clarification, Correction, Recovery, And Same-Page State Reconciliation |
+| Current active stage | Stage 7 |
+| Current active build | Stage 7A - Wake, Side Button, And Activation Stack Reconciliation |
+| Next build after current stage passes | Stage 8 - Voice I/O, Listen State, Transcript Gate, And Turn Boundary |
+| Last completed stage | Stage 6A - Master Access, Tenant, Policy, And Per-User Authority Context Reconciliation |
 | Stages blocked | None yet |
 | Plan drift allowed | No |
 
@@ -1704,7 +1704,18 @@ Next if passed:
 
 ## Stage 6 - Master Access, Tenant, Policy, And Per-User Authority Context
 
-Status: EXISTS_BUT_NEEDS_RECONCILIATION
+Status: PROVEN_COMPLETE
+
+Stage 6A status: PROVEN_COMPLETE
+
+Stage 6A completion note:
+
+- `Stage6AccessContextPacket`, `Stage6AccessContextInput`, `Stage6AccessContextDisposition`, `Stage6AccessWorkAuthority`, `Stage6AuthorityRequestKind`, and `Stage6IdentityPosture` now provide the minimal runtime-owned access-context carrier in `runtime_session_foundation.rs`.
+- Stage 6A consumes only current Stage 5 turn authority and advisory Stage 5B conversation state. Stale, cancelled, superseded, abandoned, closed-session, and record-artifact-only turns resolve to `Stage5AuthorityBlocked` and cannot construct access context.
+- Public read-only context is representable without mutation authority; it cannot route search/tools/providers/TTS or authorize sends, posts, deletes, purchases, connector writes, or protected business changes.
+- Protected-action context can be marked ready only when tenant, actor, consent, device trust, verified identity posture, policy context, access context, and audit references are present and positive. It still cannot execute, simulate, route tools/search/providers/TTS, connector-write, or grant authority; Stage 12 remains the protected execution gate.
+- Unknown, low-confidence, wrong-speaker, multi-speaker, cross-tenant, revoked-consent, untrusted-device, missing-access, policy-denied, approval-required, and step-up-required cases fail closed for protected authority context.
+- Existing PH1.ACCESS/PH2.ACCESS storage, PH1.TENANT, PH1.POLICY, PH1.GOV, PH1.VOICE.ID posture, Stage 3 consent/provider-safety, and Stage 5 session/conversation carriers remain the repo-truth sources and were not duplicated.
 
 Build:
 

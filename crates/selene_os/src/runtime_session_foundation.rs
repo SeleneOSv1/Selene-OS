@@ -57,6 +57,17 @@ mod reason_codes {
     pub const STAGE5B_SAME_PAGE_SNAPSHOT: &str = "stage5b_same_page_snapshot";
     pub const STAGE5B_SAFE_BACKCHANNEL_CANDIDATE: &str = "stage5b_safe_backchannel_candidate";
     pub const STAGE5B_TURN_AUTHORITY_BLOCKED: &str = "stage5b_turn_authority_blocked";
+    pub const STAGE6_PUBLIC_READ_ONLY_CONTEXT: &str = "stage6_public_read_only_context";
+    pub const STAGE6_PROTECTED_CONTEXT_READY: &str = "stage6_protected_context_ready";
+    pub const STAGE6_STAGE5_AUTHORITY_BLOCKED: &str = "stage6_stage5_authority_blocked";
+    pub const STAGE6_IDENTITY_NOT_VERIFIED: &str = "stage6_identity_not_verified";
+    pub const STAGE6_TENANT_MISMATCH: &str = "stage6_tenant_mismatch";
+    pub const STAGE6_CONSENT_REVOKED: &str = "stage6_consent_revoked";
+    pub const STAGE6_DEVICE_TRUST_MISMATCH: &str = "stage6_device_trust_mismatch";
+    pub const STAGE6_MISSING_ACCESS_INSTANCE: &str = "stage6_missing_access_instance";
+    pub const STAGE6_POLICY_DENIED: &str = "stage6_policy_denied";
+    pub const STAGE6_STEP_UP_REQUIRED: &str = "stage6_step_up_required";
+    pub const STAGE6_APPROVAL_REQUIRED: &str = "stage6_approval_required";
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1463,6 +1474,566 @@ impl Stage5ConversationControlPacket {
                 },
             });
         }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stage6AuthorityRequestKind {
+    PublicReadOnly,
+    ProtectedActionContext,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stage6IdentityPosture {
+    NotRequiredForPublicReadOnly,
+    VerifiedUser,
+    UnknownSpeaker,
+    LowConfidenceSpeaker,
+    WrongSpeaker,
+    MultiSpeaker,
+    StepUpRequired,
+}
+
+impl Stage6IdentityPosture {
+    pub const fn supports_protected_context(self) -> bool {
+        matches!(self, Stage6IdentityPosture::VerifiedUser)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stage6AccessContextDisposition {
+    PublicReadOnlyContext,
+    ProtectedContextReady,
+    Stage5AuthorityBlocked,
+    IdentityNotVerified,
+    TenantMismatch,
+    ConsentRevoked,
+    DeviceTrustMismatch,
+    MissingAccessInstance,
+    PolicyDenied,
+    StepUpRequired,
+    ApprovalRequired,
+}
+
+impl Stage6AccessContextDisposition {
+    pub const fn default_reason_code(self) -> &'static str {
+        match self {
+            Stage6AccessContextDisposition::PublicReadOnlyContext => {
+                reason_codes::STAGE6_PUBLIC_READ_ONLY_CONTEXT
+            }
+            Stage6AccessContextDisposition::ProtectedContextReady => {
+                reason_codes::STAGE6_PROTECTED_CONTEXT_READY
+            }
+            Stage6AccessContextDisposition::Stage5AuthorityBlocked => {
+                reason_codes::STAGE6_STAGE5_AUTHORITY_BLOCKED
+            }
+            Stage6AccessContextDisposition::IdentityNotVerified => {
+                reason_codes::STAGE6_IDENTITY_NOT_VERIFIED
+            }
+            Stage6AccessContextDisposition::TenantMismatch => reason_codes::STAGE6_TENANT_MISMATCH,
+            Stage6AccessContextDisposition::ConsentRevoked => reason_codes::STAGE6_CONSENT_REVOKED,
+            Stage6AccessContextDisposition::DeviceTrustMismatch => {
+                reason_codes::STAGE6_DEVICE_TRUST_MISMATCH
+            }
+            Stage6AccessContextDisposition::MissingAccessInstance => {
+                reason_codes::STAGE6_MISSING_ACCESS_INSTANCE
+            }
+            Stage6AccessContextDisposition::PolicyDenied => reason_codes::STAGE6_POLICY_DENIED,
+            Stage6AccessContextDisposition::StepUpRequired => reason_codes::STAGE6_STEP_UP_REQUIRED,
+            Stage6AccessContextDisposition::ApprovalRequired => {
+                reason_codes::STAGE6_APPROVAL_REQUIRED
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Stage6AccessWorkAuthority {
+    pub can_represent_public_read_only: bool,
+    pub can_hold_protected_context: bool,
+    pub can_execute_protected_mutation: bool,
+    pub can_simulate_protected_workflow: bool,
+    pub can_route_tools: bool,
+    pub can_route_search: bool,
+    pub can_route_providers: bool,
+    pub can_route_tts: bool,
+    pub can_connector_write: bool,
+    pub can_grant_authority: bool,
+}
+
+impl Stage6AccessWorkAuthority {
+    pub const fn public_read_only_context() -> Self {
+        Self {
+            can_represent_public_read_only: true,
+            can_hold_protected_context: false,
+            can_execute_protected_mutation: false,
+            can_simulate_protected_workflow: false,
+            can_route_tools: false,
+            can_route_search: false,
+            can_route_providers: false,
+            can_route_tts: false,
+            can_connector_write: false,
+            can_grant_authority: false,
+        }
+    }
+
+    pub const fn protected_context_ready() -> Self {
+        Self {
+            can_represent_public_read_only: false,
+            can_hold_protected_context: true,
+            can_execute_protected_mutation: false,
+            can_simulate_protected_workflow: false,
+            can_route_tools: false,
+            can_route_search: false,
+            can_route_providers: false,
+            can_route_tts: false,
+            can_connector_write: false,
+            can_grant_authority: false,
+        }
+    }
+
+    pub const fn blocked() -> Self {
+        Self {
+            can_represent_public_read_only: false,
+            can_hold_protected_context: false,
+            can_execute_protected_mutation: false,
+            can_simulate_protected_workflow: false,
+            can_route_tools: false,
+            can_route_search: false,
+            can_route_providers: false,
+            can_route_tts: false,
+            can_connector_write: false,
+            can_grant_authority: false,
+        }
+    }
+
+    pub const fn can_route_any_work(self) -> bool {
+        self.can_route_tools
+            || self.can_route_search
+            || self.can_route_providers
+            || self.can_route_tts
+    }
+
+    pub const fn can_execute_or_mutate(self) -> bool {
+        self.can_execute_protected_mutation
+            || self.can_simulate_protected_workflow
+            || self.can_connector_write
+    }
+
+    pub const fn can_become_authority(self) -> bool {
+        self.can_grant_authority || self.can_execute_or_mutate()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Stage6AccessContextInput {
+    pub requested_authority: Stage6AuthorityRequestKind,
+    pub tenant_id: Option<String>,
+    pub workspace_id: Option<String>,
+    pub actor_user_id: Option<String>,
+    pub device_trust_id: Option<String>,
+    pub consent_state_id: Option<String>,
+    pub voice_identity_id: Option<String>,
+    pub policy_context_id: Option<String>,
+    pub access_context_id: Option<String>,
+    pub audit_id: Option<String>,
+    pub identity_posture: Stage6IdentityPosture,
+    pub consent_active: bool,
+    pub device_trusted: bool,
+    pub tenant_scope_verified: bool,
+    pub access_instance_present: bool,
+    pub policy_allows: bool,
+    pub access_gate_allows: bool,
+    pub step_up_required: bool,
+    pub approval_required: bool,
+}
+
+impl Stage6AccessContextInput {
+    pub fn public_read_only(audit_id: impl Into<String>) -> Self {
+        Self {
+            requested_authority: Stage6AuthorityRequestKind::PublicReadOnly,
+            tenant_id: None,
+            workspace_id: None,
+            actor_user_id: None,
+            device_trust_id: None,
+            consent_state_id: None,
+            voice_identity_id: None,
+            policy_context_id: None,
+            access_context_id: None,
+            audit_id: Some(audit_id.into()),
+            identity_posture: Stage6IdentityPosture::NotRequiredForPublicReadOnly,
+            consent_active: true,
+            device_trusted: true,
+            tenant_scope_verified: true,
+            access_instance_present: false,
+            policy_allows: true,
+            access_gate_allows: false,
+            step_up_required: false,
+            approval_required: false,
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn protected_action_context(
+        tenant_id: impl Into<String>,
+        workspace_id: impl Into<String>,
+        actor_user_id: impl Into<String>,
+        device_trust_id: impl Into<String>,
+        consent_state_id: impl Into<String>,
+        voice_identity_id: impl Into<String>,
+        policy_context_id: impl Into<String>,
+        access_context_id: impl Into<String>,
+        audit_id: impl Into<String>,
+    ) -> Self {
+        Self {
+            requested_authority: Stage6AuthorityRequestKind::ProtectedActionContext,
+            tenant_id: Some(tenant_id.into()),
+            workspace_id: Some(workspace_id.into()),
+            actor_user_id: Some(actor_user_id.into()),
+            device_trust_id: Some(device_trust_id.into()),
+            consent_state_id: Some(consent_state_id.into()),
+            voice_identity_id: Some(voice_identity_id.into()),
+            policy_context_id: Some(policy_context_id.into()),
+            access_context_id: Some(access_context_id.into()),
+            audit_id: Some(audit_id.into()),
+            identity_posture: Stage6IdentityPosture::VerifiedUser,
+            consent_active: true,
+            device_trusted: true,
+            tenant_scope_verified: true,
+            access_instance_present: true,
+            policy_allows: true,
+            access_gate_allows: true,
+            step_up_required: false,
+            approval_required: false,
+        }
+    }
+}
+
+impl Validate for Stage6AccessContextInput {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        validate_stage6_optional_token("stage6_access_context_input.tenant_id", &self.tenant_id)?;
+        validate_stage6_optional_token(
+            "stage6_access_context_input.workspace_id",
+            &self.workspace_id,
+        )?;
+        validate_stage6_optional_token(
+            "stage6_access_context_input.actor_user_id",
+            &self.actor_user_id,
+        )?;
+        validate_stage6_optional_token(
+            "stage6_access_context_input.device_trust_id",
+            &self.device_trust_id,
+        )?;
+        validate_stage6_optional_token(
+            "stage6_access_context_input.consent_state_id",
+            &self.consent_state_id,
+        )?;
+        validate_stage6_optional_token(
+            "stage6_access_context_input.voice_identity_id",
+            &self.voice_identity_id,
+        )?;
+        validate_stage6_optional_token(
+            "stage6_access_context_input.policy_context_id",
+            &self.policy_context_id,
+        )?;
+        validate_stage6_optional_token(
+            "stage6_access_context_input.access_context_id",
+            &self.access_context_id,
+        )?;
+        validate_stage6_optional_token("stage6_access_context_input.audit_id", &self.audit_id)?;
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Stage6AccessContextPacket {
+    pub session_id: SessionId,
+    pub turn_id: Option<TurnId>,
+    pub disposition: Stage6AccessContextDisposition,
+    pub reason_code: &'static str,
+    pub requested_authority: Stage6AuthorityRequestKind,
+    pub turn_authority_disposition: Stage5TurnAuthorityDisposition,
+    pub conversation_disposition: Option<Stage5ConversationControlDisposition>,
+    pub tenant_id: Option<String>,
+    pub workspace_id: Option<String>,
+    pub actor_user_id: Option<String>,
+    pub device_trust_id: Option<String>,
+    pub consent_state_id: Option<String>,
+    pub voice_identity_id: Option<String>,
+    pub policy_context_id: Option<String>,
+    pub access_context_id: Option<String>,
+    pub audit_id: Option<String>,
+    pub identity_posture: Stage6IdentityPosture,
+    pub consent_active: bool,
+    pub device_trusted: bool,
+    pub tenant_scope_verified: bool,
+    pub access_instance_present: bool,
+    pub policy_allows: bool,
+    pub access_gate_allows: bool,
+    pub step_up_required: bool,
+    pub approval_required: bool,
+    pub work_authority: Stage6AccessWorkAuthority,
+}
+
+impl Stage6AccessContextPacket {
+    pub fn from_stage5_authority(
+        turn_authority: &Stage5TurnAuthorityPacket,
+        conversation: Option<&Stage5ConversationControlPacket>,
+        input: Stage6AccessContextInput,
+    ) -> Result<Self, ContractViolation> {
+        input.validate()?;
+        let conversation_disposition =
+            Self::validate_stage5_conversation(turn_authority, conversation)?;
+        let disposition = if turn_authority.disposition
+            != Stage5TurnAuthorityDisposition::CurrentCommittedTurn
+            || !turn_authority.can_enter_understanding()
+            || turn_authority.can_route_any_work()
+        {
+            Stage6AccessContextDisposition::Stage5AuthorityBlocked
+        } else {
+            Self::decide_disposition(&input)
+        };
+        let work_authority = Self::work_authority_for(disposition);
+        let packet = Self {
+            session_id: turn_authority.session_id,
+            turn_id: turn_authority.turn_id,
+            disposition,
+            reason_code: disposition.default_reason_code(),
+            requested_authority: input.requested_authority,
+            turn_authority_disposition: turn_authority.disposition,
+            conversation_disposition,
+            tenant_id: input.tenant_id,
+            workspace_id: input.workspace_id,
+            actor_user_id: input.actor_user_id,
+            device_trust_id: input.device_trust_id,
+            consent_state_id: input.consent_state_id,
+            voice_identity_id: input.voice_identity_id,
+            policy_context_id: input.policy_context_id,
+            access_context_id: input.access_context_id,
+            audit_id: input.audit_id,
+            identity_posture: input.identity_posture,
+            consent_active: input.consent_active,
+            device_trusted: input.device_trusted,
+            tenant_scope_verified: input.tenant_scope_verified,
+            access_instance_present: input.access_instance_present,
+            policy_allows: input.policy_allows,
+            access_gate_allows: input.access_gate_allows,
+            step_up_required: input.step_up_required,
+            approval_required: input.approval_required,
+            work_authority,
+        };
+        packet.validate()?;
+        Ok(packet)
+    }
+
+    pub const fn can_represent_public_read_only(&self) -> bool {
+        self.work_authority.can_represent_public_read_only
+    }
+
+    pub const fn can_hold_protected_authority_context(&self) -> bool {
+        self.work_authority.can_hold_protected_context
+    }
+
+    pub const fn can_route_any_work(&self) -> bool {
+        self.work_authority.can_route_any_work()
+    }
+
+    pub const fn can_execute_or_mutate(&self) -> bool {
+        self.work_authority.can_execute_or_mutate()
+    }
+
+    fn validate_stage5_conversation(
+        turn_authority: &Stage5TurnAuthorityPacket,
+        conversation: Option<&Stage5ConversationControlPacket>,
+    ) -> Result<Option<Stage5ConversationControlDisposition>, ContractViolation> {
+        let Some(conversation) = conversation else {
+            return Ok(None);
+        };
+        if conversation.session_id != turn_authority.session_id
+            || conversation.turn_id != turn_authority.turn_id
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage6_access_context_packet.conversation",
+                reason: "conversation state must belong to the same Stage 5 current turn",
+            });
+        }
+        if conversation.can_route_any_work() || conversation.can_become_authoritative() {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage6_access_context_packet.conversation",
+                reason: "Stage 5B conversation state is advisory and cannot grant authority",
+            });
+        }
+        Ok(Some(conversation.disposition))
+    }
+
+    fn decide_disposition(input: &Stage6AccessContextInput) -> Stage6AccessContextDisposition {
+        if input.requested_authority == Stage6AuthorityRequestKind::PublicReadOnly {
+            return Stage6AccessContextDisposition::PublicReadOnlyContext;
+        }
+        if input.step_up_required || input.identity_posture == Stage6IdentityPosture::StepUpRequired
+        {
+            return Stage6AccessContextDisposition::StepUpRequired;
+        }
+        if input.approval_required {
+            return Stage6AccessContextDisposition::ApprovalRequired;
+        }
+        if !input.identity_posture.supports_protected_context() {
+            return Stage6AccessContextDisposition::IdentityNotVerified;
+        }
+        if !input.consent_active {
+            return Stage6AccessContextDisposition::ConsentRevoked;
+        }
+        if !input.device_trusted {
+            return Stage6AccessContextDisposition::DeviceTrustMismatch;
+        }
+        if !input.tenant_scope_verified || input.tenant_id.is_none() {
+            return Stage6AccessContextDisposition::TenantMismatch;
+        }
+        if !input.access_instance_present
+            || input.actor_user_id.is_none()
+            || input.access_context_id.is_none()
+        {
+            return Stage6AccessContextDisposition::MissingAccessInstance;
+        }
+        if !input.policy_allows || !input.access_gate_allows || input.policy_context_id.is_none() {
+            return Stage6AccessContextDisposition::PolicyDenied;
+        }
+        Stage6AccessContextDisposition::ProtectedContextReady
+    }
+
+    const fn work_authority_for(
+        disposition: Stage6AccessContextDisposition,
+    ) -> Stage6AccessWorkAuthority {
+        match disposition {
+            Stage6AccessContextDisposition::PublicReadOnlyContext => {
+                Stage6AccessWorkAuthority::public_read_only_context()
+            }
+            Stage6AccessContextDisposition::ProtectedContextReady => {
+                Stage6AccessWorkAuthority::protected_context_ready()
+            }
+            _ => Stage6AccessWorkAuthority::blocked(),
+        }
+    }
+}
+
+impl Validate for Stage6AccessContextPacket {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        if self.reason_code.trim().is_empty() || self.reason_code.len() > 128 {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage6_access_context_packet.reason_code",
+                reason: "must be a bounded non-empty reason code",
+            });
+        }
+        if self.work_authority.can_route_any_work()
+            || self.work_authority.can_execute_or_mutate()
+            || self.work_authority.can_become_authority()
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage6_access_context_packet.work_authority",
+                reason: "access context cannot route, call providers, speak, execute, mutate, or grant authority",
+            });
+        }
+        validate_stage6_optional_token("stage6_access_context_packet.tenant_id", &self.tenant_id)?;
+        validate_stage6_optional_token(
+            "stage6_access_context_packet.workspace_id",
+            &self.workspace_id,
+        )?;
+        validate_stage6_optional_token(
+            "stage6_access_context_packet.actor_user_id",
+            &self.actor_user_id,
+        )?;
+        validate_stage6_optional_token(
+            "stage6_access_context_packet.device_trust_id",
+            &self.device_trust_id,
+        )?;
+        validate_stage6_optional_token(
+            "stage6_access_context_packet.consent_state_id",
+            &self.consent_state_id,
+        )?;
+        validate_stage6_optional_token(
+            "stage6_access_context_packet.voice_identity_id",
+            &self.voice_identity_id,
+        )?;
+        validate_stage6_optional_token(
+            "stage6_access_context_packet.policy_context_id",
+            &self.policy_context_id,
+        )?;
+        validate_stage6_optional_token(
+            "stage6_access_context_packet.access_context_id",
+            &self.access_context_id,
+        )?;
+        validate_stage6_optional_token("stage6_access_context_packet.audit_id", &self.audit_id)?;
+
+        match self.disposition {
+            Stage6AccessContextDisposition::PublicReadOnlyContext => {
+                if self.requested_authority != Stage6AuthorityRequestKind::PublicReadOnly
+                    || !self.work_authority.can_represent_public_read_only
+                    || self.work_authority.can_hold_protected_context
+                {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "stage6_access_context_packet",
+                        reason: "public read-only context cannot hold protected authority",
+                    });
+                }
+            }
+            Stage6AccessContextDisposition::ProtectedContextReady => {
+                if self.requested_authority != Stage6AuthorityRequestKind::ProtectedActionContext
+                    || self.turn_authority_disposition
+                        != Stage5TurnAuthorityDisposition::CurrentCommittedTurn
+                    || !self.identity_posture.supports_protected_context()
+                    || !self.consent_active
+                    || !self.device_trusted
+                    || !self.tenant_scope_verified
+                    || !self.access_instance_present
+                    || !self.policy_allows
+                    || !self.access_gate_allows
+                    || self.tenant_id.is_none()
+                    || self.actor_user_id.is_none()
+                    || self.policy_context_id.is_none()
+                    || self.access_context_id.is_none()
+                    || self.audit_id.is_none()
+                {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "stage6_access_context_packet",
+                        reason: "protected context requires current Stage 5 authority plus verified identity, tenant, consent, device trust, policy, access, and audit references",
+                    });
+                }
+            }
+            Stage6AccessContextDisposition::Stage5AuthorityBlocked => {
+                if self.turn_authority_disposition
+                    == Stage5TurnAuthorityDisposition::CurrentCommittedTurn
+                {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "stage6_access_context_packet.turn_authority_disposition",
+                        reason: "Stage 5 authority blocked disposition requires non-current turn authority",
+                    });
+                }
+            }
+            _ => {
+                if self.work_authority.can_hold_protected_context
+                    || self.work_authority.can_represent_public_read_only
+                {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "stage6_access_context_packet.work_authority",
+                        reason:
+                            "denied access context cannot hold protected or public-read authority",
+                    });
+                }
+            }
+        }
+
+        if matches!(
+            self.conversation_disposition,
+            Some(Stage5ConversationControlDisposition::TurnAuthorityBlocked)
+        ) && self.disposition == Stage6AccessContextDisposition::ProtectedContextReady
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage6_access_context_packet.conversation_disposition",
+                reason: "blocked conversation state cannot produce protected context",
+            });
+        }
+
         Ok(())
     }
 }
@@ -3838,6 +4409,16 @@ fn validate_stage5_bounded_token_list(
     Ok(())
 }
 
+fn validate_stage6_optional_token(
+    field: &'static str,
+    value: &Option<String>,
+) -> Result<(), ContractViolation> {
+    if let Some(value) = value {
+        validate_stage5_ascii_token(field, value, 128)?;
+    }
+    Ok(())
+}
+
 fn allocate_turn_id(record: &mut SessionRecord) -> TurnId {
     let turn_id = TurnId(record.next_turn_id);
     record.next_turn_id = record.next_turn_id.saturating_add(1);
@@ -4263,6 +4844,31 @@ mod tests {
             "hash-stage5b-snapshot",
         )
         .expect("same-page state")
+    }
+
+    fn stage5b_conversation_snapshot() -> Stage5ConversationControlPacket {
+        Stage5ConversationControlPacket::from_turn_authority(
+            &stage5b_current_authority(),
+            Stage5ConversationControlDisposition::SamePageSnapshot,
+            stage5b_same_page_state(),
+            None,
+            None,
+        )
+        .expect("conversation snapshot")
+    }
+
+    fn stage6_protected_input() -> Stage6AccessContextInput {
+        Stage6AccessContextInput::protected_action_context(
+            "tenant-stage6",
+            "workspace-stage6",
+            "user-stage6",
+            "device-trust-stage6",
+            "consent-stage6",
+            "voice-assertion-stage6",
+            "policy-context-stage6",
+            "access-context-stage6",
+            "audit-stage6",
+        )
     }
 
     #[test]
@@ -5213,6 +5819,231 @@ mod tests {
         let mut unsafe_delivery = state;
         unsafe_delivery.delivery_policy.claims_authority = true;
         assert!(unsafe_delivery.validate().is_err());
+    }
+
+    #[test]
+    fn stage_6a_public_read_only_context_is_non_mutating_and_non_routing() {
+        let packet = Stage6AccessContextPacket::from_stage5_authority(
+            &stage5b_current_authority(),
+            Some(&stage5b_conversation_snapshot()),
+            Stage6AccessContextInput::public_read_only("audit-stage6-public"),
+        )
+        .expect("public read-only access context");
+
+        assert_eq!(
+            packet.disposition,
+            Stage6AccessContextDisposition::PublicReadOnlyContext
+        );
+        assert!(packet.can_represent_public_read_only());
+        assert!(!packet.can_hold_protected_authority_context());
+        assert!(!packet.can_execute_or_mutate());
+        assert!(!packet.can_route_any_work());
+        assert_eq!(
+            packet.conversation_disposition,
+            Some(Stage5ConversationControlDisposition::SamePageSnapshot)
+        );
+    }
+
+    #[test]
+    fn stage_6a_protected_context_requires_access_but_still_cannot_execute() {
+        let packet = Stage6AccessContextPacket::from_stage5_authority(
+            &stage5b_current_authority(),
+            Some(&stage5b_conversation_snapshot()),
+            stage6_protected_input(),
+        )
+        .expect("protected access context");
+
+        assert_eq!(
+            packet.disposition,
+            Stage6AccessContextDisposition::ProtectedContextReady
+        );
+        assert!(packet.can_hold_protected_authority_context());
+        assert!(!packet.can_represent_public_read_only());
+        assert!(!packet.can_execute_or_mutate());
+        assert!(!packet.can_route_any_work());
+
+        let mut missing_access = stage6_protected_input();
+        missing_access.access_instance_present = false;
+        let denied = Stage6AccessContextPacket::from_stage5_authority(
+            &stage5b_current_authority(),
+            Some(&stage5b_conversation_snapshot()),
+            missing_access,
+        )
+        .expect("missing access is a closed context");
+        assert_eq!(
+            denied.disposition,
+            Stage6AccessContextDisposition::MissingAccessInstance
+        );
+        assert!(!denied.can_hold_protected_authority_context());
+        assert!(!denied.can_execute_or_mutate());
+    }
+
+    #[test]
+    fn stage_6a_stale_closed_and_record_turns_cannot_construct_access_context() {
+        let dispositions = [
+            Stage5TurnAuthorityDisposition::StaleTurnQuarantined,
+            Stage5TurnAuthorityDisposition::SupersededTurnQuarantined,
+            Stage5TurnAuthorityDisposition::CancelledTurnQuarantined,
+            Stage5TurnAuthorityDisposition::AbandonedTurnQuarantined,
+            Stage5TurnAuthorityDisposition::RecordArtifactOnly,
+        ];
+
+        for disposition in dispositions {
+            let authority = Stage5TurnAuthorityPacket::quarantined(
+                SessionId(77),
+                Some(TurnId(7)),
+                Some("device-a".to_string()),
+                Some(3),
+                SessionState::Active,
+                disposition,
+            )
+            .expect("blocked authority");
+            let packet = Stage6AccessContextPacket::from_stage5_authority(
+                &authority,
+                None,
+                stage6_protected_input(),
+            )
+            .expect("blocked access context");
+
+            assert_eq!(
+                packet.disposition,
+                Stage6AccessContextDisposition::Stage5AuthorityBlocked
+            );
+            assert!(!packet.can_hold_protected_authority_context());
+            assert!(!packet.can_execute_or_mutate());
+            assert!(!packet.can_route_any_work());
+        }
+
+        let closed = Stage5TurnAuthorityPacket::quarantined(
+            SessionId(77),
+            Some(TurnId(7)),
+            Some("device-a".to_string()),
+            Some(3),
+            SessionState::Closed,
+            Stage5TurnAuthorityDisposition::ClosedSessionRejected,
+        )
+        .expect("closed authority");
+        let closed_packet = Stage6AccessContextPacket::from_stage5_authority(
+            &closed,
+            None,
+            stage6_protected_input(),
+        )
+        .expect("closed access context");
+        assert_eq!(
+            closed_packet.disposition,
+            Stage6AccessContextDisposition::Stage5AuthorityBlocked
+        );
+    }
+
+    #[test]
+    fn stage_6a_unknown_low_confidence_and_wrong_speakers_fail_closed() {
+        for posture in [
+            Stage6IdentityPosture::UnknownSpeaker,
+            Stage6IdentityPosture::LowConfidenceSpeaker,
+            Stage6IdentityPosture::WrongSpeaker,
+            Stage6IdentityPosture::MultiSpeaker,
+        ] {
+            let mut input = stage6_protected_input();
+            input.identity_posture = posture;
+            let packet = Stage6AccessContextPacket::from_stage5_authority(
+                &stage5b_current_authority(),
+                Some(&stage5b_conversation_snapshot()),
+                input,
+            )
+            .expect("identity posture context");
+
+            assert_eq!(
+                packet.disposition,
+                Stage6AccessContextDisposition::IdentityNotVerified
+            );
+            assert!(!packet.can_hold_protected_authority_context());
+            assert!(!packet.can_execute_or_mutate());
+        }
+
+        let mut step_up = stage6_protected_input();
+        step_up.identity_posture = Stage6IdentityPosture::StepUpRequired;
+        let packet = Stage6AccessContextPacket::from_stage5_authority(
+            &stage5b_current_authority(),
+            Some(&stage5b_conversation_snapshot()),
+            step_up,
+        )
+        .expect("step-up context");
+        assert_eq!(
+            packet.disposition,
+            Stage6AccessContextDisposition::StepUpRequired
+        );
+        assert!(!packet.can_hold_protected_authority_context());
+    }
+
+    #[test]
+    fn stage_6a_tenant_consent_device_policy_and_access_fail_closed() {
+        let cases: Vec<(Stage6AccessContextInput, Stage6AccessContextDisposition)> = {
+            let mut tenant = stage6_protected_input();
+            tenant.tenant_scope_verified = false;
+
+            let mut consent = stage6_protected_input();
+            consent.consent_active = false;
+
+            let mut device = stage6_protected_input();
+            device.device_trusted = false;
+
+            let mut policy = stage6_protected_input();
+            policy.policy_allows = false;
+
+            let mut gate = stage6_protected_input();
+            gate.access_gate_allows = false;
+
+            let mut approval = stage6_protected_input();
+            approval.approval_required = true;
+
+            vec![
+                (tenant, Stage6AccessContextDisposition::TenantMismatch),
+                (consent, Stage6AccessContextDisposition::ConsentRevoked),
+                (device, Stage6AccessContextDisposition::DeviceTrustMismatch),
+                (policy, Stage6AccessContextDisposition::PolicyDenied),
+                (gate, Stage6AccessContextDisposition::PolicyDenied),
+                (approval, Stage6AccessContextDisposition::ApprovalRequired),
+            ]
+        };
+
+        for (input, expected) in cases {
+            let packet = Stage6AccessContextPacket::from_stage5_authority(
+                &stage5b_current_authority(),
+                Some(&stage5b_conversation_snapshot()),
+                input,
+            )
+            .expect("closed access context");
+
+            assert_eq!(packet.disposition, expected);
+            assert!(!packet.can_hold_protected_authority_context());
+            assert!(!packet.can_execute_or_mutate());
+            assert!(!packet.can_route_any_work());
+        }
+    }
+
+    #[test]
+    fn stage_6a_same_page_state_is_advisory_and_cannot_grant_access() {
+        let mut input = stage6_protected_input();
+        input.access_instance_present = false;
+        input.policy_allows = false;
+        let packet = Stage6AccessContextPacket::from_stage5_authority(
+            &stage5b_current_authority(),
+            Some(&stage5b_conversation_snapshot()),
+            input,
+        )
+        .expect("same-page cannot grant access");
+
+        assert_eq!(
+            packet.disposition,
+            Stage6AccessContextDisposition::MissingAccessInstance
+        );
+        assert_eq!(
+            packet.conversation_disposition,
+            Some(Stage5ConversationControlDisposition::SamePageSnapshot)
+        );
+        assert!(!packet.can_hold_protected_authority_context());
+        assert!(!packet.can_execute_or_mutate());
+        assert!(!packet.can_route_any_work());
     }
 
     #[test]

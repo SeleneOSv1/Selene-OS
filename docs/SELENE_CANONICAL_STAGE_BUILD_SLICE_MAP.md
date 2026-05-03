@@ -105,8 +105,10 @@ Large stages are build families. A future Codex build must select one exact slic
 | 30E | Custom assistant builder/store | AssistantDefinitionPacket | assistant release artifact | governance proof |
 | 30F | Self-heal/dev lane | dev route | proposal artifact | no uncontrolled shell/tool bypass |
 
-## Next Slice After Stage 5B
+## Next Slice After Stage 6A
 
 ```text
-Stage 6A - Master Access, Tenant, Policy, And Per-User Authority Context Reconciliation
+Stage 7A - Wake, Side Button, And Activation Stack Reconciliation
 ```
+
+Stage 6A is PROVEN_COMPLETE. It added the minimal runtime-owned `Stage6AccessContextPacket` carrier, preserved PH1.ACCESS/PH2.ACCESS, PH1.TENANT, PH1.POLICY, PH1.GOV, PH1.VOICE.ID, Stage 3 consent/provider-safety, and Stage 5 current-turn/conversation carriers as repo truth, and did not build protected execution, search, voice, wake, native UI, or provider/model routing.
