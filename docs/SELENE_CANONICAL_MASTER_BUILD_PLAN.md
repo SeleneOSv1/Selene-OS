@@ -78,10 +78,10 @@ After every build, update this section before final reporting.
 
 | Field | Current Value |
 |---|---|
-| Current active stage | Stage 1 |
-| Current active build | Canonical Inventory And Wiring Map |
-| Next build after current stage passes | Stage 2 - Runtime Kernel, Storage, Proof Ledger, And Law Foundation |
-| Last completed stage | None under this rewritten canonical plan |
+| Current active stage | Stage 2 |
+| Current active build | Runtime Kernel, Storage, Proof Ledger, Law Foundation, And Minimal Benchmark Envelope Inventory Reconciliation |
+| Next build after current stage passes | Stage 3 - Provider, Secret, KMS, Cost, Quota, Vault, And Early Consent Baseline |
+| Last completed stage | Stage 1 - Canonical Inventory And Wiring Map |
 | Stages blocked | None yet |
 | Plan drift allowed | No |
 
@@ -1299,13 +1299,17 @@ Search ownership rule:
 
 ## Stage 1 - Canonical Inventory And Wiring Map
 
-Status: NEEDS_BUILDING
+Status: PROVEN_COMPLETE
 
 Build:
 
 - one repo-truth inventory of all contracts, engines, OS modules, adapter routes, native clients, tools, migrations, docs, tests, and proof artifacts;
 - one wiring map from activation to session, turn, understanding, routing, tools, protected execution, Write, adapter, Desktop, iPhone, TTS, audit, and replay;
+- `docs/SELENE_CANONICAL_STAGE1_INVENTORY_AND_WIRING_MAP.md`;
 - `docs/SELENE_CANONICAL_DEPENDENCY_DAG.md`;
+- `docs/SELENE_CANONICAL_GOLDEN_JOURNEY_MATRIX.md`;
+- `docs/SELENE_CANONICAL_STAGE_BUILD_SLICE_MAP.md`;
+- `docs/SELENE_CANONICAL_BENCHMARK_TARGET_STATUS_MATRIX.md`;
 - one dependency DAG showing every stage, input packet, output packet, upstream dependency, downstream consumer, blocked stage, parallelizable slice, and must-not-start-early slice;
 - one build-family/slice map for broad stages, including Stage 8, Stage 10, Stage 13, Stage 15, Stage 21, Stage 24, Stage 29, and Stage 30;
 - one packet/handoff matrix proving current repo equivalents for every canonical packet in this document;
@@ -1362,7 +1366,7 @@ Proof:
 
 Next if passed:
 
-- Stage 2 - Runtime Kernel, Storage, Proof Ledger, And Law Foundation.
+- Stage 2A - Runtime Kernel, Storage, Proof Ledger, Law Foundation, And Minimal Benchmark Envelope Inventory Reconciliation.
 
 ## Stage 2 - Runtime Kernel, Storage, Proof Ledger, And Law Foundation
 
@@ -4390,6 +4394,7 @@ At the end of every future build:
 
 ## Plan Reconciliation Notes
 
+- Stage 1 canonical inventory is complete in `docs/SELENE_CANONICAL_STAGE1_INVENTORY_AND_WIRING_MAP.md`. Stage 2 should start as the narrowed reconciliation slice `Stage 2A - Runtime Kernel, Storage, Proof Ledger, Law Foundation, And Minimal Benchmark Envelope Inventory Reconciliation`; it must reuse current runtime/storage/law evidence instead of rebuilding foundations from zero.
 - Older 86-engine references are not deleted by this plan. They must be reconciled in Stage 1.
 - This plan is intentionally wider than the earlier four-stack plan because the repo contains storage, governance, access, delivery, learning, replay, builder, and native-client systems that must be first-class.
 - Search work is preserved and finished in Stages 13-14. It is not rebuilt from zero.
