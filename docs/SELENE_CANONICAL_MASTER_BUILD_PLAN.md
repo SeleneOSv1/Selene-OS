@@ -79,9 +79,9 @@ After every build, update this section before final reporting.
 | Field | Current Value |
 |---|---|
 | Current active stage | Stage 8 |
-| Current active build | Stage 8B - VAD, Endpointing, Partial-Versus-Final Transcript Commit, And Confidence Gate Reconciliation |
+| Current active build | Stage 8C - Listening Lab Scene, Noise, Echo, Diarization, Foreground Speaker, And Addressed-To-Selene Reconciliation |
 | Next build after current stage passes | Stage 8C - Listening Lab Scene, Noise, Echo, Diarization, Foreground Speaker, And Addressed-To-Selene Reconciliation |
-| Last completed stage | Stage 3B - STT/TTS Provider Router, Apple/OpenAI Profiles, And Fallback Policy Foundation |
+| Last completed stage | Stage 8B - VAD, Endpointing, Partial-Versus-Final Transcript Commit, And Confidence Gate Reconciliation |
 | Stages blocked | None yet |
 | Plan drift allowed | No |
 
@@ -1828,6 +1828,8 @@ Status: PARTIALLY_BUILT
 
 Stage 8A status: PROVEN_COMPLETE
 
+Stage 8B status: PROVEN_COMPLETE
+
 Build:
 
 - `PH1.K` voice runtime audio substrate;
@@ -1952,9 +1954,19 @@ Stage 8A proof update:
 - Full STT WER/CER, noisy/far-field/overlap/diarization/accent benchmarks, VAD/endpointing confidence gates, listening lab corpus, and word-level timestamp calibration remain deferred to later Stage 8 slices.
 - Stage 8B is required before Stage 9A.
 
+Stage 8B proof update:
+
+- Existing PH1.K VAD events, PH1.C partial/uncertain transcript contracts, PH1.LISTEN endpoint profiles, Stage 5 current-turn authority, Stage 7 activation context, and the Stage 8A `Stage8TranscriptGatePacket` carrier were reused and not rebuilt as duplicate VAD, endpointing, confidence, listen, or STT engines.
+- `Stage8EndpointState`, `Stage8ConfidenceGateDisposition`, `Stage8ProtectedSlotDisposition`, and `Stage8ProtectedSlotUncertainty` extend the existing Stage 8 transcript gate with VAD/endpoint, confidence, coverage, and protected-slot no-guess proof fields.
+- Stage 8B proves VAD/endpoint signals are boundary-only; endpoint-final plus confidence-pass plus coverage-pass are required before final transcript commit; confidence rejections cannot commit, enter understanding, route tools, search, providers, TTS, Voice ID, connector writes, or protected execution; and protected-slot uncertainty clarifies or fails closed instead of guessing.
+- Record-mode audio remains artifact-only and cannot enter endpoint or confidence-commit paths.
+- Stage 8B did not add live microphone capture, live STT, live TTS, provider calls, live search, Voice ID matching, understanding, routing, native UI redesign, protected execution, connector writes, raw-audio retention, or a duplicate voice/listen/STT engine.
+- Full listening lab scene/noise/echo/diarization/foreground-speaker/addressed-to-Selene proof, word-level timestamp calibration, alternatives, accent/domain-glossary proof, second-pass repair, and live STT quality benchmarks remain deferred to later Stage 8 slices.
+- Stage 8C is required before Stage 9A.
+
 Next if passed:
 
-- Stage 8B - VAD, Endpointing, Partial-Versus-Final Transcript Commit, And Confidence Gate Reconciliation.
+- Stage 8C - Listening Lab Scene, Noise, Echo, Diarization, Foreground Speaker, And Addressed-To-Selene Reconciliation.
 
 ## Stage 9 - Voice ID Stack
 

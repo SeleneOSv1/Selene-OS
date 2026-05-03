@@ -53,6 +53,8 @@ mod reason_codes {
     pub const STAGE8_BACKGROUND_OR_SELF_ECHO_BLOCKED: &str =
         "stage8_background_or_self_echo_blocked";
     pub const STAGE8_RECORD_AUDIO_ARTIFACT_ONLY: &str = "stage8_record_audio_artifact_only";
+    pub const STAGE8B_VAD_ENDPOINT_BOUNDARY_ONLY: &str = "stage8b_vad_endpoint_boundary_only";
+    pub const STAGE8B_CONFIDENCE_GATE_REJECTED: &str = "stage8b_confidence_gate_rejected";
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -773,8 +775,10 @@ impl Validate for Stage7ActivationContextPacket {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Stage8TranscriptGateKind {
     AudioSubstrateOnly,
+    VadEndpointBoundaryOnly,
     PartialTranscriptPreviewOnly,
     FinalTranscriptCommitBoundary,
+    ConfidenceGateRejected,
     BackgroundOrSelfEchoBlocked,
     RecordAudioArtifactOnly,
 }
@@ -785,11 +789,17 @@ impl Stage8TranscriptGateKind {
             Stage8TranscriptGateKind::AudioSubstrateOnly => {
                 reason_codes::STAGE8_AUDIO_SUBSTRATE_ONLY
             }
+            Stage8TranscriptGateKind::VadEndpointBoundaryOnly => {
+                reason_codes::STAGE8B_VAD_ENDPOINT_BOUNDARY_ONLY
+            }
             Stage8TranscriptGateKind::PartialTranscriptPreviewOnly => {
                 reason_codes::STAGE8_PARTIAL_TRANSCRIPT_PREVIEW_ONLY
             }
             Stage8TranscriptGateKind::FinalTranscriptCommitBoundary => {
                 reason_codes::STAGE8_FINAL_TRANSCRIPT_COMMIT_BOUNDARY
+            }
+            Stage8TranscriptGateKind::ConfidenceGateRejected => {
+                reason_codes::STAGE8B_CONFIDENCE_GATE_REJECTED
             }
             Stage8TranscriptGateKind::BackgroundOrSelfEchoBlocked => {
                 reason_codes::STAGE8_BACKGROUND_OR_SELF_ECHO_BLOCKED
@@ -798,6 +808,128 @@ impl Stage8TranscriptGateKind {
                 reason_codes::STAGE8_RECORD_AUDIO_ARTIFACT_ONLY
             }
         }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stage8EndpointState {
+    NotEvaluated,
+    VadSignalOnly,
+    EndpointCandidate,
+    EndpointFinal,
+}
+
+impl Stage8EndpointState {
+    pub const fn is_endpoint_signal(self) -> bool {
+        matches!(
+            self,
+            Stage8EndpointState::VadSignalOnly
+                | Stage8EndpointState::EndpointCandidate
+                | Stage8EndpointState::EndpointFinal
+        )
+    }
+
+    pub const fn is_final(self) -> bool {
+        matches!(self, Stage8EndpointState::EndpointFinal)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stage8ConfidenceGateDisposition {
+    NotEvaluated,
+    Passed,
+    RejectedLowConfidence,
+    RejectedLowCoverage,
+    RejectedEmptyTranscript,
+    RejectedGarbledTranscript,
+    RejectedEchoSuspect,
+    RejectedBackgroundOrNonUser,
+    RejectedStaleOrClosedTurn,
+}
+
+impl Stage8ConfidenceGateDisposition {
+    pub const fn is_rejection(self) -> bool {
+        matches!(
+            self,
+            Stage8ConfidenceGateDisposition::RejectedLowConfidence
+                | Stage8ConfidenceGateDisposition::RejectedLowCoverage
+                | Stage8ConfidenceGateDisposition::RejectedEmptyTranscript
+                | Stage8ConfidenceGateDisposition::RejectedGarbledTranscript
+                | Stage8ConfidenceGateDisposition::RejectedEchoSuspect
+                | Stage8ConfidenceGateDisposition::RejectedBackgroundOrNonUser
+                | Stage8ConfidenceGateDisposition::RejectedStaleOrClosedTurn
+        )
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stage8ProtectedSlotDisposition {
+    NotApplicable,
+    NoProtectedSlots,
+    HighConfidenceProtectedSlots,
+    ClarificationRequired,
+    FailClosed,
+    DeferredToStage10Or12,
+}
+
+impl Stage8ProtectedSlotDisposition {
+    pub const fn blocks_commit(self) -> bool {
+        matches!(
+            self,
+            Stage8ProtectedSlotDisposition::ClarificationRequired
+                | Stage8ProtectedSlotDisposition::FailClosed
+                | Stage8ProtectedSlotDisposition::DeferredToStage10Or12
+        )
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stage8ProtectedSlotKind {
+    Name,
+    Date,
+    Amount,
+    Address,
+    Recipient,
+    AccountOrActionIdentifier,
+    AuthorizationRelevantField,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Stage8ProtectedSlotUncertainty {
+    pub slot_kind: Stage8ProtectedSlotKind,
+    pub field_hint: String,
+    pub confidence_bp: u16,
+}
+
+impl Stage8ProtectedSlotUncertainty {
+    pub fn v1(
+        slot_kind: Stage8ProtectedSlotKind,
+        field_hint: impl Into<String>,
+        confidence_bp: u16,
+    ) -> Result<Self, ContractViolation> {
+        let uncertainty = Self {
+            slot_kind,
+            field_hint: field_hint.into(),
+            confidence_bp,
+        };
+        uncertainty.validate()?;
+        Ok(uncertainty)
+    }
+}
+
+impl Validate for Stage8ProtectedSlotUncertainty {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        validate_stage4_ref(
+            "stage8_protected_slot_uncertainty.field_hint",
+            &self.field_hint,
+        )?;
+        if self.confidence_bp > 10_000 {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage8_protected_slot_uncertainty.confidence_bp",
+                reason: "must be <= 10000",
+            });
+        }
+        Ok(())
     }
 }
 
@@ -922,11 +1054,19 @@ pub struct Stage8TranscriptGatePacket {
     pub boundary_kind: Stage8TranscriptGateKind,
     pub reason_code: &'static str,
     pub audio_scene_id: String,
+    pub vad_signal_id: Option<String>,
+    pub endpoint_id: Option<String>,
+    pub endpoint_state: Stage8EndpointState,
     pub transcript_id: Option<String>,
     pub transcript_text: Option<String>,
     pub exact_transcript_hash: Option<String>,
     pub partial_revision_id: Option<u32>,
     pub confidence_bp: Option<u16>,
+    pub coverage_bp: Option<u16>,
+    pub confidence_gate_id: Option<String>,
+    pub confidence_gate: Stage8ConfidenceGateDisposition,
+    pub protected_slot_disposition: Stage8ProtectedSlotDisposition,
+    pub protected_slot_uncertainties: Vec<Stage8ProtectedSlotUncertainty>,
     pub language_tag: Option<String>,
     pub session_id: Option<SessionId>,
     pub turn_id: Option<TurnId>,
@@ -961,6 +1101,28 @@ impl Stage8TranscriptGatePacket {
         Ok(packet)
     }
 
+    pub fn vad_endpoint_boundary(
+        activation_context: Stage7ActivationContextPacket,
+        audio_scene_id: impl Into<String>,
+        vad_signal_id: impl Into<String>,
+        endpoint_id: impl Into<String>,
+        endpoint_state: Stage8EndpointState,
+    ) -> Result<Self, ContractViolation> {
+        let packet = Self {
+            vad_signal_id: Some(vad_signal_id.into()),
+            endpoint_id: Some(endpoint_id.into()),
+            endpoint_state,
+            ..Self::base(
+                activation_context,
+                Stage8TranscriptGateKind::VadEndpointBoundaryOnly,
+                audio_scene_id.into(),
+                Stage8VoiceWorkAuthority::listen_state_only(),
+            )
+        };
+        packet.validate()?;
+        Ok(packet)
+    }
+
     pub fn partial_transcript_preview(
         activation_context: Stage7ActivationContextPacket,
         audio_scene_id: impl Into<String>,
@@ -975,6 +1137,7 @@ impl Stage8TranscriptGatePacket {
         )?;
         let transcript_text = transcript_text.into();
         let packet = Self {
+            endpoint_state: Stage8EndpointState::EndpointCandidate,
             transcript_id: Some(transcript_id.into()),
             transcript_text: Some(transcript_text.clone()),
             exact_transcript_hash: Some(stage8_exact_transcript_hash(&transcript_text)),
@@ -996,10 +1159,13 @@ impl Stage8TranscriptGatePacket {
         activation_context: Stage7ActivationContextPacket,
         stage5_turn_authority: Stage5TurnAuthorityPacket,
         audio_scene_id: impl Into<String>,
+        endpoint_id: impl Into<String>,
+        confidence_gate_id: impl Into<String>,
         transcript_id: impl Into<String>,
         transcript_text: impl Into<String>,
         language_tag: impl Into<String>,
         confidence_bp: u16,
+        coverage_bp: u16,
     ) -> Result<Self, ContractViolation> {
         let turn_id = stage5_turn_authority
             .turn_id
@@ -1023,10 +1189,16 @@ impl Stage8TranscriptGatePacket {
         )?;
         let transcript_text = transcript_text.into();
         let packet = Self {
+            endpoint_id: Some(endpoint_id.into()),
+            endpoint_state: Stage8EndpointState::EndpointFinal,
             transcript_id: Some(transcript_id.into()),
             transcript_text: Some(transcript_text.clone()),
             exact_transcript_hash: Some(stage8_exact_transcript_hash(&transcript_text)),
             confidence_bp: Some(confidence_bp),
+            coverage_bp: Some(coverage_bp),
+            confidence_gate_id: Some(confidence_gate_id.into()),
+            confidence_gate: Stage8ConfidenceGateDisposition::Passed,
+            protected_slot_disposition: Stage8ProtectedSlotDisposition::NoProtectedSlots,
             language_tag: Some(language_tag.into()),
             session_id: Some(stage5_turn_authority.session_id),
             turn_id: Some(turn_id),
@@ -1037,6 +1209,46 @@ impl Stage8TranscriptGatePacket {
                 Stage8TranscriptGateKind::FinalTranscriptCommitBoundary,
                 audio_scene_id.into(),
                 Stage8VoiceWorkAuthority::final_transcript_boundary(),
+            )
+        };
+        packet.validate()?;
+        Ok(packet)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn confidence_gate_reject(
+        activation_context: Stage7ActivationContextPacket,
+        audio_scene_id: impl Into<String>,
+        endpoint_id: impl Into<String>,
+        confidence_gate_id: impl Into<String>,
+        confidence_gate: Stage8ConfidenceGateDisposition,
+        transcript_id: Option<String>,
+        transcript_text: Option<String>,
+        confidence_bp: Option<u16>,
+        coverage_bp: Option<u16>,
+        protected_slot_disposition: Stage8ProtectedSlotDisposition,
+        protected_slot_uncertainties: Vec<Stage8ProtectedSlotUncertainty>,
+    ) -> Result<Self, ContractViolation> {
+        let exact_transcript_hash = transcript_text
+            .as_ref()
+            .map(|text| stage8_exact_transcript_hash(text));
+        let packet = Self {
+            endpoint_id: Some(endpoint_id.into()),
+            endpoint_state: Stage8EndpointState::EndpointFinal,
+            transcript_id,
+            transcript_text,
+            exact_transcript_hash,
+            confidence_bp,
+            coverage_bp,
+            confidence_gate_id: Some(confidence_gate_id.into()),
+            confidence_gate,
+            protected_slot_disposition,
+            protected_slot_uncertainties,
+            ..Self::base(
+                activation_context,
+                Stage8TranscriptGateKind::ConfidenceGateRejected,
+                audio_scene_id.into(),
+                Stage8VoiceWorkAuthority::blocked_or_artifact_only(),
             )
         };
         packet.validate()?;
@@ -1056,6 +1268,7 @@ impl Stage8TranscriptGatePacket {
             background_speech_detected,
             foreground_user_speech,
             addressed_to_selene,
+            confidence_gate: Stage8ConfidenceGateDisposition::RejectedBackgroundOrNonUser,
             ..Self::base(
                 activation_context,
                 Stage8TranscriptGateKind::BackgroundOrSelfEchoBlocked,
@@ -1121,11 +1334,19 @@ impl Stage8TranscriptGatePacket {
             reason_code: boundary_kind.default_reason_code(),
             boundary_kind,
             audio_scene_id,
+            vad_signal_id: None,
+            endpoint_id: None,
+            endpoint_state: Stage8EndpointState::NotEvaluated,
             transcript_id: None,
             transcript_text: None,
             exact_transcript_hash: None,
             partial_revision_id: None,
             confidence_bp: None,
+            coverage_bp: None,
+            confidence_gate_id: None,
+            confidence_gate: Stage8ConfidenceGateDisposition::NotEvaluated,
+            protected_slot_disposition: Stage8ProtectedSlotDisposition::NotApplicable,
+            protected_slot_uncertainties: Vec::new(),
             language_tag: None,
             candidate_preview: None,
             committed_turn: None,
@@ -1147,6 +1368,14 @@ impl Validate for Stage8TranscriptGatePacket {
         validate_stage4_ref(
             "stage8_transcript_gate_packet.audio_scene_id",
             &self.audio_scene_id,
+        )?;
+        validate_stage4_optional_ref(
+            "stage8_transcript_gate_packet.vad_signal_id",
+            self.vad_signal_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage8_transcript_gate_packet.endpoint_id",
+            self.endpoint_id.as_deref(),
         )?;
         validate_stage4_optional_ref(
             "stage8_transcript_gate_packet.transcript_id",
@@ -1194,6 +1423,47 @@ impl Validate for Stage8TranscriptGatePacket {
                 reason: "must be <= 10000",
             });
         }
+        if matches!(self.coverage_bp, Some(coverage_bp) if coverage_bp > 10_000) {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage8_transcript_gate_packet.coverage_bp",
+                reason: "must be <= 10000",
+            });
+        }
+        validate_stage4_optional_ref(
+            "stage8_transcript_gate_packet.confidence_gate_id",
+            self.confidence_gate_id.as_deref(),
+        )?;
+        if self.protected_slot_uncertainties.len() > 8 {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage8_transcript_gate_packet.protected_slot_uncertainties",
+                reason: "must contain <= 8 entries",
+            });
+        }
+        for uncertainty in &self.protected_slot_uncertainties {
+            uncertainty.validate()?;
+        }
+        match self.protected_slot_disposition {
+            Stage8ProtectedSlotDisposition::ClarificationRequired
+            | Stage8ProtectedSlotDisposition::FailClosed => {
+                if self.protected_slot_uncertainties.is_empty() {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "stage8_transcript_gate_packet.protected_slot_uncertainties",
+                        reason: "protected-slot clarify/fail-closed requires uncertainty evidence",
+                    });
+                }
+            }
+            Stage8ProtectedSlotDisposition::NoProtectedSlots
+            | Stage8ProtectedSlotDisposition::HighConfidenceProtectedSlots
+            | Stage8ProtectedSlotDisposition::NotApplicable => {
+                if !self.protected_slot_uncertainties.is_empty() {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "stage8_transcript_gate_packet.protected_slot_uncertainties",
+                        reason: "uncertain protected slots cannot be carried as guessed slots",
+                    });
+                }
+            }
+            Stage8ProtectedSlotDisposition::DeferredToStage10Or12 => {}
+        }
         if matches!(self.partial_revision_id, Some(0)) {
             return Err(ContractViolation::InvalidValue {
                 field: "stage8_transcript_gate_packet.partial_revision_id",
@@ -1210,6 +1480,12 @@ impl Validate for Stage8TranscriptGatePacket {
             }
         }
         if let Some(text) = self.transcript_text.as_ref() {
+            if self.transcript_id.is_none() {
+                return Err(ContractViolation::InvalidValue {
+                    field: "stage8_transcript_gate_packet.transcript_id",
+                    reason: "transcript text requires transcript id",
+                });
+            }
             if text.trim().is_empty() || text.len() > MAX_TEXT_BYTES {
                 return Err(ContractViolation::InvalidValue {
                     field: "stage8_transcript_gate_packet.transcript_text",
@@ -1258,11 +1534,18 @@ impl Validate for Stage8TranscriptGatePacket {
         match self.boundary_kind {
             Stage8TranscriptGateKind::AudioSubstrateOnly => {
                 if !self.work_authority.can_update_listen_state
+                    || self.vad_signal_id.is_some()
+                    || self.endpoint_id.is_some()
+                    || self.endpoint_state != Stage8EndpointState::NotEvaluated
                     || self.transcript_id.is_some()
                     || self.transcript_text.is_some()
                     || self.candidate_preview.is_some()
                     || self.committed_turn.is_some()
                     || self.stage5_turn_authority.is_some()
+                    || self.confidence_gate != Stage8ConfidenceGateDisposition::NotEvaluated
+                    || self.confidence_gate_id.is_some()
+                    || self.protected_slot_disposition
+                        != Stage8ProtectedSlotDisposition::NotApplicable
                     || self.record_mode_audio
                 {
                     return Err(ContractViolation::InvalidValue {
@@ -1271,6 +1554,30 @@ impl Validate for Stage8TranscriptGatePacket {
                     });
                 }
                 validate_stage8_voice_activation(&self.activation_context)?;
+            }
+            Stage8TranscriptGateKind::VadEndpointBoundaryOnly => {
+                validate_stage8_voice_activation(&self.activation_context)?;
+                if !self.endpoint_state.is_endpoint_signal()
+                    || self.vad_signal_id.is_none()
+                    || self.endpoint_id.is_none()
+                    || self.transcript_id.is_some()
+                    || self.transcript_text.is_some()
+                    || self.candidate_preview.is_some()
+                    || self.committed_turn.is_some()
+                    || self.stage5_turn_authority.is_some()
+                    || !self.work_authority.can_update_listen_state
+                    || self.work_authority.can_emit_committed_turn
+                    || self.work_authority.can_enter_understanding
+                    || self.confidence_gate != Stage8ConfidenceGateDisposition::NotEvaluated
+                    || self.confidence_gate_id.is_some()
+                    || self.protected_slot_disposition
+                        != Stage8ProtectedSlotDisposition::NotApplicable
+                {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "stage8_transcript_gate_packet",
+                        reason: "VAD and endpoint signals are boundary-only and cannot commit or route work",
+                    });
+                }
             }
             Stage8TranscriptGateKind::PartialTranscriptPreviewOnly => {
                 validate_stage8_voice_activation(&self.activation_context)?;
@@ -1287,6 +1594,11 @@ impl Validate for Stage8TranscriptGatePacket {
                     || self.transcript_id.is_none()
                     || self.transcript_text.is_none()
                     || self.partial_revision_id.is_none()
+                    || self.endpoint_state == Stage8EndpointState::EndpointFinal
+                    || self.confidence_gate != Stage8ConfidenceGateDisposition::NotEvaluated
+                    || self.confidence_gate_id.is_some()
+                    || self.protected_slot_disposition
+                        != Stage8ProtectedSlotDisposition::NotApplicable
                     || !self.work_authority.can_update_preview
                     || self.work_authority.can_emit_committed_turn
                     || self.work_authority.can_enter_understanding
@@ -1316,6 +1628,14 @@ impl Validate for Stage8TranscriptGatePacket {
                 if authority.disposition != Stage5TurnAuthorityDisposition::CurrentCommittedTurn
                     || !authority.can_enter_understanding()
                     || authority.can_route_any_work()
+                    || self.endpoint_state != Stage8EndpointState::EndpointFinal
+                    || self.endpoint_id.is_none()
+                    || self.confidence_gate != Stage8ConfidenceGateDisposition::Passed
+                    || self.confidence_gate_id.is_none()
+                    || !matches!(self.confidence_bp, Some(confidence_bp) if confidence_bp >= 8_500)
+                    || !matches!(self.coverage_bp, Some(coverage_bp) if coverage_bp >= 7_000)
+                    || self.protected_slot_disposition.blocks_commit()
+                    || !self.protected_slot_uncertainties.is_empty()
                     || self.session_id != Some(authority.session_id)
                     || self.turn_id != authority.turn_id
                     || self.activation_context.session_id != Some(authority.session_id)
@@ -1334,7 +1654,49 @@ impl Validate for Stage8TranscriptGatePacket {
                 {
                     return Err(ContractViolation::InvalidValue {
                         field: "stage8_transcript_gate_packet",
-                        reason: "final transcript commit must be the only voice path to a current committed live turn",
+                        reason: "final transcript commit requires endpoint-final, confidence pass, current turn authority, and no protected-slot uncertainty",
+                    });
+                }
+            }
+            Stage8TranscriptGateKind::ConfidenceGateRejected => {
+                validate_stage8_voice_activation(&self.activation_context)?;
+                if !self.confidence_gate.is_rejection()
+                    || self.confidence_gate_id.is_none()
+                    || !self.endpoint_state.is_final()
+                    || self.endpoint_id.is_none()
+                    || self.candidate_preview.is_some()
+                    || self.committed_turn.is_some()
+                    || self.stage5_turn_authority.is_some()
+                    || self.work_authority.can_update_listen_state
+                    || self.work_authority.can_update_preview
+                    || self.work_authority.can_emit_committed_turn
+                    || self.work_authority.can_enter_understanding
+                    || self.record_mode_audio
+                {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "stage8_transcript_gate_packet",
+                        reason: "confidence gate rejection cannot commit, preview, or route work",
+                    });
+                }
+                if self.confidence_gate == Stage8ConfidenceGateDisposition::RejectedEmptyTranscript
+                    && self.transcript_text.is_some()
+                {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "stage8_transcript_gate_packet.transcript_text",
+                        reason: "empty transcript rejection cannot carry guessed transcript text",
+                    });
+                }
+                if self.protected_slot_disposition.blocks_commit()
+                    && !matches!(
+                        self.confidence_gate,
+                        Stage8ConfidenceGateDisposition::RejectedLowConfidence
+                            | Stage8ConfidenceGateDisposition::RejectedLowCoverage
+                            | Stage8ConfidenceGateDisposition::RejectedGarbledTranscript
+                    )
+                {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "stage8_transcript_gate_packet.protected_slot_disposition",
+                        reason: "protected-slot uncertainty must clarify or fail closed from a transcript confidence rejection",
                     });
                 }
             }
@@ -1351,6 +1713,8 @@ impl Validate for Stage8TranscriptGatePacket {
                     || self.work_authority.can_update_listen_state
                     || self.work_authority.can_emit_committed_turn
                     || self.work_authority.can_enter_understanding
+                    || self.confidence_gate
+                        != Stage8ConfidenceGateDisposition::RejectedBackgroundOrNonUser
                 {
                     return Err(ContractViolation::InvalidValue {
                         field: "stage8_transcript_gate_packet",
@@ -1372,6 +1736,10 @@ impl Validate for Stage8TranscriptGatePacket {
                     || self.work_authority.can_update_listen_state
                     || self.work_authority.can_emit_committed_turn
                     || self.work_authority.can_enter_understanding
+                    || self.endpoint_state != Stage8EndpointState::NotEvaluated
+                    || self.confidence_gate != Stage8ConfidenceGateDisposition::NotEvaluated
+                    || self.protected_slot_disposition
+                        != Stage8ProtectedSlotDisposition::NotApplicable
                 {
                     return Err(ContractViolation::InvalidValue {
                         field: "stage8_transcript_gate_packet",
@@ -4814,10 +5182,13 @@ mod tests {
             stage8_explicit_mic_activation(Some(current.session_id)),
             current.clone(),
             "audio-scene-stage8",
+            "endpoint-stage8-final",
+            "confidence-gate-stage8",
             "transcript-stage8-final",
             "final exact transcript",
             "en-US",
             9_600,
+            9_400,
         )
         .expect("final transcript commit boundary");
 
@@ -4847,10 +5218,223 @@ mod tests {
             stage8_explicit_mic_activation(Some(SessionId(88))),
             stale,
             "audio-scene-stage8",
+            "endpoint-stage8-final",
+            "confidence-gate-stage8",
             "transcript-stage8-final",
             "final exact transcript",
             "en-US",
             9_600,
+            9_400,
+        );
+        assert!(rejected.is_err());
+    }
+
+    #[test]
+    fn stage_8b_vad_endpoint_boundary_is_inert_even_when_endpoint_final() {
+        let packet = Stage8TranscriptGatePacket::vad_endpoint_boundary(
+            stage8_explicit_mic_activation(None),
+            "audio-scene-stage8b",
+            "vad-signal-stage8b",
+            "endpoint-stage8b",
+            Stage8EndpointState::EndpointFinal,
+        )
+        .expect("endpoint boundary packet");
+
+        assert_eq!(
+            packet.boundary_kind,
+            Stage8TranscriptGateKind::VadEndpointBoundaryOnly
+        );
+        assert_eq!(packet.endpoint_state, Stage8EndpointState::EndpointFinal);
+        assert!(packet.work_authority.can_update_listen_state);
+        assert!(!packet.can_emit_committed_turn());
+        assert!(!packet.can_route_or_mutate());
+        assert!(packet.transcript_id.is_none());
+        assert!(packet.candidate_preview.is_none());
+        assert!(packet.committed_turn.is_none());
+    }
+
+    #[test]
+    fn stage_8b_final_commit_requires_endpoint_final_and_confidence_pass() {
+        let current = stage8_current_authority();
+        let packet = Stage8TranscriptGatePacket::final_transcript_commit(
+            stage8_explicit_mic_activation(Some(current.session_id)),
+            current,
+            "audio-scene-stage8b",
+            "endpoint-stage8b-final",
+            "confidence-gate-stage8b",
+            "transcript-stage8b-final",
+            "send the report",
+            "en-US",
+            9_200,
+            8_800,
+        )
+        .expect("final transcript commit");
+
+        assert_eq!(packet.endpoint_state, Stage8EndpointState::EndpointFinal);
+        assert_eq!(
+            packet.confidence_gate,
+            Stage8ConfidenceGateDisposition::Passed
+        );
+        assert!(packet.can_emit_committed_turn());
+        assert!(!packet.can_route_or_mutate());
+
+        let mut missing_endpoint = packet.clone();
+        missing_endpoint.endpoint_state = Stage8EndpointState::EndpointCandidate;
+        assert!(missing_endpoint.validate().is_err());
+
+        let mut low_confidence = packet.clone();
+        low_confidence.confidence_bp = Some(8_499);
+        assert!(low_confidence.validate().is_err());
+
+        let mut low_coverage = packet;
+        low_coverage.coverage_bp = Some(6_999);
+        assert!(low_coverage.validate().is_err());
+    }
+
+    #[test]
+    fn stage_8b_confidence_rejections_cannot_commit_or_enter_understanding() {
+        for gate in [
+            Stage8ConfidenceGateDisposition::RejectedLowConfidence,
+            Stage8ConfidenceGateDisposition::RejectedLowCoverage,
+            Stage8ConfidenceGateDisposition::RejectedEmptyTranscript,
+            Stage8ConfidenceGateDisposition::RejectedGarbledTranscript,
+            Stage8ConfidenceGateDisposition::RejectedEchoSuspect,
+            Stage8ConfidenceGateDisposition::RejectedBackgroundOrNonUser,
+            Stage8ConfidenceGateDisposition::RejectedStaleOrClosedTurn,
+        ] {
+            let (transcript_id, transcript_text) =
+                if gate == Stage8ConfidenceGateDisposition::RejectedEmptyTranscript {
+                    (None, None)
+                } else {
+                    (
+                        Some("transcript-stage8b-rejected".to_string()),
+                        Some("uncertain transcript fragment".to_string()),
+                    )
+                };
+            let packet = Stage8TranscriptGatePacket::confidence_gate_reject(
+                stage8_explicit_mic_activation(None),
+                "audio-scene-stage8b",
+                "endpoint-stage8b-rejected",
+                "confidence-gate-stage8b-rejected",
+                gate,
+                transcript_id,
+                transcript_text,
+                Some(5_500),
+                Some(6_000),
+                Stage8ProtectedSlotDisposition::NotApplicable,
+                Vec::new(),
+            )
+            .expect("confidence rejection");
+
+            assert_eq!(
+                packet.boundary_kind,
+                Stage8TranscriptGateKind::ConfidenceGateRejected
+            );
+            assert!(!packet.can_emit_committed_turn());
+            assert!(!packet.work_authority.can_enter_understanding);
+            assert!(!packet.can_route_or_mutate());
+            assert!(packet.committed_turn.is_none());
+        }
+    }
+
+    #[test]
+    fn stage_8b_low_confidence_protected_slots_clarify_or_fail_closed_without_guessing() {
+        let uncertainty = Stage8ProtectedSlotUncertainty::v1(
+            Stage8ProtectedSlotKind::Recipient,
+            "recipient",
+            4_200,
+        )
+        .expect("protected slot uncertainty");
+        let clarify = Stage8TranscriptGatePacket::confidence_gate_reject(
+            stage8_explicit_mic_activation(None),
+            "audio-scene-stage8b",
+            "endpoint-stage8b-protected",
+            "confidence-gate-stage8b-protected",
+            Stage8ConfidenceGateDisposition::RejectedLowConfidence,
+            Some("transcript-stage8b-protected".to_string()),
+            Some("send it to maybe alex".to_string()),
+            Some(4_900),
+            Some(8_800),
+            Stage8ProtectedSlotDisposition::ClarificationRequired,
+            vec![uncertainty.clone()],
+        )
+        .expect("protected slot clarification");
+
+        assert_eq!(
+            clarify.protected_slot_disposition,
+            Stage8ProtectedSlotDisposition::ClarificationRequired
+        );
+        assert!(!clarify.can_emit_committed_turn());
+        assert!(clarify.committed_turn.is_none());
+
+        let fail_closed = Stage8TranscriptGatePacket::confidence_gate_reject(
+            stage8_explicit_mic_activation(None),
+            "audio-scene-stage8b",
+            "endpoint-stage8b-protected",
+            "confidence-gate-stage8b-protected-fail",
+            Stage8ConfidenceGateDisposition::RejectedLowConfidence,
+            Some("transcript-stage8b-protected".to_string()),
+            Some("approve invoice maybe nine hundred".to_string()),
+            Some(4_600),
+            Some(8_700),
+            Stage8ProtectedSlotDisposition::FailClosed,
+            vec![uncertainty],
+        )
+        .expect("protected slot fail closed");
+        assert_eq!(
+            fail_closed.protected_slot_disposition,
+            Stage8ProtectedSlotDisposition::FailClosed
+        );
+        assert!(!fail_closed.can_emit_committed_turn());
+
+        let current = stage8_current_authority();
+        let mut invalid_commit = Stage8TranscriptGatePacket::final_transcript_commit(
+            stage8_explicit_mic_activation(Some(current.session_id)),
+            current,
+            "audio-scene-stage8b",
+            "endpoint-stage8b-final",
+            "confidence-gate-stage8b-final",
+            "transcript-stage8b-final",
+            "send it to alex",
+            "en-US",
+            9_200,
+            9_000,
+        )
+        .expect("final commit");
+        invalid_commit.protected_slot_disposition =
+            Stage8ProtectedSlotDisposition::ClarificationRequired;
+        invalid_commit.protected_slot_uncertainties = vec![Stage8ProtectedSlotUncertainty::v1(
+            Stage8ProtectedSlotKind::Recipient,
+            "recipient",
+            4_200,
+        )
+        .expect("uncertainty")];
+        assert!(invalid_commit.validate().is_err());
+    }
+
+    #[test]
+    fn stage_8b_record_mode_cannot_enter_endpoint_or_confidence_commit_path() {
+        let rejected = Stage8TranscriptGatePacket::vad_endpoint_boundary(
+            stage8_record_activation(),
+            "audio-scene-stage8b-record",
+            "vad-signal-stage8b-record",
+            "endpoint-stage8b-record",
+            Stage8EndpointState::EndpointFinal,
+        );
+        assert!(rejected.is_err());
+
+        let rejected = Stage8TranscriptGatePacket::confidence_gate_reject(
+            stage8_record_activation(),
+            "audio-scene-stage8b-record",
+            "endpoint-stage8b-record",
+            "confidence-gate-stage8b-record",
+            Stage8ConfidenceGateDisposition::RejectedLowConfidence,
+            Some("transcript-stage8b-record".to_string()),
+            Some("recorded artifact text".to_string()),
+            Some(5_000),
+            Some(8_000),
+            Stage8ProtectedSlotDisposition::NotApplicable,
+            Vec::new(),
         );
         assert!(rejected.is_err());
     }
