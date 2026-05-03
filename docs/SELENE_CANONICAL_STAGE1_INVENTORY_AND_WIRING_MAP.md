@@ -245,5 +245,6 @@ Stage 2A - Runtime Kernel, Storage, Proof Ledger, Law Foundation, And Minimal Be
 
 Stage 2 should not rebuild runtime/storage/law from zero. It should reconcile and prove the existing runtime execution envelope, request/session/turn foundations, PH1.F/PH1.J storage, law/governance carriers, trace fields, idempotency, append-only audit, and the new minimal benchmark target/result envelope required by the number-one quality system.
 
-No Stage 2 blocker was found. The must-not-start-early rule is that Stage 3 provider/model governance and all later feature stages must wait until Stage 2 has the minimal proof/replay and benchmark envelope crosswalk.
+Stage 2A must reuse current runtime/storage/law evidence instead of rebuilding foundations from zero.
 
+No Stage 2 blocker was found. The must-not-start-early rule is that Stage 3 provider/model governance and all later feature stages must wait until Stage 2 has the minimal proof/replay and benchmark envelope crosswalk.

@@ -19,7 +19,7 @@ The canonical numeric targets are present in `docs/SELENE_CANONICAL_MASTER_BUILD
 | Benchmark Family | Draft Targets Present | Current Repo Evidence | Stage 1 Status | Owner | Next Action |
 |---|---:|---|---|---|---|
 | Stage 1 docs reconciliation | yes | this artifact set | CERTIFICATION_TARGET_PASSED | Stage 1 | Maintain links and final report proof. |
-| Minimal benchmark result envelope | yes | not found as canonical global packet/storage surface | BLOCKED_WITH_OWNER_AND_NEXT_ACTION | Stage 2 | Build `BenchmarkTargetPacket`/`BenchmarkResultPacket` storage and replay path. |
+| Minimal benchmark result envelope | yes | `BenchmarkTargetPacket`, `BenchmarkResultPacket`, `BenchmarkResultRepo`, and `Ph1fStore` append-only target/result rows | CERTIFICATION_TARGET_PASSED | Stage 2A | Preserve the minimal envelope while future stages add product benchmark corpora/results. |
 | Provider/model governance | yes | `ph1providerctl.rs`, `ph1kms.rs`, `ph1cost.rs`, `ph1quota.rs` | BLOCKED_WITH_OWNER_AND_NEXT_ACTION | Stage 3 | Add champion router/model profile contracts and target status. |
 | Wake/activation | yes | `ph1w.rs`, wake migrations, native activation shells | BLOCKED_WITH_OWNER_AND_NEXT_ACTION | Stage 7 | Convert wake latency/false accept targets after baseline. |
 | STT/listening | yes | `ph1k.rs`, `ph1c.rs`, `ph1listen.rs`, PH1.K telemetry fixtures | BLOCKED_WITH_OWNER_AND_NEXT_ACTION | Stage 8 | Build listening lab/gold corpus and measure WER/CER/latency. |
@@ -45,5 +45,4 @@ No future stage may be marked `PROVEN_COMPLETE` unless every relevant benchmark 
 - `CERTIFICATION_TARGET_PASSED`
 - `BLOCKED_WITH_OWNER_AND_NEXT_ACTION`
 
-For Stage 1, all non-Stage-1 product benchmarks remain blocked by their owning future stage. That is expected and does not block Stage 1 because Stage 1 owns inventory, not baseline measurement.
-
+For Stage 2A, the minimal benchmark envelope foundation is certified because the target/result packet, storage, idempotency, by-target lookup, latest-result lookup, and replay-safe comparison path now exist. All product quality benchmark families remain blocked by their owning future stage until their corpora and results are measured.

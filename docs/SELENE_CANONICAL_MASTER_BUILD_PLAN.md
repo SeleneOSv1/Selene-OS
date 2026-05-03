@@ -78,10 +78,10 @@ After every build, update this section before final reporting.
 
 | Field | Current Value |
 |---|---|
-| Current active stage | Stage 2 |
-| Current active build | Runtime Kernel, Storage, Proof Ledger, Law Foundation, And Minimal Benchmark Envelope Inventory Reconciliation |
-| Next build after current stage passes | Stage 3 - Provider, Secret, KMS, Cost, Quota, Vault, And Early Consent Baseline |
-| Last completed stage | Stage 1 - Canonical Inventory And Wiring Map |
+| Current active stage | Stage 3 |
+| Current active build | Provider, Secret, KMS, Cost, Quota, Vault, Provider-Off Proof, And Early Consent Baseline Reconciliation |
+| Next build after current stage passes | Stage 4 - Activation, Session, Turn, And Packet Foundation |
+| Last completed stage | Stage 2A - Runtime Kernel, Storage, Proof Ledger, Law Foundation, And Minimal Benchmark Envelope Inventory Reconciliation |
 | Stages blocked | None yet |
 | Plan drift allowed | No |
 
@@ -1370,7 +1370,7 @@ Next if passed:
 
 ## Stage 2 - Runtime Kernel, Storage, Proof Ledger, And Law Foundation
 
-Status: EXISTS_BUT_NEEDS_RECONCILIATION
+Status: PROVEN_COMPLETE
 
 Build:
 
@@ -1431,6 +1431,14 @@ Proof:
 - append-only audit invariant proof;
 - replay/idempotency proof;
 - no business workflow can execute from foundation alone.
+
+Stage 2A completion proof:
+
+- `RuntimeExecutionEnvelope`, runtime request/session/ingress-turn foundations, `app_ingress`, `section40_exit`, runtime governance, runtime law, `PH1.F`, `PH1.J`, `PH1.COMP`, `PH1.ECM`, `PH1.PBS`, and `PH1.SIMCAT` were reconciled as the repo-truth Stage 2 carriers.
+- Canonical Stage 2 packet names that are roadmap aliases remain documented as crosswalks instead of duplicate engines.
+- `BenchmarkTargetPacket`, `BenchmarkResultPacket`, `BenchmarkTargetStatus`, and `BenchmarkComparisonOutcome` were added under PH1.J as the minimal benchmark envelope.
+- `BenchmarkResultRepo` and `Ph1fStore` now provide append-only target/result storage, idempotency, by-target lookup, latest-result lookup, and replay-safe result-to-target comparison.
+- Stage 2A benchmark status is `CERTIFICATION_TARGET_PASSED` for the minimal benchmark envelope foundation. Product benchmark families remain blocked by their owning future stages.
 
 Next if passed:
 

@@ -49,9 +49,9 @@ use selene_kernel_contracts::ph1j::{
     artifact_trust_proof_entry_ref_for_event_id_and_ordinal,
     artifact_trust_proof_record_ref_for_event_id, ArtifactTrustProofRecordEntry, AuditEngine,
     AuditEvent, AuditEventId, AuditEventInput, AuditEventType, AuditPayloadMin, AuditSeverity,
-    CanonicalProofRecord, CanonicalProofRecordInput, CorrelationId, DeviceId, PayloadKey,
-    PayloadValue, ProofChainStatus, ProofEventId, ProofFailureClass, ProofVerificationResult,
-    ProofWriteOutcome, ProofWriteReceipt, TurnId,
+    BenchmarkResultPacket, BenchmarkTargetPacket, CanonicalProofRecord, CanonicalProofRecordInput,
+    CorrelationId, DeviceId, PayloadKey, PayloadValue, ProofChainStatus, ProofEventId,
+    ProofFailureClass, ProofVerificationResult, ProofWriteOutcome, ProofWriteReceipt, TurnId,
 };
 use selene_kernel_contracts::ph1k::{
     AdvancedAudioQualityMetrics, DeviceRoute, InterruptCandidateConfidenceBand,
@@ -1971,6 +1971,13 @@ pub struct Ph1fStore {
     proof_request_index: BTreeMap<String, Vec<ProofEventId>>,
     proof_session_turn_index: BTreeMap<(SessionId, TurnId), Vec<ProofEventId>>,
     proof_idempotency_index: BTreeMap<String, ProofEventId>,
+    benchmark_target_packets: Vec<BenchmarkTargetPacket>,
+    benchmark_result_packets: Vec<BenchmarkResultPacket>,
+    benchmark_target_id_index: BTreeMap<String, usize>,
+    benchmark_result_id_index: BTreeMap<String, usize>,
+    benchmark_result_target_index: BTreeMap<String, Vec<usize>>,
+    benchmark_target_idempotency_index: BTreeMap<String, usize>,
+    benchmark_result_idempotency_index: BTreeMap<String, usize>,
     next_memory_ledger_id: u64,
     next_emotional_thread_event_id: u64,
     next_memory_metric_event_id: u64,
@@ -3658,6 +3665,13 @@ impl Ph1fStore {
             proof_request_index: BTreeMap::new(),
             proof_session_turn_index: BTreeMap::new(),
             proof_idempotency_index: BTreeMap::new(),
+            benchmark_target_packets: Vec::new(),
+            benchmark_result_packets: Vec::new(),
+            benchmark_target_id_index: BTreeMap::new(),
+            benchmark_result_id_index: BTreeMap::new(),
+            benchmark_result_target_index: BTreeMap::new(),
+            benchmark_target_idempotency_index: BTreeMap::new(),
+            benchmark_result_idempotency_index: BTreeMap::new(),
             next_memory_ledger_id: 1,
             next_emotional_thread_event_id: 1,
             next_memory_metric_event_id: 1,
@@ -3974,8 +3988,7 @@ impl Ph1fStore {
         session_id: &SessionId,
     ) -> Option<SessionRecord> {
         self.sessions.get(session_id).and_then(|row| {
-            (row.is_recoverable() && row.last_attached_device_id == *device_id)
-                .then(|| row.clone())
+            (row.is_recoverable() && row.last_attached_device_id == *device_id).then(|| row.clone())
         })
     }
 
@@ -6326,6 +6339,153 @@ impl Ph1fStore {
         Err(StorageError::AppendOnlyViolation {
             table: "proof_ledger",
         })
+    }
+
+    fn validate_benchmark_idempotency_key(
+        field: &'static str,
+        idempotency_key: &str,
+    ) -> Result<(), StorageError> {
+        if idempotency_key.trim().is_empty()
+            || idempotency_key.len() > 128
+            || !idempotency_key.is_ascii()
+        {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field,
+                    reason: "must be ASCII and <= 128 chars when provided",
+                },
+            ));
+        }
+        Ok(())
+    }
+
+    pub(crate) fn append_benchmark_target_packet(
+        &mut self,
+        packet: BenchmarkTargetPacket,
+        idempotency_key: Option<String>,
+    ) -> Result<u64, StorageError> {
+        packet.validate()?;
+        if let Some(idempotency_key) = idempotency_key.as_ref() {
+            Self::validate_benchmark_idempotency_key(
+                "benchmark_target_packets.idempotency_key",
+                idempotency_key,
+            )?;
+            if let Some(existing_idx) = self
+                .benchmark_target_idempotency_index
+                .get(idempotency_key)
+                .copied()
+            {
+                return Ok(existing_idx as u64 + 1);
+            }
+        }
+
+        if self
+            .benchmark_target_id_index
+            .contains_key(&packet.benchmark_target_id)
+        {
+            return Err(StorageError::DuplicateKey {
+                table: "benchmark_target_packets",
+                key: packet.benchmark_target_id,
+            });
+        }
+
+        let row_id = self.benchmark_target_packets.len() as u64 + 1;
+        let idx = self.benchmark_target_packets.len();
+        self.benchmark_target_id_index
+            .insert(packet.benchmark_target_id.clone(), idx);
+        self.benchmark_target_packets.push(packet);
+        if let Some(idempotency_key) = idempotency_key {
+            self.benchmark_target_idempotency_index
+                .insert(idempotency_key, idx);
+        }
+        Ok(row_id)
+    }
+
+    pub(crate) fn append_benchmark_result_packet(
+        &mut self,
+        packet: BenchmarkResultPacket,
+        idempotency_key: Option<String>,
+    ) -> Result<u64, StorageError> {
+        packet.validate()?;
+        if !self
+            .benchmark_target_id_index
+            .contains_key(&packet.benchmark_target_id)
+        {
+            return Err(StorageError::ForeignKeyViolation {
+                table: "benchmark_result_packets.benchmark_target_id",
+                key: packet.benchmark_target_id,
+            });
+        }
+        if let Some(idempotency_key) = idempotency_key.as_ref() {
+            Self::validate_benchmark_idempotency_key(
+                "benchmark_result_packets.idempotency_key",
+                idempotency_key,
+            )?;
+            if let Some(existing_idx) = self
+                .benchmark_result_idempotency_index
+                .get(idempotency_key)
+                .copied()
+            {
+                return Ok(existing_idx as u64 + 1);
+            }
+        }
+        if self
+            .benchmark_result_id_index
+            .contains_key(&packet.benchmark_result_id)
+        {
+            return Err(StorageError::DuplicateKey {
+                table: "benchmark_result_packets",
+                key: packet.benchmark_result_id,
+            });
+        }
+
+        let row_id = self.benchmark_result_packets.len() as u64 + 1;
+        let idx = self.benchmark_result_packets.len();
+        self.benchmark_result_id_index
+            .insert(packet.benchmark_result_id.clone(), idx);
+        self.benchmark_result_target_index
+            .entry(packet.benchmark_target_id.clone())
+            .or_default()
+            .push(idx);
+        self.benchmark_result_packets.push(packet);
+        if let Some(idempotency_key) = idempotency_key {
+            self.benchmark_result_idempotency_index
+                .insert(idempotency_key, idx);
+        }
+        Ok(row_id)
+    }
+
+    pub fn benchmark_target_packets(&self) -> &[BenchmarkTargetPacket] {
+        &self.benchmark_target_packets
+    }
+
+    pub fn benchmark_result_packets(&self) -> &[BenchmarkResultPacket] {
+        &self.benchmark_result_packets
+    }
+
+    pub fn benchmark_results_by_target(
+        &self,
+        benchmark_target_id: &str,
+    ) -> Vec<&BenchmarkResultPacket> {
+        self.benchmark_result_target_index
+            .get(benchmark_target_id)
+            .map(|indices| {
+                indices
+                    .iter()
+                    .filter_map(|idx| self.benchmark_result_packets.get(*idx))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    pub fn latest_benchmark_result_for_target(
+        &self,
+        benchmark_target_id: &str,
+    ) -> Option<&BenchmarkResultPacket> {
+        self.benchmark_result_target_index
+            .get(benchmark_target_id)
+            .and_then(|indices| indices.last())
+            .and_then(|idx| self.benchmark_result_packets.get(*idx))
     }
 
     pub fn proof_records_by_request_id_bounded(

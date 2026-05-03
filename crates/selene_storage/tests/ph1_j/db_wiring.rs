@@ -5,9 +5,10 @@ use std::collections::BTreeMap;
 use selene_kernel_contracts::ph1_voice_id::UserId;
 use selene_kernel_contracts::ph1j::{
     AuditEngine, AuditEventInput, AuditEventType, AuditPayloadMin, AuditSeverity,
-    CanonicalProofRecordInput, CorrelationId, DeviceId, PayloadKey, PayloadValue,
-    ProofProtectedActionClass, ProofRetentionClass, ProofSignerIdentityMetadata, ProofWriteOutcome,
-    TurnId,
+    BenchmarkComparisonOutcome, BenchmarkResultPacket, BenchmarkTargetPacket,
+    BenchmarkTargetStatus, CanonicalProofRecordInput, CorrelationId, DeviceId, PayloadKey,
+    PayloadValue, ProofProtectedActionClass, ProofRetentionClass, ProofSignerIdentityMetadata,
+    ProofWriteOutcome, TurnId,
 };
 use selene_kernel_contracts::ph1l::SessionId;
 use selene_kernel_contracts::ph1simcat::{SimulationId, SimulationVersion};
@@ -15,7 +16,7 @@ use selene_kernel_contracts::{MonotonicTimeNs, ReasonCodeId, SessionState};
 use selene_storage::ph1f::{
     DeviceRecord, IdentityRecord, IdentityStatus, Ph1fStore, SessionRecord, StorageError,
 };
-use selene_storage::repo::{Ph1jAuditRepo, Ph1jProofRepo};
+use selene_storage::repo::{BenchmarkResultRepo, Ph1jAuditRepo, Ph1jProofRepo};
 
 fn user() -> UserId {
     UserId::new("dbw_j_user_1").unwrap()
@@ -211,6 +212,67 @@ fn at_j_db_02_append_only_enforced() {
         s.attempt_overwrite_audit_event(id),
         Err(StorageError::AppendOnlyViolation { .. })
     ));
+}
+
+#[test]
+fn at_j_db_benchmark_envelope_is_replay_safe_and_idempotent() {
+    let mut s = Ph1fStore::new_in_memory();
+    let target = BenchmarkTargetPacket::v1(
+        "bench_target_stage2a_runtime".to_string(),
+        "foundation".to_string(),
+        "Stage 2A".to_string(),
+        "runtime proof law benchmark envelope".to_string(),
+        "documented".to_string(),
+        BenchmarkTargetStatus::CertificationTargetPassed,
+        None,
+        Some("replay:stage2a".to_string()),
+        Some("cert:stage2a".to_string()),
+        MonotonicTimeNs(1),
+    )
+    .unwrap();
+
+    let row_id = s
+        .append_benchmark_target_row(target.clone(), Some("idem_bench_target_1".to_string()))
+        .unwrap();
+    let retry_row_id = s
+        .append_benchmark_target_row(target.clone(), Some("idem_bench_target_1".to_string()))
+        .unwrap();
+    assert_eq!(row_id, retry_row_id);
+    assert_eq!(s.benchmark_target_rows().len(), 1);
+
+    let result = BenchmarkResultPacket::v1(
+        "bench_result_stage2a_runtime".to_string(),
+        target.benchmark_target_id.clone(),
+        "run_stage2a_1".to_string(),
+        Some("passed".to_string()),
+        BenchmarkComparisonOutcome::Passed,
+        BenchmarkTargetStatus::CertificationTargetPassed,
+        None,
+        Some("replay_artifact:stage2a:runtime".to_string()),
+        Some("a".repeat(64)),
+        None,
+        None,
+        MonotonicTimeNs(2),
+    )
+    .unwrap();
+    let result_row_id = s
+        .append_benchmark_result_row(result.clone(), Some("idem_bench_result_1".to_string()))
+        .unwrap();
+    let retry_result_row_id = s
+        .append_benchmark_result_row(result.clone(), Some("idem_bench_result_1".to_string()))
+        .unwrap();
+
+    assert_eq!(result_row_id, retry_result_row_id);
+    assert_eq!(s.benchmark_result_rows().len(), 1);
+    assert_eq!(
+        s.benchmark_results_by_target(&target.benchmark_target_id)
+            .len(),
+        1
+    );
+    let latest = s
+        .latest_benchmark_result_for_target(&target.benchmark_target_id)
+        .expect("latest benchmark result must exist");
+    assert!(latest.certifies_target(&target));
 }
 
 #[test]

@@ -11,6 +11,7 @@ Architecture baseline updated to System_Core + Build Sections 01–11.
 | PH1.OS | PARTIALLY_WIRED | Platform runtime exists and tablet support is wired in code, but final architecture closure remains incomplete. |
 | PH1.COMP | PARTIALLY_WIRED | Canonical deterministic computation subsystem exists, but major engines still retain parallel quantitative authority paths. |
 | PH1.LAW | FULLY_WIRED | Final runtime law subsystem now exposes dedicated independent-verification support and requires it on canonical law-state transport, completing the Section 11 generalized production-law closure on architecture-owned carriers. |
+| PH1.GLOBAL.BENCHMARK | MINIMAL_FOUNDATION_WIRED | Stage 2A adds PH1.J benchmark target/result packets plus PH1.F append-only storage/idempotency and replay-safe latest-result lookup. Product benchmark corpora remain owned by later stages. |
 
 Historical note:
 - The detailed matrix below remains valuable as contract-closure history.

@@ -2130,6 +2130,359 @@ impl Validate for ProofVerificationResult {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BenchmarkTargetStatus {
+    DraftTarget,
+    NotApplicableWithReason,
+    BaselineMeasured,
+    CertificationTargetPassed,
+    BlockedWithOwnerAndNextAction,
+}
+
+impl BenchmarkTargetStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::DraftTarget => "DRAFT_TARGET",
+            Self::NotApplicableWithReason => "NOT_APPLICABLE_WITH_REASON",
+            Self::BaselineMeasured => "BASELINE_MEASURED",
+            Self::CertificationTargetPassed => "CERTIFICATION_TARGET_PASSED",
+            Self::BlockedWithOwnerAndNextAction => "BLOCKED_WITH_OWNER_AND_NEXT_ACTION",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BenchmarkComparisonOutcome {
+    NotRun,
+    NotApplicable,
+    Passed,
+    Failed,
+    Blocked,
+}
+
+impl BenchmarkComparisonOutcome {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::NotRun => "NOT_RUN",
+            Self::NotApplicable => "NOT_APPLICABLE",
+            Self::Passed => "PASSED",
+            Self::Failed => "FAILED",
+            Self::Blocked => "BLOCKED",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BenchmarkTargetPacket {
+    pub schema_version: SchemaVersion,
+    pub benchmark_target_id: String,
+    pub benchmark_family: String,
+    pub owning_stage: String,
+    pub metric_name: String,
+    pub draft_target: String,
+    pub target_status: BenchmarkTargetStatus,
+    pub status_reason: Option<String>,
+    pub replay_corpus_ref: Option<String>,
+    pub certification_target_ref: Option<String>,
+    pub created_at: MonotonicTimeNs,
+}
+
+impl BenchmarkTargetPacket {
+    #[allow(clippy::too_many_arguments)]
+    pub fn v1(
+        benchmark_target_id: String,
+        benchmark_family: String,
+        owning_stage: String,
+        metric_name: String,
+        draft_target: String,
+        target_status: BenchmarkTargetStatus,
+        status_reason: Option<String>,
+        replay_corpus_ref: Option<String>,
+        certification_target_ref: Option<String>,
+        created_at: MonotonicTimeNs,
+    ) -> Result<Self, ContractViolation> {
+        let packet = Self {
+            schema_version: PH1J_CONTRACT_VERSION,
+            benchmark_target_id,
+            benchmark_family,
+            owning_stage,
+            metric_name,
+            draft_target,
+            target_status,
+            status_reason,
+            replay_corpus_ref,
+            certification_target_ref,
+            created_at,
+        };
+        packet.validate()?;
+        Ok(packet)
+    }
+}
+
+impl Validate for BenchmarkTargetPacket {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        if self.schema_version != PH1J_CONTRACT_VERSION {
+            return Err(ContractViolation::InvalidValue {
+                field: "benchmark_target_packet.schema_version",
+                reason: "must match PH1J_CONTRACT_VERSION",
+            });
+        }
+        validate_ascii_token(
+            "benchmark_target_packet.benchmark_target_id",
+            &self.benchmark_target_id,
+            128,
+        )?;
+        validate_ascii_token(
+            "benchmark_target_packet.benchmark_family",
+            &self.benchmark_family,
+            128,
+        )?;
+        validate_ascii_token(
+            "benchmark_target_packet.owning_stage",
+            &self.owning_stage,
+            128,
+        )?;
+        validate_ascii_token(
+            "benchmark_target_packet.metric_name",
+            &self.metric_name,
+            128,
+        )?;
+        validate_ascii_token(
+            "benchmark_target_packet.draft_target",
+            &self.draft_target,
+            128,
+        )?;
+        validate_opt_ascii_token(
+            "benchmark_target_packet.status_reason",
+            &self.status_reason,
+            256,
+        )?;
+        validate_opt_ascii_token(
+            "benchmark_target_packet.replay_corpus_ref",
+            &self.replay_corpus_ref,
+            256,
+        )?;
+        validate_opt_ascii_token(
+            "benchmark_target_packet.certification_target_ref",
+            &self.certification_target_ref,
+            256,
+        )?;
+        if self.created_at.0 == 0 {
+            return Err(ContractViolation::InvalidValue {
+                field: "benchmark_target_packet.created_at",
+                reason: "must be > 0",
+            });
+        }
+        match self.target_status {
+            BenchmarkTargetStatus::NotApplicableWithReason => {
+                if self.status_reason.is_none() {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "benchmark_target_packet.status_reason",
+                        reason: "required for NOT_APPLICABLE_WITH_REASON",
+                    });
+                }
+            }
+            BenchmarkTargetStatus::BaselineMeasured => {
+                if self.replay_corpus_ref.is_none() {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "benchmark_target_packet.replay_corpus_ref",
+                        reason: "required for BASELINE_MEASURED",
+                    });
+                }
+            }
+            BenchmarkTargetStatus::CertificationTargetPassed => {
+                if self.replay_corpus_ref.is_none() || self.certification_target_ref.is_none() {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "benchmark_target_packet.certification_target_ref",
+                        reason: "replay_corpus_ref and certification_target_ref are required",
+                    });
+                }
+            }
+            BenchmarkTargetStatus::BlockedWithOwnerAndNextAction => {
+                if self.status_reason.is_none() {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "benchmark_target_packet.status_reason",
+                        reason: "required for BLOCKED_WITH_OWNER_AND_NEXT_ACTION",
+                    });
+                }
+            }
+            BenchmarkTargetStatus::DraftTarget => {}
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BenchmarkResultPacket {
+    pub schema_version: SchemaVersion,
+    pub benchmark_result_id: String,
+    pub benchmark_target_id: String,
+    pub run_id: String,
+    pub measured_value: Option<String>,
+    pub comparison_outcome: BenchmarkComparisonOutcome,
+    pub target_status: BenchmarkTargetStatus,
+    pub status_reason: Option<String>,
+    pub replay_artifact_ref: Option<String>,
+    pub evidence_hash: Option<String>,
+    pub blocked_owner: Option<String>,
+    pub next_action: Option<String>,
+    pub measured_at: MonotonicTimeNs,
+}
+
+impl BenchmarkResultPacket {
+    #[allow(clippy::too_many_arguments)]
+    pub fn v1(
+        benchmark_result_id: String,
+        benchmark_target_id: String,
+        run_id: String,
+        measured_value: Option<String>,
+        comparison_outcome: BenchmarkComparisonOutcome,
+        target_status: BenchmarkTargetStatus,
+        status_reason: Option<String>,
+        replay_artifact_ref: Option<String>,
+        evidence_hash: Option<String>,
+        blocked_owner: Option<String>,
+        next_action: Option<String>,
+        measured_at: MonotonicTimeNs,
+    ) -> Result<Self, ContractViolation> {
+        let packet = Self {
+            schema_version: PH1J_CONTRACT_VERSION,
+            benchmark_result_id,
+            benchmark_target_id,
+            run_id,
+            measured_value,
+            comparison_outcome,
+            target_status,
+            status_reason,
+            replay_artifact_ref,
+            evidence_hash,
+            blocked_owner,
+            next_action,
+            measured_at,
+        };
+        packet.validate()?;
+        Ok(packet)
+    }
+
+    pub fn certifies_target(&self, target: &BenchmarkTargetPacket) -> bool {
+        self.benchmark_target_id == target.benchmark_target_id
+            && target.target_status == BenchmarkTargetStatus::CertificationTargetPassed
+            && self.target_status == BenchmarkTargetStatus::CertificationTargetPassed
+            && self.comparison_outcome == BenchmarkComparisonOutcome::Passed
+    }
+}
+
+impl Validate for BenchmarkResultPacket {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        if self.schema_version != PH1J_CONTRACT_VERSION {
+            return Err(ContractViolation::InvalidValue {
+                field: "benchmark_result_packet.schema_version",
+                reason: "must match PH1J_CONTRACT_VERSION",
+            });
+        }
+        validate_ascii_token(
+            "benchmark_result_packet.benchmark_result_id",
+            &self.benchmark_result_id,
+            128,
+        )?;
+        validate_ascii_token(
+            "benchmark_result_packet.benchmark_target_id",
+            &self.benchmark_target_id,
+            128,
+        )?;
+        validate_ascii_token("benchmark_result_packet.run_id", &self.run_id, 128)?;
+        validate_opt_ascii_token(
+            "benchmark_result_packet.measured_value",
+            &self.measured_value,
+            128,
+        )?;
+        validate_opt_ascii_token(
+            "benchmark_result_packet.status_reason",
+            &self.status_reason,
+            256,
+        )?;
+        validate_opt_ascii_token(
+            "benchmark_result_packet.replay_artifact_ref",
+            &self.replay_artifact_ref,
+            256,
+        )?;
+        validate_opt_ascii_token(
+            "benchmark_result_packet.blocked_owner",
+            &self.blocked_owner,
+            128,
+        )?;
+        validate_opt_ascii_token(
+            "benchmark_result_packet.next_action",
+            &self.next_action,
+            256,
+        )?;
+        if let Some(evidence_hash) = self.evidence_hash.as_ref() {
+            validate_lower_hex_64("benchmark_result_packet.evidence_hash", evidence_hash)?;
+        }
+        if self.measured_at.0 == 0 {
+            return Err(ContractViolation::InvalidValue {
+                field: "benchmark_result_packet.measured_at",
+                reason: "must be > 0",
+            });
+        }
+        match self.target_status {
+            BenchmarkTargetStatus::DraftTarget => {
+                return Err(ContractViolation::InvalidValue {
+                    field: "benchmark_result_packet.target_status",
+                    reason: "result packets cannot use DRAFT_TARGET",
+                });
+            }
+            BenchmarkTargetStatus::NotApplicableWithReason => {
+                if self.comparison_outcome != BenchmarkComparisonOutcome::NotApplicable
+                    || self.status_reason.is_none()
+                {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "benchmark_result_packet.status_reason",
+                        reason: "NOT_APPLICABLE_WITH_REASON requires NOT_APPLICABLE and a reason",
+                    });
+                }
+            }
+            BenchmarkTargetStatus::BaselineMeasured => {
+                if self.measured_value.is_none()
+                    || self.replay_artifact_ref.is_none()
+                    || self.evidence_hash.is_none()
+                    || self.comparison_outcome == BenchmarkComparisonOutcome::NotRun
+                {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "benchmark_result_packet.replay_artifact_ref",
+                        reason: "BASELINE_MEASURED requires measured value, replay artifact, evidence hash, and non-NOT_RUN outcome",
+                    });
+                }
+            }
+            BenchmarkTargetStatus::CertificationTargetPassed => {
+                if self.comparison_outcome != BenchmarkComparisonOutcome::Passed
+                    || self.measured_value.is_none()
+                    || self.replay_artifact_ref.is_none()
+                    || self.evidence_hash.is_none()
+                {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "benchmark_result_packet.comparison_outcome",
+                        reason:
+                            "CERTIFICATION_TARGET_PASSED requires PASSED plus replayed evidence",
+                    });
+                }
+            }
+            BenchmarkTargetStatus::BlockedWithOwnerAndNextAction => {
+                if self.comparison_outcome != BenchmarkComparisonOutcome::Blocked
+                    || self.blocked_owner.is_none()
+                    || self.next_action.is_none()
+                {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "benchmark_result_packet.blocked_owner",
+                        reason: "BLOCKED_WITH_OWNER_AND_NEXT_ACTION requires BLOCKED, owner, and next action",
+                    });
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2479,5 +2832,92 @@ mod tests {
             .validate()
             .expect("record with artifact trust entries must validate");
         assert_eq!(record.canonical_payload(), input.canonical_payload());
+    }
+
+    #[test]
+    fn benchmark_target_requires_reason_for_not_applicable() {
+        let err = BenchmarkTargetPacket::v1(
+            "bench_target_stage2_not_applicable".to_string(),
+            "foundation".to_string(),
+            "Stage 2A".to_string(),
+            "runtime envelope inventory".to_string(),
+            "documented".to_string(),
+            BenchmarkTargetStatus::NotApplicableWithReason,
+            None,
+            None,
+            None,
+            MonotonicTimeNs(1),
+        )
+        .unwrap_err();
+        match err {
+            ContractViolation::InvalidValue { field, reason } => {
+                assert_eq!(field, "benchmark_target_packet.status_reason");
+                assert_eq!(reason, "required for NOT_APPLICABLE_WITH_REASON");
+            }
+            _ => panic!("expected InvalidValue"),
+        }
+    }
+
+    #[test]
+    fn benchmark_result_requires_replay_evidence_for_certification() {
+        let err = BenchmarkResultPacket::v1(
+            "bench_result_stage2_cert".to_string(),
+            "bench_target_stage2_runtime".to_string(),
+            "run_stage2a_1".to_string(),
+            Some("passed".to_string()),
+            BenchmarkComparisonOutcome::Passed,
+            BenchmarkTargetStatus::CertificationTargetPassed,
+            None,
+            None,
+            Some("a".repeat(64)),
+            None,
+            None,
+            MonotonicTimeNs(2),
+        )
+        .unwrap_err();
+        match err {
+            ContractViolation::InvalidValue { field, reason } => {
+                assert_eq!(field, "benchmark_result_packet.comparison_outcome");
+                assert_eq!(
+                    reason,
+                    "CERTIFICATION_TARGET_PASSED requires PASSED plus replayed evidence"
+                );
+            }
+            _ => panic!("expected InvalidValue"),
+        }
+    }
+
+    #[test]
+    fn benchmark_result_certifies_matching_target() {
+        let target = BenchmarkTargetPacket::v1(
+            "bench_target_stage2_runtime".to_string(),
+            "foundation".to_string(),
+            "Stage 2A".to_string(),
+            "runtime envelope inventory".to_string(),
+            "documented".to_string(),
+            BenchmarkTargetStatus::CertificationTargetPassed,
+            None,
+            Some("replay:stage2a".to_string()),
+            Some("cert:stage2a".to_string()),
+            MonotonicTimeNs(1),
+        )
+        .unwrap();
+        let result = BenchmarkResultPacket::v1(
+            "bench_result_stage2_cert".to_string(),
+            target.benchmark_target_id.clone(),
+            "run_stage2a_1".to_string(),
+            Some("passed".to_string()),
+            BenchmarkComparisonOutcome::Passed,
+            BenchmarkTargetStatus::CertificationTargetPassed,
+            None,
+            Some("replay_artifact:stage2a:1".to_string()),
+            Some("a".repeat(64)),
+            None,
+            None,
+            MonotonicTimeNs(2),
+        )
+        .unwrap();
+
+        assert!(result.certifies_target(&target));
     }
 }

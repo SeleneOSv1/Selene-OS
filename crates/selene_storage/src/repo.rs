@@ -30,8 +30,9 @@ use selene_kernel_contracts::ph1f::{
     ConversationSource, ConversationTurnId, ConversationTurnInput, ConversationTurnRecord,
 };
 use selene_kernel_contracts::ph1j::{
-    AuditEvent, AuditEventId, AuditEventInput, CanonicalProofRecord, CanonicalProofRecordInput,
-    CorrelationId, DeviceId, ProofEventId, ProofVerificationResult, ProofWriteReceipt, TurnId,
+    AuditEvent, AuditEventId, AuditEventInput, BenchmarkResultPacket, BenchmarkTargetPacket,
+    CanonicalProofRecord, CanonicalProofRecordInput, CorrelationId, DeviceId, ProofEventId,
+    ProofVerificationResult, ProofWriteReceipt, TurnId,
 };
 use selene_kernel_contracts::ph1l::SessionId;
 use selene_kernel_contracts::ph1link::{
@@ -157,6 +158,28 @@ pub trait Ph1jProofRepo {
         &mut self,
         proof_event_id: ProofEventId,
     ) -> Result<(), StorageError>;
+}
+
+/// Replay-safe repository surface for benchmark target/result evidence.
+pub trait BenchmarkResultRepo {
+    fn append_benchmark_target_row(
+        &mut self,
+        packet: BenchmarkTargetPacket,
+        idempotency_key: Option<String>,
+    ) -> Result<u64, StorageError>;
+    fn append_benchmark_result_row(
+        &mut self,
+        packet: BenchmarkResultPacket,
+        idempotency_key: Option<String>,
+    ) -> Result<u64, StorageError>;
+    fn benchmark_target_rows(&self) -> &[BenchmarkTargetPacket];
+    fn benchmark_result_rows(&self) -> &[BenchmarkResultPacket];
+    fn benchmark_results_by_target(&self, benchmark_target_id: &str)
+        -> Vec<&BenchmarkResultPacket>;
+    fn latest_benchmark_result_for_target(
+        &self,
+        benchmark_target_id: &str,
+    ) -> Option<&BenchmarkResultPacket>;
 }
 
 /// Typed repository interface for Selene OS core WorkOrder persistence wiring.
@@ -2069,6 +2092,46 @@ impl Ph1jProofRepo for Ph1fStore {
         proof_event_id: ProofEventId,
     ) -> Result<(), StorageError> {
         self.attempt_overwrite_proof_record(proof_event_id)
+    }
+}
+
+impl BenchmarkResultRepo for Ph1fStore {
+    fn append_benchmark_target_row(
+        &mut self,
+        packet: BenchmarkTargetPacket,
+        idempotency_key: Option<String>,
+    ) -> Result<u64, StorageError> {
+        self.append_benchmark_target_packet(packet, idempotency_key)
+    }
+
+    fn append_benchmark_result_row(
+        &mut self,
+        packet: BenchmarkResultPacket,
+        idempotency_key: Option<String>,
+    ) -> Result<u64, StorageError> {
+        self.append_benchmark_result_packet(packet, idempotency_key)
+    }
+
+    fn benchmark_target_rows(&self) -> &[BenchmarkTargetPacket] {
+        self.benchmark_target_packets()
+    }
+
+    fn benchmark_result_rows(&self) -> &[BenchmarkResultPacket] {
+        self.benchmark_result_packets()
+    }
+
+    fn benchmark_results_by_target(
+        &self,
+        benchmark_target_id: &str,
+    ) -> Vec<&BenchmarkResultPacket> {
+        Ph1fStore::benchmark_results_by_target(self, benchmark_target_id)
+    }
+
+    fn latest_benchmark_result_for_target(
+        &self,
+        benchmark_target_id: &str,
+    ) -> Option<&BenchmarkResultPacket> {
+        Ph1fStore::latest_benchmark_result_for_target(self, benchmark_target_id)
     }
 }
 
