@@ -18,7 +18,7 @@ Large stages are build families. A future Codex build must select one exact slic
 | Slice | Focus | Input | Output | Proof |
 |---|---|---|---|---|
 | 5A | Session lifecycle/current-turn authority/stale-turn quarantine | Stage4TurnBoundaryPacket, SessionPacket | Stage5TurnAuthorityPacket | PROVEN_COMPLETE: only current committed turns enter understanding/render as current; stale/superseded/cancelled/abandoned/record/closed dispositions quarantine without route authority. |
-| 5B | Conversation control, clarification, correction, recovery, same-page state | Stage5TurnAuthorityPacket | ConversationGoalStatePacket, OpenLoopsPacket, SamePageCheckPacket | no provider/tool/protected execution; one-question clarification and correction/recovery boundary proof. |
+| 5B | Conversation control, clarification, correction, recovery, same-page state | Stage5TurnAuthorityPacket | ConversationGoalStatePacket, OpenLoopsPacket, SamePageCheckPacket | PROVEN_COMPLETE: only current Stage 5A authority can update advisory conversation state; stale/record/closed turns are blocked; one-question clarification, session-scoped correction, safe backchannel, and no provider/tool/protected execution proof. |
 
 ## Stage 8 - Voice I/O, Listen State, Transcript Gate
 
@@ -105,8 +105,8 @@ Large stages are build families. A future Codex build must select one exact slic
 | 30E | Custom assistant builder/store | AssistantDefinitionPacket | assistant release artifact | governance proof |
 | 30F | Self-heal/dev lane | dev route | proposal artifact | no uncontrolled shell/tool bypass |
 
-## Next Slice After Stage 5A
+## Next Slice After Stage 5B
 
 ```text
-Stage 5B - Conversation Control, Clarification, Correction, Recovery, And Same-Page State Reconciliation
+Stage 6A - Master Access, Tenant, Policy, And Per-User Authority Context Reconciliation
 ```

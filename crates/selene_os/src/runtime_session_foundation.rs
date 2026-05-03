@@ -50,6 +50,13 @@ mod reason_codes {
     pub const STAGE5_ABANDONED_TURN_QUARANTINED: &str = "stage5_abandoned_turn_quarantined";
     pub const STAGE5_CLOSED_SESSION_REJECTED: &str = "stage5_closed_session_rejected";
     pub const STAGE5_RECORD_ARTIFACT_ONLY: &str = "stage5_record_artifact_only";
+    pub const STAGE5B_CONVERSATION_STATE_UPDATED: &str = "stage5b_conversation_state_updated";
+    pub const STAGE5B_CLARIFICATION_REQUESTED: &str = "stage5b_clarification_requested";
+    pub const STAGE5B_CORRECTION_APPLIED: &str = "stage5b_correction_applied";
+    pub const STAGE5B_RECOVERY_APPLIED: &str = "stage5b_recovery_applied";
+    pub const STAGE5B_SAME_PAGE_SNAPSHOT: &str = "stage5b_same_page_snapshot";
+    pub const STAGE5B_SAFE_BACKCHANNEL_CANDIDATE: &str = "stage5b_safe_backchannel_candidate";
+    pub const STAGE5B_TURN_AUTHORITY_BLOCKED: &str = "stage5b_turn_authority_blocked";
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -883,6 +890,578 @@ impl Validate for Stage5TurnAuthorityPacket {
                     });
                 }
             }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stage5ConversationControlDisposition {
+    StateUpdated,
+    ClarificationRequested,
+    CorrectionApplied,
+    RecoveryApplied,
+    SamePageSnapshot,
+    SafeBackchannelCandidate,
+    TurnAuthorityBlocked,
+}
+
+impl Stage5ConversationControlDisposition {
+    pub const fn default_reason_code(self) -> &'static str {
+        match self {
+            Stage5ConversationControlDisposition::StateUpdated => {
+                reason_codes::STAGE5B_CONVERSATION_STATE_UPDATED
+            }
+            Stage5ConversationControlDisposition::ClarificationRequested => {
+                reason_codes::STAGE5B_CLARIFICATION_REQUESTED
+            }
+            Stage5ConversationControlDisposition::CorrectionApplied => {
+                reason_codes::STAGE5B_CORRECTION_APPLIED
+            }
+            Stage5ConversationControlDisposition::RecoveryApplied => {
+                reason_codes::STAGE5B_RECOVERY_APPLIED
+            }
+            Stage5ConversationControlDisposition::SamePageSnapshot => {
+                reason_codes::STAGE5B_SAME_PAGE_SNAPSHOT
+            }
+            Stage5ConversationControlDisposition::SafeBackchannelCandidate => {
+                reason_codes::STAGE5B_SAFE_BACKCHANNEL_CANDIDATE
+            }
+            Stage5ConversationControlDisposition::TurnAuthorityBlocked => {
+                reason_codes::STAGE5B_TURN_AUTHORITY_BLOCKED
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Stage5ConversationWorkAuthority {
+    pub can_update_conversation_state: bool,
+    pub can_emit_clarification: bool,
+    pub can_emit_safe_backchannel: bool,
+    pub can_write_memory: bool,
+    pub can_rewrite_facts: bool,
+    pub can_rewrite_protected_slots: bool,
+    pub can_grant_authority: bool,
+    pub can_route_tools: bool,
+    pub can_route_search: bool,
+    pub can_route_providers: bool,
+    pub can_route_tts: bool,
+    pub can_route_protected_execution: bool,
+}
+
+impl Stage5ConversationWorkAuthority {
+    pub const fn current_advisory_turn() -> Self {
+        Self {
+            can_update_conversation_state: true,
+            can_emit_clarification: true,
+            can_emit_safe_backchannel: true,
+            can_write_memory: false,
+            can_rewrite_facts: false,
+            can_rewrite_protected_slots: false,
+            can_grant_authority: false,
+            can_route_tools: false,
+            can_route_search: false,
+            can_route_providers: false,
+            can_route_tts: false,
+            can_route_protected_execution: false,
+        }
+    }
+
+    pub const fn blocked() -> Self {
+        Self {
+            can_update_conversation_state: false,
+            can_emit_clarification: false,
+            can_emit_safe_backchannel: false,
+            can_write_memory: false,
+            can_rewrite_facts: false,
+            can_rewrite_protected_slots: false,
+            can_grant_authority: false,
+            can_route_tools: false,
+            can_route_search: false,
+            can_route_providers: false,
+            can_route_tts: false,
+            can_route_protected_execution: false,
+        }
+    }
+
+    pub const fn can_route_any_work(self) -> bool {
+        self.can_route_tools
+            || self.can_route_search
+            || self.can_route_providers
+            || self.can_route_tts
+            || self.can_route_protected_execution
+    }
+
+    pub const fn can_become_authoritative(self) -> bool {
+        self.can_write_memory
+            || self.can_rewrite_facts
+            || self.can_rewrite_protected_slots
+            || self.can_grant_authority
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Stage5ConversationDeliveryPolicy {
+    pub safe_backchannel_allowed: bool,
+    pub claims_task_completion: bool,
+    pub claims_evidence_truth: bool,
+    pub claims_authority: bool,
+    pub over_apology_loop_blocked: bool,
+}
+
+impl Stage5ConversationDeliveryPolicy {
+    pub const fn controlled_backchannel() -> Self {
+        Self {
+            safe_backchannel_allowed: true,
+            claims_task_completion: false,
+            claims_evidence_truth: false,
+            claims_authority: false,
+            over_apology_loop_blocked: true,
+        }
+    }
+}
+
+impl Validate for Stage5ConversationDeliveryPolicy {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        if self.claims_task_completion || self.claims_evidence_truth || self.claims_authority {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage5_conversation_delivery_policy",
+                reason: "conversation-control backchannels cannot claim completion, evidence truth, or authority",
+            });
+        }
+        if self.safe_backchannel_allowed && !self.over_apology_loop_blocked {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage5_conversation_delivery_policy.over_apology_loop_blocked",
+                reason: "safe backchannels require bounded over-apology/filler-loop control",
+            });
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Stage5ClarificationState {
+    pub question: String,
+    pub missing_field: String,
+    pub accepted_answer_formats: Vec<String>,
+    pub protected_slot_uncertain: bool,
+    pub repeated_prompt_count: u8,
+}
+
+impl Stage5ClarificationState {
+    pub fn one_best_question(
+        question: impl Into<String>,
+        missing_field: impl Into<String>,
+        accepted_answer_formats: Vec<String>,
+        protected_slot_uncertain: bool,
+        repeated_prompt_count: u8,
+    ) -> Result<Self, ContractViolation> {
+        let state = Self {
+            question: question.into(),
+            missing_field: missing_field.into(),
+            accepted_answer_formats,
+            protected_slot_uncertain,
+            repeated_prompt_count,
+        };
+        state.validate()?;
+        Ok(state)
+    }
+}
+
+impl Validate for Stage5ClarificationState {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        validate_stage5_ascii_token("stage5_clarification_state.question", &self.question, 180)?;
+        if self.question.matches('?').count() != 1 {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage5_clarification_state.question",
+                reason: "must contain exactly one question",
+            });
+        }
+        validate_stage5_ascii_token(
+            "stage5_clarification_state.missing_field",
+            &self.missing_field,
+            96,
+        )?;
+        if !(2..=3).contains(&self.accepted_answer_formats.len()) {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage5_clarification_state.accepted_answer_formats",
+                reason: "must contain 2-3 bounded answer formats",
+            });
+        }
+        for format in &self.accepted_answer_formats {
+            validate_stage5_ascii_token(
+                "stage5_clarification_state.accepted_answer_formats[]",
+                format,
+                128,
+            )?;
+        }
+        if self.repeated_prompt_count > 2 {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage5_clarification_state.repeated_prompt_count",
+                reason: "must stay bounded to avoid clarification loops",
+            });
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Stage5CorrectionState {
+    pub corrected_assumption_ref: String,
+    pub replacement_scope: String,
+    pub session_scoped: bool,
+    pub memory_write_allowed: bool,
+    pub fact_rewrite_allowed: bool,
+    pub protected_slot_rewrite_allowed: bool,
+    pub authority_write_allowed: bool,
+}
+
+impl Stage5CorrectionState {
+    pub fn session_scoped(
+        corrected_assumption_ref: impl Into<String>,
+        replacement_scope: impl Into<String>,
+    ) -> Result<Self, ContractViolation> {
+        let state = Self {
+            corrected_assumption_ref: corrected_assumption_ref.into(),
+            replacement_scope: replacement_scope.into(),
+            session_scoped: true,
+            memory_write_allowed: false,
+            fact_rewrite_allowed: false,
+            protected_slot_rewrite_allowed: false,
+            authority_write_allowed: false,
+        };
+        state.validate()?;
+        Ok(state)
+    }
+}
+
+impl Validate for Stage5CorrectionState {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        validate_stage5_ascii_token(
+            "stage5_correction_state.corrected_assumption_ref",
+            &self.corrected_assumption_ref,
+            128,
+        )?;
+        validate_stage5_ascii_token(
+            "stage5_correction_state.replacement_scope",
+            &self.replacement_scope,
+            96,
+        )?;
+        if !self.session_scoped {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage5_correction_state.session_scoped",
+                reason: "Stage 5B corrections must remain session-scoped until governed memory is routed later",
+            });
+        }
+        if self.memory_write_allowed
+            || self.fact_rewrite_allowed
+            || self.protected_slot_rewrite_allowed
+            || self.authority_write_allowed
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage5_correction_state",
+                reason:
+                    "correction control cannot rewrite memory, facts, protected slots, or authority",
+            });
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Stage5SamePageState {
+    pub conversation_goal_state_id: String,
+    pub topic_segment_id: String,
+    pub active_entity_ids: Vec<String>,
+    pub open_loop_ids: Vec<String>,
+    pub pending_question_ids: Vec<String>,
+    pub corrected_assumption_refs: Vec<String>,
+    pub recap_on_return: bool,
+    pub advisory_only: bool,
+    pub state_snapshot_hash: String,
+    pub delivery_policy: Stage5ConversationDeliveryPolicy,
+}
+
+impl Stage5SamePageState {
+    #[allow(clippy::too_many_arguments)]
+    pub fn advisory_snapshot(
+        conversation_goal_state_id: impl Into<String>,
+        topic_segment_id: impl Into<String>,
+        active_entity_ids: Vec<String>,
+        open_loop_ids: Vec<String>,
+        pending_question_ids: Vec<String>,
+        corrected_assumption_refs: Vec<String>,
+        recap_on_return: bool,
+        state_snapshot_hash: impl Into<String>,
+    ) -> Result<Self, ContractViolation> {
+        let state = Self {
+            conversation_goal_state_id: conversation_goal_state_id.into(),
+            topic_segment_id: topic_segment_id.into(),
+            active_entity_ids,
+            open_loop_ids,
+            pending_question_ids,
+            corrected_assumption_refs,
+            recap_on_return,
+            advisory_only: true,
+            state_snapshot_hash: state_snapshot_hash.into(),
+            delivery_policy: Stage5ConversationDeliveryPolicy::controlled_backchannel(),
+        };
+        state.validate()?;
+        Ok(state)
+    }
+}
+
+impl Validate for Stage5SamePageState {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        validate_stage5_ascii_token(
+            "stage5_same_page_state.conversation_goal_state_id",
+            &self.conversation_goal_state_id,
+            128,
+        )?;
+        validate_stage5_ascii_token(
+            "stage5_same_page_state.topic_segment_id",
+            &self.topic_segment_id,
+            128,
+        )?;
+        validate_stage5_bounded_token_list(
+            "stage5_same_page_state.active_entity_ids",
+            &self.active_entity_ids,
+            8,
+            128,
+        )?;
+        validate_stage5_bounded_token_list(
+            "stage5_same_page_state.open_loop_ids",
+            &self.open_loop_ids,
+            8,
+            128,
+        )?;
+        validate_stage5_bounded_token_list(
+            "stage5_same_page_state.pending_question_ids",
+            &self.pending_question_ids,
+            4,
+            128,
+        )?;
+        validate_stage5_bounded_token_list(
+            "stage5_same_page_state.corrected_assumption_refs",
+            &self.corrected_assumption_refs,
+            4,
+            128,
+        )?;
+        if !self.advisory_only {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage5_same_page_state.advisory_only",
+                reason:
+                    "same-page state is advisory and cannot become memory, routing, or authority",
+            });
+        }
+        validate_stage5_ascii_token(
+            "stage5_same_page_state.state_snapshot_hash",
+            &self.state_snapshot_hash,
+            128,
+        )?;
+        self.delivery_policy.validate()?;
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Stage5ConversationControlPacket {
+    pub session_id: SessionId,
+    pub turn_id: Option<TurnId>,
+    pub disposition: Stage5ConversationControlDisposition,
+    pub reason_code: &'static str,
+    pub turn_authority_disposition: Stage5TurnAuthorityDisposition,
+    pub work_authority: Stage5ConversationWorkAuthority,
+    pub same_page_state: Option<Stage5SamePageState>,
+    pub clarification: Option<Stage5ClarificationState>,
+    pub correction: Option<Stage5CorrectionState>,
+}
+
+impl Stage5ConversationControlPacket {
+    pub fn from_turn_authority(
+        authority: &Stage5TurnAuthorityPacket,
+        disposition: Stage5ConversationControlDisposition,
+        same_page_state: Stage5SamePageState,
+        clarification: Option<Stage5ClarificationState>,
+        correction: Option<Stage5CorrectionState>,
+    ) -> Result<Self, ContractViolation> {
+        if authority.disposition != Stage5TurnAuthorityDisposition::CurrentCommittedTurn
+            || !authority.can_enter_understanding()
+            || authority.can_route_any_work()
+        {
+            return Self::blocked_by_turn_authority(authority);
+        }
+
+        let packet = Self {
+            session_id: authority.session_id,
+            turn_id: authority.turn_id,
+            disposition,
+            reason_code: disposition.default_reason_code(),
+            turn_authority_disposition: authority.disposition,
+            work_authority: Stage5ConversationWorkAuthority::current_advisory_turn(),
+            same_page_state: Some(same_page_state),
+            clarification,
+            correction,
+        };
+        packet.validate()?;
+        Ok(packet)
+    }
+
+    pub fn blocked_by_turn_authority(
+        authority: &Stage5TurnAuthorityPacket,
+    ) -> Result<Self, ContractViolation> {
+        let packet = Self {
+            session_id: authority.session_id,
+            turn_id: authority.turn_id,
+            disposition: Stage5ConversationControlDisposition::TurnAuthorityBlocked,
+            reason_code: Stage5ConversationControlDisposition::TurnAuthorityBlocked
+                .default_reason_code(),
+            turn_authority_disposition: authority.disposition,
+            work_authority: Stage5ConversationWorkAuthority::blocked(),
+            same_page_state: None,
+            clarification: None,
+            correction: None,
+        };
+        packet.validate()?;
+        Ok(packet)
+    }
+
+    pub const fn can_update_conversation_state(&self) -> bool {
+        self.work_authority.can_update_conversation_state
+    }
+
+    pub const fn can_route_any_work(&self) -> bool {
+        self.work_authority.can_route_any_work()
+    }
+
+    pub const fn can_become_authoritative(&self) -> bool {
+        self.work_authority.can_become_authoritative()
+    }
+}
+
+impl Validate for Stage5ConversationControlPacket {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        if self.reason_code.trim().is_empty() || self.reason_code.len() > 128 {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage5_conversation_control_packet.reason_code",
+                reason: "must be a bounded non-empty reason code",
+            });
+        }
+        if self.work_authority.can_route_any_work() {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage5_conversation_control_packet.work_authority",
+                reason: "conversation control cannot route tools, search, providers, TTS, or protected execution",
+            });
+        }
+        if self.work_authority.can_become_authoritative() {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage5_conversation_control_packet.work_authority",
+                reason: "conversation control cannot write memory, rewrite facts or protected slots, or grant authority",
+            });
+        }
+
+        match self.disposition {
+            Stage5ConversationControlDisposition::TurnAuthorityBlocked => {
+                if self.turn_authority_disposition
+                    == Stage5TurnAuthorityDisposition::CurrentCommittedTurn
+                {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "stage5_conversation_control_packet.turn_authority_disposition",
+                        reason: "blocked conversation packets require non-current turn authority",
+                    });
+                }
+                if self.work_authority.can_update_conversation_state
+                    || self.work_authority.can_emit_clarification
+                    || self.work_authority.can_emit_safe_backchannel
+                    || self.same_page_state.is_some()
+                    || self.clarification.is_some()
+                    || self.correction.is_some()
+                {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "stage5_conversation_control_packet",
+                        reason: "blocked turn authority cannot update conversation state or emit clarification/correction state",
+                    });
+                }
+            }
+            Stage5ConversationControlDisposition::ClarificationRequested => {
+                self.validate_current_authority("clarification")?;
+                if !self.work_authority.can_emit_clarification || self.clarification.is_none() {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "stage5_conversation_control_packet.clarification",
+                        reason:
+                            "clarification disposition requires one bounded clarification state",
+                    });
+                }
+                if self.correction.is_some() {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "stage5_conversation_control_packet.correction",
+                        reason: "clarification cannot also apply correction state",
+                    });
+                }
+            }
+            Stage5ConversationControlDisposition::CorrectionApplied => {
+                self.validate_current_authority("correction")?;
+                if self.correction.is_none() {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "stage5_conversation_control_packet.correction",
+                        reason: "correction disposition requires session-scoped correction state",
+                    });
+                }
+                if self.clarification.is_some() {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "stage5_conversation_control_packet.clarification",
+                        reason: "correction cannot also emit clarification state",
+                    });
+                }
+            }
+            Stage5ConversationControlDisposition::StateUpdated
+            | Stage5ConversationControlDisposition::RecoveryApplied
+            | Stage5ConversationControlDisposition::SamePageSnapshot
+            | Stage5ConversationControlDisposition::SafeBackchannelCandidate => {
+                self.validate_current_authority("same-page state")?;
+                if self.clarification.is_some() || self.correction.is_some() {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "stage5_conversation_control_packet",
+                        reason: "plain state/recovery/same-page/backchannel events cannot carry clarification or correction payloads",
+                    });
+                }
+            }
+        }
+
+        if let Some(state) = &self.same_page_state {
+            state.validate()?;
+        }
+        if let Some(clarification) = &self.clarification {
+            clarification.validate()?;
+        }
+        if let Some(correction) = &self.correction {
+            correction.validate()?;
+        }
+
+        Ok(())
+    }
+}
+
+impl Stage5ConversationControlPacket {
+    fn validate_current_authority(&self, context: &'static str) -> Result<(), ContractViolation> {
+        if self.turn_authority_disposition != Stage5TurnAuthorityDisposition::CurrentCommittedTurn
+            || self.turn_id.is_none()
+            || !self.work_authority.can_update_conversation_state
+            || self.same_page_state.is_none()
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage5_conversation_control_packet",
+                reason: match context {
+                    "clarification" => {
+                        "clarification requires current committed turn authority and same-page state"
+                    }
+                    "correction" => {
+                        "correction requires current committed turn authority and same-page state"
+                    }
+                    _ => "same-page state requires current committed turn authority",
+                },
+            });
         }
         Ok(())
     }
@@ -3234,6 +3813,31 @@ fn validate_stage5_ascii_token(
     Ok(())
 }
 
+fn validate_stage5_bounded_token_list(
+    field: &'static str,
+    values: &[String],
+    max_items: usize,
+    max_len: usize,
+) -> Result<(), ContractViolation> {
+    if values.len() > max_items {
+        return Err(ContractViolation::InvalidValue {
+            field,
+            reason: "contains too many entries",
+        });
+    }
+    let mut seen = BTreeSet::new();
+    for value in values {
+        validate_stage5_ascii_token(field, value, max_len)?;
+        if !seen.insert(value.as_str()) {
+            return Err(ContractViolation::InvalidValue {
+                field,
+                reason: "entries must be unique",
+            });
+        }
+    }
+    Ok(())
+}
+
 fn allocate_turn_id(record: &mut SessionRecord) -> TurnId {
     let turn_id = TurnId(record.next_turn_id);
     record.next_turn_id = record.next_turn_id.saturating_add(1);
@@ -3634,6 +4238,31 @@ mod tests {
     fn startup_container() -> RuntimeServiceContainer<FixedClock, StaticSecretsProvider> {
         RuntimeServiceContainer::with_startup_foundation(FixedClock, StaticSecretsProvider)
             .expect("container")
+    }
+
+    fn stage5b_current_authority() -> Stage5TurnAuthorityPacket {
+        Stage5TurnAuthorityPacket::current_committed(
+            SessionId(77),
+            TurnId(7),
+            "device-a",
+            3,
+            SessionState::Active,
+        )
+        .expect("stage 5 current authority")
+    }
+
+    fn stage5b_same_page_state() -> Stage5SamePageState {
+        Stage5SamePageState::advisory_snapshot(
+            "goal-current-answer",
+            "topic-current",
+            vec!["entity-primary".to_string()],
+            vec!["loop-follow-up".to_string()],
+            vec!["question-clarify".to_string()],
+            vec!["assumption-old-entity".to_string()],
+            true,
+            "hash-stage5b-snapshot",
+        )
+        .expect("same-page state")
     }
 
     #[test]
@@ -4406,6 +5035,184 @@ mod tests {
         assert!(!closed.can_enter_understanding());
         assert!(!closed.can_render_current_result());
         assert!(!closed.can_route_any_work());
+    }
+
+    #[test]
+    fn stage_5b_current_turn_updates_advisory_same_page_state_without_route_authority() {
+        let authority = stage5b_current_authority();
+        let packet = Stage5ConversationControlPacket::from_turn_authority(
+            &authority,
+            Stage5ConversationControlDisposition::SamePageSnapshot,
+            stage5b_same_page_state(),
+            None,
+            None,
+        )
+        .expect("conversation packet");
+
+        assert_eq!(
+            packet.disposition,
+            Stage5ConversationControlDisposition::SamePageSnapshot
+        );
+        assert!(packet.can_update_conversation_state());
+        assert!(!packet.can_route_any_work());
+        assert!(!packet.can_become_authoritative());
+        let same_page = packet.same_page_state.expect("same page state");
+        assert!(same_page.advisory_only);
+        assert!(same_page.recap_on_return);
+        assert!(same_page.delivery_policy.safe_backchannel_allowed);
+        assert!(!same_page.delivery_policy.claims_task_completion);
+        assert!(!same_page.delivery_policy.claims_evidence_truth);
+        assert!(!same_page.delivery_policy.claims_authority);
+    }
+
+    #[test]
+    fn stage_5b_quarantined_and_record_turn_authority_cannot_update_conversation_state() {
+        let dispositions = [
+            Stage5TurnAuthorityDisposition::StaleTurnQuarantined,
+            Stage5TurnAuthorityDisposition::SupersededTurnQuarantined,
+            Stage5TurnAuthorityDisposition::CancelledTurnQuarantined,
+            Stage5TurnAuthorityDisposition::AbandonedTurnQuarantined,
+            Stage5TurnAuthorityDisposition::RecordArtifactOnly,
+        ];
+
+        for disposition in dispositions {
+            let authority = Stage5TurnAuthorityPacket::quarantined(
+                SessionId(77),
+                Some(TurnId(7)),
+                Some("device-a".to_string()),
+                Some(3),
+                SessionState::Active,
+                disposition,
+            )
+            .expect("quarantined authority");
+            let packet = Stage5ConversationControlPacket::from_turn_authority(
+                &authority,
+                Stage5ConversationControlDisposition::StateUpdated,
+                stage5b_same_page_state(),
+                None,
+                None,
+            )
+            .expect("blocked conversation packet");
+
+            assert_eq!(
+                packet.disposition,
+                Stage5ConversationControlDisposition::TurnAuthorityBlocked
+            );
+            assert_eq!(packet.turn_authority_disposition, disposition);
+            assert!(!packet.can_update_conversation_state());
+            assert!(!packet.can_route_any_work());
+            assert!(packet.same_page_state.is_none());
+            assert!(packet.clarification.is_none());
+            assert!(packet.correction.is_none());
+        }
+
+        let closed = Stage5TurnAuthorityPacket::quarantined(
+            SessionId(77),
+            Some(TurnId(7)),
+            Some("device-a".to_string()),
+            Some(3),
+            SessionState::Closed,
+            Stage5TurnAuthorityDisposition::ClosedSessionRejected,
+        )
+        .expect("closed authority");
+        let blocked = Stage5ConversationControlPacket::from_turn_authority(
+            &closed,
+            Stage5ConversationControlDisposition::StateUpdated,
+            stage5b_same_page_state(),
+            None,
+            None,
+        )
+        .expect("blocked closed-session conversation packet");
+        assert_eq!(
+            blocked.disposition,
+            Stage5ConversationControlDisposition::TurnAuthorityBlocked
+        );
+        assert!(!blocked.can_update_conversation_state());
+    }
+
+    #[test]
+    fn stage_5b_clarification_is_one_question_and_non_authoritative() {
+        let authority = stage5b_current_authority();
+        let clarification = Stage5ClarificationState::one_best_question(
+            "Which account should I use?",
+            "protected_account",
+            vec!["account id".to_string(), "say cancel".to_string()],
+            true,
+            1,
+        )
+        .expect("clarification");
+        let packet = Stage5ConversationControlPacket::from_turn_authority(
+            &authority,
+            Stage5ConversationControlDisposition::ClarificationRequested,
+            stage5b_same_page_state(),
+            Some(clarification),
+            None,
+        )
+        .expect("clarification packet");
+
+        assert_eq!(
+            packet.disposition,
+            Stage5ConversationControlDisposition::ClarificationRequested
+        );
+        assert!(packet.work_authority.can_emit_clarification);
+        assert!(!packet.can_route_any_work());
+        assert!(!packet.can_become_authoritative());
+
+        let bad = Stage5ClarificationState {
+            question: "Which account? What amount?".to_string(),
+            missing_field: "protected_account".to_string(),
+            accepted_answer_formats: vec!["account id".to_string(), "say cancel".to_string()],
+            protected_slot_uncertain: true,
+            repeated_prompt_count: 1,
+        };
+        assert!(bad.validate().is_err());
+    }
+
+    #[test]
+    fn stage_5b_correction_stays_session_scoped_and_cannot_rewrite_authority_or_memory() {
+        let authority = stage5b_current_authority();
+        let correction =
+            Stage5CorrectionState::session_scoped("assumption-old-entity", "current_turn_only")
+                .expect("correction");
+        let packet = Stage5ConversationControlPacket::from_turn_authority(
+            &authority,
+            Stage5ConversationControlDisposition::CorrectionApplied,
+            stage5b_same_page_state(),
+            None,
+            Some(correction.clone()),
+        )
+        .expect("correction packet");
+
+        assert_eq!(
+            packet.disposition,
+            Stage5ConversationControlDisposition::CorrectionApplied
+        );
+        assert!(packet.can_update_conversation_state());
+        assert!(!packet.can_route_any_work());
+        assert!(!packet.can_become_authoritative());
+        assert!(correction.session_scoped);
+        assert!(!correction.memory_write_allowed);
+        assert!(!correction.fact_rewrite_allowed);
+        assert!(!correction.protected_slot_rewrite_allowed);
+        assert!(!correction.authority_write_allowed);
+
+        let mut invalid = correction;
+        invalid.memory_write_allowed = true;
+        assert!(invalid.validate().is_err());
+    }
+
+    #[test]
+    fn stage_5b_same_page_state_is_bounded_advisory_and_backchannel_safe() {
+        let state = stage5b_same_page_state();
+        state.validate().expect("same page valid");
+
+        let mut not_advisory = state.clone();
+        not_advisory.advisory_only = false;
+        assert!(not_advisory.validate().is_err());
+
+        let mut unsafe_delivery = state;
+        unsafe_delivery.delivery_policy.claims_authority = true;
+        assert!(unsafe_delivery.validate().is_err());
     }
 
     #[test]

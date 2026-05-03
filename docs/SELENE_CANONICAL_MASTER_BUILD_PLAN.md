@@ -78,10 +78,10 @@ After every build, update this section before final reporting.
 
 | Field | Current Value |
 |---|---|
-| Current active stage | Stage 5 |
-| Current active build | Stage 5B - Conversation Control, Clarification, Correction, Recovery, And Same-Page State Reconciliation |
-| Next build after current stage passes | Stage 6 - Master Access, Tenant, Policy, And Per-User Authority Context |
-| Last completed stage | Stage 5A - Session Open, Resume, Close, Runtime Turn Spine, And Stale-Turn Quarantine Reconciliation |
+| Current active stage | Stage 6 |
+| Current active build | Stage 6A - Master Access, Tenant, Policy, And Per-User Authority Context Reconciliation |
+| Next build after current stage passes | Stage 7 - Wake, Side Button, And Activation Stack |
+| Last completed stage | Stage 5B - Conversation Control, Clarification, Correction, Recovery, And Same-Page State Reconciliation |
 | Stages blocked | None yet |
 | Plan drift allowed | No |
 
@@ -1611,9 +1611,11 @@ Next if passed:
 
 ## Stage 5 - Session Open, Resume, Close, And Runtime Turn Spine
 
-Status: PARTIALLY_BUILT
+Status: PROVEN_COMPLETE
 
 Stage 5A status: PROVEN_COMPLETE
+
+Stage 5B status: PROVEN_COMPLETE
 
 Build:
 
@@ -1683,13 +1685,22 @@ Stage 5A completion proof:
 - Stale, deferred, superseded, cancelled, abandoned, retry-reused, closed-session, and record-artifact dispositions are represented as quarantined Stage 5A authority packets that cannot enter understanding, cannot render as current, and cannot route tools, search, providers, TTS, connector work, or protected execution.
 - Old result render is blocked by session/turn state: if a newer turn is deferred while the first turn drains, or if a newer turn has already committed, the older turn authority resolves to `SupersededTurnQuarantined`.
 - Record sessions remain distinct from live chat by Stage 4A `RecordArtifactOnly` packet proof and Stage 5A `RecordArtifactOnly` quarantine disposition. Stage 5A did not build the Stage 27 record product.
-- Broad conversation-control items remain deferred to Stage 5B: discourse frame, clarification loop, correction control, conversation recovery, conversation trace/eval, open loops, active entity, recap-on-return, same-page checks, natural turn-taking, backchannel policy, and no-over-apology proof.
-- Stage 5A benchmark status is `CERTIFICATION_TARGET_PASSED` for session/current-turn authority, stale/superseded quarantine, closed-session rejection, record-session separation, and no-route-authority proof. Conversation/same-page quality targets remain blocked for Stage 5B, Stage 10, and Stage 34.
-- Stage 5B is required before broad Stage 5 can be marked complete.
+- Stage 5A broad conversation-control items were completed by Stage 5B.
+
+Stage 5B completion proof:
+
+- Existing repo carriers were reused and crosswalked instead of duplicated: `PH1.CONTEXT` already represents conversation-state and clarification-history context sources, `PH1.N` already enforces one-question clarification contracts, `PH1.SRL` already carries ambiguity-to-clarification proof, and the adapter H411 public-discourse frame remains a client/adapter-local product surface rather than the canonical brain.
+- `Stage5ConversationControlPacket`, `Stage5ConversationControlDisposition`, `Stage5ConversationWorkAuthority`, `Stage5SamePageState`, `Stage5ClarificationState`, `Stage5CorrectionState`, and `Stage5ConversationDeliveryPolicy` now provide the minimal runtime conversation-control carrier in `runtime_session_foundation.rs`.
+- `Stage5ConversationControlPacket::from_turn_authority` consumes `Stage5TurnAuthorityPacket` only. Current committed turn authority may update advisory conversation state; stale, deferred, superseded, cancelled, abandoned, closed-session, retry-reused, and record-artifact-only authority resolves to `TurnAuthorityBlocked` without same-page, clarification, or correction state.
+- Clarification proof is bounded to one best question with 2-3 accepted answer formats, protected-slot uncertainty marking, and repeat-count limits. Clarification state cannot authorize, execute, search, route providers, route TTS, or mutate protected state.
+- Correction proof is session-scoped only. Correction state cannot write memory, rewrite facts, rewrite protected slots, rewrite audit, or grant authority; governed memory/persona correction remains Stage 21.
+- Same-page proof now carries current goal, topic segment, active entity ids, open loops, pending questions, corrected assumption refs, recap-on-return marker, snapshot hash, advisory-only status, and safe backchannel policy. The policy cannot claim task completion, evidence truth, authority, or execution, and requires no-over-apology/filler-loop control.
+- Stage 5B benchmark status is `CERTIFICATION_TARGET_PASSED` for conversation-control authority consumption, stale-turn update blocking, one-question clarification, session-scoped correction, advisory same-page state, safe backchannel/no-over-apology policy, and no route authority. Rich natural-language continuity, emotional experience, and product-quality benchmarks remain owned by Stage 10, Stage 29, and Stage 34.
+- Broad Stage 5 is complete enough for Stage 6 access/authority context to start. No understanding, routing, search, TTS, memory/persona, emotion, native UI, or protected workflow behavior was built in Stage 5B.
 
 Next if passed:
 
-- Stage 5B - Conversation Control, Clarification, Correction, Recovery, And Same-Page State Reconciliation.
+- Stage 6A - Master Access, Tenant, Policy, And Per-User Authority Context Reconciliation.
 
 ## Stage 6 - Master Access, Tenant, Policy, And Per-User Authority Context
 
