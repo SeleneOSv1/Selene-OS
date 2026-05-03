@@ -33,8 +33,8 @@ Large stages are build families. A future Codex build must select one exact slic
 |---|---|---|---|---|
 | 8A | Audio substrate and listen-state reconciliation | Stage7ActivationContextPacket, Stage5TurnAuthorityPacket where final commit is requested | Stage8TranscriptGatePacket, partial transcript preview, final transcript commit boundary | PROVEN_COMPLETE: audio/listen/partial transcript state cannot execute/search/speak/call providers/identify/authorize/route tools/connector-write/protected-mutate; final transcript commit requires Stage 5 current-turn authority; background/self-echo/non-user audio is blocked; record audio remains artifact-only. |
 | 8B | VAD/endpointing/partial-vs-final transcript and confidence gate | Stage8TranscriptGatePacket, Stage7ActivationContextPacket, Stage5TurnAuthorityPacket | Stage8EndpointState, Stage8ConfidenceGateDisposition, Stage8ProtectedSlotDisposition | PROVEN_COMPLETE: VAD/endpoint signals are boundary-only; final transcript commit requires endpoint-final plus confidence/coverage pass; low-confidence protected slots clarify or fail closed; record audio remains artifact-only; no live mic/STT/TTS/provider/search/protected execution behavior. |
-| 8C | Listening lab scene/noise/echo/diarization | AudioScenePacket | ForegroundSpeakerPacket, AddressedToSelenePacket | background/non-user speech block |
-| 8D | Transcript confidence, alternatives, protected slot gate | CommittedTurnPacket | ProtectedSlotConfidencePacket, ClarificationQuestionPacket | no protected audio guessing |
+| 8C | Listening lab scene/noise/echo/diarization | Stage8TranscriptGatePacket, Stage8EndpointState, Stage8ConfidenceGateDisposition | Stage8AudioScenePacket, Stage8ForegroundSpeakerPacket, Stage8AddressedToSelenePacket | PROVEN_COMPLETE: scene, foreground, addressed, echo, noise, overlap, and barge-in signals are advisory or blocking-only; they cannot identify, authorize, route, execute, call providers, speak TTS, or commit turns by themselves; record audio remains artifact-only. |
+| 8D | Listening lab numeric benchmarks, STT WER, noise, diarization, endpoint latency, and calibration | BenchmarkTargetPacket, Stage8AudioScenePacket | BenchmarkResultPacket, listening-lab target status | WER/CER/noise/diarization/latency status assigned |
 | 8E | Barge-in, interruption, cancel/resume | TtsPacket, ResponsivenessStatePacket | cancellation and resume state | stale output blocked |
 | 8F | STT benchmark corpus and target status | BenchmarkTargetPacket | BenchmarkResultPacket | WER/CER/latency status assigned |
 
@@ -112,14 +112,16 @@ Large stages are build families. A future Codex build must select one exact slic
 | 30E | Custom assistant builder/store | AssistantDefinitionPacket | assistant release artifact | governance proof |
 | 30F | Self-heal/dev lane | dev route | proposal artifact | no uncontrolled shell/tool bypass |
 
-## Next Slice After Stage 8B
+## Next Slice After Stage 8C
 
 ```text
-Stage 8C - Listening Lab Scene, Noise, Echo, Diarization, Foreground Speaker, And Addressed-To-Selene Reconciliation
+Stage 8D - Listening Lab Numeric Benchmarks, STT WER, Noise, Diarization, Endpoint Latency, And Calibration Reconciliation
 ```
 
 Stage 8A is PROVEN_COMPLETE. It added the minimal runtime-owned `Stage8TranscriptGatePacket` carrier, preserved PH1.K, PH1.C, PH1.LISTEN, Stage 7 activation, Stage 5 current-turn authority, and adapter voice surfaces as repo truth, and did not build live mic capture, live STT/TTS, Voice ID matching, understanding, routing, search, native UI redesign, protected execution, or provider/model routing.
 
 Stage 3B is also PROVEN_COMPLETE as a Stage 3 contract slice after Stage 8A. It added inert STT/TTS provider profile and route-decision contracts for Apple/OpenAI/local fallback policy without changing the Stage 8 next-build order.
 
-Stage 8B is PROVEN_COMPLETE. It extends the existing Stage 8A transcript gate with VAD/endpoint, confidence/coverage, and protected-slot no-guess dispositions while preserving no-live-provider/no-live-mic/no-execution scope. Stage 8C remains the next exact build.
+Stage 8B is PROVEN_COMPLETE. It extends the existing Stage 8A transcript gate with VAD/endpoint, confidence/coverage, and protected-slot no-guess dispositions while preserving no-live-provider/no-live-mic/no-execution scope.
+
+Stage 8C is PROVEN_COMPLETE. It extends the existing Stage 8A/8B transcript gate with listening-scene, foreground-speaker, addressed-to-Selene, echo, noise, overlap, and barge-in boundary evidence while preserving advisory/no-execution scope. Stage 8D remains the next exact build for numeric listening-lab benchmarks and calibration.

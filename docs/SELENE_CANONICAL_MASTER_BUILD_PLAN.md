@@ -79,9 +79,9 @@ After every build, update this section before final reporting.
 | Field | Current Value |
 |---|---|
 | Current active stage | Stage 8 |
-| Current active build | Stage 8C - Listening Lab Scene, Noise, Echo, Diarization, Foreground Speaker, And Addressed-To-Selene Reconciliation |
-| Next build after current stage passes | Stage 8C - Listening Lab Scene, Noise, Echo, Diarization, Foreground Speaker, And Addressed-To-Selene Reconciliation |
-| Last completed stage | Stage 8B - VAD, Endpointing, Partial-Versus-Final Transcript Commit, And Confidence Gate Reconciliation |
+| Current active build | Stage 8D - Listening Lab Numeric Benchmarks, STT WER, Noise, Diarization, Endpoint Latency, And Calibration Reconciliation |
+| Next build after current stage passes | Stage 8D - Listening Lab Numeric Benchmarks, STT WER, Noise, Diarization, Endpoint Latency, And Calibration Reconciliation |
+| Last completed stage | Stage 8C - Listening Lab Scene, Noise, Echo, Diarization, Foreground Speaker, And Addressed-To-Selene Reconciliation |
 | Stages blocked | None yet |
 | Plan drift allowed | No |
 
@@ -1830,6 +1830,8 @@ Stage 8A status: PROVEN_COMPLETE
 
 Stage 8B status: PROVEN_COMPLETE
 
+Stage 8C status: PROVEN_COMPLETE
+
 Build:
 
 - `PH1.K` voice runtime audio substrate;
@@ -1964,9 +1966,20 @@ Stage 8B proof update:
 - Full listening lab scene/noise/echo/diarization/foreground-speaker/addressed-to-Selene proof, word-level timestamp calibration, alternatives, accent/domain-glossary proof, second-pass repair, and live STT quality benchmarks remain deferred to later Stage 8 slices.
 - Stage 8C is required before Stage 9A.
 
+Stage 8C proof update:
+
+- Existing PH1.K, PH1.C, PH1.LISTEN, PH1.LANG, PH1.PRON, PH1.VOICE.ID-adjacent diarization/posture surfaces, Stage 7 activation context, Stage 8A transcript gate, Stage 8B endpoint/confidence gate, and OS voice/listen carriers were inspected and crosswalked rather than rebuilt as duplicate listening-scene, diarization, or STT engines.
+- `Stage8AudioScenePacket`, `Stage8ForegroundSpeakerPacket`, `Stage8AddressedToSelenePacket`, `Stage8AudioSceneDisposition`, and `Stage8NoiseDegradationClass` extend `Stage8TranscriptGatePacket` with runtime-owned listening-scene evidence.
+- Stage 8C proves audio-scene, foreground-speaker, addressed-to-Selene, echo, self-echo, noise, overlap, background, and barge-in/interruption signals are advisory or blocking boundary evidence only. They cannot understand, answer, search, call providers, trigger Voice ID matching, authorize, emit TTS, connector-write, execute protected mutations, or commit turns by themselves.
+- Addressed-to-Selene and foreground-speaker evidence remain non-authoritative and do not replace Voice ID, Stage 5 current-turn authority, Stage 6 access context, endpoint-final state, confidence gates, or protected-slot no-guess rules.
+- Echo, self-echo, background, non-user, overlapping-speaker, low-addressing-confidence, high-noise/degraded, and record-mode scene evidence blocks before commit or remains artifact-only.
+- Stage 8C did not add live microphone capture, live STT, live TTS, provider calls, live search, Voice ID matching, understanding, routing, native UI redesign, protected execution, connector writes, raw-audio retention, or a duplicate voice/listen/STT/diarization engine.
+- Numeric listening-lab benchmarks, STT WER/CER, noisy-room/far-field/overlap/diarization/accent benchmarks, endpoint latency, word-level timestamp calibration, alternatives, accent/domain-glossary proof, second-pass repair, and live STT quality proof remain deferred to Stage 8D or later slices.
+- Stage 8D is required before Stage 9A.
+
 Next if passed:
 
-- Stage 8C - Listening Lab Scene, Noise, Echo, Diarization, Foreground Speaker, And Addressed-To-Selene Reconciliation.
+- Stage 8D - Listening Lab Numeric Benchmarks, STT WER, Noise, Diarization, Endpoint Latency, And Calibration Reconciliation.
 
 ## Stage 9 - Voice ID Stack
 

@@ -55,6 +55,8 @@ mod reason_codes {
     pub const STAGE8_RECORD_AUDIO_ARTIFACT_ONLY: &str = "stage8_record_audio_artifact_only";
     pub const STAGE8B_VAD_ENDPOINT_BOUNDARY_ONLY: &str = "stage8b_vad_endpoint_boundary_only";
     pub const STAGE8B_CONFIDENCE_GATE_REJECTED: &str = "stage8b_confidence_gate_rejected";
+    pub const STAGE8C_AUDIO_SCENE_BOUNDARY_ONLY: &str = "stage8c_audio_scene_boundary_only";
+    pub const STAGE8C_LISTENING_SCENE_BLOCKED: &str = "stage8c_listening_scene_blocked";
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -779,6 +781,8 @@ pub enum Stage8TranscriptGateKind {
     PartialTranscriptPreviewOnly,
     FinalTranscriptCommitBoundary,
     ConfidenceGateRejected,
+    AudioSceneBoundaryOnly,
+    ListeningSceneBlocked,
     BackgroundOrSelfEchoBlocked,
     RecordAudioArtifactOnly,
 }
@@ -800,6 +804,12 @@ impl Stage8TranscriptGateKind {
             }
             Stage8TranscriptGateKind::ConfidenceGateRejected => {
                 reason_codes::STAGE8B_CONFIDENCE_GATE_REJECTED
+            }
+            Stage8TranscriptGateKind::AudioSceneBoundaryOnly => {
+                reason_codes::STAGE8C_AUDIO_SCENE_BOUNDARY_ONLY
+            }
+            Stage8TranscriptGateKind::ListeningSceneBlocked => {
+                reason_codes::STAGE8C_LISTENING_SCENE_BLOCKED
             }
             Stage8TranscriptGateKind::BackgroundOrSelfEchoBlocked => {
                 reason_codes::STAGE8_BACKGROUND_OR_SELF_ECHO_BLOCKED
@@ -934,6 +944,292 @@ impl Validate for Stage8ProtectedSlotUncertainty {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stage8NoiseDegradationClass {
+    NotEvaluated,
+    Clear,
+    Moderate,
+    High,
+    Severe,
+}
+
+impl Stage8NoiseDegradationClass {
+    pub const fn blocks_commit(self) -> bool {
+        matches!(
+            self,
+            Stage8NoiseDegradationClass::High | Stage8NoiseDegradationClass::Severe
+        )
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Stage8ForegroundSpeakerPacket {
+    pub speaker_segment_id: String,
+    pub foreground_speaker_id: Option<String>,
+    pub foreground_confidence_bp: u16,
+    pub is_user_speech_candidate: bool,
+    pub advisory_only: bool,
+}
+
+impl Stage8ForegroundSpeakerPacket {
+    pub fn advisory(
+        speaker_segment_id: impl Into<String>,
+        foreground_speaker_id: Option<String>,
+        foreground_confidence_bp: u16,
+        is_user_speech_candidate: bool,
+    ) -> Result<Self, ContractViolation> {
+        let packet = Self {
+            speaker_segment_id: speaker_segment_id.into(),
+            foreground_speaker_id,
+            foreground_confidence_bp,
+            is_user_speech_candidate,
+            advisory_only: true,
+        };
+        packet.validate()?;
+        Ok(packet)
+    }
+}
+
+impl Validate for Stage8ForegroundSpeakerPacket {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        validate_stage4_ref(
+            "stage8_foreground_speaker_packet.speaker_segment_id",
+            &self.speaker_segment_id,
+        )?;
+        validate_stage4_optional_ref(
+            "stage8_foreground_speaker_packet.foreground_speaker_id",
+            self.foreground_speaker_id.as_deref(),
+        )?;
+        if self.foreground_confidence_bp > 10_000 {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage8_foreground_speaker_packet.foreground_confidence_bp",
+                reason: "must be <= 10000",
+            });
+        }
+        if !self.advisory_only {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage8_foreground_speaker_packet.advisory_only",
+                reason: "foreground speaker evidence is advisory and cannot identify or authorize",
+            });
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Stage8AddressedToSelenePacket {
+    pub addressed_to_selene_id: String,
+    pub confidence_bp: u16,
+    pub addressed: bool,
+    pub advisory_only: bool,
+}
+
+impl Stage8AddressedToSelenePacket {
+    pub fn advisory(
+        addressed_to_selene_id: impl Into<String>,
+        confidence_bp: u16,
+        addressed: bool,
+    ) -> Result<Self, ContractViolation> {
+        let packet = Self {
+            addressed_to_selene_id: addressed_to_selene_id.into(),
+            confidence_bp,
+            addressed,
+            advisory_only: true,
+        };
+        packet.validate()?;
+        Ok(packet)
+    }
+}
+
+impl Validate for Stage8AddressedToSelenePacket {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        validate_stage4_ref(
+            "stage8_addressed_to_selene_packet.addressed_to_selene_id",
+            &self.addressed_to_selene_id,
+        )?;
+        if self.confidence_bp > 10_000 {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage8_addressed_to_selene_packet.confidence_bp",
+                reason: "must be <= 10000",
+            });
+        }
+        if !self.advisory_only {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage8_addressed_to_selene_packet.advisory_only",
+                reason: "addressed-to-Selene evidence is advisory and cannot identify or authorize",
+            });
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stage8AudioSceneDisposition {
+    AdvisoryOnly,
+    CleanForegroundAddressed,
+    BlockedLowAddressingConfidence,
+    BlockedBackgroundSpeech,
+    BlockedSelfEcho,
+    BlockedOverlappingSpeakers,
+    BlockedUnknownOrNonUserSpeaker,
+    BlockedHighNoiseOrDegradation,
+    BlockedRecordArtifactOnly,
+}
+
+impl Stage8AudioSceneDisposition {
+    pub const fn blocks_commit(self) -> bool {
+        matches!(
+            self,
+            Stage8AudioSceneDisposition::BlockedLowAddressingConfidence
+                | Stage8AudioSceneDisposition::BlockedBackgroundSpeech
+                | Stage8AudioSceneDisposition::BlockedSelfEcho
+                | Stage8AudioSceneDisposition::BlockedOverlappingSpeakers
+                | Stage8AudioSceneDisposition::BlockedUnknownOrNonUserSpeaker
+                | Stage8AudioSceneDisposition::BlockedHighNoiseOrDegradation
+                | Stage8AudioSceneDisposition::BlockedRecordArtifactOnly
+        )
+    }
+
+    pub const fn clean_for_commit(self) -> bool {
+        matches!(self, Stage8AudioSceneDisposition::CleanForegroundAddressed)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Stage8AudioScenePacket {
+    pub audio_scene_id: String,
+    pub foreground_speaker: Option<Stage8ForegroundSpeakerPacket>,
+    pub addressed_to_selene: Option<Stage8AddressedToSelenePacket>,
+    pub disposition: Stage8AudioSceneDisposition,
+    pub noise_degradation: Stage8NoiseDegradationClass,
+    pub echo_suspect: bool,
+    pub self_echo_suspect: bool,
+    pub background_speech: bool,
+    pub overlapping_speakers: bool,
+    pub unknown_or_non_user_speaker: bool,
+    pub barge_in_or_interruption_marker: bool,
+    pub record_mode_audio: bool,
+    pub reason_code: String,
+}
+
+impl Stage8AudioScenePacket {
+    #[allow(clippy::too_many_arguments)]
+    pub fn v1(
+        audio_scene_id: impl Into<String>,
+        foreground_speaker: Option<Stage8ForegroundSpeakerPacket>,
+        addressed_to_selene: Option<Stage8AddressedToSelenePacket>,
+        disposition: Stage8AudioSceneDisposition,
+        noise_degradation: Stage8NoiseDegradationClass,
+        echo_suspect: bool,
+        self_echo_suspect: bool,
+        background_speech: bool,
+        overlapping_speakers: bool,
+        unknown_or_non_user_speaker: bool,
+        barge_in_or_interruption_marker: bool,
+        record_mode_audio: bool,
+        reason_code: impl Into<String>,
+    ) -> Result<Self, ContractViolation> {
+        let packet = Self {
+            audio_scene_id: audio_scene_id.into(),
+            foreground_speaker,
+            addressed_to_selene,
+            disposition,
+            noise_degradation,
+            echo_suspect,
+            self_echo_suspect,
+            background_speech,
+            overlapping_speakers,
+            unknown_or_non_user_speaker,
+            barge_in_or_interruption_marker,
+            record_mode_audio,
+            reason_code: reason_code.into(),
+        };
+        packet.validate()?;
+        Ok(packet)
+    }
+
+    pub fn has_blocking_signal(&self) -> bool {
+        self.disposition.blocks_commit()
+            || self.noise_degradation.blocks_commit()
+            || self.echo_suspect
+            || self.self_echo_suspect
+            || self.background_speech
+            || self.overlapping_speakers
+            || self.unknown_or_non_user_speaker
+            || self.record_mode_audio
+    }
+
+    pub fn clean_foreground_addressed(&self) -> bool {
+        self.disposition.clean_for_commit()
+            && !self.has_blocking_signal()
+            && matches!(
+                self.foreground_speaker.as_ref(),
+                Some(foreground)
+                    if foreground.advisory_only
+                        && foreground.is_user_speech_candidate
+                        && foreground.foreground_confidence_bp >= 8_000
+            )
+            && matches!(
+                self.addressed_to_selene.as_ref(),
+                Some(addressed)
+                    if addressed.advisory_only && addressed.addressed && addressed.confidence_bp >= 8_000
+            )
+    }
+}
+
+impl Validate for Stage8AudioScenePacket {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        validate_stage4_ref(
+            "stage8_audio_scene_packet.audio_scene_id",
+            &self.audio_scene_id,
+        )?;
+        validate_stage4_ref("stage8_audio_scene_packet.reason_code", &self.reason_code)?;
+        if let Some(foreground) = self.foreground_speaker.as_ref() {
+            foreground.validate()?;
+        }
+        if let Some(addressed) = self.addressed_to_selene.as_ref() {
+            addressed.validate()?;
+        }
+        if self.disposition.clean_for_commit()
+            && (self.foreground_speaker.is_none() || self.addressed_to_selene.is_none())
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage8_audio_scene_packet.disposition",
+                reason:
+                    "clean foreground-addressed scene requires foreground and addressed evidence",
+            });
+        }
+        if self.disposition == Stage8AudioSceneDisposition::BlockedLowAddressingConfidence
+            && !matches!(
+                self.addressed_to_selene.as_ref(),
+                Some(addressed) if !addressed.addressed || addressed.confidence_bp < 8_000
+            )
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage8_audio_scene_packet.addressed_to_selene",
+                reason: "low-addressing block requires low or negative addressed evidence",
+            });
+        }
+        if self.disposition == Stage8AudioSceneDisposition::BlockedHighNoiseOrDegradation
+            && !self.noise_degradation.blocks_commit()
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage8_audio_scene_packet.noise_degradation",
+                reason: "high-noise block requires high or severe degradation",
+            });
+        }
+        if self.disposition == Stage8AudioSceneDisposition::BlockedRecordArtifactOnly
+            && !self.record_mode_audio
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage8_audio_scene_packet.record_mode_audio",
+                reason: "record artifact block requires record-mode audio",
+            });
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Stage8VoiceWorkAuthority {
     pub can_update_listen_state: bool,
     pub can_update_preview: bool,
@@ -1054,6 +1350,7 @@ pub struct Stage8TranscriptGatePacket {
     pub boundary_kind: Stage8TranscriptGateKind,
     pub reason_code: &'static str,
     pub audio_scene_id: String,
+    pub audio_scene_packet: Option<Stage8AudioScenePacket>,
     pub vad_signal_id: Option<String>,
     pub endpoint_id: Option<String>,
     pub endpoint_state: Stage8EndpointState,
@@ -1280,6 +1577,43 @@ impl Stage8TranscriptGatePacket {
         Ok(packet)
     }
 
+    pub fn audio_scene_boundary(
+        activation_context: Stage7ActivationContextPacket,
+        audio_scene_packet: Stage8AudioScenePacket,
+    ) -> Result<Self, ContractViolation> {
+        let packet = Self {
+            audio_scene_id: audio_scene_packet.audio_scene_id.clone(),
+            audio_scene_packet: Some(audio_scene_packet),
+            ..Self::base(
+                activation_context,
+                Stage8TranscriptGateKind::AudioSceneBoundaryOnly,
+                String::new(),
+                Stage8VoiceWorkAuthority::listen_state_only(),
+            )
+        };
+        packet.validate()?;
+        Ok(packet)
+    }
+
+    pub fn listening_scene_blocked(
+        activation_context: Stage7ActivationContextPacket,
+        audio_scene_packet: Stage8AudioScenePacket,
+    ) -> Result<Self, ContractViolation> {
+        let packet = Self {
+            audio_scene_id: audio_scene_packet.audio_scene_id.clone(),
+            audio_scene_packet: Some(audio_scene_packet),
+            confidence_gate: Stage8ConfidenceGateDisposition::RejectedBackgroundOrNonUser,
+            ..Self::base(
+                activation_context,
+                Stage8TranscriptGateKind::ListeningSceneBlocked,
+                String::new(),
+                Stage8VoiceWorkAuthority::blocked_or_artifact_only(),
+            )
+        };
+        packet.validate()?;
+        Ok(packet)
+    }
+
     pub fn record_audio_artifact_only(
         activation_context: Stage7ActivationContextPacket,
         audio_scene_id: impl Into<String>,
@@ -1334,6 +1668,7 @@ impl Stage8TranscriptGatePacket {
             reason_code: boundary_kind.default_reason_code(),
             boundary_kind,
             audio_scene_id,
+            audio_scene_packet: None,
             vad_signal_id: None,
             endpoint_id: None,
             endpoint_state: Stage8EndpointState::NotEvaluated,
@@ -1369,6 +1704,15 @@ impl Validate for Stage8TranscriptGatePacket {
             "stage8_transcript_gate_packet.audio_scene_id",
             &self.audio_scene_id,
         )?;
+        if let Some(scene) = self.audio_scene_packet.as_ref() {
+            scene.validate()?;
+            if scene.audio_scene_id != self.audio_scene_id {
+                return Err(ContractViolation::InvalidValue {
+                    field: "stage8_transcript_gate_packet.audio_scene_packet",
+                    reason: "audio scene packet id must match transcript gate audio scene id",
+                });
+            }
+        }
         validate_stage4_optional_ref(
             "stage8_transcript_gate_packet.vad_signal_id",
             self.vad_signal_id.as_deref(),
@@ -1508,6 +1852,7 @@ impl Validate for Stage8TranscriptGatePacket {
         if !matches!(
             self.boundary_kind,
             Stage8TranscriptGateKind::BackgroundOrSelfEchoBlocked
+                | Stage8TranscriptGateKind::ListeningSceneBlocked
                 | Stage8TranscriptGateKind::RecordAudioArtifactOnly
         ) && (self.tts_self_echo_active
             || self.background_speech_detected
@@ -1534,6 +1879,7 @@ impl Validate for Stage8TranscriptGatePacket {
         match self.boundary_kind {
             Stage8TranscriptGateKind::AudioSubstrateOnly => {
                 if !self.work_authority.can_update_listen_state
+                    || self.audio_scene_packet.is_some()
                     || self.vad_signal_id.is_some()
                     || self.endpoint_id.is_some()
                     || self.endpoint_state != Stage8EndpointState::NotEvaluated
@@ -1558,6 +1904,7 @@ impl Validate for Stage8TranscriptGatePacket {
             Stage8TranscriptGateKind::VadEndpointBoundaryOnly => {
                 validate_stage8_voice_activation(&self.activation_context)?;
                 if !self.endpoint_state.is_endpoint_signal()
+                    || self.audio_scene_packet.is_some()
                     || self.vad_signal_id.is_none()
                     || self.endpoint_id.is_none()
                     || self.transcript_id.is_some()
@@ -1588,7 +1935,8 @@ impl Validate for Stage8TranscriptGatePacket {
                     });
                 };
                 candidate_preview.validate()?;
-                if candidate_preview.is_committed_live_turn()
+                if self.audio_scene_packet.is_some()
+                    || candidate_preview.is_committed_live_turn()
                     || self.committed_turn.is_some()
                     || self.stage5_turn_authority.is_some()
                     || self.transcript_id.is_none()
@@ -1657,10 +2005,19 @@ impl Validate for Stage8TranscriptGatePacket {
                         reason: "final transcript commit requires endpoint-final, confidence pass, current turn authority, and no protected-slot uncertainty",
                     });
                 }
+                if let Some(scene) = self.audio_scene_packet.as_ref() {
+                    if !scene.clean_foreground_addressed() {
+                        return Err(ContractViolation::InvalidValue {
+                            field: "stage8_transcript_gate_packet.audio_scene_packet",
+                            reason: "scene evidence attached to final commit must be clean foreground user speech addressed to Selene and cannot replace Stage 5 authority or confidence gates",
+                        });
+                    }
+                }
             }
             Stage8TranscriptGateKind::ConfidenceGateRejected => {
                 validate_stage8_voice_activation(&self.activation_context)?;
                 if !self.confidence_gate.is_rejection()
+                    || self.audio_scene_packet.is_some()
                     || self.confidence_gate_id.is_none()
                     || !self.endpoint_state.is_final()
                     || self.endpoint_id.is_none()
@@ -1699,6 +2056,76 @@ impl Validate for Stage8TranscriptGatePacket {
                         reason: "protected-slot uncertainty must clarify or fail closed from a transcript confidence rejection",
                     });
                 }
+            }
+            Stage8TranscriptGateKind::AudioSceneBoundaryOnly => {
+                validate_stage8_voice_activation(&self.activation_context)?;
+                let Some(scene) = self.audio_scene_packet.as_ref() else {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "stage8_transcript_gate_packet.audio_scene_packet",
+                        reason: "audio scene boundary requires scene evidence",
+                    });
+                };
+                if scene.has_blocking_signal()
+                    || self.vad_signal_id.is_some()
+                    || self.endpoint_id.is_some()
+                    || self.endpoint_state != Stage8EndpointState::NotEvaluated
+                    || self.transcript_id.is_some()
+                    || self.transcript_text.is_some()
+                    || self.candidate_preview.is_some()
+                    || self.committed_turn.is_some()
+                    || self.stage5_turn_authority.is_some()
+                    || !self.work_authority.can_update_listen_state
+                    || self.work_authority.can_emit_committed_turn
+                    || self.work_authority.can_enter_understanding
+                    || self.confidence_gate != Stage8ConfidenceGateDisposition::NotEvaluated
+                    || self.confidence_gate_id.is_some()
+                    || self.protected_slot_disposition
+                        != Stage8ProtectedSlotDisposition::NotApplicable
+                {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "stage8_transcript_gate_packet",
+                        reason: "audio-scene signals are advisory listen-state evidence only",
+                    });
+                }
+            }
+            Stage8TranscriptGateKind::ListeningSceneBlocked => {
+                let Some(scene) = self.audio_scene_packet.as_ref() else {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "stage8_transcript_gate_packet.audio_scene_packet",
+                        reason: "blocked listening scene requires scene evidence",
+                    });
+                };
+                if !scene.has_blocking_signal()
+                    || self.vad_signal_id.is_some()
+                    || self.endpoint_id.is_some()
+                    || self.endpoint_state != Stage8EndpointState::NotEvaluated
+                    || self.transcript_id.is_some()
+                    || self.transcript_text.is_some()
+                    || self.candidate_preview.is_some()
+                    || self.committed_turn.is_some()
+                    || self.stage5_turn_authority.is_some()
+                    || self.work_authority.can_update_listen_state
+                    || self.work_authority.can_update_preview
+                    || self.work_authority.can_emit_committed_turn
+                    || self.work_authority.can_enter_understanding
+                    || self.confidence_gate
+                        != Stage8ConfidenceGateDisposition::RejectedBackgroundOrNonUser
+                    || self.confidence_gate_id.is_some()
+                    || self.protected_slot_disposition
+                        != Stage8ProtectedSlotDisposition::NotApplicable
+                {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "stage8_transcript_gate_packet",
+                        reason: "blocked listening-scene evidence cannot commit, preview, route, or enter understanding",
+                    });
+                }
+                if scene.record_mode_audio {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "stage8_transcript_gate_packet.audio_scene_packet",
+                        reason: "record-mode scene evidence must use the artifact-only boundary",
+                    });
+                }
+                validate_stage8_voice_activation(&self.activation_context)?;
             }
             Stage8TranscriptGateKind::BackgroundOrSelfEchoBlocked => {
                 if !(self.tts_self_echo_active
@@ -5120,6 +5547,160 @@ mod tests {
         .expect("stage 8 current turn authority")
     }
 
+    fn stage8c_foreground(
+        confidence_bp: u16,
+        is_user_speech_candidate: bool,
+    ) -> Stage8ForegroundSpeakerPacket {
+        Stage8ForegroundSpeakerPacket::advisory(
+            "speaker-segment-stage8c",
+            Some("foreground-speaker-stage8c".to_string()),
+            confidence_bp,
+            is_user_speech_candidate,
+        )
+        .expect("foreground speaker packet")
+    }
+
+    fn stage8c_addressed(confidence_bp: u16, addressed: bool) -> Stage8AddressedToSelenePacket {
+        Stage8AddressedToSelenePacket::advisory(
+            "addressed-to-selene-stage8c",
+            confidence_bp,
+            addressed,
+        )
+        .expect("addressed-to-selene packet")
+    }
+
+    fn stage8c_clean_scene(audio_scene_id: &str) -> Stage8AudioScenePacket {
+        Stage8AudioScenePacket::v1(
+            audio_scene_id,
+            Some(stage8c_foreground(9_000, true)),
+            Some(stage8c_addressed(9_100, true)),
+            Stage8AudioSceneDisposition::CleanForegroundAddressed,
+            Stage8NoiseDegradationClass::Clear,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            "stage8c-clean",
+        )
+        .expect("clean stage 8c scene")
+    }
+
+    fn stage8c_blocked_scene(
+        audio_scene_id: &str,
+        disposition: Stage8AudioSceneDisposition,
+    ) -> Stage8AudioScenePacket {
+        let (
+            foreground,
+            addressed,
+            noise,
+            echo,
+            self_echo,
+            background,
+            overlapping,
+            non_user,
+            record_mode,
+        ) = match disposition {
+            Stage8AudioSceneDisposition::BlockedLowAddressingConfidence => (
+                Some(stage8c_foreground(9_000, true)),
+                Some(stage8c_addressed(4_500, false)),
+                Stage8NoiseDegradationClass::Clear,
+                false,
+                false,
+                false,
+                false,
+                false,
+                false,
+            ),
+            Stage8AudioSceneDisposition::BlockedBackgroundSpeech => (
+                Some(stage8c_foreground(7_000, false)),
+                Some(stage8c_addressed(6_000, false)),
+                Stage8NoiseDegradationClass::Moderate,
+                false,
+                false,
+                true,
+                false,
+                false,
+                false,
+            ),
+            Stage8AudioSceneDisposition::BlockedSelfEcho => (
+                Some(stage8c_foreground(7_000, false)),
+                Some(stage8c_addressed(7_000, false)),
+                Stage8NoiseDegradationClass::Clear,
+                true,
+                true,
+                false,
+                false,
+                false,
+                false,
+            ),
+            Stage8AudioSceneDisposition::BlockedOverlappingSpeakers => (
+                Some(stage8c_foreground(7_500, true)),
+                Some(stage8c_addressed(7_500, true)),
+                Stage8NoiseDegradationClass::Moderate,
+                false,
+                false,
+                false,
+                true,
+                false,
+                false,
+            ),
+            Stage8AudioSceneDisposition::BlockedUnknownOrNonUserSpeaker => (
+                Some(stage8c_foreground(5_500, false)),
+                Some(stage8c_addressed(6_000, false)),
+                Stage8NoiseDegradationClass::Moderate,
+                false,
+                false,
+                false,
+                false,
+                true,
+                false,
+            ),
+            Stage8AudioSceneDisposition::BlockedHighNoiseOrDegradation => (
+                Some(stage8c_foreground(6_000, true)),
+                Some(stage8c_addressed(6_000, true)),
+                Stage8NoiseDegradationClass::Severe,
+                false,
+                false,
+                false,
+                false,
+                false,
+                false,
+            ),
+            Stage8AudioSceneDisposition::BlockedRecordArtifactOnly => (
+                None,
+                None,
+                Stage8NoiseDegradationClass::NotEvaluated,
+                false,
+                false,
+                false,
+                false,
+                false,
+                true,
+            ),
+            Stage8AudioSceneDisposition::AdvisoryOnly
+            | Stage8AudioSceneDisposition::CleanForegroundAddressed => unreachable!(),
+        };
+        Stage8AudioScenePacket::v1(
+            audio_scene_id,
+            foreground,
+            addressed,
+            disposition,
+            noise,
+            echo,
+            self_echo,
+            background,
+            overlapping,
+            non_user,
+            false,
+            record_mode,
+            "stage8c-blocked",
+        )
+        .expect("blocked stage 8c scene")
+    }
+
     #[test]
     fn stage_8a_audio_substrate_consumes_stage7_activation_without_downstream_work() {
         let packet = Stage8TranscriptGatePacket::audio_substrate_only(
@@ -5437,6 +6018,157 @@ mod tests {
             Vec::new(),
         );
         assert!(rejected.is_err());
+    }
+
+    #[test]
+    fn stage_8c_audio_scene_boundary_is_advisory_and_inert() {
+        let scene = Stage8AudioScenePacket::v1(
+            "audio-scene-stage8c-advisory",
+            Some(stage8c_foreground(8_800, true)),
+            Some(stage8c_addressed(8_700, true)),
+            Stage8AudioSceneDisposition::AdvisoryOnly,
+            Stage8NoiseDegradationClass::Clear,
+            false,
+            false,
+            false,
+            false,
+            false,
+            true,
+            false,
+            "stage8c-advisory",
+        )
+        .expect("advisory audio scene");
+        let packet = Stage8TranscriptGatePacket::audio_scene_boundary(
+            stage8_explicit_mic_activation(None),
+            scene,
+        )
+        .expect("audio scene boundary");
+
+        assert_eq!(
+            packet.boundary_kind,
+            Stage8TranscriptGateKind::AudioSceneBoundaryOnly
+        );
+        assert!(packet.work_authority.can_update_listen_state);
+        assert!(!packet.can_emit_committed_turn());
+        assert!(!packet.can_route_or_mutate());
+        assert!(packet.transcript_id.is_none());
+        assert!(packet.candidate_preview.is_none());
+        assert!(packet.committed_turn.is_none());
+        assert!(packet.stage5_turn_authority.is_none());
+        let scene = packet.audio_scene_packet.as_ref().expect("scene packet");
+        assert!(scene.barge_in_or_interruption_marker);
+        assert!(!scene.has_blocking_signal());
+    }
+
+    #[test]
+    fn stage_8c_foreground_and_addressed_are_advisory_not_identity_or_authority() {
+        let scene = stage8c_clean_scene("audio-scene-stage8c-clean");
+        assert!(scene.clean_foreground_addressed());
+        let packet = Stage8TranscriptGatePacket::audio_scene_boundary(
+            stage8_explicit_mic_activation(None),
+            scene,
+        )
+        .expect("clean scene boundary");
+
+        assert_eq!(
+            packet.boundary_kind,
+            Stage8TranscriptGateKind::AudioSceneBoundaryOnly
+        );
+        assert!(packet.audio_scene_packet.is_some());
+        assert!(!packet.work_authority.can_trigger_voice_id_matching);
+        assert!(!packet.work_authority.can_authorize);
+        assert!(!packet.can_emit_committed_turn());
+        assert!(!packet.can_route_or_mutate());
+    }
+
+    #[test]
+    fn stage_8c_echo_noise_overlap_background_and_non_user_block_before_commit() {
+        for disposition in [
+            Stage8AudioSceneDisposition::BlockedLowAddressingConfidence,
+            Stage8AudioSceneDisposition::BlockedBackgroundSpeech,
+            Stage8AudioSceneDisposition::BlockedSelfEcho,
+            Stage8AudioSceneDisposition::BlockedOverlappingSpeakers,
+            Stage8AudioSceneDisposition::BlockedUnknownOrNonUserSpeaker,
+            Stage8AudioSceneDisposition::BlockedHighNoiseOrDegradation,
+        ] {
+            let packet = Stage8TranscriptGatePacket::listening_scene_blocked(
+                stage8_explicit_mic_activation(None),
+                stage8c_blocked_scene("audio-scene-stage8c-blocked", disposition),
+            )
+            .expect("blocked listening scene");
+
+            assert_eq!(
+                packet.boundary_kind,
+                Stage8TranscriptGateKind::ListeningSceneBlocked
+            );
+            assert!(!packet.work_authority.can_update_listen_state);
+            assert!(!packet.can_emit_committed_turn());
+            assert!(!packet.work_authority.can_enter_understanding);
+            assert!(!packet.can_route_or_mutate());
+            assert!(packet.committed_turn.is_none());
+            assert!(packet.stage5_turn_authority.is_none());
+            assert!(packet
+                .audio_scene_packet
+                .as_ref()
+                .expect("scene")
+                .has_blocking_signal());
+        }
+    }
+
+    #[test]
+    fn stage_8c_scene_cannot_replace_stage5_authority_or_confidence_gate() {
+        let scene = stage8c_clean_scene("audio-scene-stage8c-final");
+        let current = stage8_current_authority();
+        let mut packet = Stage8TranscriptGatePacket::final_transcript_commit(
+            stage8_explicit_mic_activation(Some(current.session_id)),
+            current.clone(),
+            "audio-scene-stage8c-final",
+            "endpoint-stage8c-final",
+            "confidence-gate-stage8c-final",
+            "transcript-stage8c-final",
+            "answer the question",
+            "en-US",
+            9_300,
+            9_100,
+        )
+        .expect("final transcript commit");
+        packet.audio_scene_packet = Some(scene);
+        packet.validate().expect("clean scene may be attached");
+        assert!(packet.can_emit_committed_turn());
+        assert!(!packet.can_route_or_mutate());
+
+        let mut missing_authority = packet.clone();
+        missing_authority.stage5_turn_authority = None;
+        assert!(missing_authority.validate().is_err());
+
+        let mut low_confidence = packet;
+        low_confidence.confidence_bp = Some(7_999);
+        assert!(low_confidence.validate().is_err());
+    }
+
+    #[test]
+    fn stage_8c_record_mode_scene_evidence_stays_artifact_only() {
+        let scene = stage8c_blocked_scene(
+            "audio-scene-stage8c-record",
+            Stage8AudioSceneDisposition::BlockedRecordArtifactOnly,
+        );
+        let rejected =
+            Stage8TranscriptGatePacket::listening_scene_blocked(stage8_record_activation(), scene);
+        assert!(rejected.is_err());
+
+        let artifact = Stage8TranscriptGatePacket::record_audio_artifact_only(
+            stage8_record_activation(),
+            "audio-scene-stage8c-record",
+        )
+        .expect("record artifact boundary");
+        assert_eq!(
+            artifact.boundary_kind,
+            Stage8TranscriptGateKind::RecordAudioArtifactOnly
+        );
+        assert!(artifact.record_mode_audio);
+        assert!(!artifact.can_emit_committed_turn());
+        assert!(!artifact.can_route_or_mutate());
+        assert!(artifact.committed_turn.is_none());
     }
 
     #[test]
