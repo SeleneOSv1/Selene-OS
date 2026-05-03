@@ -1814,6 +1814,731 @@ impl Validate for Stage8DListeningBenchmarkPacket {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stage8EAlternativeTranscriptSource {
+    FixtureOffline,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stage8ERepairDisposition {
+    NotAttempted,
+    AcceptedFixtureNormalization,
+    RejectedEmptyRepair,
+    RejectedProtectedTokenInvented,
+    RejectedProtectedTokenMismatch,
+    RejectedDomainTokenMismatch,
+    RejectedMeaningDrift,
+    RejectedOverRepair,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Stage8EAlternativeTranscriptCandidate {
+    pub candidate_id: String,
+    pub rank: u16,
+    pub transcript_text: String,
+    pub transcript_hash: String,
+    pub confidence_bucket: Stage8DConfidenceBucket,
+    pub protected_token_mismatch_count: u16,
+    pub source: Stage8EAlternativeTranscriptSource,
+    pub can_commit_directly: bool,
+}
+
+impl Stage8EAlternativeTranscriptCandidate {
+    pub fn fixture_offline(
+        candidate_id: impl Into<String>,
+        rank: u16,
+        transcript_text: impl Into<String>,
+        confidence_bucket: Stage8DConfidenceBucket,
+        protected_tokens: &[String],
+    ) -> Result<Self, ContractViolation> {
+        let transcript_text = transcript_text.into();
+        let normalized_transcript = stage8d_normalize_transcript(&transcript_text);
+        let packet = Self {
+            candidate_id: candidate_id.into(),
+            rank,
+            transcript_hash: stage8_exact_transcript_hash(&transcript_text),
+            protected_token_mismatch_count: stage8d_token_mismatch_count(
+                protected_tokens,
+                &normalized_transcript,
+            )?,
+            transcript_text,
+            confidence_bucket,
+            source: Stage8EAlternativeTranscriptSource::FixtureOffline,
+            can_commit_directly: false,
+        };
+        packet.validate()?;
+        Ok(packet)
+    }
+}
+
+impl Validate for Stage8EAlternativeTranscriptCandidate {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        validate_stage4_ref(
+            "stage8e_alternative_candidate.candidate_id",
+            &self.candidate_id,
+        )?;
+        validate_stage8d_text(
+            "stage8e_alternative_candidate.transcript_text",
+            &self.transcript_text,
+        )?;
+        validate_stage4_ref(
+            "stage8e_alternative_candidate.transcript_hash",
+            &self.transcript_hash,
+        )?;
+        if self.rank == 0 || self.rank > 16 {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage8e_alternative_candidate.rank",
+                reason: "candidate rank must be within 1..=16",
+            });
+        }
+        if self.can_commit_directly {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage8e_alternative_candidate.can_commit_directly",
+                reason: "alternative transcript candidates are benchmark evidence and cannot commit directly",
+            });
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Stage8EAlternativeTranscriptCandidateSetPacket {
+    pub candidate_set_id: String,
+    pub fixture_id: String,
+    pub candidates: Vec<Stage8EAlternativeTranscriptCandidate>,
+    pub selected_candidate_id: Option<String>,
+    pub reason_code: String,
+}
+
+impl Stage8EAlternativeTranscriptCandidateSetPacket {
+    pub fn v1(
+        candidate_set_id: impl Into<String>,
+        fixture_id: impl Into<String>,
+        candidates: Vec<Stage8EAlternativeTranscriptCandidate>,
+        selected_candidate_id: Option<String>,
+    ) -> Result<Self, ContractViolation> {
+        let packet = Self {
+            candidate_set_id: candidate_set_id.into(),
+            fixture_id: fixture_id.into(),
+            candidates,
+            selected_candidate_id,
+            reason_code: "stage8e_alternative_candidates_fixture_only".to_string(),
+        };
+        packet.validate()?;
+        Ok(packet)
+    }
+
+    pub fn selected_candidate(&self) -> Option<&Stage8EAlternativeTranscriptCandidate> {
+        let selected_id = self.selected_candidate_id.as_deref()?;
+        self.candidates
+            .iter()
+            .find(|candidate| candidate.candidate_id == selected_id)
+    }
+}
+
+impl Validate for Stage8EAlternativeTranscriptCandidateSetPacket {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        validate_stage4_ref(
+            "stage8e_candidate_set.candidate_set_id",
+            &self.candidate_set_id,
+        )?;
+        validate_stage4_ref("stage8e_candidate_set.fixture_id", &self.fixture_id)?;
+        validate_stage4_ref("stage8e_candidate_set.reason_code", &self.reason_code)?;
+        validate_stage4_optional_ref(
+            "stage8e_candidate_set.selected_candidate_id",
+            self.selected_candidate_id.as_deref(),
+        )?;
+        if self.candidates.is_empty() || self.candidates.len() > 5 {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage8e_candidate_set.candidates",
+                reason: "candidate set must contain 1..=5 deterministic fixture candidates",
+            });
+        }
+        for (index, candidate) in self.candidates.iter().enumerate() {
+            candidate.validate()?;
+            if candidate.rank != (index as u16).saturating_add(1) {
+                return Err(ContractViolation::InvalidValue {
+                    field: "stage8e_candidate_set.candidates",
+                    reason: "candidate ranks must be contiguous and already sorted",
+                });
+            }
+            if self.candidates[..index]
+                .iter()
+                .any(|previous| previous.candidate_id == candidate.candidate_id)
+            {
+                return Err(ContractViolation::InvalidValue {
+                    field: "stage8e_candidate_set.candidates",
+                    reason: "candidate ids must be unique",
+                });
+            }
+        }
+        if let Some(selected_id) = self.selected_candidate_id.as_deref() {
+            let selected = self
+                .candidates
+                .iter()
+                .any(|candidate| candidate.candidate_id == selected_id);
+            if !selected {
+                return Err(ContractViolation::InvalidValue {
+                    field: "stage8e_candidate_set.selected_candidate_id",
+                    reason: "selected candidate must be present in the bounded candidate set",
+                });
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Stage8ERepairDecisionPacket {
+    pub repair_decision_id: String,
+    pub fixture_id: String,
+    pub original_transcript: String,
+    pub reference_transcript: String,
+    pub repair_candidate: Option<String>,
+    pub accepted_repair: bool,
+    pub disposition: Stage8ERepairDisposition,
+    pub protected_token_mismatch_count: u16,
+    pub domain_token_mismatch_count: u16,
+    pub protected_token_invented: bool,
+    pub meaning_drift_detected: bool,
+    pub over_repair_detected: bool,
+    pub reason_code: String,
+}
+
+impl Stage8ERepairDecisionPacket {
+    #[allow(clippy::too_many_arguments)]
+    pub fn fixture_only(
+        repair_decision_id: impl Into<String>,
+        fixture_id: impl Into<String>,
+        original_transcript: impl Into<String>,
+        reference_transcript: impl Into<String>,
+        repair_candidate: Option<String>,
+        protected_tokens: &[String],
+        domain_tokens: &[String],
+    ) -> Result<Self, ContractViolation> {
+        let original_transcript = original_transcript.into();
+        let reference_transcript = reference_transcript.into();
+        let normalized_original = stage8d_normalize_transcript(&original_transcript);
+        let normalized_reference = stage8d_normalize_transcript(&reference_transcript);
+        let normalized_repair = repair_candidate
+            .as_deref()
+            .map(stage8d_normalize_transcript)
+            .unwrap_or_default();
+        let protected_token_invented = repair_candidate.as_ref().is_some()
+            && stage8e_any_token_invented(
+                protected_tokens,
+                &normalized_original,
+                &normalized_repair,
+            )?;
+        let protected_token_mismatch_count =
+            stage8d_token_mismatch_count(protected_tokens, &normalized_repair)?;
+        let domain_token_mismatch_count =
+            stage8d_token_mismatch_count(domain_tokens, &normalized_repair)?;
+        let over_repair_detected =
+            stage8e_over_repair_detected(&normalized_reference, &normalized_repair);
+        let meaning_drift_detected = repair_candidate.as_ref().is_some()
+            && !normalized_repair.is_empty()
+            && !stage8e_words_subset_of_reference(&normalized_reference, &normalized_repair);
+        let disposition = if repair_candidate.is_none() {
+            Stage8ERepairDisposition::NotAttempted
+        } else if normalized_repair.is_empty() {
+            Stage8ERepairDisposition::RejectedEmptyRepair
+        } else if protected_token_invented {
+            Stage8ERepairDisposition::RejectedProtectedTokenInvented
+        } else if protected_token_mismatch_count > 0 {
+            Stage8ERepairDisposition::RejectedProtectedTokenMismatch
+        } else if domain_token_mismatch_count > 0 {
+            Stage8ERepairDisposition::RejectedDomainTokenMismatch
+        } else if over_repair_detected {
+            Stage8ERepairDisposition::RejectedOverRepair
+        } else if meaning_drift_detected {
+            Stage8ERepairDisposition::RejectedMeaningDrift
+        } else {
+            Stage8ERepairDisposition::AcceptedFixtureNormalization
+        };
+        let packet = Self {
+            repair_decision_id: repair_decision_id.into(),
+            fixture_id: fixture_id.into(),
+            original_transcript,
+            reference_transcript,
+            repair_candidate,
+            accepted_repair: disposition == Stage8ERepairDisposition::AcceptedFixtureNormalization,
+            disposition,
+            protected_token_mismatch_count,
+            domain_token_mismatch_count,
+            protected_token_invented,
+            meaning_drift_detected,
+            over_repair_detected,
+            reason_code: "stage8e_repair_fixture_decision".to_string(),
+        };
+        packet.validate()?;
+        Ok(packet)
+    }
+
+    fn effective_transcript<'a>(&'a self, fallback: &'a str) -> &'a str {
+        if self.accepted_repair {
+            self.repair_candidate.as_deref().unwrap_or(fallback)
+        } else {
+            fallback
+        }
+    }
+}
+
+impl Validate for Stage8ERepairDecisionPacket {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        validate_stage4_ref(
+            "stage8e_repair_decision.repair_decision_id",
+            &self.repair_decision_id,
+        )?;
+        validate_stage4_ref("stage8e_repair_decision.fixture_id", &self.fixture_id)?;
+        validate_stage8d_text(
+            "stage8e_repair_decision.original_transcript",
+            &self.original_transcript,
+        )?;
+        validate_stage8d_text(
+            "stage8e_repair_decision.reference_transcript",
+            &self.reference_transcript,
+        )?;
+        if let Some(candidate) = self.repair_candidate.as_deref() {
+            validate_stage8d_text("stage8e_repair_decision.repair_candidate", candidate)?;
+        }
+        validate_stage4_ref("stage8e_repair_decision.reason_code", &self.reason_code)?;
+        if self.accepted_repair
+            && self.disposition != Stage8ERepairDisposition::AcceptedFixtureNormalization
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage8e_repair_decision.accepted_repair",
+                reason: "accepted repair requires accepted fixture normalization disposition",
+            });
+        }
+        if self.accepted_repair
+            && (self.protected_token_mismatch_count > 0
+                || self.domain_token_mismatch_count > 0
+                || self.protected_token_invented
+                || self.meaning_drift_detected
+                || self.over_repair_detected)
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage8e_repair_decision.accepted_repair",
+                reason:
+                    "accepted repair cannot invent or lose protected/domain tokens or drift meaning",
+            });
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Stage8ERepairBenchmarkFixture {
+    pub fixture_id: String,
+    pub reference_transcript: String,
+    pub observed_transcript: String,
+    pub accent_marker: Option<String>,
+    pub mixed_language_tokens: Vec<String>,
+    pub domain_vocabulary_tokens: Vec<String>,
+    pub protected_tokens: Vec<String>,
+    pub vocabulary_pack_id: Option<String>,
+    pub pronunciation_profile_id: Option<String>,
+}
+
+impl Stage8ERepairBenchmarkFixture {
+    #[allow(clippy::too_many_arguments)]
+    pub fn v1(
+        fixture_id: impl Into<String>,
+        reference_transcript: impl Into<String>,
+        observed_transcript: impl Into<String>,
+        accent_marker: Option<String>,
+        mixed_language_tokens: Vec<String>,
+        domain_vocabulary_tokens: Vec<String>,
+        protected_tokens: Vec<String>,
+        vocabulary_pack_id: Option<String>,
+        pronunciation_profile_id: Option<String>,
+    ) -> Result<Self, ContractViolation> {
+        let fixture = Self {
+            fixture_id: fixture_id.into(),
+            reference_transcript: reference_transcript.into(),
+            observed_transcript: observed_transcript.into(),
+            accent_marker,
+            mixed_language_tokens,
+            domain_vocabulary_tokens,
+            protected_tokens,
+            vocabulary_pack_id,
+            pronunciation_profile_id,
+        };
+        fixture.validate()?;
+        Ok(fixture)
+    }
+
+    pub fn score(
+        &self,
+        metric_id: impl Into<String>,
+        candidate_set: &Stage8EAlternativeTranscriptCandidateSetPacket,
+        repair_decision: &Stage8ERepairDecisionPacket,
+    ) -> Result<Stage8ERepairBenchmarkMetricPacket, ContractViolation> {
+        self.validate()?;
+        candidate_set.validate()?;
+        repair_decision.validate()?;
+        if candidate_set.fixture_id != self.fixture_id
+            || repair_decision.fixture_id != self.fixture_id
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage8e_repair_fixture.fixture_id",
+                reason: "candidate set and repair decision must belong to fixture",
+            });
+        }
+        let effective_transcript = repair_decision.effective_transcript(&self.observed_transcript);
+        let normalized_effective = stage8d_normalize_transcript(effective_transcript);
+        let metric = Stage8ERepairBenchmarkMetricPacket {
+            metric_id: metric_id.into(),
+            fixture_id: self.fixture_id.clone(),
+            accent_marker: self.accent_marker.clone(),
+            accent_benchmark_only: self.accent_marker.is_some(),
+            mixed_language_preserved: stage8d_all_tokens_present(
+                &self.mixed_language_tokens,
+                &normalized_effective,
+            )?,
+            domain_vocabulary_preserved: stage8d_all_tokens_present(
+                &self.domain_vocabulary_tokens,
+                &normalized_effective,
+            )?,
+            alternative_candidate_count: candidate_set.candidates.len() as u16,
+            selected_candidate_id: candidate_set.selected_candidate_id.clone(),
+            repair_decision_id: repair_decision.repair_decision_id.clone(),
+            repair_disposition: repair_decision.disposition,
+            protected_token_mismatch_count: stage8d_token_mismatch_count(
+                &self.protected_tokens,
+                &normalized_effective,
+            )?,
+            language_script_token_mismatch_count: stage8d_token_mismatch_count(
+                &self.mixed_language_tokens,
+                &normalized_effective,
+            )?,
+            domain_token_mismatch_count: stage8d_token_mismatch_count(
+                &self.domain_vocabulary_tokens,
+                &normalized_effective,
+            )?,
+            vocabulary_pack_id: self.vocabulary_pack_id.clone(),
+            pronunciation_profile_id: self.pronunciation_profile_id.clone(),
+            reason_code: "stage8e_repair_benchmark_scored".to_string(),
+        };
+        metric.validate()?;
+        Ok(metric)
+    }
+}
+
+impl Validate for Stage8ERepairBenchmarkFixture {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        validate_stage4_ref("stage8e_repair_fixture.fixture_id", &self.fixture_id)?;
+        validate_stage8d_text(
+            "stage8e_repair_fixture.reference_transcript",
+            &self.reference_transcript,
+        )?;
+        validate_stage8d_text(
+            "stage8e_repair_fixture.observed_transcript",
+            &self.observed_transcript,
+        )?;
+        validate_stage4_optional_ref(
+            "stage8e_repair_fixture.accent_marker",
+            self.accent_marker.as_deref(),
+        )?;
+        validate_stage8d_token_list(
+            "stage8e_repair_fixture.mixed_language_tokens",
+            &self.mixed_language_tokens,
+        )?;
+        validate_stage8d_token_list(
+            "stage8e_repair_fixture.domain_vocabulary_tokens",
+            &self.domain_vocabulary_tokens,
+        )?;
+        validate_stage8d_token_list(
+            "stage8e_repair_fixture.protected_tokens",
+            &self.protected_tokens,
+        )?;
+        validate_stage4_optional_ref(
+            "stage8e_repair_fixture.vocabulary_pack_id",
+            self.vocabulary_pack_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage8e_repair_fixture.pronunciation_profile_id",
+            self.pronunciation_profile_id.as_deref(),
+        )?;
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Stage8ERepairBenchmarkMetricPacket {
+    pub metric_id: String,
+    pub fixture_id: String,
+    pub accent_marker: Option<String>,
+    pub accent_benchmark_only: bool,
+    pub mixed_language_preserved: bool,
+    pub domain_vocabulary_preserved: bool,
+    pub alternative_candidate_count: u16,
+    pub selected_candidate_id: Option<String>,
+    pub repair_decision_id: String,
+    pub repair_disposition: Stage8ERepairDisposition,
+    pub protected_token_mismatch_count: u16,
+    pub language_script_token_mismatch_count: u16,
+    pub domain_token_mismatch_count: u16,
+    pub vocabulary_pack_id: Option<String>,
+    pub pronunciation_profile_id: Option<String>,
+    pub reason_code: String,
+}
+
+impl Validate for Stage8ERepairBenchmarkMetricPacket {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        validate_stage4_ref("stage8e_repair_metric.metric_id", &self.metric_id)?;
+        validate_stage4_ref("stage8e_repair_metric.fixture_id", &self.fixture_id)?;
+        validate_stage4_optional_ref(
+            "stage8e_repair_metric.accent_marker",
+            self.accent_marker.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage8e_repair_metric.selected_candidate_id",
+            self.selected_candidate_id.as_deref(),
+        )?;
+        validate_stage4_ref(
+            "stage8e_repair_metric.repair_decision_id",
+            &self.repair_decision_id,
+        )?;
+        validate_stage4_optional_ref(
+            "stage8e_repair_metric.vocabulary_pack_id",
+            self.vocabulary_pack_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage8e_repair_metric.pronunciation_profile_id",
+            self.pronunciation_profile_id.as_deref(),
+        )?;
+        validate_stage4_ref("stage8e_repair_metric.reason_code", &self.reason_code)?;
+        if self.alternative_candidate_count == 0 || self.alternative_candidate_count > 5 {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage8e_repair_metric.alternative_candidate_count",
+                reason: "alternative transcript candidate count must be within 1..=5",
+            });
+        }
+        if self.repair_disposition == Stage8ERepairDisposition::AcceptedFixtureNormalization
+            && (self.protected_token_mismatch_count > 0
+                || self.language_script_token_mismatch_count > 0
+                || self.domain_token_mismatch_count > 0)
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage8e_repair_metric.repair_disposition",
+                reason: "accepted repair must preserve protected, language, and domain tokens",
+            });
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Stage8EBenchmarkWorkAuthority {
+    pub can_understand_intent: bool,
+    pub can_answer: bool,
+    pub can_search: bool,
+    pub can_call_providers: bool,
+    pub can_capture_microphone_audio: bool,
+    pub can_transcribe_live_audio: bool,
+    pub can_trigger_voice_id_matching: bool,
+    pub can_authorize: bool,
+    pub can_emit_tts: bool,
+    pub can_route_tools: bool,
+    pub can_connector_write: bool,
+    pub can_execute_protected_mutation: bool,
+    pub can_update_memory_persona_emotion: bool,
+    pub can_promote_provider_model_router: bool,
+}
+
+impl Stage8EBenchmarkWorkAuthority {
+    pub const fn benchmark_evidence_only() -> Self {
+        Self {
+            can_understand_intent: false,
+            can_answer: false,
+            can_search: false,
+            can_call_providers: false,
+            can_capture_microphone_audio: false,
+            can_transcribe_live_audio: false,
+            can_trigger_voice_id_matching: false,
+            can_authorize: false,
+            can_emit_tts: false,
+            can_route_tools: false,
+            can_connector_write: false,
+            can_execute_protected_mutation: false,
+            can_update_memory_persona_emotion: false,
+            can_promote_provider_model_router: false,
+        }
+    }
+
+    pub const fn can_route_or_mutate(self) -> bool {
+        self.can_understand_intent
+            || self.can_answer
+            || self.can_search
+            || self.can_call_providers
+            || self.can_capture_microphone_audio
+            || self.can_transcribe_live_audio
+            || self.can_trigger_voice_id_matching
+            || self.can_authorize
+            || self.can_emit_tts
+            || self.can_route_tools
+            || self.can_connector_write
+            || self.can_execute_protected_mutation
+            || self.can_update_memory_persona_emotion
+            || self.can_promote_provider_model_router
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Stage8EListeningRepairBenchmarkPacket {
+    pub benchmark_target_id: String,
+    pub benchmark_result_id: String,
+    pub fixture_id: String,
+    pub metric_id: String,
+    pub candidate_set_id: String,
+    pub repair_decision_id: String,
+    pub vocabulary_pack_id: Option<String>,
+    pub pronunciation_profile_id: Option<String>,
+    pub replay_id: String,
+    pub audit_id: String,
+    pub reason_code: String,
+    pub target_status: BenchmarkTargetStatus,
+    pub comparison_outcome: BenchmarkComparisonOutcome,
+    pub repair_metric: Option<Stage8ERepairBenchmarkMetricPacket>,
+    pub work_authority: Stage8EBenchmarkWorkAuthority,
+}
+
+impl Stage8EListeningRepairBenchmarkPacket {
+    #[allow(clippy::too_many_arguments)]
+    pub fn from_stage2_envelope(
+        target: &BenchmarkTargetPacket,
+        result: &BenchmarkResultPacket,
+        fixture_id: impl Into<String>,
+        metric_id: impl Into<String>,
+        candidate_set_id: impl Into<String>,
+        repair_decision_id: impl Into<String>,
+        vocabulary_pack_id: Option<String>,
+        pronunciation_profile_id: Option<String>,
+        replay_id: impl Into<String>,
+        audit_id: impl Into<String>,
+        repair_metric: Option<Stage8ERepairBenchmarkMetricPacket>,
+    ) -> Result<Self, ContractViolation> {
+        target.validate()?;
+        result.validate()?;
+        let packet = Self {
+            benchmark_target_id: target.benchmark_target_id.clone(),
+            benchmark_result_id: result.benchmark_result_id.clone(),
+            fixture_id: fixture_id.into(),
+            metric_id: metric_id.into(),
+            candidate_set_id: candidate_set_id.into(),
+            repair_decision_id: repair_decision_id.into(),
+            vocabulary_pack_id,
+            pronunciation_profile_id,
+            replay_id: replay_id.into(),
+            audit_id: audit_id.into(),
+            reason_code: "stage8e_repair_benchmark_envelope".to_string(),
+            target_status: result.target_status,
+            comparison_outcome: result.comparison_outcome,
+            repair_metric,
+            work_authority: Stage8EBenchmarkWorkAuthority::benchmark_evidence_only(),
+        };
+        if result.benchmark_target_id != target.benchmark_target_id
+            || result.target_status != target.target_status
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage8e_repair_benchmark_packet.stage2_envelope",
+                reason: "benchmark result must match target id and target status",
+            });
+        }
+        if target.target_status == BenchmarkTargetStatus::CertificationTargetPassed
+            && !result.certifies_target(target)
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage8e_repair_benchmark_packet.stage2_envelope",
+                reason: "certification packet requires a passing Stage 2 benchmark result",
+            });
+        }
+        packet.validate()?;
+        Ok(packet)
+    }
+
+    pub const fn can_route_or_mutate(&self) -> bool {
+        self.work_authority.can_route_or_mutate()
+    }
+}
+
+impl Validate for Stage8EListeningRepairBenchmarkPacket {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        validate_stage4_ref(
+            "stage8e_repair_benchmark_packet.benchmark_target_id",
+            &self.benchmark_target_id,
+        )?;
+        validate_stage4_ref(
+            "stage8e_repair_benchmark_packet.benchmark_result_id",
+            &self.benchmark_result_id,
+        )?;
+        validate_stage4_ref(
+            "stage8e_repair_benchmark_packet.fixture_id",
+            &self.fixture_id,
+        )?;
+        validate_stage4_ref("stage8e_repair_benchmark_packet.metric_id", &self.metric_id)?;
+        validate_stage4_ref(
+            "stage8e_repair_benchmark_packet.candidate_set_id",
+            &self.candidate_set_id,
+        )?;
+        validate_stage4_ref(
+            "stage8e_repair_benchmark_packet.repair_decision_id",
+            &self.repair_decision_id,
+        )?;
+        validate_stage4_optional_ref(
+            "stage8e_repair_benchmark_packet.vocabulary_pack_id",
+            self.vocabulary_pack_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage8e_repair_benchmark_packet.pronunciation_profile_id",
+            self.pronunciation_profile_id.as_deref(),
+        )?;
+        validate_stage4_ref("stage8e_repair_benchmark_packet.replay_id", &self.replay_id)?;
+        validate_stage4_ref("stage8e_repair_benchmark_packet.audit_id", &self.audit_id)?;
+        validate_stage4_ref(
+            "stage8e_repair_benchmark_packet.reason_code",
+            &self.reason_code,
+        )?;
+        if let Some(metric) = self.repair_metric.as_ref() {
+            metric.validate()?;
+            if metric.fixture_id != self.fixture_id
+                || metric.metric_id != self.metric_id
+                || metric.repair_decision_id != self.repair_decision_id
+            {
+                return Err(ContractViolation::InvalidValue {
+                    field: "stage8e_repair_benchmark_packet.repair_metric",
+                    reason: "metric ids must match the benchmark envelope",
+                });
+            }
+        }
+        if self.work_authority.can_route_or_mutate() {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage8e_repair_benchmark_packet.work_authority",
+                reason: "repair benchmark evidence cannot execute, route, speak, capture, call providers, identify, authorize, promote routers, or mutate",
+            });
+        }
+        if self.target_status == BenchmarkTargetStatus::CertificationTargetPassed
+            && self.repair_metric.is_none()
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage8e_repair_benchmark_packet.repair_metric",
+                reason: "certification requires a deterministic Stage 8E repair metric packet",
+            });
+        }
+        if self.target_status == BenchmarkTargetStatus::BlockedWithOwnerAndNextAction
+            && self.comparison_outcome != BenchmarkComparisonOutcome::Blocked
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage8e_repair_benchmark_packet.comparison_outcome",
+                reason: "blocked benchmark status requires blocked comparison outcome",
+            });
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Stage8VoiceWorkAuthority {
     pub can_update_listen_state: bool,
     pub can_update_preview: bool,
@@ -5215,6 +5940,46 @@ fn validate_stage8d_token_list(
     Ok(())
 }
 
+fn stage8e_any_token_invented(
+    tokens: &[String],
+    normalized_original: &str,
+    normalized_repair: &str,
+) -> Result<bool, ContractViolation> {
+    let original_words = stage8d_words(normalized_original);
+    let repair_words = stage8d_words(normalized_repair);
+    for token in tokens {
+        let normalized = stage8d_normalize_transcript(token);
+        if normalized.is_empty() {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage8e_any_token_invented.token",
+                reason: "tokens must normalize to non-empty text",
+            });
+        }
+        let was_absent = !original_words
+            .iter()
+            .any(|original| original == &normalized);
+        let now_present = repair_words.iter().any(|repair| repair == &normalized);
+        if was_absent && now_present {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn stage8e_words_subset_of_reference(normalized_reference: &str, normalized_repair: &str) -> bool {
+    let reference_words = stage8d_words(normalized_reference);
+    stage8d_words(normalized_repair)
+        .iter()
+        .all(|repair| reference_words.iter().any(|reference| reference == repair))
+}
+
+fn stage8e_over_repair_detected(normalized_reference: &str, normalized_repair: &str) -> bool {
+    let reference_words = stage8d_words(normalized_reference);
+    let repair_words = stage8d_words(normalized_repair);
+    repair_words.len() > reference_words.len().saturating_add(2)
+        || normalized_repair.len() > normalized_reference.len().saturating_add(64)
+}
+
 fn validate_stage8_voice_activation(
     activation_context: &Stage7ActivationContextPacket,
 ) -> Result<(), ContractViolation> {
@@ -6567,6 +7332,94 @@ mod tests {
         .expect("stage8d benchmark result")
     }
 
+    fn stage8e_target(
+        target_id: &str,
+        metric_name: &str,
+        status: BenchmarkTargetStatus,
+    ) -> BenchmarkTargetPacket {
+        let status_reason = match status {
+            BenchmarkTargetStatus::BlockedWithOwnerAndNextAction => {
+                Some("stage8e_live_second_pass_lab_deferred".to_string())
+            }
+            _ => None,
+        };
+        let replay_corpus_ref = match status {
+            BenchmarkTargetStatus::CertificationTargetPassed
+            | BenchmarkTargetStatus::BaselineMeasured => {
+                Some("stage8e_fixture_corpus_v1".to_string())
+            }
+            _ => None,
+        };
+        let certification_target_ref = match status {
+            BenchmarkTargetStatus::CertificationTargetPassed => {
+                Some("stage8e_deterministic_cert_target_v1".to_string())
+            }
+            _ => None,
+        };
+        BenchmarkTargetPacket::v1(
+            target_id.to_string(),
+            "stage8e_listening_repair_lab".to_string(),
+            "stage8e".to_string(),
+            metric_name.to_string(),
+            "stage8e_replay_fixture_threshold".to_string(),
+            status,
+            status_reason,
+            replay_corpus_ref,
+            certification_target_ref,
+            MonotonicTimeNs(1),
+        )
+        .expect("stage8e benchmark target")
+    }
+
+    fn stage8e_result(
+        result_id: &str,
+        target: &BenchmarkTargetPacket,
+        outcome: BenchmarkComparisonOutcome,
+        status: BenchmarkTargetStatus,
+    ) -> BenchmarkResultPacket {
+        let (measured_value, replay_artifact_ref, evidence_hash, blocked_owner, next_action) =
+            match status {
+                BenchmarkTargetStatus::CertificationTargetPassed
+                | BenchmarkTargetStatus::BaselineMeasured => (
+                    Some("passed_stage8e_fixture_metric".to_string()),
+                    Some("stage8e_replay_artifact_v1".to_string()),
+                    Some(
+                        "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
+                            .to_string(),
+                    ),
+                    None,
+                    None,
+                ),
+                BenchmarkTargetStatus::BlockedWithOwnerAndNextAction => (
+                    None,
+                    None,
+                    None,
+                    Some("stage8_live_repair_lab".to_string()),
+                    Some(
+                        "measure_live_second_pass_provider_native_lab_after_explicit_allowance"
+                            .to_string(),
+                    ),
+                ),
+                BenchmarkTargetStatus::NotApplicableWithReason => (None, None, None, None, None),
+                BenchmarkTargetStatus::DraftTarget => unreachable!(),
+            };
+        BenchmarkResultPacket::v1(
+            result_id.to_string(),
+            target.benchmark_target_id.clone(),
+            "stage8e_run_v1".to_string(),
+            measured_value,
+            outcome,
+            status,
+            None,
+            replay_artifact_ref,
+            evidence_hash,
+            blocked_owner,
+            next_action,
+            MonotonicTimeNs(2),
+        )
+        .expect("stage8e benchmark result")
+    }
+
     #[test]
     fn stage_8d_transcript_fixture_scores_exact_wer_cer_and_preserves_tokens() {
         let fixture = Stage8DTranscriptFixture::v1(
@@ -6883,6 +7736,310 @@ mod tests {
         );
 
         assert!(packet.is_err());
+    }
+
+    #[test]
+    fn stage_8e_accent_mixed_language_and_domain_fixture_scores_without_authority() {
+        let protected_tokens = vec!["alpha99".to_string()];
+        let domain_tokens = vec!["domainx".to_string()];
+        let mixed_tokens = vec!["hola".to_string()];
+        let fixture = Stage8ERepairBenchmarkFixture::v1(
+            "fixture-stage8e-accent",
+            "selene hola set alpha99 timer domainx",
+            "selene hola set alpha99 timer domainx",
+            Some("accent-bucket-alpha".to_string()),
+            mixed_tokens,
+            domain_tokens.clone(),
+            protected_tokens.clone(),
+            Some("vocab-pack-alpha".to_string()),
+            Some("pron-profile-alpha".to_string()),
+        )
+        .expect("stage8e fixture");
+        let candidate = Stage8EAlternativeTranscriptCandidate::fixture_offline(
+            "candidate-stage8e-accent-1",
+            1,
+            "selene hola set alpha99 timer domainx",
+            Stage8DConfidenceBucket::High,
+            &protected_tokens,
+        )
+        .expect("stage8e candidate");
+        let candidate_set = Stage8EAlternativeTranscriptCandidateSetPacket::v1(
+            "candidate-set-stage8e-accent",
+            "fixture-stage8e-accent",
+            vec![candidate],
+            Some("candidate-stage8e-accent-1".to_string()),
+        )
+        .expect("stage8e candidate set");
+        let repair = Stage8ERepairDecisionPacket::fixture_only(
+            "repair-stage8e-accent",
+            "fixture-stage8e-accent",
+            "selene hola set alpha99 timer domainx",
+            "selene hola set alpha99 timer domainx",
+            Some("selene hola set alpha99 timer domainx".to_string()),
+            &protected_tokens,
+            &domain_tokens,
+        )
+        .expect("stage8e repair");
+        let metric = fixture
+            .score("metric-stage8e-accent", &candidate_set, &repair)
+            .expect("stage8e metric");
+
+        assert!(metric.accent_benchmark_only);
+        assert!(metric.mixed_language_preserved);
+        assert!(metric.domain_vocabulary_preserved);
+        assert_eq!(metric.protected_token_mismatch_count, 0);
+        assert_eq!(metric.language_script_token_mismatch_count, 0);
+        assert_eq!(metric.domain_token_mismatch_count, 0);
+        assert_eq!(
+            metric.repair_disposition,
+            Stage8ERepairDisposition::AcceptedFixtureNormalization
+        );
+    }
+
+    #[test]
+    fn stage_8e_alternative_candidates_are_bounded_ordered_and_non_committing() {
+        let protected_tokens = vec!["alpha99".to_string()];
+        let first = Stage8EAlternativeTranscriptCandidate::fixture_offline(
+            "candidate-stage8e-order-1",
+            1,
+            "selene set alpha99 timer",
+            Stage8DConfidenceBucket::High,
+            &protected_tokens,
+        )
+        .expect("first candidate");
+        let second = Stage8EAlternativeTranscriptCandidate::fixture_offline(
+            "candidate-stage8e-order-2",
+            2,
+            "selene set alpha99 timer please",
+            Stage8DConfidenceBucket::Medium,
+            &protected_tokens,
+        )
+        .expect("second candidate");
+        let set = Stage8EAlternativeTranscriptCandidateSetPacket::v1(
+            "candidate-set-stage8e-order",
+            "fixture-stage8e-order",
+            vec![first.clone(), second],
+            Some("candidate-stage8e-order-1".to_string()),
+        )
+        .expect("ordered candidate set");
+
+        assert_eq!(set.candidates.len(), 2);
+        assert_eq!(
+            set.selected_candidate().map(|candidate| candidate.rank),
+            Some(1)
+        );
+        assert!(set
+            .candidates
+            .iter()
+            .all(|candidate| !candidate.can_commit_directly));
+
+        let mut committing = first.clone();
+        committing.can_commit_directly = true;
+        assert!(committing.validate().is_err());
+
+        let rank_gap = Stage8EAlternativeTranscriptCandidate::fixture_offline(
+            "candidate-stage8e-order-3",
+            3,
+            "selene set alpha99 timer",
+            Stage8DConfidenceBucket::Low,
+            &protected_tokens,
+        )
+        .expect("rank gap candidate");
+        let invalid_set = Stage8EAlternativeTranscriptCandidateSetPacket::v1(
+            "candidate-set-stage8e-rank-gap",
+            "fixture-stage8e-order",
+            vec![first, rank_gap],
+            None,
+        );
+        assert!(invalid_set.is_err());
+    }
+
+    #[test]
+    fn stage_8e_second_pass_repair_rejects_protected_invention_and_overrepair() {
+        let protected_tokens = vec!["alpha99".to_string()];
+        let domain_tokens = vec!["domainx".to_string()];
+        let invented = Stage8ERepairDecisionPacket::fixture_only(
+            "repair-stage8e-invented",
+            "fixture-stage8e-invented",
+            "selene send amount nine domainx",
+            "selene send alpha99 amount nine domainx",
+            Some("selene send alpha99 amount nine domainx".to_string()),
+            &protected_tokens,
+            &domain_tokens,
+        )
+        .expect("invented protected token repair");
+
+        assert_eq!(
+            invented.disposition,
+            Stage8ERepairDisposition::RejectedProtectedTokenInvented
+        );
+        assert!(invented.protected_token_invented);
+        assert!(!invented.accepted_repair);
+
+        let over_repair = Stage8ERepairDecisionPacket::fixture_only(
+            "repair-stage8e-over",
+            "fixture-stage8e-over",
+            "selene send alpha99 amount nine domainx",
+            "selene send alpha99 amount nine domainx",
+            Some("selene send alpha99 amount nine domainx extra one two three".to_string()),
+            &protected_tokens,
+            &domain_tokens,
+        )
+        .expect("over repair");
+
+        assert_eq!(
+            over_repair.disposition,
+            Stage8ERepairDisposition::RejectedOverRepair
+        );
+        assert!(over_repair.over_repair_detected);
+        assert!(!over_repair.accepted_repair);
+    }
+
+    #[test]
+    fn stage_8e_repair_accepts_punctuation_and_case_without_meaning_drift() {
+        let protected_tokens = vec!["alpha99".to_string()];
+        let repair = Stage8ERepairDecisionPacket::fixture_only(
+            "repair-stage8e-normalize",
+            "fixture-stage8e-normalize",
+            "SELENE set alpha99 timer!!!",
+            "selene set alpha99 timer",
+            Some("selene set alpha99 timer".to_string()),
+            &protected_tokens,
+            &[],
+        )
+        .expect("normalizing repair");
+
+        assert!(repair.accepted_repair);
+        assert_eq!(
+            repair.disposition,
+            Stage8ERepairDisposition::AcceptedFixtureNormalization
+        );
+        assert_eq!(repair.protected_token_mismatch_count, 0);
+        assert!(!repair.meaning_drift_detected);
+        assert!(!repair.over_repair_detected);
+    }
+
+    #[test]
+    fn stage_8e_packet_reuses_stage2_envelope_and_blocks_live_work() {
+        let protected_tokens = vec!["alpha99".to_string()];
+        let domain_tokens = vec!["domainx".to_string()];
+        let fixture = Stage8ERepairBenchmarkFixture::v1(
+            "fixture-stage8e-envelope",
+            "selene hola set alpha99 timer domainx",
+            "selene hola set alpha99 timer domainx",
+            Some("accent-bucket-beta".to_string()),
+            vec!["hola".to_string()],
+            domain_tokens.clone(),
+            protected_tokens.clone(),
+            Some("vocab-pack-beta".to_string()),
+            Some("pron-profile-beta".to_string()),
+        )
+        .expect("stage8e envelope fixture");
+        let candidate = Stage8EAlternativeTranscriptCandidate::fixture_offline(
+            "candidate-stage8e-envelope-1",
+            1,
+            "selene hola set alpha99 timer domainx",
+            Stage8DConfidenceBucket::High,
+            &protected_tokens,
+        )
+        .expect("stage8e envelope candidate");
+        let candidate_set = Stage8EAlternativeTranscriptCandidateSetPacket::v1(
+            "candidate-set-stage8e-envelope",
+            "fixture-stage8e-envelope",
+            vec![candidate],
+            Some("candidate-stage8e-envelope-1".to_string()),
+        )
+        .expect("stage8e envelope candidate set");
+        let repair = Stage8ERepairDecisionPacket::fixture_only(
+            "repair-stage8e-envelope",
+            "fixture-stage8e-envelope",
+            "selene hola set alpha99 timer domainx",
+            "selene hola set alpha99 timer domainx",
+            Some("selene hola set alpha99 timer domainx".to_string()),
+            &protected_tokens,
+            &domain_tokens,
+        )
+        .expect("stage8e envelope repair");
+        let metric = fixture
+            .score("metric-stage8e-envelope", &candidate_set, &repair)
+            .expect("stage8e envelope metric");
+        let target = stage8e_target(
+            "stage8e-target-envelope",
+            "accent_mixed_domain_alternatives_repair",
+            BenchmarkTargetStatus::CertificationTargetPassed,
+        );
+        let result = stage8e_result(
+            "stage8e-result-envelope",
+            &target,
+            BenchmarkComparisonOutcome::Passed,
+            BenchmarkTargetStatus::CertificationTargetPassed,
+        );
+
+        let packet = Stage8EListeningRepairBenchmarkPacket::from_stage2_envelope(
+            &target,
+            &result,
+            "fixture-stage8e-envelope",
+            "metric-stage8e-envelope",
+            "candidate-set-stage8e-envelope",
+            "repair-stage8e-envelope",
+            Some("vocab-pack-beta".to_string()),
+            Some("pron-profile-beta".to_string()),
+            "replay-stage8e-envelope",
+            "audit-stage8e-envelope",
+            Some(metric),
+        )
+        .expect("stage8e benchmark packet");
+
+        assert_eq!(
+            packet.target_status,
+            BenchmarkTargetStatus::CertificationTargetPassed
+        );
+        assert!(!packet.can_route_or_mutate());
+        assert!(!packet.work_authority.can_capture_microphone_audio);
+        assert!(!packet.work_authority.can_transcribe_live_audio);
+        assert!(!packet.work_authority.can_call_providers);
+        assert!(!packet.work_authority.can_emit_tts);
+        assert!(!packet.work_authority.can_promote_provider_model_router);
+    }
+
+    #[test]
+    fn stage_8e_blocked_live_repair_benchmark_records_owner_without_metrics() {
+        let target = stage8e_target(
+            "stage8e-target-live-blocked",
+            "live_second_pass_provider_repair",
+            BenchmarkTargetStatus::BlockedWithOwnerAndNextAction,
+        );
+        let result = stage8e_result(
+            "stage8e-result-live-blocked",
+            &target,
+            BenchmarkComparisonOutcome::Blocked,
+            BenchmarkTargetStatus::BlockedWithOwnerAndNextAction,
+        );
+
+        let packet = Stage8EListeningRepairBenchmarkPacket::from_stage2_envelope(
+            &target,
+            &result,
+            "fixture-stage8e-live-blocked",
+            "metric-stage8e-live-blocked",
+            "candidate-set-stage8e-live-blocked",
+            "repair-stage8e-live-blocked",
+            None,
+            None,
+            "replay-stage8e-live-blocked",
+            "audit-stage8e-live-blocked",
+            None,
+        )
+        .expect("blocked stage8e benchmark packet");
+
+        assert_eq!(
+            packet.target_status,
+            BenchmarkTargetStatus::BlockedWithOwnerAndNextAction
+        );
+        assert_eq!(
+            packet.comparison_outcome,
+            BenchmarkComparisonOutcome::Blocked
+        );
+        assert!(!packet.can_route_or_mutate());
     }
 
     #[test]

@@ -1989,9 +1989,22 @@ Stage 8D proof update:
 - Stage 8D did not add live microphone capture, live STT, live TTS, provider calls, live search, Voice ID matching, understanding, routing, native UI redesign, protected execution, connector writes, raw-audio retention, or duplicate benchmark/listening/STT/calibration engines.
 - Stage 8E is required before Stage 9A.
 
+Stage 8E status: PROVEN_COMPLETE.
+
+Stage 8E proof update:
+
+- Existing PH1.J benchmark envelopes, Stage 8D deterministic listening-lab packets, PH1.K, PH1.C, PH1.LISTEN, PH1.LANG, PH1.PRON, PH1.VOICE.ID-adjacent evidence, OS voice/listen carriers, and adapter voice-ingress surfaces were inspected and crosswalked rather than rebuilt as duplicate benchmark, listening, STT, language, pronunciation, vocabulary, or repair engines.
+- `Stage8ERepairBenchmarkFixture`, `Stage8EAlternativeTranscriptCandidate`, `Stage8EAlternativeTranscriptCandidateSetPacket`, `Stage8ERepairDecisionPacket`, `Stage8ERepairBenchmarkMetricPacket`, `Stage8EListeningRepairBenchmarkPacket`, `Stage8ERepairDisposition`, and `Stage8EBenchmarkWorkAuthority` now provide deterministic fixture-only proof for accent markers, mixed-language/code-switch token preservation, domain vocabulary/proper-token preservation, bounded alternative transcript candidates, and second-pass repair/no-repair decisions.
+- Stage 8E proves accent markers remain benchmark metadata only, never identity or authority evidence; mixed-language/code-switch tokens are preserved without forced translation; domain vocabulary/pronunciation references are versioned/audit-visible where present; alternative transcript candidates are bounded, ordered, provider-agnostic, hashed, and non-committing; and second-pass repair can normalize fixture punctuation/case only when protected/domain tokens are preserved and no meaning drift or over-repair is detected.
+- Stage 8E preserves protected-token no-guess continuity from Stage 8B and Stage 8D: low-confidence or missing protected tokens clarify/fail closed, alternative candidates cannot guess protected tokens, and repair cannot invent names, dates, amounts, addresses, recipients, account IDs, action IDs, or authorization-relevant fields.
+- Stage 8E benchmark packets/results are evidence only. They cannot understand intent, answer, search, call providers, capture microphone audio, transcribe live audio, trigger Voice ID matching, authorize, emit TTS, route tools, connector-write, execute protected mutations, update memory/persona/emotion, or promote provider/model/router behavior.
+- Deterministic accent, mixed-language/code-switch, domain vocabulary/pronunciation, alternative transcript, and second-pass repair benchmark envelopes are certified for Stage 8E. Live accent/noisy-room/native-mic/provider second-pass, production STT WER, real diarization error rate, real provider latency, playback interruption, and Stage 17 TTS benchmarks remain deferred to Stage 8F, Stage 17, Stage 34, or later explicitly approved live/native-lab stages.
+- Stage 8E did not add live microphone capture, live STT, live TTS, provider calls, live search, Voice ID matching, understanding, routing, native UI redesign, protected execution, connector writes, raw-audio retention, or duplicate benchmark/listening/STT/language/pronunciation/repair engines.
+- Stage 8F is required before Stage 9A.
+
 Next if passed:
 
-- Stage 8E - Accent, Mixed-Language, Domain Vocabulary, Alternative Transcript, And Second-Pass Repair Benchmark Reconciliation.
+- Stage 8F - Barge-In, Interruption, Cancel, Pause, Resume, And Output-Interaction Boundary Reconciliation.
 
 ## Stage 9 - Voice ID Stack
 
