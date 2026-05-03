@@ -78,10 +78,10 @@ After every build, update this section before final reporting.
 
 | Field | Current Value |
 |---|---|
-| Current active stage | Stage 4 |
-| Current active build | Stage 4A - Activation, Session, Turn, And Packet Foundation Reconciliation |
-| Next build after current stage passes | Stage 5 - Session Open, Resume, Close, And Runtime Turn Spine |
-| Last completed stage | Stage 3A - Provider, Secret, KMS, Cost, Quota, Vault, Provider-Off Proof, And Early Consent Baseline Reconciliation |
+| Current active stage | Stage 5 |
+| Current active build | Stage 5A - Session Open, Resume, Close, Runtime Turn Spine, And Stale-Turn Quarantine Reconciliation |
+| Next build after current stage passes | Stage 6 - Master Access, Tenant, Policy, And Per-User Authority Context |
+| Last completed stage | Stage 4A - Activation, Session, Turn, And Packet Foundation Reconciliation |
 | Stages blocked | None yet |
 | Plan drift allowed | No |
 
@@ -1548,7 +1548,9 @@ Next if passed:
 
 ## Stage 4 - Activation, Session, Turn, And Packet Foundation
 
-Status: PARTIALLY_BUILT
+Status: PROVEN_COMPLETE
+
+Stage 4A status: PROVEN_COMPLETE
 
 Build:
 
@@ -1591,9 +1593,21 @@ Proof:
 - record-mode audio stays in artifact lane;
 - no tool/search/execution route from packet creation alone.
 
+Stage 4A completion proof:
+
+- `Stage4ActivationPacket`, `Stage4ActivationSource`, `Stage4TurnBoundaryPacket`, `Stage4TurnBoundaryKind`, `Stage4RecordBoundary`, `Stage4RecordingState`, and `Stage4PacketRouteAuthority` now provide the minimal Stage 4A packet-boundary carrier in `runtime_ingress_turn_foundation.rs` without creating a separate brain or feature router.
+- Canonical `ActivationPacket`, `TurnCandidatePacket`, `CommittedTurnPacket`, `RecordSessionPacket`, and `AudioArtifactPacket` remain roadmap packet names crosswalked to the Stage 4A carrier plus existing runtime ingress/session/PH1.F/PH1.J carriers.
+- `SessionPacket` remains crosswalked to `PH1.L`, `SessionRuntimeProjection`, and `SessionTurnPermit`; Stage 5A owns lifecycle promotion, stale-turn quarantine, and cancellation closure.
+- `ConsentStatePacket` is consumed as the Stage 3A provider-secrets consent carrier; `DeviceTrustPacket` is crosswalked to `PlatformRuntimeContext.device_trust_class`; `ProviderBudgetPacket` is crosswalked to PH1.COST/PH1.QUOTA/provider-control budget and counter carriers.
+- Packet creation now has an explicit no-authority proof: Stage 4A packet carriers report no route authority for tools, search, providers, TTS, or protected execution.
+- Record-button activation is artifact-only at this stage: record packets require `recording_session_id`, `recording_state`, `audio_artifact_id`, `consent_state_id`, and `artifact_lane_handoff_ref`, cannot carry a live turn ID, route ID, modality, or device turn sequence, and cannot become live chat.
+- Wake, side button, typed input, explicit mic, and record button are represented as activation source packet foundations only. Wake detection, live voice, STT/TTS, Voice ID enrollment/matching, native UI behavior, and the Stage 27 record product remain deferred to their owning stages.
+- Stage 4A benchmark status is `CERTIFICATION_TARGET_PASSED` for packet-boundary/no-route-authority and record-artifact separation proof.
+- Stage 5A is ready to start as the narrowed session open/resume/close, runtime turn spine, and stale-turn quarantine build.
+
 Next if passed:
 
-- Stage 5 - Session Open, Resume, Close, And Runtime Turn Spine.
+- Stage 5A - Session Open, Resume, Close, Runtime Turn Spine, And Stale-Turn Quarantine Reconciliation.
 
 ## Stage 5 - Session Open, Resume, Close, And Runtime Turn Spine
 

@@ -104,6 +104,333 @@ pub enum SessionResolveMode {
     RecoverExisting,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stage4ActivationSource {
+    TypedInput,
+    WakeCandidate,
+    SideButton,
+    ExplicitMic,
+    RecordButton,
+}
+
+impl Stage4ActivationSource {
+    pub const fn requested_trigger(self) -> RuntimeEntryTrigger {
+        match self {
+            Stage4ActivationSource::WakeCandidate => RuntimeEntryTrigger::WakeWord,
+            Stage4ActivationSource::TypedInput
+            | Stage4ActivationSource::SideButton
+            | Stage4ActivationSource::ExplicitMic
+            | Stage4ActivationSource::RecordButton => RuntimeEntryTrigger::Explicit,
+        }
+    }
+
+    pub const fn is_record_button(self) -> bool {
+        matches!(self, Stage4ActivationSource::RecordButton)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stage4TurnBoundaryKind {
+    CandidatePreview,
+    CommittedLiveTurn,
+    RecordArtifactOnly,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stage4RecordingState {
+    Idle,
+    Recording,
+    Paused,
+    Stopped,
+    Processing,
+    Complete,
+    Failed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Stage4PacketRouteAuthority {
+    pub can_route_tools: bool,
+    pub can_route_search: bool,
+    pub can_route_providers: bool,
+    pub can_route_tts: bool,
+    pub can_route_protected_execution: bool,
+}
+
+impl Stage4PacketRouteAuthority {
+    pub const fn none() -> Self {
+        Self {
+            can_route_tools: false,
+            can_route_search: false,
+            can_route_providers: false,
+            can_route_tts: false,
+            can_route_protected_execution: false,
+        }
+    }
+
+    pub const fn any_route_enabled(self) -> bool {
+        self.can_route_tools
+            || self.can_route_search
+            || self.can_route_providers
+            || self.can_route_tts
+            || self.can_route_protected_execution
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Stage4RecordBoundary {
+    pub recording_session_id: String,
+    pub recording_state: Stage4RecordingState,
+    pub audio_artifact_id: String,
+    pub consent_state_id: String,
+    pub artifact_lane_handoff_ref: String,
+}
+
+impl Validate for Stage4RecordBoundary {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        validate_stage4_ref(
+            "stage4_record_boundary.recording_session_id",
+            &self.recording_session_id,
+        )?;
+        validate_stage4_ref(
+            "stage4_record_boundary.audio_artifact_id",
+            &self.audio_artifact_id,
+        )?;
+        validate_stage4_ref(
+            "stage4_record_boundary.consent_state_id",
+            &self.consent_state_id,
+        )?;
+        validate_stage4_ref(
+            "stage4_record_boundary.artifact_lane_handoff_ref",
+            &self.artifact_lane_handoff_ref,
+        )?;
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Stage4ActivationPacket {
+    pub source: Stage4ActivationSource,
+    pub platform_context: PlatformRuntimeContext,
+    pub session_hint: Option<SessionId>,
+    pub consent_state_id: Option<String>,
+    pub device_trust_ref: Option<String>,
+    pub provider_budget_ref: Option<String>,
+    pub audit_id: Option<String>,
+}
+
+impl Stage4ActivationPacket {
+    pub fn new(
+        source: Stage4ActivationSource,
+        platform_context: PlatformRuntimeContext,
+    ) -> Result<Self, ContractViolation> {
+        let packet = Self {
+            source,
+            platform_context,
+            session_hint: None,
+            consent_state_id: None,
+            device_trust_ref: None,
+            provider_budget_ref: None,
+            audit_id: None,
+        };
+        packet.validate()?;
+        Ok(packet)
+    }
+
+    pub const fn route_authority(&self) -> Stage4PacketRouteAuthority {
+        Stage4PacketRouteAuthority::none()
+    }
+}
+
+impl Validate for Stage4ActivationPacket {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        self.platform_context.validate()?;
+        if self.platform_context.requested_trigger != self.source.requested_trigger() {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage4_activation_packet.platform_context.requested_trigger",
+                reason: "activation source and platform trigger must agree",
+            });
+        }
+        if !self.platform_context.trigger_allowed {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage4_activation_packet.platform_context.trigger_allowed",
+                reason: "activation packet cannot carry a disallowed platform trigger",
+            });
+        }
+        validate_stage4_optional_ref(
+            "stage4_activation_packet.consent_state_id",
+            self.consent_state_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage4_activation_packet.device_trust_ref",
+            self.device_trust_ref.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage4_activation_packet.provider_budget_ref",
+            self.provider_budget_ref.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage4_activation_packet.audit_id",
+            self.audit_id.as_deref(),
+        )?;
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Stage4TurnBoundaryPacket {
+    pub activation: Stage4ActivationPacket,
+    pub boundary_kind: Stage4TurnBoundaryKind,
+    pub turn_id: Option<TurnId>,
+    pub device_turn_sequence: Option<u64>,
+    pub modality: Option<CanonicalTurnModality>,
+    pub record_boundary: Option<Stage4RecordBoundary>,
+    pub route_id: Option<String>,
+}
+
+impl Stage4TurnBoundaryPacket {
+    pub fn candidate_preview(
+        activation: Stage4ActivationPacket,
+        modality: Option<CanonicalTurnModality>,
+    ) -> Result<Self, ContractViolation> {
+        let packet = Self {
+            activation,
+            boundary_kind: Stage4TurnBoundaryKind::CandidatePreview,
+            turn_id: None,
+            device_turn_sequence: None,
+            modality,
+            record_boundary: None,
+            route_id: None,
+        };
+        packet.validate()?;
+        Ok(packet)
+    }
+
+    pub fn committed_live_turn(
+        activation: Stage4ActivationPacket,
+        turn_id: TurnId,
+        device_turn_sequence: u64,
+        modality: CanonicalTurnModality,
+    ) -> Result<Self, ContractViolation> {
+        let packet = Self {
+            activation,
+            boundary_kind: Stage4TurnBoundaryKind::CommittedLiveTurn,
+            turn_id: Some(turn_id),
+            device_turn_sequence: Some(device_turn_sequence),
+            modality: Some(modality),
+            record_boundary: None,
+            route_id: None,
+        };
+        packet.validate()?;
+        Ok(packet)
+    }
+
+    pub fn record_artifact_only(
+        activation: Stage4ActivationPacket,
+        record_boundary: Stage4RecordBoundary,
+    ) -> Result<Self, ContractViolation> {
+        let packet = Self {
+            activation,
+            boundary_kind: Stage4TurnBoundaryKind::RecordArtifactOnly,
+            turn_id: None,
+            device_turn_sequence: None,
+            modality: None,
+            record_boundary: Some(record_boundary),
+            route_id: None,
+        };
+        packet.validate()?;
+        Ok(packet)
+    }
+
+    pub const fn route_authority(&self) -> Stage4PacketRouteAuthority {
+        Stage4PacketRouteAuthority::none()
+    }
+
+    pub const fn is_committed_live_turn(&self) -> bool {
+        matches!(
+            self.boundary_kind,
+            Stage4TurnBoundaryKind::CommittedLiveTurn
+        )
+    }
+
+    pub const fn record_mode_can_be_live_chat(&self) -> bool {
+        false
+    }
+}
+
+impl Validate for Stage4TurnBoundaryPacket {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        self.activation.validate()?;
+        validate_stage4_optional_ref(
+            "stage4_turn_boundary_packet.route_id",
+            self.route_id.as_deref(),
+        )?;
+        match self.boundary_kind {
+            Stage4TurnBoundaryKind::CandidatePreview => {
+                if self.turn_id.is_some()
+                    || self.device_turn_sequence.is_some()
+                    || self.record_boundary.is_some()
+                {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "stage4_turn_boundary_packet",
+                        reason: "candidate preview packets cannot carry committed turn or record artifact state",
+                    });
+                }
+                if self.activation.source.is_record_button() {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "stage4_turn_boundary_packet.activation.source",
+                        reason: "record button packets must use the artifact-only boundary",
+                    });
+                }
+            }
+            Stage4TurnBoundaryKind::CommittedLiveTurn => {
+                if self.activation.source.is_record_button() {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "stage4_turn_boundary_packet.activation.source",
+                        reason: "record button activation cannot create a committed live turn",
+                    });
+                }
+                if self.activation.session_hint.is_none()
+                    || self.turn_id.is_none()
+                    || self.device_turn_sequence.unwrap_or_default() == 0
+                    || self.modality.is_none()
+                    || self.record_boundary.is_some()
+                {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "stage4_turn_boundary_packet",
+                        reason: "committed live turns require session, turn, sequence, modality, and no record boundary",
+                    });
+                }
+            }
+            Stage4TurnBoundaryKind::RecordArtifactOnly => {
+                if !self.activation.source.is_record_button() {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "stage4_turn_boundary_packet.activation.source",
+                        reason: "record artifact boundary requires record-button activation",
+                    });
+                }
+                if self.turn_id.is_some()
+                    || self.device_turn_sequence.is_some()
+                    || self.modality.is_some()
+                    || self.route_id.is_some()
+                {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "stage4_turn_boundary_packet",
+                        reason: "record artifact boundary cannot carry live turn or route state",
+                    });
+                }
+                let Some(record_boundary) = self.record_boundary.as_ref() else {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "stage4_turn_boundary_packet.record_boundary",
+                        reason: "record artifact boundary requires record boundary fields",
+                    });
+                };
+                record_boundary.validate()?;
+            }
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RawTurnPayload {
     Text {
@@ -2210,11 +2537,7 @@ fn onboarding_compatibility_device_turn_sequence(
     let action_components: Vec<Vec<u8>> = match &onboarding_request.action {
         AppOnboardingContinueAction::AskMissingSubmit { field_value } => vec![
             b"ASK_MISSING_SUBMIT".to_vec(),
-            field_value
-                .as_deref()
-                .unwrap_or("")
-                .as_bytes()
-                .to_vec(),
+            field_value.as_deref().unwrap_or("").as_bytes().to_vec(),
         ],
         AppOnboardingContinueAction::PlatformSetupReceipt {
             receipt_kind,
@@ -2351,6 +2674,27 @@ fn revalidate_onboarding_continue_request(
         onboarding_request.action.clone(),
     )
     .map(|_| ())
+}
+
+fn validate_stage4_optional_ref(
+    field: &'static str,
+    value: Option<&str>,
+) -> Result<(), ContractViolation> {
+    if let Some(value) = value {
+        validate_stage4_ref(field, value)?;
+    }
+    Ok(())
+}
+
+fn validate_stage4_ref(field: &'static str, value: &str) -> Result<(), ContractViolation> {
+    let value = value.trim();
+    if value.is_empty() || value.len() > 128 || !value.is_ascii() {
+        return Err(ContractViolation::InvalidValue {
+            field,
+            reason: "must be bounded non-empty ASCII",
+        });
+    }
+    Ok(())
 }
 
 fn validate_authorization_header(value: &str) -> Result<(), RuntimeIngressTurnError> {
@@ -2526,9 +2870,9 @@ fn compatibility_prepared_classification(
         CanonicalTurnPayloadCarrier::OnboardingCompleteCommit { .. } => {
             Some(TurnStartClassification::OnboardingCompleteCommitCompatibilityPrepared)
         }
-        CanonicalTurnPayloadCarrier::OnboardingPairingCompletionCommit { .. } => Some(
-            TurnStartClassification::OnboardingPairingCompletionCommitCompatibilityPrepared,
-        ),
+        CanonicalTurnPayloadCarrier::OnboardingPairingCompletionCommit { .. } => {
+            Some(TurnStartClassification::OnboardingPairingCompletionCommitCompatibilityPrepared)
+        }
         CanonicalTurnPayloadCarrier::Text { .. } | CanonicalTurnPayloadCarrier::Binary { .. } => {
             None
         }
@@ -3062,14 +3406,12 @@ mod tests {
             SpeakerAssertionUnknown::v1(
                 IdentityConfidence::Medium,
                 selene_kernel_contracts::ReasonCodeId(1),
-                vec![
-                    DiarizationSegment::v1(
-                        MonotonicTimeNs(1),
-                        MonotonicTimeNs(2),
-                        Some(SpeakerLabel::speaker_a()),
-                    )
-                    .expect("diarization segment must validate"),
-                ],
+                vec![DiarizationSegment::v1(
+                    MonotonicTimeNs(1),
+                    MonotonicTimeNs(2),
+                    Some(SpeakerLabel::speaker_a()),
+                )
+                .expect("diarization segment must validate")],
             )
             .expect("voice assertion must validate"),
         )
@@ -3139,6 +3481,135 @@ mod tests {
             },
         )
         .expect("text turn request")
+    }
+
+    fn stage4_activation(
+        source: Stage4ActivationSource,
+        trigger: RuntimeEntryTrigger,
+    ) -> Stage4ActivationPacket {
+        let mut packet =
+            Stage4ActivationPacket::new(source, platform_context(AppPlatform::Desktop, trigger))
+                .expect("stage 4 activation packet");
+        packet.consent_state_id = Some("consent-stage4".to_string());
+        packet.device_trust_ref = Some("device-trust-stage4".to_string());
+        packet.provider_budget_ref = Some("provider-budget-stage4".to_string());
+        packet.audit_id = Some("audit-stage4".to_string());
+        packet.validate().expect("stage 4 refs must validate");
+        packet
+    }
+
+    #[test]
+    fn stage_4a_activation_sources_preserve_trigger_posture() {
+        let wake = stage4_activation(
+            Stage4ActivationSource::WakeCandidate,
+            RuntimeEntryTrigger::WakeWord,
+        );
+        assert_eq!(
+            wake.platform_context.requested_trigger,
+            RuntimeEntryTrigger::WakeWord
+        );
+        assert!(!wake.route_authority().any_route_enabled());
+
+        let side_button = stage4_activation(
+            Stage4ActivationSource::SideButton,
+            RuntimeEntryTrigger::Explicit,
+        );
+        assert_eq!(
+            side_button.platform_context.requested_trigger,
+            RuntimeEntryTrigger::Explicit
+        );
+        assert!(!side_button.route_authority().any_route_enabled());
+
+        let mismatched = Stage4ActivationPacket::new(
+            Stage4ActivationSource::SideButton,
+            platform_context(AppPlatform::Desktop, RuntimeEntryTrigger::WakeWord),
+        );
+        assert!(mismatched.is_err());
+    }
+
+    #[test]
+    fn stage_4a_candidate_preview_packets_cannot_route_work() {
+        let packet = Stage4TurnBoundaryPacket::candidate_preview(
+            stage4_activation(
+                Stage4ActivationSource::ExplicitMic,
+                RuntimeEntryTrigger::Explicit,
+            ),
+            Some(CanonicalTurnModality::Voice),
+        )
+        .expect("candidate preview packet");
+
+        assert!(!packet.is_committed_live_turn());
+        assert!(!packet.route_authority().any_route_enabled());
+        assert!(packet.turn_id.is_none());
+        assert!(packet.device_turn_sequence.is_none());
+        assert!(packet.record_boundary.is_none());
+    }
+
+    #[test]
+    fn stage_4a_committed_turn_packet_is_not_route_authority() {
+        let mut activation = stage4_activation(
+            Stage4ActivationSource::TypedInput,
+            RuntimeEntryTrigger::Explicit,
+        );
+        activation.session_hint = Some(SessionId(42));
+        let packet = Stage4TurnBoundaryPacket::committed_live_turn(
+            activation,
+            TurnId(7),
+            1,
+            CanonicalTurnModality::Text,
+        )
+        .expect("committed live turn packet");
+
+        assert!(packet.is_committed_live_turn());
+        assert!(!packet.route_authority().any_route_enabled());
+        assert!(packet.record_boundary.is_none());
+        assert_eq!(packet.turn_id, Some(TurnId(7)));
+        assert_eq!(packet.device_turn_sequence, Some(1));
+    }
+
+    #[test]
+    fn stage_4a_record_button_cannot_create_live_chat_turn() {
+        let mut activation = stage4_activation(
+            Stage4ActivationSource::RecordButton,
+            RuntimeEntryTrigger::Explicit,
+        );
+        activation.session_hint = Some(SessionId(99));
+
+        let live_turn = Stage4TurnBoundaryPacket::committed_live_turn(
+            activation,
+            TurnId(9),
+            1,
+            CanonicalTurnModality::Voice,
+        );
+
+        assert!(live_turn.is_err());
+    }
+
+    #[test]
+    fn stage_4a_record_boundary_stays_artifact_only() {
+        let record_boundary = Stage4RecordBoundary {
+            recording_session_id: "record-session-stage4".to_string(),
+            recording_state: Stage4RecordingState::Stopped,
+            audio_artifact_id: "audio-artifact-stage4".to_string(),
+            consent_state_id: "consent-stage4".to_string(),
+            artifact_lane_handoff_ref: "artifact-lane-stage4".to_string(),
+        };
+        let packet = Stage4TurnBoundaryPacket::record_artifact_only(
+            stage4_activation(
+                Stage4ActivationSource::RecordButton,
+                RuntimeEntryTrigger::Explicit,
+            ),
+            record_boundary,
+        )
+        .expect("record artifact packet");
+
+        assert!(!packet.is_committed_live_turn());
+        assert!(!packet.record_mode_can_be_live_chat());
+        assert!(!packet.route_authority().any_route_enabled());
+        assert!(packet.turn_id.is_none());
+        assert!(packet.device_turn_sequence.is_none());
+        assert!(packet.modality.is_none());
+        assert!(packet.record_boundary.is_some());
     }
 
     fn invite_click_request(
@@ -3679,7 +4150,10 @@ mod tests {
             AdmissionState::ExecutionAdmitted
         );
         assert!(ready.runtime_execution_envelope.identity_state.is_none());
-        assert!(ready.runtime_execution_envelope.voice_identity_assertion.is_none());
+        assert!(ready
+            .runtime_execution_envelope
+            .voice_identity_assertion
+            .is_none());
         assert!(ready.runtime_execution_envelope.authority_state.is_none());
         assert!(ready.runtime_execution_envelope.persistence_state.is_none());
         assert!(ready.runtime_execution_envelope.governance_state.is_none());
@@ -3709,7 +4183,10 @@ mod tests {
             RuntimePreAuthorityTurnResult::Ready(ready) => ready,
             other => panic!("expected ready handoff, got {other:?}"),
         };
-        assert!(ready.runtime_execution_envelope.voice_identity_assertion.is_none());
+        assert!(ready
+            .runtime_execution_envelope
+            .voice_identity_assertion
+            .is_none());
         let envelope = ready
             .runtime_execution_envelope
             .with_voice_identity_assertion(Some(sample_voice_identity_assertion()))
