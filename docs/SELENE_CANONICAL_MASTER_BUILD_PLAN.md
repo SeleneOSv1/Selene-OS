@@ -78,10 +78,10 @@ After every build, update this section before final reporting.
 
 | Field | Current Value |
 |---|---|
-| Current active stage | Stage 8 |
-| Current active build | Stage 8E - Accent, Mixed-Language, Domain Vocabulary, Alternative Transcript, And Second-Pass Repair Benchmark Reconciliation |
-| Next build after current stage passes | Stage 8E - Accent, Mixed-Language, Domain Vocabulary, Alternative Transcript, And Second-Pass Repair Benchmark Reconciliation |
-| Last completed stage | Stage 8D - Listening Lab Numeric Benchmarks, STT WER, Noise, Diarization, Endpoint Latency, And Calibration Reconciliation |
+| Current active stage | Stage 9 |
+| Current active build | Stage 9A - Voice ID Stack Reconciliation |
+| Next build after current stage passes | Stage 9A - Voice ID Stack Reconciliation |
+| Last completed stage | Stage 8F - Barge-In, Interruption, Cancel, Pause, Resume, And Output-Interaction Boundary Reconciliation |
 | Stages blocked | None yet |
 | Plan drift allowed | No |
 
@@ -1834,6 +1834,10 @@ Stage 8C status: PROVEN_COMPLETE
 
 Stage 8D status: PROVEN_COMPLETE
 
+Stage 8E status: PROVEN_COMPLETE
+
+Stage 8F status: PROVEN_COMPLETE
+
 Build:
 
 - `PH1.K` voice runtime audio substrate;
@@ -1989,8 +1993,6 @@ Stage 8D proof update:
 - Stage 8D did not add live microphone capture, live STT, live TTS, provider calls, live search, Voice ID matching, understanding, routing, native UI redesign, protected execution, connector writes, raw-audio retention, or duplicate benchmark/listening/STT/calibration engines.
 - Stage 8E is required before Stage 9A.
 
-Stage 8E status: PROVEN_COMPLETE.
-
 Stage 8E proof update:
 
 - Existing PH1.J benchmark envelopes, Stage 8D deterministic listening-lab packets, PH1.K, PH1.C, PH1.LISTEN, PH1.LANG, PH1.PRON, PH1.VOICE.ID-adjacent evidence, OS voice/listen carriers, and adapter voice-ingress surfaces were inspected and crosswalked rather than rebuilt as duplicate benchmark, listening, STT, language, pronunciation, vocabulary, or repair engines.
@@ -1998,13 +2000,27 @@ Stage 8E proof update:
 - Stage 8E proves accent markers remain benchmark metadata only, never identity or authority evidence; mixed-language/code-switch tokens are preserved without forced translation; domain vocabulary/pronunciation references are versioned/audit-visible where present; alternative transcript candidates are bounded, ordered, provider-agnostic, hashed, and non-committing; and second-pass repair can normalize fixture punctuation/case only when protected/domain tokens are preserved and no meaning drift or over-repair is detected.
 - Stage 8E preserves protected-token no-guess continuity from Stage 8B and Stage 8D: low-confidence or missing protected tokens clarify/fail closed, alternative candidates cannot guess protected tokens, and repair cannot invent names, dates, amounts, addresses, recipients, account IDs, action IDs, or authorization-relevant fields.
 - Stage 8E benchmark packets/results are evidence only. They cannot understand intent, answer, search, call providers, capture microphone audio, transcribe live audio, trigger Voice ID matching, authorize, emit TTS, route tools, connector-write, execute protected mutations, update memory/persona/emotion, or promote provider/model/router behavior.
-- Deterministic accent, mixed-language/code-switch, domain vocabulary/pronunciation, alternative transcript, and second-pass repair benchmark envelopes are certified for Stage 8E. Live accent/noisy-room/native-mic/provider second-pass, production STT WER, real diarization error rate, real provider latency, playback interruption, and Stage 17 TTS benchmarks remain deferred to Stage 8F, Stage 17, Stage 34, or later explicitly approved live/native-lab stages.
+- Deterministic accent, mixed-language/code-switch, domain vocabulary/pronunciation, alternative transcript, and second-pass repair benchmark envelopes are certified for Stage 8E. Live accent/noisy-room/native-mic/provider second-pass, production STT WER, real diarization error rate, real provider latency, live playback interruption, and Stage 17 TTS benchmarks remain deferred to Stage 17, Stage 34, or later explicitly approved live/native-lab stages.
 - Stage 8E did not add live microphone capture, live STT, live TTS, provider calls, live search, Voice ID matching, understanding, routing, native UI redesign, protected execution, connector writes, raw-audio retention, or duplicate benchmark/listening/STT/language/pronunciation/repair engines.
-- Stage 8F is required before Stage 9A.
+- Stage 8F was required before Stage 9A and is now closed below.
+
+Stage 8F status: PROVEN_COMPLETE.
+
+Stage 8F proof update:
+
+- Existing PH1.K, PH1.C, PH1.LISTEN, PH1.TTS, PH1.X, PH1.J, Stage 5 current-turn authority, Stage 7 activation context, Stage 8A transcript gate, Stage 8B endpoint/confidence gate, Stage 8C audio-scene evidence, and Stage 8D/8E benchmark carriers were inspected and crosswalked rather than rebuilt as duplicate output, playback, TTS, listen, interruption, or stale-render engines.
+- `Stage8FOutputInteractionPacket`, `Stage8FOutputInteractionKind`, `Stage8FOutputInteractionDisposition`, and `Stage8FOutputInteractionAuthority` now provide deterministic output-interaction boundary carriers for barge-in, interruption, cancel, pause, resume, output stopped, stale-output quarantine, and TTS self-echo blocking.
+- Stage 8F proves barge-in and interruption signals are boundary/control evidence only. They may mark output boundaries, request future output defer/cancel/pause behavior, block stale output, and emit audit/trace evidence, but cannot understand intent, answer, search, call providers, capture microphone audio, transcribe live audio, trigger Voice ID matching, authorize, emit TTS, route tools, connector-write, execute protected mutations, or commit turns by themselves.
+- Cancel, pause, resume, and output-stopped state are tied to current session/turn/output identity and Stage 5 current-turn authority. They cannot mutate protected state, become business approval/rejection/action, reopen stale/cancelled/superseded turns, or render stale output as the current answer.
+- Stale, cancelled, superseded, closed-session, and record-artifact output is quarantined before render. Old provider/tool/search/TTS results cannot render as current answers from Stage 8F state alone.
+- Stage 8F preserves TTS self-echo continuity from Stage 8A/8C: self-echo remains blocking/non-user evidence and cannot create user turns, pass endpoint/confidence/protected-slot gates, trigger Voice ID matching, route tools/search/providers/TTS/protected execution, or connector-write.
+- Stage 8F did not add live microphone capture, live STT, live TTS/playback, provider calls, live search, Voice ID matching, understanding, routing, native UI redesign, protected execution, connector writes, raw-audio retention, or duplicate output/playback/TTS/listen/interruption engines.
+- Barge-in/interruption/cancel/pause/resume/stale-output/TTS-self-echo boundary proof is certified for Stage 8F. Live interruption latency, real audio stop latency, native playback control, native mic/speaker loop, live TTS, production barge-in, and full live listening/native-lab benchmarks remain deferred to Stage 17, Stage 34, or later explicitly approved live/native-lab stages.
+- Stage 9A is ready to start. Broad Stage 8 foundation is closed for Stage 9A dependency purposes; live/native quality certification remains a later Stage 17/34 obligation.
 
 Next if passed:
 
-- Stage 8F - Barge-In, Interruption, Cancel, Pause, Resume, And Output-Interaction Boundary Reconciliation.
+- Stage 9A - Voice ID Stack Reconciliation.
 
 ## Stage 9 - Voice ID Stack
 

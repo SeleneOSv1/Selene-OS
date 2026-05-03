@@ -60,6 +60,14 @@ mod reason_codes {
     pub const STAGE8B_CONFIDENCE_GATE_REJECTED: &str = "stage8b_confidence_gate_rejected";
     pub const STAGE8C_AUDIO_SCENE_BOUNDARY_ONLY: &str = "stage8c_audio_scene_boundary_only";
     pub const STAGE8C_LISTENING_SCENE_BLOCKED: &str = "stage8c_listening_scene_blocked";
+    pub const STAGE8F_BARGE_IN_BOUNDARY: &str = "stage8f_barge_in_boundary";
+    pub const STAGE8F_INTERRUPTION_BOUNDARY: &str = "stage8f_interruption_boundary";
+    pub const STAGE8F_CANCEL_REQUESTED: &str = "stage8f_cancel_requested";
+    pub const STAGE8F_PAUSE_REQUESTED: &str = "stage8f_pause_requested";
+    pub const STAGE8F_RESUME_REQUESTED: &str = "stage8f_resume_requested";
+    pub const STAGE8F_OUTPUT_STOPPED: &str = "stage8f_output_stopped";
+    pub const STAGE8F_STALE_OUTPUT_QUARANTINED: &str = "stage8f_stale_output_quarantined";
+    pub const STAGE8F_SELF_ECHO_BLOCKED: &str = "stage8f_self_echo_blocked";
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2532,6 +2540,775 @@ impl Validate for Stage8EListeningRepairBenchmarkPacket {
             return Err(ContractViolation::InvalidValue {
                 field: "stage8e_repair_benchmark_packet.comparison_outcome",
                 reason: "blocked benchmark status requires blocked comparison outcome",
+            });
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stage8FOutputInteractionKind {
+    BargeInSignal,
+    InterruptionSignal,
+    CancelRequest,
+    PauseRequest,
+    ResumeRequest,
+    OutputStopped,
+    StaleOutputQuarantined,
+    SelfEchoBlocked,
+}
+
+impl Stage8FOutputInteractionKind {
+    pub const fn default_reason_code(self) -> &'static str {
+        match self {
+            Stage8FOutputInteractionKind::BargeInSignal => reason_codes::STAGE8F_BARGE_IN_BOUNDARY,
+            Stage8FOutputInteractionKind::InterruptionSignal => {
+                reason_codes::STAGE8F_INTERRUPTION_BOUNDARY
+            }
+            Stage8FOutputInteractionKind::CancelRequest => reason_codes::STAGE8F_CANCEL_REQUESTED,
+            Stage8FOutputInteractionKind::PauseRequest => reason_codes::STAGE8F_PAUSE_REQUESTED,
+            Stage8FOutputInteractionKind::ResumeRequest => reason_codes::STAGE8F_RESUME_REQUESTED,
+            Stage8FOutputInteractionKind::OutputStopped => reason_codes::STAGE8F_OUTPUT_STOPPED,
+            Stage8FOutputInteractionKind::StaleOutputQuarantined => {
+                reason_codes::STAGE8F_STALE_OUTPUT_QUARANTINED
+            }
+            Stage8FOutputInteractionKind::SelfEchoBlocked => {
+                reason_codes::STAGE8F_SELF_ECHO_BLOCKED
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stage8FOutputInteractionDisposition {
+    BoundaryOnly,
+    CancelRequested,
+    PauseRequested,
+    ResumeRequested,
+    Stopped,
+    BlockedStaleOutput,
+    BlockedSelfEcho,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Stage8FOutputInteractionAuthority {
+    pub can_mark_output_boundary: bool,
+    pub can_request_cancel: bool,
+    pub can_request_pause: bool,
+    pub can_request_resume: bool,
+    pub can_request_defer_output: bool,
+    pub can_block_stale_output: bool,
+    pub can_emit_audit_trace: bool,
+    pub can_understand_intent: bool,
+    pub can_answer: bool,
+    pub can_search: bool,
+    pub can_call_providers: bool,
+    pub can_capture_microphone_audio: bool,
+    pub can_transcribe_live_audio: bool,
+    pub can_trigger_voice_id_matching: bool,
+    pub can_authorize: bool,
+    pub can_emit_tts: bool,
+    pub can_route_tools: bool,
+    pub can_connector_write: bool,
+    pub can_execute_protected_mutation: bool,
+    pub can_update_memory_persona_emotion: bool,
+}
+
+impl Stage8FOutputInteractionAuthority {
+    pub const fn boundary_only() -> Self {
+        Self {
+            can_mark_output_boundary: true,
+            can_request_cancel: false,
+            can_request_pause: false,
+            can_request_resume: false,
+            can_request_defer_output: true,
+            can_block_stale_output: true,
+            can_emit_audit_trace: true,
+            can_understand_intent: false,
+            can_answer: false,
+            can_search: false,
+            can_call_providers: false,
+            can_capture_microphone_audio: false,
+            can_transcribe_live_audio: false,
+            can_trigger_voice_id_matching: false,
+            can_authorize: false,
+            can_emit_tts: false,
+            can_route_tools: false,
+            can_connector_write: false,
+            can_execute_protected_mutation: false,
+            can_update_memory_persona_emotion: false,
+        }
+    }
+
+    pub const fn cancel_request() -> Self {
+        Self {
+            can_request_cancel: true,
+            ..Self::boundary_only()
+        }
+    }
+
+    pub const fn pause_request() -> Self {
+        Self {
+            can_request_pause: true,
+            ..Self::boundary_only()
+        }
+    }
+
+    pub const fn resume_request() -> Self {
+        Self {
+            can_request_resume: true,
+            ..Self::boundary_only()
+        }
+    }
+
+    pub const fn stopped() -> Self {
+        Self::boundary_only()
+    }
+
+    pub const fn blocked_output() -> Self {
+        Self {
+            can_mark_output_boundary: false,
+            can_request_cancel: false,
+            can_request_pause: false,
+            can_request_resume: false,
+            can_request_defer_output: false,
+            can_block_stale_output: true,
+            can_emit_audit_trace: true,
+            can_understand_intent: false,
+            can_answer: false,
+            can_search: false,
+            can_call_providers: false,
+            can_capture_microphone_audio: false,
+            can_transcribe_live_audio: false,
+            can_trigger_voice_id_matching: false,
+            can_authorize: false,
+            can_emit_tts: false,
+            can_route_tools: false,
+            can_connector_write: false,
+            can_execute_protected_mutation: false,
+            can_update_memory_persona_emotion: false,
+        }
+    }
+
+    pub const fn can_route_or_mutate(self) -> bool {
+        self.can_understand_intent
+            || self.can_answer
+            || self.can_search
+            || self.can_call_providers
+            || self.can_capture_microphone_audio
+            || self.can_transcribe_live_audio
+            || self.can_trigger_voice_id_matching
+            || self.can_authorize
+            || self.can_emit_tts
+            || self.can_route_tools
+            || self.can_connector_write
+            || self.can_execute_protected_mutation
+            || self.can_update_memory_persona_emotion
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Stage8FOutputInteractionPacket {
+    pub activation_context: Stage7ActivationContextPacket,
+    pub kind: Stage8FOutputInteractionKind,
+    pub disposition: Stage8FOutputInteractionDisposition,
+    pub reason_code: &'static str,
+    pub session_id: SessionId,
+    pub turn_id: Option<TurnId>,
+    pub output_id: String,
+    pub tts_hash: Option<String>,
+    pub audio_scene_id: Option<String>,
+    pub endpoint_id: Option<String>,
+    pub transcript_id: Option<String>,
+    pub interruption_id: Option<String>,
+    pub cancel_id: Option<String>,
+    pub pause_resume_id: Option<String>,
+    pub consent_state_id: Option<String>,
+    pub device_trust_id: Option<String>,
+    pub provider_budget_id: Option<String>,
+    pub access_context_id: Option<String>,
+    pub audit_id: String,
+    pub stage5_turn_authority: Option<Stage5TurnAuthorityPacket>,
+    pub audio_scene_packet: Option<Stage8AudioScenePacket>,
+    pub current_output_identity: bool,
+    pub session_matches_output: bool,
+    pub turn_matches_output: bool,
+    pub output_stale: bool,
+    pub output_cancelled: bool,
+    pub output_superseded: bool,
+    pub session_closed: bool,
+    pub record_mode_artifact: bool,
+    pub tts_self_echo: bool,
+    pub work_authority: Stage8FOutputInteractionAuthority,
+}
+
+impl Stage8FOutputInteractionPacket {
+    pub fn barge_in_boundary(
+        activation_context: Stage7ActivationContextPacket,
+        audio_scene_packet: Stage8AudioScenePacket,
+        session_id: SessionId,
+        turn_id: Option<TurnId>,
+        output_id: impl Into<String>,
+        interruption_id: impl Into<String>,
+        audit_id: impl Into<String>,
+    ) -> Result<Self, ContractViolation> {
+        let audio_scene_id = Some(audio_scene_packet.audio_scene_id.clone());
+        let packet = Self::base(
+            activation_context,
+            Stage8FOutputInteractionKind::BargeInSignal,
+            Stage8FOutputInteractionDisposition::BoundaryOnly,
+            session_id,
+            turn_id,
+            output_id.into(),
+            audit_id.into(),
+            Stage8FOutputInteractionAuthority::boundary_only(),
+        )
+        .with_audio_scene(audio_scene_id, audio_scene_packet)
+        .with_interruption_id(interruption_id);
+        packet.validate()?;
+        Ok(packet)
+    }
+
+    pub fn interruption_boundary(
+        activation_context: Stage7ActivationContextPacket,
+        audio_scene_packet: Stage8AudioScenePacket,
+        session_id: SessionId,
+        turn_id: Option<TurnId>,
+        output_id: impl Into<String>,
+        interruption_id: impl Into<String>,
+        audit_id: impl Into<String>,
+    ) -> Result<Self, ContractViolation> {
+        let audio_scene_id = Some(audio_scene_packet.audio_scene_id.clone());
+        let packet = Self::base(
+            activation_context,
+            Stage8FOutputInteractionKind::InterruptionSignal,
+            Stage8FOutputInteractionDisposition::BoundaryOnly,
+            session_id,
+            turn_id,
+            output_id.into(),
+            audit_id.into(),
+            Stage8FOutputInteractionAuthority::boundary_only(),
+        )
+        .with_audio_scene(audio_scene_id, audio_scene_packet)
+        .with_interruption_id(interruption_id);
+        packet.validate()?;
+        Ok(packet)
+    }
+
+    pub fn cancel_current_output(
+        activation_context: Stage7ActivationContextPacket,
+        stage5_turn_authority: Stage5TurnAuthorityPacket,
+        output_id: impl Into<String>,
+        cancel_id: impl Into<String>,
+        audit_id: impl Into<String>,
+    ) -> Result<Self, ContractViolation> {
+        let session_id = stage5_turn_authority.session_id;
+        let turn_id = stage5_turn_authority.turn_id;
+        let packet = Self::base(
+            activation_context,
+            Stage8FOutputInteractionKind::CancelRequest,
+            Stage8FOutputInteractionDisposition::CancelRequested,
+            session_id,
+            turn_id,
+            output_id.into(),
+            audit_id.into(),
+            Stage8FOutputInteractionAuthority::cancel_request(),
+        )
+        .with_stage5_turn_authority(stage5_turn_authority)
+        .with_cancel_id(cancel_id);
+        packet.validate()?;
+        Ok(packet)
+    }
+
+    pub fn pause_current_output(
+        activation_context: Stage7ActivationContextPacket,
+        stage5_turn_authority: Stage5TurnAuthorityPacket,
+        output_id: impl Into<String>,
+        pause_resume_id: impl Into<String>,
+        audit_id: impl Into<String>,
+    ) -> Result<Self, ContractViolation> {
+        let session_id = stage5_turn_authority.session_id;
+        let turn_id = stage5_turn_authority.turn_id;
+        let packet = Self::base(
+            activation_context,
+            Stage8FOutputInteractionKind::PauseRequest,
+            Stage8FOutputInteractionDisposition::PauseRequested,
+            session_id,
+            turn_id,
+            output_id.into(),
+            audit_id.into(),
+            Stage8FOutputInteractionAuthority::pause_request(),
+        )
+        .with_stage5_turn_authority(stage5_turn_authority)
+        .with_pause_resume_id(pause_resume_id);
+        packet.validate()?;
+        Ok(packet)
+    }
+
+    pub fn resume_current_output(
+        activation_context: Stage7ActivationContextPacket,
+        stage5_turn_authority: Stage5TurnAuthorityPacket,
+        output_id: impl Into<String>,
+        pause_resume_id: impl Into<String>,
+        audit_id: impl Into<String>,
+    ) -> Result<Self, ContractViolation> {
+        let session_id = stage5_turn_authority.session_id;
+        let turn_id = stage5_turn_authority.turn_id;
+        let packet = Self::base(
+            activation_context,
+            Stage8FOutputInteractionKind::ResumeRequest,
+            Stage8FOutputInteractionDisposition::ResumeRequested,
+            session_id,
+            turn_id,
+            output_id.into(),
+            audit_id.into(),
+            Stage8FOutputInteractionAuthority::resume_request(),
+        )
+        .with_stage5_turn_authority(stage5_turn_authority)
+        .with_pause_resume_id(pause_resume_id);
+        packet.validate()?;
+        Ok(packet)
+    }
+
+    pub fn output_stopped(
+        activation_context: Stage7ActivationContextPacket,
+        stage5_turn_authority: Stage5TurnAuthorityPacket,
+        output_id: impl Into<String>,
+        audit_id: impl Into<String>,
+    ) -> Result<Self, ContractViolation> {
+        let session_id = stage5_turn_authority.session_id;
+        let turn_id = stage5_turn_authority.turn_id;
+        let packet = Self::base(
+            activation_context,
+            Stage8FOutputInteractionKind::OutputStopped,
+            Stage8FOutputInteractionDisposition::Stopped,
+            session_id,
+            turn_id,
+            output_id.into(),
+            audit_id.into(),
+            Stage8FOutputInteractionAuthority::stopped(),
+        )
+        .with_stage5_turn_authority(stage5_turn_authority);
+        packet.validate()?;
+        Ok(packet)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn stale_output_quarantined(
+        activation_context: Stage7ActivationContextPacket,
+        session_id: SessionId,
+        turn_id: Option<TurnId>,
+        output_id: impl Into<String>,
+        audit_id: impl Into<String>,
+        output_cancelled: bool,
+        output_superseded: bool,
+        session_closed: bool,
+        record_mode_artifact: bool,
+    ) -> Result<Self, ContractViolation> {
+        let mut packet = Self::base(
+            activation_context,
+            Stage8FOutputInteractionKind::StaleOutputQuarantined,
+            Stage8FOutputInteractionDisposition::BlockedStaleOutput,
+            session_id,
+            turn_id,
+            output_id.into(),
+            audit_id.into(),
+            Stage8FOutputInteractionAuthority::blocked_output(),
+        );
+        packet.current_output_identity = false;
+        packet.session_matches_output = !session_closed;
+        packet.turn_matches_output = !(output_superseded || output_cancelled);
+        packet.output_stale = true;
+        packet.output_cancelled = output_cancelled;
+        packet.output_superseded = output_superseded;
+        packet.session_closed = session_closed;
+        packet.record_mode_artifact = record_mode_artifact;
+        packet.validate()?;
+        Ok(packet)
+    }
+
+    pub fn self_echo_blocked(
+        activation_context: Stage7ActivationContextPacket,
+        audio_scene_packet: Stage8AudioScenePacket,
+        session_id: SessionId,
+        turn_id: Option<TurnId>,
+        output_id: impl Into<String>,
+        audit_id: impl Into<String>,
+    ) -> Result<Self, ContractViolation> {
+        let audio_scene_id = Some(audio_scene_packet.audio_scene_id.clone());
+        let mut packet = Self::base(
+            activation_context,
+            Stage8FOutputInteractionKind::SelfEchoBlocked,
+            Stage8FOutputInteractionDisposition::BlockedSelfEcho,
+            session_id,
+            turn_id,
+            output_id.into(),
+            audit_id.into(),
+            Stage8FOutputInteractionAuthority::blocked_output(),
+        )
+        .with_audio_scene(audio_scene_id, audio_scene_packet);
+        packet.current_output_identity = false;
+        packet.tts_self_echo = true;
+        packet.validate()?;
+        Ok(packet)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn base(
+        activation_context: Stage7ActivationContextPacket,
+        kind: Stage8FOutputInteractionKind,
+        disposition: Stage8FOutputInteractionDisposition,
+        session_id: SessionId,
+        turn_id: Option<TurnId>,
+        output_id: String,
+        audit_id: String,
+        work_authority: Stage8FOutputInteractionAuthority,
+    ) -> Self {
+        Self {
+            consent_state_id: activation_context.consent_state_id.clone(),
+            device_trust_id: activation_context.device_trust_id.clone(),
+            provider_budget_id: activation_context.provider_budget_id.clone(),
+            access_context_id: activation_context.access_context_id.clone(),
+            activation_context,
+            kind,
+            disposition,
+            reason_code: kind.default_reason_code(),
+            session_id,
+            turn_id,
+            output_id,
+            tts_hash: None,
+            audio_scene_id: None,
+            endpoint_id: None,
+            transcript_id: None,
+            interruption_id: None,
+            cancel_id: None,
+            pause_resume_id: None,
+            audit_id,
+            stage5_turn_authority: None,
+            audio_scene_packet: None,
+            current_output_identity: true,
+            session_matches_output: true,
+            turn_matches_output: true,
+            output_stale: false,
+            output_cancelled: false,
+            output_superseded: false,
+            session_closed: false,
+            record_mode_artifact: false,
+            tts_self_echo: false,
+            work_authority,
+        }
+    }
+
+    fn with_audio_scene(
+        mut self,
+        audio_scene_id: Option<String>,
+        audio_scene_packet: Stage8AudioScenePacket,
+    ) -> Self {
+        self.audio_scene_id = audio_scene_id;
+        self.audio_scene_packet = Some(audio_scene_packet);
+        self
+    }
+
+    fn with_interruption_id(mut self, interruption_id: impl Into<String>) -> Self {
+        self.interruption_id = Some(interruption_id.into());
+        self
+    }
+
+    fn with_stage5_turn_authority(
+        mut self,
+        stage5_turn_authority: Stage5TurnAuthorityPacket,
+    ) -> Self {
+        self.stage5_turn_authority = Some(stage5_turn_authority);
+        self
+    }
+
+    fn with_cancel_id(mut self, cancel_id: impl Into<String>) -> Self {
+        self.cancel_id = Some(cancel_id.into());
+        self
+    }
+
+    fn with_pause_resume_id(mut self, pause_resume_id: impl Into<String>) -> Self {
+        self.pause_resume_id = Some(pause_resume_id.into());
+        self
+    }
+
+    pub const fn can_route_or_mutate(&self) -> bool {
+        self.work_authority.can_route_or_mutate()
+    }
+
+    pub const fn blocks_stale_output(&self) -> bool {
+        self.work_authority.can_block_stale_output && !self.work_authority.can_route_or_mutate()
+    }
+}
+
+impl Validate for Stage8FOutputInteractionPacket {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        self.activation_context.validate()?;
+        if self.record_mode_artifact {
+            if self.activation_context.disposition
+                != Stage7ActivationDisposition::RecordArtifactDeferred
+            {
+                return Err(ContractViolation::InvalidValue {
+                    field: "stage8f_output_interaction_packet.activation_context",
+                    reason: "record artifact output quarantine requires record activation context",
+                });
+            }
+        } else {
+            validate_stage8_voice_activation(&self.activation_context)?;
+        }
+        validate_stage4_ref(
+            "stage8f_output_interaction_packet.output_id",
+            &self.output_id,
+        )?;
+        validate_stage4_optional_ref(
+            "stage8f_output_interaction_packet.tts_hash",
+            self.tts_hash.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage8f_output_interaction_packet.audio_scene_id",
+            self.audio_scene_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage8f_output_interaction_packet.endpoint_id",
+            self.endpoint_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage8f_output_interaction_packet.transcript_id",
+            self.transcript_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage8f_output_interaction_packet.interruption_id",
+            self.interruption_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage8f_output_interaction_packet.cancel_id",
+            self.cancel_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage8f_output_interaction_packet.pause_resume_id",
+            self.pause_resume_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage8f_output_interaction_packet.consent_state_id",
+            self.consent_state_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage8f_output_interaction_packet.device_trust_id",
+            self.device_trust_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage8f_output_interaction_packet.provider_budget_id",
+            self.provider_budget_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage8f_output_interaction_packet.access_context_id",
+            self.access_context_id.as_deref(),
+        )?;
+        validate_stage4_ref("stage8f_output_interaction_packet.audit_id", &self.audit_id)?;
+        if self.reason_code != self.kind.default_reason_code() {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage8f_output_interaction_packet.reason_code",
+                reason: "must match output interaction kind",
+            });
+        }
+        if self.work_authority.can_route_or_mutate() {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage8f_output_interaction_packet.work_authority",
+                reason: "output interaction evidence cannot execute, route, speak, capture, call providers, identify, authorize, or mutate",
+            });
+        }
+        if let Some(scene) = self.audio_scene_packet.as_ref() {
+            scene.validate()?;
+            if self.audio_scene_id.as_deref() != Some(scene.audio_scene_id.as_str()) {
+                return Err(ContractViolation::InvalidValue {
+                    field: "stage8f_output_interaction_packet.audio_scene_id",
+                    reason: "audio scene id must match the attached scene packet",
+                });
+            }
+            if scene.record_mode_audio && !self.record_mode_artifact {
+                return Err(ContractViolation::InvalidValue {
+                    field: "stage8f_output_interaction_packet.audio_scene_packet",
+                    reason: "record-mode scene evidence cannot become output interaction state",
+                });
+            }
+        }
+        if let Some(authority) = self.stage5_turn_authority.as_ref() {
+            authority.validate()?;
+            if authority.session_id != self.session_id || authority.turn_id != self.turn_id {
+                return Err(ContractViolation::InvalidValue {
+                    field: "stage8f_output_interaction_packet.stage5_turn_authority",
+                    reason: "Stage 5 authority must match output interaction session and turn",
+                });
+            }
+        }
+
+        match self.kind {
+            Stage8FOutputInteractionKind::BargeInSignal
+            | Stage8FOutputInteractionKind::InterruptionSignal => {
+                let Some(scene) = self.audio_scene_packet.as_ref() else {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "stage8f_output_interaction_packet.audio_scene_packet",
+                        reason: "barge-in or interruption boundary requires scene evidence",
+                    });
+                };
+                if self.disposition != Stage8FOutputInteractionDisposition::BoundaryOnly
+                    || !scene.barge_in_or_interruption_marker
+                    || self.interruption_id.is_none()
+                    || !self.current_output_identity
+                    || !self.session_matches_output
+                    || !self.turn_matches_output
+                    || !self.work_authority.can_mark_output_boundary
+                    || !self.work_authority.can_request_defer_output
+                    || !self.work_authority.can_block_stale_output
+                    || self.cancel_id.is_some()
+                    || self.pause_resume_id.is_some()
+                    || self.stage5_turn_authority.is_some()
+                    || self.output_stale
+                    || self.output_cancelled
+                    || self.output_superseded
+                    || self.session_closed
+                    || self.record_mode_artifact
+                {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "stage8f_output_interaction_packet",
+                        reason: "barge-in and interruption are boundary-only controls tied to current output identity",
+                    });
+                }
+            }
+            Stage8FOutputInteractionKind::CancelRequest => {
+                self.validate_current_output_control(
+                    Stage8FOutputInteractionDisposition::CancelRequested,
+                    "cancel",
+                )?;
+                if self.cancel_id.is_none() || !self.work_authority.can_request_cancel {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "stage8f_output_interaction_packet.cancel_id",
+                        reason: "cancel requires an auditable cancel id and cancel authority only",
+                    });
+                }
+            }
+            Stage8FOutputInteractionKind::PauseRequest => {
+                self.validate_current_output_control(
+                    Stage8FOutputInteractionDisposition::PauseRequested,
+                    "pause",
+                )?;
+                if self.pause_resume_id.is_none() || !self.work_authority.can_request_pause {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "stage8f_output_interaction_packet.pause_resume_id",
+                        reason:
+                            "pause requires an auditable pause/resume id and pause authority only",
+                    });
+                }
+            }
+            Stage8FOutputInteractionKind::ResumeRequest => {
+                self.validate_current_output_control(
+                    Stage8FOutputInteractionDisposition::ResumeRequested,
+                    "resume",
+                )?;
+                if self.pause_resume_id.is_none()
+                    || !self.work_authority.can_request_resume
+                    || self.tts_self_echo
+                {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "stage8f_output_interaction_packet.pause_resume_id",
+                        reason: "resume requires a current non-stale output identity and cannot resume self-echo",
+                    });
+                }
+            }
+            Stage8FOutputInteractionKind::OutputStopped => {
+                self.validate_current_output_control(
+                    Stage8FOutputInteractionDisposition::Stopped,
+                    "output-stopped",
+                )?;
+                if !self.work_authority.can_mark_output_boundary {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "stage8f_output_interaction_packet.work_authority",
+                        reason: "output stopped is boundary evidence only",
+                    });
+                }
+            }
+            Stage8FOutputInteractionKind::StaleOutputQuarantined => {
+                if self.disposition != Stage8FOutputInteractionDisposition::BlockedStaleOutput
+                    || !self.output_stale
+                    || !self.work_authority.can_block_stale_output
+                    || self.work_authority.can_mark_output_boundary
+                    || self.current_output_identity
+                    || !(self.output_cancelled
+                        || self.output_superseded
+                        || self.session_closed
+                        || self.record_mode_artifact
+                        || !self.session_matches_output
+                        || !self.turn_matches_output)
+                    || self.cancel_id.is_some()
+                    || self.pause_resume_id.is_some()
+                    || self.interruption_id.is_some()
+                {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "stage8f_output_interaction_packet",
+                        reason: "stale output quarantine must block non-current, cancelled, superseded, closed-session, or record-artifact output",
+                    });
+                }
+            }
+            Stage8FOutputInteractionKind::SelfEchoBlocked => {
+                let scene_self_echo = self
+                    .audio_scene_packet
+                    .as_ref()
+                    .is_some_and(|scene| scene.self_echo_suspect || scene.echo_suspect);
+                if self.disposition != Stage8FOutputInteractionDisposition::BlockedSelfEcho
+                    || !(self.tts_self_echo || scene_self_echo)
+                    || !self.work_authority.can_block_stale_output
+                    || self.work_authority.can_mark_output_boundary
+                    || self.stage5_turn_authority.is_some()
+                    || self.current_output_identity
+                    || self.cancel_id.is_some()
+                    || self.pause_resume_id.is_some()
+                    || self.interruption_id.is_some()
+                {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "stage8f_output_interaction_packet",
+                        reason: "TTS self-echo can only be blocked as non-user audio evidence",
+                    });
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+impl Stage8FOutputInteractionPacket {
+    fn validate_current_output_control(
+        &self,
+        expected_disposition: Stage8FOutputInteractionDisposition,
+        field_name: &'static str,
+    ) -> Result<(), ContractViolation> {
+        let Some(authority) = self.stage5_turn_authority.as_ref() else {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage8f_output_interaction_packet.stage5_turn_authority",
+                reason: "current output controls require Stage 5 current-turn authority",
+            });
+        };
+        if self.disposition != expected_disposition
+            || authority.disposition != Stage5TurnAuthorityDisposition::CurrentCommittedTurn
+            || !authority.can_render_current_result()
+            || authority.can_route_any_work()
+            || !self.current_output_identity
+            || !self.session_matches_output
+            || !self.turn_matches_output
+            || self.output_stale
+            || self.output_cancelled
+            || self.output_superseded
+            || self.session_closed
+            || self.record_mode_artifact
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage8f_output_interaction_packet",
+                reason: match field_name {
+                    "cancel" => "cancel must be tied to current output identity and cannot mutate protected state",
+                    "pause" => "pause must be tied to current output identity and cannot mutate protected state",
+                    "resume" => "resume requires current non-stale output identity",
+                    "output-stopped" => "output stopped evidence must be tied to current output identity",
+                    _ => "output control requires current output identity",
+                },
             });
         }
         Ok(())
@@ -7247,6 +8024,25 @@ mod tests {
         .expect("blocked stage 8c scene")
     }
 
+    fn stage8f_barge_scene(audio_scene_id: &str) -> Stage8AudioScenePacket {
+        Stage8AudioScenePacket::v1(
+            audio_scene_id,
+            Some(stage8c_foreground(9_000, true)),
+            Some(stage8c_addressed(9_100, true)),
+            Stage8AudioSceneDisposition::AdvisoryOnly,
+            Stage8NoiseDegradationClass::Clear,
+            false,
+            false,
+            false,
+            false,
+            false,
+            true,
+            false,
+            "stage8f-barge-boundary",
+        )
+        .expect("stage8f barge scene")
+    }
+
     fn stage8d_target(
         target_id: &str,
         metric_name: &str,
@@ -8040,6 +8836,182 @@ mod tests {
             BenchmarkComparisonOutcome::Blocked
         );
         assert!(!packet.can_route_or_mutate());
+    }
+
+    #[test]
+    fn stage_8f_barge_in_boundary_is_output_control_only() {
+        let packet = Stage8FOutputInteractionPacket::barge_in_boundary(
+            stage8_explicit_mic_activation(Some(SessionId(88))),
+            stage8f_barge_scene("audio-scene-stage8f-barge"),
+            SessionId(88),
+            Some(TurnId(8)),
+            "output-stage8f-barge",
+            "interrupt-stage8f-barge",
+            "audit-stage8f-barge",
+        )
+        .expect("stage8f barge-in boundary");
+
+        assert_eq!(packet.kind, Stage8FOutputInteractionKind::BargeInSignal);
+        assert_eq!(
+            packet.disposition,
+            Stage8FOutputInteractionDisposition::BoundaryOnly
+        );
+        assert!(packet.work_authority.can_mark_output_boundary);
+        assert!(packet.work_authority.can_request_defer_output);
+        assert!(packet.blocks_stale_output());
+        assert!(!packet.can_route_or_mutate());
+        assert!(!packet.work_authority.can_emit_tts);
+        assert!(!packet.work_authority.can_call_providers);
+        assert!(!packet.work_authority.can_trigger_voice_id_matching);
+        assert!(packet.stage5_turn_authority.is_none());
+
+        let mut invalid = packet.clone();
+        invalid.work_authority.can_emit_tts = true;
+        assert!(invalid.validate().is_err());
+    }
+
+    #[test]
+    fn stage_8f_cancel_pause_resume_are_tied_to_current_output_identity() {
+        let activation = stage8_explicit_mic_activation(Some(SessionId(88)));
+        let authority = stage8_current_authority();
+        let cancel = Stage8FOutputInteractionPacket::cancel_current_output(
+            activation.clone(),
+            authority.clone(),
+            "output-stage8f-control",
+            "cancel-stage8f-control",
+            "audit-stage8f-cancel",
+        )
+        .expect("stage8f cancel current output");
+
+        assert_eq!(cancel.kind, Stage8FOutputInteractionKind::CancelRequest);
+        assert!(cancel.work_authority.can_request_cancel);
+        assert!(cancel.blocks_stale_output());
+        assert!(!cancel.can_route_or_mutate());
+        assert_eq!(cancel.session_id, authority.session_id);
+        assert_eq!(cancel.turn_id, authority.turn_id);
+
+        let pause = Stage8FOutputInteractionPacket::pause_current_output(
+            activation.clone(),
+            authority.clone(),
+            "output-stage8f-control",
+            "pause-resume-stage8f-control",
+            "audit-stage8f-pause",
+        )
+        .expect("stage8f pause current output");
+        assert!(pause.work_authority.can_request_pause);
+        assert!(!pause.can_route_or_mutate());
+
+        let resume = Stage8FOutputInteractionPacket::resume_current_output(
+            activation,
+            authority,
+            "output-stage8f-control",
+            "pause-resume-stage8f-control",
+            "audit-stage8f-resume",
+        )
+        .expect("stage8f resume current output");
+        assert!(resume.work_authority.can_request_resume);
+        assert!(!resume.can_route_or_mutate());
+
+        let mut stale_resume = resume.clone();
+        stale_resume.output_stale = true;
+        assert!(stale_resume.validate().is_err());
+    }
+
+    #[test]
+    fn stage_8f_stale_output_quarantine_blocks_render_after_state_changes() {
+        let cancelled = Stage8FOutputInteractionPacket::stale_output_quarantined(
+            stage8_explicit_mic_activation(Some(SessionId(88))),
+            SessionId(88),
+            Some(TurnId(8)),
+            "output-stage8f-cancelled",
+            "audit-stage8f-cancelled",
+            true,
+            false,
+            false,
+            false,
+        )
+        .expect("cancelled stale output quarantine");
+        assert_eq!(
+            cancelled.disposition,
+            Stage8FOutputInteractionDisposition::BlockedStaleOutput
+        );
+        assert!(cancelled.output_stale);
+        assert!(cancelled.output_cancelled);
+        assert!(!cancelled.current_output_identity);
+        assert!(cancelled.blocks_stale_output());
+        assert!(!cancelled.can_route_or_mutate());
+
+        let closed = Stage8FOutputInteractionPacket::stale_output_quarantined(
+            stage8_explicit_mic_activation(Some(SessionId(88))),
+            SessionId(88),
+            Some(TurnId(8)),
+            "output-stage8f-closed",
+            "audit-stage8f-closed",
+            false,
+            false,
+            true,
+            false,
+        )
+        .expect("closed-session stale output quarantine");
+        assert!(closed.session_closed);
+        assert!(!closed.session_matches_output);
+
+        let record_artifact = Stage8FOutputInteractionPacket::stale_output_quarantined(
+            stage8_record_activation(),
+            SessionId(88),
+            None,
+            "output-stage8f-record",
+            "audit-stage8f-record",
+            false,
+            false,
+            false,
+            true,
+        )
+        .expect("record artifact stale output quarantine");
+        assert!(record_artifact.record_mode_artifact);
+        assert!(!record_artifact.can_route_or_mutate());
+
+        let rejected_current = Stage8FOutputInteractionPacket::stale_output_quarantined(
+            stage8_explicit_mic_activation(Some(SessionId(88))),
+            SessionId(88),
+            Some(TurnId(8)),
+            "output-stage8f-current",
+            "audit-stage8f-current",
+            false,
+            false,
+            false,
+            false,
+        );
+        assert!(rejected_current.is_err());
+    }
+
+    #[test]
+    fn stage_8f_tts_self_echo_cannot_create_user_turn_or_output_control() {
+        let packet = Stage8FOutputInteractionPacket::self_echo_blocked(
+            stage8_explicit_mic_activation(Some(SessionId(88))),
+            stage8c_blocked_scene(
+                "audio-scene-stage8f-self-echo",
+                Stage8AudioSceneDisposition::BlockedSelfEcho,
+            ),
+            SessionId(88),
+            Some(TurnId(8)),
+            "output-stage8f-self-echo",
+            "audit-stage8f-self-echo",
+        )
+        .expect("stage8f self echo block");
+
+        assert_eq!(packet.kind, Stage8FOutputInteractionKind::SelfEchoBlocked);
+        assert!(packet.tts_self_echo);
+        assert!(!packet.current_output_identity);
+        assert!(packet.stage5_turn_authority.is_none());
+        assert!(packet.blocks_stale_output());
+        assert!(!packet.can_route_or_mutate());
+        assert!(!packet.work_authority.can_emit_tts);
+        assert!(!packet.work_authority.can_trigger_voice_id_matching);
+
+        let mut invalid = packet.clone();
+        invalid.current_output_identity = true;
+        assert!(invalid.validate().is_err());
     }
 
     #[test]

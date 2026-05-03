@@ -36,7 +36,7 @@ Large stages are build families. A future Codex build must select one exact slic
 | 8C | Listening lab scene/noise/echo/diarization | Stage8TranscriptGatePacket, Stage8EndpointState, Stage8ConfidenceGateDisposition | Stage8AudioScenePacket, Stage8ForegroundSpeakerPacket, Stage8AddressedToSelenePacket | PROVEN_COMPLETE: scene, foreground, addressed, echo, noise, overlap, and barge-in signals are advisory or blocking-only; they cannot identify, authorize, route, execute, call providers, speak TTS, or commit turns by themselves; record audio remains artifact-only. |
 | 8D | Listening lab numeric benchmarks, STT WER, noise, diarization, endpoint latency, and calibration | BenchmarkTargetPacket, BenchmarkResultPacket, Stage8AudioScenePacket | Stage8DTranscriptMetricPacket, Stage8DEndpointLatencyMetricPacket, Stage8DSceneCalibrationMetricPacket, Stage8DListeningBenchmarkPacket | PROVEN_COMPLETE: deterministic fixture-only WER/CER/protected-token scoring, endpoint latency classification, noise/echo/overlap/addressed calibration, blocked live benchmark status, and no live mic/STT/TTS/provider/search/Voice ID/protected execution behavior. |
 | 8E | Accent, mixed-language, domain vocabulary, alternative transcript, and second-pass repair benchmark reconciliation | Stage8DListeningBenchmarkPacket, Stage8TranscriptGatePacket, PH1.LANG, PH1.PRON | Stage8ERepairBenchmarkFixture, Stage8EAlternativeTranscriptCandidateSetPacket, Stage8ERepairDecisionPacket, Stage8ERepairBenchmarkMetricPacket, Stage8EListeningRepairBenchmarkPacket | PROVEN_COMPLETE: deterministic fixture-only accent, mixed-language/code-switch, domain vocabulary/pronunciation, bounded alternative transcript, and second-pass repair/no-repair benchmark envelopes preserve protected-token no-guess continuity and cannot understand, route, execute, call providers, capture live audio, speak TTS, connector-write, mutate, or promote providers. |
-| 8F | Barge-in, interruption, cancel/resume | TtsPacket, ResponsivenessStatePacket | cancellation and resume state | stale output blocked |
+| 8F | Barge-in, interruption, cancel, pause, resume, and output-interaction boundary | Stage8AudioScenePacket, Stage5TurnAuthorityPacket, PH1.TTS, PH1.X | Stage8FOutputInteractionPacket, Stage8FOutputInteractionAuthority | PROVEN_COMPLETE: barge-in/interruption/cancel/pause/resume/output-stopped state is boundary/control-only, tied to current session/turn/output identity where needed, quarantines stale/cancelled/superseded/closed/record-artifact output before render, blocks TTS self-echo from creating user turns, and cannot execute/search/speak/call providers/identify/authorize/route tools/connector-write/protected-mutate. |
 
 ## Stage 10 - Universal Understanding And Perception Assist
 
@@ -112,10 +112,10 @@ Large stages are build families. A future Codex build must select one exact slic
 | 30E | Custom assistant builder/store | AssistantDefinitionPacket | assistant release artifact | governance proof |
 | 30F | Self-heal/dev lane | dev route | proposal artifact | no uncontrolled shell/tool bypass |
 
-## Next Slice After Stage 8E
+## Next Slice After Stage 8F
 
 ```text
-Stage 8F - Barge-In, Interruption, Cancel, Pause, Resume, And Output-Interaction Boundary Reconciliation
+Stage 9A - Voice ID Stack Reconciliation
 ```
 
 Stage 8A is PROVEN_COMPLETE. It added the minimal runtime-owned `Stage8TranscriptGatePacket` carrier, preserved PH1.K, PH1.C, PH1.LISTEN, Stage 7 activation, Stage 5 current-turn authority, and adapter voice surfaces as repo truth, and did not build live mic capture, live STT/TTS, Voice ID matching, understanding, routing, search, native UI redesign, protected execution, or provider/model routing.
@@ -128,4 +128,6 @@ Stage 8C is PROVEN_COMPLETE. It extends the existing Stage 8A/8B transcript gate
 
 Stage 8D is PROVEN_COMPLETE. It adds deterministic PH1.J-backed listening-lab benchmark packets and fixture-only scoring for WER/CER-style edit counts, protected-token mismatches, endpoint latency, noise/echo/overlap/addressed calibration, and blocked live benchmark status while preserving no-live-mic/no-live-STT/no-provider/no-execution scope. Stage 8E is the next exact build for accent, mixed-language, domain vocabulary, alternatives, and second-pass repair benchmark reconciliation.
 
-Stage 8E is PROVEN_COMPLETE. It adds deterministic PH1.J-backed repair benchmark packets and fixture-only scoring for accent metadata, mixed-language/code-switch preservation, domain vocabulary/pronunciation references, bounded alternative transcript candidate sets, and second-pass repair/no-repair decisions while preserving protected-token no-guess continuity and no-live-mic/no-live-STT/no-provider/no-execution scope. Stage 8F is the next exact build for barge-in, interruption, cancel, pause, resume, and output-interaction boundary reconciliation.
+Stage 8E is PROVEN_COMPLETE. It adds deterministic PH1.J-backed repair benchmark packets and fixture-only scoring for accent metadata, mixed-language/code-switch preservation, domain vocabulary/pronunciation references, bounded alternative transcript candidate sets, and second-pass repair/no-repair decisions while preserving protected-token no-guess continuity and no-live-mic/no-live-STT/no-provider/no-execution scope.
+
+Stage 8F is PROVEN_COMPLETE. It adds `Stage8FOutputInteractionPacket` and `Stage8FOutputInteractionAuthority` on top of Stage 8A-E carriers, PH1.TTS, PH1.X, and Stage 5 current-turn authority. Barge-in, interruption, cancel, pause, resume, output-stopped, stale-output quarantine, and TTS self-echo blocking remain output-control evidence only; stale output cannot render as current; self-echo cannot create user turns; and no live playback, live STT/TTS, provider call, Voice ID matching, native UI, routing, connector write, or protected execution behavior is added. Stage 9A is the next exact build for Voice ID stack reconciliation.
