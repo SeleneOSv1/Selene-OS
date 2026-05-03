@@ -41,6 +41,15 @@ mod reason_codes {
     pub const OWNERSHIP_TRANSFER_INVALID_TARGET: &str = "runtime_session_transfer_invalid_target";
     pub const BACKPRESSURE_EXCEEDED: &str = "runtime_session_backpressure_exceeded";
     pub const INTEGRITY_VIOLATION: &str = "runtime_session_integrity_violation";
+    pub const STAGE5_CURRENT_COMMITTED_TURN: &str = "stage5_current_committed_turn";
+    pub const STAGE5_RETRY_REUSED_RESULT: &str = "stage5_retry_reused_result";
+    pub const STAGE5_DEFERRED_TURN: &str = "stage5_deferred_turn";
+    pub const STAGE5_STALE_TURN_QUARANTINED: &str = "stage5_stale_turn_quarantined";
+    pub const STAGE5_SUPERSEDED_TURN_QUARANTINED: &str = "stage5_superseded_turn_quarantined";
+    pub const STAGE5_CANCELLED_TURN_QUARANTINED: &str = "stage5_cancelled_turn_quarantined";
+    pub const STAGE5_ABANDONED_TURN_QUARANTINED: &str = "stage5_abandoned_turn_quarantined";
+    pub const STAGE5_CLOSED_SESSION_REJECTED: &str = "stage5_closed_session_rejected";
+    pub const STAGE5_RECORD_ARTIFACT_ONLY: &str = "stage5_record_artifact_only";
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -647,6 +656,236 @@ pub struct SessionTurnCommit {
     pub projection: SessionRuntimeProjection,
     pub classification: DeviceTimelineClassification,
     pub previous_state: SessionState,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stage5TurnAuthorityDisposition {
+    CurrentCommittedTurn,
+    RetryReusedResult,
+    DeferredTurn,
+    StaleTurnQuarantined,
+    SupersededTurnQuarantined,
+    CancelledTurnQuarantined,
+    AbandonedTurnQuarantined,
+    ClosedSessionRejected,
+    RecordArtifactOnly,
+}
+
+impl Stage5TurnAuthorityDisposition {
+    pub const fn default_reason_code(self) -> &'static str {
+        match self {
+            Stage5TurnAuthorityDisposition::CurrentCommittedTurn => {
+                reason_codes::STAGE5_CURRENT_COMMITTED_TURN
+            }
+            Stage5TurnAuthorityDisposition::RetryReusedResult => {
+                reason_codes::STAGE5_RETRY_REUSED_RESULT
+            }
+            Stage5TurnAuthorityDisposition::DeferredTurn => reason_codes::STAGE5_DEFERRED_TURN,
+            Stage5TurnAuthorityDisposition::StaleTurnQuarantined => {
+                reason_codes::STAGE5_STALE_TURN_QUARANTINED
+            }
+            Stage5TurnAuthorityDisposition::SupersededTurnQuarantined => {
+                reason_codes::STAGE5_SUPERSEDED_TURN_QUARANTINED
+            }
+            Stage5TurnAuthorityDisposition::CancelledTurnQuarantined => {
+                reason_codes::STAGE5_CANCELLED_TURN_QUARANTINED
+            }
+            Stage5TurnAuthorityDisposition::AbandonedTurnQuarantined => {
+                reason_codes::STAGE5_ABANDONED_TURN_QUARANTINED
+            }
+            Stage5TurnAuthorityDisposition::ClosedSessionRejected => {
+                reason_codes::STAGE5_CLOSED_SESSION_REJECTED
+            }
+            Stage5TurnAuthorityDisposition::RecordArtifactOnly => {
+                reason_codes::STAGE5_RECORD_ARTIFACT_ONLY
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Stage5TurnWorkAuthority {
+    pub can_enter_understanding: bool,
+    pub can_render_current_result: bool,
+    pub can_route_tools: bool,
+    pub can_route_search: bool,
+    pub can_route_providers: bool,
+    pub can_route_tts: bool,
+    pub can_route_protected_execution: bool,
+}
+
+impl Stage5TurnWorkAuthority {
+    pub const fn current_committed_turn() -> Self {
+        Self {
+            can_enter_understanding: true,
+            can_render_current_result: true,
+            can_route_tools: false,
+            can_route_search: false,
+            can_route_providers: false,
+            can_route_tts: false,
+            can_route_protected_execution: false,
+        }
+    }
+
+    pub const fn quarantined() -> Self {
+        Self {
+            can_enter_understanding: false,
+            can_render_current_result: false,
+            can_route_tools: false,
+            can_route_search: false,
+            can_route_providers: false,
+            can_route_tts: false,
+            can_route_protected_execution: false,
+        }
+    }
+
+    pub const fn can_route_any_work(self) -> bool {
+        self.can_route_tools
+            || self.can_route_search
+            || self.can_route_providers
+            || self.can_route_tts
+            || self.can_route_protected_execution
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Stage5TurnAuthorityPacket {
+    pub session_id: SessionId,
+    pub turn_id: Option<TurnId>,
+    pub device_id: Option<String>,
+    pub device_turn_sequence: Option<u64>,
+    pub session_state: SessionState,
+    pub disposition: Stage5TurnAuthorityDisposition,
+    pub reason_code: &'static str,
+    pub authority: Stage5TurnWorkAuthority,
+}
+
+impl Stage5TurnAuthorityPacket {
+    pub fn current_committed(
+        session_id: SessionId,
+        turn_id: TurnId,
+        device_id: impl Into<String>,
+        device_turn_sequence: u64,
+        session_state: SessionState,
+    ) -> Result<Self, ContractViolation> {
+        let packet = Self {
+            session_id,
+            turn_id: Some(turn_id),
+            device_id: Some(device_id.into()),
+            device_turn_sequence: Some(device_turn_sequence),
+            session_state,
+            disposition: Stage5TurnAuthorityDisposition::CurrentCommittedTurn,
+            reason_code: Stage5TurnAuthorityDisposition::CurrentCommittedTurn.default_reason_code(),
+            authority: Stage5TurnWorkAuthority::current_committed_turn(),
+        };
+        packet.validate()?;
+        Ok(packet)
+    }
+
+    pub fn quarantined(
+        session_id: SessionId,
+        turn_id: Option<TurnId>,
+        device_id: Option<String>,
+        device_turn_sequence: Option<u64>,
+        session_state: SessionState,
+        disposition: Stage5TurnAuthorityDisposition,
+    ) -> Result<Self, ContractViolation> {
+        let packet = Self {
+            session_id,
+            turn_id,
+            device_id,
+            device_turn_sequence,
+            session_state,
+            disposition,
+            reason_code: disposition.default_reason_code(),
+            authority: Stage5TurnWorkAuthority::quarantined(),
+        };
+        packet.validate()?;
+        Ok(packet)
+    }
+
+    pub const fn can_enter_understanding(&self) -> bool {
+        self.authority.can_enter_understanding
+    }
+
+    pub const fn can_render_current_result(&self) -> bool {
+        self.authority.can_render_current_result
+    }
+
+    pub const fn can_route_any_work(&self) -> bool {
+        self.authority.can_route_any_work()
+    }
+}
+
+impl Validate for Stage5TurnAuthorityPacket {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        if self.reason_code.trim().is_empty() || self.reason_code.len() > 128 {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage5_turn_authority_packet.reason_code",
+                reason: "must be a bounded non-empty reason code",
+            });
+        }
+        if let Some(device_id) = self.device_id.as_ref() {
+            validate_stage5_ascii_token("stage5_turn_authority_packet.device_id", device_id, 128)?;
+        }
+        if matches!(self.device_turn_sequence, Some(0)) {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage5_turn_authority_packet.device_turn_sequence",
+                reason: "must be greater than zero when present",
+            });
+        }
+        if self.authority.can_route_any_work() {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage5_turn_authority_packet.authority",
+                reason: "session/turn authority cannot route tools, search, providers, TTS, or protected execution",
+            });
+        }
+
+        match self.disposition {
+            Stage5TurnAuthorityDisposition::CurrentCommittedTurn => {
+                if self.turn_id.is_none()
+                    || self.device_id.is_none()
+                    || self.device_turn_sequence.is_none()
+                    || self.session_state == SessionState::Closed
+                    || !self.authority.can_enter_understanding
+                    || !self.authority.can_render_current_result
+                {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "stage5_turn_authority_packet",
+                        reason: "current committed turns require turn/device/sequence, open session state, understanding admission, and current-render authority",
+                    });
+                }
+            }
+            Stage5TurnAuthorityDisposition::ClosedSessionRejected => {
+                if self.session_state != SessionState::Closed {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "stage5_turn_authority_packet.session_state",
+                        reason: "closed-session rejection must carry session_state=Closed",
+                    });
+                }
+                if self.authority.can_enter_understanding
+                    || self.authority.can_render_current_result
+                {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "stage5_turn_authority_packet.authority",
+                        reason:
+                            "closed-session turns cannot enter understanding or render as current",
+                    });
+                }
+            }
+            _ => {
+                if self.authority.can_enter_understanding
+                    || self.authority.can_render_current_result
+                {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "stage5_turn_authority_packet.authority",
+                        reason: "quarantined turn dispositions cannot enter understanding or render as current",
+                    });
+                }
+            }
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1815,6 +2054,102 @@ impl RuntimeSessionFoundation {
         })
     }
 
+    pub fn authorize_stage5_current_committed_turn(
+        &self,
+        commit: &SessionTurnCommit,
+        permit: &SessionTurnPermit,
+    ) -> Result<Stage5TurnAuthorityPacket, SessionFoundationError> {
+        if commit.projection.session_id != permit.session_id
+            || commit.projection.turn_id != Some(permit.turn_id)
+            || commit.projection.device_turn_sequence != Some(permit.device_turn_sequence)
+            || commit.classification != DeviceTimelineClassification::New
+        {
+            return Err(SessionFoundationError::integrity_violation(
+                permit.session_id,
+                "committed turn projection must match the session turn permit before Stage 5 authority",
+            ));
+        }
+
+        let snapshot = self.session_snapshot(permit.session_id)?;
+        if snapshot.session_state == SessionState::Closed {
+            return Stage5TurnAuthorityPacket::quarantined(
+                permit.session_id,
+                Some(permit.turn_id),
+                Some(permit.device_id.clone()),
+                Some(permit.device_turn_sequence),
+                snapshot.session_state,
+                Stage5TurnAuthorityDisposition::ClosedSessionRejected,
+            )
+            .map_err(|_| {
+                SessionFoundationError::integrity_violation(
+                    permit.session_id,
+                    "Stage 5 closed-session quarantine packet failed validation",
+                )
+            });
+        }
+
+        if snapshot.active_writer.is_some() || !snapshot.deferred_turns.is_empty() {
+            return Stage5TurnAuthorityPacket::quarantined(
+                permit.session_id,
+                Some(permit.turn_id),
+                Some(permit.device_id.clone()),
+                Some(permit.device_turn_sequence),
+                snapshot.session_state,
+                Stage5TurnAuthorityDisposition::SupersededTurnQuarantined,
+            )
+            .map_err(|_| {
+                SessionFoundationError::integrity_violation(
+                    permit.session_id,
+                    "Stage 5 superseded-turn quarantine packet failed validation",
+                )
+            });
+        }
+
+        let Some(timeline) = snapshot
+            .device_timelines
+            .iter()
+            .find(|timeline| timeline.device_id == permit.device_id)
+        else {
+            return Err(SessionFoundationError::integrity_violation(
+                permit.session_id,
+                "committed turn device timeline was missing before Stage 5 authority",
+            ));
+        };
+
+        if timeline.highest_seen_sequence != permit.device_turn_sequence
+            || timeline.last_turn_id != permit.turn_id
+        {
+            return Stage5TurnAuthorityPacket::quarantined(
+                permit.session_id,
+                Some(permit.turn_id),
+                Some(permit.device_id.clone()),
+                Some(permit.device_turn_sequence),
+                snapshot.session_state,
+                Stage5TurnAuthorityDisposition::SupersededTurnQuarantined,
+            )
+            .map_err(|_| {
+                SessionFoundationError::integrity_violation(
+                    permit.session_id,
+                    "Stage 5 stale-turn quarantine packet failed validation",
+                )
+            });
+        }
+
+        Stage5TurnAuthorityPacket::current_committed(
+            permit.session_id,
+            permit.turn_id,
+            permit.device_id.clone(),
+            permit.device_turn_sequence,
+            snapshot.session_state,
+        )
+        .map_err(|_| {
+            SessionFoundationError::integrity_violation(
+                permit.session_id,
+                "Stage 5 current committed turn authority packet failed validation",
+            )
+        })
+    }
+
     pub fn renew_session_lease(
         &mut self,
         session_id: SessionId,
@@ -2873,6 +3208,32 @@ fn validate_device_turn_sequence(
     Ok(())
 }
 
+fn validate_stage5_ascii_token(
+    field: &'static str,
+    value: &str,
+    max_len: usize,
+) -> Result<(), ContractViolation> {
+    if value.trim().is_empty() {
+        return Err(ContractViolation::InvalidValue {
+            field,
+            reason: "must not be empty",
+        });
+    }
+    if value.len() > max_len {
+        return Err(ContractViolation::InvalidValue {
+            field,
+            reason: "exceeds max length",
+        });
+    }
+    if !value.is_ascii() {
+        return Err(ContractViolation::InvalidValue {
+            field,
+            reason: "must be ASCII",
+        });
+    }
+    Ok(())
+}
+
 fn allocate_turn_id(record: &mut SessionRecord) -> TurnId {
     let turn_id = TurnId(record.next_turn_id);
     record.next_turn_id = record.next_turn_id.saturating_add(1);
@@ -3897,6 +4258,154 @@ mod tests {
             bound.session_attach_outcome,
             Some(SessionAttachOutcome::NewSessionCreated)
         );
+    }
+
+    #[test]
+    fn stage_5a_current_committed_turn_can_enter_understanding_without_route_authority() {
+        let mut runtime = session_runtime();
+        let created = runtime.create_session(device("device-a")).expect("session");
+        let started = runtime
+            .begin_turn(created.projection.session_id, &device("device-a"), 1)
+            .expect("turn start");
+        let permit = match started {
+            SessionTurnResolution::Started(permit) => permit,
+            _ => panic!("expected started turn"),
+        };
+        let commit = runtime
+            .finish_turn(permit.clone(), SessionState::Active)
+            .expect("turn commit");
+
+        let authority = runtime
+            .authorize_stage5_current_committed_turn(&commit, &permit)
+            .expect("stage 5 authority");
+
+        assert_eq!(
+            authority.disposition,
+            Stage5TurnAuthorityDisposition::CurrentCommittedTurn
+        );
+        assert!(authority.can_enter_understanding());
+        assert!(authority.can_render_current_result());
+        assert!(!authority.can_route_any_work());
+        assert!(!authority.authority.can_route_tools);
+        assert!(!authority.authority.can_route_search);
+        assert!(!authority.authority.can_route_providers);
+        assert!(!authority.authority.can_route_tts);
+        assert!(!authority.authority.can_route_protected_execution);
+    }
+
+    #[test]
+    fn stage_5a_deferred_newer_turn_quarantines_old_result_render() {
+        let mut runtime = session_runtime();
+        let created = runtime.create_session(device("device-a")).expect("session");
+        let session_id = created.projection.session_id;
+        let started = runtime
+            .begin_turn(session_id, &device("device-a"), 1)
+            .expect("turn start");
+        let permit = match started {
+            SessionTurnResolution::Started(permit) => permit,
+            _ => panic!("expected started turn"),
+        };
+
+        let deferred = runtime
+            .begin_turn(session_id, &device("device-a"), 2)
+            .expect("newer turn defers while first drains");
+        assert!(matches!(deferred, SessionTurnResolution::Deferred(_)));
+
+        let commit = runtime
+            .finish_turn(permit.clone(), SessionState::Active)
+            .expect("turn commit");
+        let authority = runtime
+            .authorize_stage5_current_committed_turn(&commit, &permit)
+            .expect("stage 5 quarantine");
+
+        assert_eq!(
+            authority.disposition,
+            Stage5TurnAuthorityDisposition::SupersededTurnQuarantined
+        );
+        assert!(!authority.can_enter_understanding());
+        assert!(!authority.can_render_current_result());
+        assert!(!authority.can_route_any_work());
+    }
+
+    #[test]
+    fn stage_5a_older_completed_turn_cannot_become_current_after_newer_commit() {
+        let mut runtime = session_runtime();
+        let created = runtime.create_session(device("device-a")).expect("session");
+        let session_id = created.projection.session_id;
+        let first_started = runtime
+            .begin_turn(session_id, &device("device-a"), 1)
+            .expect("first turn start");
+        let first_permit = match first_started {
+            SessionTurnResolution::Started(permit) => permit,
+            _ => panic!("expected first turn"),
+        };
+        let first_commit = runtime
+            .finish_turn(first_permit.clone(), SessionState::Active)
+            .expect("first turn commit");
+
+        let second_started = runtime
+            .begin_turn(session_id, &device("device-a"), 2)
+            .expect("second turn start");
+        let second_permit = match second_started {
+            SessionTurnResolution::Started(permit) => permit,
+            _ => panic!("expected second turn"),
+        };
+        runtime
+            .finish_turn(second_permit, SessionState::Active)
+            .expect("second turn commit");
+
+        let old_authority = runtime
+            .authorize_stage5_current_committed_turn(&first_commit, &first_permit)
+            .expect("old turn quarantine");
+
+        assert_eq!(
+            old_authority.disposition,
+            Stage5TurnAuthorityDisposition::SupersededTurnQuarantined
+        );
+        assert!(!old_authority.can_enter_understanding());
+        assert!(!old_authority.can_render_current_result());
+        assert!(!old_authority.can_route_any_work());
+    }
+
+    #[test]
+    fn stage_5a_quarantine_dispositions_cannot_enter_understanding_or_route_work() {
+        let dispositions = [
+            Stage5TurnAuthorityDisposition::RetryReusedResult,
+            Stage5TurnAuthorityDisposition::DeferredTurn,
+            Stage5TurnAuthorityDisposition::StaleTurnQuarantined,
+            Stage5TurnAuthorityDisposition::SupersededTurnQuarantined,
+            Stage5TurnAuthorityDisposition::CancelledTurnQuarantined,
+            Stage5TurnAuthorityDisposition::AbandonedTurnQuarantined,
+            Stage5TurnAuthorityDisposition::RecordArtifactOnly,
+        ];
+
+        for disposition in dispositions {
+            let packet = Stage5TurnAuthorityPacket::quarantined(
+                SessionId(77),
+                Some(TurnId(7)),
+                Some("device-a".to_string()),
+                Some(3),
+                SessionState::Active,
+                disposition,
+            )
+            .expect("quarantine packet");
+            assert!(!packet.can_enter_understanding());
+            assert!(!packet.can_render_current_result());
+            assert!(!packet.can_route_any_work());
+        }
+
+        let closed = Stage5TurnAuthorityPacket::quarantined(
+            SessionId(77),
+            Some(TurnId(7)),
+            Some("device-a".to_string()),
+            Some(3),
+            SessionState::Closed,
+            Stage5TurnAuthorityDisposition::ClosedSessionRejected,
+        )
+        .expect("closed session packet");
+        assert!(!closed.can_enter_understanding());
+        assert!(!closed.can_render_current_result());
+        assert!(!closed.can_route_any_work());
     }
 
     #[test]

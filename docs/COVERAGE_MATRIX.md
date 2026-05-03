@@ -14,6 +14,7 @@ Architecture baseline updated to System_Core + Build Sections 01–11.
 | PH1.GLOBAL.BENCHMARK | MINIMAL_FOUNDATION_WIRED | Stage 2A adds PH1.J benchmark target/result packets plus PH1.F append-only storage/idempotency and replay-safe latest-result lookup. Product benchmark corpora remain owned by later stages. |
 | PH1.PROVIDER.SAFETY | MINIMAL_FOUNDATION_WIRED | Stage 3A reconciles PH1.KMS/provider_secrets/PH1.COST/PH1.QUOTA/PH1.PROVIDERCTL, proves provider-off zero attempts and zero network dispatches, proves startup/health no-probe behavior, and adds PH1.F-backed early consent storage. Broad champion/model routing remains deferred. |
 | PH1.PACKET.FOUNDATION | MINIMAL_FOUNDATION_WIRED | Stage 4A adds activation/source, candidate/committed-turn, record-artifact boundary, consent/device/provider-budget/audit reference, and no-route-authority packet proof in `runtime_ingress_turn_foundation.rs`; Stage 5 owns session lifecycle and stale-turn closure. |
+| PH1.SESSION.TURN.AUTHORITY | MINIMAL_FOUNDATION_WIRED | Stage 5A reuses `PH1.L`/`RuntimeSessionFoundation` and adds `Stage5TurnAuthorityPacket` current-turn/quarantine proof so only a current committed turn may enter understanding/render as current, while stale, superseded, deferred, retry, cancelled, abandoned, closed-session, and record-artifact dispositions cannot route work. Broad conversation-control and same-page state remain Stage 5B. |
 
 Historical note:
 - The detailed matrix below remains valuable as contract-closure history.

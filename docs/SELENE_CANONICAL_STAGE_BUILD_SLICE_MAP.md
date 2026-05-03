@@ -13,6 +13,13 @@ Large stages are build families. A future Codex build must select one exact slic
 - Do not combine unrelated runtime, UI, provider, and benchmark work in one slice.
 - Update benchmark target status before marking the slice complete.
 
+## Stage 5 - Session Open, Resume, Close, Runtime Turn Spine
+
+| Slice | Focus | Input | Output | Proof |
+|---|---|---|---|---|
+| 5A | Session lifecycle/current-turn authority/stale-turn quarantine | Stage4TurnBoundaryPacket, SessionPacket | Stage5TurnAuthorityPacket | PROVEN_COMPLETE: only current committed turns enter understanding/render as current; stale/superseded/cancelled/abandoned/record/closed dispositions quarantine without route authority. |
+| 5B | Conversation control, clarification, correction, recovery, same-page state | Stage5TurnAuthorityPacket | ConversationGoalStatePacket, OpenLoopsPacket, SamePageCheckPacket | no provider/tool/protected execution; one-question clarification and correction/recovery boundary proof. |
+
 ## Stage 8 - Voice I/O, Listen State, Transcript Gate
 
 | Slice | Focus | Input | Output | Proof |
@@ -98,8 +105,8 @@ Large stages are build families. A future Codex build must select one exact slic
 | 30E | Custom assistant builder/store | AssistantDefinitionPacket | assistant release artifact | governance proof |
 | 30F | Self-heal/dev lane | dev route | proposal artifact | no uncontrolled shell/tool bypass |
 
-## Next Slice After Stage 4A
+## Next Slice After Stage 5A
 
 ```text
-Stage 5A - Session Open, Resume, Close, Runtime Turn Spine, And Stale-Turn Quarantine Reconciliation
+Stage 5B - Conversation Control, Clarification, Correction, Recovery, And Same-Page State Reconciliation
 ```

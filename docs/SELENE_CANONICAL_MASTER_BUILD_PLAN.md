@@ -79,9 +79,9 @@ After every build, update this section before final reporting.
 | Field | Current Value |
 |---|---|
 | Current active stage | Stage 5 |
-| Current active build | Stage 5A - Session Open, Resume, Close, Runtime Turn Spine, And Stale-Turn Quarantine Reconciliation |
+| Current active build | Stage 5B - Conversation Control, Clarification, Correction, Recovery, And Same-Page State Reconciliation |
 | Next build after current stage passes | Stage 6 - Master Access, Tenant, Policy, And Per-User Authority Context |
-| Last completed stage | Stage 4A - Activation, Session, Turn, And Packet Foundation Reconciliation |
+| Last completed stage | Stage 5A - Session Open, Resume, Close, Runtime Turn Spine, And Stale-Turn Quarantine Reconciliation |
 | Stages blocked | None yet |
 | Plan drift allowed | No |
 
@@ -1613,6 +1613,8 @@ Next if passed:
 
 Status: PARTIALLY_BUILT
 
+Stage 5A status: PROVEN_COMPLETE
+
 Build:
 
 - `PH1.L` session lifecycle;
@@ -1673,9 +1675,21 @@ Proof:
 - follow-up continuity and smooth correction proof;
 - no raw text to tool route.
 
+Stage 5A completion proof:
+
+- Existing `PH1.L` and `runtime_session_foundation.rs` carriers were reused for session create/open, resume, recover, soft-close, close, attach, transfer, failover recovery, single-writer turn admission, retry reuse, stale device-turn rejection, deferral, backpressure, lease/ownership checks, reason-coded errors, and PH1.L event/counter proof. No duplicate session engine was created.
+- `Stage5TurnAuthorityPacket`, `Stage5TurnAuthorityDisposition`, and `Stage5TurnWorkAuthority` now provide the minimal current-turn authority carrier in `runtime_session_foundation.rs`.
+- `authorize_stage5_current_committed_turn` admits a committed turn only when the `SessionTurnCommit` matches the original `SessionTurnPermit`, the session is not closed, no active writer or deferred newer turn exists, and the device timeline still identifies that same turn as current.
+- Stale, deferred, superseded, cancelled, abandoned, retry-reused, closed-session, and record-artifact dispositions are represented as quarantined Stage 5A authority packets that cannot enter understanding, cannot render as current, and cannot route tools, search, providers, TTS, connector work, or protected execution.
+- Old result render is blocked by session/turn state: if a newer turn is deferred while the first turn drains, or if a newer turn has already committed, the older turn authority resolves to `SupersededTurnQuarantined`.
+- Record sessions remain distinct from live chat by Stage 4A `RecordArtifactOnly` packet proof and Stage 5A `RecordArtifactOnly` quarantine disposition. Stage 5A did not build the Stage 27 record product.
+- Broad conversation-control items remain deferred to Stage 5B: discourse frame, clarification loop, correction control, conversation recovery, conversation trace/eval, open loops, active entity, recap-on-return, same-page checks, natural turn-taking, backchannel policy, and no-over-apology proof.
+- Stage 5A benchmark status is `CERTIFICATION_TARGET_PASSED` for session/current-turn authority, stale/superseded quarantine, closed-session rejection, record-session separation, and no-route-authority proof. Conversation/same-page quality targets remain blocked for Stage 5B, Stage 10, and Stage 34.
+- Stage 5B is required before broad Stage 5 can be marked complete.
+
 Next if passed:
 
-- Stage 6 - Master Access, Tenant, Policy, And Per-User Authority Context.
+- Stage 5B - Conversation Control, Clarification, Correction, Recovery, And Same-Page State Reconciliation.
 
 ## Stage 6 - Master Access, Tenant, Policy, And Per-User Authority Context
 
