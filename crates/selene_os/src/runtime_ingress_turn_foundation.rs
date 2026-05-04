@@ -283,6 +283,25 @@ mod reason_codes {
     pub const STAGE21_UNSAFE_INPUT_BLOCKED: &str = "stage21_unsafe_input_blocked";
     pub const STAGE21_RUNTIME_MOCK_BLOCKED: &str = "stage21_runtime_mock_blocked";
     pub const STAGE21_AUDIT_PROOF_MISSING: &str = "stage21_audit_proof_missing";
+    pub const STAGE22_EXTERNAL_INTEGRATION_READY: &str = "stage22_external_integration_ready";
+    pub const STAGE22_CONNECTOR_ACTION_STAGING_READY: &str =
+        "stage22_connector_action_staging_ready";
+    pub const STAGE22_OUTBOUND_SYSTEM_INTENT_READY: &str =
+        "stage22_outbound_system_intent_ready";
+    pub const STAGE22_STAGED_DISPATCH_POSTURE_READY: &str =
+        "stage22_staged_dispatch_posture_ready";
+    pub const STAGE22_REMOTE_TARGET_REFERENCE_READY: &str =
+        "stage22_remote_target_reference_ready";
+    pub const STAGE22_STAGE_INPUT_BLOCKED: &str = "stage22_stage_input_blocked";
+    pub const STAGE22_NO_INVENTION_BLOCKED: &str = "stage22_no_invention_blocked";
+    pub const STAGE22_CONNECTOR_TARGET_STAGING_BLOCKED: &str =
+        "stage22_connector_target_staging_blocked";
+    pub const STAGE22_NATIVE_OUTBOUND_BLOCKED: &str = "stage22_native_outbound_blocked";
+    pub const STAGE22_PROTECTED_OUTBOUND_BLOCKED: &str = "stage22_protected_outbound_blocked";
+    pub const STAGE22_STALE_OUTBOUND_BLOCKED: &str = "stage22_stale_outbound_blocked";
+    pub const STAGE22_UNSAFE_INPUT_BLOCKED: &str = "stage22_unsafe_input_blocked";
+    pub const STAGE22_RUNTIME_MOCK_BLOCKED: &str = "stage22_runtime_mock_blocked";
+    pub const STAGE22_AUDIT_PROOF_MISSING: &str = "stage22_audit_proof_missing";
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -21262,6 +21281,1277 @@ impl Validate for Stage21AutomationOrchestrationPacket {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stage22ConnectorOutboundKind {
+    ExternalIntegration,
+    ConnectorActionStaging,
+    OutboundSystemIntent,
+    StagedDispatchPosture,
+    RemoteTargetReference,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stage22ConnectorOutboundDisposition {
+    ExternalIntegrationReady,
+    ConnectorActionStagingReady,
+    OutboundSystemIntentReady,
+    StagedDispatchPostureReady,
+    RemoteTargetReferenceReady,
+    StageInputBlocked,
+    NoInventionBlocked,
+    ConnectorTargetStagingBlocked,
+    NativeOutboundBlocked,
+    ProtectedOutboundBlocked,
+    StaleOutboundBlocked,
+    UnsafeInputBlocked,
+    RuntimeMockBlocked,
+    AuditProofMissing,
+}
+
+impl Stage22ConnectorOutboundDisposition {
+    pub const fn default_reason_code(self) -> &'static str {
+        match self {
+            Self::ExternalIntegrationReady => reason_codes::STAGE22_EXTERNAL_INTEGRATION_READY,
+            Self::ConnectorActionStagingReady => {
+                reason_codes::STAGE22_CONNECTOR_ACTION_STAGING_READY
+            }
+            Self::OutboundSystemIntentReady => reason_codes::STAGE22_OUTBOUND_SYSTEM_INTENT_READY,
+            Self::StagedDispatchPostureReady => {
+                reason_codes::STAGE22_STAGED_DISPATCH_POSTURE_READY
+            }
+            Self::RemoteTargetReferenceReady => {
+                reason_codes::STAGE22_REMOTE_TARGET_REFERENCE_READY
+            }
+            Self::StageInputBlocked => reason_codes::STAGE22_STAGE_INPUT_BLOCKED,
+            Self::NoInventionBlocked => reason_codes::STAGE22_NO_INVENTION_BLOCKED,
+            Self::ConnectorTargetStagingBlocked => {
+                reason_codes::STAGE22_CONNECTOR_TARGET_STAGING_BLOCKED
+            }
+            Self::NativeOutboundBlocked => reason_codes::STAGE22_NATIVE_OUTBOUND_BLOCKED,
+            Self::ProtectedOutboundBlocked => reason_codes::STAGE22_PROTECTED_OUTBOUND_BLOCKED,
+            Self::StaleOutboundBlocked => reason_codes::STAGE22_STALE_OUTBOUND_BLOCKED,
+            Self::UnsafeInputBlocked => reason_codes::STAGE22_UNSAFE_INPUT_BLOCKED,
+            Self::RuntimeMockBlocked => reason_codes::STAGE22_RUNTIME_MOCK_BLOCKED,
+            Self::AuditProofMissing => reason_codes::STAGE22_AUDIT_PROOF_MISSING,
+        }
+    }
+
+    pub const fn is_ready(self) -> bool {
+        matches!(
+            self,
+            Self::ExternalIntegrationReady
+                | Self::ConnectorActionStagingReady
+                | Self::OutboundSystemIntentReady
+                | Self::StagedDispatchPostureReady
+                | Self::RemoteTargetReferenceReady
+        )
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Stage22ConnectorOutboundWorkAuthority {
+    pub can_emit_external_integration_packet: bool,
+    pub can_emit_connector_action_staging_packet: bool,
+    pub can_emit_outbound_system_intent_packet: bool,
+    pub can_emit_staged_dispatch_posture_packet: bool,
+    pub can_emit_remote_target_ref: bool,
+    pub can_emit_ownership_lease_ref: bool,
+    pub can_emit_honest_uncertainty: bool,
+    pub can_emit_audit_proof: bool,
+    pub can_fail_closed: bool,
+    pub can_invent_facts: bool,
+    pub can_invent_connector_success: bool,
+    pub can_invent_dispatch_success: bool,
+    pub can_invent_remote_completion: bool,
+    pub can_invent_ownership_or_outbound_authority: bool,
+    pub can_claim_unproven_completion: bool,
+    pub can_mutate_external_state: bool,
+    pub can_connector_write: bool,
+    pub can_approve: bool,
+    pub can_dispatch: bool,
+    pub can_execute_simulation: bool,
+    pub can_execute_protected_action: bool,
+    pub can_call_live_provider: bool,
+    pub can_run_live_search: bool,
+    pub can_call_live_external_tool: bool,
+    pub can_generate_live_media: bool,
+    pub can_emit_live_outbound_delivery: bool,
+    pub can_emit_tts_or_playback: bool,
+    pub can_capture_microphone_audio: bool,
+    pub can_transcribe_live_audio: bool,
+    pub can_trigger_voice_id_matching: bool,
+    pub can_update_memory_persona_emotion: bool,
+    pub can_add_native_ui_behavior: bool,
+    pub can_create_user_turn: bool,
+    pub can_treat_visible_outbound_as_action_success: bool,
+}
+
+impl Stage22ConnectorOutboundWorkAuthority {
+    const fn fail_closed() -> Self {
+        Self {
+            can_emit_external_integration_packet: false,
+            can_emit_connector_action_staging_packet: false,
+            can_emit_outbound_system_intent_packet: false,
+            can_emit_staged_dispatch_posture_packet: false,
+            can_emit_remote_target_ref: false,
+            can_emit_ownership_lease_ref: false,
+            can_emit_honest_uncertainty: true,
+            can_emit_audit_proof: false,
+            can_fail_closed: true,
+            can_invent_facts: false,
+            can_invent_connector_success: false,
+            can_invent_dispatch_success: false,
+            can_invent_remote_completion: false,
+            can_invent_ownership_or_outbound_authority: false,
+            can_claim_unproven_completion: false,
+            can_mutate_external_state: false,
+            can_connector_write: false,
+            can_approve: false,
+            can_dispatch: false,
+            can_execute_simulation: false,
+            can_execute_protected_action: false,
+            can_call_live_provider: false,
+            can_run_live_search: false,
+            can_call_live_external_tool: false,
+            can_generate_live_media: false,
+            can_emit_live_outbound_delivery: false,
+            can_emit_tts_or_playback: false,
+            can_capture_microphone_audio: false,
+            can_transcribe_live_audio: false,
+            can_trigger_voice_id_matching: false,
+            can_update_memory_persona_emotion: false,
+            can_add_native_ui_behavior: false,
+            can_create_user_turn: false,
+            can_treat_visible_outbound_as_action_success: false,
+        }
+    }
+
+    const fn external_integration_ready() -> Self {
+        Self {
+            can_emit_external_integration_packet: true,
+            can_emit_remote_target_ref: true,
+            can_emit_ownership_lease_ref: true,
+            can_emit_honest_uncertainty: true,
+            can_emit_audit_proof: true,
+            can_fail_closed: false,
+            ..Self::fail_closed()
+        }
+    }
+
+    const fn connector_action_staging_ready() -> Self {
+        Self {
+            can_emit_connector_action_staging_packet: true,
+            can_emit_ownership_lease_ref: true,
+            can_emit_honest_uncertainty: true,
+            can_emit_audit_proof: true,
+            can_fail_closed: false,
+            ..Self::fail_closed()
+        }
+    }
+
+    const fn outbound_system_intent_ready() -> Self {
+        Self {
+            can_emit_outbound_system_intent_packet: true,
+            can_emit_remote_target_ref: true,
+            can_emit_ownership_lease_ref: true,
+            can_emit_honest_uncertainty: true,
+            can_emit_audit_proof: true,
+            can_fail_closed: false,
+            ..Self::fail_closed()
+        }
+    }
+
+    const fn staged_dispatch_posture_ready() -> Self {
+        Self {
+            can_emit_staged_dispatch_posture_packet: true,
+            can_emit_remote_target_ref: true,
+            can_emit_ownership_lease_ref: true,
+            can_emit_honest_uncertainty: true,
+            can_emit_audit_proof: true,
+            can_fail_closed: false,
+            ..Self::fail_closed()
+        }
+    }
+
+    const fn remote_target_ready() -> Self {
+        Self {
+            can_emit_remote_target_ref: true,
+            can_emit_honest_uncertainty: true,
+            can_emit_audit_proof: true,
+            can_fail_closed: false,
+            ..Self::fail_closed()
+        }
+    }
+
+    pub const fn can_mutate_or_execute(self) -> bool {
+        self.can_invent_facts
+            || self.can_invent_connector_success
+            || self.can_invent_dispatch_success
+            || self.can_invent_remote_completion
+            || self.can_invent_ownership_or_outbound_authority
+            || self.can_claim_unproven_completion
+            || self.can_mutate_external_state
+            || self.can_connector_write
+            || self.can_approve
+            || self.can_dispatch
+            || self.can_execute_simulation
+            || self.can_execute_protected_action
+            || self.can_call_live_provider
+            || self.can_run_live_search
+            || self.can_call_live_external_tool
+            || self.can_generate_live_media
+            || self.can_emit_live_outbound_delivery
+            || self.can_emit_tts_or_playback
+            || self.can_capture_microphone_audio
+            || self.can_transcribe_live_audio
+            || self.can_trigger_voice_id_matching
+            || self.can_update_memory_persona_emotion
+            || self.can_add_native_ui_behavior
+            || self.can_create_user_turn
+            || self.can_treat_visible_outbound_as_action_success
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Stage22ConnectorOutboundInput {
+    pub outbound_kind: Stage22ConnectorOutboundKind,
+    pub connector_action_stage_id: Option<String>,
+    pub external_integration_id: Option<String>,
+    pub outbound_intent_id: Option<String>,
+    pub remote_target_id: Option<String>,
+    pub work_id: Option<String>,
+    pub lease_id: Option<String>,
+    pub ownership_ref: Option<String>,
+    pub device_id: String,
+    pub audit_id: Option<String>,
+    pub ph1j_proof_ref: Option<String>,
+    pub stage15_response_output_ref_present: bool,
+    pub stage19_attention_ref_present: bool,
+    pub stage19_attention_ref_non_authoritative: bool,
+    pub stage20_continuity_ref_present: bool,
+    pub stage20_continuity_ref_non_authoritative: bool,
+    pub stage21_automation_ref_present: bool,
+    pub stage21_automation_ref_non_authoritative: bool,
+    pub connector_target_staging_bounded: bool,
+    pub remote_target_bounded: bool,
+    pub ownership_lease_bounded: bool,
+    pub uncertainty_preserved: bool,
+    pub outbound_invented_fact: bool,
+    pub outbound_invented_connector_success: bool,
+    pub outbound_invented_dispatch_success: bool,
+    pub outbound_invented_remote_completion: bool,
+    pub outbound_invented_ownership: bool,
+    pub outbound_invented_attachment_or_citation: bool,
+    pub outbound_invented_provider_or_tool_result: bool,
+    pub outbound_claimed_unproven_completion: bool,
+    pub outbound_implied_mutation: bool,
+    pub tenant_user_device_project_scoped: bool,
+    pub secret_safe: bool,
+    pub redacted: bool,
+    pub stale_aware: bool,
+    pub revocation_aware: bool,
+    pub connector_ref_present: bool,
+    pub remote_target_ref_present: bool,
+    pub ownership_ref_present: bool,
+    pub lease_ref_present: bool,
+    pub unverifiable: bool,
+    pub stale: bool,
+    pub secret_unsafe: bool,
+    pub cross_tenant: bool,
+    pub cross_target: bool,
+    pub missing_lease: bool,
+    pub ownership_drift: bool,
+    pub connector_mismatch: bool,
+    pub remote_target_mismatch: bool,
+    pub native_outbound_declarative_only: bool,
+    pub native_outbound_mutates_state: bool,
+    pub native_outbound_connector_writes: bool,
+    pub native_outbound_dispatches_or_executes: bool,
+    pub native_outbound_calls_providers_or_tools: bool,
+    pub native_outbound_emits_tts_or_playback: bool,
+    pub native_outbound_creates_user_turn: bool,
+    pub native_outbound_treats_visible_success_as_action_success: bool,
+    pub protected_action_like_request: bool,
+    pub protected_slot_or_authority_ambiguous: bool,
+    pub unsafe_identity_posture: bool,
+    pub outbound_implies_stage12_mutation_without_proof: bool,
+    pub stale_or_cancelled_or_superseded_output: bool,
+    pub session_closed: bool,
+    pub record_artifact_only_turn: bool,
+    pub stale_connector_state: bool,
+    pub stale_remote_target_state: bool,
+    pub stale_lease_or_ownership_state: bool,
+    pub outbound_identity_matches_current_output_session: bool,
+    pub replay_upgrades_blocked_outbound: bool,
+    pub fake_connector_detected: bool,
+    pub fake_dispatch_detected: bool,
+    pub fake_outbound_detected: bool,
+    pub fake_remote_completion_detected: bool,
+    pub runtime_mock_detected: bool,
+    pub fixture_only_test_path: bool,
+    pub raw_provider_output_present: bool,
+    pub raw_search_dump_present: bool,
+    pub raw_media_present: bool,
+    pub raw_secret_connector_credential_present: bool,
+    pub unverified_source_evidence_present: bool,
+    pub unsupported_claim_candidate_present: bool,
+    pub fake_connector_source_carrier_present: bool,
+    pub speech_playback_attention_continuity_automation_used_as_truth_authority: bool,
+    pub protected_action_candidate_present: bool,
+    pub simulation_candidate_present: bool,
+    pub approved_execution_plan_present: bool,
+    pub secrets_exposed: bool,
+    pub raw_audio_or_voice_material_exposed: bool,
+    pub internal_trace_exposed: bool,
+    pub access_denied: bool,
+    pub policy_denied: bool,
+    pub tenant_mismatch: bool,
+    pub attempted_live_provider_in_build: bool,
+    pub generated_live_media_in_build: bool,
+    pub ran_live_search_in_build: bool,
+    pub called_live_external_tool_in_build: bool,
+    pub connector_write_requested: bool,
+    pub ran_live_notification_delivery_in_build: bool,
+    pub ran_live_background_execution_in_build: bool,
+    pub ran_live_outbound_delivery_in_build: bool,
+    pub ran_live_connector_dispatch_in_build: bool,
+    pub ran_live_tts_or_playback_in_build: bool,
+    pub captured_microphone_audio: bool,
+    pub transcribed_live_audio: bool,
+    pub voice_id_matching_attempted: bool,
+    pub native_ui_behavior_added: bool,
+}
+
+impl Stage22ConnectorOutboundInput {
+    #[cfg(test)]
+    fn fixture_base(
+        outbound_kind: Stage22ConnectorOutboundKind,
+        device_id: impl Into<String>,
+        audit_id: impl Into<String>,
+    ) -> Self {
+        let audit_id = audit_id.into();
+        Self {
+            outbound_kind,
+            connector_action_stage_id: Some("connector-action-stage22-ready".to_string()),
+            external_integration_id: Some("external-integration-stage22-ready".to_string()),
+            outbound_intent_id: Some("outbound-intent-stage22-ready".to_string()),
+            remote_target_id: Some("remote-target-stage22-ready".to_string()),
+            work_id: Some("work-stage22-ready".to_string()),
+            lease_id: Some("lease-stage22-ready".to_string()),
+            ownership_ref: Some("ownership-stage22-ready".to_string()),
+            device_id: device_id.into(),
+            audit_id: Some(audit_id.clone()),
+            ph1j_proof_ref: Some(audit_id),
+            stage15_response_output_ref_present: true,
+            stage19_attention_ref_present: false,
+            stage19_attention_ref_non_authoritative: false,
+            stage20_continuity_ref_present: false,
+            stage20_continuity_ref_non_authoritative: false,
+            stage21_automation_ref_present: false,
+            stage21_automation_ref_non_authoritative: false,
+            connector_target_staging_bounded: true,
+            remote_target_bounded: true,
+            ownership_lease_bounded: true,
+            uncertainty_preserved: true,
+            outbound_invented_fact: false,
+            outbound_invented_connector_success: false,
+            outbound_invented_dispatch_success: false,
+            outbound_invented_remote_completion: false,
+            outbound_invented_ownership: false,
+            outbound_invented_attachment_or_citation: false,
+            outbound_invented_provider_or_tool_result: false,
+            outbound_claimed_unproven_completion: false,
+            outbound_implied_mutation: false,
+            tenant_user_device_project_scoped: true,
+            secret_safe: true,
+            redacted: true,
+            stale_aware: true,
+            revocation_aware: true,
+            connector_ref_present: true,
+            remote_target_ref_present: true,
+            ownership_ref_present: true,
+            lease_ref_present: true,
+            unverifiable: false,
+            stale: false,
+            secret_unsafe: false,
+            cross_tenant: false,
+            cross_target: false,
+            missing_lease: false,
+            ownership_drift: false,
+            connector_mismatch: false,
+            remote_target_mismatch: false,
+            native_outbound_declarative_only: true,
+            native_outbound_mutates_state: false,
+            native_outbound_connector_writes: false,
+            native_outbound_dispatches_or_executes: false,
+            native_outbound_calls_providers_or_tools: false,
+            native_outbound_emits_tts_or_playback: false,
+            native_outbound_creates_user_turn: false,
+            native_outbound_treats_visible_success_as_action_success: false,
+            protected_action_like_request: false,
+            protected_slot_or_authority_ambiguous: false,
+            unsafe_identity_posture: false,
+            outbound_implies_stage12_mutation_without_proof: false,
+            stale_or_cancelled_or_superseded_output: false,
+            session_closed: false,
+            record_artifact_only_turn: false,
+            stale_connector_state: false,
+            stale_remote_target_state: false,
+            stale_lease_or_ownership_state: false,
+            outbound_identity_matches_current_output_session: true,
+            replay_upgrades_blocked_outbound: false,
+            fake_connector_detected: false,
+            fake_dispatch_detected: false,
+            fake_outbound_detected: false,
+            fake_remote_completion_detected: false,
+            runtime_mock_detected: false,
+            fixture_only_test_path: false,
+            raw_provider_output_present: false,
+            raw_search_dump_present: false,
+            raw_media_present: false,
+            raw_secret_connector_credential_present: false,
+            unverified_source_evidence_present: false,
+            unsupported_claim_candidate_present: false,
+            fake_connector_source_carrier_present: false,
+            speech_playback_attention_continuity_automation_used_as_truth_authority: false,
+            protected_action_candidate_present: false,
+            simulation_candidate_present: false,
+            approved_execution_plan_present: false,
+            secrets_exposed: false,
+            raw_audio_or_voice_material_exposed: false,
+            internal_trace_exposed: false,
+            access_denied: false,
+            policy_denied: false,
+            tenant_mismatch: false,
+            attempted_live_provider_in_build: false,
+            generated_live_media_in_build: false,
+            ran_live_search_in_build: false,
+            called_live_external_tool_in_build: false,
+            connector_write_requested: false,
+            ran_live_notification_delivery_in_build: false,
+            ran_live_background_execution_in_build: false,
+            ran_live_outbound_delivery_in_build: false,
+            ran_live_connector_dispatch_in_build: false,
+            ran_live_tts_or_playback_in_build: false,
+            captured_microphone_audio: false,
+            transcribed_live_audio: false,
+            voice_id_matching_attempted: false,
+            native_ui_behavior_added: false,
+        }
+    }
+
+    #[cfg(test)]
+    pub fn fixture_external_integration_ready(
+        external_integration_id: impl Into<String>,
+        remote_target_id: impl Into<String>,
+        device_id: impl Into<String>,
+        audit_id: impl Into<String>,
+    ) -> Self {
+        let mut input =
+            Self::fixture_base(Stage22ConnectorOutboundKind::ExternalIntegration, device_id, audit_id);
+        input.external_integration_id = Some(external_integration_id.into());
+        input.remote_target_id = Some(remote_target_id.into());
+        input.connector_action_stage_id = None;
+        input.outbound_intent_id = None;
+        input
+    }
+
+    #[cfg(test)]
+    pub fn fixture_connector_action_staging_ready(
+        connector_action_stage_id: impl Into<String>,
+        external_integration_id: impl Into<String>,
+        work_id: impl Into<String>,
+        lease_id: impl Into<String>,
+        device_id: impl Into<String>,
+        audit_id: impl Into<String>,
+    ) -> Self {
+        let mut input = Self::fixture_base(
+            Stage22ConnectorOutboundKind::ConnectorActionStaging,
+            device_id,
+            audit_id,
+        );
+        input.connector_action_stage_id = Some(connector_action_stage_id.into());
+        input.external_integration_id = Some(external_integration_id.into());
+        input.outbound_intent_id = None;
+        input.work_id = Some(work_id.into());
+        input.lease_id = Some(lease_id.into());
+        input
+    }
+
+    #[cfg(test)]
+    pub fn fixture_outbound_system_intent_ready(
+        outbound_intent_id: impl Into<String>,
+        remote_target_id: impl Into<String>,
+        work_id: impl Into<String>,
+        lease_id: impl Into<String>,
+        device_id: impl Into<String>,
+        audit_id: impl Into<String>,
+    ) -> Self {
+        let mut input =
+            Self::fixture_base(Stage22ConnectorOutboundKind::OutboundSystemIntent, device_id, audit_id);
+        input.connector_action_stage_id = None;
+        input.outbound_intent_id = Some(outbound_intent_id.into());
+        input.remote_target_id = Some(remote_target_id.into());
+        input.work_id = Some(work_id.into());
+        input.lease_id = Some(lease_id.into());
+        input
+    }
+
+    #[cfg(test)]
+    pub fn fixture_staged_dispatch_posture_ready(
+        connector_action_stage_id: impl Into<String>,
+        outbound_intent_id: impl Into<String>,
+        remote_target_id: impl Into<String>,
+        work_id: impl Into<String>,
+        lease_id: impl Into<String>,
+        device_id: impl Into<String>,
+        audit_id: impl Into<String>,
+    ) -> Self {
+        let mut input = Self::fixture_base(
+            Stage22ConnectorOutboundKind::StagedDispatchPosture,
+            device_id,
+            audit_id,
+        );
+        input.connector_action_stage_id = Some(connector_action_stage_id.into());
+        input.outbound_intent_id = Some(outbound_intent_id.into());
+        input.remote_target_id = Some(remote_target_id.into());
+        input.work_id = Some(work_id.into());
+        input.lease_id = Some(lease_id.into());
+        input
+    }
+
+    #[cfg(test)]
+    pub fn fixture_remote_target_reference_ready(
+        remote_target_id: impl Into<String>,
+        device_id: impl Into<String>,
+        audit_id: impl Into<String>,
+    ) -> Self {
+        let mut input =
+            Self::fixture_base(Stage22ConnectorOutboundKind::RemoteTargetReference, device_id, audit_id);
+        input.connector_action_stage_id = None;
+        input.external_integration_id = None;
+        input.outbound_intent_id = None;
+        input.remote_target_id = Some(remote_target_id.into());
+        input
+    }
+}
+
+impl Validate for Stage22ConnectorOutboundInput {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        validate_stage4_optional_ref(
+            "stage22_connector_outbound_input.connector_action_stage_id",
+            self.connector_action_stage_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage22_connector_outbound_input.external_integration_id",
+            self.external_integration_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage22_connector_outbound_input.outbound_intent_id",
+            self.outbound_intent_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage22_connector_outbound_input.remote_target_id",
+            self.remote_target_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage22_connector_outbound_input.work_id",
+            self.work_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage22_connector_outbound_input.lease_id",
+            self.lease_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage22_connector_outbound_input.ownership_ref",
+            self.ownership_ref.as_deref(),
+        )?;
+        validate_stage4_ref("stage22_connector_outbound_input.device_id", &self.device_id)?;
+        validate_stage4_optional_ref(
+            "stage22_connector_outbound_input.audit_id",
+            self.audit_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage22_connector_outbound_input.ph1j_proof_ref",
+            self.ph1j_proof_ref.as_deref(),
+        )?;
+        if self.attempted_live_provider_in_build
+            || self.generated_live_media_in_build
+            || self.ran_live_search_in_build
+            || self.called_live_external_tool_in_build
+            || self.connector_write_requested
+            || self.ran_live_notification_delivery_in_build
+            || self.ran_live_background_execution_in_build
+            || self.ran_live_outbound_delivery_in_build
+            || self.ran_live_connector_dispatch_in_build
+            || self.ran_live_tts_or_playback_in_build
+            || self.captured_microphone_audio
+            || self.transcribed_live_audio
+            || self.voice_id_matching_attempted
+            || self.native_ui_behavior_added
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage22_connector_outbound_input.no_live_build",
+                reason: "Stage 22A cannot call live providers/search/tools, connector-write, dispatch live outbound actions, emit TTS/playback, capture mic, transcribe, match Voice ID, or add native UI",
+            });
+        }
+        if (self.runtime_mock_detected
+            || self.fake_connector_detected
+            || self.fake_dispatch_detected
+            || self.fake_outbound_detected
+            || self.fake_remote_completion_detected)
+            && !self.fixture_only_test_path
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage22_connector_outbound_input.runtime_mock",
+                reason: "runtime mocks and fake connector/dispatch/outbound/remote-completion success are forbidden outside explicit fixture-only paths",
+            });
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Stage22ConnectorOutboundPacket {
+    pub session_id: SessionId,
+    pub turn_id: Option<TurnId>,
+    pub activation_id: Option<String>,
+    pub response_output_id: String,
+    pub response_hash: String,
+    pub public_answer_id: String,
+    pub notification_candidate_id: Option<String>,
+    pub attention_state_id: Option<String>,
+    pub continuity_packet_id: Option<String>,
+    pub automation_candidate_id: Option<String>,
+    pub connector_action_stage_id: Option<String>,
+    pub external_integration_id: Option<String>,
+    pub outbound_intent_id: Option<String>,
+    pub remote_target_id: Option<String>,
+    pub work_id: Option<String>,
+    pub lease_id: Option<String>,
+    pub ownership_ref: Option<String>,
+    pub access_context_id: Option<String>,
+    pub policy_context_id: Option<String>,
+    pub tenant_id: Option<String>,
+    pub audit_id: Option<String>,
+    pub ph1j_proof_ref: Option<String>,
+    pub outbound_kind: Stage22ConnectorOutboundKind,
+    pub reason_code: &'static str,
+    pub disposition: Stage22ConnectorOutboundDisposition,
+    pub stage15_disposition: Stage15ResponseOutputDisposition,
+    pub stage19_disposition: Option<Stage19NotificationAttentionDisposition>,
+    pub stage20_disposition: Option<Stage20ContinuityHandoffDisposition>,
+    pub stage21_disposition: Option<Stage21AutomationOrchestrationDisposition>,
+    pub stage15_response_output_ref_present: bool,
+    pub stage19_attention_ref_present: bool,
+    pub stage19_attention_ref_non_authoritative: bool,
+    pub stage20_continuity_ref_present: bool,
+    pub stage20_continuity_ref_non_authoritative: bool,
+    pub stage21_automation_ref_present: bool,
+    pub stage21_automation_ref_non_authoritative: bool,
+    pub connector_target_staging_bounded: bool,
+    pub remote_target_bounded: bool,
+    pub ownership_lease_bounded: bool,
+    pub uncertainty_preserved: bool,
+    pub outbound_invented_fact: bool,
+    pub outbound_invented_connector_success: bool,
+    pub outbound_invented_dispatch_success: bool,
+    pub outbound_invented_remote_completion: bool,
+    pub outbound_invented_ownership: bool,
+    pub outbound_invented_attachment_or_citation: bool,
+    pub outbound_invented_provider_or_tool_result: bool,
+    pub outbound_claimed_unproven_completion: bool,
+    pub outbound_implied_mutation: bool,
+    pub tenant_user_device_project_scoped: bool,
+    pub secret_safe: bool,
+    pub redacted: bool,
+    pub stale_aware: bool,
+    pub revocation_aware: bool,
+    pub connector_ref_present: bool,
+    pub remote_target_ref_present: bool,
+    pub ownership_ref_present: bool,
+    pub lease_ref_present: bool,
+    pub unverifiable: bool,
+    pub stale: bool,
+    pub secret_unsafe: bool,
+    pub cross_tenant: bool,
+    pub cross_target: bool,
+    pub missing_lease: bool,
+    pub ownership_drift: bool,
+    pub connector_mismatch: bool,
+    pub remote_target_mismatch: bool,
+    pub native_outbound_declarative_only: bool,
+    pub native_outbound_mutates_state: bool,
+    pub native_outbound_connector_writes: bool,
+    pub native_outbound_dispatches_or_executes: bool,
+    pub native_outbound_calls_providers_or_tools: bool,
+    pub native_outbound_emits_tts_or_playback: bool,
+    pub native_outbound_creates_user_turn: bool,
+    pub native_outbound_treats_visible_success_as_action_success: bool,
+    pub protected_action_like_request: bool,
+    pub protected_slot_or_authority_ambiguous: bool,
+    pub unsafe_identity_posture: bool,
+    pub outbound_implies_stage12_mutation_without_proof: bool,
+    pub stale_or_cancelled_or_superseded_output: bool,
+    pub session_closed: bool,
+    pub record_artifact_only_turn: bool,
+    pub stale_connector_state: bool,
+    pub stale_remote_target_state: bool,
+    pub stale_lease_or_ownership_state: bool,
+    pub outbound_identity_matches_current_output_session: bool,
+    pub replay_upgrades_blocked_outbound: bool,
+    pub fake_connector_detected: bool,
+    pub fake_dispatch_detected: bool,
+    pub fake_outbound_detected: bool,
+    pub fake_remote_completion_detected: bool,
+    pub runtime_mock_detected: bool,
+    pub raw_provider_output_present: bool,
+    pub raw_search_dump_present: bool,
+    pub raw_media_present: bool,
+    pub raw_secret_connector_credential_present: bool,
+    pub unverified_source_evidence_present: bool,
+    pub unsupported_claim_candidate_present: bool,
+    pub fake_connector_source_carrier_present: bool,
+    pub speech_playback_attention_continuity_automation_used_as_truth_authority: bool,
+    pub protected_action_candidate_present: bool,
+    pub simulation_candidate_present: bool,
+    pub approved_execution_plan_present: bool,
+    pub secrets_exposed: bool,
+    pub raw_audio_or_voice_material_exposed: bool,
+    pub internal_trace_exposed: bool,
+    pub access_denied: bool,
+    pub policy_denied: bool,
+    pub tenant_mismatch: bool,
+    pub work_authority: Stage22ConnectorOutboundWorkAuthority,
+}
+
+impl Stage22ConnectorOutboundPacket {
+    pub fn from_stage15_output(
+        output: &Stage15ResponseOutputPacket,
+        attention_output: Option<&Stage19NotificationAttentionPacket>,
+        continuity_output: Option<&Stage20ContinuityHandoffPacket>,
+        automation_output: Option<&Stage21AutomationOrchestrationPacket>,
+        input: Stage22ConnectorOutboundInput,
+    ) -> Result<Self, ContractViolation> {
+        output.validate()?;
+        if let Some(attention_output) = attention_output {
+            attention_output.validate()?;
+        }
+        if let Some(continuity_output) = continuity_output {
+            continuity_output.validate()?;
+        }
+        if let Some(automation_output) = automation_output {
+            automation_output.validate()?;
+        }
+        input.validate()?;
+        let disposition = Self::decide_disposition(
+            output,
+            attention_output,
+            continuity_output,
+            automation_output,
+            &input,
+        );
+        let work_authority = Self::work_authority_for(disposition);
+        let audit_id = input.audit_id.clone().or_else(|| output.audit_id.clone());
+        let ph1j_proof_ref = input
+            .ph1j_proof_ref
+            .clone()
+            .or_else(|| output.ph1j_proof_ref.clone())
+            .or_else(|| audit_id.clone());
+        let packet = Self {
+            session_id: output.session_id,
+            turn_id: output.turn_id,
+            activation_id: output.activation_id.clone(),
+            response_output_id: output.response_output_id.clone(),
+            response_hash: output.response_hash.clone(),
+            public_answer_id: output.public_answer_id.clone(),
+            notification_candidate_id: attention_output
+                .and_then(|attention| attention.notification_candidate_id.clone()),
+            attention_state_id: attention_output
+                .and_then(|attention| attention.attention_state_id.clone()),
+            continuity_packet_id: continuity_output
+                .map(|continuity| continuity.continuity_packet_id.clone()),
+            automation_candidate_id: automation_output
+                .and_then(|automation| automation.automation_candidate_id.clone()),
+            connector_action_stage_id: input.connector_action_stage_id,
+            external_integration_id: input.external_integration_id,
+            outbound_intent_id: input.outbound_intent_id,
+            remote_target_id: input.remote_target_id,
+            work_id: input.work_id,
+            lease_id: input.lease_id,
+            ownership_ref: input.ownership_ref,
+            access_context_id: output.access_context_id.clone(),
+            policy_context_id: output.policy_context_id.clone(),
+            tenant_id: output.tenant_id.clone(),
+            audit_id,
+            ph1j_proof_ref,
+            outbound_kind: input.outbound_kind,
+            reason_code: disposition.default_reason_code(),
+            disposition,
+            stage15_disposition: output.disposition,
+            stage19_disposition: attention_output.map(|attention| attention.disposition),
+            stage20_disposition: continuity_output.map(|continuity| continuity.disposition),
+            stage21_disposition: automation_output.map(|automation| automation.disposition),
+            stage15_response_output_ref_present: input.stage15_response_output_ref_present,
+            stage19_attention_ref_present: input.stage19_attention_ref_present,
+            stage19_attention_ref_non_authoritative: input.stage19_attention_ref_non_authoritative,
+            stage20_continuity_ref_present: input.stage20_continuity_ref_present,
+            stage20_continuity_ref_non_authoritative: input
+                .stage20_continuity_ref_non_authoritative,
+            stage21_automation_ref_present: input.stage21_automation_ref_present,
+            stage21_automation_ref_non_authoritative: input
+                .stage21_automation_ref_non_authoritative,
+            connector_target_staging_bounded: input.connector_target_staging_bounded,
+            remote_target_bounded: input.remote_target_bounded,
+            ownership_lease_bounded: input.ownership_lease_bounded,
+            uncertainty_preserved: input.uncertainty_preserved,
+            outbound_invented_fact: input.outbound_invented_fact,
+            outbound_invented_connector_success: input.outbound_invented_connector_success,
+            outbound_invented_dispatch_success: input.outbound_invented_dispatch_success,
+            outbound_invented_remote_completion: input.outbound_invented_remote_completion,
+            outbound_invented_ownership: input.outbound_invented_ownership,
+            outbound_invented_attachment_or_citation: input
+                .outbound_invented_attachment_or_citation,
+            outbound_invented_provider_or_tool_result: input
+                .outbound_invented_provider_or_tool_result,
+            outbound_claimed_unproven_completion: input.outbound_claimed_unproven_completion,
+            outbound_implied_mutation: input.outbound_implied_mutation,
+            tenant_user_device_project_scoped: input.tenant_user_device_project_scoped,
+            secret_safe: input.secret_safe,
+            redacted: input.redacted,
+            stale_aware: input.stale_aware,
+            revocation_aware: input.revocation_aware,
+            connector_ref_present: input.connector_ref_present,
+            remote_target_ref_present: input.remote_target_ref_present,
+            ownership_ref_present: input.ownership_ref_present,
+            lease_ref_present: input.lease_ref_present,
+            unverifiable: input.unverifiable,
+            stale: input.stale,
+            secret_unsafe: input.secret_unsafe,
+            cross_tenant: input.cross_tenant,
+            cross_target: input.cross_target,
+            missing_lease: input.missing_lease,
+            ownership_drift: input.ownership_drift,
+            connector_mismatch: input.connector_mismatch,
+            remote_target_mismatch: input.remote_target_mismatch,
+            native_outbound_declarative_only: input.native_outbound_declarative_only,
+            native_outbound_mutates_state: input.native_outbound_mutates_state,
+            native_outbound_connector_writes: input.native_outbound_connector_writes,
+            native_outbound_dispatches_or_executes: input
+                .native_outbound_dispatches_or_executes,
+            native_outbound_calls_providers_or_tools: input
+                .native_outbound_calls_providers_or_tools,
+            native_outbound_emits_tts_or_playback: input.native_outbound_emits_tts_or_playback,
+            native_outbound_creates_user_turn: input.native_outbound_creates_user_turn,
+            native_outbound_treats_visible_success_as_action_success: input
+                .native_outbound_treats_visible_success_as_action_success,
+            protected_action_like_request: input.protected_action_like_request,
+            protected_slot_or_authority_ambiguous: input.protected_slot_or_authority_ambiguous,
+            unsafe_identity_posture: input.unsafe_identity_posture,
+            outbound_implies_stage12_mutation_without_proof: input
+                .outbound_implies_stage12_mutation_without_proof,
+            stale_or_cancelled_or_superseded_output: input.stale_or_cancelled_or_superseded_output,
+            session_closed: input.session_closed,
+            record_artifact_only_turn: input.record_artifact_only_turn,
+            stale_connector_state: input.stale_connector_state,
+            stale_remote_target_state: input.stale_remote_target_state,
+            stale_lease_or_ownership_state: input.stale_lease_or_ownership_state,
+            outbound_identity_matches_current_output_session: input
+                .outbound_identity_matches_current_output_session,
+            replay_upgrades_blocked_outbound: input.replay_upgrades_blocked_outbound,
+            fake_connector_detected: input.fake_connector_detected,
+            fake_dispatch_detected: input.fake_dispatch_detected,
+            fake_outbound_detected: input.fake_outbound_detected,
+            fake_remote_completion_detected: input.fake_remote_completion_detected,
+            runtime_mock_detected: input.runtime_mock_detected,
+            raw_provider_output_present: input.raw_provider_output_present,
+            raw_search_dump_present: input.raw_search_dump_present,
+            raw_media_present: input.raw_media_present,
+            raw_secret_connector_credential_present: input.raw_secret_connector_credential_present,
+            unverified_source_evidence_present: input.unverified_source_evidence_present,
+            unsupported_claim_candidate_present: input.unsupported_claim_candidate_present,
+            fake_connector_source_carrier_present: input.fake_connector_source_carrier_present,
+            speech_playback_attention_continuity_automation_used_as_truth_authority: input
+                .speech_playback_attention_continuity_automation_used_as_truth_authority,
+            protected_action_candidate_present: input.protected_action_candidate_present,
+            simulation_candidate_present: input.simulation_candidate_present,
+            approved_execution_plan_present: input.approved_execution_plan_present,
+            secrets_exposed: input.secrets_exposed,
+            raw_audio_or_voice_material_exposed: input.raw_audio_or_voice_material_exposed,
+            internal_trace_exposed: input.internal_trace_exposed,
+            access_denied: input.access_denied,
+            policy_denied: input.policy_denied,
+            tenant_mismatch: input.tenant_mismatch,
+            work_authority,
+        };
+        packet.validate()?;
+        Ok(packet)
+    }
+
+    pub const fn can_mutate_or_execute(&self) -> bool {
+        self.work_authority.can_mutate_or_execute()
+    }
+
+    fn decide_disposition(
+        output: &Stage15ResponseOutputPacket,
+        attention_output: Option<&Stage19NotificationAttentionPacket>,
+        continuity_output: Option<&Stage20ContinuityHandoffPacket>,
+        automation_output: Option<&Stage21AutomationOrchestrationPacket>,
+        input: &Stage22ConnectorOutboundInput,
+    ) -> Stage22ConnectorOutboundDisposition {
+        if input.runtime_mock_detected
+            || input.fake_connector_detected
+            || input.fake_dispatch_detected
+            || input.fake_outbound_detected
+            || input.fake_remote_completion_detected
+        {
+            return Stage22ConnectorOutboundDisposition::RuntimeMockBlocked;
+        }
+        if input.raw_provider_output_present
+            || input.raw_search_dump_present
+            || input.raw_media_present
+            || input.raw_secret_connector_credential_present
+            || input.unverified_source_evidence_present
+            || input.unsupported_claim_candidate_present
+            || input.fake_connector_source_carrier_present
+            || input.speech_playback_attention_continuity_automation_used_as_truth_authority
+            || input.protected_action_candidate_present
+            || input.simulation_candidate_present
+            || input.approved_execution_plan_present
+            || input.secrets_exposed
+            || input.raw_audio_or_voice_material_exposed
+            || input.internal_trace_exposed
+            || input.access_denied
+            || input.policy_denied
+            || input.tenant_mismatch
+        {
+            return Stage22ConnectorOutboundDisposition::UnsafeInputBlocked;
+        }
+        if !output.disposition.is_ready()
+            || output.can_mutate_or_execute()
+            || !input.stage15_response_output_ref_present
+        {
+            return Stage22ConnectorOutboundDisposition::StageInputBlocked;
+        }
+        if let Some(attention_output) = attention_output {
+            if attention_output.can_mutate_or_execute()
+                || attention_output.stale_or_cancelled_or_superseded_output
+                || attention_output.session_closed
+                || attention_output.record_artifact_only_turn
+                || !input.stage19_attention_ref_present
+                || !input.stage19_attention_ref_non_authoritative
+            {
+                return Stage22ConnectorOutboundDisposition::StageInputBlocked;
+            }
+        }
+        if let Some(continuity_output) = continuity_output {
+            if continuity_output.can_mutate_or_execute()
+                || continuity_output.stale_or_cancelled_or_superseded_output
+                || continuity_output.session_closed
+                || continuity_output.record_artifact_only_turn
+                || !input.stage20_continuity_ref_present
+                || !input.stage20_continuity_ref_non_authoritative
+            {
+                return Stage22ConnectorOutboundDisposition::StageInputBlocked;
+            }
+        }
+        if let Some(automation_output) = automation_output {
+            if automation_output.can_mutate_or_execute()
+                || automation_output.stale_or_cancelled_or_superseded_output
+                || automation_output.session_closed
+                || automation_output.record_artifact_only_turn
+                || !input.stage21_automation_ref_present
+                || !input.stage21_automation_ref_non_authoritative
+            {
+                return Stage22ConnectorOutboundDisposition::StageInputBlocked;
+            }
+        }
+        if input.audit_id.is_none()
+            && input.ph1j_proof_ref.is_none()
+            && output.audit_id.is_none()
+            && output.ph1j_proof_ref.is_none()
+        {
+            return Stage22ConnectorOutboundDisposition::AuditProofMissing;
+        }
+        if !input.uncertainty_preserved
+            || input.outbound_invented_fact
+            || input.outbound_invented_connector_success
+            || input.outbound_invented_dispatch_success
+            || input.outbound_invented_remote_completion
+            || input.outbound_invented_ownership
+            || input.outbound_invented_attachment_or_citation
+            || input.outbound_invented_provider_or_tool_result
+            || input.outbound_claimed_unproven_completion
+            || input.outbound_implied_mutation
+        {
+            return Stage22ConnectorOutboundDisposition::NoInventionBlocked;
+        }
+        if !input.connector_target_staging_bounded
+            || !input.remote_target_bounded
+            || !input.ownership_lease_bounded
+            || !input.tenant_user_device_project_scoped
+            || !input.secret_safe
+            || !input.redacted
+            || !input.stale_aware
+            || !input.revocation_aware
+            || !input.connector_ref_present
+            || !input.remote_target_ref_present
+            || !input.ownership_ref_present
+            || !input.lease_ref_present
+            || input.unverifiable
+            || input.stale
+            || input.secret_unsafe
+            || input.cross_tenant
+            || input.cross_target
+            || input.missing_lease
+            || input.ownership_drift
+            || input.connector_mismatch
+            || input.remote_target_mismatch
+        {
+            return Stage22ConnectorOutboundDisposition::ConnectorTargetStagingBlocked;
+        }
+        if !input.native_outbound_declarative_only
+            || input.native_outbound_mutates_state
+            || input.native_outbound_connector_writes
+            || input.native_outbound_dispatches_or_executes
+            || input.native_outbound_calls_providers_or_tools
+            || input.native_outbound_emits_tts_or_playback
+            || input.native_outbound_creates_user_turn
+            || input.native_outbound_treats_visible_success_as_action_success
+        {
+            return Stage22ConnectorOutboundDisposition::NativeOutboundBlocked;
+        }
+        if input.protected_action_like_request
+            || input.protected_slot_or_authority_ambiguous
+            || input.unsafe_identity_posture
+            || input.outbound_implies_stage12_mutation_without_proof
+        {
+            return Stage22ConnectorOutboundDisposition::ProtectedOutboundBlocked;
+        }
+        if input.stale_or_cancelled_or_superseded_output
+            || input.session_closed
+            || input.record_artifact_only_turn
+            || input.stale_connector_state
+            || input.stale_remote_target_state
+            || input.stale_lease_or_ownership_state
+            || !input.outbound_identity_matches_current_output_session
+            || input.replay_upgrades_blocked_outbound
+        {
+            return Stage22ConnectorOutboundDisposition::StaleOutboundBlocked;
+        }
+
+        match input.outbound_kind {
+            Stage22ConnectorOutboundKind::ExternalIntegration => {
+                if input.external_integration_id.is_some() && input.remote_target_id.is_some() {
+                    Stage22ConnectorOutboundDisposition::ExternalIntegrationReady
+                } else {
+                    Stage22ConnectorOutboundDisposition::ConnectorTargetStagingBlocked
+                }
+            }
+            Stage22ConnectorOutboundKind::ConnectorActionStaging => {
+                if input.connector_action_stage_id.is_some()
+                    && input.external_integration_id.is_some()
+                    && input.work_id.is_some()
+                    && input.lease_id.is_some()
+                {
+                    Stage22ConnectorOutboundDisposition::ConnectorActionStagingReady
+                } else {
+                    Stage22ConnectorOutboundDisposition::ConnectorTargetStagingBlocked
+                }
+            }
+            Stage22ConnectorOutboundKind::OutboundSystemIntent => {
+                if input.outbound_intent_id.is_some()
+                    && input.remote_target_id.is_some()
+                    && input.work_id.is_some()
+                    && input.lease_id.is_some()
+                {
+                    Stage22ConnectorOutboundDisposition::OutboundSystemIntentReady
+                } else {
+                    Stage22ConnectorOutboundDisposition::ConnectorTargetStagingBlocked
+                }
+            }
+            Stage22ConnectorOutboundKind::StagedDispatchPosture => {
+                if input.connector_action_stage_id.is_some()
+                    && input.outbound_intent_id.is_some()
+                    && input.remote_target_id.is_some()
+                    && input.work_id.is_some()
+                    && input.lease_id.is_some()
+                {
+                    Stage22ConnectorOutboundDisposition::StagedDispatchPostureReady
+                } else {
+                    Stage22ConnectorOutboundDisposition::ConnectorTargetStagingBlocked
+                }
+            }
+            Stage22ConnectorOutboundKind::RemoteTargetReference => {
+                if input.remote_target_id.is_some() {
+                    Stage22ConnectorOutboundDisposition::RemoteTargetReferenceReady
+                } else {
+                    Stage22ConnectorOutboundDisposition::ConnectorTargetStagingBlocked
+                }
+            }
+        }
+    }
+
+    const fn work_authority_for(
+        disposition: Stage22ConnectorOutboundDisposition,
+    ) -> Stage22ConnectorOutboundWorkAuthority {
+        match disposition {
+            Stage22ConnectorOutboundDisposition::ExternalIntegrationReady => {
+                Stage22ConnectorOutboundWorkAuthority::external_integration_ready()
+            }
+            Stage22ConnectorOutboundDisposition::ConnectorActionStagingReady => {
+                Stage22ConnectorOutboundWorkAuthority::connector_action_staging_ready()
+            }
+            Stage22ConnectorOutboundDisposition::OutboundSystemIntentReady => {
+                Stage22ConnectorOutboundWorkAuthority::outbound_system_intent_ready()
+            }
+            Stage22ConnectorOutboundDisposition::StagedDispatchPostureReady => {
+                Stage22ConnectorOutboundWorkAuthority::staged_dispatch_posture_ready()
+            }
+            Stage22ConnectorOutboundDisposition::RemoteTargetReferenceReady => {
+                Stage22ConnectorOutboundWorkAuthority::remote_target_ready()
+            }
+            _ => Stage22ConnectorOutboundWorkAuthority::fail_closed(),
+        }
+    }
+}
+
+impl Validate for Stage22ConnectorOutboundPacket {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        validate_stage4_optional_ref(
+            "stage22_connector_outbound_packet.activation_id",
+            self.activation_id.as_deref(),
+        )?;
+        validate_stage4_ref(
+            "stage22_connector_outbound_packet.response_output_id",
+            &self.response_output_id,
+        )?;
+        validate_stage4_ref(
+            "stage22_connector_outbound_packet.response_hash",
+            &self.response_hash,
+        )?;
+        validate_stage4_ref(
+            "stage22_connector_outbound_packet.public_answer_id",
+            &self.public_answer_id,
+        )?;
+        validate_stage4_optional_ref(
+            "stage22_connector_outbound_packet.notification_candidate_id",
+            self.notification_candidate_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage22_connector_outbound_packet.attention_state_id",
+            self.attention_state_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage22_connector_outbound_packet.continuity_packet_id",
+            self.continuity_packet_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage22_connector_outbound_packet.automation_candidate_id",
+            self.automation_candidate_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage22_connector_outbound_packet.connector_action_stage_id",
+            self.connector_action_stage_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage22_connector_outbound_packet.external_integration_id",
+            self.external_integration_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage22_connector_outbound_packet.outbound_intent_id",
+            self.outbound_intent_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage22_connector_outbound_packet.remote_target_id",
+            self.remote_target_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage22_connector_outbound_packet.work_id",
+            self.work_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage22_connector_outbound_packet.lease_id",
+            self.lease_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage22_connector_outbound_packet.ownership_ref",
+            self.ownership_ref.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage22_connector_outbound_packet.access_context_id",
+            self.access_context_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage22_connector_outbound_packet.policy_context_id",
+            self.policy_context_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage22_connector_outbound_packet.tenant_id",
+            self.tenant_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage22_connector_outbound_packet.audit_id",
+            self.audit_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage22_connector_outbound_packet.ph1j_proof_ref",
+            self.ph1j_proof_ref.as_deref(),
+        )?;
+        if self.reason_code != self.disposition.default_reason_code() {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage22_connector_outbound_packet.reason_code",
+                reason: "must match Stage 22A connector/outbound disposition",
+            });
+        }
+        if self.work_authority.can_mutate_or_execute() {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage22_connector_outbound_packet.work_authority",
+                reason: "Stage 22A cannot invent outbound authority, mutate, connector-write, approve, dispatch, execute, call live providers/search/tools, deliver live outbound actions, emit TTS/playback, create turns, or add native UI behavior",
+            });
+        }
+        if self.disposition.is_ready()
+            && (self.audit_id.is_none() || self.ph1j_proof_ref.is_none())
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage22_connector_outbound_packet.audit_proof",
+                reason: "ready Stage 22A outbound output requires PH1.J audit/proof refs",
+            });
+        }
+        Ok(())
+    }
+}
+
+pub fn stage22_connector_outbound_symbol_anchor() {
+    let _ = Stage22ConnectorOutboundKind::ExternalIntegration;
+    let _ = Stage22ConnectorOutboundKind::ConnectorActionStaging;
+    let _ = Stage22ConnectorOutboundKind::OutboundSystemIntent;
+    let _ = Stage22ConnectorOutboundKind::StagedDispatchPosture;
+    let _ = Stage22ConnectorOutboundKind::RemoteTargetReference;
+    let disposition = Stage22ConnectorOutboundDisposition::StageInputBlocked;
+    let _ = disposition.default_reason_code();
+    let _ = disposition.is_ready();
+    let _ = Stage22ConnectorOutboundWorkAuthority::fail_closed().can_mutate_or_execute();
+    let _ = Stage22ConnectorOutboundWorkAuthority::external_integration_ready();
+    let _ = Stage22ConnectorOutboundWorkAuthority::connector_action_staging_ready();
+    let _ = Stage22ConnectorOutboundWorkAuthority::outbound_system_intent_ready();
+    let _ = Stage22ConnectorOutboundWorkAuthority::staged_dispatch_posture_ready();
+    let _ = Stage22ConnectorOutboundWorkAuthority::remote_target_ready();
+    let _ = core::mem::size_of::<Stage22ConnectorOutboundInput>();
+    let _ = core::mem::size_of::<Stage22ConnectorOutboundPacket>();
+    let _ = Stage22ConnectorOutboundPacket::from_stage15_output
+        as fn(
+            &Stage15ResponseOutputPacket,
+            Option<&Stage19NotificationAttentionPacket>,
+            Option<&Stage20ContinuityHandoffPacket>,
+            Option<&Stage21AutomationOrchestrationPacket>,
+            Stage22ConnectorOutboundInput,
+        ) -> Result<Stage22ConnectorOutboundPacket, ContractViolation>;
+    let _ = Stage22ConnectorOutboundPacket::can_mutate_or_execute
+        as fn(&Stage22ConnectorOutboundPacket) -> bool;
+}
+const _: fn() = stage22_connector_outbound_symbol_anchor;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -28818,6 +30108,1837 @@ mod tests {
         runtime_mock.fixture_only_test_path = false;
         assert!(Stage21AutomationOrchestrationPacket::from_stage15_output(
             &output,
+            None,
+            None,
+            runtime_mock,
+        )
+        .is_err());
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub enum Stage22ConnectorOutboundKind {
+        ExternalIntegration,
+        ConnectorActionStaging,
+        OutboundSystemIntent,
+        StagedDispatchPosture,
+        RemoteTargetReference,
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub enum Stage22ConnectorOutboundDisposition {
+        ExternalIntegrationReady,
+        ConnectorActionStagingReady,
+        OutboundSystemIntentReady,
+        StagedDispatchPostureReady,
+        RemoteTargetReferenceReady,
+        StageInputBlocked,
+        NoInventionBlocked,
+        ConnectorTargetStagingBlocked,
+        NativeOutboundBlocked,
+        ProtectedOutboundBlocked,
+        StaleOutboundBlocked,
+        UnsafeInputBlocked,
+        RuntimeMockBlocked,
+        AuditProofMissing,
+    }
+
+    impl Stage22ConnectorOutboundDisposition {
+        pub const fn default_reason_code(self) -> &'static str {
+            match self {
+                Self::ExternalIntegrationReady => reason_codes::STAGE22_EXTERNAL_INTEGRATION_READY,
+                Self::ConnectorActionStagingReady => {
+                    reason_codes::STAGE22_CONNECTOR_ACTION_STAGING_READY
+                }
+                Self::OutboundSystemIntentReady => {
+                    reason_codes::STAGE22_OUTBOUND_SYSTEM_INTENT_READY
+                }
+                Self::StagedDispatchPostureReady => {
+                    reason_codes::STAGE22_STAGED_DISPATCH_POSTURE_READY
+                }
+                Self::RemoteTargetReferenceReady => {
+                    reason_codes::STAGE22_REMOTE_TARGET_REFERENCE_READY
+                }
+                Self::StageInputBlocked => reason_codes::STAGE22_STAGE_INPUT_BLOCKED,
+                Self::NoInventionBlocked => reason_codes::STAGE22_NO_INVENTION_BLOCKED,
+                Self::ConnectorTargetStagingBlocked => {
+                    reason_codes::STAGE22_CONNECTOR_TARGET_STAGING_BLOCKED
+                }
+                Self::NativeOutboundBlocked => reason_codes::STAGE22_NATIVE_OUTBOUND_BLOCKED,
+                Self::ProtectedOutboundBlocked => {
+                    reason_codes::STAGE22_PROTECTED_OUTBOUND_BLOCKED
+                }
+                Self::StaleOutboundBlocked => reason_codes::STAGE22_STALE_OUTBOUND_BLOCKED,
+                Self::UnsafeInputBlocked => reason_codes::STAGE22_UNSAFE_INPUT_BLOCKED,
+                Self::RuntimeMockBlocked => reason_codes::STAGE22_RUNTIME_MOCK_BLOCKED,
+                Self::AuditProofMissing => reason_codes::STAGE22_AUDIT_PROOF_MISSING,
+            }
+        }
+
+        pub const fn is_ready(self) -> bool {
+            matches!(
+                self,
+                Self::ExternalIntegrationReady
+                    | Self::ConnectorActionStagingReady
+                    | Self::OutboundSystemIntentReady
+                    | Self::StagedDispatchPostureReady
+                    | Self::RemoteTargetReferenceReady
+            )
+        }
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub struct Stage22ConnectorOutboundWorkAuthority {
+        pub can_emit_external_integration_packet: bool,
+        pub can_emit_connector_action_staging_packet: bool,
+        pub can_emit_outbound_system_intent_packet: bool,
+        pub can_emit_staged_dispatch_posture_packet: bool,
+        pub can_emit_remote_target_ref: bool,
+        pub can_emit_ownership_lease_ref: bool,
+        pub can_emit_honest_uncertainty: bool,
+        pub can_emit_audit_proof: bool,
+        pub can_fail_closed: bool,
+        pub can_invent_facts: bool,
+        pub can_invent_connector_success: bool,
+        pub can_invent_dispatch_success: bool,
+        pub can_invent_remote_completion: bool,
+        pub can_invent_ownership_or_outbound_authority: bool,
+        pub can_claim_unproven_completion: bool,
+        pub can_mutate_external_state: bool,
+        pub can_connector_write: bool,
+        pub can_approve: bool,
+        pub can_dispatch: bool,
+        pub can_execute_simulation: bool,
+        pub can_execute_protected_action: bool,
+        pub can_call_live_provider: bool,
+        pub can_run_live_search: bool,
+        pub can_call_live_external_tool: bool,
+        pub can_generate_live_media: bool,
+        pub can_emit_live_outbound_delivery: bool,
+        pub can_emit_tts_or_playback: bool,
+        pub can_capture_microphone_audio: bool,
+        pub can_transcribe_live_audio: bool,
+        pub can_trigger_voice_id_matching: bool,
+        pub can_update_memory_persona_emotion: bool,
+        pub can_add_native_ui_behavior: bool,
+        pub can_create_user_turn: bool,
+        pub can_treat_visible_outbound_as_action_success: bool,
+    }
+
+    impl Stage22ConnectorOutboundWorkAuthority {
+        const fn fail_closed() -> Self {
+            Self {
+                can_emit_external_integration_packet: false,
+                can_emit_connector_action_staging_packet: false,
+                can_emit_outbound_system_intent_packet: false,
+                can_emit_staged_dispatch_posture_packet: false,
+                can_emit_remote_target_ref: false,
+                can_emit_ownership_lease_ref: false,
+                can_emit_honest_uncertainty: true,
+                can_emit_audit_proof: false,
+                can_fail_closed: true,
+                can_invent_facts: false,
+                can_invent_connector_success: false,
+                can_invent_dispatch_success: false,
+                can_invent_remote_completion: false,
+                can_invent_ownership_or_outbound_authority: false,
+                can_claim_unproven_completion: false,
+                can_mutate_external_state: false,
+                can_connector_write: false,
+                can_approve: false,
+                can_dispatch: false,
+                can_execute_simulation: false,
+                can_execute_protected_action: false,
+                can_call_live_provider: false,
+                can_run_live_search: false,
+                can_call_live_external_tool: false,
+                can_generate_live_media: false,
+                can_emit_live_outbound_delivery: false,
+                can_emit_tts_or_playback: false,
+                can_capture_microphone_audio: false,
+                can_transcribe_live_audio: false,
+                can_trigger_voice_id_matching: false,
+                can_update_memory_persona_emotion: false,
+                can_add_native_ui_behavior: false,
+                can_create_user_turn: false,
+                can_treat_visible_outbound_as_action_success: false,
+            }
+        }
+
+        const fn external_integration_ready() -> Self {
+            Self {
+                can_emit_external_integration_packet: true,
+                can_emit_remote_target_ref: true,
+                can_emit_ownership_lease_ref: true,
+                can_emit_honest_uncertainty: true,
+                can_emit_audit_proof: true,
+                can_fail_closed: false,
+                ..Self::fail_closed()
+            }
+        }
+
+        const fn connector_action_staging_ready() -> Self {
+            Self {
+                can_emit_connector_action_staging_packet: true,
+                can_emit_ownership_lease_ref: true,
+                can_emit_honest_uncertainty: true,
+                can_emit_audit_proof: true,
+                can_fail_closed: false,
+                ..Self::fail_closed()
+            }
+        }
+
+        const fn outbound_system_intent_ready() -> Self {
+            Self {
+                can_emit_outbound_system_intent_packet: true,
+                can_emit_remote_target_ref: true,
+                can_emit_ownership_lease_ref: true,
+                can_emit_honest_uncertainty: true,
+                can_emit_audit_proof: true,
+                can_fail_closed: false,
+                ..Self::fail_closed()
+            }
+        }
+
+        const fn staged_dispatch_posture_ready() -> Self {
+            Self {
+                can_emit_staged_dispatch_posture_packet: true,
+                can_emit_remote_target_ref: true,
+                can_emit_ownership_lease_ref: true,
+                can_emit_honest_uncertainty: true,
+                can_emit_audit_proof: true,
+                can_fail_closed: false,
+                ..Self::fail_closed()
+            }
+        }
+
+        const fn remote_target_ready() -> Self {
+            Self {
+                can_emit_remote_target_ref: true,
+                can_emit_honest_uncertainty: true,
+                can_emit_audit_proof: true,
+                can_fail_closed: false,
+                ..Self::fail_closed()
+            }
+        }
+
+        pub const fn can_mutate_or_execute(self) -> bool {
+            self.can_invent_facts
+                || self.can_invent_connector_success
+                || self.can_invent_dispatch_success
+                || self.can_invent_remote_completion
+                || self.can_invent_ownership_or_outbound_authority
+                || self.can_claim_unproven_completion
+                || self.can_mutate_external_state
+                || self.can_connector_write
+                || self.can_approve
+                || self.can_dispatch
+                || self.can_execute_simulation
+                || self.can_execute_protected_action
+                || self.can_call_live_provider
+                || self.can_run_live_search
+                || self.can_call_live_external_tool
+                || self.can_generate_live_media
+                || self.can_emit_live_outbound_delivery
+                || self.can_emit_tts_or_playback
+                || self.can_capture_microphone_audio
+                || self.can_transcribe_live_audio
+                || self.can_trigger_voice_id_matching
+                || self.can_update_memory_persona_emotion
+                || self.can_add_native_ui_behavior
+                || self.can_create_user_turn
+                || self.can_treat_visible_outbound_as_action_success
+        }
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub struct Stage22ConnectorOutboundInput {
+        pub outbound_kind: Stage22ConnectorOutboundKind,
+        pub connector_action_stage_id: Option<String>,
+        pub external_integration_id: Option<String>,
+        pub outbound_intent_id: Option<String>,
+        pub remote_target_id: Option<String>,
+        pub work_id: Option<String>,
+        pub lease_id: Option<String>,
+        pub ownership_ref: Option<String>,
+        pub device_id: String,
+        pub audit_id: Option<String>,
+        pub ph1j_proof_ref: Option<String>,
+        pub stage15_response_output_ref_present: bool,
+        pub stage19_attention_ref_present: bool,
+        pub stage19_attention_ref_non_authoritative: bool,
+        pub stage20_continuity_ref_present: bool,
+        pub stage20_continuity_ref_non_authoritative: bool,
+        pub stage21_automation_ref_present: bool,
+        pub stage21_automation_ref_non_authoritative: bool,
+        pub connector_target_staging_bounded: bool,
+        pub remote_target_bounded: bool,
+        pub ownership_lease_bounded: bool,
+        pub uncertainty_preserved: bool,
+        pub outbound_invented_fact: bool,
+        pub outbound_invented_connector_success: bool,
+        pub outbound_invented_dispatch_success: bool,
+        pub outbound_invented_remote_completion: bool,
+        pub outbound_invented_ownership: bool,
+        pub outbound_invented_attachment_or_citation: bool,
+        pub outbound_invented_provider_or_tool_result: bool,
+        pub outbound_claimed_unproven_completion: bool,
+        pub outbound_implied_mutation: bool,
+        pub tenant_user_device_project_scoped: bool,
+        pub secret_safe: bool,
+        pub redacted: bool,
+        pub stale_aware: bool,
+        pub revocation_aware: bool,
+        pub connector_ref_present: bool,
+        pub remote_target_ref_present: bool,
+        pub ownership_ref_present: bool,
+        pub lease_ref_present: bool,
+        pub unverifiable: bool,
+        pub stale: bool,
+        pub secret_unsafe: bool,
+        pub cross_tenant: bool,
+        pub cross_target: bool,
+        pub missing_lease: bool,
+        pub ownership_drift: bool,
+        pub connector_mismatch: bool,
+        pub remote_target_mismatch: bool,
+        pub native_outbound_declarative_only: bool,
+        pub native_outbound_mutates_state: bool,
+        pub native_outbound_connector_writes: bool,
+        pub native_outbound_dispatches_or_executes: bool,
+        pub native_outbound_calls_providers_or_tools: bool,
+        pub native_outbound_emits_tts_or_playback: bool,
+        pub native_outbound_creates_user_turn: bool,
+        pub native_outbound_treats_visible_success_as_action_success: bool,
+        pub protected_action_like_request: bool,
+        pub protected_slot_or_authority_ambiguous: bool,
+        pub unsafe_identity_posture: bool,
+        pub outbound_implies_stage12_mutation_without_proof: bool,
+        pub stale_or_cancelled_or_superseded_output: bool,
+        pub session_closed: bool,
+        pub record_artifact_only_turn: bool,
+        pub stale_connector_state: bool,
+        pub stale_remote_target_state: bool,
+        pub stale_lease_or_ownership_state: bool,
+        pub outbound_identity_matches_current_output_session: bool,
+        pub replay_upgrades_blocked_outbound: bool,
+        pub fake_connector_detected: bool,
+        pub fake_dispatch_detected: bool,
+        pub fake_outbound_detected: bool,
+        pub fake_remote_completion_detected: bool,
+        pub runtime_mock_detected: bool,
+        pub fixture_only_test_path: bool,
+        pub raw_provider_output_present: bool,
+        pub raw_search_dump_present: bool,
+        pub raw_media_present: bool,
+        pub raw_secret_connector_credential_present: bool,
+        pub unverified_source_evidence_present: bool,
+        pub unsupported_claim_candidate_present: bool,
+        pub fake_connector_source_carrier_present: bool,
+        pub speech_playback_attention_continuity_automation_used_as_truth_authority: bool,
+        pub protected_action_candidate_present: bool,
+        pub simulation_candidate_present: bool,
+        pub approved_execution_plan_present: bool,
+        pub secrets_exposed: bool,
+        pub raw_audio_or_voice_material_exposed: bool,
+        pub internal_trace_exposed: bool,
+        pub access_denied: bool,
+        pub policy_denied: bool,
+        pub tenant_mismatch: bool,
+        pub attempted_live_provider_in_build: bool,
+        pub generated_live_media_in_build: bool,
+        pub ran_live_search_in_build: bool,
+        pub called_live_external_tool_in_build: bool,
+        pub connector_write_requested: bool,
+        pub ran_live_notification_delivery_in_build: bool,
+        pub ran_live_background_execution_in_build: bool,
+        pub ran_live_outbound_delivery_in_build: bool,
+        pub ran_live_connector_dispatch_in_build: bool,
+        pub ran_live_tts_or_playback_in_build: bool,
+        pub captured_microphone_audio: bool,
+        pub transcribed_live_audio: bool,
+        pub voice_id_matching_attempted: bool,
+        pub native_ui_behavior_added: bool,
+    }
+
+    impl Stage22ConnectorOutboundInput {
+        fn fixture_base(
+            outbound_kind: Stage22ConnectorOutboundKind,
+            device_id: impl Into<String>,
+            audit_id: impl Into<String>,
+        ) -> Self {
+            let audit_id = audit_id.into();
+            Self {
+                outbound_kind,
+                connector_action_stage_id: Some("connector-action-stage22-ready".to_string()),
+                external_integration_id: Some("external-integration-stage22-ready".to_string()),
+                outbound_intent_id: Some("outbound-intent-stage22-ready".to_string()),
+                remote_target_id: Some("remote-target-stage22-ready".to_string()),
+                work_id: Some("work-stage22-ready".to_string()),
+                lease_id: Some("lease-stage22-ready".to_string()),
+                ownership_ref: Some("ownership-stage22-ready".to_string()),
+                device_id: device_id.into(),
+                audit_id: Some(audit_id.clone()),
+                ph1j_proof_ref: Some(audit_id),
+                stage15_response_output_ref_present: true,
+                stage19_attention_ref_present: false,
+                stage19_attention_ref_non_authoritative: false,
+                stage20_continuity_ref_present: false,
+                stage20_continuity_ref_non_authoritative: false,
+                stage21_automation_ref_present: false,
+                stage21_automation_ref_non_authoritative: false,
+                connector_target_staging_bounded: true,
+                remote_target_bounded: true,
+                ownership_lease_bounded: true,
+                uncertainty_preserved: true,
+                outbound_invented_fact: false,
+                outbound_invented_connector_success: false,
+                outbound_invented_dispatch_success: false,
+                outbound_invented_remote_completion: false,
+                outbound_invented_ownership: false,
+                outbound_invented_attachment_or_citation: false,
+                outbound_invented_provider_or_tool_result: false,
+                outbound_claimed_unproven_completion: false,
+                outbound_implied_mutation: false,
+                tenant_user_device_project_scoped: true,
+                secret_safe: true,
+                redacted: true,
+                stale_aware: true,
+                revocation_aware: true,
+                connector_ref_present: true,
+                remote_target_ref_present: true,
+                ownership_ref_present: true,
+                lease_ref_present: true,
+                unverifiable: false,
+                stale: false,
+                secret_unsafe: false,
+                cross_tenant: false,
+                cross_target: false,
+                missing_lease: false,
+                ownership_drift: false,
+                connector_mismatch: false,
+                remote_target_mismatch: false,
+                native_outbound_declarative_only: true,
+                native_outbound_mutates_state: false,
+                native_outbound_connector_writes: false,
+                native_outbound_dispatches_or_executes: false,
+                native_outbound_calls_providers_or_tools: false,
+                native_outbound_emits_tts_or_playback: false,
+                native_outbound_creates_user_turn: false,
+                native_outbound_treats_visible_success_as_action_success: false,
+                protected_action_like_request: false,
+                protected_slot_or_authority_ambiguous: false,
+                unsafe_identity_posture: false,
+                outbound_implies_stage12_mutation_without_proof: false,
+                stale_or_cancelled_or_superseded_output: false,
+                session_closed: false,
+                record_artifact_only_turn: false,
+                stale_connector_state: false,
+                stale_remote_target_state: false,
+                stale_lease_or_ownership_state: false,
+                outbound_identity_matches_current_output_session: true,
+                replay_upgrades_blocked_outbound: false,
+                fake_connector_detected: false,
+                fake_dispatch_detected: false,
+                fake_outbound_detected: false,
+                fake_remote_completion_detected: false,
+                runtime_mock_detected: false,
+                fixture_only_test_path: false,
+                raw_provider_output_present: false,
+                raw_search_dump_present: false,
+                raw_media_present: false,
+                raw_secret_connector_credential_present: false,
+                unverified_source_evidence_present: false,
+                unsupported_claim_candidate_present: false,
+                fake_connector_source_carrier_present: false,
+                speech_playback_attention_continuity_automation_used_as_truth_authority: false,
+                protected_action_candidate_present: false,
+                simulation_candidate_present: false,
+                approved_execution_plan_present: false,
+                secrets_exposed: false,
+                raw_audio_or_voice_material_exposed: false,
+                internal_trace_exposed: false,
+                access_denied: false,
+                policy_denied: false,
+                tenant_mismatch: false,
+                attempted_live_provider_in_build: false,
+                generated_live_media_in_build: false,
+                ran_live_search_in_build: false,
+                called_live_external_tool_in_build: false,
+                connector_write_requested: false,
+                ran_live_notification_delivery_in_build: false,
+                ran_live_background_execution_in_build: false,
+                ran_live_outbound_delivery_in_build: false,
+                ran_live_connector_dispatch_in_build: false,
+                ran_live_tts_or_playback_in_build: false,
+                captured_microphone_audio: false,
+                transcribed_live_audio: false,
+                voice_id_matching_attempted: false,
+                native_ui_behavior_added: false,
+            }
+        }
+
+        pub fn fixture_external_integration_ready(
+            external_integration_id: impl Into<String>,
+            remote_target_id: impl Into<String>,
+            device_id: impl Into<String>,
+            audit_id: impl Into<String>,
+        ) -> Self {
+            let mut input = Self::fixture_base(
+                Stage22ConnectorOutboundKind::ExternalIntegration,
+                device_id,
+                audit_id,
+            );
+            input.external_integration_id = Some(external_integration_id.into());
+            input.remote_target_id = Some(remote_target_id.into());
+            input.connector_action_stage_id = None;
+            input.outbound_intent_id = None;
+            input
+        }
+
+        pub fn fixture_connector_action_staging_ready(
+            connector_action_stage_id: impl Into<String>,
+            external_integration_id: impl Into<String>,
+            work_id: impl Into<String>,
+            lease_id: impl Into<String>,
+            device_id: impl Into<String>,
+            audit_id: impl Into<String>,
+        ) -> Self {
+            let mut input = Self::fixture_base(
+                Stage22ConnectorOutboundKind::ConnectorActionStaging,
+                device_id,
+                audit_id,
+            );
+            input.connector_action_stage_id = Some(connector_action_stage_id.into());
+            input.external_integration_id = Some(external_integration_id.into());
+            input.outbound_intent_id = None;
+            input.work_id = Some(work_id.into());
+            input.lease_id = Some(lease_id.into());
+            input
+        }
+
+        pub fn fixture_outbound_system_intent_ready(
+            outbound_intent_id: impl Into<String>,
+            remote_target_id: impl Into<String>,
+            work_id: impl Into<String>,
+            lease_id: impl Into<String>,
+            device_id: impl Into<String>,
+            audit_id: impl Into<String>,
+        ) -> Self {
+            let mut input = Self::fixture_base(
+                Stage22ConnectorOutboundKind::OutboundSystemIntent,
+                device_id,
+                audit_id,
+            );
+            input.connector_action_stage_id = None;
+            input.outbound_intent_id = Some(outbound_intent_id.into());
+            input.remote_target_id = Some(remote_target_id.into());
+            input.work_id = Some(work_id.into());
+            input.lease_id = Some(lease_id.into());
+            input
+        }
+
+        pub fn fixture_staged_dispatch_posture_ready(
+            connector_action_stage_id: impl Into<String>,
+            outbound_intent_id: impl Into<String>,
+            remote_target_id: impl Into<String>,
+            work_id: impl Into<String>,
+            lease_id: impl Into<String>,
+            device_id: impl Into<String>,
+            audit_id: impl Into<String>,
+        ) -> Self {
+            let mut input = Self::fixture_base(
+                Stage22ConnectorOutboundKind::StagedDispatchPosture,
+                device_id,
+                audit_id,
+            );
+            input.connector_action_stage_id = Some(connector_action_stage_id.into());
+            input.outbound_intent_id = Some(outbound_intent_id.into());
+            input.remote_target_id = Some(remote_target_id.into());
+            input.work_id = Some(work_id.into());
+            input.lease_id = Some(lease_id.into());
+            input
+        }
+
+        pub fn fixture_remote_target_reference_ready(
+            remote_target_id: impl Into<String>,
+            device_id: impl Into<String>,
+            audit_id: impl Into<String>,
+        ) -> Self {
+            let mut input = Self::fixture_base(
+                Stage22ConnectorOutboundKind::RemoteTargetReference,
+                device_id,
+                audit_id,
+            );
+            input.connector_action_stage_id = None;
+            input.external_integration_id = None;
+            input.outbound_intent_id = None;
+            input.remote_target_id = Some(remote_target_id.into());
+            input
+        }
+    }
+
+    impl Validate for Stage22ConnectorOutboundInput {
+        fn validate(&self) -> Result<(), ContractViolation> {
+            validate_stage4_optional_ref(
+                "stage22_connector_outbound_input.connector_action_stage_id",
+                self.connector_action_stage_id.as_deref(),
+            )?;
+            validate_stage4_optional_ref(
+                "stage22_connector_outbound_input.external_integration_id",
+                self.external_integration_id.as_deref(),
+            )?;
+            validate_stage4_optional_ref(
+                "stage22_connector_outbound_input.outbound_intent_id",
+                self.outbound_intent_id.as_deref(),
+            )?;
+            validate_stage4_optional_ref(
+                "stage22_connector_outbound_input.remote_target_id",
+                self.remote_target_id.as_deref(),
+            )?;
+            validate_stage4_optional_ref(
+                "stage22_connector_outbound_input.work_id",
+                self.work_id.as_deref(),
+            )?;
+            validate_stage4_optional_ref(
+                "stage22_connector_outbound_input.lease_id",
+                self.lease_id.as_deref(),
+            )?;
+            validate_stage4_optional_ref(
+                "stage22_connector_outbound_input.ownership_ref",
+                self.ownership_ref.as_deref(),
+            )?;
+            validate_stage4_ref("stage22_connector_outbound_input.device_id", &self.device_id)?;
+            validate_stage4_optional_ref(
+                "stage22_connector_outbound_input.audit_id",
+                self.audit_id.as_deref(),
+            )?;
+            validate_stage4_optional_ref(
+                "stage22_connector_outbound_input.ph1j_proof_ref",
+                self.ph1j_proof_ref.as_deref(),
+            )?;
+            if self.attempted_live_provider_in_build
+                || self.generated_live_media_in_build
+                || self.ran_live_search_in_build
+                || self.called_live_external_tool_in_build
+                || self.connector_write_requested
+                || self.ran_live_notification_delivery_in_build
+                || self.ran_live_background_execution_in_build
+                || self.ran_live_outbound_delivery_in_build
+                || self.ran_live_connector_dispatch_in_build
+                || self.ran_live_tts_or_playback_in_build
+                || self.captured_microphone_audio
+                || self.transcribed_live_audio
+                || self.voice_id_matching_attempted
+                || self.native_ui_behavior_added
+            {
+                return Err(ContractViolation::InvalidValue {
+                    field: "stage22_connector_outbound_input.no_live_build",
+                    reason: "Stage 22A cannot call live providers/search/tools, connector-write, dispatch live outbound actions, emit TTS/playback, capture mic, transcribe, match Voice ID, or add native UI",
+                });
+            }
+            if (self.runtime_mock_detected
+                || self.fake_connector_detected
+                || self.fake_dispatch_detected
+                || self.fake_outbound_detected
+                || self.fake_remote_completion_detected)
+                && !self.fixture_only_test_path
+            {
+                return Err(ContractViolation::InvalidValue {
+                    field: "stage22_connector_outbound_input.runtime_mock",
+                    reason: "runtime mocks and fake connector/dispatch/outbound/remote-completion success are forbidden outside explicit fixture-only paths",
+                });
+            }
+            Ok(())
+        }
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub struct Stage22ConnectorOutboundPacket {
+        pub session_id: SessionId,
+        pub turn_id: Option<TurnId>,
+        pub activation_id: Option<String>,
+        pub response_output_id: String,
+        pub response_hash: String,
+        pub public_answer_id: String,
+        pub notification_candidate_id: Option<String>,
+        pub attention_state_id: Option<String>,
+        pub continuity_packet_id: Option<String>,
+        pub automation_candidate_id: Option<String>,
+        pub connector_action_stage_id: Option<String>,
+        pub external_integration_id: Option<String>,
+        pub outbound_intent_id: Option<String>,
+        pub remote_target_id: Option<String>,
+        pub work_id: Option<String>,
+        pub lease_id: Option<String>,
+        pub ownership_ref: Option<String>,
+        pub access_context_id: Option<String>,
+        pub policy_context_id: Option<String>,
+        pub tenant_id: Option<String>,
+        pub audit_id: Option<String>,
+        pub ph1j_proof_ref: Option<String>,
+        pub outbound_kind: Stage22ConnectorOutboundKind,
+        pub reason_code: &'static str,
+        pub disposition: Stage22ConnectorOutboundDisposition,
+        pub stage15_disposition: Stage15ResponseOutputDisposition,
+        pub stage19_disposition: Option<Stage19NotificationAttentionDisposition>,
+        pub stage20_disposition: Option<Stage20ContinuityHandoffDisposition>,
+        pub stage21_disposition: Option<Stage21AutomationOrchestrationDisposition>,
+        pub stage15_response_output_ref_present: bool,
+        pub stage19_attention_ref_present: bool,
+        pub stage19_attention_ref_non_authoritative: bool,
+        pub stage20_continuity_ref_present: bool,
+        pub stage20_continuity_ref_non_authoritative: bool,
+        pub stage21_automation_ref_present: bool,
+        pub stage21_automation_ref_non_authoritative: bool,
+        pub connector_target_staging_bounded: bool,
+        pub remote_target_bounded: bool,
+        pub ownership_lease_bounded: bool,
+        pub uncertainty_preserved: bool,
+        pub outbound_invented_fact: bool,
+        pub outbound_invented_connector_success: bool,
+        pub outbound_invented_dispatch_success: bool,
+        pub outbound_invented_remote_completion: bool,
+        pub outbound_invented_ownership: bool,
+        pub outbound_invented_attachment_or_citation: bool,
+        pub outbound_invented_provider_or_tool_result: bool,
+        pub outbound_claimed_unproven_completion: bool,
+        pub outbound_implied_mutation: bool,
+        pub tenant_user_device_project_scoped: bool,
+        pub secret_safe: bool,
+        pub redacted: bool,
+        pub stale_aware: bool,
+        pub revocation_aware: bool,
+        pub connector_ref_present: bool,
+        pub remote_target_ref_present: bool,
+        pub ownership_ref_present: bool,
+        pub lease_ref_present: bool,
+        pub unverifiable: bool,
+        pub stale: bool,
+        pub secret_unsafe: bool,
+        pub cross_tenant: bool,
+        pub cross_target: bool,
+        pub missing_lease: bool,
+        pub ownership_drift: bool,
+        pub connector_mismatch: bool,
+        pub remote_target_mismatch: bool,
+        pub native_outbound_declarative_only: bool,
+        pub native_outbound_mutates_state: bool,
+        pub native_outbound_connector_writes: bool,
+        pub native_outbound_dispatches_or_executes: bool,
+        pub native_outbound_calls_providers_or_tools: bool,
+        pub native_outbound_emits_tts_or_playback: bool,
+        pub native_outbound_creates_user_turn: bool,
+        pub native_outbound_treats_visible_success_as_action_success: bool,
+        pub protected_action_like_request: bool,
+        pub protected_slot_or_authority_ambiguous: bool,
+        pub unsafe_identity_posture: bool,
+        pub outbound_implies_stage12_mutation_without_proof: bool,
+        pub stale_or_cancelled_or_superseded_output: bool,
+        pub session_closed: bool,
+        pub record_artifact_only_turn: bool,
+        pub stale_connector_state: bool,
+        pub stale_remote_target_state: bool,
+        pub stale_lease_or_ownership_state: bool,
+        pub outbound_identity_matches_current_output_session: bool,
+        pub replay_upgrades_blocked_outbound: bool,
+        pub fake_connector_detected: bool,
+        pub fake_dispatch_detected: bool,
+        pub fake_outbound_detected: bool,
+        pub fake_remote_completion_detected: bool,
+        pub runtime_mock_detected: bool,
+        pub raw_provider_output_present: bool,
+        pub raw_search_dump_present: bool,
+        pub raw_media_present: bool,
+        pub raw_secret_connector_credential_present: bool,
+        pub unverified_source_evidence_present: bool,
+        pub unsupported_claim_candidate_present: bool,
+        pub fake_connector_source_carrier_present: bool,
+        pub speech_playback_attention_continuity_automation_used_as_truth_authority: bool,
+        pub protected_action_candidate_present: bool,
+        pub simulation_candidate_present: bool,
+        pub approved_execution_plan_present: bool,
+        pub secrets_exposed: bool,
+        pub raw_audio_or_voice_material_exposed: bool,
+        pub internal_trace_exposed: bool,
+        pub access_denied: bool,
+        pub policy_denied: bool,
+        pub tenant_mismatch: bool,
+        pub work_authority: Stage22ConnectorOutboundWorkAuthority,
+    }
+
+    impl Stage22ConnectorOutboundPacket {
+        pub fn from_stage15_output(
+            output: &Stage15ResponseOutputPacket,
+            attention_output: Option<&Stage19NotificationAttentionPacket>,
+            continuity_output: Option<&Stage20ContinuityHandoffPacket>,
+            automation_output: Option<&Stage21AutomationOrchestrationPacket>,
+            input: Stage22ConnectorOutboundInput,
+        ) -> Result<Self, ContractViolation> {
+            output.validate()?;
+            if let Some(attention_output) = attention_output {
+                attention_output.validate()?;
+            }
+            if let Some(continuity_output) = continuity_output {
+                continuity_output.validate()?;
+            }
+            if let Some(automation_output) = automation_output {
+                automation_output.validate()?;
+            }
+            input.validate()?;
+            let disposition = Self::decide_disposition(
+                output,
+                attention_output,
+                continuity_output,
+                automation_output,
+                &input,
+            );
+            let work_authority = Self::work_authority_for(disposition);
+            let audit_id = input.audit_id.clone().or_else(|| output.audit_id.clone());
+            let ph1j_proof_ref = input
+                .ph1j_proof_ref
+                .clone()
+                .or_else(|| output.ph1j_proof_ref.clone())
+                .or_else(|| audit_id.clone());
+            let packet = Self {
+                session_id: output.session_id,
+                turn_id: output.turn_id,
+                activation_id: output.activation_id.clone(),
+                response_output_id: output.response_output_id.clone(),
+                response_hash: output.response_hash.clone(),
+                public_answer_id: output.public_answer_id.clone(),
+                notification_candidate_id: attention_output
+                    .and_then(|attention| attention.notification_candidate_id.clone()),
+                attention_state_id: attention_output
+                    .and_then(|attention| attention.attention_state_id.clone()),
+                continuity_packet_id: continuity_output
+                    .map(|continuity| continuity.continuity_packet_id.clone()),
+                automation_candidate_id: automation_output
+                    .and_then(|automation| automation.automation_candidate_id.clone()),
+                connector_action_stage_id: input.connector_action_stage_id,
+                external_integration_id: input.external_integration_id,
+                outbound_intent_id: input.outbound_intent_id,
+                remote_target_id: input.remote_target_id,
+                work_id: input.work_id,
+                lease_id: input.lease_id,
+                ownership_ref: input.ownership_ref,
+                access_context_id: output.access_context_id.clone(),
+                policy_context_id: output.policy_context_id.clone(),
+                tenant_id: output.tenant_id.clone(),
+                audit_id,
+                ph1j_proof_ref,
+                outbound_kind: input.outbound_kind,
+                reason_code: disposition.default_reason_code(),
+                disposition,
+                stage15_disposition: output.disposition,
+                stage19_disposition: attention_output.map(|attention| attention.disposition),
+                stage20_disposition: continuity_output.map(|continuity| continuity.disposition),
+                stage21_disposition: automation_output.map(|automation| automation.disposition),
+                stage15_response_output_ref_present: input.stage15_response_output_ref_present,
+                stage19_attention_ref_present: input.stage19_attention_ref_present,
+                stage19_attention_ref_non_authoritative: input
+                    .stage19_attention_ref_non_authoritative,
+                stage20_continuity_ref_present: input.stage20_continuity_ref_present,
+                stage20_continuity_ref_non_authoritative: input
+                    .stage20_continuity_ref_non_authoritative,
+                stage21_automation_ref_present: input.stage21_automation_ref_present,
+                stage21_automation_ref_non_authoritative: input
+                    .stage21_automation_ref_non_authoritative,
+                connector_target_staging_bounded: input.connector_target_staging_bounded,
+                remote_target_bounded: input.remote_target_bounded,
+                ownership_lease_bounded: input.ownership_lease_bounded,
+                uncertainty_preserved: input.uncertainty_preserved,
+                outbound_invented_fact: input.outbound_invented_fact,
+                outbound_invented_connector_success: input.outbound_invented_connector_success,
+                outbound_invented_dispatch_success: input.outbound_invented_dispatch_success,
+                outbound_invented_remote_completion: input.outbound_invented_remote_completion,
+                outbound_invented_ownership: input.outbound_invented_ownership,
+                outbound_invented_attachment_or_citation: input
+                    .outbound_invented_attachment_or_citation,
+                outbound_invented_provider_or_tool_result: input
+                    .outbound_invented_provider_or_tool_result,
+                outbound_claimed_unproven_completion: input.outbound_claimed_unproven_completion,
+                outbound_implied_mutation: input.outbound_implied_mutation,
+                tenant_user_device_project_scoped: input.tenant_user_device_project_scoped,
+                secret_safe: input.secret_safe,
+                redacted: input.redacted,
+                stale_aware: input.stale_aware,
+                revocation_aware: input.revocation_aware,
+                connector_ref_present: input.connector_ref_present,
+                remote_target_ref_present: input.remote_target_ref_present,
+                ownership_ref_present: input.ownership_ref_present,
+                lease_ref_present: input.lease_ref_present,
+                unverifiable: input.unverifiable,
+                stale: input.stale,
+                secret_unsafe: input.secret_unsafe,
+                cross_tenant: input.cross_tenant,
+                cross_target: input.cross_target,
+                missing_lease: input.missing_lease,
+                ownership_drift: input.ownership_drift,
+                connector_mismatch: input.connector_mismatch,
+                remote_target_mismatch: input.remote_target_mismatch,
+                native_outbound_declarative_only: input.native_outbound_declarative_only,
+                native_outbound_mutates_state: input.native_outbound_mutates_state,
+                native_outbound_connector_writes: input.native_outbound_connector_writes,
+                native_outbound_dispatches_or_executes: input
+                    .native_outbound_dispatches_or_executes,
+                native_outbound_calls_providers_or_tools: input
+                    .native_outbound_calls_providers_or_tools,
+                native_outbound_emits_tts_or_playback: input
+                    .native_outbound_emits_tts_or_playback,
+                native_outbound_creates_user_turn: input.native_outbound_creates_user_turn,
+                native_outbound_treats_visible_success_as_action_success: input
+                    .native_outbound_treats_visible_success_as_action_success,
+                protected_action_like_request: input.protected_action_like_request,
+                protected_slot_or_authority_ambiguous: input
+                    .protected_slot_or_authority_ambiguous,
+                unsafe_identity_posture: input.unsafe_identity_posture,
+                outbound_implies_stage12_mutation_without_proof: input
+                    .outbound_implies_stage12_mutation_without_proof,
+                stale_or_cancelled_or_superseded_output: input
+                    .stale_or_cancelled_or_superseded_output,
+                session_closed: input.session_closed,
+                record_artifact_only_turn: input.record_artifact_only_turn,
+                stale_connector_state: input.stale_connector_state,
+                stale_remote_target_state: input.stale_remote_target_state,
+                stale_lease_or_ownership_state: input.stale_lease_or_ownership_state,
+                outbound_identity_matches_current_output_session: input
+                    .outbound_identity_matches_current_output_session,
+                replay_upgrades_blocked_outbound: input.replay_upgrades_blocked_outbound,
+                fake_connector_detected: input.fake_connector_detected,
+                fake_dispatch_detected: input.fake_dispatch_detected,
+                fake_outbound_detected: input.fake_outbound_detected,
+                fake_remote_completion_detected: input.fake_remote_completion_detected,
+                runtime_mock_detected: input.runtime_mock_detected,
+                raw_provider_output_present: input.raw_provider_output_present,
+                raw_search_dump_present: input.raw_search_dump_present,
+                raw_media_present: input.raw_media_present,
+                raw_secret_connector_credential_present: input
+                    .raw_secret_connector_credential_present,
+                unverified_source_evidence_present: input.unverified_source_evidence_present,
+                unsupported_claim_candidate_present: input.unsupported_claim_candidate_present,
+                fake_connector_source_carrier_present: input.fake_connector_source_carrier_present,
+                speech_playback_attention_continuity_automation_used_as_truth_authority: input
+                    .speech_playback_attention_continuity_automation_used_as_truth_authority,
+                protected_action_candidate_present: input.protected_action_candidate_present,
+                simulation_candidate_present: input.simulation_candidate_present,
+                approved_execution_plan_present: input.approved_execution_plan_present,
+                secrets_exposed: input.secrets_exposed,
+                raw_audio_or_voice_material_exposed: input.raw_audio_or_voice_material_exposed,
+                internal_trace_exposed: input.internal_trace_exposed,
+                access_denied: input.access_denied,
+                policy_denied: input.policy_denied,
+                tenant_mismatch: input.tenant_mismatch,
+                work_authority,
+            };
+            packet.validate()?;
+            Ok(packet)
+        }
+
+        pub const fn can_mutate_or_execute(&self) -> bool {
+            self.work_authority.can_mutate_or_execute()
+        }
+
+        fn decide_disposition(
+            output: &Stage15ResponseOutputPacket,
+            attention_output: Option<&Stage19NotificationAttentionPacket>,
+            continuity_output: Option<&Stage20ContinuityHandoffPacket>,
+            automation_output: Option<&Stage21AutomationOrchestrationPacket>,
+            input: &Stage22ConnectorOutboundInput,
+        ) -> Stage22ConnectorOutboundDisposition {
+            if input.runtime_mock_detected
+                || input.fake_connector_detected
+                || input.fake_dispatch_detected
+                || input.fake_outbound_detected
+                || input.fake_remote_completion_detected
+            {
+                return Stage22ConnectorOutboundDisposition::RuntimeMockBlocked;
+            }
+            if input.raw_provider_output_present
+                || input.raw_search_dump_present
+                || input.raw_media_present
+                || input.raw_secret_connector_credential_present
+                || input.unverified_source_evidence_present
+                || input.unsupported_claim_candidate_present
+                || input.fake_connector_source_carrier_present
+                || input.speech_playback_attention_continuity_automation_used_as_truth_authority
+                || input.protected_action_candidate_present
+                || input.simulation_candidate_present
+                || input.approved_execution_plan_present
+                || input.secrets_exposed
+                || input.raw_audio_or_voice_material_exposed
+                || input.internal_trace_exposed
+                || input.access_denied
+                || input.policy_denied
+                || input.tenant_mismatch
+            {
+                return Stage22ConnectorOutboundDisposition::UnsafeInputBlocked;
+            }
+            if !output.disposition.is_ready()
+                || output.can_mutate_or_execute()
+                || !input.stage15_response_output_ref_present
+            {
+                return Stage22ConnectorOutboundDisposition::StageInputBlocked;
+            }
+            if let Some(attention_output) = attention_output {
+                if attention_output.can_mutate_or_execute()
+                    || attention_output.stale_or_cancelled_or_superseded_output
+                    || attention_output.session_closed
+                    || attention_output.record_artifact_only_turn
+                    || !input.stage19_attention_ref_present
+                    || !input.stage19_attention_ref_non_authoritative
+                {
+                    return Stage22ConnectorOutboundDisposition::StageInputBlocked;
+                }
+            }
+            if let Some(continuity_output) = continuity_output {
+                if continuity_output.can_mutate_or_execute()
+                    || continuity_output.stale_or_cancelled_or_superseded_output
+                    || continuity_output.session_closed
+                    || continuity_output.record_artifact_only_turn
+                    || !input.stage20_continuity_ref_present
+                    || !input.stage20_continuity_ref_non_authoritative
+                {
+                    return Stage22ConnectorOutboundDisposition::StageInputBlocked;
+                }
+            }
+            if let Some(automation_output) = automation_output {
+                if automation_output.can_mutate_or_execute()
+                    || automation_output.stale_or_cancelled_or_superseded_output
+                    || automation_output.session_closed
+                    || automation_output.record_artifact_only_turn
+                    || !input.stage21_automation_ref_present
+                    || !input.stage21_automation_ref_non_authoritative
+                {
+                    return Stage22ConnectorOutboundDisposition::StageInputBlocked;
+                }
+            }
+            if input.audit_id.is_none()
+                && input.ph1j_proof_ref.is_none()
+                && output.audit_id.is_none()
+                && output.ph1j_proof_ref.is_none()
+            {
+                return Stage22ConnectorOutboundDisposition::AuditProofMissing;
+            }
+            if !input.uncertainty_preserved
+                || input.outbound_invented_fact
+                || input.outbound_invented_connector_success
+                || input.outbound_invented_dispatch_success
+                || input.outbound_invented_remote_completion
+                || input.outbound_invented_ownership
+                || input.outbound_invented_attachment_or_citation
+                || input.outbound_invented_provider_or_tool_result
+                || input.outbound_claimed_unproven_completion
+                || input.outbound_implied_mutation
+            {
+                return Stage22ConnectorOutboundDisposition::NoInventionBlocked;
+            }
+            if !input.connector_target_staging_bounded
+                || !input.remote_target_bounded
+                || !input.ownership_lease_bounded
+                || !input.tenant_user_device_project_scoped
+                || !input.secret_safe
+                || !input.redacted
+                || !input.stale_aware
+                || !input.revocation_aware
+                || !input.connector_ref_present
+                || !input.remote_target_ref_present
+                || !input.ownership_ref_present
+                || !input.lease_ref_present
+                || input.unverifiable
+                || input.stale
+                || input.secret_unsafe
+                || input.cross_tenant
+                || input.cross_target
+                || input.missing_lease
+                || input.ownership_drift
+                || input.connector_mismatch
+                || input.remote_target_mismatch
+            {
+                return Stage22ConnectorOutboundDisposition::ConnectorTargetStagingBlocked;
+            }
+            if !input.native_outbound_declarative_only
+                || input.native_outbound_mutates_state
+                || input.native_outbound_connector_writes
+                || input.native_outbound_dispatches_or_executes
+                || input.native_outbound_calls_providers_or_tools
+                || input.native_outbound_emits_tts_or_playback
+                || input.native_outbound_creates_user_turn
+                || input.native_outbound_treats_visible_success_as_action_success
+            {
+                return Stage22ConnectorOutboundDisposition::NativeOutboundBlocked;
+            }
+            if input.protected_action_like_request
+                || input.protected_slot_or_authority_ambiguous
+                || input.unsafe_identity_posture
+                || input.outbound_implies_stage12_mutation_without_proof
+            {
+                return Stage22ConnectorOutboundDisposition::ProtectedOutboundBlocked;
+            }
+            if input.stale_or_cancelled_or_superseded_output
+                || input.session_closed
+                || input.record_artifact_only_turn
+                || input.stale_connector_state
+                || input.stale_remote_target_state
+                || input.stale_lease_or_ownership_state
+                || !input.outbound_identity_matches_current_output_session
+                || input.replay_upgrades_blocked_outbound
+            {
+                return Stage22ConnectorOutboundDisposition::StaleOutboundBlocked;
+            }
+
+            match input.outbound_kind {
+                Stage22ConnectorOutboundKind::ExternalIntegration => {
+                    if input.external_integration_id.is_some() && input.remote_target_id.is_some() {
+                        Stage22ConnectorOutboundDisposition::ExternalIntegrationReady
+                    } else {
+                        Stage22ConnectorOutboundDisposition::ConnectorTargetStagingBlocked
+                    }
+                }
+                Stage22ConnectorOutboundKind::ConnectorActionStaging => {
+                    if input.connector_action_stage_id.is_some()
+                        && input.external_integration_id.is_some()
+                        && input.work_id.is_some()
+                        && input.lease_id.is_some()
+                    {
+                        Stage22ConnectorOutboundDisposition::ConnectorActionStagingReady
+                    } else {
+                        Stage22ConnectorOutboundDisposition::ConnectorTargetStagingBlocked
+                    }
+                }
+                Stage22ConnectorOutboundKind::OutboundSystemIntent => {
+                    if input.outbound_intent_id.is_some()
+                        && input.remote_target_id.is_some()
+                        && input.work_id.is_some()
+                        && input.lease_id.is_some()
+                    {
+                        Stage22ConnectorOutboundDisposition::OutboundSystemIntentReady
+                    } else {
+                        Stage22ConnectorOutboundDisposition::ConnectorTargetStagingBlocked
+                    }
+                }
+                Stage22ConnectorOutboundKind::StagedDispatchPosture => {
+                    if input.connector_action_stage_id.is_some()
+                        && input.outbound_intent_id.is_some()
+                        && input.remote_target_id.is_some()
+                        && input.work_id.is_some()
+                        && input.lease_id.is_some()
+                    {
+                        Stage22ConnectorOutboundDisposition::StagedDispatchPostureReady
+                    } else {
+                        Stage22ConnectorOutboundDisposition::ConnectorTargetStagingBlocked
+                    }
+                }
+                Stage22ConnectorOutboundKind::RemoteTargetReference => {
+                    if input.remote_target_id.is_some() {
+                        Stage22ConnectorOutboundDisposition::RemoteTargetReferenceReady
+                    } else {
+                        Stage22ConnectorOutboundDisposition::ConnectorTargetStagingBlocked
+                    }
+                }
+            }
+        }
+
+        const fn work_authority_for(
+            disposition: Stage22ConnectorOutboundDisposition,
+        ) -> Stage22ConnectorOutboundWorkAuthority {
+            match disposition {
+                Stage22ConnectorOutboundDisposition::ExternalIntegrationReady => {
+                    Stage22ConnectorOutboundWorkAuthority::external_integration_ready()
+                }
+                Stage22ConnectorOutboundDisposition::ConnectorActionStagingReady => {
+                    Stage22ConnectorOutboundWorkAuthority::connector_action_staging_ready()
+                }
+                Stage22ConnectorOutboundDisposition::OutboundSystemIntentReady => {
+                    Stage22ConnectorOutboundWorkAuthority::outbound_system_intent_ready()
+                }
+                Stage22ConnectorOutboundDisposition::StagedDispatchPostureReady => {
+                    Stage22ConnectorOutboundWorkAuthority::staged_dispatch_posture_ready()
+                }
+                Stage22ConnectorOutboundDisposition::RemoteTargetReferenceReady => {
+                    Stage22ConnectorOutboundWorkAuthority::remote_target_ready()
+                }
+                _ => Stage22ConnectorOutboundWorkAuthority::fail_closed(),
+            }
+        }
+    }
+
+    impl Validate for Stage22ConnectorOutboundPacket {
+        fn validate(&self) -> Result<(), ContractViolation> {
+            validate_stage4_optional_ref(
+                "stage22_connector_outbound_packet.activation_id",
+                self.activation_id.as_deref(),
+            )?;
+            validate_stage4_ref(
+                "stage22_connector_outbound_packet.response_output_id",
+                &self.response_output_id,
+            )?;
+            validate_stage4_ref(
+                "stage22_connector_outbound_packet.response_hash",
+                &self.response_hash,
+            )?;
+            validate_stage4_ref(
+                "stage22_connector_outbound_packet.public_answer_id",
+                &self.public_answer_id,
+            )?;
+            validate_stage4_optional_ref(
+                "stage22_connector_outbound_packet.notification_candidate_id",
+                self.notification_candidate_id.as_deref(),
+            )?;
+            validate_stage4_optional_ref(
+                "stage22_connector_outbound_packet.attention_state_id",
+                self.attention_state_id.as_deref(),
+            )?;
+            validate_stage4_optional_ref(
+                "stage22_connector_outbound_packet.continuity_packet_id",
+                self.continuity_packet_id.as_deref(),
+            )?;
+            validate_stage4_optional_ref(
+                "stage22_connector_outbound_packet.automation_candidate_id",
+                self.automation_candidate_id.as_deref(),
+            )?;
+            validate_stage4_optional_ref(
+                "stage22_connector_outbound_packet.connector_action_stage_id",
+                self.connector_action_stage_id.as_deref(),
+            )?;
+            validate_stage4_optional_ref(
+                "stage22_connector_outbound_packet.external_integration_id",
+                self.external_integration_id.as_deref(),
+            )?;
+            validate_stage4_optional_ref(
+                "stage22_connector_outbound_packet.outbound_intent_id",
+                self.outbound_intent_id.as_deref(),
+            )?;
+            validate_stage4_optional_ref(
+                "stage22_connector_outbound_packet.remote_target_id",
+                self.remote_target_id.as_deref(),
+            )?;
+            validate_stage4_optional_ref(
+                "stage22_connector_outbound_packet.work_id",
+                self.work_id.as_deref(),
+            )?;
+            validate_stage4_optional_ref(
+                "stage22_connector_outbound_packet.lease_id",
+                self.lease_id.as_deref(),
+            )?;
+            validate_stage4_optional_ref(
+                "stage22_connector_outbound_packet.ownership_ref",
+                self.ownership_ref.as_deref(),
+            )?;
+            validate_stage4_optional_ref(
+                "stage22_connector_outbound_packet.access_context_id",
+                self.access_context_id.as_deref(),
+            )?;
+            validate_stage4_optional_ref(
+                "stage22_connector_outbound_packet.policy_context_id",
+                self.policy_context_id.as_deref(),
+            )?;
+            validate_stage4_optional_ref(
+                "stage22_connector_outbound_packet.tenant_id",
+                self.tenant_id.as_deref(),
+            )?;
+            validate_stage4_optional_ref(
+                "stage22_connector_outbound_packet.audit_id",
+                self.audit_id.as_deref(),
+            )?;
+            validate_stage4_optional_ref(
+                "stage22_connector_outbound_packet.ph1j_proof_ref",
+                self.ph1j_proof_ref.as_deref(),
+            )?;
+            if self.reason_code != self.disposition.default_reason_code() {
+                return Err(ContractViolation::InvalidValue {
+                    field: "stage22_connector_outbound_packet.reason_code",
+                    reason: "must match Stage 22A connector/outbound disposition",
+                });
+            }
+            if self.work_authority.can_mutate_or_execute() {
+                return Err(ContractViolation::InvalidValue {
+                    field: "stage22_connector_outbound_packet.work_authority",
+                    reason: "Stage 22A cannot invent outbound authority, mutate, connector-write, approve, dispatch, execute, call live providers/search/tools, deliver live outbound actions, emit TTS/playback, create turns, or add native UI behavior",
+                });
+            }
+            if self.disposition.is_ready() && (self.audit_id.is_none() || self.ph1j_proof_ref.is_none())
+            {
+                return Err(ContractViolation::InvalidValue {
+                    field: "stage22_connector_outbound_packet.audit_proof",
+                    reason: "ready Stage 22A outbound output requires PH1.J audit/proof refs",
+                });
+            }
+            match self.disposition {
+                Stage22ConnectorOutboundDisposition::ExternalIntegrationReady => {
+                    if self.outbound_kind != Stage22ConnectorOutboundKind::ExternalIntegration
+                        || self.external_integration_id.is_none()
+                        || self.remote_target_id.is_none()
+                        || !self.work_authority.can_emit_external_integration_packet
+                    {
+                        return Err(ContractViolation::InvalidValue {
+                            field: "stage22_connector_outbound_packet.external_integration",
+                            reason: "external integration readiness requires bounded integration and remote-target refs only",
+                        });
+                    }
+                }
+                Stage22ConnectorOutboundDisposition::ConnectorActionStagingReady => {
+                    if self.outbound_kind
+                        != Stage22ConnectorOutboundKind::ConnectorActionStaging
+                        || self.connector_action_stage_id.is_none()
+                        || self.external_integration_id.is_none()
+                        || self.work_id.is_none()
+                        || self.lease_id.is_none()
+                        || !self.work_authority.can_emit_connector_action_staging_packet
+                    {
+                        return Err(ContractViolation::InvalidValue {
+                            field: "stage22_connector_outbound_packet.connector_action_staging",
+                            reason: "connector action staging readiness requires bounded staging/integration/work/lease refs only",
+                        });
+                    }
+                }
+                Stage22ConnectorOutboundDisposition::OutboundSystemIntentReady => {
+                    if self.outbound_kind != Stage22ConnectorOutboundKind::OutboundSystemIntent
+                        || self.outbound_intent_id.is_none()
+                        || self.remote_target_id.is_none()
+                        || self.work_id.is_none()
+                        || self.lease_id.is_none()
+                        || !self.work_authority.can_emit_outbound_system_intent_packet
+                    {
+                        return Err(ContractViolation::InvalidValue {
+                            field: "stage22_connector_outbound_packet.outbound_system_intent",
+                            reason: "outbound system intent readiness requires bounded intent/target/work/lease refs only",
+                        });
+                    }
+                }
+                Stage22ConnectorOutboundDisposition::StagedDispatchPostureReady => {
+                    if self.outbound_kind != Stage22ConnectorOutboundKind::StagedDispatchPosture
+                        || self.connector_action_stage_id.is_none()
+                        || self.outbound_intent_id.is_none()
+                        || self.remote_target_id.is_none()
+                        || self.work_id.is_none()
+                        || self.lease_id.is_none()
+                        || !self.work_authority.can_emit_staged_dispatch_posture_packet
+                    {
+                        return Err(ContractViolation::InvalidValue {
+                            field: "stage22_connector_outbound_packet.staged_dispatch_posture",
+                            reason: "staged dispatch posture readiness requires bounded staging/intent/target/work/lease refs only",
+                        });
+                    }
+                }
+                Stage22ConnectorOutboundDisposition::RemoteTargetReferenceReady => {
+                    if self.outbound_kind != Stage22ConnectorOutboundKind::RemoteTargetReference
+                        || self.remote_target_id.is_none()
+                        || !self.work_authority.can_emit_remote_target_ref
+                    {
+                        return Err(ContractViolation::InvalidValue {
+                            field: "stage22_connector_outbound_packet.remote_target_reference",
+                            reason: "remote target readiness requires bounded remote target refs only",
+                        });
+                    }
+                }
+                _ => {
+                    if !self.work_authority.can_fail_closed
+                        || self.work_authority.can_emit_external_integration_packet
+                        || self.work_authority.can_emit_connector_action_staging_packet
+                        || self.work_authority.can_emit_outbound_system_intent_packet
+                        || self.work_authority.can_emit_staged_dispatch_posture_packet
+                        || self.work_authority.can_emit_remote_target_ref
+                        || self.work_authority.can_emit_ownership_lease_ref
+                    {
+                        return Err(ContractViolation::InvalidValue {
+                            field: "stage22_connector_outbound_packet.blocked_outbound",
+                            reason: "blocked Stage 22A packets fail closed and cannot emit fake connector, staging, outbound, target, ownership, or dispatch success",
+                        });
+                    }
+                }
+            }
+            Ok(())
+        }
+    }
+
+    fn stage22_automation_identity() -> Stage21AutomationOrchestrationPacket {
+        let output = stage21_response_output_packet();
+        Stage21AutomationOrchestrationPacket::from_stage15_output(
+            &output,
+            None,
+            None,
+            Stage21AutomationOrchestrationInput::fixture_automation_candidate_ready(
+                "automation-candidate-stage22-continuity",
+                "device-stage22-a",
+                "audit-stage22-automation",
+            ),
+        )
+        .expect("stage22 automation identity")
+    }
+
+    #[test]
+    fn stage_22a_outbound_consumes_stage15_stage19_stage20_stage21_non_authoritatively() {
+        let output = stage21_response_output_packet();
+        let attention = stage21_attention_identity();
+        let continuity = stage21_continuity_identity();
+        let automation = stage22_automation_identity();
+        let mut input = Stage22ConnectorOutboundInput::fixture_connector_action_staging_ready(
+            "connector-stage22-ready",
+            "external-integration-stage22-ready",
+            "work-stage22-ready",
+            "lease-stage22-ready",
+            "device-stage22-a",
+            "audit-stage22-ready",
+        );
+        input.stage19_attention_ref_present = true;
+        input.stage19_attention_ref_non_authoritative = true;
+        input.stage20_continuity_ref_present = true;
+        input.stage20_continuity_ref_non_authoritative = true;
+        input.stage21_automation_ref_present = true;
+        input.stage21_automation_ref_non_authoritative = true;
+        let packet = Stage22ConnectorOutboundPacket::from_stage15_output(
+            &output,
+            Some(&attention),
+            Some(&continuity),
+            Some(&automation),
+            input,
+        )
+        .expect("stage22 staging ready");
+
+        assert_eq!(
+            packet.disposition,
+            Stage22ConnectorOutboundDisposition::ConnectorActionStagingReady
+        );
+        assert_eq!(
+            packet.stage19_disposition,
+            Some(Stage19NotificationAttentionDisposition::NotificationCandidateReady)
+        );
+        assert_eq!(
+            packet.stage20_disposition,
+            Some(Stage20ContinuityHandoffDisposition::SessionContinuityReady)
+        );
+        assert_eq!(
+            packet.stage21_disposition,
+            Some(Stage21AutomationOrchestrationDisposition::AutomationCandidateReady)
+        );
+        assert!(packet.stage21_automation_ref_non_authoritative);
+        assert!(packet.work_authority.can_emit_connector_action_staging_packet);
+        assert!(!packet.work_authority.can_dispatch);
+        assert!(!packet.can_mutate_or_execute());
+    }
+
+    #[test]
+    fn stage_22a_outbound_packets_cannot_invent_or_claim_completion() {
+        let output = stage21_response_output_packet();
+
+        for input in [
+            {
+                let mut input = Stage22ConnectorOutboundInput::fixture_external_integration_ready(
+                    "external-integration-stage22-invent-fact",
+                    "remote-target-stage22-invent-fact",
+                    "device-stage22-a",
+                    "audit-stage22-invent-fact",
+                );
+                input.outbound_invented_fact = true;
+                input
+            },
+            {
+                let mut input =
+                    Stage22ConnectorOutboundInput::fixture_connector_action_staging_ready(
+                        "connector-stage22-invent-connector",
+                        "external-integration-stage22-invent-connector",
+                        "work-stage22-invent-connector",
+                        "lease-stage22-invent-connector",
+                        "device-stage22-a",
+                        "audit-stage22-invent-connector",
+                    );
+                input.outbound_invented_connector_success = true;
+                input
+            },
+            {
+                let mut input = Stage22ConnectorOutboundInput::fixture_outbound_system_intent_ready(
+                    "outbound-intent-stage22-invent-dispatch",
+                    "remote-target-stage22-invent-dispatch",
+                    "work-stage22-invent-dispatch",
+                    "lease-stage22-invent-dispatch",
+                    "device-stage22-a",
+                    "audit-stage22-invent-dispatch",
+                );
+                input.outbound_invented_dispatch_success = true;
+                input
+            },
+            {
+                let mut input = Stage22ConnectorOutboundInput::fixture_staged_dispatch_posture_ready(
+                    "connector-stage22-unproven",
+                    "outbound-intent-stage22-unproven",
+                    "remote-target-stage22-unproven",
+                    "work-stage22-unproven",
+                    "lease-stage22-unproven",
+                    "device-stage22-a",
+                    "audit-stage22-unproven",
+                );
+                input.outbound_claimed_unproven_completion = true;
+                input
+            },
+        ] {
+            let packet = Stage22ConnectorOutboundPacket::from_stage15_output(
+                &output, None, None, None, input,
+            )
+            .expect("stage22 no-invention blocked");
+            assert_eq!(
+                packet.disposition,
+                Stage22ConnectorOutboundDisposition::NoInventionBlocked
+            );
+            assert!(packet.work_authority.can_fail_closed);
+            assert!(!packet.can_mutate_or_execute());
+        }
+    }
+
+    #[test]
+    fn stage_22a_connector_target_staging_require_scoped_secret_safe_refs() {
+        let output = stage21_response_output_packet();
+        let ready = Stage22ConnectorOutboundPacket::from_stage15_output(
+            &output,
+            None,
+            None,
+            None,
+            Stage22ConnectorOutboundInput::fixture_outbound_system_intent_ready(
+                "outbound-intent-stage22-ready",
+                "remote-target-stage22-ready",
+                "work-stage22-ready",
+                "lease-stage22-ready",
+                "device-stage22-a",
+                "audit-stage22-intent-ready",
+            ),
+        )
+        .expect("stage22 intent ready");
+        assert_eq!(
+            ready.disposition,
+            Stage22ConnectorOutboundDisposition::OutboundSystemIntentReady
+        );
+        assert!(ready.work_authority.can_emit_outbound_system_intent_packet);
+        assert!(ready.work_authority.can_emit_remote_target_ref);
+        assert!(!ready.can_mutate_or_execute());
+
+        for input in [
+            {
+                let mut input =
+                    Stage22ConnectorOutboundInput::fixture_external_integration_ready(
+                        "external-integration-stage22-unbounded",
+                        "remote-target-stage22-unbounded",
+                        "device-stage22-a",
+                        "audit-stage22-unbounded",
+                    );
+                input.connector_target_staging_bounded = false;
+                input
+            },
+            {
+                let mut input =
+                    Stage22ConnectorOutboundInput::fixture_remote_target_reference_ready(
+                        "remote-target-stage22-secret",
+                        "device-stage22-a",
+                        "audit-stage22-secret",
+                    );
+                input.secret_unsafe = true;
+                input
+            },
+            {
+                let mut input =
+                    Stage22ConnectorOutboundInput::fixture_connector_action_staging_ready(
+                        "connector-stage22-cross-tenant",
+                        "external-integration-stage22-cross-tenant",
+                        "work-stage22-cross-tenant",
+                        "lease-stage22-cross-tenant",
+                        "device-stage22-a",
+                        "audit-stage22-cross-tenant",
+                    );
+                input.cross_tenant = true;
+                input
+            },
+            {
+                let mut input = Stage22ConnectorOutboundInput::fixture_staged_dispatch_posture_ready(
+                    "connector-stage22-missing-lease",
+                    "outbound-intent-stage22-missing-lease",
+                    "remote-target-stage22-missing-lease",
+                    "work-stage22-missing-lease",
+                    "lease-stage22-missing-lease",
+                    "device-stage22-a",
+                    "audit-stage22-missing-lease",
+                );
+                input.lease_ref_present = false;
+                input
+            },
+            {
+                let mut input = Stage22ConnectorOutboundInput::fixture_outbound_system_intent_ready(
+                    "outbound-intent-stage22-target-mismatch",
+                    "remote-target-stage22-target-mismatch",
+                    "work-stage22-target-mismatch",
+                    "lease-stage22-target-mismatch",
+                    "device-stage22-a",
+                    "audit-stage22-target-mismatch",
+                );
+                input.remote_target_mismatch = true;
+                input
+            },
+        ] {
+            let packet = Stage22ConnectorOutboundPacket::from_stage15_output(
+                &output, None, None, None, input,
+            )
+            .expect("stage22 connector target blocked");
+            assert_eq!(
+                packet.disposition,
+                Stage22ConnectorOutboundDisposition::ConnectorTargetStagingBlocked
+            );
+            assert!(packet.work_authority.can_fail_closed);
+            assert!(!packet.can_mutate_or_execute());
+        }
+    }
+
+    #[test]
+    fn stage_22a_native_outbound_and_stale_cases_fail_closed() {
+        let output = stage21_response_output_packet();
+        let ready = Stage22ConnectorOutboundPacket::from_stage15_output(
+            &output,
+            None,
+            None,
+            None,
+            Stage22ConnectorOutboundInput::fixture_remote_target_reference_ready(
+                "remote-target-stage22-ready",
+                "device-stage22-a",
+                "audit-stage22-remote-ready",
+            ),
+        )
+        .expect("stage22 remote target ready");
+        assert_eq!(
+            ready.disposition,
+            Stage22ConnectorOutboundDisposition::RemoteTargetReferenceReady
+        );
+        assert!(ready.native_outbound_declarative_only);
+        assert!(ready.work_authority.can_emit_remote_target_ref);
+        assert!(!ready.can_mutate_or_execute());
+
+        for input in [
+            {
+                let mut input =
+                    Stage22ConnectorOutboundInput::fixture_external_integration_ready(
+                        "external-integration-stage22-mutate",
+                        "remote-target-stage22-mutate",
+                        "device-stage22-a",
+                        "audit-stage22-mutate",
+                    );
+                input.native_outbound_mutates_state = true;
+                input
+            },
+            {
+                let mut input =
+                    Stage22ConnectorOutboundInput::fixture_staged_dispatch_posture_ready(
+                        "connector-stage22-exec",
+                        "outbound-intent-stage22-exec",
+                        "remote-target-stage22-exec",
+                        "work-stage22-exec",
+                        "lease-stage22-exec",
+                        "device-stage22-a",
+                        "audit-stage22-exec",
+                    );
+                input.native_outbound_dispatches_or_executes = true;
+                input
+            },
+        ] {
+            let packet = Stage22ConnectorOutboundPacket::from_stage15_output(
+                &output, None, None, None, input,
+            )
+            .expect("stage22 native blocked");
+            assert_eq!(
+                packet.disposition,
+                Stage22ConnectorOutboundDisposition::NativeOutboundBlocked
+            );
+            assert!(packet.work_authority.can_fail_closed);
+        }
+
+        for input in [
+            {
+                let mut input =
+                    Stage22ConnectorOutboundInput::fixture_connector_action_staging_ready(
+                        "connector-stage22-stale",
+                        "external-integration-stage22-stale",
+                        "work-stage22-stale",
+                        "lease-stage22-stale",
+                        "device-stage22-a",
+                        "audit-stage22-stale",
+                    );
+                input.stale_or_cancelled_or_superseded_output = true;
+                input
+            },
+            {
+                let mut input =
+                    Stage22ConnectorOutboundInput::fixture_remote_target_reference_ready(
+                        "remote-target-stage22-stale-target",
+                        "device-stage22-a",
+                        "audit-stage22-stale-target",
+                    );
+                input.stale_remote_target_state = true;
+                input
+            },
+            {
+                let mut input = Stage22ConnectorOutboundInput::fixture_outbound_system_intent_ready(
+                    "outbound-intent-stage22-replay",
+                    "remote-target-stage22-replay",
+                    "work-stage22-replay",
+                    "lease-stage22-replay",
+                    "device-stage22-a",
+                    "audit-stage22-replay",
+                );
+                input.replay_upgrades_blocked_outbound = true;
+                input
+            },
+        ] {
+            let packet = Stage22ConnectorOutboundPacket::from_stage15_output(
+                &output, None, None, None, input,
+            )
+            .expect("stage22 stale blocked");
+            assert_eq!(
+                packet.disposition,
+                Stage22ConnectorOutboundDisposition::StaleOutboundBlocked
+            );
+            assert!(packet.work_authority.can_fail_closed);
+            assert!(!packet.can_mutate_or_execute());
+        }
+    }
+
+    #[test]
+    fn stage_22a_blocks_raw_inputs_live_paths_and_runtime_mocks() {
+        let output = stage21_response_output_packet();
+        let packet = Stage22ConnectorOutboundPacket::from_stage15_output(
+            &output,
+            None,
+            None,
+            None,
+            Stage22ConnectorOutboundInput::fixture_external_integration_ready(
+                "external-integration-stage22-no-exec",
+                "remote-target-stage22-no-exec",
+                "device-stage22-a",
+                "audit-stage22-no-exec",
+            ),
+        )
+        .expect("stage22 no-exec packet");
+        assert!(!packet.work_authority.can_invent_facts);
+        assert!(!packet.work_authority.can_invent_connector_success);
+        assert!(!packet.work_authority.can_invent_dispatch_success);
+        assert!(!packet.work_authority.can_invent_remote_completion);
+        assert!(!packet.work_authority.can_invent_ownership_or_outbound_authority);
+        assert!(!packet.work_authority.can_mutate_external_state);
+        assert!(!packet.work_authority.can_dispatch);
+        assert!(!packet.work_authority.can_emit_live_outbound_delivery);
+        assert!(!packet.work_authority.can_create_user_turn);
+        assert!(!packet.work_authority.can_treat_visible_outbound_as_action_success);
+        assert!(!packet.can_mutate_or_execute());
+
+        for input in [
+            {
+                let mut input =
+                    Stage22ConnectorOutboundInput::fixture_connector_action_staging_ready(
+                        "connector-stage22-raw-provider",
+                        "external-integration-stage22-raw-provider",
+                        "work-stage22-raw-provider",
+                        "lease-stage22-raw-provider",
+                        "device-stage22-a",
+                        "audit-stage22-raw-provider",
+                    );
+                input.raw_provider_output_present = true;
+                input
+            },
+            {
+                let mut input = Stage22ConnectorOutboundInput::fixture_outbound_system_intent_ready(
+                    "outbound-intent-stage22-unverified",
+                    "remote-target-stage22-unverified",
+                    "work-stage22-unverified",
+                    "lease-stage22-unverified",
+                    "device-stage22-a",
+                    "audit-stage22-unverified",
+                );
+                input.unverified_source_evidence_present = true;
+                input
+            },
+            {
+                let mut input = Stage22ConnectorOutboundInput::fixture_remote_target_reference_ready(
+                    "remote-target-stage22-protected",
+                    "device-stage22-a",
+                    "audit-stage22-protected",
+                );
+                input.protected_action_candidate_present = true;
+                input
+            },
+            {
+                let mut input =
+                    Stage22ConnectorOutboundInput::fixture_external_integration_ready(
+                        "external-integration-stage22-policy",
+                        "remote-target-stage22-policy",
+                        "device-stage22-a",
+                        "audit-stage22-policy",
+                    );
+                input.policy_denied = true;
+                input
+            },
+        ] {
+            let packet = Stage22ConnectorOutboundPacket::from_stage15_output(
+                &output, None, None, None, input,
+            )
+            .expect("stage22 unsafe input blocked");
+            assert_eq!(
+                packet.disposition,
+                Stage22ConnectorOutboundDisposition::UnsafeInputBlocked
+            );
+            assert!(packet.work_authority.can_fail_closed);
+            assert!(!packet.can_mutate_or_execute());
+        }
+
+        for mut input in [
+            {
+                let mut input =
+                    Stage22ConnectorOutboundInput::fixture_external_integration_ready(
+                        "external-integration-stage22-live-provider",
+                        "remote-target-stage22-live-provider",
+                        "device-stage22-a",
+                        "audit-stage22-live-provider",
+                    );
+                input.attempted_live_provider_in_build = true;
+                input
+            },
+            {
+                let mut input =
+                    Stage22ConnectorOutboundInput::fixture_connector_action_staging_ready(
+                        "connector-stage22-live-dispatch",
+                        "external-integration-stage22-live-dispatch",
+                        "work-stage22-live-dispatch",
+                        "lease-stage22-live-dispatch",
+                        "device-stage22-a",
+                        "audit-stage22-live-dispatch",
+                    );
+                input.ran_live_connector_dispatch_in_build = true;
+                input
+            },
+            {
+                let mut input = Stage22ConnectorOutboundInput::fixture_outbound_system_intent_ready(
+                    "outbound-intent-stage22-live-delivery",
+                    "remote-target-stage22-live-delivery",
+                    "work-stage22-live-delivery",
+                    "lease-stage22-live-delivery",
+                    "device-stage22-a",
+                    "audit-stage22-live-delivery",
+                );
+                input.ran_live_outbound_delivery_in_build = true;
+                input
+            },
+        ] {
+            input.fixture_only_test_path = true;
+            assert!(Stage22ConnectorOutboundPacket::from_stage15_output(
+                &output, None, None, None, input,
+            )
+            .is_err());
+        }
+
+        let mut runtime_mock =
+            Stage22ConnectorOutboundInput::fixture_external_integration_ready(
+                "external-integration-stage22-runtime-mock",
+                "remote-target-stage22-runtime-mock",
+                "device-stage22-a",
+                "audit-stage22-runtime-mock",
+            );
+        runtime_mock.fake_connector_detected = true;
+        runtime_mock.fixture_only_test_path = false;
+        assert!(Stage22ConnectorOutboundPacket::from_stage15_output(
+            &output,
+            None,
             None,
             None,
             runtime_mock,
