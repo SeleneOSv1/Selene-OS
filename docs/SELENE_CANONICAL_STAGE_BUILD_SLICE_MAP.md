@@ -48,6 +48,18 @@ Large stages are build families. A future Codex build must select one exact slic
 | 10D | Emotion/context signal extraction | UnderstandingPacket | EmotionSignalPacket | signal is advisory only |
 | 10E | One-question clarification and correction learning | ProtectedSlotConfidencePacket | ClarificationQuestionPacket | one best question proof |
 
+## Stage 11 - Reasoning, Capability Registry, Router, And Tool-Selection
+
+| Slice | Focus | Input | Output | Proof |
+|---|---|---|---|---|
+| 11A | Reasoning, capability registry, router, and tool-selection boundary | Stage10UnderstandingPacket, Stage5TurnAuthorityPacket, Stage6AccessContextPacket, safe Stage 8/9 references | Stage11ReasoningRouterPacket, Stage11ReasoningWorkAuthority | PROVEN_COMPLETE: router/tool-selection outputs are inert candidates only; public read-only candidates cannot mutate; protected-action and simulation candidates wait for Stage 12; missing/disabled/drifted/tenant-mismatched capability maps fail closed; no provider/search/tool/connector/dispatch/execution behavior. |
+
+## Stage 12 - Runtime Risk, Authority, Simulation, Execution Gate
+
+| Slice | Focus | Input | Output | Proof |
+|---|---|---|---|---|
+| 12A | Simulation, protected execution, approval, and runtime action gate | Stage11ReasoningRouterPacket, Stage5TurnAuthorityPacket, Stage6AccessContextPacket, PH1.ACCESS/POLICY/TENANT/GOV, PH1.SIMCAT/SIMFINDER, PH1.WORK/LEASE, runtime law/governance, PH1.J audit proof | Stage12ProtectedActionGatePacket, Stage12ApprovedExecutionPlanPacket, Stage12FailClosedResponsePacket, Stage12ProtectedActionWorkAuthority | PROVEN_COMPLETE: protected actions require current turn, protected access, policy/tenant/device/Voice ID posture where required, active simulation/action identity, approval, runtime law, idempotency/replay, work/lease, and audit proof; public read-only candidates cannot mutate; simulation candidates cannot dispatch themselves; all failed gates fail closed; no live provider/search/tool/connector/native behavior. |
+
 ## Stage 13 - Search, Source, Image Evidence, Public Tool Quality
 
 | Slice | Focus | Input | Output | Proof |
@@ -112,10 +124,10 @@ Large stages are build families. A future Codex build must select one exact slic
 | 30E | Custom assistant builder/store | AssistantDefinitionPacket | assistant release artifact | governance proof |
 | 30F | Self-heal/dev lane | dev route | proposal artifact | no uncontrolled shell/tool bypass |
 
-## Next Slice After Stage 11A
+## Next Slice After Stage 12A
 
 ```text
-Stage 12A - Simulation, Protected Execution, Approval, And Runtime Action Gate Reconciliation
+Stage 13A - Public Read-Only Search, Source Evidence, Tool Route, And No-Mutation Boundary Reconciliation
 ```
 
 Stage 8A is PROVEN_COMPLETE. It added the minimal runtime-owned `Stage8TranscriptGatePacket` carrier, preserved PH1.K, PH1.C, PH1.LISTEN, Stage 7 activation, Stage 5 current-turn authority, and adapter voice surfaces as repo truth, and did not build live mic capture, live STT/TTS, Voice ID matching, understanding, routing, search, native UI redesign, protected execution, or provider/model routing.
@@ -137,3 +149,5 @@ Stage 9A is PROVEN_COMPLETE. It adds `Stage9VoiceIdentityPosturePacket`, `Stage9
 Stage 10A is PROVEN_COMPLETE. It adds `Stage10UnderstandingPacket`, `Stage10UnderstandingInput`, `Stage10UnderstandingInputKind`, `Stage10ProtectedSlotDisposition`, `Stage10MeaningReconstructionCandidate`, `Stage10UnderstandingDisposition`, and `Stage10UnderstandingWorkAuthority` on top of PH1.N/PH1.SRL/PH1.CONTEXT/PH1.LANG/PH1.PRON repo truth, PH1.D inspect-only model-boundary context, Stage 5 current-turn authority, Stage 6 access context, safe Stage 8 final transcript metadata, and optional receipt-safe Stage 9 Voice ID posture. Understanding, intent, slot, semantic-role, language, pronunciation, ambiguity, and meaning-candidate outputs are advisory only; protected slots clarify or fail closed; meaning reconstruction cannot invent protected or authority-relevant facts; partial/VAD/audio-scene/stale/record/unsafe Voice ID inputs cannot update understanding; and no answer, search, provider, TTS, tool-routing, connector-write, authority, protected execution, or memory/persona/emotion mutation behavior is added. Stage 11A is the next exact build for reasoning, capability registry, router, and tool-selection boundary reconciliation.
 
 Stage 11A is PROVEN_COMPLETE. It adds `Stage11ReasoningRouterPacket`, `Stage11RouteCandidateInput`, `Stage11RouteCandidateKind`, `Stage11CapabilityMapDisposition`, `Stage11RouterDisposition`, and `Stage11ReasoningWorkAuthority` on top of PH1.X, PH1.N/PH1.SRL/PH1.CONTEXT, PH1.ECM engine capability maps, PH1.SIMCAT, PH1.SIMFINDER, runtime law/governance, Stage 10 advisory understanding, Stage 5 current-turn authority, Stage 6 access context, safe Stage 8 final transcript metadata, and receipt-safe Stage 9 Voice ID posture. Router/tool-selection outputs are candidate-only and cannot call providers, search, call tools, connector-write, speak, authorize, approve, dispatch, execute simulations, execute protected mutations, or update memory/persona/emotion. Public read-only candidates remain non-mutating; protected-action candidates remain inert until Stage 12; simulation candidates are inert catalog/finder handoffs; missing/disabled/drifted/tenant-mismatched capability maps fail closed; and stale/ambiguous/protected-slot-uncertain/unsafe inputs cannot route to execution. PH1.D and `simulation_executor.rs` were inspect-only for Stage 11A. Stage 12A is the next exact build for simulation, protected execution, approval, and runtime action gate reconciliation.
+
+Stage 12A is PROVEN_COMPLETE. It adds `Stage12ProtectedActionGatePacket`, `Stage12ProtectedActionGateInput`, `Stage12ProtectedActionDisposition`, `Stage12ProtectedActionWorkAuthority`, `Stage12ApprovedExecutionPlanPacket`, and `Stage12FailClosedResponsePacket` on top of Stage 11 inert route candidates, Stage 5 current-turn authority, Stage 6 access context, PH1.ACCESS/PH1.POLICY/PH1.TENANT/PH1.GOV, PH1.SIMCAT/PH1.SIMFINDER, PH1.WORK/PH1.LEASE, runtime law/governance, `simulation_executor` gate context, and PH1.J audit/proof-ledger surfaces. Public read-only candidates cannot mutate or become protected execution; protected-action candidates cannot execute until all Stage 12 gates pass; simulation candidates cannot dispatch themselves; failed access, policy, tenant, approval, simulation, runtime-law, idempotency, replay, lease, stale-turn, and unsafe-identity cases fail closed; and no live provider, search, external tool, connector write, native UI, live STT/TTS/playback, Voice ID matching, memory/persona/emotion, or new workflow behavior is added. Stage 13A is the next exact build for public read-only search, source evidence, tool route, and no-mutation boundary reconciliation.

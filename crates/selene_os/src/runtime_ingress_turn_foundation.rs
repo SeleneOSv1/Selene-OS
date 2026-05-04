@@ -120,6 +120,26 @@ mod reason_codes {
     pub const STAGE11_CAPABILITY_DRIFT_FAIL_CLOSED: &str = "stage11_capability_drift_fail_closed";
     pub const STAGE11_TENANT_WORKSPACE_MISMATCH_FAIL_CLOSED: &str =
         "stage11_tenant_workspace_mismatch_fail_closed";
+    pub const STAGE12_APPROVED_EXECUTION_PLAN_READY: &str = "stage12_approved_execution_plan_ready";
+    pub const STAGE12_SIMULATION_GATE_APPROVED: &str = "stage12_simulation_gate_approved";
+    pub const STAGE12_PUBLIC_READ_ONLY_BLOCKED: &str = "stage12_public_read_only_blocked";
+    pub const STAGE12_STAGE11_CANDIDATE_BLOCKED: &str = "stage12_stage11_candidate_blocked";
+    pub const STAGE12_MISSING_STAGE12_GATE: &str = "stage12_missing_stage12_gate";
+    pub const STAGE12_CURRENT_TURN_AUTHORITY_BLOCKED: &str =
+        "stage12_current_turn_authority_blocked";
+    pub const STAGE12_ACCESS_CONTEXT_BLOCKED: &str = "stage12_access_context_blocked";
+    pub const STAGE12_POLICY_DENIED: &str = "stage12_policy_denied";
+    pub const STAGE12_TENANT_MISMATCH: &str = "stage12_tenant_mismatch";
+    pub const STAGE12_DEVICE_TRUST_BLOCKED: &str = "stage12_device_trust_blocked";
+    pub const STAGE12_VOICE_IDENTITY_INSUFFICIENT: &str = "stage12_voice_identity_insufficient";
+    pub const STAGE12_SIMULATION_MISSING: &str = "stage12_simulation_missing";
+    pub const STAGE12_SIMULATION_INACTIVE: &str = "stage12_simulation_inactive";
+    pub const STAGE12_SIMULATION_AMBIGUOUS: &str = "stage12_simulation_ambiguous";
+    pub const STAGE12_APPROVAL_MISSING: &str = "stage12_approval_missing";
+    pub const STAGE12_RUNTIME_LAW_DENIED: &str = "stage12_runtime_law_denied";
+    pub const STAGE12_IDEMPOTENCY_REPLAY_BLOCKED: &str = "stage12_idempotency_replay_blocked";
+    pub const STAGE12_WORK_LEASE_BLOCKED: &str = "stage12_work_lease_blocked";
+    pub const STAGE12_AUDIT_PROOF_MISSING: &str = "stage12_audit_proof_missing";
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -6967,6 +6987,1002 @@ impl Validate for Stage11ReasoningRouterPacket {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stage12ProtectedActionDisposition {
+    ApprovedExecutionPlanReady,
+    SimulationGateApproved,
+    PublicReadOnlyCandidateBlocked,
+    Stage11CandidateBlocked,
+    MissingStage12Gate,
+    CurrentTurnAuthorityBlocked,
+    AccessContextBlocked,
+    PolicyDenied,
+    TenantMismatch,
+    DeviceTrustBlocked,
+    VoiceIdentityInsufficient,
+    SimulationMissing,
+    SimulationInactive,
+    SimulationAmbiguous,
+    ApprovalMissing,
+    RuntimeLawDenied,
+    IdempotencyReplayBlocked,
+    WorkLeaseBlocked,
+    AuditProofMissing,
+}
+
+impl Stage12ProtectedActionDisposition {
+    pub const fn default_reason_code(self) -> &'static str {
+        match self {
+            Stage12ProtectedActionDisposition::ApprovedExecutionPlanReady => {
+                reason_codes::STAGE12_APPROVED_EXECUTION_PLAN_READY
+            }
+            Stage12ProtectedActionDisposition::SimulationGateApproved => {
+                reason_codes::STAGE12_SIMULATION_GATE_APPROVED
+            }
+            Stage12ProtectedActionDisposition::PublicReadOnlyCandidateBlocked => {
+                reason_codes::STAGE12_PUBLIC_READ_ONLY_BLOCKED
+            }
+            Stage12ProtectedActionDisposition::Stage11CandidateBlocked => {
+                reason_codes::STAGE12_STAGE11_CANDIDATE_BLOCKED
+            }
+            Stage12ProtectedActionDisposition::MissingStage12Gate => {
+                reason_codes::STAGE12_MISSING_STAGE12_GATE
+            }
+            Stage12ProtectedActionDisposition::CurrentTurnAuthorityBlocked => {
+                reason_codes::STAGE12_CURRENT_TURN_AUTHORITY_BLOCKED
+            }
+            Stage12ProtectedActionDisposition::AccessContextBlocked => {
+                reason_codes::STAGE12_ACCESS_CONTEXT_BLOCKED
+            }
+            Stage12ProtectedActionDisposition::PolicyDenied => reason_codes::STAGE12_POLICY_DENIED,
+            Stage12ProtectedActionDisposition::TenantMismatch => {
+                reason_codes::STAGE12_TENANT_MISMATCH
+            }
+            Stage12ProtectedActionDisposition::DeviceTrustBlocked => {
+                reason_codes::STAGE12_DEVICE_TRUST_BLOCKED
+            }
+            Stage12ProtectedActionDisposition::VoiceIdentityInsufficient => {
+                reason_codes::STAGE12_VOICE_IDENTITY_INSUFFICIENT
+            }
+            Stage12ProtectedActionDisposition::SimulationMissing => {
+                reason_codes::STAGE12_SIMULATION_MISSING
+            }
+            Stage12ProtectedActionDisposition::SimulationInactive => {
+                reason_codes::STAGE12_SIMULATION_INACTIVE
+            }
+            Stage12ProtectedActionDisposition::SimulationAmbiguous => {
+                reason_codes::STAGE12_SIMULATION_AMBIGUOUS
+            }
+            Stage12ProtectedActionDisposition::ApprovalMissing => {
+                reason_codes::STAGE12_APPROVAL_MISSING
+            }
+            Stage12ProtectedActionDisposition::RuntimeLawDenied => {
+                reason_codes::STAGE12_RUNTIME_LAW_DENIED
+            }
+            Stage12ProtectedActionDisposition::IdempotencyReplayBlocked => {
+                reason_codes::STAGE12_IDEMPOTENCY_REPLAY_BLOCKED
+            }
+            Stage12ProtectedActionDisposition::WorkLeaseBlocked => {
+                reason_codes::STAGE12_WORK_LEASE_BLOCKED
+            }
+            Stage12ProtectedActionDisposition::AuditProofMissing => {
+                reason_codes::STAGE12_AUDIT_PROOF_MISSING
+            }
+        }
+    }
+
+    pub const fn is_approved(self) -> bool {
+        matches!(
+            self,
+            Stage12ProtectedActionDisposition::ApprovedExecutionPlanReady
+                | Stage12ProtectedActionDisposition::SimulationGateApproved
+        )
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Stage12ProtectedActionWorkAuthority {
+    pub can_consume_stage11_candidate: bool,
+    pub can_apply_access_policy_tenant_gate: bool,
+    pub can_apply_runtime_law_gate: bool,
+    pub can_apply_idempotency_replay_gate: bool,
+    pub can_apply_work_lease_gate: bool,
+    pub can_emit_approved_execution_plan: bool,
+    pub can_emit_fail_closed_response: bool,
+    pub can_release_internal_simulation_dispatch: bool,
+    pub can_call_providers: bool,
+    pub can_search: bool,
+    pub can_call_live_external_tools: bool,
+    pub can_connector_write: bool,
+    pub can_emit_tts: bool,
+    pub can_capture_microphone_audio: bool,
+    pub can_transcribe_live_audio: bool,
+    pub can_match_voice_id: bool,
+    pub can_mutate_memory_persona_emotion: bool,
+    pub can_execute_without_stage12_gate: bool,
+}
+
+impl Stage12ProtectedActionWorkAuthority {
+    pub const fn approved_plan() -> Self {
+        Self {
+            can_consume_stage11_candidate: true,
+            can_apply_access_policy_tenant_gate: true,
+            can_apply_runtime_law_gate: true,
+            can_apply_idempotency_replay_gate: true,
+            can_apply_work_lease_gate: true,
+            can_emit_approved_execution_plan: true,
+            can_emit_fail_closed_response: false,
+            can_release_internal_simulation_dispatch: false,
+            can_call_providers: false,
+            can_search: false,
+            can_call_live_external_tools: false,
+            can_connector_write: false,
+            can_emit_tts: false,
+            can_capture_microphone_audio: false,
+            can_transcribe_live_audio: false,
+            can_match_voice_id: false,
+            can_mutate_memory_persona_emotion: false,
+            can_execute_without_stage12_gate: false,
+        }
+    }
+
+    pub const fn approved_simulation() -> Self {
+        Self {
+            can_release_internal_simulation_dispatch: true,
+            ..Self::approved_plan()
+        }
+    }
+
+    pub const fn fail_closed() -> Self {
+        Self {
+            can_consume_stage11_candidate: true,
+            can_apply_access_policy_tenant_gate: true,
+            can_apply_runtime_law_gate: true,
+            can_apply_idempotency_replay_gate: true,
+            can_apply_work_lease_gate: true,
+            can_emit_approved_execution_plan: false,
+            can_emit_fail_closed_response: true,
+            can_release_internal_simulation_dispatch: false,
+            can_call_providers: false,
+            can_search: false,
+            can_call_live_external_tools: false,
+            can_connector_write: false,
+            can_emit_tts: false,
+            can_capture_microphone_audio: false,
+            can_transcribe_live_audio: false,
+            can_match_voice_id: false,
+            can_mutate_memory_persona_emotion: false,
+            can_execute_without_stage12_gate: false,
+        }
+    }
+
+    pub const fn has_forbidden_live_or_mutation_power(self) -> bool {
+        self.can_call_providers
+            || self.can_search
+            || self.can_call_live_external_tools
+            || self.can_connector_write
+            || self.can_emit_tts
+            || self.can_capture_microphone_audio
+            || self.can_transcribe_live_audio
+            || self.can_match_voice_id
+            || self.can_mutate_memory_persona_emotion
+            || self.can_execute_without_stage12_gate
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Stage12ApprovedExecutionPlanPacket {
+    pub approved_execution_plan_id: String,
+    pub runtime_action_gate_id: String,
+    pub reasoning_id: String,
+    pub router_id: String,
+    pub capability_id: String,
+    pub capability_map_id: String,
+    pub tool_candidate_id: Option<String>,
+    pub simulation_candidate_id: Option<String>,
+    pub simulation_id: Option<String>,
+    pub action_id: Option<String>,
+    pub policy_context_id: String,
+    pub tenant_id: String,
+    pub idempotency_key: String,
+    pub work_id: String,
+    pub lease_id: String,
+    pub audit_id: String,
+}
+
+impl Validate for Stage12ApprovedExecutionPlanPacket {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        validate_stage4_ref(
+            "stage12_approved_execution_plan_packet.approved_execution_plan_id",
+            &self.approved_execution_plan_id,
+        )?;
+        validate_stage4_ref(
+            "stage12_approved_execution_plan_packet.runtime_action_gate_id",
+            &self.runtime_action_gate_id,
+        )?;
+        validate_stage4_ref(
+            "stage12_approved_execution_plan_packet.reasoning_id",
+            &self.reasoning_id,
+        )?;
+        validate_stage4_ref(
+            "stage12_approved_execution_plan_packet.router_id",
+            &self.router_id,
+        )?;
+        validate_stage4_ref(
+            "stage12_approved_execution_plan_packet.capability_id",
+            &self.capability_id,
+        )?;
+        validate_stage4_ref(
+            "stage12_approved_execution_plan_packet.capability_map_id",
+            &self.capability_map_id,
+        )?;
+        validate_stage4_optional_ref(
+            "stage12_approved_execution_plan_packet.tool_candidate_id",
+            self.tool_candidate_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage12_approved_execution_plan_packet.simulation_candidate_id",
+            self.simulation_candidate_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage12_approved_execution_plan_packet.simulation_id",
+            self.simulation_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage12_approved_execution_plan_packet.action_id",
+            self.action_id.as_deref(),
+        )?;
+        validate_stage4_ref(
+            "stage12_approved_execution_plan_packet.policy_context_id",
+            &self.policy_context_id,
+        )?;
+        validate_stage4_ref(
+            "stage12_approved_execution_plan_packet.tenant_id",
+            &self.tenant_id,
+        )?;
+        validate_stage4_ref(
+            "stage12_approved_execution_plan_packet.idempotency_key",
+            &self.idempotency_key,
+        )?;
+        validate_stage4_ref(
+            "stage12_approved_execution_plan_packet.work_id",
+            &self.work_id,
+        )?;
+        validate_stage4_ref(
+            "stage12_approved_execution_plan_packet.lease_id",
+            &self.lease_id,
+        )?;
+        validate_stage4_ref(
+            "stage12_approved_execution_plan_packet.audit_id",
+            &self.audit_id,
+        )?;
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Stage12FailClosedResponsePacket {
+    pub fail_closed_response_id: String,
+    pub runtime_action_gate_id: String,
+    pub reasoning_id: String,
+    pub router_id: String,
+    pub capability_id: Option<String>,
+    pub simulation_candidate_id: Option<String>,
+    pub failed_disposition: Stage12ProtectedActionDisposition,
+    pub reason_code: &'static str,
+    pub audit_id: Option<String>,
+}
+
+impl Validate for Stage12FailClosedResponsePacket {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        validate_stage4_ref(
+            "stage12_fail_closed_response_packet.fail_closed_response_id",
+            &self.fail_closed_response_id,
+        )?;
+        validate_stage4_ref(
+            "stage12_fail_closed_response_packet.runtime_action_gate_id",
+            &self.runtime_action_gate_id,
+        )?;
+        validate_stage4_ref(
+            "stage12_fail_closed_response_packet.reasoning_id",
+            &self.reasoning_id,
+        )?;
+        validate_stage4_ref(
+            "stage12_fail_closed_response_packet.router_id",
+            &self.router_id,
+        )?;
+        validate_stage4_optional_ref(
+            "stage12_fail_closed_response_packet.capability_id",
+            self.capability_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage12_fail_closed_response_packet.simulation_candidate_id",
+            self.simulation_candidate_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage12_fail_closed_response_packet.audit_id",
+            self.audit_id.as_deref(),
+        )?;
+        if self.failed_disposition.is_approved() {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage12_fail_closed_response_packet.failed_disposition",
+                reason: "fail-closed response cannot carry an approved disposition",
+            });
+        }
+        if self.reason_code != self.failed_disposition.default_reason_code() {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage12_fail_closed_response_packet.reason_code",
+                reason: "must match fail-closed disposition",
+            });
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Stage12ProtectedActionGateInput {
+    pub approved_execution_plan_id: String,
+    pub runtime_action_gate_id: String,
+    pub simulation_id: Option<String>,
+    pub action_id: Option<String>,
+    pub approval_id: Option<String>,
+    pub policy_context_id: Option<String>,
+    pub tenant_id: Option<String>,
+    pub device_trust_id: Option<String>,
+    pub idempotency_key: Option<String>,
+    pub prior_authoritative_outcome_id: Option<String>,
+    pub replay_outcome_id: Option<String>,
+    pub work_id: Option<String>,
+    pub lease_id: Option<String>,
+    pub audit_id: Option<String>,
+    pub access_context_ready: bool,
+    pub policy_allowed: bool,
+    pub tenant_workspace_match: bool,
+    pub device_trust_sufficient: bool,
+    pub voice_identity_sufficient: bool,
+    pub simulation_registered: bool,
+    pub simulation_active: bool,
+    pub simulation_action_unambiguous: bool,
+    pub explicit_approval_present: bool,
+    pub policy_approved_non_user_impacting_path: bool,
+    pub runtime_law_allowed: bool,
+    pub governance_allowed: bool,
+    pub idempotency_replay_safe: bool,
+    pub idempotency_key_matches: bool,
+    pub duplicate_replay: bool,
+    pub work_lease_valid: bool,
+    pub stale_work_owner: bool,
+}
+
+impl Stage12ProtectedActionGateInput {
+    pub fn approved(
+        approved_execution_plan_id: impl Into<String>,
+        runtime_action_gate_id: impl Into<String>,
+        approval_id: impl Into<String>,
+        policy_context_id: impl Into<String>,
+        tenant_id: impl Into<String>,
+        device_trust_id: impl Into<String>,
+        idempotency_key: impl Into<String>,
+        work_id: impl Into<String>,
+        lease_id: impl Into<String>,
+        audit_id: impl Into<String>,
+    ) -> Self {
+        Self {
+            approved_execution_plan_id: approved_execution_plan_id.into(),
+            runtime_action_gate_id: runtime_action_gate_id.into(),
+            simulation_id: None,
+            action_id: None,
+            approval_id: Some(approval_id.into()),
+            policy_context_id: Some(policy_context_id.into()),
+            tenant_id: Some(tenant_id.into()),
+            device_trust_id: Some(device_trust_id.into()),
+            idempotency_key: Some(idempotency_key.into()),
+            prior_authoritative_outcome_id: None,
+            replay_outcome_id: None,
+            work_id: Some(work_id.into()),
+            lease_id: Some(lease_id.into()),
+            audit_id: Some(audit_id.into()),
+            access_context_ready: true,
+            policy_allowed: true,
+            tenant_workspace_match: true,
+            device_trust_sufficient: true,
+            voice_identity_sufficient: true,
+            simulation_registered: true,
+            simulation_active: true,
+            simulation_action_unambiguous: true,
+            explicit_approval_present: true,
+            policy_approved_non_user_impacting_path: false,
+            runtime_law_allowed: true,
+            governance_allowed: true,
+            idempotency_replay_safe: true,
+            idempotency_key_matches: true,
+            duplicate_replay: false,
+            work_lease_valid: true,
+            stale_work_owner: false,
+        }
+    }
+
+    pub fn with_simulation(
+        mut self,
+        simulation_id: impl Into<String>,
+        action_id: impl Into<String>,
+    ) -> Self {
+        self.simulation_id = Some(simulation_id.into());
+        self.action_id = Some(action_id.into());
+        self
+    }
+
+    pub fn with_replay_outcome(mut self, replay_outcome_id: impl Into<String>) -> Self {
+        self.duplicate_replay = true;
+        self.replay_outcome_id = Some(replay_outcome_id.into());
+        self.prior_authoritative_outcome_id = self.replay_outcome_id.clone();
+        self
+    }
+}
+
+impl Validate for Stage12ProtectedActionGateInput {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        validate_stage4_ref(
+            "stage12_protected_action_gate_input.approved_execution_plan_id",
+            &self.approved_execution_plan_id,
+        )?;
+        validate_stage4_ref(
+            "stage12_protected_action_gate_input.runtime_action_gate_id",
+            &self.runtime_action_gate_id,
+        )?;
+        validate_stage4_optional_ref(
+            "stage12_protected_action_gate_input.simulation_id",
+            self.simulation_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage12_protected_action_gate_input.action_id",
+            self.action_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage12_protected_action_gate_input.approval_id",
+            self.approval_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage12_protected_action_gate_input.policy_context_id",
+            self.policy_context_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage12_protected_action_gate_input.tenant_id",
+            self.tenant_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage12_protected_action_gate_input.device_trust_id",
+            self.device_trust_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage12_protected_action_gate_input.idempotency_key",
+            self.idempotency_key.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage12_protected_action_gate_input.prior_authoritative_outcome_id",
+            self.prior_authoritative_outcome_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage12_protected_action_gate_input.replay_outcome_id",
+            self.replay_outcome_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage12_protected_action_gate_input.work_id",
+            self.work_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage12_protected_action_gate_input.lease_id",
+            self.lease_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage12_protected_action_gate_input.audit_id",
+            self.audit_id.as_deref(),
+        )?;
+        if self.duplicate_replay
+            && (self.prior_authoritative_outcome_id.is_none()
+                || self.replay_outcome_id.is_none()
+                || !self.idempotency_replay_safe
+                || !self.idempotency_key_matches)
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage12_protected_action_gate_input.replay",
+                reason:
+                    "duplicate replay requires prior authoritative outcome and matching idempotency",
+            });
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Stage12ProtectedActionGatePacket {
+    pub session_id: SessionId,
+    pub turn_id: Option<TurnId>,
+    pub activation_id: Option<String>,
+    pub understanding_id: String,
+    pub reasoning_id: String,
+    pub router_id: String,
+    pub capability_id: Option<String>,
+    pub capability_map_id: Option<String>,
+    pub tool_candidate_id: Option<String>,
+    pub simulation_candidate_id: Option<String>,
+    pub simulation_catalog_ref: Option<String>,
+    pub simulation_finder_ref: Option<String>,
+    pub simulation_id: Option<String>,
+    pub action_id: Option<String>,
+    pub approved_execution_plan_id: Option<String>,
+    pub fail_closed_response_id: Option<String>,
+    pub runtime_action_gate_id: String,
+    pub access_context_id: Option<String>,
+    pub policy_context_id: Option<String>,
+    pub tenant_id: Option<String>,
+    pub voice_identity_id: Option<String>,
+    pub device_trust_id: Option<String>,
+    pub idempotency_key: Option<String>,
+    pub work_id: Option<String>,
+    pub lease_id: Option<String>,
+    pub audit_id: Option<String>,
+    pub ph1j_proof_ref: Option<String>,
+    pub reason_code: &'static str,
+    pub disposition: Stage12ProtectedActionDisposition,
+    pub stage11_disposition: Stage11RouterDisposition,
+    pub candidate_kind: Stage11RouteCandidateKind,
+    pub stage5_turn_disposition: Stage5TurnAuthorityDisposition,
+    pub stage6_access_disposition: Stage6AccessContextDisposition,
+    pub approved_execution_plan: Option<Stage12ApprovedExecutionPlanPacket>,
+    pub fail_closed_response: Option<Stage12FailClosedResponsePacket>,
+    pub work_authority: Stage12ProtectedActionWorkAuthority,
+}
+
+impl Stage12ProtectedActionGatePacket {
+    pub fn from_stage11_candidate(
+        route: &Stage11ReasoningRouterPacket,
+        input: Stage12ProtectedActionGateInput,
+    ) -> Result<Self, ContractViolation> {
+        route.validate()?;
+        input.validate()?;
+        let disposition = Self::decide_disposition(route, &input);
+        let work_authority = Self::work_authority_for(disposition);
+        let approved_execution_plan = if disposition.is_approved() {
+            Some(Self::approved_execution_plan(route, &input)?)
+        } else {
+            None
+        };
+        let fail_closed_response = if disposition.is_approved() {
+            None
+        } else {
+            Some(Self::fail_closed_response(route, &input, disposition)?)
+        };
+        let audit_id = input.audit_id.clone().or_else(|| route.audit_id.clone());
+        let packet = Self {
+            session_id: route.session_id,
+            turn_id: route.turn_id,
+            activation_id: route.activation_id.clone(),
+            understanding_id: route.understanding_id.clone(),
+            reasoning_id: route.reasoning_id.clone(),
+            router_id: route.router_id.clone(),
+            capability_id: route.capability_id.clone(),
+            capability_map_id: route.capability_map_id.clone(),
+            tool_candidate_id: route.tool_candidate_id.clone(),
+            simulation_candidate_id: route.simulation_candidate_id.clone(),
+            simulation_catalog_ref: route.simulation_catalog_ref.clone(),
+            simulation_finder_ref: route.simulation_finder_ref.clone(),
+            simulation_id: input.simulation_id.clone(),
+            action_id: input.action_id.clone(),
+            approved_execution_plan_id: approved_execution_plan
+                .as_ref()
+                .map(|plan| plan.approved_execution_plan_id.clone()),
+            fail_closed_response_id: fail_closed_response
+                .as_ref()
+                .map(|response| response.fail_closed_response_id.clone()),
+            runtime_action_gate_id: input.runtime_action_gate_id,
+            access_context_id: route.access_context_id.clone(),
+            policy_context_id: input.policy_context_id,
+            tenant_id: input.tenant_id,
+            voice_identity_id: route.voice_identity_id.clone(),
+            device_trust_id: input.device_trust_id,
+            idempotency_key: input.idempotency_key,
+            work_id: input.work_id,
+            lease_id: input.lease_id,
+            audit_id: audit_id.clone(),
+            ph1j_proof_ref: audit_id,
+            reason_code: disposition.default_reason_code(),
+            disposition,
+            stage11_disposition: route.disposition,
+            candidate_kind: route.candidate_kind,
+            stage5_turn_disposition: route.stage5_turn_disposition,
+            stage6_access_disposition: route.stage6_access_disposition,
+            approved_execution_plan,
+            fail_closed_response,
+            work_authority,
+        };
+        packet.validate()?;
+        Ok(packet)
+    }
+
+    pub const fn can_call_live_or_mutate_without_gate(&self) -> bool {
+        self.work_authority.has_forbidden_live_or_mutation_power()
+    }
+
+    fn decide_disposition(
+        route: &Stage11ReasoningRouterPacket,
+        input: &Stage12ProtectedActionGateInput,
+    ) -> Stage12ProtectedActionDisposition {
+        if route.disposition == Stage11RouterDisposition::PublicReadOnlyCandidate
+            || route.candidate_kind.is_public_read_only()
+        {
+            return Stage12ProtectedActionDisposition::PublicReadOnlyCandidateBlocked;
+        }
+        if !matches!(
+            route.disposition,
+            Stage11RouterDisposition::ProtectedActionBlockedUntilStage12
+                | Stage11RouterDisposition::SimulationCandidateInertHandoff
+        ) {
+            return Stage12ProtectedActionDisposition::Stage11CandidateBlocked;
+        }
+        if !route.requires_stage12_gate {
+            return Stage12ProtectedActionDisposition::MissingStage12Gate;
+        }
+        if route.stage5_turn_disposition != Stage5TurnAuthorityDisposition::CurrentCommittedTurn {
+            return Stage12ProtectedActionDisposition::CurrentTurnAuthorityBlocked;
+        }
+        if route.stage6_access_disposition != Stage6AccessContextDisposition::ProtectedContextReady
+            || !input.access_context_ready
+        {
+            return Stage12ProtectedActionDisposition::AccessContextBlocked;
+        }
+        if !input.policy_allowed || !input.governance_allowed {
+            return Stage12ProtectedActionDisposition::PolicyDenied;
+        }
+        if !input.tenant_workspace_match {
+            return Stage12ProtectedActionDisposition::TenantMismatch;
+        }
+        if !input.device_trust_sufficient || input.device_trust_id.is_none() {
+            return Stage12ProtectedActionDisposition::DeviceTrustBlocked;
+        }
+        if !input.voice_identity_sufficient {
+            return Stage12ProtectedActionDisposition::VoiceIdentityInsufficient;
+        }
+        if route.candidate_kind.is_simulation_candidate() {
+            if route.simulation_candidate_id.is_none()
+                || route.simulation_catalog_ref.is_none()
+                || route.simulation_finder_ref.is_none()
+                || input.simulation_id.is_none()
+                || !input.simulation_registered
+            {
+                return Stage12ProtectedActionDisposition::SimulationMissing;
+            }
+            if !input.simulation_active {
+                return Stage12ProtectedActionDisposition::SimulationInactive;
+            }
+            if !input.simulation_action_unambiguous || input.action_id.is_none() {
+                return Stage12ProtectedActionDisposition::SimulationAmbiguous;
+            }
+        }
+        if !input.explicit_approval_present && !input.policy_approved_non_user_impacting_path {
+            return Stage12ProtectedActionDisposition::ApprovalMissing;
+        }
+        if !input.runtime_law_allowed {
+            return Stage12ProtectedActionDisposition::RuntimeLawDenied;
+        }
+        if input.idempotency_key.is_none()
+            || !input.idempotency_replay_safe
+            || !input.idempotency_key_matches
+        {
+            return Stage12ProtectedActionDisposition::IdempotencyReplayBlocked;
+        }
+        if input.work_id.is_none()
+            || input.lease_id.is_none()
+            || !input.work_lease_valid
+            || input.stale_work_owner
+        {
+            return Stage12ProtectedActionDisposition::WorkLeaseBlocked;
+        }
+        if input.audit_id.is_none() && route.audit_id.is_none() {
+            return Stage12ProtectedActionDisposition::AuditProofMissing;
+        }
+        if route.candidate_kind.is_simulation_candidate() {
+            Stage12ProtectedActionDisposition::SimulationGateApproved
+        } else {
+            Stage12ProtectedActionDisposition::ApprovedExecutionPlanReady
+        }
+    }
+
+    const fn work_authority_for(
+        disposition: Stage12ProtectedActionDisposition,
+    ) -> Stage12ProtectedActionWorkAuthority {
+        match disposition {
+            Stage12ProtectedActionDisposition::ApprovedExecutionPlanReady => {
+                Stage12ProtectedActionWorkAuthority::approved_plan()
+            }
+            Stage12ProtectedActionDisposition::SimulationGateApproved => {
+                Stage12ProtectedActionWorkAuthority::approved_simulation()
+            }
+            _ => Stage12ProtectedActionWorkAuthority::fail_closed(),
+        }
+    }
+
+    fn approved_execution_plan(
+        route: &Stage11ReasoningRouterPacket,
+        input: &Stage12ProtectedActionGateInput,
+    ) -> Result<Stage12ApprovedExecutionPlanPacket, ContractViolation> {
+        let plan = Stage12ApprovedExecutionPlanPacket {
+            approved_execution_plan_id: input.approved_execution_plan_id.clone(),
+            runtime_action_gate_id: input.runtime_action_gate_id.clone(),
+            reasoning_id: route.reasoning_id.clone(),
+            router_id: route.router_id.clone(),
+            capability_id: route
+                .capability_id
+                .clone()
+                .ok_or(ContractViolation::InvalidValue {
+                    field: "stage12_approved_execution_plan_packet.capability_id",
+                    reason: "approved execution plan requires capability id",
+                })?,
+            capability_map_id: route.capability_map_id.clone().ok_or(
+                ContractViolation::InvalidValue {
+                    field: "stage12_approved_execution_plan_packet.capability_map_id",
+                    reason: "approved execution plan requires capability-map id",
+                },
+            )?,
+            tool_candidate_id: route.tool_candidate_id.clone(),
+            simulation_candidate_id: route.simulation_candidate_id.clone(),
+            simulation_id: input.simulation_id.clone(),
+            action_id: input.action_id.clone(),
+            policy_context_id: input.policy_context_id.clone().ok_or(
+                ContractViolation::InvalidValue {
+                    field: "stage12_approved_execution_plan_packet.policy_context_id",
+                    reason: "approved execution plan requires policy context id",
+                },
+            )?,
+            tenant_id: input
+                .tenant_id
+                .clone()
+                .ok_or(ContractViolation::InvalidValue {
+                    field: "stage12_approved_execution_plan_packet.tenant_id",
+                    reason: "approved execution plan requires tenant id",
+                })?,
+            idempotency_key: input.idempotency_key.clone().ok_or(
+                ContractViolation::InvalidValue {
+                    field: "stage12_approved_execution_plan_packet.idempotency_key",
+                    reason: "approved execution plan requires idempotency key",
+                },
+            )?,
+            work_id: input
+                .work_id
+                .clone()
+                .ok_or(ContractViolation::InvalidValue {
+                    field: "stage12_approved_execution_plan_packet.work_id",
+                    reason: "approved execution plan requires work id",
+                })?,
+            lease_id: input
+                .lease_id
+                .clone()
+                .ok_or(ContractViolation::InvalidValue {
+                    field: "stage12_approved_execution_plan_packet.lease_id",
+                    reason: "approved execution plan requires lease id",
+                })?,
+            audit_id: input
+                .audit_id
+                .clone()
+                .or_else(|| route.audit_id.clone())
+                .ok_or(ContractViolation::InvalidValue {
+                    field: "stage12_approved_execution_plan_packet.audit_id",
+                    reason: "approved execution plan requires PH1.J audit proof ref",
+                })?,
+        };
+        plan.validate()?;
+        Ok(plan)
+    }
+
+    fn fail_closed_response(
+        route: &Stage11ReasoningRouterPacket,
+        input: &Stage12ProtectedActionGateInput,
+        disposition: Stage12ProtectedActionDisposition,
+    ) -> Result<Stage12FailClosedResponsePacket, ContractViolation> {
+        let response = Stage12FailClosedResponsePacket {
+            fail_closed_response_id: format!("{}-fail-closed", input.runtime_action_gate_id),
+            runtime_action_gate_id: input.runtime_action_gate_id.clone(),
+            reasoning_id: route.reasoning_id.clone(),
+            router_id: route.router_id.clone(),
+            capability_id: route.capability_id.clone(),
+            simulation_candidate_id: route.simulation_candidate_id.clone(),
+            failed_disposition: disposition,
+            reason_code: disposition.default_reason_code(),
+            audit_id: input.audit_id.clone().or_else(|| route.audit_id.clone()),
+        };
+        response.validate()?;
+        Ok(response)
+    }
+}
+
+impl Validate for Stage12ProtectedActionGatePacket {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        validate_stage4_optional_ref(
+            "stage12_protected_action_gate_packet.activation_id",
+            self.activation_id.as_deref(),
+        )?;
+        validate_stage4_ref(
+            "stage12_protected_action_gate_packet.understanding_id",
+            &self.understanding_id,
+        )?;
+        validate_stage4_ref(
+            "stage12_protected_action_gate_packet.reasoning_id",
+            &self.reasoning_id,
+        )?;
+        validate_stage4_ref(
+            "stage12_protected_action_gate_packet.router_id",
+            &self.router_id,
+        )?;
+        validate_stage4_optional_ref(
+            "stage12_protected_action_gate_packet.capability_id",
+            self.capability_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage12_protected_action_gate_packet.capability_map_id",
+            self.capability_map_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage12_protected_action_gate_packet.tool_candidate_id",
+            self.tool_candidate_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage12_protected_action_gate_packet.simulation_candidate_id",
+            self.simulation_candidate_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage12_protected_action_gate_packet.simulation_catalog_ref",
+            self.simulation_catalog_ref.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage12_protected_action_gate_packet.simulation_finder_ref",
+            self.simulation_finder_ref.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage12_protected_action_gate_packet.simulation_id",
+            self.simulation_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage12_protected_action_gate_packet.action_id",
+            self.action_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage12_protected_action_gate_packet.approved_execution_plan_id",
+            self.approved_execution_plan_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage12_protected_action_gate_packet.fail_closed_response_id",
+            self.fail_closed_response_id.as_deref(),
+        )?;
+        validate_stage4_ref(
+            "stage12_protected_action_gate_packet.runtime_action_gate_id",
+            &self.runtime_action_gate_id,
+        )?;
+        validate_stage4_optional_ref(
+            "stage12_protected_action_gate_packet.access_context_id",
+            self.access_context_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage12_protected_action_gate_packet.policy_context_id",
+            self.policy_context_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage12_protected_action_gate_packet.tenant_id",
+            self.tenant_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage12_protected_action_gate_packet.voice_identity_id",
+            self.voice_identity_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage12_protected_action_gate_packet.device_trust_id",
+            self.device_trust_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage12_protected_action_gate_packet.idempotency_key",
+            self.idempotency_key.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage12_protected_action_gate_packet.work_id",
+            self.work_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage12_protected_action_gate_packet.lease_id",
+            self.lease_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage12_protected_action_gate_packet.audit_id",
+            self.audit_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage12_protected_action_gate_packet.ph1j_proof_ref",
+            self.ph1j_proof_ref.as_deref(),
+        )?;
+        if self.reason_code != self.disposition.default_reason_code() {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage12_protected_action_gate_packet.reason_code",
+                reason: "must match Stage 12 protected-action disposition",
+            });
+        }
+        if self.work_authority.has_forbidden_live_or_mutation_power() {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage12_protected_action_gate_packet.work_authority",
+                reason: "Stage 12A gate packets cannot call providers, search, call live tools, connector-write, emit TTS, capture audio, match Voice ID, or mutate memory/persona/emotion",
+            });
+        }
+        if self.disposition.is_approved() {
+            if self.approved_execution_plan.is_none()
+                || self.fail_closed_response.is_some()
+                || !self.work_authority.can_emit_approved_execution_plan
+                || self.approved_execution_plan_id.is_none()
+                || self.idempotency_key.is_none()
+                || self.work_id.is_none()
+                || self.lease_id.is_none()
+                || self.audit_id.is_none()
+            {
+                return Err(ContractViolation::InvalidValue {
+                    field: "stage12_protected_action_gate_packet.approved_execution_plan",
+                    reason: "approved Stage 12 gates require plan, idempotency, work, lease, and PH1.J audit refs",
+                });
+            }
+            if self.stage5_turn_disposition != Stage5TurnAuthorityDisposition::CurrentCommittedTurn
+                || self.stage6_access_disposition
+                    != Stage6AccessContextDisposition::ProtectedContextReady
+            {
+                return Err(ContractViolation::InvalidValue {
+                    field: "stage12_protected_action_gate_packet.stage_authority",
+                    reason: "approved execution requires current turn and protected access context",
+                });
+            }
+            if self.candidate_kind.is_public_read_only()
+                || self.stage11_disposition == Stage11RouterDisposition::PublicReadOnlyCandidate
+            {
+                return Err(ContractViolation::InvalidValue {
+                    field: "stage12_protected_action_gate_packet.public_read_only",
+                    reason: "public read-only candidates cannot become protected execution",
+                });
+            }
+            if self.candidate_kind.is_simulation_candidate() {
+                if self.disposition != Stage12ProtectedActionDisposition::SimulationGateApproved
+                    || self.simulation_candidate_id.is_none()
+                    || self.simulation_id.is_none()
+                    || self.action_id.is_none()
+                    || !self.work_authority.can_release_internal_simulation_dispatch
+                {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "stage12_protected_action_gate_packet.simulation_candidate",
+                        reason: "simulation candidate requires approved simulation/action refs before dispatch handoff",
+                    });
+                }
+            } else if self.work_authority.can_release_internal_simulation_dispatch {
+                return Err(ContractViolation::InvalidValue {
+                    field: "stage12_protected_action_gate_packet.work_authority",
+                    reason:
+                        "non-simulation protected-action plans cannot release simulation dispatch",
+                });
+            }
+            if let Some(plan) = self.approved_execution_plan.as_ref() {
+                plan.validate()?;
+            }
+        } else {
+            if self.approved_execution_plan.is_some()
+                || self.approved_execution_plan_id.is_some()
+                || self.fail_closed_response.is_none()
+                || !self.work_authority.can_emit_fail_closed_response
+                || self.work_authority.can_release_internal_simulation_dispatch
+            {
+                return Err(ContractViolation::InvalidValue {
+                    field: "stage12_protected_action_gate_packet.fail_closed_response",
+                    reason: "failed Stage 12 gates must emit only fail-closed response and no dispatch handoff",
+                });
+            }
+            if let Some(response) = self.fail_closed_response.as_ref() {
+                response.validate()?;
+            }
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RawTurnPayload {
     Text {
@@ -12645,6 +13661,309 @@ mod tests {
             assert!(!route.work_authority.can_emit_router_candidate);
             assert!(!route.can_route_or_mutate());
         }
+    }
+
+    fn stage12_gate_input() -> Stage12ProtectedActionGateInput {
+        Stage12ProtectedActionGateInput::approved(
+            "approved-plan-stage12",
+            "runtime-action-gate-stage12",
+            "approval-stage12",
+            "policy-context-stage12",
+            "tenant-stage12",
+            "device-trust-stage12",
+            "idempotency-stage12",
+            "work-stage12",
+            "lease-stage12",
+            "audit-stage12",
+        )
+    }
+
+    fn stage12_protected_route() -> Stage11ReasoningRouterPacket {
+        let understanding = stage11_ready_understanding();
+        Stage11ReasoningRouterPacket::from_stage10_understanding(
+            &understanding,
+            Stage11RouteCandidateInput::protected_action(
+                "reasoning-stage12-protected",
+                "router-stage12-protected",
+                "capability-stage12-protected",
+                "capability-map-stage12-protected",
+                "tool-candidate-stage12-protected",
+                "audit-stage12-route-protected",
+            ),
+        )
+        .expect("stage12 protected route")
+    }
+
+    fn stage12_simulation_route() -> Stage11ReasoningRouterPacket {
+        let understanding = stage11_ready_understanding();
+        Stage11ReasoningRouterPacket::from_stage10_understanding(
+            &understanding,
+            Stage11RouteCandidateInput::simulation_candidate(
+                "reasoning-stage12-sim",
+                "router-stage12-sim",
+                "capability-stage12-sim",
+                "capability-map-stage12-sim",
+                "simulation-candidate-stage12",
+                "simulation-catalog-stage12",
+                "simulation-finder-stage12",
+                "audit-stage12-route-sim",
+            ),
+        )
+        .expect("stage12 simulation route")
+    }
+
+    #[test]
+    fn stage_12a_protected_action_requires_all_gates_and_emits_approved_plan() {
+        let route = stage12_protected_route();
+        let packet =
+            Stage12ProtectedActionGatePacket::from_stage11_candidate(&route, stage12_gate_input())
+                .expect("stage12 approved protected action");
+
+        assert_eq!(
+            packet.disposition,
+            Stage12ProtectedActionDisposition::ApprovedExecutionPlanReady
+        );
+        assert!(packet.approved_execution_plan.is_some());
+        assert!(packet.fail_closed_response.is_none());
+        assert!(packet.work_authority.can_emit_approved_execution_plan);
+        assert!(
+            !packet
+                .work_authority
+                .can_release_internal_simulation_dispatch
+        );
+        assert!(!packet.can_call_live_or_mutate_without_gate());
+        assert!(!packet.work_authority.can_call_providers);
+        assert!(!packet.work_authority.can_search);
+        assert!(!packet.work_authority.can_call_live_external_tools);
+        assert!(!packet.work_authority.can_connector_write);
+        assert!(!packet.work_authority.can_execute_without_stage12_gate);
+        assert_eq!(
+            packet.approved_execution_plan_id.as_deref(),
+            Some("approved-plan-stage12")
+        );
+        assert_eq!(packet.audit_id.as_deref(), Some("audit-stage12"));
+        assert_eq!(packet.ph1j_proof_ref.as_deref(), Some("audit-stage12"));
+    }
+
+    #[test]
+    fn stage_12a_simulation_candidate_requires_gate_pass_before_dispatch_handoff() {
+        let route = stage12_simulation_route();
+        let input = stage12_gate_input()
+            .with_simulation("simulation-stage12", "action-stage12")
+            .with_replay_outcome("prior-outcome-stage12");
+        let packet = Stage12ProtectedActionGatePacket::from_stage11_candidate(&route, input)
+            .expect("stage12 approved simulation candidate");
+
+        assert_eq!(
+            packet.disposition,
+            Stage12ProtectedActionDisposition::SimulationGateApproved
+        );
+        assert!(packet.approved_execution_plan.is_some());
+        assert!(packet.fail_closed_response.is_none());
+        assert_eq!(packet.simulation_id.as_deref(), Some("simulation-stage12"));
+        assert_eq!(packet.action_id.as_deref(), Some("action-stage12"));
+        assert!(
+            packet
+                .work_authority
+                .can_release_internal_simulation_dispatch
+        );
+        assert!(!packet.work_authority.can_call_live_external_tools);
+        assert!(!packet.work_authority.can_connector_write);
+        assert!(!packet.work_authority.can_execute_without_stage12_gate);
+    }
+
+    #[test]
+    fn stage_12a_public_read_only_candidate_cannot_become_protected_execution() {
+        let understanding = stage11_ready_understanding();
+        let route = Stage11ReasoningRouterPacket::from_stage10_understanding(
+            &understanding,
+            Stage11RouteCandidateInput::public_read_only_tool(
+                "reasoning-stage12-public",
+                "router-stage12-public",
+                "capability-stage12-public",
+                "capability-map-stage12-public",
+                "tool-candidate-stage12-public",
+                "audit-stage12-public",
+            ),
+        )
+        .expect("stage12 public read-only route");
+        let packet =
+            Stage12ProtectedActionGatePacket::from_stage11_candidate(&route, stage12_gate_input())
+                .expect("stage12 public read-only blocked");
+
+        assert_eq!(
+            packet.disposition,
+            Stage12ProtectedActionDisposition::PublicReadOnlyCandidateBlocked
+        );
+        assert!(packet.approved_execution_plan.is_none());
+        assert!(packet.fail_closed_response.is_some());
+        assert!(packet.work_authority.can_emit_fail_closed_response);
+        assert!(!packet.work_authority.can_emit_approved_execution_plan);
+        assert!(
+            !packet
+                .work_authority
+                .can_release_internal_simulation_dispatch
+        );
+        assert!(!packet.can_call_live_or_mutate_without_gate());
+    }
+
+    #[test]
+    fn stage_12a_failed_gates_fail_closed_with_reason_codes() {
+        let route = stage12_protected_route();
+        let failure_cases: Vec<(
+            Stage12ProtectedActionGateInput,
+            Stage12ProtectedActionDisposition,
+        )> = vec![
+            {
+                let mut input = stage12_gate_input();
+                input.access_context_ready = false;
+                (
+                    input,
+                    Stage12ProtectedActionDisposition::AccessContextBlocked,
+                )
+            },
+            {
+                let mut input = stage12_gate_input();
+                input.policy_allowed = false;
+                (input, Stage12ProtectedActionDisposition::PolicyDenied)
+            },
+            {
+                let mut input = stage12_gate_input();
+                input.tenant_workspace_match = false;
+                (input, Stage12ProtectedActionDisposition::TenantMismatch)
+            },
+            {
+                let mut input = stage12_gate_input();
+                input.device_trust_sufficient = false;
+                (input, Stage12ProtectedActionDisposition::DeviceTrustBlocked)
+            },
+            {
+                let mut input = stage12_gate_input();
+                input.voice_identity_sufficient = false;
+                (
+                    input,
+                    Stage12ProtectedActionDisposition::VoiceIdentityInsufficient,
+                )
+            },
+            {
+                let mut input = stage12_gate_input();
+                input.explicit_approval_present = false;
+                (input, Stage12ProtectedActionDisposition::ApprovalMissing)
+            },
+            {
+                let mut input = stage12_gate_input();
+                input.runtime_law_allowed = false;
+                (input, Stage12ProtectedActionDisposition::RuntimeLawDenied)
+            },
+            {
+                let mut input = stage12_gate_input();
+                input.idempotency_replay_safe = false;
+                (
+                    input,
+                    Stage12ProtectedActionDisposition::IdempotencyReplayBlocked,
+                )
+            },
+            {
+                let mut input = stage12_gate_input();
+                input.work_lease_valid = false;
+                (input, Stage12ProtectedActionDisposition::WorkLeaseBlocked)
+            },
+        ];
+
+        for (input, expected) in failure_cases {
+            let packet = Stage12ProtectedActionGatePacket::from_stage11_candidate(&route, input)
+                .expect("stage12 failed gate");
+            assert_eq!(packet.disposition, expected);
+            assert_eq!(packet.reason_code, expected.default_reason_code());
+            assert!(packet.fail_closed_response.is_some());
+            assert!(packet.approved_execution_plan.is_none());
+            assert!(packet.work_authority.can_emit_fail_closed_response);
+            assert!(!packet.work_authority.can_emit_approved_execution_plan);
+            assert!(!packet.can_call_live_or_mutate_without_gate());
+        }
+
+        let mut route_without_audit = route.clone();
+        route_without_audit.audit_id = None;
+        let mut missing_audit = stage12_gate_input();
+        missing_audit.audit_id = None;
+        let audit_packet = Stage12ProtectedActionGatePacket::from_stage11_candidate(
+            &route_without_audit,
+            missing_audit,
+        )
+        .expect("stage12 missing audit proof");
+        assert_eq!(
+            audit_packet.disposition,
+            Stage12ProtectedActionDisposition::AuditProofMissing
+        );
+        assert!(audit_packet.fail_closed_response.is_some());
+        assert!(audit_packet.approved_execution_plan.is_none());
+    }
+
+    #[test]
+    fn stage_12a_simulation_missing_inactive_and_ambiguous_fail_closed() {
+        let route = stage12_simulation_route();
+        for (input, expected) in [
+            {
+                let mut input = stage12_gate_input();
+                input.simulation_registered = false;
+                (input, Stage12ProtectedActionDisposition::SimulationMissing)
+            },
+            {
+                let mut input = stage12_gate_input()
+                    .with_simulation("simulation-stage12-inactive", "action-stage12-inactive");
+                input.simulation_active = false;
+                (input, Stage12ProtectedActionDisposition::SimulationInactive)
+            },
+            {
+                let mut input = stage12_gate_input()
+                    .with_simulation("simulation-stage12-ambiguous", "action-stage12-ambiguous");
+                input.simulation_action_unambiguous = false;
+                (
+                    input,
+                    Stage12ProtectedActionDisposition::SimulationAmbiguous,
+                )
+            },
+        ] {
+            let packet = Stage12ProtectedActionGatePacket::from_stage11_candidate(&route, input)
+                .expect("stage12 simulation fail closed");
+            assert_eq!(packet.disposition, expected);
+            assert!(packet.fail_closed_response.is_some());
+            assert!(packet.approved_execution_plan.is_none());
+            assert!(
+                !packet
+                    .work_authority
+                    .can_release_internal_simulation_dispatch
+            );
+            assert!(!packet.work_authority.can_call_live_external_tools);
+        }
+    }
+
+    #[test]
+    fn stage_12a_replay_and_lease_drift_cannot_upgrade_denial_or_double_execute() {
+        let route = stage12_protected_route();
+        let mut idempotency_drift = stage12_gate_input();
+        idempotency_drift.idempotency_key_matches = false;
+        let idempotency_packet =
+            Stage12ProtectedActionGatePacket::from_stage11_candidate(&route, idempotency_drift)
+                .expect("stage12 idempotency drift");
+        assert_eq!(
+            idempotency_packet.disposition,
+            Stage12ProtectedActionDisposition::IdempotencyReplayBlocked
+        );
+        assert!(idempotency_packet.fail_closed_response.is_some());
+        assert!(idempotency_packet.approved_execution_plan.is_none());
+
+        let mut stale_lease = stage12_gate_input();
+        stale_lease.stale_work_owner = true;
+        let stale_lease_packet =
+            Stage12ProtectedActionGatePacket::from_stage11_candidate(&route, stale_lease)
+                .expect("stage12 stale lease");
+        assert_eq!(
+            stale_lease_packet.disposition,
+            Stage12ProtectedActionDisposition::WorkLeaseBlocked
+        );
+        assert!(stale_lease_packet.fail_closed_response.is_some());
+        assert!(!stale_lease_packet.can_call_live_or_mutate_without_gate());
     }
 
     #[test]

@@ -78,10 +78,10 @@ After every build, update this section before final reporting.
 
 | Field | Current Value |
 |---|---|
-| Current active stage | Stage 12 |
-| Current active build | Stage 12A - Simulation, Protected Execution, Approval, And Runtime Action Gate Reconciliation |
-| Next build after current stage passes | Stage 12A - Simulation, Protected Execution, Approval, And Runtime Action Gate Reconciliation |
-| Last completed stage | Stage 11A - Reasoning, Capability Registry, Router, And Tool-Selection Boundary Reconciliation |
+| Current active stage | Stage 13 |
+| Current active build | Stage 13A - Public Read-Only Search, Source Evidence, Tool Route, And No-Mutation Boundary Reconciliation |
+| Next build after current stage passes | Stage 13A - Public Read-Only Search, Source Evidence, Tool Route, And No-Mutation Boundary Reconciliation |
+| Last completed stage | Stage 12A - Simulation, Protected Execution, Approval, And Runtime Action Gate Reconciliation |
 | Stages blocked | None yet |
 | Plan drift allowed | No |
 
@@ -1826,7 +1826,7 @@ Next if passed:
 
 ## Stage 8 - Voice I/O, Listen State, Transcript Gate, And Turn Boundary
 
-Status: PARTIALLY_BUILT
+Status: PROVEN_COMPLETE_BY_STAGE_12A
 
 Stage 8A status: PROVEN_COMPLETE
 
@@ -2312,9 +2312,23 @@ Proof:
 - mutation emits audit proof only after gates pass;
 - runtime law final judgment proof.
 
+Stage 12A status: PROVEN_COMPLETE
+
+Stage 12A proof update:
+
+- Existing PH1.OS, PH1.GOV, PH1.WORK, PH1.LEASE, PH1.SIMCAT, PH1.SIMFINDER, PH1.ACCESS, PH1.POLICY, PH1.TENANT, runtime law/governance/execution, `simulation_executor`, and PH1.J audit/proof-ledger surfaces were inspected and crosswalked rather than rebuilt as duplicate simulation, approval, runtime-law, access, policy, tenant, work, lease, audit, or execution engines.
+- `Stage12ProtectedActionGatePacket`, `Stage12ProtectedActionGateInput`, `Stage12ProtectedActionDisposition`, `Stage12ProtectedActionWorkAuthority`, `Stage12ApprovedExecutionPlanPacket`, and `Stage12FailClosedResponsePacket` provide the minimal runtime-owned protected-action gate in `runtime_ingress_turn_foundation.rs`.
+- Stage 12A consumes only inert Stage 11 protected-action or simulation candidates plus Stage 5 current-turn authority, Stage 6 access context, policy/tenant context, receipt-safe Stage 9 Voice ID posture where required, runtime-law/governance proof, idempotency/replay proof, work/lease proof, and PH1.J audit proof. Stage 11 reasoning traces, public read-only candidates, clarification candidates, missing/disabled/drifted capabilities, ambiguous or protected-slot-uncertain understanding, stale/cancelled/superseded/closed-session turns, and record-artifact-only turns fail closed.
+- Protected actions require current turn/session, protected access readiness, policy allowance, tenant/workspace match, device trust where required, sufficient Voice ID posture where required, registered active unambiguous simulation/action identity, explicit approval or a policy-approved non-user-impacting path, runtime law allowance, idempotency/replay safety, work/lease validity, and PH1.J audit proof. Missing or failed gates emit fail-closed packets with deterministic reason codes.
+- Public read-only candidates cannot mutate, send, post, purchase, delete, invite, approve, connector-write, or become protected execution by label drift. Simulation candidates cannot dispatch or execute themselves; only a Stage 12 approved simulation gate may release an internal simulation dispatch handoff.
+- Replay, idempotency drift, lease mismatch, stale work ownership, and duplicate requests cannot double-execute or upgrade a denial into approved execution. Runtime law/governance cannot be skipped by router intent, simulation catalog/finder, Voice ID posture, or access hints.
+- Stage 12A did not add live provider calls, live search, live external tool calls, connector writes, native UI behavior, live STT/TTS/playback, live Voice ID matching, memory/persona/emotion mutation, new business workflows, raw biometric/audio exposure, or duplicate simulation/approval/runtime-law/execution engines.
+- Protected-action gate, approval, simulation-candidate, runtime-law, idempotency/replay, work/lease, PH1.J audit, and fail-closed proof are certified for Stage 12A. Production workflow correctness, live connector writes, real external tool execution, human approval UX, business workflow coverage, and end-to-end protected-action benchmarks remain deferred to later owning stages.
+- Stage 13A is ready to start. Broad Stage 12 remains partial for live connector/business workflow product coverage, but the protected-action gate foundation is complete enough for public read-only search/tool quality to proceed without mutation authority.
+
 Next if passed:
 
-- Stage 13 - Search, Source, Image Evidence, And Public Tool Quality.
+- Stage 13A - Public Read-Only Search, Source Evidence, Tool Route, And No-Mutation Boundary Reconciliation.
 
 ## Stage 13 - Search, Source, Image Evidence, And Public Tool Quality
 
