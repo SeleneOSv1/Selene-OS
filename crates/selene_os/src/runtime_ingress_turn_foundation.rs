@@ -255,6 +255,20 @@ mod reason_codes {
     pub const STAGE19_UNSAFE_INPUT_BLOCKED: &str = "stage19_unsafe_input_blocked";
     pub const STAGE19_RUNTIME_MOCK_BLOCKED: &str = "stage19_runtime_mock_blocked";
     pub const STAGE19_AUDIT_PROOF_MISSING: &str = "stage19_audit_proof_missing";
+    pub const STAGE20_CROSS_DEVICE_HANDOFF_READY: &str = "stage20_cross_device_handoff_ready";
+    pub const STAGE20_SESSION_CONTINUITY_READY: &str = "stage20_session_continuity_ready";
+    pub const STAGE20_ATTACH_OUTCOME_READY: &str = "stage20_attach_outcome_ready";
+    pub const STAGE20_RESUME_OUTCOME_READY: &str = "stage20_resume_outcome_ready";
+    pub const STAGE20_RECOVER_OUTCOME_READY: &str = "stage20_recover_outcome_ready";
+    pub const STAGE20_STAGE_INPUT_BLOCKED: &str = "stage20_stage_input_blocked";
+    pub const STAGE20_NO_INVENTION_BLOCKED: &str = "stage20_no_invention_blocked";
+    pub const STAGE20_OWNERSHIP_LEASE_BLOCKED: &str = "stage20_ownership_lease_blocked";
+    pub const STAGE20_NATIVE_TRANSFER_BLOCKED: &str = "stage20_native_transfer_blocked";
+    pub const STAGE20_PROTECTED_CONTINUITY_BLOCKED: &str = "stage20_protected_continuity_blocked";
+    pub const STAGE20_STALE_CONTINUITY_BLOCKED: &str = "stage20_stale_continuity_blocked";
+    pub const STAGE20_UNSAFE_INPUT_BLOCKED: &str = "stage20_unsafe_input_blocked";
+    pub const STAGE20_RUNTIME_MOCK_BLOCKED: &str = "stage20_runtime_mock_blocked";
+    pub const STAGE20_AUDIT_PROOF_MISSING: &str = "stage20_audit_proof_missing";
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -18471,6 +18485,1390 @@ impl Validate for Stage19NotificationAttentionPacket {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stage20ContinuityHandoffKind {
+    CrossDeviceHandoff,
+    SessionContinuity,
+    AttachOutcomeTransfer,
+    ResumeOutcomeTransfer,
+    RecoverOutcomeTransfer,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stage20ContinuityHandoffDisposition {
+    CrossDeviceHandoffReady,
+    SessionContinuityReady,
+    AttachOutcomeReady,
+    ResumeOutcomeReady,
+    RecoverOutcomeReady,
+    StageInputBlocked,
+    NoInventionBlocked,
+    OwnershipLeaseBlocked,
+    NativeTransferBlocked,
+    ProtectedContinuityBlocked,
+    StaleContinuityBlocked,
+    UnsafeInputBlocked,
+    RuntimeMockBlocked,
+    AuditProofMissing,
+}
+
+impl Stage20ContinuityHandoffDisposition {
+    pub const fn default_reason_code(self) -> &'static str {
+        match self {
+            Stage20ContinuityHandoffDisposition::CrossDeviceHandoffReady => {
+                reason_codes::STAGE20_CROSS_DEVICE_HANDOFF_READY
+            }
+            Stage20ContinuityHandoffDisposition::SessionContinuityReady => {
+                reason_codes::STAGE20_SESSION_CONTINUITY_READY
+            }
+            Stage20ContinuityHandoffDisposition::AttachOutcomeReady => {
+                reason_codes::STAGE20_ATTACH_OUTCOME_READY
+            }
+            Stage20ContinuityHandoffDisposition::ResumeOutcomeReady => {
+                reason_codes::STAGE20_RESUME_OUTCOME_READY
+            }
+            Stage20ContinuityHandoffDisposition::RecoverOutcomeReady => {
+                reason_codes::STAGE20_RECOVER_OUTCOME_READY
+            }
+            Stage20ContinuityHandoffDisposition::StageInputBlocked => {
+                reason_codes::STAGE20_STAGE_INPUT_BLOCKED
+            }
+            Stage20ContinuityHandoffDisposition::NoInventionBlocked => {
+                reason_codes::STAGE20_NO_INVENTION_BLOCKED
+            }
+            Stage20ContinuityHandoffDisposition::OwnershipLeaseBlocked => {
+                reason_codes::STAGE20_OWNERSHIP_LEASE_BLOCKED
+            }
+            Stage20ContinuityHandoffDisposition::NativeTransferBlocked => {
+                reason_codes::STAGE20_NATIVE_TRANSFER_BLOCKED
+            }
+            Stage20ContinuityHandoffDisposition::ProtectedContinuityBlocked => {
+                reason_codes::STAGE20_PROTECTED_CONTINUITY_BLOCKED
+            }
+            Stage20ContinuityHandoffDisposition::StaleContinuityBlocked => {
+                reason_codes::STAGE20_STALE_CONTINUITY_BLOCKED
+            }
+            Stage20ContinuityHandoffDisposition::UnsafeInputBlocked => {
+                reason_codes::STAGE20_UNSAFE_INPUT_BLOCKED
+            }
+            Stage20ContinuityHandoffDisposition::RuntimeMockBlocked => {
+                reason_codes::STAGE20_RUNTIME_MOCK_BLOCKED
+            }
+            Stage20ContinuityHandoffDisposition::AuditProofMissing => {
+                reason_codes::STAGE20_AUDIT_PROOF_MISSING
+            }
+        }
+    }
+
+    pub const fn is_ready(self) -> bool {
+        matches!(
+            self,
+            Stage20ContinuityHandoffDisposition::CrossDeviceHandoffReady
+                | Stage20ContinuityHandoffDisposition::SessionContinuityReady
+                | Stage20ContinuityHandoffDisposition::AttachOutcomeReady
+                | Stage20ContinuityHandoffDisposition::ResumeOutcomeReady
+                | Stage20ContinuityHandoffDisposition::RecoverOutcomeReady
+        )
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Stage20ContinuityHandoffWorkAuthority {
+    pub can_emit_continuity_packet: bool,
+    pub can_emit_cross_device_handoff_packet: bool,
+    pub can_emit_attach_outcome_packet: bool,
+    pub can_emit_resume_outcome_packet: bool,
+    pub can_emit_recover_outcome_packet: bool,
+    pub can_emit_transfer_identity: bool,
+    pub can_emit_selection_reference: bool,
+    pub can_emit_ownership_lease_ref: bool,
+    pub can_emit_honest_uncertainty: bool,
+    pub can_emit_audit_proof: bool,
+    pub can_fail_closed: bool,
+    pub can_invent_facts: bool,
+    pub can_invent_resume_or_recover_success: bool,
+    pub can_invent_ownership_or_continuity_authority: bool,
+    pub can_claim_unproven_completion: bool,
+    pub can_mutate_external_state: bool,
+    pub can_connector_write: bool,
+    pub can_send_message: bool,
+    pub can_post_content: bool,
+    pub can_purchase: bool,
+    pub can_delete_remote: bool,
+    pub can_invite: bool,
+    pub can_schedule: bool,
+    pub can_approve: bool,
+    pub can_dispatch: bool,
+    pub can_execute_simulation: bool,
+    pub can_execute_protected_action: bool,
+    pub can_call_live_provider: bool,
+    pub can_run_live_search: bool,
+    pub can_call_live_external_tool: bool,
+    pub can_generate_live_media: bool,
+    pub can_emit_live_notification_delivery: bool,
+    pub can_run_live_background_execution: bool,
+    pub can_emit_live_continuity_transfer: bool,
+    pub can_emit_tts_or_playback: bool,
+    pub can_capture_microphone_audio: bool,
+    pub can_transcribe_live_audio: bool,
+    pub can_trigger_voice_id_matching: bool,
+    pub can_update_memory_persona_emotion: bool,
+    pub can_add_native_ui_behavior: bool,
+    pub can_create_user_turn: bool,
+    pub can_treat_visible_transfer_as_action_success: bool,
+}
+
+impl Stage20ContinuityHandoffWorkAuthority {
+    pub const fn handoff_ready() -> Self {
+        Self {
+            can_emit_continuity_packet: true,
+            can_emit_cross_device_handoff_packet: true,
+            can_emit_transfer_identity: true,
+            can_emit_selection_reference: true,
+            can_emit_ownership_lease_ref: true,
+            can_emit_audit_proof: true,
+            can_fail_closed: false,
+            ..Self::fail_closed()
+        }
+    }
+
+    pub const fn continuity_ready() -> Self {
+        Self {
+            can_emit_continuity_packet: true,
+            can_emit_transfer_identity: true,
+            can_emit_selection_reference: true,
+            can_emit_ownership_lease_ref: true,
+            can_emit_honest_uncertainty: true,
+            can_emit_audit_proof: true,
+            can_fail_closed: false,
+            ..Self::fail_closed()
+        }
+    }
+
+    pub const fn attach_ready() -> Self {
+        Self {
+            can_emit_continuity_packet: true,
+            can_emit_attach_outcome_packet: true,
+            can_emit_transfer_identity: true,
+            can_emit_ownership_lease_ref: true,
+            can_emit_audit_proof: true,
+            can_fail_closed: false,
+            ..Self::fail_closed()
+        }
+    }
+
+    pub const fn resume_ready() -> Self {
+        Self {
+            can_emit_continuity_packet: true,
+            can_emit_resume_outcome_packet: true,
+            can_emit_transfer_identity: true,
+            can_emit_ownership_lease_ref: true,
+            can_emit_audit_proof: true,
+            can_fail_closed: false,
+            ..Self::fail_closed()
+        }
+    }
+
+    pub const fn recover_ready() -> Self {
+        Self {
+            can_emit_continuity_packet: true,
+            can_emit_recover_outcome_packet: true,
+            can_emit_transfer_identity: true,
+            can_emit_ownership_lease_ref: true,
+            can_emit_audit_proof: true,
+            can_fail_closed: false,
+            ..Self::fail_closed()
+        }
+    }
+
+    pub const fn fail_closed() -> Self {
+        Self {
+            can_emit_continuity_packet: false,
+            can_emit_cross_device_handoff_packet: false,
+            can_emit_attach_outcome_packet: false,
+            can_emit_resume_outcome_packet: false,
+            can_emit_recover_outcome_packet: false,
+            can_emit_transfer_identity: false,
+            can_emit_selection_reference: false,
+            can_emit_ownership_lease_ref: false,
+            can_emit_honest_uncertainty: true,
+            can_emit_audit_proof: false,
+            can_fail_closed: true,
+            can_invent_facts: false,
+            can_invent_resume_or_recover_success: false,
+            can_invent_ownership_or_continuity_authority: false,
+            can_claim_unproven_completion: false,
+            can_mutate_external_state: false,
+            can_connector_write: false,
+            can_send_message: false,
+            can_post_content: false,
+            can_purchase: false,
+            can_delete_remote: false,
+            can_invite: false,
+            can_schedule: false,
+            can_approve: false,
+            can_dispatch: false,
+            can_execute_simulation: false,
+            can_execute_protected_action: false,
+            can_call_live_provider: false,
+            can_run_live_search: false,
+            can_call_live_external_tool: false,
+            can_generate_live_media: false,
+            can_emit_live_notification_delivery: false,
+            can_run_live_background_execution: false,
+            can_emit_live_continuity_transfer: false,
+            can_emit_tts_or_playback: false,
+            can_capture_microphone_audio: false,
+            can_transcribe_live_audio: false,
+            can_trigger_voice_id_matching: false,
+            can_update_memory_persona_emotion: false,
+            can_add_native_ui_behavior: false,
+            can_create_user_turn: false,
+            can_treat_visible_transfer_as_action_success: false,
+        }
+    }
+
+    pub const fn can_mutate_or_execute(self) -> bool {
+        self.can_invent_facts
+            || self.can_invent_resume_or_recover_success
+            || self.can_invent_ownership_or_continuity_authority
+            || self.can_claim_unproven_completion
+            || self.can_mutate_external_state
+            || self.can_connector_write
+            || self.can_send_message
+            || self.can_post_content
+            || self.can_purchase
+            || self.can_delete_remote
+            || self.can_invite
+            || self.can_schedule
+            || self.can_approve
+            || self.can_dispatch
+            || self.can_execute_simulation
+            || self.can_execute_protected_action
+            || self.can_call_live_provider
+            || self.can_run_live_search
+            || self.can_call_live_external_tool
+            || self.can_generate_live_media
+            || self.can_emit_live_notification_delivery
+            || self.can_run_live_background_execution
+            || self.can_emit_live_continuity_transfer
+            || self.can_emit_tts_or_playback
+            || self.can_capture_microphone_audio
+            || self.can_transcribe_live_audio
+            || self.can_trigger_voice_id_matching
+            || self.can_update_memory_persona_emotion
+            || self.can_add_native_ui_behavior
+            || self.can_create_user_turn
+            || self.can_treat_visible_transfer_as_action_success
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Stage20ContinuityHandoffInput {
+    pub continuity_kind: Stage20ContinuityHandoffKind,
+    pub continuity_packet_id: String,
+    pub handoff_id: Option<String>,
+    pub attach_outcome_id: Option<String>,
+    pub resume_outcome_id: Option<String>,
+    pub recover_outcome_id: Option<String>,
+    pub transfer_identity_id: Option<String>,
+    pub continuity_selection_id: Option<String>,
+    pub lease_id: Option<String>,
+    pub ownership_ref: Option<String>,
+    pub device_id: String,
+    pub audit_id: Option<String>,
+    pub ph1j_proof_ref: Option<String>,
+    pub stage15_response_output_ref_present: bool,
+    pub stage17_output_identity_ref_present: bool,
+    pub stage17_output_identity_non_authoritative: bool,
+    pub stage18_display_ref_present: bool,
+    pub stage18_display_ref_non_authoritative: bool,
+    pub stage19_attention_ref_present: bool,
+    pub stage19_attention_ref_non_authoritative: bool,
+    pub session_projection_ref_present: bool,
+    pub session_projection_matches_response_session: bool,
+    pub continuity_payload_bounded: bool,
+    pub continuity_selection_bounded: bool,
+    pub ownership_lease_bounded: bool,
+    pub uncertainty_preserved: bool,
+    pub continuity_invented_fact: bool,
+    pub continuity_invented_ownership: bool,
+    pub continuity_invented_attach_resume_recover_success: bool,
+    pub continuity_invented_completion_state: bool,
+    pub continuity_invented_attachment_or_citation: bool,
+    pub continuity_invented_provider_or_tool_result: bool,
+    pub continuity_claimed_unproven_completion: bool,
+    pub continuity_implied_mutation: bool,
+    pub tenant_user_device_project_scoped: bool,
+    pub secret_safe: bool,
+    pub redacted: bool,
+    pub stale_aware: bool,
+    pub revocation_aware: bool,
+    pub ownership_ref_present: bool,
+    pub lease_ref_present: bool,
+    pub unverifiable: bool,
+    pub stale: bool,
+    pub secret_unsafe: bool,
+    pub cross_tenant: bool,
+    pub cross_device: bool,
+    pub missing_lease: bool,
+    pub ownership_drift: bool,
+    pub native_transfer_declarative_only: bool,
+    pub native_transfer_mutates_state: bool,
+    pub native_transfer_connector_writes: bool,
+    pub native_transfer_dispatches_or_executes: bool,
+    pub native_transfer_calls_providers_or_tools: bool,
+    pub native_transfer_emits_tts_or_playback: bool,
+    pub native_transfer_creates_user_turn: bool,
+    pub native_transfer_treats_visible_success_as_action_success: bool,
+    pub protected_action_like_request: bool,
+    pub protected_slot_or_authority_ambiguous: bool,
+    pub unsafe_identity_posture: bool,
+    pub continuity_implies_stage12_mutation_without_proof: bool,
+    pub stale_or_cancelled_or_superseded_output: bool,
+    pub session_closed: bool,
+    pub record_artifact_only_turn: bool,
+    pub stale_selection_state: bool,
+    pub stale_ownership_or_lease_state: bool,
+    pub device_mismatch: bool,
+    pub transfer_identity_matches_current_output_session: bool,
+    pub replay_upgrades_blocked_continuity: bool,
+    pub fake_handoff_detected: bool,
+    pub fake_resume_detected: bool,
+    pub fake_recover_detected: bool,
+    pub fake_continuity_detected: bool,
+    pub runtime_mock_detected: bool,
+    pub fixture_only_test_path: bool,
+    pub raw_provider_output_present: bool,
+    pub raw_search_dump_present: bool,
+    pub raw_media_present: bool,
+    pub raw_push_token_present: bool,
+    pub unverified_source_evidence_present: bool,
+    pub unsupported_claim_candidate_present: bool,
+    pub fake_continuity_source_carrier_present: bool,
+    pub speech_playback_attention_used_as_truth_authority: bool,
+    pub protected_action_candidate_present: bool,
+    pub simulation_candidate_present: bool,
+    pub approved_execution_plan_present: bool,
+    pub secrets_exposed: bool,
+    pub raw_audio_or_voice_material_exposed: bool,
+    pub internal_trace_exposed: bool,
+    pub access_denied: bool,
+    pub policy_denied: bool,
+    pub tenant_mismatch: bool,
+    pub attempted_live_provider_in_build: bool,
+    pub generated_live_media_in_build: bool,
+    pub ran_live_search_in_build: bool,
+    pub called_live_external_tool_in_build: bool,
+    pub connector_write_requested: bool,
+    pub ran_live_notification_delivery_in_build: bool,
+    pub ran_live_background_execution_in_build: bool,
+    pub ran_live_continuity_transfer_in_build: bool,
+    pub ran_live_tts_or_playback_in_build: bool,
+    pub captured_microphone_audio: bool,
+    pub transcribed_live_audio: bool,
+    pub voice_id_matching_attempted: bool,
+    pub native_ui_behavior_added: bool,
+}
+
+impl Stage20ContinuityHandoffInput {
+    fn fixture_base(
+        continuity_kind: Stage20ContinuityHandoffKind,
+        continuity_packet_id: impl Into<String>,
+        device_id: impl Into<String>,
+        audit_id: impl Into<String>,
+    ) -> Self {
+        let audit_id = audit_id.into();
+        Self {
+            continuity_kind,
+            continuity_packet_id: continuity_packet_id.into(),
+            handoff_id: Some("handoff-stage20-ready".to_string()),
+            attach_outcome_id: Some("attach-outcome-stage20-ready".to_string()),
+            resume_outcome_id: Some("resume-outcome-stage20-ready".to_string()),
+            recover_outcome_id: Some("recover-outcome-stage20-ready".to_string()),
+            transfer_identity_id: Some("transfer-identity-stage20-ready".to_string()),
+            continuity_selection_id: Some("continuity-selection-stage20-ready".to_string()),
+            lease_id: Some("lease-stage20-ready".to_string()),
+            ownership_ref: Some("ownership-stage20-ready".to_string()),
+            device_id: device_id.into(),
+            audit_id: Some(audit_id.clone()),
+            ph1j_proof_ref: Some(audit_id),
+            stage15_response_output_ref_present: true,
+            stage17_output_identity_ref_present: false,
+            stage17_output_identity_non_authoritative: false,
+            stage18_display_ref_present: false,
+            stage18_display_ref_non_authoritative: false,
+            stage19_attention_ref_present: false,
+            stage19_attention_ref_non_authoritative: false,
+            session_projection_ref_present: true,
+            session_projection_matches_response_session: true,
+            continuity_payload_bounded: true,
+            continuity_selection_bounded: true,
+            ownership_lease_bounded: true,
+            uncertainty_preserved: true,
+            continuity_invented_fact: false,
+            continuity_invented_ownership: false,
+            continuity_invented_attach_resume_recover_success: false,
+            continuity_invented_completion_state: false,
+            continuity_invented_attachment_or_citation: false,
+            continuity_invented_provider_or_tool_result: false,
+            continuity_claimed_unproven_completion: false,
+            continuity_implied_mutation: false,
+            tenant_user_device_project_scoped: true,
+            secret_safe: true,
+            redacted: true,
+            stale_aware: true,
+            revocation_aware: true,
+            ownership_ref_present: true,
+            lease_ref_present: true,
+            unverifiable: false,
+            stale: false,
+            secret_unsafe: false,
+            cross_tenant: false,
+            cross_device: false,
+            missing_lease: false,
+            ownership_drift: false,
+            native_transfer_declarative_only: true,
+            native_transfer_mutates_state: false,
+            native_transfer_connector_writes: false,
+            native_transfer_dispatches_or_executes: false,
+            native_transfer_calls_providers_or_tools: false,
+            native_transfer_emits_tts_or_playback: false,
+            native_transfer_creates_user_turn: false,
+            native_transfer_treats_visible_success_as_action_success: false,
+            protected_action_like_request: false,
+            protected_slot_or_authority_ambiguous: false,
+            unsafe_identity_posture: false,
+            continuity_implies_stage12_mutation_without_proof: false,
+            stale_or_cancelled_or_superseded_output: false,
+            session_closed: false,
+            record_artifact_only_turn: false,
+            stale_selection_state: false,
+            stale_ownership_or_lease_state: false,
+            device_mismatch: false,
+            transfer_identity_matches_current_output_session: true,
+            replay_upgrades_blocked_continuity: false,
+            fake_handoff_detected: false,
+            fake_resume_detected: false,
+            fake_recover_detected: false,
+            fake_continuity_detected: false,
+            runtime_mock_detected: false,
+            fixture_only_test_path: true,
+            raw_provider_output_present: false,
+            raw_search_dump_present: false,
+            raw_media_present: false,
+            raw_push_token_present: false,
+            unverified_source_evidence_present: false,
+            unsupported_claim_candidate_present: false,
+            fake_continuity_source_carrier_present: false,
+            speech_playback_attention_used_as_truth_authority: false,
+            protected_action_candidate_present: false,
+            simulation_candidate_present: false,
+            approved_execution_plan_present: false,
+            secrets_exposed: false,
+            raw_audio_or_voice_material_exposed: false,
+            internal_trace_exposed: false,
+            access_denied: false,
+            policy_denied: false,
+            tenant_mismatch: false,
+            attempted_live_provider_in_build: false,
+            generated_live_media_in_build: false,
+            ran_live_search_in_build: false,
+            called_live_external_tool_in_build: false,
+            connector_write_requested: false,
+            ran_live_notification_delivery_in_build: false,
+            ran_live_background_execution_in_build: false,
+            ran_live_continuity_transfer_in_build: false,
+            ran_live_tts_or_playback_in_build: false,
+            captured_microphone_audio: false,
+            transcribed_live_audio: false,
+            voice_id_matching_attempted: false,
+            native_ui_behavior_added: false,
+        }
+    }
+
+    pub fn fixture_cross_device_handoff_ready(
+        continuity_packet_id: impl Into<String>,
+        handoff_id: impl Into<String>,
+        device_id: impl Into<String>,
+        audit_id: impl Into<String>,
+    ) -> Self {
+        let mut input = Self::fixture_base(
+            Stage20ContinuityHandoffKind::CrossDeviceHandoff,
+            continuity_packet_id,
+            device_id,
+            audit_id,
+        );
+        input.handoff_id = Some(handoff_id.into());
+        input
+    }
+
+    pub fn fixture_session_continuity_ready(
+        continuity_packet_id: impl Into<String>,
+        continuity_selection_id: impl Into<String>,
+        device_id: impl Into<String>,
+        audit_id: impl Into<String>,
+    ) -> Self {
+        let mut input = Self::fixture_base(
+            Stage20ContinuityHandoffKind::SessionContinuity,
+            continuity_packet_id,
+            device_id,
+            audit_id,
+        );
+        input.continuity_selection_id = Some(continuity_selection_id.into());
+        input.handoff_id = None;
+        input
+    }
+
+    pub fn fixture_attach_outcome_ready(
+        continuity_packet_id: impl Into<String>,
+        attach_outcome_id: impl Into<String>,
+        device_id: impl Into<String>,
+        audit_id: impl Into<String>,
+    ) -> Self {
+        let mut input = Self::fixture_base(
+            Stage20ContinuityHandoffKind::AttachOutcomeTransfer,
+            continuity_packet_id,
+            device_id,
+            audit_id,
+        );
+        input.attach_outcome_id = Some(attach_outcome_id.into());
+        input.handoff_id = None;
+        input.resume_outcome_id = None;
+        input.recover_outcome_id = None;
+        input
+    }
+
+    pub fn fixture_resume_outcome_ready(
+        continuity_packet_id: impl Into<String>,
+        resume_outcome_id: impl Into<String>,
+        device_id: impl Into<String>,
+        audit_id: impl Into<String>,
+    ) -> Self {
+        let mut input = Self::fixture_base(
+            Stage20ContinuityHandoffKind::ResumeOutcomeTransfer,
+            continuity_packet_id,
+            device_id,
+            audit_id,
+        );
+        input.attach_outcome_id = None;
+        input.handoff_id = None;
+        input.resume_outcome_id = Some(resume_outcome_id.into());
+        input.recover_outcome_id = None;
+        input
+    }
+
+    pub fn fixture_recover_outcome_ready(
+        continuity_packet_id: impl Into<String>,
+        recover_outcome_id: impl Into<String>,
+        device_id: impl Into<String>,
+        audit_id: impl Into<String>,
+    ) -> Self {
+        let mut input = Self::fixture_base(
+            Stage20ContinuityHandoffKind::RecoverOutcomeTransfer,
+            continuity_packet_id,
+            device_id,
+            audit_id,
+        );
+        input.attach_outcome_id = None;
+        input.handoff_id = None;
+        input.resume_outcome_id = None;
+        input.recover_outcome_id = Some(recover_outcome_id.into());
+        input
+    }
+}
+
+impl Validate for Stage20ContinuityHandoffInput {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        validate_stage4_ref(
+            "stage20_continuity_handoff_input.continuity_packet_id",
+            &self.continuity_packet_id,
+        )?;
+        validate_stage4_optional_ref(
+            "stage20_continuity_handoff_input.handoff_id",
+            self.handoff_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage20_continuity_handoff_input.attach_outcome_id",
+            self.attach_outcome_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage20_continuity_handoff_input.resume_outcome_id",
+            self.resume_outcome_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage20_continuity_handoff_input.recover_outcome_id",
+            self.recover_outcome_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage20_continuity_handoff_input.transfer_identity_id",
+            self.transfer_identity_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage20_continuity_handoff_input.continuity_selection_id",
+            self.continuity_selection_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage20_continuity_handoff_input.lease_id",
+            self.lease_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage20_continuity_handoff_input.ownership_ref",
+            self.ownership_ref.as_deref(),
+        )?;
+        validate_stage4_ref(
+            "stage20_continuity_handoff_input.device_id",
+            &self.device_id,
+        )?;
+        validate_stage4_optional_ref(
+            "stage20_continuity_handoff_input.audit_id",
+            self.audit_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage20_continuity_handoff_input.ph1j_proof_ref",
+            self.ph1j_proof_ref.as_deref(),
+        )?;
+        if self.attempted_live_provider_in_build
+            || self.generated_live_media_in_build
+            || self.ran_live_search_in_build
+            || self.called_live_external_tool_in_build
+            || self.connector_write_requested
+            || self.ran_live_notification_delivery_in_build
+            || self.ran_live_background_execution_in_build
+            || self.ran_live_continuity_transfer_in_build
+            || self.ran_live_tts_or_playback_in_build
+            || self.captured_microphone_audio
+            || self.transcribed_live_audio
+            || self.voice_id_matching_attempted
+            || self.native_ui_behavior_added
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage20_continuity_handoff_input.no_live_build",
+                reason: "Stage 20A cannot call live providers/search/tools, live-transfer continuity, live notification/background delivery, emit TTS/playback, capture mic, transcribe, match Voice ID, connector-write, or add native UI",
+            });
+        }
+        if (self.runtime_mock_detected
+            || self.fake_handoff_detected
+            || self.fake_resume_detected
+            || self.fake_recover_detected
+            || self.fake_continuity_detected)
+            && !self.fixture_only_test_path
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage20_continuity_handoff_input.runtime_mock",
+                reason: "runtime mocks and fake handoff/resume/recover/continuity success are forbidden outside explicit fixture-only paths",
+            });
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Stage20ContinuityHandoffPacket {
+    pub session_id: SessionId,
+    pub turn_id: Option<TurnId>,
+    pub activation_id: Option<String>,
+    pub response_output_id: String,
+    pub response_hash: String,
+    pub public_answer_id: String,
+    pub speech_output_id: Option<String>,
+    pub display_output_id: Option<String>,
+    pub notification_candidate_id: Option<String>,
+    pub attention_state_id: Option<String>,
+    pub continuity_packet_id: String,
+    pub handoff_id: Option<String>,
+    pub attach_outcome_id: Option<String>,
+    pub resume_outcome_id: Option<String>,
+    pub recover_outcome_id: Option<String>,
+    pub transfer_identity_id: Option<String>,
+    pub continuity_selection_id: Option<String>,
+    pub lease_id: Option<String>,
+    pub ownership_ref: Option<String>,
+    pub device_id: String,
+    pub access_context_id: Option<String>,
+    pub policy_context_id: Option<String>,
+    pub tenant_id: Option<String>,
+    pub audit_id: Option<String>,
+    pub ph1j_proof_ref: Option<String>,
+    pub continuity_kind: Stage20ContinuityHandoffKind,
+    pub reason_code: &'static str,
+    pub disposition: Stage20ContinuityHandoffDisposition,
+    pub stage15_disposition: Stage15ResponseOutputDisposition,
+    pub stage17_disposition: Option<Stage17SpeechOutputDisposition>,
+    pub stage18_disposition: Option<Stage18MultimodalDisplayDisposition>,
+    pub stage19_disposition: Option<Stage19NotificationAttentionDisposition>,
+    pub continuity_session_state: Option<SessionState>,
+    pub projection_attach_outcome: Option<SessionAttachOutcome>,
+    pub stage15_response_output_ref_present: bool,
+    pub stage17_output_identity_ref_present: bool,
+    pub stage17_output_identity_non_authoritative: bool,
+    pub stage18_display_ref_present: bool,
+    pub stage18_display_ref_non_authoritative: bool,
+    pub stage19_attention_ref_present: bool,
+    pub stage19_attention_ref_non_authoritative: bool,
+    pub session_projection_ref_present: bool,
+    pub session_projection_matches_response_session: bool,
+    pub continuity_payload_bounded: bool,
+    pub continuity_selection_bounded: bool,
+    pub ownership_lease_bounded: bool,
+    pub uncertainty_preserved: bool,
+    pub continuity_invented_fact: bool,
+    pub continuity_invented_ownership: bool,
+    pub continuity_invented_attach_resume_recover_success: bool,
+    pub continuity_invented_completion_state: bool,
+    pub continuity_invented_attachment_or_citation: bool,
+    pub continuity_invented_provider_or_tool_result: bool,
+    pub continuity_claimed_unproven_completion: bool,
+    pub continuity_implied_mutation: bool,
+    pub tenant_user_device_project_scoped: bool,
+    pub secret_safe: bool,
+    pub redacted: bool,
+    pub stale_aware: bool,
+    pub revocation_aware: bool,
+    pub ownership_ref_present: bool,
+    pub lease_ref_present: bool,
+    pub unverifiable: bool,
+    pub stale: bool,
+    pub secret_unsafe: bool,
+    pub cross_tenant: bool,
+    pub cross_device: bool,
+    pub missing_lease: bool,
+    pub ownership_drift: bool,
+    pub native_transfer_declarative_only: bool,
+    pub native_transfer_mutates_state: bool,
+    pub native_transfer_connector_writes: bool,
+    pub native_transfer_dispatches_or_executes: bool,
+    pub native_transfer_calls_providers_or_tools: bool,
+    pub native_transfer_emits_tts_or_playback: bool,
+    pub native_transfer_creates_user_turn: bool,
+    pub native_transfer_treats_visible_success_as_action_success: bool,
+    pub protected_action_like_request: bool,
+    pub protected_slot_or_authority_ambiguous: bool,
+    pub unsafe_identity_posture: bool,
+    pub continuity_implies_stage12_mutation_without_proof: bool,
+    pub stale_or_cancelled_or_superseded_output: bool,
+    pub session_closed: bool,
+    pub record_artifact_only_turn: bool,
+    pub stale_selection_state: bool,
+    pub stale_ownership_or_lease_state: bool,
+    pub device_mismatch: bool,
+    pub transfer_identity_matches_current_output_session: bool,
+    pub replay_upgrades_blocked_continuity: bool,
+    pub fake_handoff_detected: bool,
+    pub fake_resume_detected: bool,
+    pub fake_recover_detected: bool,
+    pub fake_continuity_detected: bool,
+    pub runtime_mock_detected: bool,
+    pub raw_provider_output_present: bool,
+    pub raw_search_dump_present: bool,
+    pub raw_media_present: bool,
+    pub raw_push_token_present: bool,
+    pub unverified_source_evidence_present: bool,
+    pub unsupported_claim_candidate_present: bool,
+    pub fake_continuity_source_carrier_present: bool,
+    pub speech_playback_attention_used_as_truth_authority: bool,
+    pub protected_action_candidate_present: bool,
+    pub simulation_candidate_present: bool,
+    pub approved_execution_plan_present: bool,
+    pub secrets_exposed: bool,
+    pub raw_audio_or_voice_material_exposed: bool,
+    pub internal_trace_exposed: bool,
+    pub access_denied: bool,
+    pub policy_denied: bool,
+    pub tenant_mismatch: bool,
+    pub work_authority: Stage20ContinuityHandoffWorkAuthority,
+}
+
+impl Stage20ContinuityHandoffPacket {
+    pub fn from_stage15_output(
+        output: &Stage15ResponseOutputPacket,
+        speech_output: Option<&Stage17SpeechOutputPacket>,
+        display_output: Option<&Stage18MultimodalDisplayPacket>,
+        attention_output: Option<&Stage19NotificationAttentionPacket>,
+        session_projection: Option<&SessionRuntimeProjection>,
+        input: Stage20ContinuityHandoffInput,
+    ) -> Result<Self, ContractViolation> {
+        output.validate()?;
+        if let Some(speech_output) = speech_output {
+            speech_output.validate()?;
+        }
+        if let Some(display_output) = display_output {
+            display_output.validate()?;
+        }
+        if let Some(attention_output) = attention_output {
+            attention_output.validate()?;
+        }
+        input.validate()?;
+        let disposition = Self::decide_disposition(
+            output,
+            speech_output,
+            display_output,
+            attention_output,
+            session_projection,
+            &input,
+        );
+        let work_authority = Self::work_authority_for(disposition);
+        let audit_id = input.audit_id.clone().or_else(|| output.audit_id.clone());
+        let ph1j_proof_ref = input
+            .ph1j_proof_ref
+            .clone()
+            .or_else(|| output.ph1j_proof_ref.clone())
+            .or_else(|| audit_id.clone());
+        let packet = Self {
+            session_id: output.session_id,
+            turn_id: output.turn_id,
+            activation_id: output.activation_id.clone(),
+            response_output_id: output.response_output_id.clone(),
+            response_hash: output.response_hash.clone(),
+            public_answer_id: output.public_answer_id.clone(),
+            speech_output_id: speech_output.map(|speech| speech.speech_output_id.clone()),
+            display_output_id: display_output.map(|display| display.display_output_id.clone()),
+            notification_candidate_id: attention_output
+                .and_then(|attention| attention.notification_candidate_id.clone()),
+            attention_state_id: attention_output
+                .and_then(|attention| attention.attention_state_id.clone()),
+            continuity_packet_id: input.continuity_packet_id,
+            handoff_id: input.handoff_id,
+            attach_outcome_id: input.attach_outcome_id,
+            resume_outcome_id: input.resume_outcome_id,
+            recover_outcome_id: input.recover_outcome_id,
+            transfer_identity_id: input.transfer_identity_id,
+            continuity_selection_id: input.continuity_selection_id,
+            lease_id: input.lease_id,
+            ownership_ref: input.ownership_ref,
+            device_id: input.device_id,
+            access_context_id: output.access_context_id.clone(),
+            policy_context_id: output.policy_context_id.clone(),
+            tenant_id: output.tenant_id.clone(),
+            audit_id,
+            ph1j_proof_ref,
+            continuity_kind: input.continuity_kind,
+            reason_code: disposition.default_reason_code(),
+            disposition,
+            stage15_disposition: output.disposition,
+            stage17_disposition: speech_output.map(|speech| speech.disposition),
+            stage18_disposition: display_output.map(|display| display.disposition),
+            stage19_disposition: attention_output.map(|attention| attention.disposition),
+            continuity_session_state: session_projection.map(|projection| projection.session_state),
+            projection_attach_outcome: session_projection
+                .and_then(|projection| projection.attach_outcome),
+            stage15_response_output_ref_present: input.stage15_response_output_ref_present,
+            stage17_output_identity_ref_present: input.stage17_output_identity_ref_present,
+            stage17_output_identity_non_authoritative: input
+                .stage17_output_identity_non_authoritative,
+            stage18_display_ref_present: input.stage18_display_ref_present,
+            stage18_display_ref_non_authoritative: input.stage18_display_ref_non_authoritative,
+            stage19_attention_ref_present: input.stage19_attention_ref_present,
+            stage19_attention_ref_non_authoritative: input.stage19_attention_ref_non_authoritative,
+            session_projection_ref_present: input.session_projection_ref_present,
+            session_projection_matches_response_session: input
+                .session_projection_matches_response_session,
+            continuity_payload_bounded: input.continuity_payload_bounded,
+            continuity_selection_bounded: input.continuity_selection_bounded,
+            ownership_lease_bounded: input.ownership_lease_bounded,
+            uncertainty_preserved: input.uncertainty_preserved,
+            continuity_invented_fact: input.continuity_invented_fact,
+            continuity_invented_ownership: input.continuity_invented_ownership,
+            continuity_invented_attach_resume_recover_success: input
+                .continuity_invented_attach_resume_recover_success,
+            continuity_invented_completion_state: input.continuity_invented_completion_state,
+            continuity_invented_attachment_or_citation: input
+                .continuity_invented_attachment_or_citation,
+            continuity_invented_provider_or_tool_result: input
+                .continuity_invented_provider_or_tool_result,
+            continuity_claimed_unproven_completion: input.continuity_claimed_unproven_completion,
+            continuity_implied_mutation: input.continuity_implied_mutation,
+            tenant_user_device_project_scoped: input.tenant_user_device_project_scoped,
+            secret_safe: input.secret_safe,
+            redacted: input.redacted,
+            stale_aware: input.stale_aware,
+            revocation_aware: input.revocation_aware,
+            ownership_ref_present: input.ownership_ref_present,
+            lease_ref_present: input.lease_ref_present,
+            unverifiable: input.unverifiable,
+            stale: input.stale,
+            secret_unsafe: input.secret_unsafe,
+            cross_tenant: input.cross_tenant,
+            cross_device: input.cross_device,
+            missing_lease: input.missing_lease,
+            ownership_drift: input.ownership_drift,
+            native_transfer_declarative_only: input.native_transfer_declarative_only,
+            native_transfer_mutates_state: input.native_transfer_mutates_state,
+            native_transfer_connector_writes: input.native_transfer_connector_writes,
+            native_transfer_dispatches_or_executes: input.native_transfer_dispatches_or_executes,
+            native_transfer_calls_providers_or_tools: input
+                .native_transfer_calls_providers_or_tools,
+            native_transfer_emits_tts_or_playback: input.native_transfer_emits_tts_or_playback,
+            native_transfer_creates_user_turn: input.native_transfer_creates_user_turn,
+            native_transfer_treats_visible_success_as_action_success: input
+                .native_transfer_treats_visible_success_as_action_success,
+            protected_action_like_request: input.protected_action_like_request,
+            protected_slot_or_authority_ambiguous: input.protected_slot_or_authority_ambiguous,
+            unsafe_identity_posture: input.unsafe_identity_posture,
+            continuity_implies_stage12_mutation_without_proof: input
+                .continuity_implies_stage12_mutation_without_proof,
+            stale_or_cancelled_or_superseded_output: input.stale_or_cancelled_or_superseded_output,
+            session_closed: input.session_closed,
+            record_artifact_only_turn: input.record_artifact_only_turn,
+            stale_selection_state: input.stale_selection_state,
+            stale_ownership_or_lease_state: input.stale_ownership_or_lease_state,
+            device_mismatch: input.device_mismatch,
+            transfer_identity_matches_current_output_session: input
+                .transfer_identity_matches_current_output_session,
+            replay_upgrades_blocked_continuity: input.replay_upgrades_blocked_continuity,
+            fake_handoff_detected: input.fake_handoff_detected,
+            fake_resume_detected: input.fake_resume_detected,
+            fake_recover_detected: input.fake_recover_detected,
+            fake_continuity_detected: input.fake_continuity_detected,
+            runtime_mock_detected: input.runtime_mock_detected,
+            raw_provider_output_present: input.raw_provider_output_present,
+            raw_search_dump_present: input.raw_search_dump_present,
+            raw_media_present: input.raw_media_present,
+            raw_push_token_present: input.raw_push_token_present,
+            unverified_source_evidence_present: input.unverified_source_evidence_present,
+            unsupported_claim_candidate_present: input.unsupported_claim_candidate_present,
+            fake_continuity_source_carrier_present: input.fake_continuity_source_carrier_present,
+            speech_playback_attention_used_as_truth_authority: input
+                .speech_playback_attention_used_as_truth_authority,
+            protected_action_candidate_present: input.protected_action_candidate_present,
+            simulation_candidate_present: input.simulation_candidate_present,
+            approved_execution_plan_present: input.approved_execution_plan_present,
+            secrets_exposed: input.secrets_exposed,
+            raw_audio_or_voice_material_exposed: input.raw_audio_or_voice_material_exposed,
+            internal_trace_exposed: input.internal_trace_exposed,
+            access_denied: input.access_denied,
+            policy_denied: input.policy_denied,
+            tenant_mismatch: input.tenant_mismatch,
+            work_authority,
+        };
+        packet.validate()?;
+        Ok(packet)
+    }
+
+    pub const fn can_mutate_or_execute(&self) -> bool {
+        self.work_authority.can_mutate_or_execute()
+    }
+
+    fn decide_disposition(
+        output: &Stage15ResponseOutputPacket,
+        speech_output: Option<&Stage17SpeechOutputPacket>,
+        display_output: Option<&Stage18MultimodalDisplayPacket>,
+        attention_output: Option<&Stage19NotificationAttentionPacket>,
+        session_projection: Option<&SessionRuntimeProjection>,
+        input: &Stage20ContinuityHandoffInput,
+    ) -> Stage20ContinuityHandoffDisposition {
+        if input.runtime_mock_detected
+            || input.fake_handoff_detected
+            || input.fake_resume_detected
+            || input.fake_recover_detected
+            || input.fake_continuity_detected
+        {
+            return Stage20ContinuityHandoffDisposition::RuntimeMockBlocked;
+        }
+        if input.raw_provider_output_present
+            || input.raw_search_dump_present
+            || input.raw_media_present
+            || input.raw_push_token_present
+            || input.unverified_source_evidence_present
+            || input.unsupported_claim_candidate_present
+            || input.fake_continuity_source_carrier_present
+            || input.speech_playback_attention_used_as_truth_authority
+            || input.protected_action_candidate_present
+            || input.simulation_candidate_present
+            || input.approved_execution_plan_present
+            || input.secrets_exposed
+            || input.raw_audio_or_voice_material_exposed
+            || input.internal_trace_exposed
+            || input.access_denied
+            || input.policy_denied
+            || input.tenant_mismatch
+        {
+            return Stage20ContinuityHandoffDisposition::UnsafeInputBlocked;
+        }
+        if !output.disposition.is_ready()
+            || output.can_mutate_or_execute()
+            || !input.stage15_response_output_ref_present
+        {
+            return Stage20ContinuityHandoffDisposition::StageInputBlocked;
+        }
+        if let Some(speech_output) = speech_output {
+            if speech_output.can_mutate_or_execute()
+                || speech_output.stale_or_cancelled_or_superseded_output
+                || speech_output.session_closed
+                || speech_output.record_artifact_only_turn
+                || !input.stage17_output_identity_ref_present
+                || !input.stage17_output_identity_non_authoritative
+            {
+                return Stage20ContinuityHandoffDisposition::StageInputBlocked;
+            }
+        }
+        if let Some(display_output) = display_output {
+            if display_output.can_mutate_or_execute()
+                || display_output.stale_or_cancelled_or_superseded_output
+                || display_output.session_closed
+                || display_output.record_artifact_only_turn
+                || !input.stage18_display_ref_present
+                || !input.stage18_display_ref_non_authoritative
+            {
+                return Stage20ContinuityHandoffDisposition::StageInputBlocked;
+            }
+        }
+        if let Some(attention_output) = attention_output {
+            if attention_output.can_mutate_or_execute()
+                || attention_output.stale_or_cancelled_or_superseded_output
+                || attention_output.session_closed
+                || attention_output.record_artifact_only_turn
+                || !input.stage19_attention_ref_present
+                || !input.stage19_attention_ref_non_authoritative
+            {
+                return Stage20ContinuityHandoffDisposition::StageInputBlocked;
+            }
+        }
+        let Some(session_projection) = session_projection else {
+            return Stage20ContinuityHandoffDisposition::StageInputBlocked;
+        };
+        if !input.session_projection_ref_present
+            || !input.session_projection_matches_response_session
+            || session_projection.session_id != output.session_id
+        {
+            return Stage20ContinuityHandoffDisposition::StageInputBlocked;
+        }
+        if input.audit_id.is_none()
+            && input.ph1j_proof_ref.is_none()
+            && output.audit_id.is_none()
+            && output.ph1j_proof_ref.is_none()
+        {
+            return Stage20ContinuityHandoffDisposition::AuditProofMissing;
+        }
+        if !input.continuity_payload_bounded
+            || !input.continuity_selection_bounded
+            || !input.ownership_lease_bounded
+            || !input.uncertainty_preserved
+            || input.continuity_invented_fact
+            || input.continuity_invented_ownership
+            || input.continuity_invented_attach_resume_recover_success
+            || input.continuity_invented_completion_state
+            || input.continuity_invented_attachment_or_citation
+            || input.continuity_invented_provider_or_tool_result
+            || input.continuity_claimed_unproven_completion
+            || input.continuity_implied_mutation
+        {
+            return Stage20ContinuityHandoffDisposition::NoInventionBlocked;
+        }
+        if !input.tenant_user_device_project_scoped
+            || !input.secret_safe
+            || !input.redacted
+            || !input.stale_aware
+            || !input.revocation_aware
+            || !input.ownership_ref_present
+            || !input.lease_ref_present
+            || input.unverifiable
+            || input.stale
+            || input.secret_unsafe
+            || input.cross_tenant
+            || input.cross_device
+            || input.missing_lease
+            || input.ownership_drift
+        {
+            return Stage20ContinuityHandoffDisposition::OwnershipLeaseBlocked;
+        }
+        if !input.native_transfer_declarative_only
+            || input.native_transfer_mutates_state
+            || input.native_transfer_connector_writes
+            || input.native_transfer_dispatches_or_executes
+            || input.native_transfer_calls_providers_or_tools
+            || input.native_transfer_emits_tts_or_playback
+            || input.native_transfer_creates_user_turn
+            || input.native_transfer_treats_visible_success_as_action_success
+        {
+            return Stage20ContinuityHandoffDisposition::NativeTransferBlocked;
+        }
+        if input.protected_action_like_request
+            || input.protected_slot_or_authority_ambiguous
+            || input.unsafe_identity_posture
+            || input.continuity_implies_stage12_mutation_without_proof
+        {
+            return Stage20ContinuityHandoffDisposition::ProtectedContinuityBlocked;
+        }
+        if input.stale_or_cancelled_or_superseded_output
+            || input.session_closed
+            || input.record_artifact_only_turn
+            || input.stale_selection_state
+            || input.stale_ownership_or_lease_state
+            || input.device_mismatch
+            || !input.transfer_identity_matches_current_output_session
+            || input.replay_upgrades_blocked_continuity
+        {
+            return Stage20ContinuityHandoffDisposition::StaleContinuityBlocked;
+        }
+
+        match input.continuity_kind {
+            Stage20ContinuityHandoffKind::CrossDeviceHandoff => {
+                if input.handoff_id.is_some()
+                    && input.transfer_identity_id.is_some()
+                    && input.continuity_selection_id.is_some()
+                {
+                    Stage20ContinuityHandoffDisposition::CrossDeviceHandoffReady
+                } else {
+                    Stage20ContinuityHandoffDisposition::StageInputBlocked
+                }
+            }
+            Stage20ContinuityHandoffKind::SessionContinuity => {
+                if input.transfer_identity_id.is_some() && input.continuity_selection_id.is_some() {
+                    Stage20ContinuityHandoffDisposition::SessionContinuityReady
+                } else {
+                    Stage20ContinuityHandoffDisposition::StageInputBlocked
+                }
+            }
+            Stage20ContinuityHandoffKind::AttachOutcomeTransfer => {
+                if input.attach_outcome_id.is_some() && session_projection.attach_outcome.is_some()
+                {
+                    Stage20ContinuityHandoffDisposition::AttachOutcomeReady
+                } else {
+                    Stage20ContinuityHandoffDisposition::StageInputBlocked
+                }
+            }
+            Stage20ContinuityHandoffKind::ResumeOutcomeTransfer => {
+                if input.resume_outcome_id.is_some() && session_projection.attach_outcome.is_some()
+                {
+                    Stage20ContinuityHandoffDisposition::ResumeOutcomeReady
+                } else {
+                    Stage20ContinuityHandoffDisposition::StageInputBlocked
+                }
+            }
+            Stage20ContinuityHandoffKind::RecoverOutcomeTransfer => {
+                if input.recover_outcome_id.is_some() && session_projection.attach_outcome.is_some()
+                {
+                    Stage20ContinuityHandoffDisposition::RecoverOutcomeReady
+                } else {
+                    Stage20ContinuityHandoffDisposition::StageInputBlocked
+                }
+            }
+        }
+    }
+
+    const fn work_authority_for(
+        disposition: Stage20ContinuityHandoffDisposition,
+    ) -> Stage20ContinuityHandoffWorkAuthority {
+        match disposition {
+            Stage20ContinuityHandoffDisposition::CrossDeviceHandoffReady => {
+                Stage20ContinuityHandoffWorkAuthority::handoff_ready()
+            }
+            Stage20ContinuityHandoffDisposition::SessionContinuityReady => {
+                Stage20ContinuityHandoffWorkAuthority::continuity_ready()
+            }
+            Stage20ContinuityHandoffDisposition::AttachOutcomeReady => {
+                Stage20ContinuityHandoffWorkAuthority::attach_ready()
+            }
+            Stage20ContinuityHandoffDisposition::ResumeOutcomeReady => {
+                Stage20ContinuityHandoffWorkAuthority::resume_ready()
+            }
+            Stage20ContinuityHandoffDisposition::RecoverOutcomeReady => {
+                Stage20ContinuityHandoffWorkAuthority::recover_ready()
+            }
+            _ => Stage20ContinuityHandoffWorkAuthority::fail_closed(),
+        }
+    }
+}
+
+impl Validate for Stage20ContinuityHandoffPacket {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        validate_stage4_optional_ref(
+            "stage20_continuity_handoff_packet.activation_id",
+            self.activation_id.as_deref(),
+        )?;
+        validate_stage4_ref(
+            "stage20_continuity_handoff_packet.response_output_id",
+            &self.response_output_id,
+        )?;
+        validate_stage4_ref(
+            "stage20_continuity_handoff_packet.response_hash",
+            &self.response_hash,
+        )?;
+        validate_stage4_ref(
+            "stage20_continuity_handoff_packet.public_answer_id",
+            &self.public_answer_id,
+        )?;
+        validate_stage4_optional_ref(
+            "stage20_continuity_handoff_packet.speech_output_id",
+            self.speech_output_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage20_continuity_handoff_packet.display_output_id",
+            self.display_output_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage20_continuity_handoff_packet.notification_candidate_id",
+            self.notification_candidate_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage20_continuity_handoff_packet.attention_state_id",
+            self.attention_state_id.as_deref(),
+        )?;
+        validate_stage4_ref(
+            "stage20_continuity_handoff_packet.continuity_packet_id",
+            &self.continuity_packet_id,
+        )?;
+        validate_stage4_optional_ref(
+            "stage20_continuity_handoff_packet.handoff_id",
+            self.handoff_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage20_continuity_handoff_packet.attach_outcome_id",
+            self.attach_outcome_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage20_continuity_handoff_packet.resume_outcome_id",
+            self.resume_outcome_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage20_continuity_handoff_packet.recover_outcome_id",
+            self.recover_outcome_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage20_continuity_handoff_packet.transfer_identity_id",
+            self.transfer_identity_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage20_continuity_handoff_packet.continuity_selection_id",
+            self.continuity_selection_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage20_continuity_handoff_packet.lease_id",
+            self.lease_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage20_continuity_handoff_packet.ownership_ref",
+            self.ownership_ref.as_deref(),
+        )?;
+        validate_stage4_ref(
+            "stage20_continuity_handoff_packet.device_id",
+            &self.device_id,
+        )?;
+        validate_stage4_optional_ref(
+            "stage20_continuity_handoff_packet.access_context_id",
+            self.access_context_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage20_continuity_handoff_packet.policy_context_id",
+            self.policy_context_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage20_continuity_handoff_packet.tenant_id",
+            self.tenant_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage20_continuity_handoff_packet.audit_id",
+            self.audit_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage20_continuity_handoff_packet.ph1j_proof_ref",
+            self.ph1j_proof_ref.as_deref(),
+        )?;
+        if self.reason_code != self.disposition.default_reason_code() {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage20_continuity_handoff_packet.reason_code",
+                reason: "must match Stage 20A continuity/handoff disposition",
+            });
+        }
+        if self.work_authority.can_mutate_or_execute() {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage20_continuity_handoff_packet.work_authority",
+                reason: "Stage 20A cannot invent continuity authority, mutate, connector-write, approve, dispatch, execute, call live providers/search/tools, live-transfer continuity, emit TTS/playback, create turns, or add native UI behavior",
+            });
+        }
+        if self.disposition.is_ready() && (self.audit_id.is_none() || self.ph1j_proof_ref.is_none())
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage20_continuity_handoff_packet.audit_proof",
+                reason: "ready Stage 20A continuity output requires PH1.J audit/proof refs",
+            });
+        }
+
+        match self.disposition {
+            Stage20ContinuityHandoffDisposition::CrossDeviceHandoffReady => {
+                if self.continuity_kind != Stage20ContinuityHandoffKind::CrossDeviceHandoff
+                    || self.handoff_id.is_none()
+                    || self.transfer_identity_id.is_none()
+                    || self.continuity_selection_id.is_none()
+                    || !self.work_authority.can_emit_cross_device_handoff_packet
+                {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "stage20_continuity_handoff_packet.cross_device_handoff",
+                        reason: "cross-device handoff readiness requires bounded handoff, transfer identity, and selection refs only",
+                    });
+                }
+            }
+            Stage20ContinuityHandoffDisposition::SessionContinuityReady => {
+                if self.continuity_kind != Stage20ContinuityHandoffKind::SessionContinuity
+                    || self.transfer_identity_id.is_none()
+                    || self.continuity_selection_id.is_none()
+                    || !self.work_authority.can_emit_selection_reference
+                {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "stage20_continuity_handoff_packet.session_continuity",
+                        reason: "session continuity readiness requires bounded transfer identity and selection refs only",
+                    });
+                }
+            }
+            Stage20ContinuityHandoffDisposition::AttachOutcomeReady => {
+                if self.continuity_kind != Stage20ContinuityHandoffKind::AttachOutcomeTransfer
+                    || self.attach_outcome_id.is_none()
+                    || self.projection_attach_outcome.is_none()
+                    || !self.work_authority.can_emit_attach_outcome_packet
+                {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "stage20_continuity_handoff_packet.attach_outcome",
+                        reason: "attach outcome readiness requires bounded attach outcome refs from session projection truth only",
+                    });
+                }
+            }
+            Stage20ContinuityHandoffDisposition::ResumeOutcomeReady => {
+                if self.continuity_kind != Stage20ContinuityHandoffKind::ResumeOutcomeTransfer
+                    || self.resume_outcome_id.is_none()
+                    || self.projection_attach_outcome.is_none()
+                    || !self.work_authority.can_emit_resume_outcome_packet
+                {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "stage20_continuity_handoff_packet.resume_outcome",
+                        reason: "resume outcome readiness requires bounded resume outcome refs from session projection truth only",
+                    });
+                }
+            }
+            Stage20ContinuityHandoffDisposition::RecoverOutcomeReady => {
+                if self.continuity_kind != Stage20ContinuityHandoffKind::RecoverOutcomeTransfer
+                    || self.recover_outcome_id.is_none()
+                    || self.projection_attach_outcome.is_none()
+                    || !self.work_authority.can_emit_recover_outcome_packet
+                {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "stage20_continuity_handoff_packet.recover_outcome",
+                        reason: "recover outcome readiness requires bounded recover outcome refs from session projection truth only",
+                    });
+                }
+            }
+            _ => {
+                if !self.work_authority.can_fail_closed
+                    || self.work_authority.can_emit_continuity_packet
+                    || self.work_authority.can_emit_cross_device_handoff_packet
+                    || self.work_authority.can_emit_attach_outcome_packet
+                    || self.work_authority.can_emit_resume_outcome_packet
+                    || self.work_authority.can_emit_recover_outcome_packet
+                    || self.work_authority.can_emit_transfer_identity
+                    || self.work_authority.can_emit_selection_reference
+                    || self.work_authority.can_emit_ownership_lease_ref
+                {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "stage20_continuity_handoff_packet.blocked_continuity",
+                        reason: "blocked Stage 20A packets fail closed and cannot emit fake continuity, handoff, attach, resume, recover, ownership, or transfer success",
+                    });
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -25023,6 +26421,535 @@ mod tests {
             &output,
             None,
             None,
+            runtime_mock,
+        )
+        .is_err());
+    }
+
+    fn stage20_response_output_packet() -> Stage15ResponseOutputPacket {
+        stage19_response_output_packet()
+    }
+
+    fn stage20_speech_output_identity() -> Stage17SpeechOutputPacket {
+        stage19_speech_output_identity()
+    }
+
+    fn stage20_display_identity() -> Stage18MultimodalDisplayPacket {
+        stage19_display_identity()
+    }
+
+    fn stage20_attention_identity() -> Stage19NotificationAttentionPacket {
+        let output = stage20_response_output_packet();
+        let speech = stage20_speech_output_identity();
+        let display = stage20_display_identity();
+        let mut input = Stage19NotificationAttentionInput::fixture_notification_candidate_ready(
+            "notification-candidate-stage20-identity",
+            "audit-stage20-identity",
+        );
+        input.stage17_output_identity_ref_present = true;
+        input.stage17_output_identity_non_authoritative = true;
+        input.stage18_display_ref_present = true;
+        input.stage18_display_ref_non_authoritative = true;
+        Stage19NotificationAttentionPacket::from_stage15_output(
+            &output,
+            Some(&speech),
+            Some(&display),
+            input,
+        )
+        .expect("stage20 attention identity")
+    }
+
+    fn stage20_projection(
+        session_id: SessionId,
+        state: SessionState,
+        outcome: SessionAttachOutcome,
+    ) -> SessionRuntimeProjection {
+        SessionRuntimeProjection {
+            session_id,
+            turn_id: Some(TurnId(20)),
+            session_state: state,
+            device_turn_sequence: Some(9),
+            attach_outcome: Some(outcome),
+        }
+    }
+
+    #[test]
+    fn stage_20a_continuity_consumes_stage15_stage17_stage18_stage19_non_authoritatively() {
+        let output = stage20_response_output_packet();
+        let speech = stage20_speech_output_identity();
+        let display = stage20_display_identity();
+        let attention = stage20_attention_identity();
+        let mut input = Stage20ContinuityHandoffInput::fixture_cross_device_handoff_ready(
+            "continuity-packet-stage20-ready",
+            "handoff-stage20-ready",
+            "device-stage20-a",
+            "audit-stage20-ready",
+        );
+        input.stage17_output_identity_ref_present = true;
+        input.stage17_output_identity_non_authoritative = true;
+        input.stage18_display_ref_present = true;
+        input.stage18_display_ref_non_authoritative = true;
+        input.stage19_attention_ref_present = true;
+        input.stage19_attention_ref_non_authoritative = true;
+        let projection = stage20_projection(
+            output.session_id,
+            SessionState::Active,
+            SessionAttachOutcome::ExistingSessionAttached,
+        );
+        let packet = Stage20ContinuityHandoffPacket::from_stage15_output(
+            &output,
+            Some(&speech),
+            Some(&display),
+            Some(&attention),
+            Some(&projection),
+            input,
+        )
+        .expect("stage20 continuity handoff ready");
+
+        assert_eq!(
+            packet.disposition,
+            Stage20ContinuityHandoffDisposition::CrossDeviceHandoffReady
+        );
+        assert_eq!(
+            packet.stage17_disposition,
+            Some(Stage17SpeechOutputDisposition::SpeechOutputReady)
+        );
+        assert_eq!(
+            packet.stage18_disposition,
+            Some(Stage18MultimodalDisplayDisposition::RendererPayloadReady)
+        );
+        assert_eq!(
+            packet.stage19_disposition,
+            Some(Stage19NotificationAttentionDisposition::NotificationCandidateReady)
+        );
+        assert!(packet.stage17_output_identity_non_authoritative);
+        assert!(packet.stage18_display_ref_non_authoritative);
+        assert!(packet.stage19_attention_ref_non_authoritative);
+        assert!(packet.work_authority.can_emit_cross_device_handoff_packet);
+        assert!(packet.work_authority.can_emit_transfer_identity);
+        assert!(!packet.work_authority.can_emit_live_continuity_transfer);
+        assert!(!packet.can_mutate_or_execute());
+    }
+
+    #[test]
+    fn stage_20a_continuity_packets_cannot_invent_or_claim_completion() {
+        let output = stage20_response_output_packet();
+        let projection = stage20_projection(
+            output.session_id,
+            SessionState::Open,
+            SessionAttachOutcome::ExistingSessionReused,
+        );
+
+        for input in [
+            {
+                let mut input = Stage20ContinuityHandoffInput::fixture_session_continuity_ready(
+                    "continuity-packet-stage20-invent-fact",
+                    "continuity-selection-stage20-invent-fact",
+                    "device-stage20-a",
+                    "audit-stage20-invent-fact",
+                );
+                input.continuity_invented_fact = true;
+                input
+            },
+            {
+                let mut input = Stage20ContinuityHandoffInput::fixture_session_continuity_ready(
+                    "continuity-packet-stage20-invent-owner",
+                    "continuity-selection-stage20-invent-owner",
+                    "device-stage20-a",
+                    "audit-stage20-invent-owner",
+                );
+                input.continuity_invented_ownership = true;
+                input
+            },
+            {
+                let mut input = Stage20ContinuityHandoffInput::fixture_resume_outcome_ready(
+                    "continuity-packet-stage20-invent-resume",
+                    "resume-outcome-stage20-invent-resume",
+                    "device-stage20-a",
+                    "audit-stage20-invent-resume",
+                );
+                input.continuity_invented_attach_resume_recover_success = true;
+                input
+            },
+            {
+                let mut input = Stage20ContinuityHandoffInput::fixture_cross_device_handoff_ready(
+                    "continuity-packet-stage20-invent-completion",
+                    "handoff-stage20-invent-completion",
+                    "device-stage20-a",
+                    "audit-stage20-invent-completion",
+                );
+                input.continuity_claimed_unproven_completion = true;
+                input
+            },
+        ] {
+            let packet = Stage20ContinuityHandoffPacket::from_stage15_output(
+                &output,
+                None,
+                None,
+                None,
+                Some(&projection),
+                input,
+            )
+            .expect("stage20 no-invention blocked");
+            assert_eq!(
+                packet.disposition,
+                Stage20ContinuityHandoffDisposition::NoInventionBlocked
+            );
+            assert!(packet.work_authority.can_fail_closed);
+            assert!(!packet.work_authority.can_emit_continuity_packet);
+            assert!(!packet.can_mutate_or_execute());
+        }
+    }
+
+    #[test]
+    fn stage_20a_ownership_lease_and_transfer_posture_require_scoped_refs() {
+        let output = stage20_response_output_packet();
+        let projection = stage20_projection(
+            output.session_id,
+            SessionState::Active,
+            SessionAttachOutcome::ExistingSessionAttached,
+        );
+        let ready = Stage20ContinuityHandoffPacket::from_stage15_output(
+            &output,
+            None,
+            None,
+            None,
+            Some(&projection),
+            Stage20ContinuityHandoffInput::fixture_attach_outcome_ready(
+                "continuity-packet-stage20-attach-ready",
+                "attach-outcome-stage20-ready",
+                "device-stage20-a",
+                "audit-stage20-attach-ready",
+            ),
+        )
+        .expect("stage20 attach ready");
+        assert_eq!(
+            ready.disposition,
+            Stage20ContinuityHandoffDisposition::AttachOutcomeReady
+        );
+        assert!(ready.work_authority.can_emit_attach_outcome_packet);
+        assert!(ready.work_authority.can_emit_ownership_lease_ref);
+        assert!(!ready.can_mutate_or_execute());
+
+        for input in [
+            {
+                let mut input = Stage20ContinuityHandoffInput::fixture_session_continuity_ready(
+                    "continuity-packet-stage20-missing-lease",
+                    "continuity-selection-stage20-missing-lease",
+                    "device-stage20-a",
+                    "audit-stage20-missing-lease",
+                );
+                input.lease_ref_present = false;
+                input
+            },
+            {
+                let mut input = Stage20ContinuityHandoffInput::fixture_session_continuity_ready(
+                    "continuity-packet-stage20-secret-unsafe",
+                    "continuity-selection-stage20-secret-unsafe",
+                    "device-stage20-a",
+                    "audit-stage20-secret-unsafe",
+                );
+                input.secret_unsafe = true;
+                input
+            },
+            {
+                let mut input = Stage20ContinuityHandoffInput::fixture_session_continuity_ready(
+                    "continuity-packet-stage20-cross-device",
+                    "continuity-selection-stage20-cross-device",
+                    "device-stage20-a",
+                    "audit-stage20-cross-device",
+                );
+                input.cross_device = true;
+                input
+            },
+            {
+                let mut input = Stage20ContinuityHandoffInput::fixture_session_continuity_ready(
+                    "continuity-packet-stage20-ownership-drift",
+                    "continuity-selection-stage20-ownership-drift",
+                    "device-stage20-a",
+                    "audit-stage20-ownership-drift",
+                );
+                input.ownership_drift = true;
+                input
+            },
+        ] {
+            let packet = Stage20ContinuityHandoffPacket::from_stage15_output(
+                &output,
+                None,
+                None,
+                None,
+                Some(&projection),
+                input,
+            )
+            .expect("stage20 ownership/lease blocked");
+            assert_eq!(
+                packet.disposition,
+                Stage20ContinuityHandoffDisposition::OwnershipLeaseBlocked
+            );
+            assert!(packet.work_authority.can_fail_closed);
+            assert!(!packet.can_mutate_or_execute());
+        }
+    }
+
+    #[test]
+    fn stage_20a_native_transfer_and_stale_session_cases_fail_closed() {
+        let output = stage20_response_output_packet();
+        let projection = stage20_projection(
+            output.session_id,
+            SessionState::SoftClosed,
+            SessionAttachOutcome::ExistingSessionAttached,
+        );
+        let ready = Stage20ContinuityHandoffPacket::from_stage15_output(
+            &output,
+            None,
+            None,
+            None,
+            Some(&projection),
+            Stage20ContinuityHandoffInput::fixture_cross_device_handoff_ready(
+                "continuity-packet-stage20-native-ready",
+                "handoff-stage20-native-ready",
+                "device-stage20-a",
+                "audit-stage20-native-ready",
+            ),
+        )
+        .expect("stage20 native handoff ready");
+        assert!(ready.work_authority.can_emit_cross_device_handoff_packet);
+        assert!(!ready.can_mutate_or_execute());
+
+        for input in [
+            {
+                let mut input = Stage20ContinuityHandoffInput::fixture_cross_device_handoff_ready(
+                    "continuity-packet-stage20-native-mutate",
+                    "handoff-stage20-native-mutate",
+                    "device-stage20-a",
+                    "audit-stage20-native-mutate",
+                );
+                input.native_transfer_mutates_state = true;
+                input
+            },
+            {
+                let mut input = Stage20ContinuityHandoffInput::fixture_cross_device_handoff_ready(
+                    "continuity-packet-stage20-native-exec",
+                    "handoff-stage20-native-exec",
+                    "device-stage20-a",
+                    "audit-stage20-native-exec",
+                );
+                input.native_transfer_dispatches_or_executes = true;
+                input
+            },
+        ] {
+            let packet = Stage20ContinuityHandoffPacket::from_stage15_output(
+                &output,
+                None,
+                None,
+                None,
+                Some(&projection),
+                input,
+            )
+            .expect("stage20 native blocked");
+            assert_eq!(
+                packet.disposition,
+                Stage20ContinuityHandoffDisposition::NativeTransferBlocked
+            );
+            assert!(packet.work_authority.can_fail_closed);
+        }
+
+        for input in [
+            {
+                let mut input = Stage20ContinuityHandoffInput::fixture_cross_device_handoff_ready(
+                    "continuity-packet-stage20-stale",
+                    "handoff-stage20-stale",
+                    "device-stage20-a",
+                    "audit-stage20-stale",
+                );
+                input.stale_or_cancelled_or_superseded_output = true;
+                input
+            },
+            {
+                let mut input = Stage20ContinuityHandoffInput::fixture_session_continuity_ready(
+                    "continuity-packet-stage20-device-mismatch",
+                    "continuity-selection-stage20-device-mismatch",
+                    "device-stage20-a",
+                    "audit-stage20-device-mismatch",
+                );
+                input.device_mismatch = true;
+                input
+            },
+            {
+                let mut input = Stage20ContinuityHandoffInput::fixture_session_continuity_ready(
+                    "continuity-packet-stage20-replay",
+                    "continuity-selection-stage20-replay",
+                    "device-stage20-a",
+                    "audit-stage20-replay",
+                );
+                input.replay_upgrades_blocked_continuity = true;
+                input
+            },
+        ] {
+            let packet = Stage20ContinuityHandoffPacket::from_stage15_output(
+                &output,
+                None,
+                None,
+                None,
+                Some(&projection),
+                input,
+            )
+            .expect("stage20 stale blocked");
+            assert_eq!(
+                packet.disposition,
+                Stage20ContinuityHandoffDisposition::StaleContinuityBlocked
+            );
+            assert!(packet.work_authority.can_fail_closed);
+            assert!(!packet.can_mutate_or_execute());
+        }
+    }
+
+    #[test]
+    fn stage_20a_blocks_raw_inputs_live_paths_and_runtime_mocks() {
+        let output = stage20_response_output_packet();
+        let projection = stage20_projection(
+            output.session_id,
+            SessionState::Open,
+            SessionAttachOutcome::ExistingSessionAttached,
+        );
+        let packet = Stage20ContinuityHandoffPacket::from_stage15_output(
+            &output,
+            None,
+            None,
+            None,
+            Some(&projection),
+            Stage20ContinuityHandoffInput::fixture_session_continuity_ready(
+                "continuity-packet-stage20-no-exec",
+                "continuity-selection-stage20-no-exec",
+                "device-stage20-a",
+                "audit-stage20-no-exec",
+            ),
+        )
+        .expect("stage20 no-exec packet");
+        assert!(!packet.work_authority.can_invent_facts);
+        assert!(!packet.work_authority.can_invent_resume_or_recover_success);
+        assert!(
+            !packet
+                .work_authority
+                .can_invent_ownership_or_continuity_authority
+        );
+        assert!(!packet.work_authority.can_mutate_external_state);
+        assert!(!packet.work_authority.can_emit_live_continuity_transfer);
+        assert!(!packet.work_authority.can_create_user_turn);
+        assert!(
+            !packet
+                .work_authority
+                .can_treat_visible_transfer_as_action_success
+        );
+        assert!(!packet.can_mutate_or_execute());
+
+        for input in [
+            {
+                let mut input = Stage20ContinuityHandoffInput::fixture_session_continuity_ready(
+                    "continuity-packet-stage20-raw-provider",
+                    "continuity-selection-stage20-raw-provider",
+                    "device-stage20-a",
+                    "audit-stage20-raw-provider",
+                );
+                input.raw_provider_output_present = true;
+                input
+            },
+            {
+                let mut input = Stage20ContinuityHandoffInput::fixture_session_continuity_ready(
+                    "continuity-packet-stage20-unverified",
+                    "continuity-selection-stage20-unverified",
+                    "device-stage20-a",
+                    "audit-stage20-unverified",
+                );
+                input.unverified_source_evidence_present = true;
+                input
+            },
+            {
+                let mut input = Stage20ContinuityHandoffInput::fixture_session_continuity_ready(
+                    "continuity-packet-stage20-protected",
+                    "continuity-selection-stage20-protected",
+                    "device-stage20-a",
+                    "audit-stage20-protected",
+                );
+                input.protected_action_candidate_present = true;
+                input
+            },
+            {
+                let mut input = Stage20ContinuityHandoffInput::fixture_session_continuity_ready(
+                    "continuity-packet-stage20-policy",
+                    "continuity-selection-stage20-policy",
+                    "device-stage20-a",
+                    "audit-stage20-policy",
+                );
+                input.policy_denied = true;
+                input
+            },
+        ] {
+            let packet = Stage20ContinuityHandoffPacket::from_stage15_output(
+                &output,
+                None,
+                None,
+                None,
+                Some(&projection),
+                input,
+            )
+            .expect("stage20 unsafe input blocked");
+            assert_eq!(
+                packet.disposition,
+                Stage20ContinuityHandoffDisposition::UnsafeInputBlocked
+            );
+            assert!(packet.work_authority.can_fail_closed);
+            assert!(!packet.can_mutate_or_execute());
+        }
+
+        for mut input in [
+            {
+                let mut input = Stage20ContinuityHandoffInput::fixture_cross_device_handoff_ready(
+                    "continuity-packet-stage20-live-provider",
+                    "handoff-stage20-live-provider",
+                    "device-stage20-a",
+                    "audit-stage20-live-provider",
+                );
+                input.attempted_live_provider_in_build = true;
+                input
+            },
+            {
+                let mut input = Stage20ContinuityHandoffInput::fixture_cross_device_handoff_ready(
+                    "continuity-packet-stage20-live-transfer",
+                    "handoff-stage20-live-transfer",
+                    "device-stage20-a",
+                    "audit-stage20-live-transfer",
+                );
+                input.ran_live_continuity_transfer_in_build = true;
+                input
+            },
+        ] {
+            input.fixture_only_test_path = true;
+            assert!(Stage20ContinuityHandoffPacket::from_stage15_output(
+                &output,
+                None,
+                None,
+                None,
+                Some(&projection),
+                input,
+            )
+            .is_err());
+        }
+
+        let mut runtime_mock = Stage20ContinuityHandoffInput::fixture_session_continuity_ready(
+            "continuity-packet-stage20-runtime-mock",
+            "continuity-selection-stage20-runtime-mock",
+            "device-stage20-a",
+            "audit-stage20-runtime-mock",
+        );
+        runtime_mock.fake_continuity_detected = true;
+        runtime_mock.fixture_only_test_path = false;
+        assert!(Stage20ContinuityHandoffPacket::from_stage15_output(
+            &output,
+            None,
+            None,
+            None,
+            Some(&projection),
             runtime_mock,
         )
         .is_err());
