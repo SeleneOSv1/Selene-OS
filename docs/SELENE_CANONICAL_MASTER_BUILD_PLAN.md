@@ -78,10 +78,10 @@ After every build, update this section before final reporting.
 
 | Field | Current Value |
 |---|---|
-| Current active stage | Stage 11 |
-| Current active build | Stage 11A - Reasoning, Capability Registry, Router, And Tool-Selection Boundary Reconciliation |
-| Next build after current stage passes | Stage 11A - Reasoning, Capability Registry, Router, And Tool-Selection Boundary Reconciliation |
-| Last completed stage | Stage 10A - Understanding, Intent, Slot, And Meaning Reconstruction Foundation Reconciliation |
+| Current active stage | Stage 12 |
+| Current active build | Stage 12A - Simulation, Protected Execution, Approval, And Runtime Action Gate Reconciliation |
+| Next build after current stage passes | Stage 12A - Simulation, Protected Execution, Approval, And Runtime Action Gate Reconciliation |
+| Last completed stage | Stage 11A - Reasoning, Capability Registry, Router, And Tool-Selection Boundary Reconciliation |
 | Stages blocked | None yet |
 | Plan drift allowed | No |
 
@@ -2197,7 +2197,9 @@ Next if passed:
 
 ## Stage 11 - Reasoning Orchestrator, Capability Registry, And Tool Route
 
-Status: NEEDS_BUILDING
+Status: PROVEN_COMPLETE_BY_STAGE_11A
+
+Stage 11A status: PROVEN_COMPLETE
 
 Build:
 
@@ -2239,9 +2241,20 @@ Proof:
 - route candidate cannot execute proof;
 - no route from raw text.
 
+Stage 11A proof update:
+
+- Existing PH1.X, PH1.N, PH1.SRL, PH1.CONTEXT, PH1.ECM engine capability maps, PH1.SIMCAT, PH1.SIMFINDER, runtime law/governance, app ingress, and PH1.D inspect-only model-boundary context were inspected and crosswalked rather than rebuilt as duplicate reasoning, capability registry, router, tool-selection, search, simulation, or execution engines. `simulation_executor.rs` remained inspect-only for Stage 11A.
+- `Stage11ReasoningRouterPacket`, `Stage11RouteCandidateInput`, `Stage11RouteCandidateKind`, `Stage11CapabilityMapDisposition`, `Stage11RouterDisposition`, and `Stage11ReasoningWorkAuthority` provide the minimal runtime-owned reasoning/router/capability candidate boundary in `runtime_ingress_turn_foundation.rs`.
+- Stage 11A proves reasoning/router can consume only non-executing Stage 10 understanding plus safe Stage 5 current-turn authority, Stage 6 access context, Stage 7 activation context, Stage 8 final transcript metadata, and Stage 9 receipt-safe Voice ID posture. Partial transcript, VAD-only, audio-scene-only, stale, cancelled, superseded, closed-session, record-artifact-only, unsafe Voice ID posture, protected-slot uncertainty, and ambiguity requiring clarification cannot route to execution.
+- Capability registry and capability-map state are declarative only. Missing, disabled, drifted, or tenant/workspace-mismatched capability maps fail closed. Public read-only candidates remain non-mutating; protected-action candidates remain inert until Stage 12; simulation candidates are inert catalog/finder handoffs and cannot dispatch or execute themselves.
+- Reasoning/router/tool-selection packets cannot answer as final responses by themselves, search, call providers, call tools, capture microphone audio, transcribe live audio, emit TTS, connector-write, authorize, approve, dispatch, execute simulations, execute protected mutations, or update memory/persona/emotion.
+- Stage 11A did not add provider calls, live search, live tools, connector writes, protected execution, simulation execution, Stage 12 approval gates, native UI redesign, live STT/TTS/playback, live Voice ID matching, memory/persona/emotion updates, raw-audio retention, provider-backed model/router behavior, or duplicate router/tool/simulation/search engines.
+- Reasoning/router/capability/tool-selection boundary proof is certified for Stage 11A. Production reasoning quality, broad capability-routing accuracy, live tool routing, provider-backed planner quality, public search/tool execution, and protected execution benchmarks remain deferred to later owning stages.
+- Stage 12A is ready to start. Broad Stage 11 remains partial for product-quality routing accuracy and live tool/provider planner benchmarks, but the non-executing route-candidate boundary is complete enough for protected simulation and runtime action gates.
+
 Next if passed:
 
-- Stage 12 - Runtime Risk, Authority, Simulation, Execution Gate, And Protected-Action Closure.
+- Stage 12A - Simulation, Protected Execution, Approval, And Runtime Action Gate Reconciliation.
 
 ## Stage 12 - Runtime Risk, Authority, Simulation, Execution Gate, And Protected-Action Closure
 

@@ -99,6 +99,27 @@ mod reason_codes {
     pub const STAGE10_RECORD_ARTIFACT_ONLY: &str = "stage10_record_artifact_only";
     pub const STAGE10_MEANING_RECONSTRUCTION_REJECTED: &str =
         "stage10_meaning_reconstruction_rejected";
+    pub const STAGE11_REASONING_TRACE_READY: &str = "stage11_reasoning_trace_ready";
+    pub const STAGE11_PUBLIC_READ_ONLY_CANDIDATE: &str = "stage11_public_read_only_candidate";
+    pub const STAGE11_PROTECTED_ACTION_BLOCKED_UNTIL_STAGE12: &str =
+        "stage11_protected_action_blocked_until_stage12";
+    pub const STAGE11_SIMULATION_CANDIDATE_INERT_HANDOFF: &str =
+        "stage11_simulation_candidate_inert_handoff";
+    pub const STAGE11_CLARIFICATION_REQUIRED: &str = "stage11_clarification_required";
+    pub const STAGE11_STAGE10_UNDERSTANDING_BLOCKED: &str = "stage11_stage10_understanding_blocked";
+    pub const STAGE11_STAGE5_AUTHORITY_BLOCKED: &str = "stage11_stage5_authority_blocked";
+    pub const STAGE11_STAGE6_ACCESS_BLOCKED: &str = "stage11_stage6_access_blocked";
+    pub const STAGE11_UNSAFE_VOICE_POSTURE_BLOCKED: &str = "stage11_unsafe_voice_posture_blocked";
+    pub const STAGE11_PROTECTED_SLOT_UNCERTAIN: &str = "stage11_protected_slot_uncertain";
+    pub const STAGE11_RECORD_ARTIFACT_ONLY: &str = "stage11_record_artifact_only";
+    pub const STAGE11_UNSAFE_OR_STALE_INPUT_BLOCKED: &str = "stage11_unsafe_or_stale_input_blocked";
+    pub const STAGE11_MISSING_CAPABILITY_FAIL_CLOSED: &str =
+        "stage11_missing_capability_fail_closed";
+    pub const STAGE11_DISABLED_CAPABILITY_FAIL_CLOSED: &str =
+        "stage11_disabled_capability_fail_closed";
+    pub const STAGE11_CAPABILITY_DRIFT_FAIL_CLOSED: &str = "stage11_capability_drift_fail_closed";
+    pub const STAGE11_TENANT_WORKSPACE_MISMATCH_FAIL_CLOSED: &str =
+        "stage11_tenant_workspace_mismatch_fail_closed";
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -6020,6 +6041,932 @@ impl Validate for Stage10UnderstandingPacket {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stage11RouteCandidateKind {
+    ReasoningTraceOnly,
+    Clarification,
+    PublicReadOnlyToolCandidate,
+    ProtectedActionCandidate,
+    SimulationCandidate,
+}
+
+impl Stage11RouteCandidateKind {
+    pub const fn requires_capability(self) -> bool {
+        !matches!(
+            self,
+            Stage11RouteCandidateKind::ReasoningTraceOnly
+                | Stage11RouteCandidateKind::Clarification
+        )
+    }
+
+    pub const fn is_public_read_only(self) -> bool {
+        matches!(self, Stage11RouteCandidateKind::PublicReadOnlyToolCandidate)
+    }
+
+    pub const fn is_protected_action(self) -> bool {
+        matches!(
+            self,
+            Stage11RouteCandidateKind::ProtectedActionCandidate
+                | Stage11RouteCandidateKind::SimulationCandidate
+        )
+    }
+
+    pub const fn is_simulation_candidate(self) -> bool {
+        matches!(self, Stage11RouteCandidateKind::SimulationCandidate)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stage11CapabilityMapDisposition {
+    ActiveDeclarative,
+    Missing,
+    Disabled,
+    DriftDetected,
+    TenantWorkspaceMismatch,
+}
+
+impl Stage11CapabilityMapDisposition {
+    pub const fn is_active_declarative(self) -> bool {
+        matches!(self, Stage11CapabilityMapDisposition::ActiveDeclarative)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stage11RouterDisposition {
+    ReasoningTraceReady,
+    PublicReadOnlyCandidate,
+    ProtectedActionBlockedUntilStage12,
+    SimulationCandidateInertHandoff,
+    ClarificationRequired,
+    Stage10UnderstandingBlocked,
+    Stage5AuthorityBlocked,
+    Stage6AccessBlocked,
+    UnsafeVoicePostureBlocked,
+    ProtectedSlotUncertain,
+    RecordArtifactOnly,
+    UnsafeOrStaleInputBlocked,
+    MissingCapabilityFailClosed,
+    DisabledCapabilityFailClosed,
+    CapabilityDriftFailClosed,
+    TenantWorkspaceMismatchFailClosed,
+}
+
+impl Stage11RouterDisposition {
+    pub const fn default_reason_code(self) -> &'static str {
+        match self {
+            Stage11RouterDisposition::ReasoningTraceReady => {
+                reason_codes::STAGE11_REASONING_TRACE_READY
+            }
+            Stage11RouterDisposition::PublicReadOnlyCandidate => {
+                reason_codes::STAGE11_PUBLIC_READ_ONLY_CANDIDATE
+            }
+            Stage11RouterDisposition::ProtectedActionBlockedUntilStage12 => {
+                reason_codes::STAGE11_PROTECTED_ACTION_BLOCKED_UNTIL_STAGE12
+            }
+            Stage11RouterDisposition::SimulationCandidateInertHandoff => {
+                reason_codes::STAGE11_SIMULATION_CANDIDATE_INERT_HANDOFF
+            }
+            Stage11RouterDisposition::ClarificationRequired => {
+                reason_codes::STAGE11_CLARIFICATION_REQUIRED
+            }
+            Stage11RouterDisposition::Stage10UnderstandingBlocked => {
+                reason_codes::STAGE11_STAGE10_UNDERSTANDING_BLOCKED
+            }
+            Stage11RouterDisposition::Stage5AuthorityBlocked => {
+                reason_codes::STAGE11_STAGE5_AUTHORITY_BLOCKED
+            }
+            Stage11RouterDisposition::Stage6AccessBlocked => {
+                reason_codes::STAGE11_STAGE6_ACCESS_BLOCKED
+            }
+            Stage11RouterDisposition::UnsafeVoicePostureBlocked => {
+                reason_codes::STAGE11_UNSAFE_VOICE_POSTURE_BLOCKED
+            }
+            Stage11RouterDisposition::ProtectedSlotUncertain => {
+                reason_codes::STAGE11_PROTECTED_SLOT_UNCERTAIN
+            }
+            Stage11RouterDisposition::RecordArtifactOnly => {
+                reason_codes::STAGE11_RECORD_ARTIFACT_ONLY
+            }
+            Stage11RouterDisposition::UnsafeOrStaleInputBlocked => {
+                reason_codes::STAGE11_UNSAFE_OR_STALE_INPUT_BLOCKED
+            }
+            Stage11RouterDisposition::MissingCapabilityFailClosed => {
+                reason_codes::STAGE11_MISSING_CAPABILITY_FAIL_CLOSED
+            }
+            Stage11RouterDisposition::DisabledCapabilityFailClosed => {
+                reason_codes::STAGE11_DISABLED_CAPABILITY_FAIL_CLOSED
+            }
+            Stage11RouterDisposition::CapabilityDriftFailClosed => {
+                reason_codes::STAGE11_CAPABILITY_DRIFT_FAIL_CLOSED
+            }
+            Stage11RouterDisposition::TenantWorkspaceMismatchFailClosed => {
+                reason_codes::STAGE11_TENANT_WORKSPACE_MISMATCH_FAIL_CLOSED
+            }
+        }
+    }
+
+    pub const fn is_candidate_disposition(self) -> bool {
+        matches!(
+            self,
+            Stage11RouterDisposition::ReasoningTraceReady
+                | Stage11RouterDisposition::PublicReadOnlyCandidate
+                | Stage11RouterDisposition::ProtectedActionBlockedUntilStage12
+                | Stage11RouterDisposition::SimulationCandidateInertHandoff
+        )
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Stage11ReasoningWorkAuthority {
+    pub can_emit_reasoning_trace: bool,
+    pub can_emit_router_candidate: bool,
+    pub can_emit_capability_candidate: bool,
+    pub can_emit_tool_selection_candidate: bool,
+    pub can_emit_public_read_only_candidate: bool,
+    pub can_emit_protected_action_candidate: bool,
+    pub can_emit_simulation_candidate: bool,
+    pub can_emit_clarification: bool,
+    pub can_fail_closed: bool,
+    pub can_answer: bool,
+    pub can_search: bool,
+    pub can_call_providers: bool,
+    pub can_call_tools: bool,
+    pub can_capture_microphone_audio: bool,
+    pub can_transcribe_live_audio: bool,
+    pub can_emit_tts: bool,
+    pub can_connector_write: bool,
+    pub can_authorize: bool,
+    pub can_approve: bool,
+    pub can_dispatch: bool,
+    pub can_execute_simulation: bool,
+    pub can_execute_protected_mutation: bool,
+    pub can_update_memory_persona_emotion: bool,
+    pub can_promote_provider_model_router: bool,
+}
+
+impl Stage11ReasoningWorkAuthority {
+    pub const fn reasoning_trace_only() -> Self {
+        Self {
+            can_emit_reasoning_trace: true,
+            can_emit_router_candidate: false,
+            can_emit_capability_candidate: false,
+            can_emit_tool_selection_candidate: false,
+            can_emit_public_read_only_candidate: false,
+            can_emit_protected_action_candidate: false,
+            can_emit_simulation_candidate: false,
+            can_emit_clarification: false,
+            can_fail_closed: false,
+            can_answer: false,
+            can_search: false,
+            can_call_providers: false,
+            can_call_tools: false,
+            can_capture_microphone_audio: false,
+            can_transcribe_live_audio: false,
+            can_emit_tts: false,
+            can_connector_write: false,
+            can_authorize: false,
+            can_approve: false,
+            can_dispatch: false,
+            can_execute_simulation: false,
+            can_execute_protected_mutation: false,
+            can_update_memory_persona_emotion: false,
+            can_promote_provider_model_router: false,
+        }
+    }
+
+    pub const fn public_read_only_candidate() -> Self {
+        Self {
+            can_emit_reasoning_trace: true,
+            can_emit_router_candidate: true,
+            can_emit_capability_candidate: true,
+            can_emit_tool_selection_candidate: true,
+            can_emit_public_read_only_candidate: true,
+            can_emit_protected_action_candidate: false,
+            can_emit_simulation_candidate: false,
+            can_emit_clarification: false,
+            can_fail_closed: false,
+            ..Self::reasoning_trace_only()
+        }
+    }
+
+    pub const fn protected_action_candidate() -> Self {
+        Self {
+            can_emit_reasoning_trace: true,
+            can_emit_router_candidate: true,
+            can_emit_capability_candidate: true,
+            can_emit_tool_selection_candidate: true,
+            can_emit_public_read_only_candidate: false,
+            can_emit_protected_action_candidate: true,
+            can_emit_simulation_candidate: false,
+            can_emit_clarification: false,
+            can_fail_closed: false,
+            ..Self::reasoning_trace_only()
+        }
+    }
+
+    pub const fn simulation_candidate() -> Self {
+        Self {
+            can_emit_reasoning_trace: true,
+            can_emit_router_candidate: true,
+            can_emit_capability_candidate: true,
+            can_emit_tool_selection_candidate: true,
+            can_emit_public_read_only_candidate: false,
+            can_emit_protected_action_candidate: true,
+            can_emit_simulation_candidate: true,
+            can_emit_clarification: false,
+            can_fail_closed: false,
+            ..Self::reasoning_trace_only()
+        }
+    }
+
+    pub const fn clarification_only() -> Self {
+        Self {
+            can_emit_reasoning_trace: true,
+            can_emit_clarification: true,
+            can_fail_closed: false,
+            ..Self::reasoning_trace_only()
+        }
+    }
+
+    pub const fn blocked() -> Self {
+        Self {
+            can_fail_closed: true,
+            ..Self::reasoning_trace_only()
+        }
+    }
+
+    pub const fn can_route_or_mutate(self) -> bool {
+        self.can_answer
+            || self.can_search
+            || self.can_call_providers
+            || self.can_call_tools
+            || self.can_capture_microphone_audio
+            || self.can_transcribe_live_audio
+            || self.can_emit_tts
+            || self.can_connector_write
+            || self.can_authorize
+            || self.can_approve
+            || self.can_dispatch
+            || self.can_execute_simulation
+            || self.can_execute_protected_mutation
+            || self.can_update_memory_persona_emotion
+            || self.can_promote_provider_model_router
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Stage11RouteCandidateInput {
+    pub reasoning_id: String,
+    pub router_id: String,
+    pub candidate_kind: Stage11RouteCandidateKind,
+    pub capability_map_disposition: Stage11CapabilityMapDisposition,
+    pub capability_id: Option<String>,
+    pub capability_map_id: Option<String>,
+    pub tool_candidate_id: Option<String>,
+    pub simulation_candidate_id: Option<String>,
+    pub simulation_catalog_ref: Option<String>,
+    pub simulation_finder_ref: Option<String>,
+    pub route_clarification_id: Option<String>,
+    pub route_rejection_id: Option<String>,
+    pub audit_id: Option<String>,
+    pub public_read_only: bool,
+    pub protected_action: bool,
+    pub requires_stage12_gate: bool,
+    pub candidate_can_search_now: bool,
+    pub candidate_can_call_provider_now: bool,
+    pub candidate_can_call_tool_now: bool,
+    pub candidate_can_connector_write_now: bool,
+    pub candidate_can_dispatch_now: bool,
+    pub candidate_can_execute_now: bool,
+    pub candidate_can_authorize_now: bool,
+    pub candidate_can_mutate_now: bool,
+}
+
+impl Stage11RouteCandidateInput {
+    pub fn reasoning_trace(
+        reasoning_id: impl Into<String>,
+        router_id: impl Into<String>,
+        audit_id: impl Into<String>,
+    ) -> Self {
+        Self {
+            reasoning_id: reasoning_id.into(),
+            router_id: router_id.into(),
+            candidate_kind: Stage11RouteCandidateKind::ReasoningTraceOnly,
+            capability_map_disposition: Stage11CapabilityMapDisposition::ActiveDeclarative,
+            capability_id: None,
+            capability_map_id: None,
+            tool_candidate_id: None,
+            simulation_candidate_id: None,
+            simulation_catalog_ref: None,
+            simulation_finder_ref: None,
+            route_clarification_id: None,
+            route_rejection_id: None,
+            audit_id: Some(audit_id.into()),
+            public_read_only: false,
+            protected_action: false,
+            requires_stage12_gate: false,
+            candidate_can_search_now: false,
+            candidate_can_call_provider_now: false,
+            candidate_can_call_tool_now: false,
+            candidate_can_connector_write_now: false,
+            candidate_can_dispatch_now: false,
+            candidate_can_execute_now: false,
+            candidate_can_authorize_now: false,
+            candidate_can_mutate_now: false,
+        }
+    }
+
+    pub fn public_read_only_tool(
+        reasoning_id: impl Into<String>,
+        router_id: impl Into<String>,
+        capability_id: impl Into<String>,
+        capability_map_id: impl Into<String>,
+        tool_candidate_id: impl Into<String>,
+        audit_id: impl Into<String>,
+    ) -> Self {
+        Self {
+            capability_id: Some(capability_id.into()),
+            capability_map_id: Some(capability_map_id.into()),
+            tool_candidate_id: Some(tool_candidate_id.into()),
+            public_read_only: true,
+            ..Self::reasoning_trace(reasoning_id, router_id, audit_id)
+        }
+        .with_candidate_kind(Stage11RouteCandidateKind::PublicReadOnlyToolCandidate)
+    }
+
+    pub fn protected_action(
+        reasoning_id: impl Into<String>,
+        router_id: impl Into<String>,
+        capability_id: impl Into<String>,
+        capability_map_id: impl Into<String>,
+        tool_candidate_id: impl Into<String>,
+        audit_id: impl Into<String>,
+    ) -> Self {
+        Self {
+            capability_id: Some(capability_id.into()),
+            capability_map_id: Some(capability_map_id.into()),
+            tool_candidate_id: Some(tool_candidate_id.into()),
+            protected_action: true,
+            requires_stage12_gate: true,
+            ..Self::reasoning_trace(reasoning_id, router_id, audit_id)
+        }
+        .with_candidate_kind(Stage11RouteCandidateKind::ProtectedActionCandidate)
+    }
+
+    pub fn simulation_candidate(
+        reasoning_id: impl Into<String>,
+        router_id: impl Into<String>,
+        capability_id: impl Into<String>,
+        capability_map_id: impl Into<String>,
+        simulation_candidate_id: impl Into<String>,
+        simulation_catalog_ref: impl Into<String>,
+        simulation_finder_ref: impl Into<String>,
+        audit_id: impl Into<String>,
+    ) -> Self {
+        Self {
+            capability_id: Some(capability_id.into()),
+            capability_map_id: Some(capability_map_id.into()),
+            simulation_candidate_id: Some(simulation_candidate_id.into()),
+            simulation_catalog_ref: Some(simulation_catalog_ref.into()),
+            simulation_finder_ref: Some(simulation_finder_ref.into()),
+            protected_action: true,
+            requires_stage12_gate: true,
+            ..Self::reasoning_trace(reasoning_id, router_id, audit_id)
+        }
+        .with_candidate_kind(Stage11RouteCandidateKind::SimulationCandidate)
+    }
+
+    pub fn clarification(
+        reasoning_id: impl Into<String>,
+        router_id: impl Into<String>,
+        route_clarification_id: impl Into<String>,
+        audit_id: impl Into<String>,
+    ) -> Self {
+        Self {
+            route_clarification_id: Some(route_clarification_id.into()),
+            ..Self::reasoning_trace(reasoning_id, router_id, audit_id)
+        }
+        .with_candidate_kind(Stage11RouteCandidateKind::Clarification)
+    }
+
+    pub fn with_capability_disposition(
+        mut self,
+        capability_map_disposition: Stage11CapabilityMapDisposition,
+        route_rejection_id: impl Into<String>,
+    ) -> Self {
+        self.capability_map_disposition = capability_map_disposition;
+        self.route_rejection_id = Some(route_rejection_id.into());
+        self
+    }
+
+    const fn with_candidate_kind(mut self, candidate_kind: Stage11RouteCandidateKind) -> Self {
+        self.candidate_kind = candidate_kind;
+        self
+    }
+}
+
+impl Validate for Stage11RouteCandidateInput {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        validate_stage4_ref(
+            "stage11_route_candidate_input.reasoning_id",
+            &self.reasoning_id,
+        )?;
+        validate_stage4_ref("stage11_route_candidate_input.router_id", &self.router_id)?;
+        validate_stage4_optional_ref(
+            "stage11_route_candidate_input.capability_id",
+            self.capability_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage11_route_candidate_input.capability_map_id",
+            self.capability_map_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage11_route_candidate_input.tool_candidate_id",
+            self.tool_candidate_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage11_route_candidate_input.simulation_candidate_id",
+            self.simulation_candidate_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage11_route_candidate_input.simulation_catalog_ref",
+            self.simulation_catalog_ref.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage11_route_candidate_input.simulation_finder_ref",
+            self.simulation_finder_ref.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage11_route_candidate_input.route_clarification_id",
+            self.route_clarification_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage11_route_candidate_input.route_rejection_id",
+            self.route_rejection_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage11_route_candidate_input.audit_id",
+            self.audit_id.as_deref(),
+        )?;
+        if self.candidate_kind.requires_capability()
+            && (self.capability_id.is_none() || self.capability_map_id.is_none())
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage11_route_candidate_input.capability",
+                reason: "capability candidates require capability and capability-map ids",
+            });
+        }
+        if self.candidate_kind.is_public_read_only()
+            && (!self.public_read_only
+                || self.protected_action
+                || self.requires_stage12_gate
+                || self.tool_candidate_id.is_none())
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage11_route_candidate_input.public_read_only",
+                reason: "public read-only candidates must stay read-only and non-authoritative",
+            });
+        }
+        if self.candidate_kind == Stage11RouteCandidateKind::ProtectedActionCandidate
+            && (!self.protected_action
+                || self.public_read_only
+                || !self.requires_stage12_gate
+                || self.tool_candidate_id.is_none())
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage11_route_candidate_input.protected_action",
+                reason: "protected-action candidates must require Stage 12 gates",
+            });
+        }
+        if self.candidate_kind.is_simulation_candidate()
+            && (!self.protected_action
+                || !self.requires_stage12_gate
+                || self.simulation_candidate_id.is_none()
+                || self.simulation_catalog_ref.is_none()
+                || self.simulation_finder_ref.is_none())
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage11_route_candidate_input.simulation_candidate",
+                reason:
+                    "simulation candidates require inert catalog/finder refs and Stage 12 gates",
+            });
+        }
+        if self.candidate_kind == Stage11RouteCandidateKind::Clarification
+            && self.route_clarification_id.is_none()
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage11_route_candidate_input.route_clarification_id",
+                reason: "clarification route requires one bounded clarification id",
+            });
+        }
+        if !self.capability_map_disposition.is_active_declarative()
+            && self.route_rejection_id.is_none()
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage11_route_candidate_input.route_rejection_id",
+                reason: "capability-map blocks require a rejection reason reference",
+            });
+        }
+        if self.candidate_can_search_now
+            || self.candidate_can_call_provider_now
+            || self.candidate_can_call_tool_now
+            || self.candidate_can_connector_write_now
+            || self.candidate_can_dispatch_now
+            || self.candidate_can_execute_now
+            || self.candidate_can_authorize_now
+            || self.candidate_can_mutate_now
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage11_route_candidate_input",
+                reason: "Stage 11A candidates are inert and cannot execute, dispatch, call tools/providers, search, authorize, connector-write, or mutate",
+            });
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Stage11ReasoningRouterPacket {
+    pub session_id: SessionId,
+    pub turn_id: Option<TurnId>,
+    pub activation_id: Option<String>,
+    pub understanding_id: String,
+    pub reasoning_id: String,
+    pub router_id: String,
+    pub capability_id: Option<String>,
+    pub capability_map_id: Option<String>,
+    pub tool_candidate_id: Option<String>,
+    pub simulation_candidate_id: Option<String>,
+    pub simulation_catalog_ref: Option<String>,
+    pub simulation_finder_ref: Option<String>,
+    pub access_context_id: Option<String>,
+    pub policy_context_id: Option<String>,
+    pub voice_identity_id: Option<String>,
+    pub audit_id: Option<String>,
+    pub reason_code: &'static str,
+    pub candidate_kind: Stage11RouteCandidateKind,
+    pub capability_map_disposition: Stage11CapabilityMapDisposition,
+    pub disposition: Stage11RouterDisposition,
+    pub stage10_disposition: Stage10UnderstandingDisposition,
+    pub stage5_turn_disposition: Stage5TurnAuthorityDisposition,
+    pub stage6_access_disposition: Stage6AccessContextDisposition,
+    pub stage8_input_kind: Stage10UnderstandingInputKind,
+    pub stage9_posture_disposition: Option<Stage9VoiceIdentityDisposition>,
+    pub protected_slot_disposition: Stage10ProtectedSlotDisposition,
+    pub public_read_only: bool,
+    pub protected_action: bool,
+    pub requires_stage12_gate: bool,
+    pub route_clarification_id: Option<String>,
+    pub route_rejection_id: Option<String>,
+    pub work_authority: Stage11ReasoningWorkAuthority,
+}
+
+impl Stage11ReasoningRouterPacket {
+    pub fn from_stage10_understanding(
+        understanding: &Stage10UnderstandingPacket,
+        candidate: Stage11RouteCandidateInput,
+    ) -> Result<Self, ContractViolation> {
+        understanding.validate()?;
+        candidate.validate()?;
+        let disposition = Self::decide_disposition(understanding, &candidate);
+        let packet = Self {
+            session_id: understanding.session_id,
+            turn_id: understanding.turn_id,
+            activation_id: understanding.activation_id.clone(),
+            understanding_id: understanding.understanding_id.clone(),
+            reasoning_id: candidate.reasoning_id,
+            router_id: candidate.router_id,
+            capability_id: candidate.capability_id,
+            capability_map_id: candidate.capability_map_id,
+            tool_candidate_id: candidate.tool_candidate_id,
+            simulation_candidate_id: candidate.simulation_candidate_id,
+            simulation_catalog_ref: candidate.simulation_catalog_ref,
+            simulation_finder_ref: candidate.simulation_finder_ref,
+            access_context_id: understanding.access_context_id.clone(),
+            policy_context_id: None,
+            voice_identity_id: understanding.voice_identity_id.clone(),
+            audit_id: candidate
+                .audit_id
+                .or_else(|| understanding.audit_id.clone()),
+            reason_code: disposition.default_reason_code(),
+            candidate_kind: candidate.candidate_kind,
+            capability_map_disposition: candidate.capability_map_disposition,
+            disposition,
+            stage10_disposition: understanding.disposition,
+            stage5_turn_disposition: understanding.stage5_turn_disposition,
+            stage6_access_disposition: understanding.stage6_access_disposition,
+            stage8_input_kind: understanding.input_kind,
+            stage9_posture_disposition: understanding.stage9_posture_disposition,
+            protected_slot_disposition: understanding.protected_slot_disposition,
+            public_read_only: candidate.public_read_only,
+            protected_action: candidate.protected_action,
+            requires_stage12_gate: candidate.requires_stage12_gate,
+            route_clarification_id: candidate.route_clarification_id,
+            route_rejection_id: candidate.route_rejection_id,
+            work_authority: Self::work_authority_for(disposition),
+        };
+        packet.validate()?;
+        Ok(packet)
+    }
+
+    pub const fn can_route_or_mutate(&self) -> bool {
+        self.work_authority.can_route_or_mutate()
+    }
+
+    fn decide_disposition(
+        understanding: &Stage10UnderstandingPacket,
+        candidate: &Stage11RouteCandidateInput,
+    ) -> Stage11RouterDisposition {
+        if understanding.stage5_turn_disposition
+            != Stage5TurnAuthorityDisposition::CurrentCommittedTurn
+        {
+            return Stage11RouterDisposition::Stage5AuthorityBlocked;
+        }
+        if understanding.input_kind == Stage10UnderstandingInputKind::RecordArtifactOnly {
+            return Stage11RouterDisposition::RecordArtifactOnly;
+        }
+        if !understanding.input_kind.can_update_understanding() {
+            return Stage11RouterDisposition::UnsafeOrStaleInputBlocked;
+        }
+        if understanding.voice_posture_context
+            == Stage10VoicePostureContextKind::UnsafePostureBlocked
+        {
+            return Stage11RouterDisposition::UnsafeVoicePostureBlocked;
+        }
+        if matches!(
+            understanding.disposition,
+            Stage10UnderstandingDisposition::Stage5AuthorityBlocked
+                | Stage10UnderstandingDisposition::Stage6AccessContextBlocked
+                | Stage10UnderstandingDisposition::Stage8InputBlocked
+                | Stage10UnderstandingDisposition::Stage9PostureBlocked
+                | Stage10UnderstandingDisposition::RecordArtifactOnly
+                | Stage10UnderstandingDisposition::MeaningReconstructionRejected
+                | Stage10UnderstandingDisposition::ProtectedSlotFailClosed
+        ) || !understanding.can_update_understanding()
+        {
+            return Stage11RouterDisposition::Stage10UnderstandingBlocked;
+        }
+        if understanding
+            .protected_slot_disposition
+            .blocks_final_understanding()
+            || !understanding.protected_slot_uncertainties.is_empty()
+        {
+            return Stage11RouterDisposition::ProtectedSlotUncertain;
+        }
+        if matches!(
+            understanding.disposition,
+            Stage10UnderstandingDisposition::ClarificationRequired
+                | Stage10UnderstandingDisposition::ProtectedSlotClarificationRequired
+        ) || candidate.candidate_kind == Stage11RouteCandidateKind::Clarification
+        {
+            return Stage11RouterDisposition::ClarificationRequired;
+        }
+        match candidate.capability_map_disposition {
+            Stage11CapabilityMapDisposition::ActiveDeclarative => {}
+            Stage11CapabilityMapDisposition::Missing => {
+                return Stage11RouterDisposition::MissingCapabilityFailClosed;
+            }
+            Stage11CapabilityMapDisposition::Disabled => {
+                return Stage11RouterDisposition::DisabledCapabilityFailClosed;
+            }
+            Stage11CapabilityMapDisposition::DriftDetected => {
+                return Stage11RouterDisposition::CapabilityDriftFailClosed;
+            }
+            Stage11CapabilityMapDisposition::TenantWorkspaceMismatch => {
+                return Stage11RouterDisposition::TenantWorkspaceMismatchFailClosed;
+            }
+        }
+        if candidate.candidate_kind.is_protected_action()
+            && understanding.stage6_access_disposition
+                != Stage6AccessContextDisposition::ProtectedContextReady
+        {
+            return Stage11RouterDisposition::Stage6AccessBlocked;
+        }
+        match candidate.candidate_kind {
+            Stage11RouteCandidateKind::ReasoningTraceOnly => {
+                Stage11RouterDisposition::ReasoningTraceReady
+            }
+            Stage11RouteCandidateKind::Clarification => {
+                Stage11RouterDisposition::ClarificationRequired
+            }
+            Stage11RouteCandidateKind::PublicReadOnlyToolCandidate => {
+                Stage11RouterDisposition::PublicReadOnlyCandidate
+            }
+            Stage11RouteCandidateKind::ProtectedActionCandidate => {
+                Stage11RouterDisposition::ProtectedActionBlockedUntilStage12
+            }
+            Stage11RouteCandidateKind::SimulationCandidate => {
+                Stage11RouterDisposition::SimulationCandidateInertHandoff
+            }
+        }
+    }
+
+    const fn work_authority_for(
+        disposition: Stage11RouterDisposition,
+    ) -> Stage11ReasoningWorkAuthority {
+        match disposition {
+            Stage11RouterDisposition::ReasoningTraceReady => {
+                Stage11ReasoningWorkAuthority::reasoning_trace_only()
+            }
+            Stage11RouterDisposition::PublicReadOnlyCandidate => {
+                Stage11ReasoningWorkAuthority::public_read_only_candidate()
+            }
+            Stage11RouterDisposition::ProtectedActionBlockedUntilStage12 => {
+                Stage11ReasoningWorkAuthority::protected_action_candidate()
+            }
+            Stage11RouterDisposition::SimulationCandidateInertHandoff => {
+                Stage11ReasoningWorkAuthority::simulation_candidate()
+            }
+            Stage11RouterDisposition::ClarificationRequired => {
+                Stage11ReasoningWorkAuthority::clarification_only()
+            }
+            _ => Stage11ReasoningWorkAuthority::blocked(),
+        }
+    }
+}
+
+impl Validate for Stage11ReasoningRouterPacket {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        validate_stage4_optional_ref(
+            "stage11_reasoning_router_packet.activation_id",
+            self.activation_id.as_deref(),
+        )?;
+        validate_stage4_ref(
+            "stage11_reasoning_router_packet.understanding_id",
+            &self.understanding_id,
+        )?;
+        validate_stage4_ref(
+            "stage11_reasoning_router_packet.reasoning_id",
+            &self.reasoning_id,
+        )?;
+        validate_stage4_ref("stage11_reasoning_router_packet.router_id", &self.router_id)?;
+        validate_stage4_optional_ref(
+            "stage11_reasoning_router_packet.capability_id",
+            self.capability_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage11_reasoning_router_packet.capability_map_id",
+            self.capability_map_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage11_reasoning_router_packet.tool_candidate_id",
+            self.tool_candidate_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage11_reasoning_router_packet.simulation_candidate_id",
+            self.simulation_candidate_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage11_reasoning_router_packet.simulation_catalog_ref",
+            self.simulation_catalog_ref.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage11_reasoning_router_packet.simulation_finder_ref",
+            self.simulation_finder_ref.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage11_reasoning_router_packet.access_context_id",
+            self.access_context_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage11_reasoning_router_packet.policy_context_id",
+            self.policy_context_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage11_reasoning_router_packet.voice_identity_id",
+            self.voice_identity_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage11_reasoning_router_packet.audit_id",
+            self.audit_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage11_reasoning_router_packet.route_clarification_id",
+            self.route_clarification_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage11_reasoning_router_packet.route_rejection_id",
+            self.route_rejection_id.as_deref(),
+        )?;
+        if self.reason_code != self.disposition.default_reason_code() {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage11_reasoning_router_packet.reason_code",
+                reason: "must match Stage 11 router disposition",
+            });
+        }
+        if self.work_authority.can_route_or_mutate() {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage11_reasoning_router_packet.work_authority",
+                reason: "reasoning/router/tool-selection cannot execute, search, speak, call providers, call tools, authorize, connector-write, dispatch, mutate, or promote providers",
+            });
+        }
+        if self.stage5_turn_disposition != Stage5TurnAuthorityDisposition::CurrentCommittedTurn
+            && self.disposition.is_candidate_disposition()
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage11_reasoning_router_packet.stage5_turn_disposition",
+                reason: "stale/cancelled/superseded/closed turns cannot emit router candidates",
+            });
+        }
+        if !self.stage8_input_kind.can_update_understanding()
+            && self.disposition.is_candidate_disposition()
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage11_reasoning_router_packet.stage8_input_kind",
+                reason: "partial, VAD-only, audio-scene-only, record, or unsafe voice input cannot route",
+            });
+        }
+        if self.protected_slot_disposition.blocks_final_understanding()
+            && self.disposition.is_candidate_disposition()
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage11_reasoning_router_packet.protected_slot_disposition",
+                reason: "protected-slot uncertainty must clarify or fail closed before routing",
+            });
+        }
+        if self.candidate_kind.requires_capability()
+            && (self.capability_id.is_none() || self.capability_map_id.is_none())
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage11_reasoning_router_packet.capability",
+                reason: "candidate routes require declarative PH1.ECM capability refs",
+            });
+        }
+        if self.candidate_kind.is_public_read_only() {
+            if !self.public_read_only || self.protected_action || self.requires_stage12_gate {
+                return Err(ContractViolation::InvalidValue {
+                    field: "stage11_reasoning_router_packet.public_read_only",
+                    reason:
+                        "public read-only candidates cannot become protected authority or mutation",
+                });
+            }
+            if self.disposition == Stage11RouterDisposition::PublicReadOnlyCandidate
+                && (!self.work_authority.can_emit_public_read_only_candidate
+                    || self.work_authority.can_emit_protected_action_candidate)
+            {
+                return Err(ContractViolation::InvalidValue {
+                    field: "stage11_reasoning_router_packet.public_read_only",
+                    reason:
+                        "public read-only candidate disposition must emit only read-only candidates",
+                });
+            }
+        }
+        if self.candidate_kind == Stage11RouteCandidateKind::ProtectedActionCandidate {
+            if !self.protected_action || self.public_read_only || !self.requires_stage12_gate {
+                return Err(ContractViolation::InvalidValue {
+                    field: "stage11_reasoning_router_packet.protected_action",
+                    reason: "protected-action candidates are inert until Stage 12 authority gates",
+                });
+            }
+            if self.disposition == Stage11RouterDisposition::ProtectedActionBlockedUntilStage12
+                && (!self.work_authority.can_emit_protected_action_candidate
+                    || self.work_authority.can_execute_protected_mutation)
+            {
+                return Err(ContractViolation::InvalidValue {
+                    field: "stage11_reasoning_router_packet.protected_action",
+                    reason: "protected-action candidate disposition must stay inert until Stage 12",
+                });
+            }
+        }
+        if self.candidate_kind.is_simulation_candidate() {
+            if self.simulation_candidate_id.is_none()
+                || self.simulation_catalog_ref.is_none()
+                || self.simulation_finder_ref.is_none()
+                || !self.requires_stage12_gate
+            {
+                return Err(ContractViolation::InvalidValue {
+                    field: "stage11_reasoning_router_packet.simulation_candidate",
+                    reason: "simulation candidates cannot dispatch or execute themselves",
+                });
+            }
+            if self.disposition == Stage11RouterDisposition::SimulationCandidateInertHandoff
+                && (!self.work_authority.can_emit_simulation_candidate
+                    || self.work_authority.can_dispatch
+                    || self.work_authority.can_execute_simulation)
+            {
+                return Err(ContractViolation::InvalidValue {
+                    field: "stage11_reasoning_router_packet.simulation_candidate",
+                    reason: "simulation candidate handoff must remain inert before Stage 12",
+                });
+            }
+        }
+        if matches!(
+            self.capability_map_disposition,
+            Stage11CapabilityMapDisposition::Missing
+                | Stage11CapabilityMapDisposition::Disabled
+                | Stage11CapabilityMapDisposition::DriftDetected
+                | Stage11CapabilityMapDisposition::TenantWorkspaceMismatch
+        ) && self.disposition.is_candidate_disposition()
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage11_reasoning_router_packet.capability_map_disposition",
+                reason: "missing/disabled/drifted/mismatched capability maps fail closed",
+            });
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RawTurnPayload {
     Text {
@@ -11413,6 +12360,291 @@ mod tests {
         let mut drift = packet;
         drift.language_context_advisory_only = false;
         assert!(drift.validate().is_err());
+    }
+
+    fn stage11_ready_understanding() -> Stage10UnderstandingPacket {
+        let authority = stage8_current_authority();
+        let access = stage9_access_context(&authority);
+        let transcript_gate = stage9_final_transcript_gate(authority.clone());
+        let voice_posture = stage10_verified_voice_posture(&authority, &access, &transcript_gate);
+
+        Stage10UnderstandingPacket::from_stage_references(
+            &authority,
+            &access,
+            Some(&transcript_gate),
+            Some(&voice_posture),
+            stage10_understanding_input(),
+        )
+        .expect("stage11 ready understanding")
+    }
+
+    #[test]
+    fn stage_11a_public_read_only_tool_candidate_is_inert() {
+        let understanding = stage11_ready_understanding();
+        let packet = Stage11ReasoningRouterPacket::from_stage10_understanding(
+            &understanding,
+            Stage11RouteCandidateInput::public_read_only_tool(
+                "reasoning-stage11-public",
+                "router-stage11-public",
+                "capability-stage11-public",
+                "capability-map-stage11-public",
+                "tool-candidate-stage11-public",
+                "audit-stage11-public",
+            ),
+        )
+        .expect("stage11 public read-only candidate");
+
+        assert_eq!(
+            packet.disposition,
+            Stage11RouterDisposition::PublicReadOnlyCandidate
+        );
+        assert!(packet.public_read_only);
+        assert!(!packet.protected_action);
+        assert!(packet.work_authority.can_emit_tool_selection_candidate);
+        assert!(packet.work_authority.can_emit_public_read_only_candidate);
+        assert!(!packet.can_route_or_mutate());
+        assert!(!packet.work_authority.can_search);
+        assert!(!packet.work_authority.can_call_tools);
+        assert!(!packet.work_authority.can_call_providers);
+        assert!(!packet.work_authority.can_connector_write);
+        assert!(!packet.work_authority.can_authorize);
+        assert!(!packet.work_authority.can_dispatch);
+        assert!(!packet.work_authority.can_execute_protected_mutation);
+
+        let mut drift = packet;
+        drift.work_authority.can_call_tools = true;
+        assert!(drift.validate().is_err());
+    }
+
+    #[test]
+    fn stage_11a_protected_action_candidate_waits_for_stage12() {
+        let understanding = stage11_ready_understanding();
+        let packet = Stage11ReasoningRouterPacket::from_stage10_understanding(
+            &understanding,
+            Stage11RouteCandidateInput::protected_action(
+                "reasoning-stage11-protected",
+                "router-stage11-protected",
+                "capability-stage11-protected",
+                "capability-map-stage11-protected",
+                "tool-candidate-stage11-protected",
+                "audit-stage11-protected",
+            ),
+        )
+        .expect("stage11 protected action candidate");
+
+        assert_eq!(
+            packet.disposition,
+            Stage11RouterDisposition::ProtectedActionBlockedUntilStage12
+        );
+        assert!(packet.protected_action);
+        assert!(packet.requires_stage12_gate);
+        assert!(packet.work_authority.can_emit_protected_action_candidate);
+        assert!(!packet.work_authority.can_approve);
+        assert!(!packet.work_authority.can_authorize);
+        assert!(!packet.work_authority.can_dispatch);
+        assert!(!packet.work_authority.can_execute_protected_mutation);
+        assert!(!packet.can_route_or_mutate());
+    }
+
+    #[test]
+    fn stage_11a_simulation_candidate_handoff_is_inert() {
+        let understanding = stage11_ready_understanding();
+        let packet = Stage11ReasoningRouterPacket::from_stage10_understanding(
+            &understanding,
+            Stage11RouteCandidateInput::simulation_candidate(
+                "reasoning-stage11-sim",
+                "router-stage11-sim",
+                "capability-stage11-sim",
+                "capability-map-stage11-sim",
+                "simulation-candidate-stage11",
+                "simulation-catalog-stage11",
+                "simulation-finder-stage11",
+                "audit-stage11-sim",
+            ),
+        )
+        .expect("stage11 simulation candidate");
+
+        assert_eq!(
+            packet.disposition,
+            Stage11RouterDisposition::SimulationCandidateInertHandoff
+        );
+        assert!(packet.protected_action);
+        assert!(packet.requires_stage12_gate);
+        assert!(packet.work_authority.can_emit_simulation_candidate);
+        assert!(!packet.work_authority.can_dispatch);
+        assert!(!packet.work_authority.can_execute_simulation);
+        assert!(!packet.work_authority.can_execute_protected_mutation);
+        assert!(!packet.can_route_or_mutate());
+    }
+
+    #[test]
+    fn stage_11a_unsafe_uncertain_and_stale_inputs_do_not_route() {
+        let authority = stage8_current_authority();
+        let access = stage9_access_context(&authority);
+        let partial = Stage8TranscriptGatePacket::partial_transcript_preview(
+            stage8_explicit_mic_activation(Some(SessionId(88))),
+            "audio-scene-stage11-partial",
+            "transcript-stage11-partial",
+            "hello",
+            8_000,
+            1,
+        )
+        .expect("stage11 partial");
+        let partial_understanding = Stage10UnderstandingPacket::from_stage_references(
+            &authority,
+            &access,
+            Some(&partial),
+            None,
+            stage10_understanding_input(),
+        )
+        .expect("stage11 partial understanding");
+        let partial_route = Stage11ReasoningRouterPacket::from_stage10_understanding(
+            &partial_understanding,
+            Stage11RouteCandidateInput::public_read_only_tool(
+                "reasoning-stage11-partial",
+                "router-stage11-partial",
+                "capability-stage11-partial",
+                "capability-map-stage11-partial",
+                "tool-candidate-stage11-partial",
+                "audit-stage11-partial",
+            ),
+        )
+        .expect("stage11 partial route");
+        assert_eq!(
+            partial_route.disposition,
+            Stage11RouterDisposition::UnsafeOrStaleInputBlocked
+        );
+        assert!(!partial_route.work_authority.can_emit_router_candidate);
+
+        let uncertainty = Stage10ProtectedSlotUncertainty::v1(
+            Stage8ProtectedSlotKind::Recipient,
+            "recipient",
+            Some("evidence-span-stage11-recipient".to_string()),
+            4_000,
+        )
+        .expect("stage11 uncertainty");
+        let uncertain_input = Stage10UnderstandingInput {
+            understanding_id: "understanding-stage11-uncertain".to_string(),
+            committed_text_hash: stage8_exact_transcript_hash("send it"),
+            intent_id: None,
+            slot_id: None,
+            semantic_frame_id: None,
+            language_context_id: None,
+            pronunciation_context_id: None,
+            ambiguity_id: Some("ambiguity-stage11-recipient".to_string()),
+            protected_slot_disposition: Stage10ProtectedSlotDisposition::ClarificationRequired,
+            protected_slot_uncertainties: vec![uncertainty],
+            meaning_reconstruction_candidate: None,
+            one_best_clarification_question_id: Some("clarify-stage11-recipient".to_string()),
+            language_context_advisory_only: true,
+            pronunciation_context_advisory_only: true,
+            audit_id: Some("audit-stage11-uncertain".to_string()),
+        };
+        let uncertain_understanding = Stage10UnderstandingPacket::from_stage_references(
+            &authority,
+            &access,
+            None,
+            None,
+            uncertain_input,
+        )
+        .expect("stage11 uncertain understanding");
+        let uncertain_route = Stage11ReasoningRouterPacket::from_stage10_understanding(
+            &uncertain_understanding,
+            Stage11RouteCandidateInput::protected_action(
+                "reasoning-stage11-uncertain",
+                "router-stage11-uncertain",
+                "capability-stage11-uncertain",
+                "capability-map-stage11-uncertain",
+                "tool-candidate-stage11-uncertain",
+                "audit-stage11-uncertain",
+            ),
+        )
+        .expect("stage11 uncertain route");
+        assert_eq!(
+            uncertain_route.disposition,
+            Stage11RouterDisposition::ProtectedSlotUncertain
+        );
+        assert!(
+            !uncertain_route
+                .work_authority
+                .can_emit_protected_action_candidate
+        );
+
+        let stale = Stage5TurnAuthorityPacket::quarantined(
+            SessionId(88),
+            Some(TurnId(8)),
+            Some("device-stage8".to_string()),
+            Some(4),
+            SessionState::Active,
+            Stage5TurnAuthorityDisposition::SupersededTurnQuarantined,
+        )
+        .expect("stage11 stale turn");
+        let stale_understanding = Stage10UnderstandingPacket::from_stage_references(
+            &stale,
+            &access,
+            None,
+            None,
+            stage10_understanding_input(),
+        )
+        .expect("stage11 stale understanding");
+        let stale_route = Stage11ReasoningRouterPacket::from_stage10_understanding(
+            &stale_understanding,
+            Stage11RouteCandidateInput::public_read_only_tool(
+                "reasoning-stage11-stale",
+                "router-stage11-stale",
+                "capability-stage11-stale",
+                "capability-map-stage11-stale",
+                "tool-candidate-stage11-stale",
+                "audit-stage11-stale",
+            ),
+        )
+        .expect("stage11 stale route");
+        assert_eq!(
+            stale_route.disposition,
+            Stage11RouterDisposition::Stage5AuthorityBlocked
+        );
+        assert!(!stale_route.work_authority.can_emit_router_candidate);
+    }
+
+    #[test]
+    fn stage_11a_capability_map_blocks_fail_closed() {
+        let understanding = stage11_ready_understanding();
+        for (status, expected) in [
+            (
+                Stage11CapabilityMapDisposition::Missing,
+                Stage11RouterDisposition::MissingCapabilityFailClosed,
+            ),
+            (
+                Stage11CapabilityMapDisposition::Disabled,
+                Stage11RouterDisposition::DisabledCapabilityFailClosed,
+            ),
+            (
+                Stage11CapabilityMapDisposition::DriftDetected,
+                Stage11RouterDisposition::CapabilityDriftFailClosed,
+            ),
+            (
+                Stage11CapabilityMapDisposition::TenantWorkspaceMismatch,
+                Stage11RouterDisposition::TenantWorkspaceMismatchFailClosed,
+            ),
+        ] {
+            let route = Stage11ReasoningRouterPacket::from_stage10_understanding(
+                &understanding,
+                Stage11RouteCandidateInput::public_read_only_tool(
+                    "reasoning-stage11-capability",
+                    "router-stage11-capability",
+                    "capability-stage11-capability",
+                    "capability-map-stage11-capability",
+                    "tool-candidate-stage11-capability",
+                    "audit-stage11-capability",
+                )
+                .with_capability_disposition(status, "route-reject-stage11-capability"),
+            )
+            .expect("stage11 capability block");
+            assert_eq!(route.disposition, expected);
+            assert!(route.work_authority.can_fail_closed);
+            assert!(!route.work_authority.can_emit_router_candidate);
+            assert!(!route.can_route_or_mutate());
+        }
     }
 
     #[test]
