@@ -158,3 +158,10 @@ Read capabilities emit audit only when explicit trace mode is enabled:
 
 - `MEM_QUERY_SAFE_SUMMARY` / memory-candidate outputs may feed PH1.EXPLAIN `HOW_KNOW` responses as bounded evidence refs only.
 - PH1.EXPLAIN must respect PH1.M sensitivity flags; sensitive quotes require refusal or explicit policy allowance.
+
+## Stage 16A Long-Term State Boundary Proof
+
+- `Stage16LongTermStatePacket` is the current runtime boundary carrier for memory/persona/emotion/preference handoff from Stage 15 output.
+- PH1.M, PH1.PERSONA, PH1.LEARN, PH1.FEEDBACK, PH1.KNOW, PH1.EMO.CORE/GUIDE, PH1.CONTEXT, and PH1.MULTI remain repo-truth engines; Stage 16A crosswalked them without creating duplicate long-term-state engines.
+- Memory write dispositions require evidence, consent, identity/user/tenant/project scope, policy allowance, PH1.J audit proof, and idempotency/replay safety. Memory reads remain scoped, redacted, stale-aware, revocation-aware, and non-authoritative.
+- Persona/preference/tone hints cannot change facts, meaning, policy, authority, routing, or execution; emotion/affect hints are advisory and non-diagnostic; learning/feedback cannot silently promote runtime/provider/model/router behavior.

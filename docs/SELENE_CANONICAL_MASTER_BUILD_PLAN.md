@@ -4,7 +4,7 @@ Status: CANONICAL_BUILD_ROADMAP
 Created: 2026-05-02
 Last Updated: 2026-05-04
 Repo Root: `/Users/selene/Documents/Selene-OS`
-Current Next Build: Stage 16A - Memory, Persona, Emotion, Preference, And Long-Term State Boundary Reconciliation
+Current Next Build: Stage 17A - TTS, Speech Output, Playback, Voice Style, And Audio Output Boundary Reconciliation
 
 ## Purpose
 
@@ -80,8 +80,8 @@ After every build, update this section before final reporting.
 |---|---|
 | Current active stage | Stage 16 |
 | Current active build | Stage 16A - Memory, Persona, Emotion, Preference, And Long-Term State Boundary Reconciliation |
-| Next build after current stage passes | Stage 16A - Memory, Persona, Emotion, Preference, And Long-Term State Boundary Reconciliation |
-| Last completed stage | Stage 15A - Response Writing, Tone, Clarification Discipline, And User-Facing Turn Output Reconciliation |
+| Next build after current stage passes | Stage 17A - TTS, Speech Output, Playback, Voice Style, And Audio Output Boundary Reconciliation |
+| Last completed stage | Stage 16A - Memory, Persona, Emotion, Preference, And Long-Term State Boundary Reconciliation |
 | Stages blocked | None yet |
 | Plan drift allowed | No |
 
@@ -2583,6 +2583,24 @@ Stage 15A proof update:
 Next if passed:
 
 - Stage 16A - Memory, Persona, Emotion, Preference, And Long-Term State Boundary Reconciliation.
+
+Stage 16A status: PROVEN_COMPLETE
+
+Stage 16A proof update:
+
+- Existing PH1.M, PH1.PERSONA, PH1.LEARN, PH1.FEEDBACK, PH1.KNOW, PH1.EMO.CORE, PH1.EMO.GUIDE, PH1.CONTEXT, PH1.MULTI, PH1.POLICY, PH1.ACCESS, PH1.TENANT, PH1.VOICE.ID, PH1.WRITE, PH1.X, PH1.J audit/proof-ledger, runtime law/governance, storage, adapter, and `web_search_plan/learn` surfaces were inspected and crosswalked rather than rebuilt as duplicate memory, persona, preference, emotion, feedback, knowledge, learning, context, or audit engines. PH1.FEEDBACK, PH1.KNOW, PH1.EMO.CORE, and PH1.EMO.GUIDE were real repo-truth carriers but required no Stage 16A edits under the allowlist safety rule. PH1.D/model-provider surfaces, native Swift files, and `simulation_executor.rs` remained inspect-only.
+- `Stage16LongTermStatePacket`, `Stage16LongTermStateInput`, `Stage16LongTermStateKind`, `Stage16LongTermStateDisposition`, and `Stage16LongTermStateWorkAuthority` provide the minimal runtime-owned long-term state boundary in `runtime_ingress_turn_foundation.rs`.
+- Stage 16A consumes only `Stage15ResponseOutputPacket`, explicit memory-eligible or bounded feedback/correction signals, Stage 5 current-turn/session authority, Stage 6 access context, Stage 9 receipt-safe Voice ID posture where relevant, Stage 10 advisory understanding, PH1.J audit/proof refs, and governed repo-truth equivalents. Raw provider output, raw search dumps, raw transcripts/audio, fake completions, unsupported claims, protected-action candidates, simulation candidates, approved execution plans, tone/style text alone, user-facing answer text alone, unsafe Voice ID posture, stale/cancelled/superseded/closed-session turns, record-artifact-only turns, and protected-slot uncertainty cannot become memory/persona/emotion/preference authority.
+- Memory write dispositions require explicit evidence, active consent, identity/user scope, tenant/project scope, policy allowance, PH1.J audit/proof refs, and idempotency/replay safety. Missing consent, revoked consent, missing scope, policy denial, missing audit proof, idempotency drift, or missing required confirmation fails closed. Memory reads/context bundles must be scoped, redacted, revocation-aware, stale-aware, and non-authoritative.
+- False, conflicting, stale, revoked, cross-project, cross-tenant, and wrong-user memory is blocked before it can affect current answer truth. Persona/preference/tone hints remain tone/delivery-only and cannot change facts, meaning, safety/refusal wording, policy, authority, routing, providers, tools, connector writes, protected execution, or silently persist new preferences from output alone. Emotion/affect hints remain advisory and bounded; they cannot infer protected identity, diagnose, authorize, override policy/refusal, or mutate long-term state without governed memory eligibility.
+- Learning and feedback signals are bounded post-turn evidence only. They must be auditable and rollbackable where repo truth supports it, cannot silently promote provider/model/router/runtime behavior, and cannot overwrite memory/persona/preference state without explicit eligibility.
+- Runtime mocks, fake memories, fake preferences, fake persona profiles, fake emotional state, and fake completions are blocked outside explicit fixture-only test paths. Stage 16A did not add live provider calls, live web search, live external tool calls, connector writes, protected execution, native UI behavior, live STT/TTS/playback, live Voice ID matching, provider-backed personalization, raw audio/biometric/secret exposure, fake long-term state, new business workflows, or duplicate long-term-state engines.
+- Memory/persona/preference/emotion/learning boundary proof, consent/scope/audit proof, false-memory/stale/project-leak fail-closed proof, and no-execution/no-runtime-mock proof are certified for Stage 16A. Live personalization quality, broad long-term-memory quality, automatic memory extraction quality, emotion quality, persona UX, human preference evaluation, production retention operations, live cross-device memory sync quality, and deeper Stage 21/29 memory/emotion product benchmarks remain deferred to later owning stages.
+- Stage 17A is ready to start. Broad Stage 16 remains partial, but memory/persona/emotion/preference and long-term state boundaries are complete enough for TTS, speech output, playback, voice style, and audio output boundaries to proceed without granting long-term state mutation or personalization authority.
+
+Next if passed:
+
+- Stage 17A - TTS, Speech Output, Playback, Voice Style, And Audio Output Boundary Reconciliation.
 
 ## Stage 14 - Web Search Enterprise Sublanes And Release Proof
 

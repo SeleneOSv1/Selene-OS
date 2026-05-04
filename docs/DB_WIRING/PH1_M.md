@@ -278,3 +278,10 @@ Payload discipline:
 ## 10) Blocker
 
 - `none`
+
+## 11) Stage 16A Long-Term State Boundary Proof
+
+- Stage 16A reuses PH1.M database truth as governed memory storage/context, not as automatic response-output mutation.
+- `Stage16LongTermStatePacket` crosswalks memory proposals, memory reads/context bundles, forget/revocation, stale/expiry, tenant/user/project scope, PH1.J audit proof, and consent/policy/idempotency gates before any memory write disposition can be emitted.
+- Stage 15 user-facing output text alone, tone/style text alone, raw provider/search/transcript/audio material, fake completions, unsafe Voice ID posture, stale/cancelled/closed turns, and record-artifact-only turns cannot become PH1.M write authority.
+- Memory reads remain scoped, redacted, stale-aware, revocation-aware, and non-authoritative; false, conflicting, stale, revoked, cross-project, cross-tenant, and wrong-user memory fails closed before affecting current answer truth.

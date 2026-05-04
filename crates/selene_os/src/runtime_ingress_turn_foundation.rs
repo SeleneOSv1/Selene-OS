@@ -170,8 +170,7 @@ mod reason_codes {
     pub const STAGE14_RUNTIME_MOCK_BLOCKED: &str = "stage14_runtime_mock_blocked";
     pub const STAGE14_AUDIT_PROOF_MISSING: &str = "stage14_audit_proof_missing";
     pub const STAGE15_RESPONSE_OUTPUT_READY: &str = "stage15_response_output_ready";
-    pub const STAGE15_STAGE14_PUBLIC_ANSWER_BLOCKED: &str =
-        "stage15_stage14_public_answer_blocked";
+    pub const STAGE15_STAGE14_PUBLIC_ANSWER_BLOCKED: &str = "stage15_stage14_public_answer_blocked";
     pub const STAGE15_NO_INVENTION_BLOCKED: &str = "stage15_no_invention_blocked";
     pub const STAGE15_CLARIFICATION_READY: &str = "stage15_clarification_ready";
     pub const STAGE15_CLARIFICATION_DISCIPLINE_BLOCKED: &str =
@@ -186,6 +185,24 @@ mod reason_codes {
     pub const STAGE15_UNSAFE_INPUT_BLOCKED: &str = "stage15_unsafe_input_blocked";
     pub const STAGE15_RUNTIME_MOCK_BLOCKED: &str = "stage15_runtime_mock_blocked";
     pub const STAGE15_AUDIT_PROOF_MISSING: &str = "stage15_audit_proof_missing";
+    pub const STAGE16_MEMORY_WRITE_READY: &str = "stage16_memory_write_ready";
+    pub const STAGE16_MEMORY_READ_READY: &str = "stage16_memory_read_ready";
+    pub const STAGE16_PERSONA_PREFERENCE_HINT_READY: &str = "stage16_persona_preference_hint_ready";
+    pub const STAGE16_EMOTION_AFFECT_HINT_READY: &str = "stage16_emotion_affect_hint_ready";
+    pub const STAGE16_LEARNING_FEEDBACK_READY: &str = "stage16_learning_feedback_ready";
+    pub const STAGE16_STAGE15_OUTPUT_BLOCKED: &str = "stage16_stage15_output_blocked";
+    pub const STAGE16_MEMORY_WRITE_GATE_BLOCKED: &str = "stage16_memory_write_gate_blocked";
+    pub const STAGE16_MEMORY_READ_SCOPE_BLOCKED: &str = "stage16_memory_read_scope_blocked";
+    pub const STAGE16_FALSE_MEMORY_BLOCKED: &str = "stage16_false_memory_blocked";
+    pub const STAGE16_STALE_OR_REVOKED_MEMORY_BLOCKED: &str =
+        "stage16_stale_or_revoked_memory_blocked";
+    pub const STAGE16_SCOPE_LEAK_BLOCKED: &str = "stage16_scope_leak_blocked";
+    pub const STAGE16_PERSONA_AUTHORITY_BLOCKED: &str = "stage16_persona_authority_blocked";
+    pub const STAGE16_EMOTION_AUTHORITY_BLOCKED: &str = "stage16_emotion_authority_blocked";
+    pub const STAGE16_LEARNING_PROMOTION_BLOCKED: &str = "stage16_learning_promotion_blocked";
+    pub const STAGE16_UNSAFE_INPUT_BLOCKED: &str = "stage16_unsafe_input_blocked";
+    pub const STAGE16_RUNTIME_MOCK_BLOCKED: &str = "stage16_runtime_mock_blocked";
+    pub const STAGE16_AUDIT_PROOF_MISSING: &str = "stage16_audit_proof_missing";
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -9762,7 +9779,8 @@ impl Stage15ResponseOutputInput {
         response_hash: impl Into<String>,
         audit_id: impl Into<String>,
     ) -> Self {
-        let mut input = Self::fixture_public_answer_ready(response_output_id, response_hash, audit_id);
+        let mut input =
+            Self::fixture_public_answer_ready(response_output_id, response_hash, audit_id);
         input.output_kind = Stage15ResponseOutputKind::Clarification;
         input.response_claims_supported_by_stage14 = false;
         input.citation_refs_bound_to_stage14 = false;
@@ -9778,7 +9796,8 @@ impl Stage15ResponseOutputInput {
         response_hash: impl Into<String>,
         audit_id: impl Into<String>,
     ) -> Self {
-        let mut input = Self::fixture_public_answer_ready(response_output_id, response_hash, audit_id);
+        let mut input =
+            Self::fixture_public_answer_ready(response_output_id, response_hash, audit_id);
         input.output_kind = Stage15ResponseOutputKind::RefusalFailClosed;
         input.response_claims_supported_by_stage14 = false;
         input.citation_refs_bound_to_stage14 = false;
@@ -9973,8 +9992,7 @@ impl Stage15ResponseOutputPacket {
             mutation_claim_present: input.mutation_claim_present,
             protected_execution_outcome_claim_present: input
                 .protected_execution_outcome_claim_present,
-            bounded_stage12_execution_proof_present: input
-                .bounded_stage12_execution_proof_present,
+            bounded_stage12_execution_proof_present: input.bounded_stage12_execution_proof_present,
             clarification_question_present: input.clarification_question_present,
             clarification_question_count: input.clarification_question_count,
             missing_field_count: input.missing_field_count,
@@ -9995,8 +10013,7 @@ impl Stage15ResponseOutputPacket {
             unsafe_identity_posture: input.unsafe_identity_posture,
             citation_refs_bound_to_stage14: input.citation_refs_bound_to_stage14,
             source_refs_bound_to_stage14: input.source_refs_bound_to_stage14,
-            response_detaches_claims_from_citations: input
-                .response_detaches_claims_from_citations,
+            response_detaches_claims_from_citations: input.response_detaches_claims_from_citations,
             raw_provider_output_present: input.raw_provider_output_present,
             raw_search_dump_present: input.raw_search_dump_present,
             raw_internal_trace_present: input.raw_internal_trace_present,
@@ -10048,8 +10065,7 @@ impl Stage15ResponseOutputPacket {
         {
             return Stage15ResponseOutputDisposition::ToneStyleBlocked;
         }
-        if input.protected_action_like_request
-            && input.harmless_public_output_for_protected_request
+        if input.protected_action_like_request && input.harmless_public_output_for_protected_request
         {
             return Stage15ResponseOutputDisposition::ProtectedOutputBlocked;
         }
@@ -10235,8 +10251,7 @@ impl Validate for Stage15ResponseOutputPacket {
                 reason: "provider-off output proof must preserve zero provider attempts and network dispatches",
             });
         }
-        if self.disposition.is_ready()
-            && (self.audit_id.is_none() || self.ph1j_proof_ref.is_none())
+        if self.disposition.is_ready() && (self.audit_id.is_none() || self.ph1j_proof_ref.is_none())
         {
             return Err(ContractViolation::InvalidValue {
                 field: "stage15_response_output_packet.audit_proof",
@@ -10322,6 +10337,1174 @@ impl Validate for Stage15ResponseOutputPacket {
                     return Err(ContractViolation::InvalidValue {
                         field: "stage15_response_output_packet.blocked_output",
                         reason: "blocked Stage 15A packets fail closed and cannot emit fake response, clarification, refusal, or completion output",
+                    });
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stage16LongTermStateKind {
+    MemoryWriteProposal,
+    MemoryReadContext,
+    PersonaPreferenceHint,
+    EmotionAffectHint,
+    LearningFeedbackSignal,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stage16LongTermStateDisposition {
+    MemoryWriteReady,
+    MemoryReadReady,
+    PersonaPreferenceHintReady,
+    EmotionAffectHintReady,
+    LearningFeedbackReady,
+    Stage15OutputBlocked,
+    MemoryWriteGateBlocked,
+    MemoryReadScopeBlocked,
+    FalseMemoryBlocked,
+    StaleOrRevokedMemoryBlocked,
+    ScopeLeakBlocked,
+    PersonaAuthorityBlocked,
+    EmotionAuthorityBlocked,
+    LearningPromotionBlocked,
+    UnsafeInputBlocked,
+    RuntimeMockBlocked,
+    AuditProofMissing,
+}
+
+impl Stage16LongTermStateDisposition {
+    pub const fn default_reason_code(self) -> &'static str {
+        match self {
+            Stage16LongTermStateDisposition::MemoryWriteReady => {
+                reason_codes::STAGE16_MEMORY_WRITE_READY
+            }
+            Stage16LongTermStateDisposition::MemoryReadReady => {
+                reason_codes::STAGE16_MEMORY_READ_READY
+            }
+            Stage16LongTermStateDisposition::PersonaPreferenceHintReady => {
+                reason_codes::STAGE16_PERSONA_PREFERENCE_HINT_READY
+            }
+            Stage16LongTermStateDisposition::EmotionAffectHintReady => {
+                reason_codes::STAGE16_EMOTION_AFFECT_HINT_READY
+            }
+            Stage16LongTermStateDisposition::LearningFeedbackReady => {
+                reason_codes::STAGE16_LEARNING_FEEDBACK_READY
+            }
+            Stage16LongTermStateDisposition::Stage15OutputBlocked => {
+                reason_codes::STAGE16_STAGE15_OUTPUT_BLOCKED
+            }
+            Stage16LongTermStateDisposition::MemoryWriteGateBlocked => {
+                reason_codes::STAGE16_MEMORY_WRITE_GATE_BLOCKED
+            }
+            Stage16LongTermStateDisposition::MemoryReadScopeBlocked => {
+                reason_codes::STAGE16_MEMORY_READ_SCOPE_BLOCKED
+            }
+            Stage16LongTermStateDisposition::FalseMemoryBlocked => {
+                reason_codes::STAGE16_FALSE_MEMORY_BLOCKED
+            }
+            Stage16LongTermStateDisposition::StaleOrRevokedMemoryBlocked => {
+                reason_codes::STAGE16_STALE_OR_REVOKED_MEMORY_BLOCKED
+            }
+            Stage16LongTermStateDisposition::ScopeLeakBlocked => {
+                reason_codes::STAGE16_SCOPE_LEAK_BLOCKED
+            }
+            Stage16LongTermStateDisposition::PersonaAuthorityBlocked => {
+                reason_codes::STAGE16_PERSONA_AUTHORITY_BLOCKED
+            }
+            Stage16LongTermStateDisposition::EmotionAuthorityBlocked => {
+                reason_codes::STAGE16_EMOTION_AUTHORITY_BLOCKED
+            }
+            Stage16LongTermStateDisposition::LearningPromotionBlocked => {
+                reason_codes::STAGE16_LEARNING_PROMOTION_BLOCKED
+            }
+            Stage16LongTermStateDisposition::UnsafeInputBlocked => {
+                reason_codes::STAGE16_UNSAFE_INPUT_BLOCKED
+            }
+            Stage16LongTermStateDisposition::RuntimeMockBlocked => {
+                reason_codes::STAGE16_RUNTIME_MOCK_BLOCKED
+            }
+            Stage16LongTermStateDisposition::AuditProofMissing => {
+                reason_codes::STAGE16_AUDIT_PROOF_MISSING
+            }
+        }
+    }
+
+    pub const fn is_ready(self) -> bool {
+        matches!(
+            self,
+            Stage16LongTermStateDisposition::MemoryWriteReady
+                | Stage16LongTermStateDisposition::MemoryReadReady
+                | Stage16LongTermStateDisposition::PersonaPreferenceHintReady
+                | Stage16LongTermStateDisposition::EmotionAffectHintReady
+                | Stage16LongTermStateDisposition::LearningFeedbackReady
+        )
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Stage16LongTermStateWorkAuthority {
+    pub can_emit_memory_write_disposition: bool,
+    pub can_emit_memory_read_context: bool,
+    pub can_emit_persona_preference_hint: bool,
+    pub can_emit_emotion_affect_hint: bool,
+    pub can_emit_learning_feedback_signal: bool,
+    pub can_hold_memory_refs: bool,
+    pub can_emit_audit_proof: bool,
+    pub can_emit_honest_uncertainty: bool,
+    pub can_fail_closed: bool,
+    pub can_mutate_external_state: bool,
+    pub can_connector_write: bool,
+    pub can_send_message: bool,
+    pub can_post_content: bool,
+    pub can_purchase: bool,
+    pub can_delete_remote: bool,
+    pub can_invite: bool,
+    pub can_schedule: bool,
+    pub can_approve: bool,
+    pub can_dispatch: bool,
+    pub can_execute_simulation: bool,
+    pub can_execute_protected_action: bool,
+    pub can_call_live_provider: bool,
+    pub can_run_live_search: bool,
+    pub can_call_live_external_tool: bool,
+    pub can_emit_tts: bool,
+    pub can_add_native_ui_behavior: bool,
+    pub can_promote_provider_model_router: bool,
+    pub can_change_output_truth_or_policy: bool,
+    pub can_update_memory_persona_emotion_without_governed_path: bool,
+}
+
+impl Stage16LongTermStateWorkAuthority {
+    pub const fn memory_write_ready() -> Self {
+        Self {
+            can_emit_memory_write_disposition: true,
+            can_hold_memory_refs: true,
+            can_emit_audit_proof: true,
+            can_emit_honest_uncertainty: false,
+            can_fail_closed: false,
+            ..Self::fail_closed()
+        }
+    }
+
+    pub const fn memory_read_ready() -> Self {
+        Self {
+            can_emit_memory_read_context: true,
+            can_hold_memory_refs: true,
+            can_emit_audit_proof: true,
+            can_emit_honest_uncertainty: false,
+            can_fail_closed: false,
+            ..Self::fail_closed()
+        }
+    }
+
+    pub const fn persona_preference_ready() -> Self {
+        Self {
+            can_emit_persona_preference_hint: true,
+            can_emit_audit_proof: true,
+            can_emit_honest_uncertainty: false,
+            can_fail_closed: false,
+            ..Self::fail_closed()
+        }
+    }
+
+    pub const fn emotion_affect_ready() -> Self {
+        Self {
+            can_emit_emotion_affect_hint: true,
+            can_emit_audit_proof: true,
+            can_emit_honest_uncertainty: false,
+            can_fail_closed: false,
+            ..Self::fail_closed()
+        }
+    }
+
+    pub const fn learning_feedback_ready() -> Self {
+        Self {
+            can_emit_learning_feedback_signal: true,
+            can_emit_audit_proof: true,
+            can_emit_honest_uncertainty: false,
+            can_fail_closed: false,
+            ..Self::fail_closed()
+        }
+    }
+
+    pub const fn fail_closed() -> Self {
+        Self {
+            can_emit_memory_write_disposition: false,
+            can_emit_memory_read_context: false,
+            can_emit_persona_preference_hint: false,
+            can_emit_emotion_affect_hint: false,
+            can_emit_learning_feedback_signal: false,
+            can_hold_memory_refs: false,
+            can_emit_audit_proof: false,
+            can_emit_honest_uncertainty: true,
+            can_fail_closed: true,
+            can_mutate_external_state: false,
+            can_connector_write: false,
+            can_send_message: false,
+            can_post_content: false,
+            can_purchase: false,
+            can_delete_remote: false,
+            can_invite: false,
+            can_schedule: false,
+            can_approve: false,
+            can_dispatch: false,
+            can_execute_simulation: false,
+            can_execute_protected_action: false,
+            can_call_live_provider: false,
+            can_run_live_search: false,
+            can_call_live_external_tool: false,
+            can_emit_tts: false,
+            can_add_native_ui_behavior: false,
+            can_promote_provider_model_router: false,
+            can_change_output_truth_or_policy: false,
+            can_update_memory_persona_emotion_without_governed_path: false,
+        }
+    }
+
+    pub const fn can_mutate_or_execute(self) -> bool {
+        self.can_mutate_external_state
+            || self.can_connector_write
+            || self.can_send_message
+            || self.can_post_content
+            || self.can_purchase
+            || self.can_delete_remote
+            || self.can_invite
+            || self.can_schedule
+            || self.can_approve
+            || self.can_dispatch
+            || self.can_execute_simulation
+            || self.can_execute_protected_action
+            || self.can_call_live_provider
+            || self.can_run_live_search
+            || self.can_call_live_external_tool
+            || self.can_emit_tts
+            || self.can_add_native_ui_behavior
+            || self.can_promote_provider_model_router
+            || self.can_change_output_truth_or_policy
+            || self.can_update_memory_persona_emotion_without_governed_path
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Stage16LongTermStateInput {
+    pub state_kind: Stage16LongTermStateKind,
+    pub long_term_state_id: String,
+    pub memory_id: Option<String>,
+    pub memory_proposal_id: Option<String>,
+    pub memory_context_bundle_id: Option<String>,
+    pub persona_profile_id: Option<String>,
+    pub preference_signal_id: Option<String>,
+    pub emotion_hint_id: Option<String>,
+    pub feedback_event_id: Option<String>,
+    pub learn_signal_bundle_id: Option<String>,
+    pub consent_state_id: Option<String>,
+    pub user_id: Option<String>,
+    pub project_id: Option<String>,
+    pub audit_id: Option<String>,
+    pub ph1j_proof_ref: Option<String>,
+    pub explicit_memory_eligible_evidence: bool,
+    pub bounded_feedback_or_correction_signal: bool,
+    pub consent_present: bool,
+    pub consent_revoked: bool,
+    pub identity_scope_present: bool,
+    pub tenant_scope_present: bool,
+    pub project_scope_present: bool,
+    pub policy_allows_state: bool,
+    pub audit_proof_present: bool,
+    pub idempotency_or_replay_safe: bool,
+    pub sensitive_requires_confirmation: bool,
+    pub required_confirmation_present: bool,
+    pub memory_read_scoped: bool,
+    pub memory_read_redacted: bool,
+    pub memory_read_revocation_aware: bool,
+    pub memory_read_stale_aware: bool,
+    pub memory_read_non_authoritative: bool,
+    pub unsupported_memory_claim_present: bool,
+    pub conflicting_memory_present: bool,
+    pub stale_memory_used_as_truth: bool,
+    pub revoked_memory_used: bool,
+    pub cross_project_memory_present: bool,
+    pub cross_tenant_memory_present: bool,
+    pub wrong_user_memory_present: bool,
+    pub persona_identity_scope_present: bool,
+    pub persona_tone_only: bool,
+    pub persona_changes_facts_or_meaning: bool,
+    pub persona_removes_safety_language: bool,
+    pub persona_grants_authority: bool,
+    pub persona_routes_or_executes: bool,
+    pub preference_persisted_from_output_only: bool,
+    pub emotion_advisory_bounded: bool,
+    pub emotion_infers_protected_identity: bool,
+    pub emotion_overrides_policy_or_refusal: bool,
+    pub emotion_authorizes_or_diagnoses: bool,
+    pub emotion_mutates_without_memory_eligibility: bool,
+    pub learning_post_turn_only: bool,
+    pub learning_versioned_auditable_rollbackable: bool,
+    pub learning_silent_runtime_promotion: bool,
+    pub learning_overwrites_state_without_eligibility: bool,
+    pub raw_provider_output_present: bool,
+    pub raw_search_dump_present: bool,
+    pub raw_transcript_or_audio_present: bool,
+    pub raw_voice_or_biometric_material_exposed: bool,
+    pub secrets_exposed: bool,
+    pub internal_trace_exposed: bool,
+    pub fake_completion_present: bool,
+    pub fake_memory_detected: bool,
+    pub fake_preference_detected: bool,
+    pub fake_persona_detected: bool,
+    pub fake_emotion_detected: bool,
+    pub runtime_mock_detected: bool,
+    pub fixture_only_test_path: bool,
+    pub protected_action_candidate_present: bool,
+    pub simulation_candidate_present: bool,
+    pub approved_execution_plan_present: bool,
+    pub tone_or_answer_text_only: bool,
+    pub unsafe_voice_identity_posture: bool,
+    pub stale_or_cancelled_or_closed_turn: bool,
+    pub record_artifact_only_turn: bool,
+    pub protected_slot_uncertain: bool,
+    pub attempted_live_provider_in_build: bool,
+    pub ran_live_search_in_build: bool,
+    pub called_live_external_tool_in_build: bool,
+    pub connector_write_requested: bool,
+}
+
+impl Stage16LongTermStateInput {
+    pub fn fixture_memory_write_ready(
+        long_term_state_id: impl Into<String>,
+        memory_proposal_id: impl Into<String>,
+        audit_id: impl Into<String>,
+    ) -> Self {
+        let audit_id = audit_id.into();
+        Self {
+            state_kind: Stage16LongTermStateKind::MemoryWriteProposal,
+            long_term_state_id: long_term_state_id.into(),
+            memory_id: None,
+            memory_proposal_id: Some(memory_proposal_id.into()),
+            memory_context_bundle_id: None,
+            persona_profile_id: None,
+            preference_signal_id: None,
+            emotion_hint_id: None,
+            feedback_event_id: None,
+            learn_signal_bundle_id: None,
+            consent_state_id: Some("consent-stage16".to_string()),
+            user_id: Some("user-stage16".to_string()),
+            project_id: Some("project-stage16".to_string()),
+            audit_id: Some(audit_id.clone()),
+            ph1j_proof_ref: Some(audit_id),
+            explicit_memory_eligible_evidence: true,
+            bounded_feedback_or_correction_signal: false,
+            consent_present: true,
+            consent_revoked: false,
+            identity_scope_present: true,
+            tenant_scope_present: true,
+            project_scope_present: true,
+            policy_allows_state: true,
+            audit_proof_present: true,
+            idempotency_or_replay_safe: true,
+            sensitive_requires_confirmation: false,
+            required_confirmation_present: false,
+            memory_read_scoped: false,
+            memory_read_redacted: false,
+            memory_read_revocation_aware: false,
+            memory_read_stale_aware: false,
+            memory_read_non_authoritative: false,
+            unsupported_memory_claim_present: false,
+            conflicting_memory_present: false,
+            stale_memory_used_as_truth: false,
+            revoked_memory_used: false,
+            cross_project_memory_present: false,
+            cross_tenant_memory_present: false,
+            wrong_user_memory_present: false,
+            persona_identity_scope_present: true,
+            persona_tone_only: true,
+            persona_changes_facts_or_meaning: false,
+            persona_removes_safety_language: false,
+            persona_grants_authority: false,
+            persona_routes_or_executes: false,
+            preference_persisted_from_output_only: false,
+            emotion_advisory_bounded: true,
+            emotion_infers_protected_identity: false,
+            emotion_overrides_policy_or_refusal: false,
+            emotion_authorizes_or_diagnoses: false,
+            emotion_mutates_without_memory_eligibility: false,
+            learning_post_turn_only: true,
+            learning_versioned_auditable_rollbackable: true,
+            learning_silent_runtime_promotion: false,
+            learning_overwrites_state_without_eligibility: false,
+            raw_provider_output_present: false,
+            raw_search_dump_present: false,
+            raw_transcript_or_audio_present: false,
+            raw_voice_or_biometric_material_exposed: false,
+            secrets_exposed: false,
+            internal_trace_exposed: false,
+            fake_completion_present: false,
+            fake_memory_detected: false,
+            fake_preference_detected: false,
+            fake_persona_detected: false,
+            fake_emotion_detected: false,
+            runtime_mock_detected: false,
+            fixture_only_test_path: true,
+            protected_action_candidate_present: false,
+            simulation_candidate_present: false,
+            approved_execution_plan_present: false,
+            tone_or_answer_text_only: false,
+            unsafe_voice_identity_posture: false,
+            stale_or_cancelled_or_closed_turn: false,
+            record_artifact_only_turn: false,
+            protected_slot_uncertain: false,
+            attempted_live_provider_in_build: false,
+            ran_live_search_in_build: false,
+            called_live_external_tool_in_build: false,
+            connector_write_requested: false,
+        }
+    }
+
+    pub fn fixture_memory_read_ready(
+        long_term_state_id: impl Into<String>,
+        memory_context_bundle_id: impl Into<String>,
+        audit_id: impl Into<String>,
+    ) -> Self {
+        let mut input = Self::fixture_memory_write_ready(
+            long_term_state_id,
+            "memory-proposal-stage16",
+            audit_id,
+        );
+        input.state_kind = Stage16LongTermStateKind::MemoryReadContext;
+        input.memory_proposal_id = None;
+        input.memory_id = Some("memory-stage16".to_string());
+        input.memory_context_bundle_id = Some(memory_context_bundle_id.into());
+        input.explicit_memory_eligible_evidence = false;
+        input.memory_read_scoped = true;
+        input.memory_read_redacted = true;
+        input.memory_read_revocation_aware = true;
+        input.memory_read_stale_aware = true;
+        input.memory_read_non_authoritative = true;
+        input
+    }
+
+    pub fn fixture_persona_preference_ready(
+        long_term_state_id: impl Into<String>,
+        persona_profile_id: impl Into<String>,
+        preference_signal_id: impl Into<String>,
+        audit_id: impl Into<String>,
+    ) -> Self {
+        let mut input = Self::fixture_memory_write_ready(
+            long_term_state_id,
+            "memory-proposal-stage16",
+            audit_id,
+        );
+        input.state_kind = Stage16LongTermStateKind::PersonaPreferenceHint;
+        input.memory_proposal_id = None;
+        input.persona_profile_id = Some(persona_profile_id.into());
+        input.preference_signal_id = Some(preference_signal_id.into());
+        input.explicit_memory_eligible_evidence = false;
+        input
+    }
+
+    pub fn fixture_emotion_affect_ready(
+        long_term_state_id: impl Into<String>,
+        emotion_hint_id: impl Into<String>,
+        audit_id: impl Into<String>,
+    ) -> Self {
+        let mut input = Self::fixture_memory_write_ready(
+            long_term_state_id,
+            "memory-proposal-stage16",
+            audit_id,
+        );
+        input.state_kind = Stage16LongTermStateKind::EmotionAffectHint;
+        input.memory_proposal_id = None;
+        input.emotion_hint_id = Some(emotion_hint_id.into());
+        input.explicit_memory_eligible_evidence = false;
+        input
+    }
+
+    pub fn fixture_learning_feedback_ready(
+        long_term_state_id: impl Into<String>,
+        feedback_event_id: impl Into<String>,
+        learn_signal_bundle_id: impl Into<String>,
+        audit_id: impl Into<String>,
+    ) -> Self {
+        let mut input = Self::fixture_memory_write_ready(
+            long_term_state_id,
+            "memory-proposal-stage16",
+            audit_id,
+        );
+        input.state_kind = Stage16LongTermStateKind::LearningFeedbackSignal;
+        input.memory_proposal_id = None;
+        input.feedback_event_id = Some(feedback_event_id.into());
+        input.learn_signal_bundle_id = Some(learn_signal_bundle_id.into());
+        input.explicit_memory_eligible_evidence = false;
+        input.bounded_feedback_or_correction_signal = true;
+        input
+    }
+}
+
+impl Validate for Stage16LongTermStateInput {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        validate_stage4_ref(
+            "stage16_long_term_state_input.long_term_state_id",
+            &self.long_term_state_id,
+        )?;
+        validate_stage4_optional_ref(
+            "stage16_long_term_state_input.memory_id",
+            self.memory_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage16_long_term_state_input.memory_proposal_id",
+            self.memory_proposal_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage16_long_term_state_input.memory_context_bundle_id",
+            self.memory_context_bundle_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage16_long_term_state_input.persona_profile_id",
+            self.persona_profile_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage16_long_term_state_input.preference_signal_id",
+            self.preference_signal_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage16_long_term_state_input.emotion_hint_id",
+            self.emotion_hint_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage16_long_term_state_input.feedback_event_id",
+            self.feedback_event_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage16_long_term_state_input.learn_signal_bundle_id",
+            self.learn_signal_bundle_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage16_long_term_state_input.consent_state_id",
+            self.consent_state_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage16_long_term_state_input.user_id",
+            self.user_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage16_long_term_state_input.project_id",
+            self.project_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage16_long_term_state_input.audit_id",
+            self.audit_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage16_long_term_state_input.ph1j_proof_ref",
+            self.ph1j_proof_ref.as_deref(),
+        )?;
+        if self.attempted_live_provider_in_build
+            || self.ran_live_search_in_build
+            || self.called_live_external_tool_in_build
+            || self.connector_write_requested
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage16_long_term_state_input.no_live_build",
+                reason:
+                    "Stage 16A long-term state cannot call live providers/search/tools or connector-write",
+            });
+        }
+        if (self.runtime_mock_detected
+            || self.fake_completion_present
+            || self.fake_memory_detected
+            || self.fake_preference_detected
+            || self.fake_persona_detected
+            || self.fake_emotion_detected)
+            && !self.fixture_only_test_path
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage16_long_term_state_input.runtime_mock",
+                reason: "runtime mocks and fake memory, preference, persona, emotion, or completion state are forbidden outside explicit fixture-only paths",
+            });
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Stage16LongTermStatePacket {
+    pub session_id: SessionId,
+    pub turn_id: Option<TurnId>,
+    pub activation_id: Option<String>,
+    pub response_output_id: String,
+    pub understanding_id: String,
+    pub voice_identity_id: Option<String>,
+    pub access_context_id: Option<String>,
+    pub policy_context_id: Option<String>,
+    pub tenant_id: Option<String>,
+    pub user_id: Option<String>,
+    pub project_id: Option<String>,
+    pub memory_id: Option<String>,
+    pub memory_proposal_id: Option<String>,
+    pub memory_context_bundle_id: Option<String>,
+    pub persona_profile_id: Option<String>,
+    pub preference_signal_id: Option<String>,
+    pub emotion_hint_id: Option<String>,
+    pub feedback_event_id: Option<String>,
+    pub learn_signal_bundle_id: Option<String>,
+    pub consent_state_id: Option<String>,
+    pub audit_id: Option<String>,
+    pub ph1j_proof_ref: Option<String>,
+    pub long_term_state_id: String,
+    pub state_kind: Stage16LongTermStateKind,
+    pub reason_code: &'static str,
+    pub disposition: Stage16LongTermStateDisposition,
+    pub stage15_disposition: Stage15ResponseOutputDisposition,
+    pub explicit_memory_eligible_evidence: bool,
+    pub bounded_feedback_or_correction_signal: bool,
+    pub consent_present: bool,
+    pub consent_revoked: bool,
+    pub identity_scope_present: bool,
+    pub tenant_scope_present: bool,
+    pub project_scope_present: bool,
+    pub policy_allows_state: bool,
+    pub audit_proof_present: bool,
+    pub idempotency_or_replay_safe: bool,
+    pub sensitive_requires_confirmation: bool,
+    pub required_confirmation_present: bool,
+    pub memory_read_scoped: bool,
+    pub memory_read_redacted: bool,
+    pub memory_read_revocation_aware: bool,
+    pub memory_read_stale_aware: bool,
+    pub memory_read_non_authoritative: bool,
+    pub unsupported_memory_claim_present: bool,
+    pub conflicting_memory_present: bool,
+    pub stale_memory_used_as_truth: bool,
+    pub revoked_memory_used: bool,
+    pub cross_project_memory_present: bool,
+    pub cross_tenant_memory_present: bool,
+    pub wrong_user_memory_present: bool,
+    pub persona_identity_scope_present: bool,
+    pub persona_tone_only: bool,
+    pub persona_changes_facts_or_meaning: bool,
+    pub persona_removes_safety_language: bool,
+    pub persona_grants_authority: bool,
+    pub persona_routes_or_executes: bool,
+    pub preference_persisted_from_output_only: bool,
+    pub emotion_advisory_bounded: bool,
+    pub emotion_infers_protected_identity: bool,
+    pub emotion_overrides_policy_or_refusal: bool,
+    pub emotion_authorizes_or_diagnoses: bool,
+    pub emotion_mutates_without_memory_eligibility: bool,
+    pub learning_post_turn_only: bool,
+    pub learning_versioned_auditable_rollbackable: bool,
+    pub learning_silent_runtime_promotion: bool,
+    pub learning_overwrites_state_without_eligibility: bool,
+    pub raw_provider_output_present: bool,
+    pub raw_search_dump_present: bool,
+    pub raw_transcript_or_audio_present: bool,
+    pub raw_voice_or_biometric_material_exposed: bool,
+    pub secrets_exposed: bool,
+    pub internal_trace_exposed: bool,
+    pub fake_completion_present: bool,
+    pub fake_memory_detected: bool,
+    pub fake_preference_detected: bool,
+    pub fake_persona_detected: bool,
+    pub fake_emotion_detected: bool,
+    pub runtime_mock_detected: bool,
+    pub protected_action_candidate_present: bool,
+    pub simulation_candidate_present: bool,
+    pub approved_execution_plan_present: bool,
+    pub tone_or_answer_text_only: bool,
+    pub unsafe_voice_identity_posture: bool,
+    pub stale_or_cancelled_or_closed_turn: bool,
+    pub record_artifact_only_turn: bool,
+    pub protected_slot_uncertain: bool,
+    pub provider_off_state: bool,
+    pub provider_call_attempt_count: u32,
+    pub provider_network_dispatch_count: u32,
+    pub work_authority: Stage16LongTermStateWorkAuthority,
+}
+
+impl Stage16LongTermStatePacket {
+    pub fn from_stage15_output(
+        output: &Stage15ResponseOutputPacket,
+        input: Stage16LongTermStateInput,
+    ) -> Result<Self, ContractViolation> {
+        input.validate()?;
+        let disposition = Self::decide_disposition(output, &input);
+        let work_authority = Self::work_authority_for(disposition);
+        let audit_id = input.audit_id.clone().or_else(|| output.audit_id.clone());
+        let ph1j_proof_ref = input
+            .ph1j_proof_ref
+            .clone()
+            .or_else(|| output.ph1j_proof_ref.clone())
+            .or_else(|| audit_id.clone());
+        let audit_proof_present =
+            input.audit_proof_present || audit_id.is_some() || ph1j_proof_ref.is_some();
+        let packet = Self {
+            session_id: output.session_id,
+            turn_id: output.turn_id,
+            activation_id: output.activation_id.clone(),
+            response_output_id: output.response_output_id.clone(),
+            understanding_id: output.understanding_id.clone(),
+            voice_identity_id: None,
+            access_context_id: output.access_context_id.clone(),
+            policy_context_id: output.policy_context_id.clone(),
+            tenant_id: output.tenant_id.clone(),
+            user_id: input.user_id,
+            project_id: input.project_id,
+            memory_id: input.memory_id,
+            memory_proposal_id: input.memory_proposal_id,
+            memory_context_bundle_id: input.memory_context_bundle_id,
+            persona_profile_id: input.persona_profile_id,
+            preference_signal_id: input.preference_signal_id,
+            emotion_hint_id: input.emotion_hint_id,
+            feedback_event_id: input.feedback_event_id,
+            learn_signal_bundle_id: input.learn_signal_bundle_id,
+            consent_state_id: input.consent_state_id,
+            audit_id,
+            ph1j_proof_ref,
+            long_term_state_id: input.long_term_state_id,
+            state_kind: input.state_kind,
+            reason_code: disposition.default_reason_code(),
+            disposition,
+            stage15_disposition: output.disposition,
+            explicit_memory_eligible_evidence: input.explicit_memory_eligible_evidence,
+            bounded_feedback_or_correction_signal: input.bounded_feedback_or_correction_signal,
+            consent_present: input.consent_present,
+            consent_revoked: input.consent_revoked,
+            identity_scope_present: input.identity_scope_present,
+            tenant_scope_present: input.tenant_scope_present,
+            project_scope_present: input.project_scope_present,
+            policy_allows_state: input.policy_allows_state,
+            audit_proof_present,
+            idempotency_or_replay_safe: input.idempotency_or_replay_safe,
+            sensitive_requires_confirmation: input.sensitive_requires_confirmation,
+            required_confirmation_present: input.required_confirmation_present,
+            memory_read_scoped: input.memory_read_scoped,
+            memory_read_redacted: input.memory_read_redacted,
+            memory_read_revocation_aware: input.memory_read_revocation_aware,
+            memory_read_stale_aware: input.memory_read_stale_aware,
+            memory_read_non_authoritative: input.memory_read_non_authoritative,
+            unsupported_memory_claim_present: input.unsupported_memory_claim_present,
+            conflicting_memory_present: input.conflicting_memory_present,
+            stale_memory_used_as_truth: input.stale_memory_used_as_truth,
+            revoked_memory_used: input.revoked_memory_used,
+            cross_project_memory_present: input.cross_project_memory_present,
+            cross_tenant_memory_present: input.cross_tenant_memory_present,
+            wrong_user_memory_present: input.wrong_user_memory_present,
+            persona_identity_scope_present: input.persona_identity_scope_present,
+            persona_tone_only: input.persona_tone_only,
+            persona_changes_facts_or_meaning: input.persona_changes_facts_or_meaning,
+            persona_removes_safety_language: input.persona_removes_safety_language,
+            persona_grants_authority: input.persona_grants_authority,
+            persona_routes_or_executes: input.persona_routes_or_executes,
+            preference_persisted_from_output_only: input.preference_persisted_from_output_only,
+            emotion_advisory_bounded: input.emotion_advisory_bounded,
+            emotion_infers_protected_identity: input.emotion_infers_protected_identity,
+            emotion_overrides_policy_or_refusal: input.emotion_overrides_policy_or_refusal,
+            emotion_authorizes_or_diagnoses: input.emotion_authorizes_or_diagnoses,
+            emotion_mutates_without_memory_eligibility: input
+                .emotion_mutates_without_memory_eligibility,
+            learning_post_turn_only: input.learning_post_turn_only,
+            learning_versioned_auditable_rollbackable: input
+                .learning_versioned_auditable_rollbackable,
+            learning_silent_runtime_promotion: input.learning_silent_runtime_promotion,
+            learning_overwrites_state_without_eligibility: input
+                .learning_overwrites_state_without_eligibility,
+            raw_provider_output_present: input.raw_provider_output_present,
+            raw_search_dump_present: input.raw_search_dump_present,
+            raw_transcript_or_audio_present: input.raw_transcript_or_audio_present,
+            raw_voice_or_biometric_material_exposed: input.raw_voice_or_biometric_material_exposed,
+            secrets_exposed: input.secrets_exposed,
+            internal_trace_exposed: input.internal_trace_exposed,
+            fake_completion_present: input.fake_completion_present,
+            fake_memory_detected: input.fake_memory_detected,
+            fake_preference_detected: input.fake_preference_detected,
+            fake_persona_detected: input.fake_persona_detected,
+            fake_emotion_detected: input.fake_emotion_detected,
+            runtime_mock_detected: input.runtime_mock_detected,
+            protected_action_candidate_present: input.protected_action_candidate_present,
+            simulation_candidate_present: input.simulation_candidate_present,
+            approved_execution_plan_present: input.approved_execution_plan_present,
+            tone_or_answer_text_only: input.tone_or_answer_text_only,
+            unsafe_voice_identity_posture: input.unsafe_voice_identity_posture,
+            stale_or_cancelled_or_closed_turn: input.stale_or_cancelled_or_closed_turn,
+            record_artifact_only_turn: input.record_artifact_only_turn,
+            protected_slot_uncertain: input.protected_slot_uncertain,
+            provider_off_state: output.provider_off_state,
+            provider_call_attempt_count: output.provider_call_attempt_count,
+            provider_network_dispatch_count: output.provider_network_dispatch_count,
+            work_authority,
+        };
+        packet.validate()?;
+        Ok(packet)
+    }
+
+    pub const fn can_mutate_or_execute(&self) -> bool {
+        self.work_authority.can_mutate_or_execute()
+    }
+
+    fn decide_disposition(
+        output: &Stage15ResponseOutputPacket,
+        input: &Stage16LongTermStateInput,
+    ) -> Stage16LongTermStateDisposition {
+        if input.runtime_mock_detected
+            || input.fake_completion_present
+            || input.fake_memory_detected
+            || input.fake_preference_detected
+            || input.fake_persona_detected
+            || input.fake_emotion_detected
+        {
+            return Stage16LongTermStateDisposition::RuntimeMockBlocked;
+        }
+        if input.raw_provider_output_present
+            || input.raw_search_dump_present
+            || input.raw_transcript_or_audio_present
+            || input.raw_voice_or_biometric_material_exposed
+            || input.secrets_exposed
+            || input.internal_trace_exposed
+            || input.protected_action_candidate_present
+            || input.simulation_candidate_present
+            || input.approved_execution_plan_present
+            || input.tone_or_answer_text_only
+            || input.unsafe_voice_identity_posture
+            || input.stale_or_cancelled_or_closed_turn
+            || input.record_artifact_only_turn
+            || input.protected_slot_uncertain
+        {
+            return Stage16LongTermStateDisposition::UnsafeInputBlocked;
+        }
+        if !output.disposition.is_ready()
+            || output.work_authority.can_update_memory_persona_emotion
+            || output.can_mutate_or_execute()
+        {
+            return Stage16LongTermStateDisposition::Stage15OutputBlocked;
+        }
+        if input.audit_id.is_none()
+            && input.ph1j_proof_ref.is_none()
+            && output.audit_id.is_none()
+            && output.ph1j_proof_ref.is_none()
+            && !input.audit_proof_present
+        {
+            return Stage16LongTermStateDisposition::AuditProofMissing;
+        }
+        if input.unsupported_memory_claim_present || input.conflicting_memory_present {
+            return Stage16LongTermStateDisposition::FalseMemoryBlocked;
+        }
+        if input.stale_memory_used_as_truth || input.revoked_memory_used {
+            return Stage16LongTermStateDisposition::StaleOrRevokedMemoryBlocked;
+        }
+        if input.cross_project_memory_present
+            || input.cross_tenant_memory_present
+            || input.wrong_user_memory_present
+        {
+            return Stage16LongTermStateDisposition::ScopeLeakBlocked;
+        }
+
+        match input.state_kind {
+            Stage16LongTermStateKind::MemoryWriteProposal => {
+                if !input.explicit_memory_eligible_evidence
+                    || !input.consent_present
+                    || input.consent_revoked
+                    || !input.identity_scope_present
+                    || !input.tenant_scope_present
+                    || !input.project_scope_present
+                    || !input.policy_allows_state
+                    || !input.audit_proof_present
+                    || !input.idempotency_or_replay_safe
+                    || (input.sensitive_requires_confirmation
+                        && !input.required_confirmation_present)
+                {
+                    return Stage16LongTermStateDisposition::MemoryWriteGateBlocked;
+                }
+                Stage16LongTermStateDisposition::MemoryWriteReady
+            }
+            Stage16LongTermStateKind::MemoryReadContext => {
+                if !input.memory_read_scoped
+                    || !input.memory_read_redacted
+                    || !input.memory_read_revocation_aware
+                    || !input.memory_read_stale_aware
+                    || !input.memory_read_non_authoritative
+                {
+                    return Stage16LongTermStateDisposition::MemoryReadScopeBlocked;
+                }
+                Stage16LongTermStateDisposition::MemoryReadReady
+            }
+            Stage16LongTermStateKind::PersonaPreferenceHint => {
+                if !input.persona_identity_scope_present
+                    || !input.persona_tone_only
+                    || input.persona_changes_facts_or_meaning
+                    || input.persona_removes_safety_language
+                    || input.persona_grants_authority
+                    || input.persona_routes_or_executes
+                    || input.preference_persisted_from_output_only
+                {
+                    return Stage16LongTermStateDisposition::PersonaAuthorityBlocked;
+                }
+                Stage16LongTermStateDisposition::PersonaPreferenceHintReady
+            }
+            Stage16LongTermStateKind::EmotionAffectHint => {
+                if !input.emotion_advisory_bounded
+                    || input.emotion_infers_protected_identity
+                    || input.emotion_overrides_policy_or_refusal
+                    || input.emotion_authorizes_or_diagnoses
+                    || input.emotion_mutates_without_memory_eligibility
+                {
+                    return Stage16LongTermStateDisposition::EmotionAuthorityBlocked;
+                }
+                Stage16LongTermStateDisposition::EmotionAffectHintReady
+            }
+            Stage16LongTermStateKind::LearningFeedbackSignal => {
+                if !input.bounded_feedback_or_correction_signal
+                    || !input.learning_post_turn_only
+                    || !input.learning_versioned_auditable_rollbackable
+                    || input.learning_silent_runtime_promotion
+                    || input.learning_overwrites_state_without_eligibility
+                {
+                    return Stage16LongTermStateDisposition::LearningPromotionBlocked;
+                }
+                Stage16LongTermStateDisposition::LearningFeedbackReady
+            }
+        }
+    }
+
+    const fn work_authority_for(
+        disposition: Stage16LongTermStateDisposition,
+    ) -> Stage16LongTermStateWorkAuthority {
+        match disposition {
+            Stage16LongTermStateDisposition::MemoryWriteReady => {
+                Stage16LongTermStateWorkAuthority::memory_write_ready()
+            }
+            Stage16LongTermStateDisposition::MemoryReadReady => {
+                Stage16LongTermStateWorkAuthority::memory_read_ready()
+            }
+            Stage16LongTermStateDisposition::PersonaPreferenceHintReady => {
+                Stage16LongTermStateWorkAuthority::persona_preference_ready()
+            }
+            Stage16LongTermStateDisposition::EmotionAffectHintReady => {
+                Stage16LongTermStateWorkAuthority::emotion_affect_ready()
+            }
+            Stage16LongTermStateDisposition::LearningFeedbackReady => {
+                Stage16LongTermStateWorkAuthority::learning_feedback_ready()
+            }
+            _ => Stage16LongTermStateWorkAuthority::fail_closed(),
+        }
+    }
+}
+
+impl Validate for Stage16LongTermStatePacket {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        validate_stage4_optional_ref(
+            "stage16_long_term_state_packet.activation_id",
+            self.activation_id.as_deref(),
+        )?;
+        validate_stage4_ref(
+            "stage16_long_term_state_packet.response_output_id",
+            &self.response_output_id,
+        )?;
+        validate_stage4_ref(
+            "stage16_long_term_state_packet.understanding_id",
+            &self.understanding_id,
+        )?;
+        validate_stage4_optional_ref(
+            "stage16_long_term_state_packet.voice_identity_id",
+            self.voice_identity_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage16_long_term_state_packet.access_context_id",
+            self.access_context_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage16_long_term_state_packet.policy_context_id",
+            self.policy_context_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage16_long_term_state_packet.tenant_id",
+            self.tenant_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage16_long_term_state_packet.user_id",
+            self.user_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage16_long_term_state_packet.project_id",
+            self.project_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage16_long_term_state_packet.memory_id",
+            self.memory_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage16_long_term_state_packet.memory_proposal_id",
+            self.memory_proposal_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage16_long_term_state_packet.memory_context_bundle_id",
+            self.memory_context_bundle_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage16_long_term_state_packet.persona_profile_id",
+            self.persona_profile_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage16_long_term_state_packet.preference_signal_id",
+            self.preference_signal_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage16_long_term_state_packet.emotion_hint_id",
+            self.emotion_hint_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage16_long_term_state_packet.feedback_event_id",
+            self.feedback_event_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage16_long_term_state_packet.learn_signal_bundle_id",
+            self.learn_signal_bundle_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage16_long_term_state_packet.consent_state_id",
+            self.consent_state_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage16_long_term_state_packet.audit_id",
+            self.audit_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage16_long_term_state_packet.ph1j_proof_ref",
+            self.ph1j_proof_ref.as_deref(),
+        )?;
+        validate_stage4_ref(
+            "stage16_long_term_state_packet.long_term_state_id",
+            &self.long_term_state_id,
+        )?;
+        if self.reason_code != self.disposition.default_reason_code() {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage16_long_term_state_packet.reason_code",
+                reason: "must match Stage 16A long-term state disposition",
+            });
+        }
+        if self.work_authority.can_mutate_or_execute() {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage16_long_term_state_packet.work_authority",
+                reason: "Stage 16A cannot execute, connector-write, call live providers/search/tools, emit TTS, add native UI, change truth/policy, or promote provider/model/router behavior",
+            });
+        }
+        if self.provider_off_state
+            && (self.provider_call_attempt_count != 0 || self.provider_network_dispatch_count != 0)
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage16_long_term_state_packet.provider_off_state",
+                reason: "provider-off long-term-state proof must preserve zero provider attempts and network dispatches",
+            });
+        }
+        if self.disposition.is_ready()
+            && (self.audit_id.is_none()
+                || self.ph1j_proof_ref.is_none()
+                || !self.audit_proof_present)
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage16_long_term_state_packet.audit_proof",
+                reason: "ready Stage 16A long-term-state output requires PH1.J audit/proof refs",
+            });
+        }
+
+        match self.disposition {
+            Stage16LongTermStateDisposition::MemoryWriteReady => {
+                if self.state_kind != Stage16LongTermStateKind::MemoryWriteProposal
+                    || self.memory_proposal_id.is_none()
+                    || !self.explicit_memory_eligible_evidence
+                    || !self.consent_present
+                    || self.consent_revoked
+                    || !self.identity_scope_present
+                    || !self.tenant_scope_present
+                    || !self.project_scope_present
+                    || !self.policy_allows_state
+                    || !self.idempotency_or_replay_safe
+                    || !self.work_authority.can_emit_memory_write_disposition
+                {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "stage16_long_term_state_packet.memory_write",
+                        reason: "memory write disposition requires evidence, consent, identity/tenant/project scope, policy, audit, and idempotency",
+                    });
+                }
+            }
+            Stage16LongTermStateDisposition::MemoryReadReady => {
+                if self.state_kind != Stage16LongTermStateKind::MemoryReadContext
+                    || self.memory_context_bundle_id.is_none()
+                    || !self.memory_read_scoped
+                    || !self.memory_read_redacted
+                    || !self.memory_read_revocation_aware
+                    || !self.memory_read_stale_aware
+                    || !self.memory_read_non_authoritative
+                    || !self.work_authority.can_emit_memory_read_context
+                {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "stage16_long_term_state_packet.memory_read",
+                        reason: "memory read context must be scoped, redacted, stale-aware, revocation-aware, and non-authoritative",
+                    });
+                }
+            }
+            Stage16LongTermStateDisposition::PersonaPreferenceHintReady => {
+                if self.state_kind != Stage16LongTermStateKind::PersonaPreferenceHint
+                    || !self.persona_identity_scope_present
+                    || !self.persona_tone_only
+                    || self.persona_changes_facts_or_meaning
+                    || self.persona_removes_safety_language
+                    || self.persona_grants_authority
+                    || self.persona_routes_or_executes
+                    || self.preference_persisted_from_output_only
+                    || !self.work_authority.can_emit_persona_preference_hint
+                {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "stage16_long_term_state_packet.persona_preference",
+                        reason: "persona and preference hints must stay scoped, tone-only, non-authoritative, and non-persistent from output alone",
+                    });
+                }
+            }
+            Stage16LongTermStateDisposition::EmotionAffectHintReady => {
+                if self.state_kind != Stage16LongTermStateKind::EmotionAffectHint
+                    || !self.emotion_advisory_bounded
+                    || self.emotion_infers_protected_identity
+                    || self.emotion_overrides_policy_or_refusal
+                    || self.emotion_authorizes_or_diagnoses
+                    || self.emotion_mutates_without_memory_eligibility
+                    || !self.work_authority.can_emit_emotion_affect_hint
+                {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "stage16_long_term_state_packet.emotion_affect",
+                        reason: "emotion and affect hints must stay advisory, bounded, non-diagnostic, non-authoritative, and non-mutating",
+                    });
+                }
+            }
+            Stage16LongTermStateDisposition::LearningFeedbackReady => {
+                if self.state_kind != Stage16LongTermStateKind::LearningFeedbackSignal
+                    || self.feedback_event_id.is_none()
+                    || self.learn_signal_bundle_id.is_none()
+                    || !self.bounded_feedback_or_correction_signal
+                    || !self.learning_post_turn_only
+                    || !self.learning_versioned_auditable_rollbackable
+                    || self.learning_silent_runtime_promotion
+                    || self.learning_overwrites_state_without_eligibility
+                    || !self.work_authority.can_emit_learning_feedback_signal
+                {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "stage16_long_term_state_packet.learning_feedback",
+                        reason: "learning and feedback signals must be bounded, post-turn, auditable, rollbackable, and unable to silently promote runtime behavior",
+                    });
+                }
+            }
+            _ => {
+                if !self.work_authority.can_fail_closed
+                    || self.work_authority.can_emit_memory_write_disposition
+                    || self.work_authority.can_emit_memory_read_context
+                    || self.work_authority.can_emit_persona_preference_hint
+                    || self.work_authority.can_emit_emotion_affect_hint
+                    || self.work_authority.can_emit_learning_feedback_signal
+                {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "stage16_long_term_state_packet.blocked_state",
+                        reason: "blocked Stage 16A packets fail closed and cannot emit fake memory, persona, emotion, preference, or learning outputs",
                     });
                 }
             }
@@ -17083,7 +18266,10 @@ mod tests {
         )
         .expect("stage15 refusal-ready packet");
 
-        assert_eq!(ready.disposition, Stage15ResponseOutputDisposition::RefusalReady);
+        assert_eq!(
+            ready.disposition,
+            Stage15ResponseOutputDisposition::RefusalReady
+        );
         assert!(ready.work_authority.can_emit_user_facing_response);
         assert!(ready.work_authority.can_emit_refusal);
         assert!(ready.work_authority.can_emit_honest_uncertainty);
@@ -17378,15 +18564,18 @@ mod tests {
         provider_off_input.citation_id = None;
         provider_off_input.provenance_id = None;
         provider_off_input.verifier_id = None;
-        let provider_off_evidence = Stage13PublicReadOnlyEvidencePacket::from_public_read_only_route(
-            &route,
-            &no_mutation,
-            provider_off_input,
+        let provider_off_evidence =
+            Stage13PublicReadOnlyEvidencePacket::from_public_read_only_route(
+                &route,
+                &no_mutation,
+                provider_off_input,
+            )
+            .expect("stage13 provider-off no-evidence packet");
+        let provider_off_answer = Stage14PublicAnswerPacket::from_stage13_evidence(
+            &provider_off_evidence,
+            stage14_answer_input(),
         )
-        .expect("stage13 provider-off no-evidence packet");
-        let provider_off_answer =
-            Stage14PublicAnswerPacket::from_stage13_evidence(&provider_off_evidence, stage14_answer_input())
-                .expect("stage14 provider-off honest failure packet");
+        .expect("stage14 provider-off honest failure packet");
         let packet = Stage15ResponseOutputPacket::from_stage14_public_answer(
             &provider_off_answer,
             Stage15ResponseOutputInput::fixture_public_answer_ready(
@@ -17481,6 +18670,815 @@ mod tests {
         assert!(!packet.work_authority.can_update_memory_persona_emotion);
         assert!(!packet.work_authority.can_add_native_ui_behavior);
         assert!(!packet.can_mutate_or_execute());
+    }
+
+    fn stage16_response_output_packet() -> Stage15ResponseOutputPacket {
+        Stage15ResponseOutputPacket::from_stage14_public_answer(
+            &stage15_public_answer_packet(),
+            Stage15ResponseOutputInput::fixture_public_answer_ready(
+                "response-output-stage16",
+                "response-hash-stage16",
+                "audit-stage16-output",
+            ),
+        )
+        .expect("stage16 ready response output")
+    }
+
+    #[test]
+    fn stage_16a_memory_write_requires_evidence_consent_scope_policy_audit_and_idempotency() {
+        let output = stage16_response_output_packet();
+        let packet = Stage16LongTermStatePacket::from_stage15_output(
+            &output,
+            Stage16LongTermStateInput::fixture_memory_write_ready(
+                "long-term-state-stage16-write",
+                "memory-proposal-stage16-write",
+                "audit-stage16-write",
+            ),
+        )
+        .expect("stage16 memory write disposition");
+
+        assert_eq!(
+            packet.disposition,
+            Stage16LongTermStateDisposition::MemoryWriteReady
+        );
+        assert_eq!(
+            packet.state_kind,
+            Stage16LongTermStateKind::MemoryWriteProposal
+        );
+        assert_eq!(
+            packet.memory_proposal_id.as_deref(),
+            Some("memory-proposal-stage16-write")
+        );
+        assert!(packet.explicit_memory_eligible_evidence);
+        assert!(packet.consent_present);
+        assert!(!packet.consent_revoked);
+        assert!(packet.identity_scope_present);
+        assert!(packet.tenant_scope_present);
+        assert!(packet.project_scope_present);
+        assert!(packet.policy_allows_state);
+        assert!(packet.idempotency_or_replay_safe);
+        assert!(packet.work_authority.can_emit_memory_write_disposition);
+        assert!(!packet.can_mutate_or_execute());
+
+        for mut input in [
+            {
+                let mut input = Stage16LongTermStateInput::fixture_memory_write_ready(
+                    "long-term-state-stage16-no-evidence",
+                    "memory-proposal-stage16-no-evidence",
+                    "audit-stage16-no-evidence",
+                );
+                input.explicit_memory_eligible_evidence = false;
+                input
+            },
+            {
+                let mut input = Stage16LongTermStateInput::fixture_memory_write_ready(
+                    "long-term-state-stage16-no-consent",
+                    "memory-proposal-stage16-no-consent",
+                    "audit-stage16-no-consent",
+                );
+                input.consent_present = false;
+                input
+            },
+            {
+                let mut input = Stage16LongTermStateInput::fixture_memory_write_ready(
+                    "long-term-state-stage16-revoked-consent",
+                    "memory-proposal-stage16-revoked-consent",
+                    "audit-stage16-revoked-consent",
+                );
+                input.consent_revoked = true;
+                input
+            },
+            {
+                let mut input = Stage16LongTermStateInput::fixture_memory_write_ready(
+                    "long-term-state-stage16-no-scope",
+                    "memory-proposal-stage16-no-scope",
+                    "audit-stage16-no-scope",
+                );
+                input.project_scope_present = false;
+                input
+            },
+            {
+                let mut input = Stage16LongTermStateInput::fixture_memory_write_ready(
+                    "long-term-state-stage16-policy",
+                    "memory-proposal-stage16-policy",
+                    "audit-stage16-policy",
+                );
+                input.policy_allows_state = false;
+                input
+            },
+            {
+                let mut input = Stage16LongTermStateInput::fixture_memory_write_ready(
+                    "long-term-state-stage16-replay",
+                    "memory-proposal-stage16-replay",
+                    "audit-stage16-replay",
+                );
+                input.idempotency_or_replay_safe = false;
+                input
+            },
+            {
+                let mut input = Stage16LongTermStateInput::fixture_memory_write_ready(
+                    "long-term-state-stage16-confirm",
+                    "memory-proposal-stage16-confirm",
+                    "audit-stage16-confirm",
+                );
+                input.sensitive_requires_confirmation = true;
+                input.required_confirmation_present = false;
+                input
+            },
+        ] {
+            input.fixture_only_test_path = true;
+            let blocked = Stage16LongTermStatePacket::from_stage15_output(&output, input)
+                .expect("stage16 memory write blocked");
+            assert_eq!(
+                blocked.disposition,
+                Stage16LongTermStateDisposition::MemoryWriteGateBlocked
+            );
+            assert!(blocked.work_authority.can_fail_closed);
+            assert!(!blocked.work_authority.can_emit_memory_write_disposition);
+            assert!(!blocked.can_mutate_or_execute());
+        }
+    }
+
+    #[test]
+    fn stage_16a_blocks_stage15_output_as_memory_authority_and_raw_inputs() {
+        let answer = stage15_public_answer_packet();
+        let blocked_output = Stage15ResponseOutputPacket::from_stage14_public_answer(
+            &answer,
+            Stage15ResponseOutputInput::fixture_public_answer_ready(
+                "response-output-stage16-blocked-stage15",
+                "response-hash-stage16-blocked-stage15",
+                "audit-stage16-blocked-stage15",
+            ),
+        )
+        .expect("stage16 base output");
+        let mut blocked_output = blocked_output;
+        blocked_output
+            .work_authority
+            .can_update_memory_persona_emotion = true;
+        let blocked = Stage16LongTermStatePacket::from_stage15_output(
+            &blocked_output,
+            Stage16LongTermStateInput::fixture_memory_write_ready(
+                "long-term-state-stage16-stage15-blocked",
+                "memory-proposal-stage16-stage15-blocked",
+                "audit-stage16-stage15-blocked",
+            ),
+        )
+        .expect("stage16 stage15 authority blocked packet");
+        assert_eq!(
+            blocked.disposition,
+            Stage16LongTermStateDisposition::Stage15OutputBlocked
+        );
+        assert!(blocked.work_authority.can_fail_closed);
+        assert!(!blocked.work_authority.can_emit_memory_write_disposition);
+        assert!(!blocked.can_mutate_or_execute());
+
+        let output = stage16_response_output_packet();
+        for (mut input, expected) in [
+            {
+                let mut input = Stage16LongTermStateInput::fixture_memory_write_ready(
+                    "long-term-state-stage16-raw-provider",
+                    "memory-proposal-stage16-raw-provider",
+                    "audit-stage16-raw-provider",
+                );
+                input.raw_provider_output_present = true;
+                (input, Stage16LongTermStateDisposition::UnsafeInputBlocked)
+            },
+            {
+                let mut input = Stage16LongTermStateInput::fixture_memory_write_ready(
+                    "long-term-state-stage16-raw-search",
+                    "memory-proposal-stage16-raw-search",
+                    "audit-stage16-raw-search",
+                );
+                input.raw_search_dump_present = true;
+                (input, Stage16LongTermStateDisposition::UnsafeInputBlocked)
+            },
+            {
+                let mut input = Stage16LongTermStateInput::fixture_memory_write_ready(
+                    "long-term-state-stage16-raw-audio",
+                    "memory-proposal-stage16-raw-audio",
+                    "audit-stage16-raw-audio",
+                );
+                input.raw_transcript_or_audio_present = true;
+                (input, Stage16LongTermStateDisposition::UnsafeInputBlocked)
+            },
+            {
+                let mut input = Stage16LongTermStateInput::fixture_memory_write_ready(
+                    "long-term-state-stage16-answer-only",
+                    "memory-proposal-stage16-answer-only",
+                    "audit-stage16-answer-only",
+                );
+                input.tone_or_answer_text_only = true;
+                (input, Stage16LongTermStateDisposition::UnsafeInputBlocked)
+            },
+            {
+                let mut input = Stage16LongTermStateInput::fixture_memory_write_ready(
+                    "long-term-state-stage16-unsafe-voice",
+                    "memory-proposal-stage16-unsafe-voice",
+                    "audit-stage16-unsafe-voice",
+                );
+                input.unsafe_voice_identity_posture = true;
+                (input, Stage16LongTermStateDisposition::UnsafeInputBlocked)
+            },
+            {
+                let mut input = Stage16LongTermStateInput::fixture_memory_write_ready(
+                    "long-term-state-stage16-stale-turn",
+                    "memory-proposal-stage16-stale-turn",
+                    "audit-stage16-stale-turn",
+                );
+                input.stale_or_cancelled_or_closed_turn = true;
+                (input, Stage16LongTermStateDisposition::UnsafeInputBlocked)
+            },
+        ] {
+            input.fixture_only_test_path = true;
+            let packet = Stage16LongTermStatePacket::from_stage15_output(&output, input)
+                .expect("stage16 unsafe input blocked");
+            assert_eq!(packet.disposition, expected);
+            assert!(packet.work_authority.can_fail_closed);
+            assert!(!packet.can_mutate_or_execute());
+        }
+    }
+
+    #[test]
+    fn stage_16a_memory_read_is_scoped_redacted_stale_revocation_aware_non_authoritative() {
+        let output = stage16_response_output_packet();
+        let packet = Stage16LongTermStatePacket::from_stage15_output(
+            &output,
+            Stage16LongTermStateInput::fixture_memory_read_ready(
+                "long-term-state-stage16-read",
+                "memory-context-stage16-read",
+                "audit-stage16-read",
+            ),
+        )
+        .expect("stage16 memory read context");
+
+        assert_eq!(
+            packet.disposition,
+            Stage16LongTermStateDisposition::MemoryReadReady
+        );
+        assert!(packet.memory_read_scoped);
+        assert!(packet.memory_read_redacted);
+        assert!(packet.memory_read_revocation_aware);
+        assert!(packet.memory_read_stale_aware);
+        assert!(packet.memory_read_non_authoritative);
+        assert!(packet.work_authority.can_emit_memory_read_context);
+        assert!(!packet.can_mutate_or_execute());
+
+        for mut input in [
+            {
+                let mut input = Stage16LongTermStateInput::fixture_memory_read_ready(
+                    "long-term-state-stage16-read-scope",
+                    "memory-context-stage16-read-scope",
+                    "audit-stage16-read-scope",
+                );
+                input.memory_read_scoped = false;
+                input
+            },
+            {
+                let mut input = Stage16LongTermStateInput::fixture_memory_read_ready(
+                    "long-term-state-stage16-read-redact",
+                    "memory-context-stage16-read-redact",
+                    "audit-stage16-read-redact",
+                );
+                input.memory_read_redacted = false;
+                input
+            },
+            {
+                let mut input = Stage16LongTermStateInput::fixture_memory_read_ready(
+                    "long-term-state-stage16-read-revocation",
+                    "memory-context-stage16-read-revocation",
+                    "audit-stage16-read-revocation",
+                );
+                input.memory_read_revocation_aware = false;
+                input
+            },
+            {
+                let mut input = Stage16LongTermStateInput::fixture_memory_read_ready(
+                    "long-term-state-stage16-read-authority",
+                    "memory-context-stage16-read-authority",
+                    "audit-stage16-read-authority",
+                );
+                input.memory_read_non_authoritative = false;
+                input
+            },
+        ] {
+            input.fixture_only_test_path = true;
+            let packet = Stage16LongTermStatePacket::from_stage15_output(&output, input)
+                .expect("stage16 memory read blocked");
+            assert_eq!(
+                packet.disposition,
+                Stage16LongTermStateDisposition::MemoryReadScopeBlocked
+            );
+            assert!(packet.work_authority.can_fail_closed);
+            assert!(!packet.work_authority.can_emit_memory_read_context);
+            assert!(!packet.can_mutate_or_execute());
+        }
+    }
+
+    #[test]
+    fn stage_16a_blocks_false_stale_revoked_and_cross_scope_memory() {
+        let output = stage16_response_output_packet();
+        for (mut input, expected) in [
+            {
+                let mut input = Stage16LongTermStateInput::fixture_memory_write_ready(
+                    "long-term-state-stage16-false",
+                    "memory-proposal-stage16-false",
+                    "audit-stage16-false",
+                );
+                input.unsupported_memory_claim_present = true;
+                (input, Stage16LongTermStateDisposition::FalseMemoryBlocked)
+            },
+            {
+                let mut input = Stage16LongTermStateInput::fixture_memory_write_ready(
+                    "long-term-state-stage16-conflict",
+                    "memory-proposal-stage16-conflict",
+                    "audit-stage16-conflict",
+                );
+                input.conflicting_memory_present = true;
+                (input, Stage16LongTermStateDisposition::FalseMemoryBlocked)
+            },
+            {
+                let mut input = Stage16LongTermStateInput::fixture_memory_read_ready(
+                    "long-term-state-stage16-stale",
+                    "memory-context-stage16-stale",
+                    "audit-stage16-stale",
+                );
+                input.stale_memory_used_as_truth = true;
+                (
+                    input,
+                    Stage16LongTermStateDisposition::StaleOrRevokedMemoryBlocked,
+                )
+            },
+            {
+                let mut input = Stage16LongTermStateInput::fixture_memory_read_ready(
+                    "long-term-state-stage16-revoked",
+                    "memory-context-stage16-revoked",
+                    "audit-stage16-revoked",
+                );
+                input.revoked_memory_used = true;
+                (
+                    input,
+                    Stage16LongTermStateDisposition::StaleOrRevokedMemoryBlocked,
+                )
+            },
+            {
+                let mut input = Stage16LongTermStateInput::fixture_memory_read_ready(
+                    "long-term-state-stage16-project-leak",
+                    "memory-context-stage16-project-leak",
+                    "audit-stage16-project-leak",
+                );
+                input.cross_project_memory_present = true;
+                (input, Stage16LongTermStateDisposition::ScopeLeakBlocked)
+            },
+            {
+                let mut input = Stage16LongTermStateInput::fixture_memory_read_ready(
+                    "long-term-state-stage16-tenant-leak",
+                    "memory-context-stage16-tenant-leak",
+                    "audit-stage16-tenant-leak",
+                );
+                input.cross_tenant_memory_present = true;
+                (input, Stage16LongTermStateDisposition::ScopeLeakBlocked)
+            },
+            {
+                let mut input = Stage16LongTermStateInput::fixture_memory_read_ready(
+                    "long-term-state-stage16-wrong-user",
+                    "memory-context-stage16-wrong-user",
+                    "audit-stage16-wrong-user",
+                );
+                input.wrong_user_memory_present = true;
+                (input, Stage16LongTermStateDisposition::ScopeLeakBlocked)
+            },
+        ] {
+            input.fixture_only_test_path = true;
+            let packet = Stage16LongTermStatePacket::from_stage15_output(&output, input)
+                .expect("stage16 false/stale/leak blocked");
+            assert_eq!(packet.disposition, expected);
+            assert!(packet.work_authority.can_fail_closed);
+            assert!(!packet.can_mutate_or_execute());
+        }
+    }
+
+    #[test]
+    fn stage_16a_persona_preference_hints_are_tone_only_and_non_authoritative() {
+        let output = stage16_response_output_packet();
+        let packet = Stage16LongTermStatePacket::from_stage15_output(
+            &output,
+            Stage16LongTermStateInput::fixture_persona_preference_ready(
+                "long-term-state-stage16-persona",
+                "persona-profile-stage16",
+                "preference-signal-stage16",
+                "audit-stage16-persona",
+            ),
+        )
+        .expect("stage16 persona preference hint");
+
+        assert_eq!(
+            packet.disposition,
+            Stage16LongTermStateDisposition::PersonaPreferenceHintReady
+        );
+        assert!(packet.persona_tone_only);
+        assert!(!packet.persona_changes_facts_or_meaning);
+        assert!(!packet.persona_removes_safety_language);
+        assert!(!packet.persona_grants_authority);
+        assert!(!packet.persona_routes_or_executes);
+        assert!(!packet.preference_persisted_from_output_only);
+        assert!(packet.work_authority.can_emit_persona_preference_hint);
+        assert!(!packet.can_mutate_or_execute());
+
+        for mut input in [
+            {
+                let mut input = Stage16LongTermStateInput::fixture_persona_preference_ready(
+                    "long-term-state-stage16-persona-scope",
+                    "persona-profile-stage16-scope",
+                    "preference-signal-stage16-scope",
+                    "audit-stage16-persona-scope",
+                );
+                input.persona_identity_scope_present = false;
+                input
+            },
+            {
+                let mut input = Stage16LongTermStateInput::fixture_persona_preference_ready(
+                    "long-term-state-stage16-persona-fact",
+                    "persona-profile-stage16-fact",
+                    "preference-signal-stage16-fact",
+                    "audit-stage16-persona-fact",
+                );
+                input.persona_changes_facts_or_meaning = true;
+                input
+            },
+            {
+                let mut input = Stage16LongTermStateInput::fixture_persona_preference_ready(
+                    "long-term-state-stage16-persona-policy",
+                    "persona-profile-stage16-policy",
+                    "preference-signal-stage16-policy",
+                    "audit-stage16-persona-policy",
+                );
+                input.persona_removes_safety_language = true;
+                input
+            },
+            {
+                let mut input = Stage16LongTermStateInput::fixture_persona_preference_ready(
+                    "long-term-state-stage16-persona-authority",
+                    "persona-profile-stage16-authority",
+                    "preference-signal-stage16-authority",
+                    "audit-stage16-persona-authority",
+                );
+                input.persona_grants_authority = true;
+                input
+            },
+            {
+                let mut input = Stage16LongTermStateInput::fixture_persona_preference_ready(
+                    "long-term-state-stage16-persona-persist",
+                    "persona-profile-stage16-persist",
+                    "preference-signal-stage16-persist",
+                    "audit-stage16-persona-persist",
+                );
+                input.preference_persisted_from_output_only = true;
+                input
+            },
+        ] {
+            input.fixture_only_test_path = true;
+            let packet = Stage16LongTermStatePacket::from_stage15_output(&output, input)
+                .expect("stage16 persona blocked");
+            assert_eq!(
+                packet.disposition,
+                Stage16LongTermStateDisposition::PersonaAuthorityBlocked
+            );
+            assert!(packet.work_authority.can_fail_closed);
+            assert!(!packet.work_authority.can_emit_persona_preference_hint);
+            assert!(!packet.can_mutate_or_execute());
+        }
+    }
+
+    #[test]
+    fn stage_16a_emotion_affect_hints_are_advisory_not_identity_or_diagnosis() {
+        let output = stage16_response_output_packet();
+        let packet = Stage16LongTermStatePacket::from_stage15_output(
+            &output,
+            Stage16LongTermStateInput::fixture_emotion_affect_ready(
+                "long-term-state-stage16-emotion",
+                "emotion-hint-stage16",
+                "audit-stage16-emotion",
+            ),
+        )
+        .expect("stage16 emotion affect hint");
+
+        assert_eq!(
+            packet.disposition,
+            Stage16LongTermStateDisposition::EmotionAffectHintReady
+        );
+        assert!(packet.emotion_advisory_bounded);
+        assert!(!packet.emotion_infers_protected_identity);
+        assert!(!packet.emotion_overrides_policy_or_refusal);
+        assert!(!packet.emotion_authorizes_or_diagnoses);
+        assert!(!packet.emotion_mutates_without_memory_eligibility);
+        assert!(packet.work_authority.can_emit_emotion_affect_hint);
+        assert!(!packet.can_mutate_or_execute());
+
+        for mut input in [
+            {
+                let mut input = Stage16LongTermStateInput::fixture_emotion_affect_ready(
+                    "long-term-state-stage16-emotion-unbounded",
+                    "emotion-hint-stage16-unbounded",
+                    "audit-stage16-emotion-unbounded",
+                );
+                input.emotion_advisory_bounded = false;
+                input
+            },
+            {
+                let mut input = Stage16LongTermStateInput::fixture_emotion_affect_ready(
+                    "long-term-state-stage16-emotion-id",
+                    "emotion-hint-stage16-id",
+                    "audit-stage16-emotion-id",
+                );
+                input.emotion_infers_protected_identity = true;
+                input
+            },
+            {
+                let mut input = Stage16LongTermStateInput::fixture_emotion_affect_ready(
+                    "long-term-state-stage16-emotion-policy",
+                    "emotion-hint-stage16-policy",
+                    "audit-stage16-emotion-policy",
+                );
+                input.emotion_overrides_policy_or_refusal = true;
+                input
+            },
+            {
+                let mut input = Stage16LongTermStateInput::fixture_emotion_affect_ready(
+                    "long-term-state-stage16-emotion-diagnosis",
+                    "emotion-hint-stage16-diagnosis",
+                    "audit-stage16-emotion-diagnosis",
+                );
+                input.emotion_authorizes_or_diagnoses = true;
+                input
+            },
+            {
+                let mut input = Stage16LongTermStateInput::fixture_emotion_affect_ready(
+                    "long-term-state-stage16-emotion-mutate",
+                    "emotion-hint-stage16-mutate",
+                    "audit-stage16-emotion-mutate",
+                );
+                input.emotion_mutates_without_memory_eligibility = true;
+                input
+            },
+        ] {
+            input.fixture_only_test_path = true;
+            let packet = Stage16LongTermStatePacket::from_stage15_output(&output, input)
+                .expect("stage16 emotion blocked");
+            assert_eq!(
+                packet.disposition,
+                Stage16LongTermStateDisposition::EmotionAuthorityBlocked
+            );
+            assert!(packet.work_authority.can_fail_closed);
+            assert!(!packet.work_authority.can_emit_emotion_affect_hint);
+            assert!(!packet.can_mutate_or_execute());
+        }
+    }
+
+    #[test]
+    fn stage_16a_learning_feedback_cannot_silently_promote_or_overwrite_state() {
+        let output = stage16_response_output_packet();
+        let packet = Stage16LongTermStatePacket::from_stage15_output(
+            &output,
+            Stage16LongTermStateInput::fixture_learning_feedback_ready(
+                "long-term-state-stage16-learn",
+                "feedback-event-stage16",
+                "learn-signal-stage16",
+                "audit-stage16-learn",
+            ),
+        )
+        .expect("stage16 learning feedback signal");
+
+        assert_eq!(
+            packet.disposition,
+            Stage16LongTermStateDisposition::LearningFeedbackReady
+        );
+        assert!(packet.bounded_feedback_or_correction_signal);
+        assert!(packet.learning_post_turn_only);
+        assert!(packet.learning_versioned_auditable_rollbackable);
+        assert!(!packet.learning_silent_runtime_promotion);
+        assert!(!packet.learning_overwrites_state_without_eligibility);
+        assert!(packet.work_authority.can_emit_learning_feedback_signal);
+        assert!(!packet.can_mutate_or_execute());
+
+        for mut input in [
+            {
+                let mut input = Stage16LongTermStateInput::fixture_learning_feedback_ready(
+                    "long-term-state-stage16-learn-feedback",
+                    "feedback-event-stage16-feedback",
+                    "learn-signal-stage16-feedback",
+                    "audit-stage16-learn-feedback",
+                );
+                input.bounded_feedback_or_correction_signal = false;
+                input
+            },
+            {
+                let mut input = Stage16LongTermStateInput::fixture_learning_feedback_ready(
+                    "long-term-state-stage16-learn-turn",
+                    "feedback-event-stage16-turn",
+                    "learn-signal-stage16-turn",
+                    "audit-stage16-learn-turn",
+                );
+                input.learning_post_turn_only = false;
+                input
+            },
+            {
+                let mut input = Stage16LongTermStateInput::fixture_learning_feedback_ready(
+                    "long-term-state-stage16-learn-audit",
+                    "feedback-event-stage16-audit",
+                    "learn-signal-stage16-audit",
+                    "audit-stage16-learn-audit",
+                );
+                input.learning_versioned_auditable_rollbackable = false;
+                input
+            },
+            {
+                let mut input = Stage16LongTermStateInput::fixture_learning_feedback_ready(
+                    "long-term-state-stage16-learn-promote",
+                    "feedback-event-stage16-promote",
+                    "learn-signal-stage16-promote",
+                    "audit-stage16-learn-promote",
+                );
+                input.learning_silent_runtime_promotion = true;
+                input
+            },
+            {
+                let mut input = Stage16LongTermStateInput::fixture_learning_feedback_ready(
+                    "long-term-state-stage16-learn-overwrite",
+                    "feedback-event-stage16-overwrite",
+                    "learn-signal-stage16-overwrite",
+                    "audit-stage16-learn-overwrite",
+                );
+                input.learning_overwrites_state_without_eligibility = true;
+                input
+            },
+        ] {
+            input.fixture_only_test_path = true;
+            let packet = Stage16LongTermStatePacket::from_stage15_output(&output, input)
+                .expect("stage16 learning blocked");
+            assert_eq!(
+                packet.disposition,
+                Stage16LongTermStateDisposition::LearningPromotionBlocked
+            );
+            assert!(packet.work_authority.can_fail_closed);
+            assert!(!packet.work_authority.can_emit_learning_feedback_signal);
+            assert!(!packet.can_mutate_or_execute());
+        }
+    }
+
+    #[test]
+    fn stage_16a_blocks_runtime_mocks_and_fake_long_term_state() {
+        let output = stage16_response_output_packet();
+
+        let mut runtime_mock = Stage16LongTermStateInput::fixture_memory_write_ready(
+            "long-term-state-stage16-runtime-mock",
+            "memory-proposal-stage16-runtime-mock",
+            "audit-stage16-runtime-mock",
+        );
+        runtime_mock.runtime_mock_detected = true;
+        runtime_mock.fixture_only_test_path = false;
+        assert!(Stage16LongTermStatePacket::from_stage15_output(&output, runtime_mock).is_err());
+
+        for mut input in [
+            {
+                let mut input = Stage16LongTermStateInput::fixture_memory_write_ready(
+                    "long-term-state-stage16-fake-memory",
+                    "memory-proposal-stage16-fake-memory",
+                    "audit-stage16-fake-memory",
+                );
+                input.fake_memory_detected = true;
+                input
+            },
+            {
+                let mut input = Stage16LongTermStateInput::fixture_persona_preference_ready(
+                    "long-term-state-stage16-fake-preference",
+                    "persona-profile-stage16-fake-preference",
+                    "preference-signal-stage16-fake-preference",
+                    "audit-stage16-fake-preference",
+                );
+                input.fake_preference_detected = true;
+                input
+            },
+            {
+                let mut input = Stage16LongTermStateInput::fixture_persona_preference_ready(
+                    "long-term-state-stage16-fake-persona",
+                    "persona-profile-stage16-fake-persona",
+                    "preference-signal-stage16-fake-persona",
+                    "audit-stage16-fake-persona",
+                );
+                input.fake_persona_detected = true;
+                input
+            },
+            {
+                let mut input = Stage16LongTermStateInput::fixture_emotion_affect_ready(
+                    "long-term-state-stage16-fake-emotion",
+                    "emotion-hint-stage16-fake-emotion",
+                    "audit-stage16-fake-emotion",
+                );
+                input.fake_emotion_detected = true;
+                input
+            },
+            {
+                let mut input = Stage16LongTermStateInput::fixture_memory_write_ready(
+                    "long-term-state-stage16-fake-completion",
+                    "memory-proposal-stage16-fake-completion",
+                    "audit-stage16-fake-completion",
+                );
+                input.fake_completion_present = true;
+                input
+            },
+        ] {
+            input.fixture_only_test_path = true;
+            let packet = Stage16LongTermStatePacket::from_stage15_output(&output, input)
+                .expect("stage16 runtime mock blocked");
+            assert_eq!(
+                packet.disposition,
+                Stage16LongTermStateDisposition::RuntimeMockBlocked
+            );
+            assert!(packet.work_authority.can_fail_closed);
+            assert!(!packet.can_mutate_or_execute());
+        }
+    }
+
+    #[test]
+    fn stage_16a_long_term_state_work_authority_cannot_execute_or_call_live_paths() {
+        let output = stage16_response_output_packet();
+        let packet = Stage16LongTermStatePacket::from_stage15_output(
+            &output,
+            Stage16LongTermStateInput::fixture_memory_write_ready(
+                "long-term-state-stage16-no-exec",
+                "memory-proposal-stage16-no-exec",
+                "audit-stage16-no-exec",
+            ),
+        )
+        .expect("stage16 no-exec packet");
+
+        assert!(!packet.work_authority.can_mutate_external_state);
+        assert!(!packet.work_authority.can_connector_write);
+        assert!(!packet.work_authority.can_send_message);
+        assert!(!packet.work_authority.can_post_content);
+        assert!(!packet.work_authority.can_purchase);
+        assert!(!packet.work_authority.can_delete_remote);
+        assert!(!packet.work_authority.can_invite);
+        assert!(!packet.work_authority.can_schedule);
+        assert!(!packet.work_authority.can_approve);
+        assert!(!packet.work_authority.can_dispatch);
+        assert!(!packet.work_authority.can_execute_simulation);
+        assert!(!packet.work_authority.can_execute_protected_action);
+        assert!(!packet.work_authority.can_call_live_provider);
+        assert!(!packet.work_authority.can_run_live_search);
+        assert!(!packet.work_authority.can_call_live_external_tool);
+        assert!(!packet.work_authority.can_emit_tts);
+        assert!(!packet.work_authority.can_add_native_ui_behavior);
+        assert!(!packet.work_authority.can_promote_provider_model_router);
+        assert!(!packet.work_authority.can_change_output_truth_or_policy);
+        assert!(
+            !packet
+                .work_authority
+                .can_update_memory_persona_emotion_without_governed_path
+        );
+        assert!(!packet.can_mutate_or_execute());
+
+        for mut input in [
+            {
+                let mut input = Stage16LongTermStateInput::fixture_memory_write_ready(
+                    "long-term-state-stage16-live-provider",
+                    "memory-proposal-stage16-live-provider",
+                    "audit-stage16-live-provider",
+                );
+                input.attempted_live_provider_in_build = true;
+                input
+            },
+            {
+                let mut input = Stage16LongTermStateInput::fixture_memory_write_ready(
+                    "long-term-state-stage16-live-search",
+                    "memory-proposal-stage16-live-search",
+                    "audit-stage16-live-search",
+                );
+                input.ran_live_search_in_build = true;
+                input
+            },
+            {
+                let mut input = Stage16LongTermStateInput::fixture_memory_write_ready(
+                    "long-term-state-stage16-live-tool",
+                    "memory-proposal-stage16-live-tool",
+                    "audit-stage16-live-tool",
+                );
+                input.called_live_external_tool_in_build = true;
+                input
+            },
+            {
+                let mut input = Stage16LongTermStateInput::fixture_memory_write_ready(
+                    "long-term-state-stage16-connector",
+                    "memory-proposal-stage16-connector",
+                    "audit-stage16-connector",
+                );
+                input.connector_write_requested = true;
+                input
+            },
+        ] {
+            input.fixture_only_test_path = true;
+            assert!(Stage16LongTermStatePacket::from_stage15_output(&output, input).is_err());
+        }
     }
 
     #[test]
