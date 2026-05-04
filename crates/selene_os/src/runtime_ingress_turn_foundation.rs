@@ -269,6 +269,20 @@ mod reason_codes {
     pub const STAGE20_UNSAFE_INPUT_BLOCKED: &str = "stage20_unsafe_input_blocked";
     pub const STAGE20_RUNTIME_MOCK_BLOCKED: &str = "stage20_runtime_mock_blocked";
     pub const STAGE20_AUDIT_PROOF_MISSING: &str = "stage20_audit_proof_missing";
+    pub const STAGE21_AUTOMATION_CANDIDATE_READY: &str = "stage21_automation_candidate_ready";
+    pub const STAGE21_SCHEDULED_WAKE_READY: &str = "stage21_scheduled_wake_ready";
+    pub const STAGE21_RECURRING_TASK_READY: &str = "stage21_recurring_task_ready";
+    pub const STAGE21_TRIGGER_EVALUATION_READY: &str = "stage21_trigger_evaluation_ready";
+    pub const STAGE21_ORCHESTRATION_HANDOFF_READY: &str = "stage21_orchestration_handoff_ready";
+    pub const STAGE21_STAGE_INPUT_BLOCKED: &str = "stage21_stage_input_blocked";
+    pub const STAGE21_NO_INVENTION_BLOCKED: &str = "stage21_no_invention_blocked";
+    pub const STAGE21_TRIGGER_WAKE_BLOCKED: &str = "stage21_trigger_wake_blocked";
+    pub const STAGE21_NATIVE_ORCHESTRATION_BLOCKED: &str = "stage21_native_orchestration_blocked";
+    pub const STAGE21_PROTECTED_AUTOMATION_BLOCKED: &str = "stage21_protected_automation_blocked";
+    pub const STAGE21_STALE_AUTOMATION_BLOCKED: &str = "stage21_stale_automation_blocked";
+    pub const STAGE21_UNSAFE_INPUT_BLOCKED: &str = "stage21_unsafe_input_blocked";
+    pub const STAGE21_RUNTIME_MOCK_BLOCKED: &str = "stage21_runtime_mock_blocked";
+    pub const STAGE21_AUDIT_PROOF_MISSING: &str = "stage21_audit_proof_missing";
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -19869,6 +19883,1385 @@ impl Validate for Stage20ContinuityHandoffPacket {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stage21AutomationOrchestrationKind {
+    AutomationCandidate,
+    ScheduledWake,
+    RecurringTaskPosture,
+    TriggerEvaluation,
+    OrchestrationHandoff,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stage21AutomationOrchestrationDisposition {
+    AutomationCandidateReady,
+    ScheduledWakeReady,
+    RecurringTaskReady,
+    TriggerEvaluationReady,
+    OrchestrationHandoffReady,
+    StageInputBlocked,
+    NoInventionBlocked,
+    TriggerWakeBlocked,
+    NativeOrchestrationBlocked,
+    ProtectedAutomationBlocked,
+    StaleAutomationBlocked,
+    UnsafeInputBlocked,
+    RuntimeMockBlocked,
+    AuditProofMissing,
+}
+
+impl Stage21AutomationOrchestrationDisposition {
+    pub const fn default_reason_code(self) -> &'static str {
+        match self {
+            Stage21AutomationOrchestrationDisposition::AutomationCandidateReady => {
+                reason_codes::STAGE21_AUTOMATION_CANDIDATE_READY
+            }
+            Stage21AutomationOrchestrationDisposition::ScheduledWakeReady => {
+                reason_codes::STAGE21_SCHEDULED_WAKE_READY
+            }
+            Stage21AutomationOrchestrationDisposition::RecurringTaskReady => {
+                reason_codes::STAGE21_RECURRING_TASK_READY
+            }
+            Stage21AutomationOrchestrationDisposition::TriggerEvaluationReady => {
+                reason_codes::STAGE21_TRIGGER_EVALUATION_READY
+            }
+            Stage21AutomationOrchestrationDisposition::OrchestrationHandoffReady => {
+                reason_codes::STAGE21_ORCHESTRATION_HANDOFF_READY
+            }
+            Stage21AutomationOrchestrationDisposition::StageInputBlocked => {
+                reason_codes::STAGE21_STAGE_INPUT_BLOCKED
+            }
+            Stage21AutomationOrchestrationDisposition::NoInventionBlocked => {
+                reason_codes::STAGE21_NO_INVENTION_BLOCKED
+            }
+            Stage21AutomationOrchestrationDisposition::TriggerWakeBlocked => {
+                reason_codes::STAGE21_TRIGGER_WAKE_BLOCKED
+            }
+            Stage21AutomationOrchestrationDisposition::NativeOrchestrationBlocked => {
+                reason_codes::STAGE21_NATIVE_ORCHESTRATION_BLOCKED
+            }
+            Stage21AutomationOrchestrationDisposition::ProtectedAutomationBlocked => {
+                reason_codes::STAGE21_PROTECTED_AUTOMATION_BLOCKED
+            }
+            Stage21AutomationOrchestrationDisposition::StaleAutomationBlocked => {
+                reason_codes::STAGE21_STALE_AUTOMATION_BLOCKED
+            }
+            Stage21AutomationOrchestrationDisposition::UnsafeInputBlocked => {
+                reason_codes::STAGE21_UNSAFE_INPUT_BLOCKED
+            }
+            Stage21AutomationOrchestrationDisposition::RuntimeMockBlocked => {
+                reason_codes::STAGE21_RUNTIME_MOCK_BLOCKED
+            }
+            Stage21AutomationOrchestrationDisposition::AuditProofMissing => {
+                reason_codes::STAGE21_AUDIT_PROOF_MISSING
+            }
+        }
+    }
+
+    pub const fn is_ready(self) -> bool {
+        matches!(
+            self,
+            Stage21AutomationOrchestrationDisposition::AutomationCandidateReady
+                | Stage21AutomationOrchestrationDisposition::ScheduledWakeReady
+                | Stage21AutomationOrchestrationDisposition::RecurringTaskReady
+                | Stage21AutomationOrchestrationDisposition::TriggerEvaluationReady
+                | Stage21AutomationOrchestrationDisposition::OrchestrationHandoffReady
+        )
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Stage21AutomationOrchestrationWorkAuthority {
+    pub can_emit_automation_candidate_packet: bool,
+    pub can_emit_scheduled_wake_packet: bool,
+    pub can_emit_recurring_task_posture_packet: bool,
+    pub can_emit_trigger_evaluation_packet: bool,
+    pub can_emit_orchestration_handoff_packet: bool,
+    pub can_emit_trigger_or_wake_selection_ref: bool,
+    pub can_emit_ownership_lease_ref: bool,
+    pub can_emit_honest_uncertainty: bool,
+    pub can_emit_audit_proof: bool,
+    pub can_fail_closed: bool,
+    pub can_invent_facts: bool,
+    pub can_invent_trigger_or_wake_success: bool,
+    pub can_invent_recurring_completion: bool,
+    pub can_invent_ownership_or_orchestration_authority: bool,
+    pub can_claim_unproven_completion: bool,
+    pub can_mutate_external_state: bool,
+    pub can_connector_write: bool,
+    pub can_send_message: bool,
+    pub can_post_content: bool,
+    pub can_purchase: bool,
+    pub can_delete_remote: bool,
+    pub can_invite: bool,
+    pub can_schedule: bool,
+    pub can_approve: bool,
+    pub can_dispatch: bool,
+    pub can_execute_simulation: bool,
+    pub can_execute_protected_action: bool,
+    pub can_call_live_provider: bool,
+    pub can_run_live_search: bool,
+    pub can_call_live_external_tool: bool,
+    pub can_generate_live_media: bool,
+    pub can_emit_live_notification_delivery: bool,
+    pub can_run_live_background_execution: bool,
+    pub can_run_live_automation_fire: bool,
+    pub can_run_live_scheduled_wake: bool,
+    pub can_emit_tts_or_playback: bool,
+    pub can_capture_microphone_audio: bool,
+    pub can_transcribe_live_audio: bool,
+    pub can_trigger_voice_id_matching: bool,
+    pub can_update_memory_persona_emotion: bool,
+    pub can_add_native_ui_behavior: bool,
+    pub can_create_user_turn: bool,
+    pub can_treat_visible_automation_as_action_success: bool,
+}
+
+impl Stage21AutomationOrchestrationWorkAuthority {
+    pub const fn automation_ready() -> Self {
+        Self {
+            can_emit_automation_candidate_packet: true,
+            can_emit_trigger_or_wake_selection_ref: true,
+            can_emit_ownership_lease_ref: true,
+            can_emit_honest_uncertainty: true,
+            can_emit_audit_proof: true,
+            can_fail_closed: false,
+            ..Self::fail_closed()
+        }
+    }
+
+    pub const fn scheduled_wake_ready() -> Self {
+        Self {
+            can_emit_scheduled_wake_packet: true,
+            can_emit_trigger_or_wake_selection_ref: true,
+            can_emit_ownership_lease_ref: true,
+            can_emit_honest_uncertainty: true,
+            can_emit_audit_proof: true,
+            can_fail_closed: false,
+            ..Self::fail_closed()
+        }
+    }
+
+    pub const fn recurring_ready() -> Self {
+        Self {
+            can_emit_recurring_task_posture_packet: true,
+            can_emit_ownership_lease_ref: true,
+            can_emit_honest_uncertainty: true,
+            can_emit_audit_proof: true,
+            can_fail_closed: false,
+            ..Self::fail_closed()
+        }
+    }
+
+    pub const fn trigger_ready() -> Self {
+        Self {
+            can_emit_trigger_evaluation_packet: true,
+            can_emit_trigger_or_wake_selection_ref: true,
+            can_emit_ownership_lease_ref: true,
+            can_emit_honest_uncertainty: true,
+            can_emit_audit_proof: true,
+            can_fail_closed: false,
+            ..Self::fail_closed()
+        }
+    }
+
+    pub const fn orchestration_ready() -> Self {
+        Self {
+            can_emit_orchestration_handoff_packet: true,
+            can_emit_trigger_or_wake_selection_ref: true,
+            can_emit_ownership_lease_ref: true,
+            can_emit_honest_uncertainty: true,
+            can_emit_audit_proof: true,
+            can_fail_closed: false,
+            ..Self::fail_closed()
+        }
+    }
+
+    pub const fn fail_closed() -> Self {
+        Self {
+            can_emit_automation_candidate_packet: false,
+            can_emit_scheduled_wake_packet: false,
+            can_emit_recurring_task_posture_packet: false,
+            can_emit_trigger_evaluation_packet: false,
+            can_emit_orchestration_handoff_packet: false,
+            can_emit_trigger_or_wake_selection_ref: false,
+            can_emit_ownership_lease_ref: false,
+            can_emit_honest_uncertainty: true,
+            can_emit_audit_proof: false,
+            can_fail_closed: true,
+            can_invent_facts: false,
+            can_invent_trigger_or_wake_success: false,
+            can_invent_recurring_completion: false,
+            can_invent_ownership_or_orchestration_authority: false,
+            can_claim_unproven_completion: false,
+            can_mutate_external_state: false,
+            can_connector_write: false,
+            can_send_message: false,
+            can_post_content: false,
+            can_purchase: false,
+            can_delete_remote: false,
+            can_invite: false,
+            can_schedule: false,
+            can_approve: false,
+            can_dispatch: false,
+            can_execute_simulation: false,
+            can_execute_protected_action: false,
+            can_call_live_provider: false,
+            can_run_live_search: false,
+            can_call_live_external_tool: false,
+            can_generate_live_media: false,
+            can_emit_live_notification_delivery: false,
+            can_run_live_background_execution: false,
+            can_run_live_automation_fire: false,
+            can_run_live_scheduled_wake: false,
+            can_emit_tts_or_playback: false,
+            can_capture_microphone_audio: false,
+            can_transcribe_live_audio: false,
+            can_trigger_voice_id_matching: false,
+            can_update_memory_persona_emotion: false,
+            can_add_native_ui_behavior: false,
+            can_create_user_turn: false,
+            can_treat_visible_automation_as_action_success: false,
+        }
+    }
+
+    pub const fn can_mutate_or_execute(self) -> bool {
+        self.can_invent_facts
+            || self.can_invent_trigger_or_wake_success
+            || self.can_invent_recurring_completion
+            || self.can_invent_ownership_or_orchestration_authority
+            || self.can_claim_unproven_completion
+            || self.can_mutate_external_state
+            || self.can_connector_write
+            || self.can_send_message
+            || self.can_post_content
+            || self.can_purchase
+            || self.can_delete_remote
+            || self.can_invite
+            || self.can_schedule
+            || self.can_approve
+            || self.can_dispatch
+            || self.can_execute_simulation
+            || self.can_execute_protected_action
+            || self.can_call_live_provider
+            || self.can_run_live_search
+            || self.can_call_live_external_tool
+            || self.can_generate_live_media
+            || self.can_emit_live_notification_delivery
+            || self.can_run_live_background_execution
+            || self.can_run_live_automation_fire
+            || self.can_run_live_scheduled_wake
+            || self.can_emit_tts_or_playback
+            || self.can_capture_microphone_audio
+            || self.can_transcribe_live_audio
+            || self.can_trigger_voice_id_matching
+            || self.can_update_memory_persona_emotion
+            || self.can_add_native_ui_behavior
+            || self.can_create_user_turn
+            || self.can_treat_visible_automation_as_action_success
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Stage21AutomationOrchestrationInput {
+    pub automation_kind: Stage21AutomationOrchestrationKind,
+    pub automation_candidate_id: Option<String>,
+    pub scheduled_wake_id: Option<String>,
+    pub trigger_evaluation_id: Option<String>,
+    pub recurring_task_id: Option<String>,
+    pub orchestration_handoff_id: Option<String>,
+    pub trigger_or_wake_selection_id: Option<String>,
+    pub reminder_id: Option<String>,
+    pub work_id: Option<String>,
+    pub lease_id: Option<String>,
+    pub ownership_ref: Option<String>,
+    pub device_id: String,
+    pub audit_id: Option<String>,
+    pub ph1j_proof_ref: Option<String>,
+    pub stage15_response_output_ref_present: bool,
+    pub stage19_attention_ref_present: bool,
+    pub stage19_attention_ref_non_authoritative: bool,
+    pub stage20_continuity_ref_present: bool,
+    pub stage20_continuity_ref_non_authoritative: bool,
+    pub trigger_wake_bounded: bool,
+    pub orchestration_handoff_bounded: bool,
+    pub ownership_lease_bounded: bool,
+    pub uncertainty_preserved: bool,
+    pub automation_invented_fact: bool,
+    pub automation_invented_trigger_success: bool,
+    pub automation_invented_wake_success: bool,
+    pub automation_invented_recurring_completion: bool,
+    pub automation_invented_ownership: bool,
+    pub automation_invented_attachment_or_citation: bool,
+    pub automation_invented_provider_or_tool_result: bool,
+    pub automation_claimed_unproven_completion: bool,
+    pub automation_implied_mutation: bool,
+    pub tenant_user_device_project_scoped: bool,
+    pub secret_safe: bool,
+    pub redacted: bool,
+    pub stale_aware: bool,
+    pub revocation_aware: bool,
+    pub trigger_ref_present: bool,
+    pub wake_ref_present: bool,
+    pub ownership_ref_present: bool,
+    pub lease_ref_present: bool,
+    pub unverifiable: bool,
+    pub stale: bool,
+    pub secret_unsafe: bool,
+    pub cross_tenant: bool,
+    pub cross_device: bool,
+    pub missing_lease: bool,
+    pub ownership_drift: bool,
+    pub trigger_mismatch: bool,
+    pub recurrence_mismatch: bool,
+    pub native_orchestration_declarative_only: bool,
+    pub native_orchestration_mutates_state: bool,
+    pub native_orchestration_connector_writes: bool,
+    pub native_orchestration_dispatches_or_executes: bool,
+    pub native_orchestration_calls_providers_or_tools: bool,
+    pub native_orchestration_emits_tts_or_playback: bool,
+    pub native_orchestration_creates_user_turn: bool,
+    pub native_orchestration_treats_visible_success_as_action_success: bool,
+    pub protected_action_like_request: bool,
+    pub protected_slot_or_authority_ambiguous: bool,
+    pub unsafe_identity_posture: bool,
+    pub automation_implies_stage12_mutation_without_proof: bool,
+    pub stale_or_cancelled_or_superseded_output: bool,
+    pub session_closed: bool,
+    pub record_artifact_only_turn: bool,
+    pub stale_trigger_state: bool,
+    pub stale_wake_state: bool,
+    pub stale_lease_or_ownership_state: bool,
+    pub orchestration_identity_matches_current_output_session: bool,
+    pub replay_upgrades_blocked_automation: bool,
+    pub fake_automation_detected: bool,
+    pub fake_trigger_detected: bool,
+    pub fake_wake_detected: bool,
+    pub fake_recurring_detected: bool,
+    pub fake_orchestration_detected: bool,
+    pub runtime_mock_detected: bool,
+    pub fixture_only_test_path: bool,
+    pub raw_provider_output_present: bool,
+    pub raw_search_dump_present: bool,
+    pub raw_media_present: bool,
+    pub secret_bearing_native_wake_field_present: bool,
+    pub unverified_source_evidence_present: bool,
+    pub unsupported_claim_candidate_present: bool,
+    pub fake_automation_source_carrier_present: bool,
+    pub speech_playback_attention_continuity_used_as_truth_authority: bool,
+    pub protected_action_candidate_present: bool,
+    pub simulation_candidate_present: bool,
+    pub approved_execution_plan_present: bool,
+    pub secrets_exposed: bool,
+    pub raw_audio_or_voice_material_exposed: bool,
+    pub internal_trace_exposed: bool,
+    pub access_denied: bool,
+    pub policy_denied: bool,
+    pub tenant_mismatch: bool,
+    pub attempted_live_provider_in_build: bool,
+    pub generated_live_media_in_build: bool,
+    pub ran_live_search_in_build: bool,
+    pub called_live_external_tool_in_build: bool,
+    pub connector_write_requested: bool,
+    pub ran_live_notification_delivery_in_build: bool,
+    pub ran_live_background_execution_in_build: bool,
+    pub ran_live_automation_fire_in_build: bool,
+    pub ran_live_scheduled_wake_in_build: bool,
+    pub ran_live_tts_or_playback_in_build: bool,
+    pub captured_microphone_audio: bool,
+    pub transcribed_live_audio: bool,
+    pub voice_id_matching_attempted: bool,
+    pub native_ui_behavior_added: bool,
+}
+
+impl Stage21AutomationOrchestrationInput {
+    fn fixture_base(
+        automation_kind: Stage21AutomationOrchestrationKind,
+        device_id: impl Into<String>,
+        audit_id: impl Into<String>,
+    ) -> Self {
+        let audit_id = audit_id.into();
+        Self {
+            automation_kind,
+            automation_candidate_id: Some("automation-candidate-stage21-ready".to_string()),
+            scheduled_wake_id: Some("scheduled-wake-stage21-ready".to_string()),
+            trigger_evaluation_id: Some("trigger-evaluation-stage21-ready".to_string()),
+            recurring_task_id: Some("recurring-task-stage21-ready".to_string()),
+            orchestration_handoff_id: Some("orchestration-handoff-stage21-ready".to_string()),
+            trigger_or_wake_selection_id: Some("trigger-selection-stage21-ready".to_string()),
+            reminder_id: Some("reminder-stage21-ready".to_string()),
+            work_id: Some("work-stage21-ready".to_string()),
+            lease_id: Some("lease-stage21-ready".to_string()),
+            ownership_ref: Some("ownership-stage21-ready".to_string()),
+            device_id: device_id.into(),
+            audit_id: Some(audit_id.clone()),
+            ph1j_proof_ref: Some(audit_id),
+            stage15_response_output_ref_present: true,
+            stage19_attention_ref_present: false,
+            stage19_attention_ref_non_authoritative: false,
+            stage20_continuity_ref_present: false,
+            stage20_continuity_ref_non_authoritative: false,
+            trigger_wake_bounded: true,
+            orchestration_handoff_bounded: true,
+            ownership_lease_bounded: true,
+            uncertainty_preserved: true,
+            automation_invented_fact: false,
+            automation_invented_trigger_success: false,
+            automation_invented_wake_success: false,
+            automation_invented_recurring_completion: false,
+            automation_invented_ownership: false,
+            automation_invented_attachment_or_citation: false,
+            automation_invented_provider_or_tool_result: false,
+            automation_claimed_unproven_completion: false,
+            automation_implied_mutation: false,
+            tenant_user_device_project_scoped: true,
+            secret_safe: true,
+            redacted: true,
+            stale_aware: true,
+            revocation_aware: true,
+            trigger_ref_present: true,
+            wake_ref_present: true,
+            ownership_ref_present: true,
+            lease_ref_present: true,
+            unverifiable: false,
+            stale: false,
+            secret_unsafe: false,
+            cross_tenant: false,
+            cross_device: false,
+            missing_lease: false,
+            ownership_drift: false,
+            trigger_mismatch: false,
+            recurrence_mismatch: false,
+            native_orchestration_declarative_only: true,
+            native_orchestration_mutates_state: false,
+            native_orchestration_connector_writes: false,
+            native_orchestration_dispatches_or_executes: false,
+            native_orchestration_calls_providers_or_tools: false,
+            native_orchestration_emits_tts_or_playback: false,
+            native_orchestration_creates_user_turn: false,
+            native_orchestration_treats_visible_success_as_action_success: false,
+            protected_action_like_request: false,
+            protected_slot_or_authority_ambiguous: false,
+            unsafe_identity_posture: false,
+            automation_implies_stage12_mutation_without_proof: false,
+            stale_or_cancelled_or_superseded_output: false,
+            session_closed: false,
+            record_artifact_only_turn: false,
+            stale_trigger_state: false,
+            stale_wake_state: false,
+            stale_lease_or_ownership_state: false,
+            orchestration_identity_matches_current_output_session: true,
+            replay_upgrades_blocked_automation: false,
+            fake_automation_detected: false,
+            fake_trigger_detected: false,
+            fake_wake_detected: false,
+            fake_recurring_detected: false,
+            fake_orchestration_detected: false,
+            runtime_mock_detected: false,
+            fixture_only_test_path: true,
+            raw_provider_output_present: false,
+            raw_search_dump_present: false,
+            raw_media_present: false,
+            secret_bearing_native_wake_field_present: false,
+            unverified_source_evidence_present: false,
+            unsupported_claim_candidate_present: false,
+            fake_automation_source_carrier_present: false,
+            speech_playback_attention_continuity_used_as_truth_authority: false,
+            protected_action_candidate_present: false,
+            simulation_candidate_present: false,
+            approved_execution_plan_present: false,
+            secrets_exposed: false,
+            raw_audio_or_voice_material_exposed: false,
+            internal_trace_exposed: false,
+            access_denied: false,
+            policy_denied: false,
+            tenant_mismatch: false,
+            attempted_live_provider_in_build: false,
+            generated_live_media_in_build: false,
+            ran_live_search_in_build: false,
+            called_live_external_tool_in_build: false,
+            connector_write_requested: false,
+            ran_live_notification_delivery_in_build: false,
+            ran_live_background_execution_in_build: false,
+            ran_live_automation_fire_in_build: false,
+            ran_live_scheduled_wake_in_build: false,
+            ran_live_tts_or_playback_in_build: false,
+            captured_microphone_audio: false,
+            transcribed_live_audio: false,
+            voice_id_matching_attempted: false,
+            native_ui_behavior_added: false,
+        }
+    }
+
+    pub fn fixture_automation_candidate_ready(
+        automation_candidate_id: impl Into<String>,
+        device_id: impl Into<String>,
+        audit_id: impl Into<String>,
+    ) -> Self {
+        let mut input = Self::fixture_base(
+            Stage21AutomationOrchestrationKind::AutomationCandidate,
+            device_id,
+            audit_id,
+        );
+        input.automation_candidate_id = Some(automation_candidate_id.into());
+        input.scheduled_wake_id = None;
+        input.recurring_task_id = None;
+        input.orchestration_handoff_id = None;
+        input
+    }
+
+    pub fn fixture_scheduled_wake_ready(
+        scheduled_wake_id: impl Into<String>,
+        device_id: impl Into<String>,
+        audit_id: impl Into<String>,
+    ) -> Self {
+        let mut input = Self::fixture_base(
+            Stage21AutomationOrchestrationKind::ScheduledWake,
+            device_id,
+            audit_id,
+        );
+        input.automation_candidate_id = None;
+        input.scheduled_wake_id = Some(scheduled_wake_id.into());
+        input.recurring_task_id = None;
+        input.orchestration_handoff_id = None;
+        input
+    }
+
+    pub fn fixture_recurring_task_ready(
+        recurring_task_id: impl Into<String>,
+        work_id: impl Into<String>,
+        lease_id: impl Into<String>,
+        device_id: impl Into<String>,
+        audit_id: impl Into<String>,
+    ) -> Self {
+        let mut input = Self::fixture_base(
+            Stage21AutomationOrchestrationKind::RecurringTaskPosture,
+            device_id,
+            audit_id,
+        );
+        input.automation_candidate_id = None;
+        input.scheduled_wake_id = None;
+        input.recurring_task_id = Some(recurring_task_id.into());
+        input.work_id = Some(work_id.into());
+        input.lease_id = Some(lease_id.into());
+        input.orchestration_handoff_id = None;
+        input
+    }
+
+    pub fn fixture_trigger_evaluation_ready(
+        trigger_evaluation_id: impl Into<String>,
+        selection_id: impl Into<String>,
+        device_id: impl Into<String>,
+        audit_id: impl Into<String>,
+    ) -> Self {
+        let mut input = Self::fixture_base(
+            Stage21AutomationOrchestrationKind::TriggerEvaluation,
+            device_id,
+            audit_id,
+        );
+        input.automation_candidate_id = None;
+        input.scheduled_wake_id = None;
+        input.recurring_task_id = None;
+        input.orchestration_handoff_id = None;
+        input.trigger_evaluation_id = Some(trigger_evaluation_id.into());
+        input.trigger_or_wake_selection_id = Some(selection_id.into());
+        input
+    }
+
+    pub fn fixture_orchestration_handoff_ready(
+        orchestration_handoff_id: impl Into<String>,
+        selection_id: impl Into<String>,
+        device_id: impl Into<String>,
+        audit_id: impl Into<String>,
+    ) -> Self {
+        let mut input = Self::fixture_base(
+            Stage21AutomationOrchestrationKind::OrchestrationHandoff,
+            device_id,
+            audit_id,
+        );
+        input.automation_candidate_id = None;
+        input.scheduled_wake_id = None;
+        input.recurring_task_id = None;
+        input.orchestration_handoff_id = Some(orchestration_handoff_id.into());
+        input.trigger_or_wake_selection_id = Some(selection_id.into());
+        input
+    }
+}
+
+impl Validate for Stage21AutomationOrchestrationInput {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        validate_stage4_optional_ref(
+            "stage21_automation_orchestration_input.automation_candidate_id",
+            self.automation_candidate_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage21_automation_orchestration_input.scheduled_wake_id",
+            self.scheduled_wake_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage21_automation_orchestration_input.trigger_evaluation_id",
+            self.trigger_evaluation_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage21_automation_orchestration_input.recurring_task_id",
+            self.recurring_task_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage21_automation_orchestration_input.orchestration_handoff_id",
+            self.orchestration_handoff_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage21_automation_orchestration_input.trigger_or_wake_selection_id",
+            self.trigger_or_wake_selection_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage21_automation_orchestration_input.reminder_id",
+            self.reminder_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage21_automation_orchestration_input.work_id",
+            self.work_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage21_automation_orchestration_input.lease_id",
+            self.lease_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage21_automation_orchestration_input.ownership_ref",
+            self.ownership_ref.as_deref(),
+        )?;
+        validate_stage4_ref(
+            "stage21_automation_orchestration_input.device_id",
+            &self.device_id,
+        )?;
+        validate_stage4_optional_ref(
+            "stage21_automation_orchestration_input.audit_id",
+            self.audit_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage21_automation_orchestration_input.ph1j_proof_ref",
+            self.ph1j_proof_ref.as_deref(),
+        )?;
+        if self.attempted_live_provider_in_build
+            || self.generated_live_media_in_build
+            || self.ran_live_search_in_build
+            || self.called_live_external_tool_in_build
+            || self.connector_write_requested
+            || self.ran_live_notification_delivery_in_build
+            || self.ran_live_background_execution_in_build
+            || self.ran_live_automation_fire_in_build
+            || self.ran_live_scheduled_wake_in_build
+            || self.ran_live_tts_or_playback_in_build
+            || self.captured_microphone_audio
+            || self.transcribed_live_audio
+            || self.voice_id_matching_attempted
+            || self.native_ui_behavior_added
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage21_automation_orchestration_input.no_live_build",
+                reason: "Stage 21A cannot call live providers/search/tools, fire live automation, run live scheduled wake/background execution, emit TTS/playback, capture mic, transcribe, match Voice ID, connector-write, or add native UI",
+            });
+        }
+        if (self.runtime_mock_detected
+            || self.fake_automation_detected
+            || self.fake_trigger_detected
+            || self.fake_wake_detected
+            || self.fake_recurring_detected
+            || self.fake_orchestration_detected)
+            && !self.fixture_only_test_path
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage21_automation_orchestration_input.runtime_mock",
+                reason: "runtime mocks and fake automation/trigger/wake/recurring/orchestration success are forbidden outside explicit fixture-only paths",
+            });
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Stage21AutomationOrchestrationPacket {
+    pub session_id: SessionId,
+    pub turn_id: Option<TurnId>,
+    pub activation_id: Option<String>,
+    pub response_output_id: String,
+    pub response_hash: String,
+    pub public_answer_id: String,
+    pub notification_candidate_id: Option<String>,
+    pub attention_state_id: Option<String>,
+    pub continuity_packet_id: Option<String>,
+    pub automation_candidate_id: Option<String>,
+    pub scheduled_wake_id: Option<String>,
+    pub trigger_evaluation_id: Option<String>,
+    pub recurring_task_id: Option<String>,
+    pub orchestration_handoff_id: Option<String>,
+    pub trigger_or_wake_selection_id: Option<String>,
+    pub reminder_id: Option<String>,
+    pub work_id: Option<String>,
+    pub lease_id: Option<String>,
+    pub ownership_ref: Option<String>,
+    pub device_id: String,
+    pub access_context_id: Option<String>,
+    pub policy_context_id: Option<String>,
+    pub tenant_id: Option<String>,
+    pub audit_id: Option<String>,
+    pub ph1j_proof_ref: Option<String>,
+    pub automation_kind: Stage21AutomationOrchestrationKind,
+    pub reason_code: &'static str,
+    pub disposition: Stage21AutomationOrchestrationDisposition,
+    pub stage15_disposition: Stage15ResponseOutputDisposition,
+    pub stage19_disposition: Option<Stage19NotificationAttentionDisposition>,
+    pub stage20_disposition: Option<Stage20ContinuityHandoffDisposition>,
+    pub stage15_response_output_ref_present: bool,
+    pub stage19_attention_ref_present: bool,
+    pub stage19_attention_ref_non_authoritative: bool,
+    pub stage20_continuity_ref_present: bool,
+    pub stage20_continuity_ref_non_authoritative: bool,
+    pub trigger_wake_bounded: bool,
+    pub orchestration_handoff_bounded: bool,
+    pub ownership_lease_bounded: bool,
+    pub uncertainty_preserved: bool,
+    pub automation_invented_fact: bool,
+    pub automation_invented_trigger_success: bool,
+    pub automation_invented_wake_success: bool,
+    pub automation_invented_recurring_completion: bool,
+    pub automation_invented_ownership: bool,
+    pub automation_invented_attachment_or_citation: bool,
+    pub automation_invented_provider_or_tool_result: bool,
+    pub automation_claimed_unproven_completion: bool,
+    pub automation_implied_mutation: bool,
+    pub tenant_user_device_project_scoped: bool,
+    pub secret_safe: bool,
+    pub redacted: bool,
+    pub stale_aware: bool,
+    pub revocation_aware: bool,
+    pub trigger_ref_present: bool,
+    pub wake_ref_present: bool,
+    pub ownership_ref_present: bool,
+    pub lease_ref_present: bool,
+    pub unverifiable: bool,
+    pub stale: bool,
+    pub secret_unsafe: bool,
+    pub cross_tenant: bool,
+    pub cross_device: bool,
+    pub missing_lease: bool,
+    pub ownership_drift: bool,
+    pub trigger_mismatch: bool,
+    pub recurrence_mismatch: bool,
+    pub native_orchestration_declarative_only: bool,
+    pub native_orchestration_mutates_state: bool,
+    pub native_orchestration_connector_writes: bool,
+    pub native_orchestration_dispatches_or_executes: bool,
+    pub native_orchestration_calls_providers_or_tools: bool,
+    pub native_orchestration_emits_tts_or_playback: bool,
+    pub native_orchestration_creates_user_turn: bool,
+    pub native_orchestration_treats_visible_success_as_action_success: bool,
+    pub protected_action_like_request: bool,
+    pub protected_slot_or_authority_ambiguous: bool,
+    pub unsafe_identity_posture: bool,
+    pub automation_implies_stage12_mutation_without_proof: bool,
+    pub stale_or_cancelled_or_superseded_output: bool,
+    pub session_closed: bool,
+    pub record_artifact_only_turn: bool,
+    pub stale_trigger_state: bool,
+    pub stale_wake_state: bool,
+    pub stale_lease_or_ownership_state: bool,
+    pub orchestration_identity_matches_current_output_session: bool,
+    pub replay_upgrades_blocked_automation: bool,
+    pub fake_automation_detected: bool,
+    pub fake_trigger_detected: bool,
+    pub fake_wake_detected: bool,
+    pub fake_recurring_detected: bool,
+    pub fake_orchestration_detected: bool,
+    pub runtime_mock_detected: bool,
+    pub raw_provider_output_present: bool,
+    pub raw_search_dump_present: bool,
+    pub raw_media_present: bool,
+    pub secret_bearing_native_wake_field_present: bool,
+    pub unverified_source_evidence_present: bool,
+    pub unsupported_claim_candidate_present: bool,
+    pub fake_automation_source_carrier_present: bool,
+    pub speech_playback_attention_continuity_used_as_truth_authority: bool,
+    pub protected_action_candidate_present: bool,
+    pub simulation_candidate_present: bool,
+    pub approved_execution_plan_present: bool,
+    pub secrets_exposed: bool,
+    pub raw_audio_or_voice_material_exposed: bool,
+    pub internal_trace_exposed: bool,
+    pub access_denied: bool,
+    pub policy_denied: bool,
+    pub tenant_mismatch: bool,
+    pub work_authority: Stage21AutomationOrchestrationWorkAuthority,
+}
+
+impl Stage21AutomationOrchestrationPacket {
+    pub fn from_stage15_output(
+        output: &Stage15ResponseOutputPacket,
+        attention_output: Option<&Stage19NotificationAttentionPacket>,
+        continuity_output: Option<&Stage20ContinuityHandoffPacket>,
+        input: Stage21AutomationOrchestrationInput,
+    ) -> Result<Self, ContractViolation> {
+        output.validate()?;
+        if let Some(attention_output) = attention_output {
+            attention_output.validate()?;
+        }
+        if let Some(continuity_output) = continuity_output {
+            continuity_output.validate()?;
+        }
+        input.validate()?;
+        let disposition =
+            Self::decide_disposition(output, attention_output, continuity_output, &input);
+        let work_authority = Self::work_authority_for(disposition);
+        let audit_id = input.audit_id.clone().or_else(|| output.audit_id.clone());
+        let ph1j_proof_ref = input
+            .ph1j_proof_ref
+            .clone()
+            .or_else(|| output.ph1j_proof_ref.clone())
+            .or_else(|| audit_id.clone());
+        let packet = Self {
+            session_id: output.session_id,
+            turn_id: output.turn_id,
+            activation_id: output.activation_id.clone(),
+            response_output_id: output.response_output_id.clone(),
+            response_hash: output.response_hash.clone(),
+            public_answer_id: output.public_answer_id.clone(),
+            notification_candidate_id: attention_output
+                .and_then(|attention| attention.notification_candidate_id.clone()),
+            attention_state_id: attention_output
+                .and_then(|attention| attention.attention_state_id.clone()),
+            continuity_packet_id: continuity_output
+                .map(|continuity| continuity.continuity_packet_id.clone()),
+            automation_candidate_id: input.automation_candidate_id,
+            scheduled_wake_id: input.scheduled_wake_id,
+            trigger_evaluation_id: input.trigger_evaluation_id,
+            recurring_task_id: input.recurring_task_id,
+            orchestration_handoff_id: input.orchestration_handoff_id,
+            trigger_or_wake_selection_id: input.trigger_or_wake_selection_id,
+            reminder_id: input.reminder_id,
+            work_id: input.work_id,
+            lease_id: input.lease_id,
+            ownership_ref: input.ownership_ref,
+            device_id: input.device_id,
+            access_context_id: output.access_context_id.clone(),
+            policy_context_id: output.policy_context_id.clone(),
+            tenant_id: output.tenant_id.clone(),
+            audit_id,
+            ph1j_proof_ref,
+            automation_kind: input.automation_kind,
+            reason_code: disposition.default_reason_code(),
+            disposition,
+            stage15_disposition: output.disposition,
+            stage19_disposition: attention_output.map(|attention| attention.disposition),
+            stage20_disposition: continuity_output.map(|continuity| continuity.disposition),
+            stage15_response_output_ref_present: input.stage15_response_output_ref_present,
+            stage19_attention_ref_present: input.stage19_attention_ref_present,
+            stage19_attention_ref_non_authoritative: input.stage19_attention_ref_non_authoritative,
+            stage20_continuity_ref_present: input.stage20_continuity_ref_present,
+            stage20_continuity_ref_non_authoritative: input
+                .stage20_continuity_ref_non_authoritative,
+            trigger_wake_bounded: input.trigger_wake_bounded,
+            orchestration_handoff_bounded: input.orchestration_handoff_bounded,
+            ownership_lease_bounded: input.ownership_lease_bounded,
+            uncertainty_preserved: input.uncertainty_preserved,
+            automation_invented_fact: input.automation_invented_fact,
+            automation_invented_trigger_success: input.automation_invented_trigger_success,
+            automation_invented_wake_success: input.automation_invented_wake_success,
+            automation_invented_recurring_completion: input
+                .automation_invented_recurring_completion,
+            automation_invented_ownership: input.automation_invented_ownership,
+            automation_invented_attachment_or_citation: input
+                .automation_invented_attachment_or_citation,
+            automation_invented_provider_or_tool_result: input
+                .automation_invented_provider_or_tool_result,
+            automation_claimed_unproven_completion: input.automation_claimed_unproven_completion,
+            automation_implied_mutation: input.automation_implied_mutation,
+            tenant_user_device_project_scoped: input.tenant_user_device_project_scoped,
+            secret_safe: input.secret_safe,
+            redacted: input.redacted,
+            stale_aware: input.stale_aware,
+            revocation_aware: input.revocation_aware,
+            trigger_ref_present: input.trigger_ref_present,
+            wake_ref_present: input.wake_ref_present,
+            ownership_ref_present: input.ownership_ref_present,
+            lease_ref_present: input.lease_ref_present,
+            unverifiable: input.unverifiable,
+            stale: input.stale,
+            secret_unsafe: input.secret_unsafe,
+            cross_tenant: input.cross_tenant,
+            cross_device: input.cross_device,
+            missing_lease: input.missing_lease,
+            ownership_drift: input.ownership_drift,
+            trigger_mismatch: input.trigger_mismatch,
+            recurrence_mismatch: input.recurrence_mismatch,
+            native_orchestration_declarative_only: input.native_orchestration_declarative_only,
+            native_orchestration_mutates_state: input.native_orchestration_mutates_state,
+            native_orchestration_connector_writes: input.native_orchestration_connector_writes,
+            native_orchestration_dispatches_or_executes: input
+                .native_orchestration_dispatches_or_executes,
+            native_orchestration_calls_providers_or_tools: input
+                .native_orchestration_calls_providers_or_tools,
+            native_orchestration_emits_tts_or_playback: input
+                .native_orchestration_emits_tts_or_playback,
+            native_orchestration_creates_user_turn: input.native_orchestration_creates_user_turn,
+            native_orchestration_treats_visible_success_as_action_success: input
+                .native_orchestration_treats_visible_success_as_action_success,
+            protected_action_like_request: input.protected_action_like_request,
+            protected_slot_or_authority_ambiguous: input.protected_slot_or_authority_ambiguous,
+            unsafe_identity_posture: input.unsafe_identity_posture,
+            automation_implies_stage12_mutation_without_proof: input
+                .automation_implies_stage12_mutation_without_proof,
+            stale_or_cancelled_or_superseded_output: input.stale_or_cancelled_or_superseded_output,
+            session_closed: input.session_closed,
+            record_artifact_only_turn: input.record_artifact_only_turn,
+            stale_trigger_state: input.stale_trigger_state,
+            stale_wake_state: input.stale_wake_state,
+            stale_lease_or_ownership_state: input.stale_lease_or_ownership_state,
+            orchestration_identity_matches_current_output_session: input
+                .orchestration_identity_matches_current_output_session,
+            replay_upgrades_blocked_automation: input.replay_upgrades_blocked_automation,
+            fake_automation_detected: input.fake_automation_detected,
+            fake_trigger_detected: input.fake_trigger_detected,
+            fake_wake_detected: input.fake_wake_detected,
+            fake_recurring_detected: input.fake_recurring_detected,
+            fake_orchestration_detected: input.fake_orchestration_detected,
+            runtime_mock_detected: input.runtime_mock_detected,
+            raw_provider_output_present: input.raw_provider_output_present,
+            raw_search_dump_present: input.raw_search_dump_present,
+            raw_media_present: input.raw_media_present,
+            secret_bearing_native_wake_field_present: input
+                .secret_bearing_native_wake_field_present,
+            unverified_source_evidence_present: input.unverified_source_evidence_present,
+            unsupported_claim_candidate_present: input.unsupported_claim_candidate_present,
+            fake_automation_source_carrier_present: input.fake_automation_source_carrier_present,
+            speech_playback_attention_continuity_used_as_truth_authority: input
+                .speech_playback_attention_continuity_used_as_truth_authority,
+            protected_action_candidate_present: input.protected_action_candidate_present,
+            simulation_candidate_present: input.simulation_candidate_present,
+            approved_execution_plan_present: input.approved_execution_plan_present,
+            secrets_exposed: input.secrets_exposed,
+            raw_audio_or_voice_material_exposed: input.raw_audio_or_voice_material_exposed,
+            internal_trace_exposed: input.internal_trace_exposed,
+            access_denied: input.access_denied,
+            policy_denied: input.policy_denied,
+            tenant_mismatch: input.tenant_mismatch,
+            work_authority,
+        };
+        packet.validate()?;
+        Ok(packet)
+    }
+
+    pub const fn can_mutate_or_execute(&self) -> bool {
+        self.work_authority.can_mutate_or_execute()
+    }
+
+    fn decide_disposition(
+        output: &Stage15ResponseOutputPacket,
+        attention_output: Option<&Stage19NotificationAttentionPacket>,
+        continuity_output: Option<&Stage20ContinuityHandoffPacket>,
+        input: &Stage21AutomationOrchestrationInput,
+    ) -> Stage21AutomationOrchestrationDisposition {
+        if input.runtime_mock_detected
+            || input.fake_automation_detected
+            || input.fake_trigger_detected
+            || input.fake_wake_detected
+            || input.fake_recurring_detected
+            || input.fake_orchestration_detected
+        {
+            return Stage21AutomationOrchestrationDisposition::RuntimeMockBlocked;
+        }
+        if input.raw_provider_output_present
+            || input.raw_search_dump_present
+            || input.raw_media_present
+            || input.secret_bearing_native_wake_field_present
+            || input.unverified_source_evidence_present
+            || input.unsupported_claim_candidate_present
+            || input.fake_automation_source_carrier_present
+            || input.speech_playback_attention_continuity_used_as_truth_authority
+            || input.protected_action_candidate_present
+            || input.simulation_candidate_present
+            || input.approved_execution_plan_present
+            || input.secrets_exposed
+            || input.raw_audio_or_voice_material_exposed
+            || input.internal_trace_exposed
+            || input.access_denied
+            || input.policy_denied
+            || input.tenant_mismatch
+        {
+            return Stage21AutomationOrchestrationDisposition::UnsafeInputBlocked;
+        }
+        if !output.disposition.is_ready()
+            || output.can_mutate_or_execute()
+            || !input.stage15_response_output_ref_present
+        {
+            return Stage21AutomationOrchestrationDisposition::StageInputBlocked;
+        }
+        if let Some(attention_output) = attention_output {
+            if attention_output.can_mutate_or_execute()
+                || attention_output.stale_or_cancelled_or_superseded_output
+                || attention_output.session_closed
+                || attention_output.record_artifact_only_turn
+                || !input.stage19_attention_ref_present
+                || !input.stage19_attention_ref_non_authoritative
+            {
+                return Stage21AutomationOrchestrationDisposition::StageInputBlocked;
+            }
+        }
+        if let Some(continuity_output) = continuity_output {
+            if continuity_output.can_mutate_or_execute()
+                || continuity_output.stale_or_cancelled_or_superseded_output
+                || continuity_output.session_closed
+                || continuity_output.record_artifact_only_turn
+                || !input.stage20_continuity_ref_present
+                || !input.stage20_continuity_ref_non_authoritative
+            {
+                return Stage21AutomationOrchestrationDisposition::StageInputBlocked;
+            }
+        }
+        if input.audit_id.is_none()
+            && input.ph1j_proof_ref.is_none()
+            && output.audit_id.is_none()
+            && output.ph1j_proof_ref.is_none()
+        {
+            return Stage21AutomationOrchestrationDisposition::AuditProofMissing;
+        }
+        if !input.uncertainty_preserved
+            || input.automation_invented_fact
+            || input.automation_invented_trigger_success
+            || input.automation_invented_wake_success
+            || input.automation_invented_recurring_completion
+            || input.automation_invented_ownership
+            || input.automation_invented_attachment_or_citation
+            || input.automation_invented_provider_or_tool_result
+            || input.automation_claimed_unproven_completion
+            || input.automation_implied_mutation
+        {
+            return Stage21AutomationOrchestrationDisposition::NoInventionBlocked;
+        }
+        if !input.trigger_wake_bounded
+            || !input.orchestration_handoff_bounded
+            || !input.ownership_lease_bounded
+            || !input.tenant_user_device_project_scoped
+            || !input.secret_safe
+            || !input.redacted
+            || !input.stale_aware
+            || !input.revocation_aware
+            || !input.trigger_ref_present
+            || !input.wake_ref_present
+            || !input.ownership_ref_present
+            || !input.lease_ref_present
+            || input.unverifiable
+            || input.stale
+            || input.secret_unsafe
+            || input.cross_tenant
+            || input.cross_device
+            || input.missing_lease
+            || input.ownership_drift
+            || input.trigger_mismatch
+            || input.recurrence_mismatch
+        {
+            return Stage21AutomationOrchestrationDisposition::TriggerWakeBlocked;
+        }
+        if !input.native_orchestration_declarative_only
+            || input.native_orchestration_mutates_state
+            || input.native_orchestration_connector_writes
+            || input.native_orchestration_dispatches_or_executes
+            || input.native_orchestration_calls_providers_or_tools
+            || input.native_orchestration_emits_tts_or_playback
+            || input.native_orchestration_creates_user_turn
+            || input.native_orchestration_treats_visible_success_as_action_success
+        {
+            return Stage21AutomationOrchestrationDisposition::NativeOrchestrationBlocked;
+        }
+        if input.protected_action_like_request
+            || input.protected_slot_or_authority_ambiguous
+            || input.unsafe_identity_posture
+            || input.automation_implies_stage12_mutation_without_proof
+        {
+            return Stage21AutomationOrchestrationDisposition::ProtectedAutomationBlocked;
+        }
+        if input.stale_or_cancelled_or_superseded_output
+            || input.session_closed
+            || input.record_artifact_only_turn
+            || input.stale_trigger_state
+            || input.stale_wake_state
+            || input.stale_lease_or_ownership_state
+            || !input.orchestration_identity_matches_current_output_session
+            || input.replay_upgrades_blocked_automation
+        {
+            return Stage21AutomationOrchestrationDisposition::StaleAutomationBlocked;
+        }
+
+        match input.automation_kind {
+            Stage21AutomationOrchestrationKind::AutomationCandidate => {
+                if input.automation_candidate_id.is_some()
+                    && input.trigger_or_wake_selection_id.is_some()
+                {
+                    Stage21AutomationOrchestrationDisposition::AutomationCandidateReady
+                } else {
+                    Stage21AutomationOrchestrationDisposition::StageInputBlocked
+                }
+            }
+            Stage21AutomationOrchestrationKind::ScheduledWake => {
+                if input.scheduled_wake_id.is_some() && input.trigger_or_wake_selection_id.is_some()
+                {
+                    Stage21AutomationOrchestrationDisposition::ScheduledWakeReady
+                } else {
+                    Stage21AutomationOrchestrationDisposition::TriggerWakeBlocked
+                }
+            }
+            Stage21AutomationOrchestrationKind::RecurringTaskPosture => {
+                if input.recurring_task_id.is_some()
+                    && input.work_id.is_some()
+                    && input.lease_id.is_some()
+                {
+                    Stage21AutomationOrchestrationDisposition::RecurringTaskReady
+                } else {
+                    Stage21AutomationOrchestrationDisposition::TriggerWakeBlocked
+                }
+            }
+            Stage21AutomationOrchestrationKind::TriggerEvaluation => {
+                if input.trigger_evaluation_id.is_some()
+                    && input.trigger_or_wake_selection_id.is_some()
+                {
+                    Stage21AutomationOrchestrationDisposition::TriggerEvaluationReady
+                } else {
+                    Stage21AutomationOrchestrationDisposition::TriggerWakeBlocked
+                }
+            }
+            Stage21AutomationOrchestrationKind::OrchestrationHandoff => {
+                if input.orchestration_handoff_id.is_some()
+                    && input.trigger_or_wake_selection_id.is_some()
+                {
+                    Stage21AutomationOrchestrationDisposition::OrchestrationHandoffReady
+                } else {
+                    Stage21AutomationOrchestrationDisposition::NativeOrchestrationBlocked
+                }
+            }
+        }
+    }
+
+    const fn work_authority_for(
+        disposition: Stage21AutomationOrchestrationDisposition,
+    ) -> Stage21AutomationOrchestrationWorkAuthority {
+        match disposition {
+            Stage21AutomationOrchestrationDisposition::AutomationCandidateReady => {
+                Stage21AutomationOrchestrationWorkAuthority::automation_ready()
+            }
+            Stage21AutomationOrchestrationDisposition::ScheduledWakeReady => {
+                Stage21AutomationOrchestrationWorkAuthority::scheduled_wake_ready()
+            }
+            Stage21AutomationOrchestrationDisposition::RecurringTaskReady => {
+                Stage21AutomationOrchestrationWorkAuthority::recurring_ready()
+            }
+            Stage21AutomationOrchestrationDisposition::TriggerEvaluationReady => {
+                Stage21AutomationOrchestrationWorkAuthority::trigger_ready()
+            }
+            Stage21AutomationOrchestrationDisposition::OrchestrationHandoffReady => {
+                Stage21AutomationOrchestrationWorkAuthority::orchestration_ready()
+            }
+            _ => Stage21AutomationOrchestrationWorkAuthority::fail_closed(),
+        }
+    }
+}
+
+impl Validate for Stage21AutomationOrchestrationPacket {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        validate_stage4_optional_ref(
+            "stage21_automation_orchestration_packet.activation_id",
+            self.activation_id.as_deref(),
+        )?;
+        validate_stage4_ref(
+            "stage21_automation_orchestration_packet.response_output_id",
+            &self.response_output_id,
+        )?;
+        validate_stage4_ref(
+            "stage21_automation_orchestration_packet.response_hash",
+            &self.response_hash,
+        )?;
+        validate_stage4_ref(
+            "stage21_automation_orchestration_packet.public_answer_id",
+            &self.public_answer_id,
+        )?;
+        validate_stage4_optional_ref(
+            "stage21_automation_orchestration_packet.notification_candidate_id",
+            self.notification_candidate_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage21_automation_orchestration_packet.attention_state_id",
+            self.attention_state_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage21_automation_orchestration_packet.continuity_packet_id",
+            self.continuity_packet_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage21_automation_orchestration_packet.automation_candidate_id",
+            self.automation_candidate_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage21_automation_orchestration_packet.scheduled_wake_id",
+            self.scheduled_wake_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage21_automation_orchestration_packet.trigger_evaluation_id",
+            self.trigger_evaluation_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage21_automation_orchestration_packet.recurring_task_id",
+            self.recurring_task_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage21_automation_orchestration_packet.orchestration_handoff_id",
+            self.orchestration_handoff_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage21_automation_orchestration_packet.trigger_or_wake_selection_id",
+            self.trigger_or_wake_selection_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage21_automation_orchestration_packet.reminder_id",
+            self.reminder_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage21_automation_orchestration_packet.work_id",
+            self.work_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage21_automation_orchestration_packet.lease_id",
+            self.lease_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage21_automation_orchestration_packet.ownership_ref",
+            self.ownership_ref.as_deref(),
+        )?;
+        validate_stage4_ref(
+            "stage21_automation_orchestration_packet.device_id",
+            &self.device_id,
+        )?;
+        validate_stage4_optional_ref(
+            "stage21_automation_orchestration_packet.access_context_id",
+            self.access_context_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage21_automation_orchestration_packet.policy_context_id",
+            self.policy_context_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage21_automation_orchestration_packet.tenant_id",
+            self.tenant_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage21_automation_orchestration_packet.audit_id",
+            self.audit_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage21_automation_orchestration_packet.ph1j_proof_ref",
+            self.ph1j_proof_ref.as_deref(),
+        )?;
+        if self.reason_code != self.disposition.default_reason_code() {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage21_automation_orchestration_packet.reason_code",
+                reason: "must match Stage 21A automation/orchestration disposition",
+            });
+        }
+        if self.work_authority.can_mutate_or_execute() {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage21_automation_orchestration_packet.work_authority",
+                reason: "Stage 21A cannot invent automation authority, mutate, connector-write, approve, dispatch, execute, call live providers/search/tools, fire live automation, run live scheduled wake/background orchestration, emit TTS/playback, create turns, or add native UI behavior",
+            });
+        }
+        if self.disposition.is_ready() && (self.audit_id.is_none() || self.ph1j_proof_ref.is_none())
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage21_automation_orchestration_packet.audit_proof",
+                reason: "ready Stage 21A automation output requires PH1.J audit/proof refs",
+            });
+        }
+
+        match self.disposition {
+            Stage21AutomationOrchestrationDisposition::AutomationCandidateReady => {
+                if self.automation_kind != Stage21AutomationOrchestrationKind::AutomationCandidate
+                    || self.automation_candidate_id.is_none()
+                    || self.trigger_or_wake_selection_id.is_none()
+                    || !self.work_authority.can_emit_automation_candidate_packet
+                {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "stage21_automation_orchestration_packet.automation_candidate",
+                        reason: "automation candidate readiness requires bounded automation and trigger-selection refs only",
+                    });
+                }
+            }
+            Stage21AutomationOrchestrationDisposition::ScheduledWakeReady => {
+                if self.automation_kind != Stage21AutomationOrchestrationKind::ScheduledWake
+                    || self.scheduled_wake_id.is_none()
+                    || self.trigger_or_wake_selection_id.is_none()
+                    || !self.work_authority.can_emit_scheduled_wake_packet
+                {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "stage21_automation_orchestration_packet.scheduled_wake",
+                        reason:
+                            "scheduled wake readiness requires bounded wake and selection refs only",
+                    });
+                }
+            }
+            Stage21AutomationOrchestrationDisposition::RecurringTaskReady => {
+                if self.automation_kind != Stage21AutomationOrchestrationKind::RecurringTaskPosture
+                    || self.recurring_task_id.is_none()
+                    || self.work_id.is_none()
+                    || self.lease_id.is_none()
+                    || !self.work_authority.can_emit_recurring_task_posture_packet
+                {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "stage21_automation_orchestration_packet.recurring_task",
+                        reason: "recurring task readiness requires bounded recurring/work/lease refs only",
+                    });
+                }
+            }
+            Stage21AutomationOrchestrationDisposition::TriggerEvaluationReady => {
+                if self.automation_kind != Stage21AutomationOrchestrationKind::TriggerEvaluation
+                    || self.trigger_evaluation_id.is_none()
+                    || self.trigger_or_wake_selection_id.is_none()
+                    || !self.work_authority.can_emit_trigger_evaluation_packet
+                {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "stage21_automation_orchestration_packet.trigger_evaluation",
+                        reason: "trigger evaluation readiness requires bounded trigger evaluation and selection refs only",
+                    });
+                }
+            }
+            Stage21AutomationOrchestrationDisposition::OrchestrationHandoffReady => {
+                if self.automation_kind != Stage21AutomationOrchestrationKind::OrchestrationHandoff
+                    || self.orchestration_handoff_id.is_none()
+                    || self.trigger_or_wake_selection_id.is_none()
+                    || !self.work_authority.can_emit_orchestration_handoff_packet
+                {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "stage21_automation_orchestration_packet.orchestration_handoff",
+                        reason: "orchestration handoff readiness requires bounded orchestration and selection refs only",
+                    });
+                }
+            }
+            _ => {
+                if !self.work_authority.can_fail_closed
+                    || self.work_authority.can_emit_automation_candidate_packet
+                    || self.work_authority.can_emit_scheduled_wake_packet
+                    || self.work_authority.can_emit_recurring_task_posture_packet
+                    || self.work_authority.can_emit_trigger_evaluation_packet
+                    || self.work_authority.can_emit_orchestration_handoff_packet
+                    || self.work_authority.can_emit_trigger_or_wake_selection_ref
+                    || self.work_authority.can_emit_ownership_lease_ref
+                {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "stage21_automation_orchestration_packet.blocked_automation",
+                        reason: "blocked Stage 21A packets fail closed and cannot emit fake automation, wake, recurring, trigger, orchestration, ownership, or scheduling success",
+                    });
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -26950,6 +28343,483 @@ mod tests {
             None,
             None,
             Some(&projection),
+            runtime_mock,
+        )
+        .is_err());
+    }
+
+    fn stage21_response_output_packet() -> Stage15ResponseOutputPacket {
+        stage20_response_output_packet()
+    }
+
+    fn stage21_attention_identity() -> Stage19NotificationAttentionPacket {
+        stage20_attention_identity()
+    }
+
+    fn stage21_continuity_identity() -> Stage20ContinuityHandoffPacket {
+        let output = stage21_response_output_packet();
+        let attention = stage21_attention_identity();
+        let projection = stage20_projection(
+            output.session_id,
+            SessionState::Active,
+            SessionAttachOutcome::ExistingSessionAttached,
+        );
+        let mut input = Stage20ContinuityHandoffInput::fixture_session_continuity_ready(
+            "continuity-packet-stage21-identity",
+            "continuity-selection-stage21-identity",
+            "device-stage21-a",
+            "audit-stage21-identity",
+        );
+        input.stage19_attention_ref_present = true;
+        input.stage19_attention_ref_non_authoritative = true;
+        Stage20ContinuityHandoffPacket::from_stage15_output(
+            &output,
+            None,
+            None,
+            Some(&attention),
+            Some(&projection),
+            input,
+        )
+        .expect("stage21 continuity identity")
+    }
+
+    #[test]
+    fn stage_21a_automation_consumes_stage15_stage19_stage20_non_authoritatively() {
+        let output = stage21_response_output_packet();
+        let attention = stage21_attention_identity();
+        let continuity = stage21_continuity_identity();
+        let mut input = Stage21AutomationOrchestrationInput::fixture_automation_candidate_ready(
+            "automation-candidate-stage21-ready",
+            "device-stage21-a",
+            "audit-stage21-ready",
+        );
+        input.stage19_attention_ref_present = true;
+        input.stage19_attention_ref_non_authoritative = true;
+        input.stage20_continuity_ref_present = true;
+        input.stage20_continuity_ref_non_authoritative = true;
+        let packet = Stage21AutomationOrchestrationPacket::from_stage15_output(
+            &output,
+            Some(&attention),
+            Some(&continuity),
+            input,
+        )
+        .expect("stage21 automation candidate ready");
+
+        assert_eq!(
+            packet.disposition,
+            Stage21AutomationOrchestrationDisposition::AutomationCandidateReady
+        );
+        assert_eq!(
+            packet.stage19_disposition,
+            Some(Stage19NotificationAttentionDisposition::NotificationCandidateReady)
+        );
+        assert_eq!(
+            packet.stage20_disposition,
+            Some(Stage20ContinuityHandoffDisposition::SessionContinuityReady)
+        );
+        assert!(packet.stage19_attention_ref_non_authoritative);
+        assert!(packet.stage20_continuity_ref_non_authoritative);
+        assert!(packet.work_authority.can_emit_automation_candidate_packet);
+        assert!(packet.work_authority.can_emit_trigger_or_wake_selection_ref);
+        assert!(!packet.work_authority.can_run_live_automation_fire);
+        assert!(!packet.can_mutate_or_execute());
+    }
+
+    #[test]
+    fn stage_21a_automation_packets_cannot_invent_or_claim_completion() {
+        let output = stage21_response_output_packet();
+
+        for input in [
+            {
+                let mut input =
+                    Stage21AutomationOrchestrationInput::fixture_automation_candidate_ready(
+                        "automation-candidate-stage21-invent-fact",
+                        "device-stage21-a",
+                        "audit-stage21-invent-fact",
+                    );
+                input.automation_invented_fact = true;
+                input
+            },
+            {
+                let mut input =
+                    Stage21AutomationOrchestrationInput::fixture_trigger_evaluation_ready(
+                        "trigger-evaluation-stage21-invent-trigger",
+                        "trigger-selection-stage21-invent-trigger",
+                        "device-stage21-a",
+                        "audit-stage21-invent-trigger",
+                    );
+                input.automation_invented_trigger_success = true;
+                input
+            },
+            {
+                let mut input = Stage21AutomationOrchestrationInput::fixture_scheduled_wake_ready(
+                    "scheduled-wake-stage21-invent-wake",
+                    "device-stage21-a",
+                    "audit-stage21-invent-wake",
+                );
+                input.automation_invented_wake_success = true;
+                input
+            },
+            {
+                let mut input = Stage21AutomationOrchestrationInput::fixture_recurring_task_ready(
+                    "recurring-task-stage21-invent-recurring",
+                    "work-stage21-invent-recurring",
+                    "lease-stage21-invent-recurring",
+                    "device-stage21-a",
+                    "audit-stage21-invent-recurring",
+                );
+                input.automation_claimed_unproven_completion = true;
+                input
+            },
+        ] {
+            let packet = Stage21AutomationOrchestrationPacket::from_stage15_output(
+                &output, None, None, input,
+            )
+            .expect("stage21 no-invention blocked");
+            assert_eq!(
+                packet.disposition,
+                Stage21AutomationOrchestrationDisposition::NoInventionBlocked
+            );
+            assert!(packet.work_authority.can_fail_closed);
+            assert!(!packet.work_authority.can_emit_automation_candidate_packet);
+            assert!(!packet.can_mutate_or_execute());
+        }
+    }
+
+    #[test]
+    fn stage_21a_trigger_wake_recurrence_require_scoped_secret_safe_refs() {
+        let output = stage21_response_output_packet();
+        let ready = Stage21AutomationOrchestrationPacket::from_stage15_output(
+            &output,
+            None,
+            None,
+            Stage21AutomationOrchestrationInput::fixture_recurring_task_ready(
+                "recurring-task-stage21-ready",
+                "work-stage21-ready",
+                "lease-stage21-ready",
+                "device-stage21-a",
+                "audit-stage21-recurring-ready",
+            ),
+        )
+        .expect("stage21 recurring ready");
+        assert_eq!(
+            ready.disposition,
+            Stage21AutomationOrchestrationDisposition::RecurringTaskReady
+        );
+        assert!(ready.work_authority.can_emit_recurring_task_posture_packet);
+        assert!(ready.work_authority.can_emit_ownership_lease_ref);
+        assert!(!ready.can_mutate_or_execute());
+
+        for input in [
+            {
+                let mut input = Stage21AutomationOrchestrationInput::fixture_scheduled_wake_ready(
+                    "scheduled-wake-stage21-unbounded",
+                    "device-stage21-a",
+                    "audit-stage21-unbounded",
+                );
+                input.trigger_wake_bounded = false;
+                input
+            },
+            {
+                let mut input =
+                    Stage21AutomationOrchestrationInput::fixture_trigger_evaluation_ready(
+                        "trigger-evaluation-stage21-secret",
+                        "trigger-selection-stage21-secret",
+                        "device-stage21-a",
+                        "audit-stage21-secret",
+                    );
+                input.secret_unsafe = true;
+                input
+            },
+            {
+                let mut input =
+                    Stage21AutomationOrchestrationInput::fixture_trigger_evaluation_ready(
+                        "trigger-evaluation-stage21-cross-tenant",
+                        "trigger-selection-stage21-cross-tenant",
+                        "device-stage21-a",
+                        "audit-stage21-cross-tenant",
+                    );
+                input.cross_tenant = true;
+                input
+            },
+            {
+                let mut input = Stage21AutomationOrchestrationInput::fixture_recurring_task_ready(
+                    "recurring-task-stage21-lease-missing",
+                    "work-stage21-lease-missing",
+                    "lease-stage21-lease-missing",
+                    "device-stage21-a",
+                    "audit-stage21-lease-missing",
+                );
+                input.lease_ref_present = false;
+                input
+            },
+            {
+                let mut input =
+                    Stage21AutomationOrchestrationInput::fixture_trigger_evaluation_ready(
+                        "trigger-evaluation-stage21-mismatch",
+                        "trigger-selection-stage21-mismatch",
+                        "device-stage21-a",
+                        "audit-stage21-mismatch",
+                    );
+                input.trigger_mismatch = true;
+                input
+            },
+        ] {
+            let packet = Stage21AutomationOrchestrationPacket::from_stage15_output(
+                &output, None, None, input,
+            )
+            .expect("stage21 trigger/wake blocked");
+            assert_eq!(
+                packet.disposition,
+                Stage21AutomationOrchestrationDisposition::TriggerWakeBlocked
+            );
+            assert!(packet.work_authority.can_fail_closed);
+            assert!(!packet.can_mutate_or_execute());
+        }
+    }
+
+    #[test]
+    fn stage_21a_native_orchestration_and_stale_cases_fail_closed() {
+        let output = stage21_response_output_packet();
+        let ready = Stage21AutomationOrchestrationPacket::from_stage15_output(
+            &output,
+            None,
+            None,
+            Stage21AutomationOrchestrationInput::fixture_orchestration_handoff_ready(
+                "orchestration-handoff-stage21-ready",
+                "trigger-selection-stage21-ready",
+                "device-stage21-a",
+                "audit-stage21-handoff-ready",
+            ),
+        )
+        .expect("stage21 orchestration ready");
+        assert_eq!(
+            ready.disposition,
+            Stage21AutomationOrchestrationDisposition::OrchestrationHandoffReady
+        );
+        assert!(ready.native_orchestration_declarative_only);
+        assert!(ready.work_authority.can_emit_orchestration_handoff_packet);
+        assert!(!ready.can_mutate_or_execute());
+
+        for input in [
+            {
+                let mut input =
+                    Stage21AutomationOrchestrationInput::fixture_orchestration_handoff_ready(
+                        "orchestration-handoff-stage21-mutate",
+                        "trigger-selection-stage21-mutate",
+                        "device-stage21-a",
+                        "audit-stage21-mutate",
+                    );
+                input.native_orchestration_mutates_state = true;
+                input
+            },
+            {
+                let mut input =
+                    Stage21AutomationOrchestrationInput::fixture_orchestration_handoff_ready(
+                        "orchestration-handoff-stage21-exec",
+                        "trigger-selection-stage21-exec",
+                        "device-stage21-a",
+                        "audit-stage21-exec",
+                    );
+                input.native_orchestration_dispatches_or_executes = true;
+                input
+            },
+        ] {
+            let packet = Stage21AutomationOrchestrationPacket::from_stage15_output(
+                &output, None, None, input,
+            )
+            .expect("stage21 native blocked");
+            assert_eq!(
+                packet.disposition,
+                Stage21AutomationOrchestrationDisposition::NativeOrchestrationBlocked
+            );
+            assert!(packet.work_authority.can_fail_closed);
+        }
+
+        for input in [
+            {
+                let mut input =
+                    Stage21AutomationOrchestrationInput::fixture_automation_candidate_ready(
+                        "automation-candidate-stage21-stale",
+                        "device-stage21-a",
+                        "audit-stage21-stale",
+                    );
+                input.stale_or_cancelled_or_superseded_output = true;
+                input
+            },
+            {
+                let mut input =
+                    Stage21AutomationOrchestrationInput::fixture_trigger_evaluation_ready(
+                        "trigger-evaluation-stage21-stale-trigger",
+                        "trigger-selection-stage21-stale-trigger",
+                        "device-stage21-a",
+                        "audit-stage21-stale-trigger",
+                    );
+                input.stale_trigger_state = true;
+                input
+            },
+            {
+                let mut input = Stage21AutomationOrchestrationInput::fixture_scheduled_wake_ready(
+                    "scheduled-wake-stage21-replay",
+                    "device-stage21-a",
+                    "audit-stage21-replay",
+                );
+                input.replay_upgrades_blocked_automation = true;
+                input
+            },
+        ] {
+            let packet = Stage21AutomationOrchestrationPacket::from_stage15_output(
+                &output, None, None, input,
+            )
+            .expect("stage21 stale blocked");
+            assert_eq!(
+                packet.disposition,
+                Stage21AutomationOrchestrationDisposition::StaleAutomationBlocked
+            );
+            assert!(packet.work_authority.can_fail_closed);
+            assert!(!packet.can_mutate_or_execute());
+        }
+    }
+
+    #[test]
+    fn stage_21a_blocks_raw_inputs_live_paths_and_runtime_mocks() {
+        let output = stage21_response_output_packet();
+        let packet = Stage21AutomationOrchestrationPacket::from_stage15_output(
+            &output,
+            None,
+            None,
+            Stage21AutomationOrchestrationInput::fixture_automation_candidate_ready(
+                "automation-candidate-stage21-no-exec",
+                "device-stage21-a",
+                "audit-stage21-no-exec",
+            ),
+        )
+        .expect("stage21 no-exec packet");
+        assert!(!packet.work_authority.can_invent_facts);
+        assert!(!packet.work_authority.can_invent_trigger_or_wake_success);
+        assert!(!packet.work_authority.can_invent_recurring_completion);
+        assert!(
+            !packet
+                .work_authority
+                .can_invent_ownership_or_orchestration_authority
+        );
+        assert!(!packet.work_authority.can_mutate_external_state);
+        assert!(!packet.work_authority.can_run_live_automation_fire);
+        assert!(!packet.work_authority.can_run_live_scheduled_wake);
+        assert!(!packet.work_authority.can_create_user_turn);
+        assert!(
+            !packet
+                .work_authority
+                .can_treat_visible_automation_as_action_success
+        );
+        assert!(!packet.can_mutate_or_execute());
+
+        for input in [
+            {
+                let mut input =
+                    Stage21AutomationOrchestrationInput::fixture_automation_candidate_ready(
+                        "automation-candidate-stage21-raw-provider",
+                        "device-stage21-a",
+                        "audit-stage21-raw-provider",
+                    );
+                input.raw_provider_output_present = true;
+                input
+            },
+            {
+                let mut input =
+                    Stage21AutomationOrchestrationInput::fixture_trigger_evaluation_ready(
+                        "trigger-evaluation-stage21-unverified",
+                        "trigger-selection-stage21-unverified",
+                        "device-stage21-a",
+                        "audit-stage21-unverified",
+                    );
+                input.unverified_source_evidence_present = true;
+                input
+            },
+            {
+                let mut input =
+                    Stage21AutomationOrchestrationInput::fixture_orchestration_handoff_ready(
+                        "orchestration-handoff-stage21-protected",
+                        "trigger-selection-stage21-protected",
+                        "device-stage21-a",
+                        "audit-stage21-protected",
+                    );
+                input.protected_action_candidate_present = true;
+                input
+            },
+            {
+                let mut input = Stage21AutomationOrchestrationInput::fixture_scheduled_wake_ready(
+                    "scheduled-wake-stage21-policy",
+                    "device-stage21-a",
+                    "audit-stage21-policy",
+                );
+                input.policy_denied = true;
+                input
+            },
+        ] {
+            let packet = Stage21AutomationOrchestrationPacket::from_stage15_output(
+                &output, None, None, input,
+            )
+            .expect("stage21 unsafe input blocked");
+            assert_eq!(
+                packet.disposition,
+                Stage21AutomationOrchestrationDisposition::UnsafeInputBlocked
+            );
+            assert!(packet.work_authority.can_fail_closed);
+            assert!(!packet.can_mutate_or_execute());
+        }
+
+        for mut input in [
+            {
+                let mut input =
+                    Stage21AutomationOrchestrationInput::fixture_automation_candidate_ready(
+                        "automation-candidate-stage21-live-provider",
+                        "device-stage21-a",
+                        "audit-stage21-live-provider",
+                    );
+                input.attempted_live_provider_in_build = true;
+                input
+            },
+            {
+                let mut input = Stage21AutomationOrchestrationInput::fixture_scheduled_wake_ready(
+                    "scheduled-wake-stage21-live-wake",
+                    "device-stage21-a",
+                    "audit-stage21-live-wake",
+                );
+                input.ran_live_scheduled_wake_in_build = true;
+                input
+            },
+            {
+                let mut input =
+                    Stage21AutomationOrchestrationInput::fixture_trigger_evaluation_ready(
+                        "trigger-evaluation-stage21-live-automation",
+                        "trigger-selection-stage21-live-automation",
+                        "device-stage21-a",
+                        "audit-stage21-live-automation",
+                    );
+                input.ran_live_automation_fire_in_build = true;
+                input
+            },
+        ] {
+            input.fixture_only_test_path = true;
+            assert!(Stage21AutomationOrchestrationPacket::from_stage15_output(
+                &output, None, None, input,
+            )
+            .is_err());
+        }
+
+        let mut runtime_mock =
+            Stage21AutomationOrchestrationInput::fixture_automation_candidate_ready(
+                "automation-candidate-stage21-runtime-mock",
+                "device-stage21-a",
+                "audit-stage21-runtime-mock",
+            );
+        runtime_mock.fake_automation_detected = true;
+        runtime_mock.fixture_only_test_path = false;
+        assert!(Stage21AutomationOrchestrationPacket::from_stage15_output(
+            &output,
+            None,
+            None,
             runtime_mock,
         )
         .is_err());

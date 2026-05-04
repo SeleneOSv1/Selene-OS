@@ -4,7 +4,7 @@ Status: CANONICAL_BUILD_ROADMAP
 Created: 2026-05-02
 Last Updated: 2026-05-04
 Repo Root: `/Users/selene/Documents/Selene-OS`
-Current Next Build: Stage 21A - Automations, Scheduled Wake, Recurring Tasks, And Triggered Orchestration Boundary Reconciliation
+Current Next Build: Stage 22A - External Integrations, Connector Action Staging, And Outbound System Boundary Reconciliation
 
 ## Purpose
 
@@ -80,7 +80,7 @@ After every build, update this section before final reporting.
 |---|---|
 | Current active stage | Stage 20 |
 | Current active build | Stage 20A - Cross-Device Handoff, Session Continuity, And Multi-Surface Transfer Boundary Reconciliation |
-| Next build after current stage passes | Stage 21A - Automations, Scheduled Wake, Recurring Tasks, And Triggered Orchestration Boundary Reconciliation |
+| Next build after current stage passes | Stage 22A - External Integrations, Connector Action Staging, And Outbound System Boundary Reconciliation |
 | Last completed stage | Stage 20A - Cross-Device Handoff, Session Continuity, And Multi-Surface Transfer Boundary Reconciliation |
 | Stages blocked | None yet |
 | Plan drift allowed | No |
@@ -2673,6 +2673,20 @@ Stage 20A proof update:
 Next if passed:
 
 - Stage 21A - Automations, Scheduled Wake, Recurring Tasks, And Triggered Orchestration Boundary Reconciliation.
+
+Stage 21A status: PROVEN_COMPLETE
+
+Stage 21A proof update:
+
+- Existing PH1.W, PH1.REM, PH1.WORK, PH1.LEASE, PH1.L session continuity refs, Stage 15 response-output refs, optional Stage 19 attention continuity refs, optional Stage 20 continuity/handoff refs, PH1.J audit/proof-ledger, PH1.C, PH1.K, PH1.POLICY, PH1.ACCESS, PH1.TENANT, PH1.GOV, PH1.OS, runtime law/governance, adapter, storage, and native bridge inspect-only surfaces were inspected and crosswalked rather than rebuilt as duplicate automation, trigger, wake, recurring-task, orchestration, ownership, lease, native bridge, search, provider-control, or runtime-law engines. PH1.D/model-provider surfaces, native Swift files, and `simulation_executor.rs` remained inspect-only.
+- `Stage21AutomationOrchestrationPacket`, `Stage21AutomationOrchestrationInput`, `Stage21AutomationOrchestrationKind`, `Stage21AutomationOrchestrationDisposition`, and `Stage21AutomationOrchestrationWorkAuthority` provide the minimal runtime-owned automation/scheduled-wake/orchestration boundary in `runtime_ingress_turn_foundation.rs`.
+- Stage 21A consumes only Stage 15 response-output refs as automation payload references, optional Stage 19 notification/attention refs as declarative continuity only, optional Stage 20 continuity/handoff refs as declarative session continuity only, bounded wake/reminder/work/lease/ownership/trigger refs, PH1.J audit/proof refs, Stage 5 current-turn/session authority, Stage 6 access context as non-executing context, and governed repo-truth equivalents. Raw provider output, raw search dumps, raw media, secret-bearing native wake fields, unverified evidence, unsupported claim candidates, fake automation/source carriers, speech/playback/attention/continuity state as truth authority, protected-action candidates, simulation candidates, approved execution plans without a later bounded execution contract, stale/cancelled/superseded/closed-session turns, and record-artifact-only turns cannot become automation authority.
+- Automation/scheduled-wake/recurring/orchestration packets cannot invent unsupported facts, trigger success, wake success, recurring completion, ownership, attachments, citations, URLs, dates, provenance, provider/tool results, approvals, completed actions, or mutations. Trigger/wake/recurrence posture requires bounded, tenant/user/device/project-scoped, secret-safe, redacted, stale-aware, and revocation-aware refs; missing, stale, unverifiable, secret-unsafe, cross-tenant, cross-device, missing-lease, ownership-drift, trigger-mismatch, and recurrence-mismatch state fails closed.
+- Automation/native/display/orchestration handoff remains declarative metadata only. It cannot mutate, connector-write, dispatch, approve, execute, route, call providers/search/tools, emit TTS/playback, create user turns, bypass Stage 12 protected-action gates, bypass Stage 15/19/20 evidence and continuity gates, or treat visible automation or wake success as action success.
+- Stale/cancelled/superseded/closed-session automation output, stale wake/trigger/lease/ownership state, replay-upgrade attempts, protected-action-like automation wording, and unsafe identity posture fail closed. Runtime mocks, fake automation success, fake trigger fire, fake wake success, fake recurring completion, and fake orchestration success are blocked outside explicit fixture-only tests.
+- Stage 21A did not add live provider calls, live image/video/audio generation, live web search, live external tool calls, connector writes, protected execution, native UI behavior, live scheduled wake, live automation fire, live background orchestration, live TTS/playback, live microphone capture, live STT, live Voice ID matching, memory/persona/emotion/preference mutation, raw audio/biometric/secret exposure, new business workflows, or duplicate automation/trigger/wake/orchestration engines.
+- Automation/scheduled-wake/recurring/orchestration/no-mutation/no-execution boundary proof is certified for Stage 21A. Production automation UX, real scheduled wake, live orchestration execution, recurring task quality, and user automation quality evaluation remain deferred to later owning stages.
+- Stage 22A is ready to start. Broad Stage 21 remains partial, but the declarative automation and orchestration boundary is complete enough for external integrations, connector action staging, and outbound system boundary reconciliation to proceed without live automation runtime behavior.
 
 ## Stage 14 - Web Search Enterprise Sublanes And Release Proof
 
