@@ -27491,6 +27491,1284 @@ pub fn stage26_execution_authority_symbol_anchor() {
 }
 const _: fn() = stage26_execution_authority_symbol_anchor;
 
+mod stage27_reason_codes {
+    pub const REMOTE_SIDE_EFFECT_SETTLEMENT_READY: &str =
+        "STAGE27_REMOTE_SIDE_EFFECT_SETTLEMENT_READY";
+    pub const MUTATION_COMMIT_BOUNDARY_READY: &str = "STAGE27_MUTATION_COMMIT_BOUNDARY_READY";
+    pub const POST_EXECUTION_RECONCILIATION_READY: &str =
+        "STAGE27_POST_EXECUTION_RECONCILIATION_READY";
+    pub const EXECUTION_COMPLETION_VISIBILITY_POSTURE_READY: &str =
+        "STAGE27_EXECUTION_COMPLETION_VISIBILITY_POSTURE_READY";
+    pub const CONNECTOR_OUTCOME_CONTINUITY_REFERENCE_READY: &str =
+        "STAGE27_CONNECTOR_OUTCOME_CONTINUITY_REFERENCE_READY";
+    pub const STAGE_INPUT_BLOCKED: &str = "STAGE27_STAGE_INPUT_BLOCKED";
+    pub const NO_INVENTION_BLOCKED: &str = "STAGE27_NO_INVENTION_BLOCKED";
+    pub const SETTLEMENT_AUTHORITY_BLOCKED: &str = "STAGE27_SETTLEMENT_AUTHORITY_BLOCKED";
+    pub const NATIVE_SETTLEMENT_HANDOFF_BLOCKED: &str =
+        "STAGE27_NATIVE_SETTLEMENT_HANDOFF_BLOCKED";
+    pub const PUBLIC_PROTECTED_BOUNDARY_BLOCKED: &str =
+        "STAGE27_PUBLIC_PROTECTED_BOUNDARY_BLOCKED";
+    pub const STALE_SETTLEMENT_BLOCKED: &str = "STAGE27_STALE_SETTLEMENT_BLOCKED";
+    pub const UNSAFE_INPUT_BLOCKED: &str = "STAGE27_UNSAFE_INPUT_BLOCKED";
+    pub const RUNTIME_MOCK_BLOCKED: &str = "STAGE27_RUNTIME_MOCK_BLOCKED";
+    pub const AUDIT_PROOF_MISSING: &str = "STAGE27_AUDIT_PROOF_MISSING";
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stage27SettlementReconciliationKind {
+    RemoteSideEffectSettlement,
+    MutationCommitBoundary,
+    PostExecutionReconciliation,
+    ExecutionCompletionVisibilityPosture,
+    ConnectorOutcomeContinuityReference,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stage27SettlementReconciliationDisposition {
+    RemoteSideEffectSettlementReady,
+    MutationCommitBoundaryReady,
+    PostExecutionReconciliationReady,
+    ExecutionCompletionVisibilityPostureReady,
+    ConnectorOutcomeContinuityReferenceReady,
+    StageInputBlocked,
+    NoInventionBlocked,
+    SettlementAuthorityBlocked,
+    NativeSettlementHandoffBlocked,
+    PublicProtectedBoundaryBlocked,
+    StaleSettlementBlocked,
+    UnsafeInputBlocked,
+    RuntimeMockBlocked,
+    AuditProofMissing,
+}
+
+impl Stage27SettlementReconciliationDisposition {
+    pub const fn default_reason_code(self) -> &'static str {
+        match self {
+            Self::RemoteSideEffectSettlementReady => {
+                stage27_reason_codes::REMOTE_SIDE_EFFECT_SETTLEMENT_READY
+            }
+            Self::MutationCommitBoundaryReady => {
+                stage27_reason_codes::MUTATION_COMMIT_BOUNDARY_READY
+            }
+            Self::PostExecutionReconciliationReady => {
+                stage27_reason_codes::POST_EXECUTION_RECONCILIATION_READY
+            }
+            Self::ExecutionCompletionVisibilityPostureReady => {
+                stage27_reason_codes::EXECUTION_COMPLETION_VISIBILITY_POSTURE_READY
+            }
+            Self::ConnectorOutcomeContinuityReferenceReady => {
+                stage27_reason_codes::CONNECTOR_OUTCOME_CONTINUITY_REFERENCE_READY
+            }
+            Self::StageInputBlocked => stage27_reason_codes::STAGE_INPUT_BLOCKED,
+            Self::NoInventionBlocked => stage27_reason_codes::NO_INVENTION_BLOCKED,
+            Self::SettlementAuthorityBlocked => stage27_reason_codes::SETTLEMENT_AUTHORITY_BLOCKED,
+            Self::NativeSettlementHandoffBlocked => {
+                stage27_reason_codes::NATIVE_SETTLEMENT_HANDOFF_BLOCKED
+            }
+            Self::PublicProtectedBoundaryBlocked => {
+                stage27_reason_codes::PUBLIC_PROTECTED_BOUNDARY_BLOCKED
+            }
+            Self::StaleSettlementBlocked => stage27_reason_codes::STALE_SETTLEMENT_BLOCKED,
+            Self::UnsafeInputBlocked => stage27_reason_codes::UNSAFE_INPUT_BLOCKED,
+            Self::RuntimeMockBlocked => stage27_reason_codes::RUNTIME_MOCK_BLOCKED,
+            Self::AuditProofMissing => stage27_reason_codes::AUDIT_PROOF_MISSING,
+        }
+    }
+
+    pub const fn is_ready(self) -> bool {
+        matches!(
+            self,
+            Self::RemoteSideEffectSettlementReady
+                | Self::MutationCommitBoundaryReady
+                | Self::PostExecutionReconciliationReady
+                | Self::ExecutionCompletionVisibilityPostureReady
+                | Self::ConnectorOutcomeContinuityReferenceReady
+        )
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Stage27SettlementReconciliationWorkAuthority {
+    pub can_emit_remote_side_effect_settlement_packet: bool,
+    pub can_emit_mutation_commit_boundary_packet: bool,
+    pub can_emit_post_execution_reconciliation_packet: bool,
+    pub can_emit_execution_completion_visibility_packet: bool,
+    pub can_emit_connector_outcome_continuity_ref: bool,
+    pub can_fail_closed: bool,
+    pub can_invent_facts: bool,
+    pub can_invent_settlement_success: bool,
+    pub can_invent_mutation_commit_success: bool,
+    pub can_invent_reconciliation_success: bool,
+    pub can_invent_settlement_authority: bool,
+    pub can_connector_write: bool,
+    pub can_approve: bool,
+    pub can_dispatch: bool,
+    pub can_execute: bool,
+    pub can_create_user_turn: bool,
+    pub can_treat_visible_readiness_as_action_success: bool,
+}
+
+impl Stage27SettlementReconciliationWorkAuthority {
+    pub const fn fail_closed() -> Self {
+        Self {
+            can_emit_remote_side_effect_settlement_packet: false,
+            can_emit_mutation_commit_boundary_packet: false,
+            can_emit_post_execution_reconciliation_packet: false,
+            can_emit_execution_completion_visibility_packet: false,
+            can_emit_connector_outcome_continuity_ref: false,
+            can_fail_closed: true,
+            can_invent_facts: false,
+            can_invent_settlement_success: false,
+            can_invent_mutation_commit_success: false,
+            can_invent_reconciliation_success: false,
+            can_invent_settlement_authority: false,
+            can_connector_write: false,
+            can_approve: false,
+            can_dispatch: false,
+            can_execute: false,
+            can_create_user_turn: false,
+            can_treat_visible_readiness_as_action_success: false,
+        }
+    }
+
+    pub const fn remote_side_effect_settlement_ready() -> Self {
+        let mut authority = Self::fail_closed();
+        authority.can_emit_remote_side_effect_settlement_packet = true;
+        authority
+    }
+
+    pub const fn mutation_commit_boundary_ready() -> Self {
+        let mut authority = Self::fail_closed();
+        authority.can_emit_mutation_commit_boundary_packet = true;
+        authority
+    }
+
+    pub const fn post_execution_reconciliation_ready() -> Self {
+        let mut authority = Self::fail_closed();
+        authority.can_emit_post_execution_reconciliation_packet = true;
+        authority
+    }
+
+    pub const fn execution_completion_visibility_posture_ready() -> Self {
+        let mut authority = Self::fail_closed();
+        authority.can_emit_execution_completion_visibility_packet = true;
+        authority
+    }
+
+    pub const fn connector_outcome_continuity_reference_ready() -> Self {
+        let mut authority = Self::fail_closed();
+        authority.can_emit_connector_outcome_continuity_ref = true;
+        authority
+    }
+
+    pub const fn can_mutate_or_execute(&self) -> bool {
+        self.can_invent_facts
+            || self.can_invent_settlement_success
+            || self.can_invent_mutation_commit_success
+            || self.can_invent_reconciliation_success
+            || self.can_invent_settlement_authority
+            || self.can_connector_write
+            || self.can_approve
+            || self.can_dispatch
+            || self.can_execute
+            || self.can_create_user_turn
+            || self.can_treat_visible_readiness_as_action_success
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Stage27SettlementReconciliationInput {
+    pub settlement_kind: Stage27SettlementReconciliationKind,
+    pub settlement_id: Option<String>,
+    pub mutation_commit_id: Option<String>,
+    pub reconciliation_id: Option<String>,
+    pub connector_execution_id: Option<String>,
+    pub protected_gate_id: Option<String>,
+    pub orchestration_stage_id: Option<String>,
+    pub action_graph_id: Option<String>,
+    pub tool_invocation_stage_id: Option<String>,
+    pub execution_plan_ref: Option<String>,
+    pub work_id: Option<String>,
+    pub lease_id: Option<String>,
+    pub device_id: Option<String>,
+    pub access_context_id: Option<String>,
+    pub policy_context_id: Option<String>,
+    pub tenant_id: Option<String>,
+    pub audit_id: Option<String>,
+    pub ph1j_proof_ref: Option<String>,
+    pub stage20_continuity_ref_present: bool,
+    pub stage20_continuity_ref_non_authoritative: bool,
+    pub stage21_automation_ref_present: bool,
+    pub stage21_automation_ref_non_authoritative: bool,
+    pub stage22_outbound_ref_present: bool,
+    pub stage22_outbound_ref_non_authoritative: bool,
+    pub stage23_memory_ref_present: bool,
+    pub stage23_memory_ref_non_authoritative: bool,
+    pub stage24_ingress_ref_present: bool,
+    pub stage24_ingress_ref_non_authoritative: bool,
+    pub stage25_orchestration_ref_present: bool,
+    pub stage25_orchestration_ref_non_authoritative: bool,
+    pub stage26_execution_authority_ref_present: bool,
+    pub stage26_execution_authority_ref_non_authoritative: bool,
+    pub stage11_route_ref_present: bool,
+    pub stage11_route_non_executing_context: bool,
+    pub stage12_gate_ref_present: bool,
+    pub stage12_gate_bounded_authority_context: bool,
+    pub authority_bounded: bool,
+    pub tenant_user_device_session_scoped: bool,
+    pub uncertainty_preserved: bool,
+    pub settlement_invented_fact: bool,
+    pub settlement_invented_settlement_success: bool,
+    pub settlement_invented_mutation_commit_success: bool,
+    pub settlement_invented_reconciliation_success: bool,
+    pub settlement_invented_approval: bool,
+    pub settlement_invented_remote_completion: bool,
+    pub settlement_invented_visibility_completion: bool,
+    pub settlement_invented_work_or_lease_authority: bool,
+    pub settlement_invented_route_authority: bool,
+    pub settlement_invented_attachment_or_citation: bool,
+    pub settlement_invented_provider_or_tool_result: bool,
+    pub settlement_claimed_unproven_completion: bool,
+    pub settlement_implied_routing_approval_mutation_or_completion_without_proof: bool,
+    pub secret_safe: bool,
+    pub redacted: bool,
+    pub stale_aware: bool,
+    pub revocation_aware: bool,
+    pub connector_ref_present: bool,
+    pub protected_gate_ref_present: bool,
+    pub route_ref_present: bool,
+    pub execution_plan_ref_present: bool,
+    pub work_ref_present: bool,
+    pub lease_ref_present: bool,
+    pub settlement_ref_present: bool,
+    pub mutation_commit_ref_present: bool,
+    pub reconciliation_ref_present: bool,
+    pub unverifiable: bool,
+    pub stale: bool,
+    pub secret_unsafe: bool,
+    pub cross_tenant: bool,
+    pub cross_route: bool,
+    pub cross_connector: bool,
+    pub connector_mismatch: bool,
+    pub route_mismatch: bool,
+    pub action_graph_mismatch: bool,
+    pub lease_mismatch: bool,
+    pub settlement_mismatch: bool,
+    pub protected_gate_mismatch: bool,
+    pub tenant_mismatch: bool,
+    pub missing_proof: bool,
+    pub ownership_drift: bool,
+    pub native_settlement_declarative_only: bool,
+    pub native_settlement_mutates_state: bool,
+    pub native_settlement_connector_writes: bool,
+    pub native_settlement_dispatches_or_executes: bool,
+    pub native_settlement_calls_providers_or_tools: bool,
+    pub native_settlement_emits_tts_or_playback: bool,
+    pub native_settlement_creates_user_turn: bool,
+    pub native_settlement_treats_visible_readiness_as_action_success: bool,
+    pub protected_action_like_request: bool,
+    pub protected_slot_or_authority_ambiguous: bool,
+    pub unsafe_identity_posture: bool,
+    pub stale_or_cancelled_or_superseded_output: bool,
+    pub session_closed: bool,
+    pub record_artifact_only_turn: bool,
+    pub stale_settlement_state: bool,
+    pub stale_work_state: bool,
+    pub stale_lease_state: bool,
+    pub stale_route_state: bool,
+    pub stale_connector_state: bool,
+    pub stale_protected_gate_state: bool,
+    pub settlement_identity_matches_current_output_session: bool,
+    pub replay_upgrades_blocked_authority: bool,
+    pub fake_settlement_detected: bool,
+    pub fake_mutation_commit_detected: bool,
+    pub fake_reconciliation_detected: bool,
+    pub fake_approval_detected: bool,
+    pub fake_remote_completion_detected: bool,
+    pub runtime_mock_detected: bool,
+    pub raw_provider_output_present: bool,
+    pub raw_search_dump_present: bool,
+    pub raw_media_present: bool,
+    pub raw_connector_credential_field_present: bool,
+    pub unverified_source_evidence_present: bool,
+    pub unsupported_claim_candidate_present: bool,
+    pub fake_settlement_source_carrier_present: bool,
+    pub attention_continuity_automation_outbound_memory_ingress_orchestration_execution_used_as_truth_authority:
+        bool,
+    pub protected_action_candidate_present: bool,
+    pub simulation_candidate_present: bool,
+    pub approved_execution_plan_present: bool,
+    pub secrets_exposed: bool,
+    pub raw_biometric_material_exposed: bool,
+    pub internal_trace_exposed: bool,
+    pub access_denied: bool,
+    pub policy_denied: bool,
+    pub attempted_live_provider_in_build: bool,
+    pub generated_live_media_in_build: bool,
+    pub ran_live_search_in_build: bool,
+    pub called_live_external_tool_in_build: bool,
+    pub connector_write_requested: bool,
+    pub ran_live_notification_delivery_in_build: bool,
+    pub ran_live_background_execution_in_build: bool,
+    pub ran_live_connector_mutation_in_build: bool,
+    pub ran_live_remote_settlement_in_build: bool,
+    pub ran_direct_protected_execution_in_build: bool,
+    pub ran_live_tts_or_playback_in_build: bool,
+    pub captured_microphone_audio: bool,
+    pub transcribed_live_audio: bool,
+    pub voice_id_matching_attempted: bool,
+    pub native_ui_behavior_added: bool,
+    pub fixture_only_test_path: bool,
+}
+
+impl Stage27SettlementReconciliationInput {
+    #[cfg(test)]
+    fn fixture_base(
+        settlement_kind: Stage27SettlementReconciliationKind,
+        audit_id: impl Into<String>,
+    ) -> Self {
+        Self {
+            settlement_kind,
+            settlement_id: Some("settlement-stage27".to_string()),
+            mutation_commit_id: Some("mutation-commit-stage27".to_string()),
+            reconciliation_id: Some("reconciliation-stage27".to_string()),
+            connector_execution_id: Some("connector-execution-stage27".to_string()),
+            protected_gate_id: Some("protected-gate-stage27".to_string()),
+            orchestration_stage_id: Some("orchestration-stage27".to_string()),
+            action_graph_id: Some("action-graph-stage27".to_string()),
+            tool_invocation_stage_id: Some("tool-invocation-stage27".to_string()),
+            execution_plan_ref: Some("execution-plan-stage27".to_string()),
+            work_id: Some("work-stage27".to_string()),
+            lease_id: Some("lease-stage27".to_string()),
+            device_id: Some("device-stage27".to_string()),
+            access_context_id: Some("access-context-stage27".to_string()),
+            policy_context_id: Some("policy-context-stage27".to_string()),
+            tenant_id: Some("tenant-stage27".to_string()),
+            audit_id: Some(audit_id.into()),
+            ph1j_proof_ref: Some("audit-proof-stage27".to_string()),
+            stage20_continuity_ref_present: false,
+            stage20_continuity_ref_non_authoritative: false,
+            stage21_automation_ref_present: false,
+            stage21_automation_ref_non_authoritative: false,
+            stage22_outbound_ref_present: false,
+            stage22_outbound_ref_non_authoritative: false,
+            stage23_memory_ref_present: false,
+            stage23_memory_ref_non_authoritative: false,
+            stage24_ingress_ref_present: false,
+            stage24_ingress_ref_non_authoritative: false,
+            stage25_orchestration_ref_present: false,
+            stage25_orchestration_ref_non_authoritative: false,
+            stage26_execution_authority_ref_present: true,
+            stage26_execution_authority_ref_non_authoritative: true,
+            stage11_route_ref_present: true,
+            stage11_route_non_executing_context: true,
+            stage12_gate_ref_present: true,
+            stage12_gate_bounded_authority_context: true,
+            authority_bounded: true,
+            tenant_user_device_session_scoped: true,
+            uncertainty_preserved: true,
+            settlement_invented_fact: false,
+            settlement_invented_settlement_success: false,
+            settlement_invented_mutation_commit_success: false,
+            settlement_invented_reconciliation_success: false,
+            settlement_invented_approval: false,
+            settlement_invented_remote_completion: false,
+            settlement_invented_visibility_completion: false,
+            settlement_invented_work_or_lease_authority: false,
+            settlement_invented_route_authority: false,
+            settlement_invented_attachment_or_citation: false,
+            settlement_invented_provider_or_tool_result: false,
+            settlement_claimed_unproven_completion: false,
+            settlement_implied_routing_approval_mutation_or_completion_without_proof: false,
+            secret_safe: true,
+            redacted: true,
+            stale_aware: true,
+            revocation_aware: true,
+            connector_ref_present: true,
+            protected_gate_ref_present: true,
+            route_ref_present: true,
+            execution_plan_ref_present: true,
+            work_ref_present: true,
+            lease_ref_present: true,
+            settlement_ref_present: true,
+            mutation_commit_ref_present: true,
+            reconciliation_ref_present: true,
+            unverifiable: false,
+            stale: false,
+            secret_unsafe: false,
+            cross_tenant: false,
+            cross_route: false,
+            cross_connector: false,
+            connector_mismatch: false,
+            route_mismatch: false,
+            action_graph_mismatch: false,
+            lease_mismatch: false,
+            settlement_mismatch: false,
+            protected_gate_mismatch: false,
+            tenant_mismatch: false,
+            missing_proof: false,
+            ownership_drift: false,
+            native_settlement_declarative_only: true,
+            native_settlement_mutates_state: false,
+            native_settlement_connector_writes: false,
+            native_settlement_dispatches_or_executes: false,
+            native_settlement_calls_providers_or_tools: false,
+            native_settlement_emits_tts_or_playback: false,
+            native_settlement_creates_user_turn: false,
+            native_settlement_treats_visible_readiness_as_action_success: false,
+            protected_action_like_request: false,
+            protected_slot_or_authority_ambiguous: false,
+            unsafe_identity_posture: false,
+            stale_or_cancelled_or_superseded_output: false,
+            session_closed: false,
+            record_artifact_only_turn: false,
+            stale_settlement_state: false,
+            stale_work_state: false,
+            stale_lease_state: false,
+            stale_route_state: false,
+            stale_connector_state: false,
+            stale_protected_gate_state: false,
+            settlement_identity_matches_current_output_session: true,
+            replay_upgrades_blocked_authority: false,
+            fake_settlement_detected: false,
+            fake_mutation_commit_detected: false,
+            fake_reconciliation_detected: false,
+            fake_approval_detected: false,
+            fake_remote_completion_detected: false,
+            runtime_mock_detected: false,
+            raw_provider_output_present: false,
+            raw_search_dump_present: false,
+            raw_media_present: false,
+            raw_connector_credential_field_present: false,
+            unverified_source_evidence_present: false,
+            unsupported_claim_candidate_present: false,
+            fake_settlement_source_carrier_present: false,
+            attention_continuity_automation_outbound_memory_ingress_orchestration_execution_used_as_truth_authority:
+                false,
+            protected_action_candidate_present: false,
+            simulation_candidate_present: false,
+            approved_execution_plan_present: false,
+            secrets_exposed: false,
+            raw_biometric_material_exposed: false,
+            internal_trace_exposed: false,
+            access_denied: false,
+            policy_denied: false,
+            attempted_live_provider_in_build: false,
+            generated_live_media_in_build: false,
+            ran_live_search_in_build: false,
+            called_live_external_tool_in_build: false,
+            connector_write_requested: false,
+            ran_live_notification_delivery_in_build: false,
+            ran_live_background_execution_in_build: false,
+            ran_live_connector_mutation_in_build: false,
+            ran_live_remote_settlement_in_build: false,
+            ran_direct_protected_execution_in_build: false,
+            ran_live_tts_or_playback_in_build: false,
+            captured_microphone_audio: false,
+            transcribed_live_audio: false,
+            voice_id_matching_attempted: false,
+            native_ui_behavior_added: false,
+            fixture_only_test_path: true,
+        }
+    }
+
+    #[cfg(test)]
+    pub fn fixture_remote_side_effect_settlement_ready(
+        settlement_id: impl Into<String>,
+        connector_execution_id: impl Into<String>,
+        work_id: impl Into<String>,
+        lease_id: impl Into<String>,
+        audit_id: impl Into<String>,
+    ) -> Self {
+        let mut input = Self::fixture_base(
+            Stage27SettlementReconciliationKind::RemoteSideEffectSettlement,
+            audit_id,
+        );
+        input.settlement_id = Some(settlement_id.into());
+        input.connector_execution_id = Some(connector_execution_id.into());
+        input.work_id = Some(work_id.into());
+        input.lease_id = Some(lease_id.into());
+        input.mutation_commit_id = None;
+        input.reconciliation_id = None;
+        input
+    }
+
+    #[cfg(test)]
+    pub fn fixture_mutation_commit_boundary_ready(
+        settlement_id: impl Into<String>,
+        mutation_commit_id: impl Into<String>,
+        work_id: impl Into<String>,
+        lease_id: impl Into<String>,
+        audit_id: impl Into<String>,
+    ) -> Self {
+        let mut input = Self::fixture_base(
+            Stage27SettlementReconciliationKind::MutationCommitBoundary,
+            audit_id,
+        );
+        input.settlement_id = Some(settlement_id.into());
+        input.mutation_commit_id = Some(mutation_commit_id.into());
+        input.work_id = Some(work_id.into());
+        input.lease_id = Some(lease_id.into());
+        input.reconciliation_id = None;
+        input
+    }
+
+    #[cfg(test)]
+    pub fn fixture_post_execution_reconciliation_ready(
+        settlement_id: impl Into<String>,
+        reconciliation_id: impl Into<String>,
+        execution_plan_ref: impl Into<String>,
+        work_id: impl Into<String>,
+        audit_id: impl Into<String>,
+    ) -> Self {
+        let mut input = Self::fixture_base(
+            Stage27SettlementReconciliationKind::PostExecutionReconciliation,
+            audit_id,
+        );
+        input.settlement_id = Some(settlement_id.into());
+        input.reconciliation_id = Some(reconciliation_id.into());
+        input.execution_plan_ref = Some(execution_plan_ref.into());
+        input.work_id = Some(work_id.into());
+        input.lease_id = None;
+        input.mutation_commit_id = None;
+        input
+    }
+
+    #[cfg(test)]
+    pub fn fixture_execution_completion_visibility_posture_ready(
+        reconciliation_id: impl Into<String>,
+        connector_execution_id: impl Into<String>,
+        protected_gate_id: impl Into<String>,
+        audit_id: impl Into<String>,
+    ) -> Self {
+        let mut input = Self::fixture_base(
+            Stage27SettlementReconciliationKind::ExecutionCompletionVisibilityPosture,
+            audit_id,
+        );
+        input.reconciliation_id = Some(reconciliation_id.into());
+        input.connector_execution_id = Some(connector_execution_id.into());
+        input.protected_gate_id = Some(protected_gate_id.into());
+        input.settlement_id = None;
+        input.mutation_commit_id = None;
+        input.lease_id = None;
+        input.work_id = None;
+        input
+    }
+
+    #[cfg(test)]
+    pub fn fixture_connector_outcome_continuity_reference_ready(
+        settlement_id: impl Into<String>,
+        connector_execution_id: impl Into<String>,
+        execution_plan_ref: impl Into<String>,
+        work_id: impl Into<String>,
+        audit_id: impl Into<String>,
+    ) -> Self {
+        let mut input = Self::fixture_base(
+            Stage27SettlementReconciliationKind::ConnectorOutcomeContinuityReference,
+            audit_id,
+        );
+        input.settlement_id = Some(settlement_id.into());
+        input.connector_execution_id = Some(connector_execution_id.into());
+        input.execution_plan_ref = Some(execution_plan_ref.into());
+        input.work_id = Some(work_id.into());
+        input.lease_id = None;
+        input.mutation_commit_id = None;
+        input.reconciliation_id = None;
+        input
+    }
+}
+
+impl Validate for Stage27SettlementReconciliationInput {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        validate_stage4_optional_ref(
+            "stage27_settlement_reconciliation_input.settlement_id",
+            self.settlement_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage27_settlement_reconciliation_input.mutation_commit_id",
+            self.mutation_commit_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage27_settlement_reconciliation_input.reconciliation_id",
+            self.reconciliation_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage27_settlement_reconciliation_input.connector_execution_id",
+            self.connector_execution_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage27_settlement_reconciliation_input.protected_gate_id",
+            self.protected_gate_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage27_settlement_reconciliation_input.orchestration_stage_id",
+            self.orchestration_stage_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage27_settlement_reconciliation_input.action_graph_id",
+            self.action_graph_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage27_settlement_reconciliation_input.tool_invocation_stage_id",
+            self.tool_invocation_stage_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage27_settlement_reconciliation_input.execution_plan_ref",
+            self.execution_plan_ref.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage27_settlement_reconciliation_input.work_id",
+            self.work_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage27_settlement_reconciliation_input.lease_id",
+            self.lease_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage27_settlement_reconciliation_input.device_id",
+            self.device_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage27_settlement_reconciliation_input.access_context_id",
+            self.access_context_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage27_settlement_reconciliation_input.policy_context_id",
+            self.policy_context_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage27_settlement_reconciliation_input.tenant_id",
+            self.tenant_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage27_settlement_reconciliation_input.audit_id",
+            self.audit_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage27_settlement_reconciliation_input.ph1j_proof_ref",
+            self.ph1j_proof_ref.as_deref(),
+        )?;
+        if self.attempted_live_provider_in_build
+            || self.generated_live_media_in_build
+            || self.ran_live_search_in_build
+            || self.called_live_external_tool_in_build
+            || self.connector_write_requested
+            || self.ran_live_notification_delivery_in_build
+            || self.ran_live_background_execution_in_build
+            || self.ran_live_connector_mutation_in_build
+            || self.ran_live_remote_settlement_in_build
+            || self.ran_direct_protected_execution_in_build
+            || self.ran_live_tts_or_playback_in_build
+            || self.captured_microphone_audio
+            || self.transcribed_live_audio
+            || self.voice_id_matching_attempted
+            || self.native_ui_behavior_added
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage27_settlement_reconciliation_input.no_live_build",
+                reason: "Stage 27A is boundary-only and cannot add live provider/search/tool/settlement/connector/protected/native behavior",
+            });
+        }
+        if !self.fixture_only_test_path
+            && (self.fake_settlement_detected
+                || self.fake_mutation_commit_detected
+                || self.fake_reconciliation_detected
+                || self.fake_approval_detected
+                || self.fake_remote_completion_detected
+                || self.runtime_mock_detected)
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage27_settlement_reconciliation_input.runtime_mock",
+                reason: "runtime mock/fake settlement/fake mutation/fake reconciliation/fake approval paths must stay in explicit fixture-only tests",
+            });
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Stage27SettlementReconciliationPacket {
+    pub session_id: SessionId,
+    pub turn_id: Option<TurnId>,
+    pub activation_id: Option<String>,
+    pub continuity_packet_id: Option<String>,
+    pub automation_candidate_id: Option<String>,
+    pub connector_action_stage_id: Option<String>,
+    pub memory_candidate_id: Option<String>,
+    pub capture_session_id: Option<String>,
+    pub orchestration_stage_id: Option<String>,
+    pub action_graph_id: Option<String>,
+    pub tool_invocation_stage_id: Option<String>,
+    pub execution_plan_ref: Option<String>,
+    pub connector_execution_id: Option<String>,
+    pub protected_gate_id: Option<String>,
+    pub settlement_id: Option<String>,
+    pub mutation_commit_id: Option<String>,
+    pub reconciliation_id: Option<String>,
+    pub work_id: Option<String>,
+    pub lease_id: Option<String>,
+    pub device_id: Option<String>,
+    pub access_context_id: Option<String>,
+    pub policy_context_id: Option<String>,
+    pub tenant_id: Option<String>,
+    pub audit_id: Option<String>,
+    pub ph1j_proof_ref: Option<String>,
+    pub stage20_disposition: Option<Stage20ContinuityHandoffDisposition>,
+    pub stage21_disposition: Option<Stage21AutomationOrchestrationDisposition>,
+    pub stage22_disposition: Option<Stage22ConnectorOutboundDisposition>,
+    pub stage23_disposition: Option<Stage23MemoryRetentionDisposition>,
+    pub stage24_disposition: Option<Stage24IngressCaptureDisposition>,
+    pub stage25_disposition: Option<Stage25ToolOrchestrationDisposition>,
+    pub stage26_disposition: Option<Stage26ExecutionAuthorityDisposition>,
+    pub stage12_disposition: Option<Stage12ProtectedActionDisposition>,
+    pub settlement_kind: Stage27SettlementReconciliationKind,
+    pub disposition: Stage27SettlementReconciliationDisposition,
+    pub reason_code: &'static str,
+    pub stage20_ref_non_authoritative: bool,
+    pub stage21_ref_non_authoritative: bool,
+    pub stage22_ref_non_authoritative: bool,
+    pub stage23_ref_non_authoritative: bool,
+    pub stage24_ref_non_authoritative: bool,
+    pub stage25_ref_non_authoritative: bool,
+    pub stage26_ref_non_authoritative: bool,
+    pub stage12_ref_bounded_authority_context: bool,
+    pub work_authority: Stage27SettlementReconciliationWorkAuthority,
+}
+
+impl Stage27SettlementReconciliationPacket {
+    #[allow(clippy::too_many_arguments)]
+    pub fn from_stage26_execution_authority(
+        route: &Stage11ReasoningRouterPacket,
+        stage12_gate: Option<&Stage12ProtectedActionGatePacket>,
+        continuity_handoff: Option<&Stage20ContinuityHandoffPacket>,
+        automation_output: Option<&Stage21AutomationOrchestrationPacket>,
+        outbound_output: Option<&Stage22ConnectorOutboundPacket>,
+        memory_output: Option<&Stage23MemoryRetentionPacket>,
+        ingress_output: Option<&Stage24IngressCapturePacket>,
+        orchestration_output: Option<&Stage25ToolOrchestrationPacket>,
+        execution_output: Option<&Stage26ExecutionAuthorityPacket>,
+        input: Stage27SettlementReconciliationInput,
+    ) -> Result<Self, ContractViolation> {
+        route.validate()?;
+        if let Some(packet) = stage12_gate {
+            packet.validate()?;
+        }
+        if let Some(packet) = continuity_handoff {
+            packet.validate()?;
+        }
+        if let Some(packet) = automation_output {
+            packet.validate()?;
+        }
+        if let Some(packet) = outbound_output {
+            packet.validate()?;
+        }
+        if let Some(packet) = memory_output {
+            packet.validate()?;
+        }
+        if let Some(packet) = ingress_output {
+            packet.validate()?;
+        }
+        if let Some(packet) = orchestration_output {
+            packet.validate()?;
+        }
+        if let Some(packet) = execution_output {
+            packet.validate()?;
+        }
+        input.validate()?;
+        if input.stage12_gate_ref_present && stage12_gate.is_none() {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage27_settlement_reconciliation_packet.stage12_gate",
+                reason: "present Stage 12 continuity reference requires the canonical Stage 12 packet",
+            });
+        }
+        if input.stage26_execution_authority_ref_present && execution_output.is_none() {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage27_settlement_reconciliation_packet.stage26_execution_authority",
+                reason: "present Stage 26 continuity reference requires the canonical Stage 26 packet",
+            });
+        }
+        let disposition = Self::decide_disposition(route, stage12_gate, execution_output, &input);
+        let work_authority = Self::work_authority_for(disposition);
+        let audit_id = input
+            .audit_id
+            .clone()
+            .or_else(|| execution_output.and_then(|packet| packet.audit_id.clone()))
+            .or_else(|| orchestration_output.and_then(|packet| packet.audit_id.clone()))
+            .or_else(|| ingress_output.and_then(|packet| packet.audit_id.clone()))
+            .or_else(|| memory_output.and_then(|packet| packet.audit_id.clone()))
+            .or_else(|| outbound_output.and_then(|packet| packet.audit_id.clone()))
+            .or_else(|| automation_output.and_then(|packet| packet.audit_id.clone()))
+            .or_else(|| continuity_handoff.and_then(|packet| packet.audit_id.clone()))
+            .or_else(|| stage12_gate.and_then(|packet| packet.audit_id.clone()))
+            .or_else(|| route.audit_id.clone());
+        let ph1j_proof_ref = input
+            .ph1j_proof_ref
+            .clone()
+            .or_else(|| execution_output.and_then(|packet| packet.ph1j_proof_ref.clone()));
+        let packet = Self {
+            session_id: route.session_id,
+            turn_id: route.turn_id,
+            activation_id: continuity_handoff.and_then(|packet| packet.activation_id.clone()),
+            continuity_packet_id: continuity_handoff.map(|packet| packet.continuity_packet_id.clone()),
+            automation_candidate_id: automation_output.and_then(|packet| packet.automation_candidate_id.clone()),
+            connector_action_stage_id: outbound_output.and_then(|packet| packet.connector_action_stage_id.clone()),
+            memory_candidate_id: memory_output.and_then(|packet| packet.memory_candidate_id.clone()),
+            capture_session_id: ingress_output.and_then(|packet| packet.capture_session_id.clone()),
+            orchestration_stage_id: input
+                .orchestration_stage_id
+                .clone()
+                .or_else(|| execution_output.and_then(|packet| packet.orchestration_stage_id.clone()))
+                .or_else(|| orchestration_output.and_then(|packet| packet.orchestration_stage_id.clone())),
+            action_graph_id: input
+                .action_graph_id
+                .clone()
+                .or_else(|| execution_output.and_then(|packet| packet.action_graph_id.clone()))
+                .or_else(|| orchestration_output.and_then(|packet| packet.action_graph_id.clone())),
+            tool_invocation_stage_id: input
+                .tool_invocation_stage_id
+                .clone()
+                .or_else(|| execution_output.and_then(|packet| packet.tool_invocation_stage_id.clone()))
+                .or_else(|| orchestration_output.and_then(|packet| packet.tool_invocation_stage_id.clone())),
+            execution_plan_ref: input
+                .execution_plan_ref
+                .clone()
+                .or_else(|| execution_output.and_then(|packet| packet.execution_plan_ref.clone()))
+                .or_else(|| orchestration_output.and_then(|packet| packet.execution_plan_ref.clone())),
+            connector_execution_id: input
+                .connector_execution_id
+                .clone()
+                .or_else(|| execution_output.and_then(|packet| packet.connector_execution_id.clone())),
+            protected_gate_id: input
+                .protected_gate_id
+                .clone()
+                .or_else(|| execution_output.and_then(|packet| packet.protected_gate_id.clone()))
+                .or_else(|| stage12_gate.map(|packet| packet.runtime_action_gate_id.clone())),
+            settlement_id: input.settlement_id.clone(),
+            mutation_commit_id: input.mutation_commit_id.clone(),
+            reconciliation_id: input.reconciliation_id.clone(),
+            work_id: input
+                .work_id
+                .clone()
+                .or_else(|| execution_output.and_then(|packet| packet.work_id.clone()))
+                .or_else(|| stage12_gate.and_then(|packet| packet.work_id.clone())),
+            lease_id: input
+                .lease_id
+                .clone()
+                .or_else(|| execution_output.and_then(|packet| packet.lease_id.clone()))
+                .or_else(|| stage12_gate.and_then(|packet| packet.lease_id.clone())),
+            device_id: input.device_id.clone(),
+            access_context_id: input
+                .access_context_id
+                .clone()
+                .or_else(|| execution_output.and_then(|packet| packet.access_context_id.clone()))
+                .or_else(|| route.access_context_id.clone()),
+            policy_context_id: input
+                .policy_context_id
+                .clone()
+                .or_else(|| execution_output.and_then(|packet| packet.policy_context_id.clone()))
+                .or_else(|| route.policy_context_id.clone()),
+            tenant_id: input
+                .tenant_id
+                .clone()
+                .or_else(|| execution_output.and_then(|packet| packet.tenant_id.clone()))
+                .or_else(|| stage12_gate.and_then(|packet| packet.tenant_id.clone())),
+            audit_id,
+            ph1j_proof_ref,
+            stage20_disposition: continuity_handoff.map(|packet| packet.disposition),
+            stage21_disposition: automation_output.map(|packet| packet.disposition),
+            stage22_disposition: outbound_output.map(|packet| packet.disposition),
+            stage23_disposition: memory_output.map(|packet| packet.disposition),
+            stage24_disposition: ingress_output.map(|packet| packet.disposition),
+            stage25_disposition: orchestration_output.map(|packet| packet.disposition),
+            stage26_disposition: execution_output.map(|packet| packet.disposition),
+            stage12_disposition: stage12_gate.map(|packet| packet.disposition),
+            settlement_kind: input.settlement_kind,
+            disposition,
+            reason_code: disposition.default_reason_code(),
+            stage20_ref_non_authoritative: input.stage20_continuity_ref_non_authoritative,
+            stage21_ref_non_authoritative: input.stage21_automation_ref_non_authoritative,
+            stage22_ref_non_authoritative: input.stage22_outbound_ref_non_authoritative,
+            stage23_ref_non_authoritative: input.stage23_memory_ref_non_authoritative,
+            stage24_ref_non_authoritative: input.stage24_ingress_ref_non_authoritative,
+            stage25_ref_non_authoritative: input.stage25_orchestration_ref_non_authoritative,
+            stage26_ref_non_authoritative: input.stage26_execution_authority_ref_non_authoritative,
+            stage12_ref_bounded_authority_context: input.stage12_gate_bounded_authority_context,
+            work_authority,
+        };
+        packet.validate()?;
+        Ok(packet)
+    }
+
+    pub const fn can_mutate_or_execute(&self) -> bool {
+        self.work_authority.can_mutate_or_execute()
+    }
+
+    fn decide_disposition(
+        route: &Stage11ReasoningRouterPacket,
+        stage12_gate: Option<&Stage12ProtectedActionGatePacket>,
+        execution_output: Option<&Stage26ExecutionAuthorityPacket>,
+        input: &Stage27SettlementReconciliationInput,
+    ) -> Stage27SettlementReconciliationDisposition {
+        if input.runtime_mock_detected {
+            return Stage27SettlementReconciliationDisposition::RuntimeMockBlocked;
+        }
+        if input.access_denied || input.policy_denied {
+            return Stage27SettlementReconciliationDisposition::UnsafeInputBlocked;
+        }
+        if !input.stage11_route_ref_present
+            || !input.stage11_route_non_executing_context
+            || !matches!(
+                route.disposition,
+                Stage11RouterDisposition::PublicReadOnlyCandidate
+                    | Stage11RouterDisposition::ProtectedActionBlockedUntilStage12
+                    | Stage11RouterDisposition::SimulationCandidateInertHandoff
+            )
+            || !input.stage12_gate_ref_present
+            || !input.stage12_gate_bounded_authority_context
+            || stage12_gate.is_none()
+            || !input.stage26_execution_authority_ref_present
+            || !input.stage26_execution_authority_ref_non_authoritative
+            || execution_output.is_none()
+        {
+            return Stage27SettlementReconciliationDisposition::StageInputBlocked;
+        }
+        if input.audit_id.is_none()
+            && route.audit_id.is_none()
+            && stage12_gate.and_then(|packet| packet.audit_id.clone()).is_none()
+            && execution_output.and_then(|packet| packet.audit_id.clone()).is_none()
+        {
+            return Stage27SettlementReconciliationDisposition::AuditProofMissing;
+        }
+        if input.settlement_invented_fact
+            || input.settlement_invented_settlement_success
+            || input.settlement_invented_mutation_commit_success
+            || input.settlement_invented_reconciliation_success
+            || input.settlement_invented_approval
+            || input.settlement_invented_remote_completion
+            || input.settlement_invented_visibility_completion
+            || input.settlement_invented_work_or_lease_authority
+            || input.settlement_invented_route_authority
+            || input.settlement_invented_attachment_or_citation
+            || input.settlement_invented_provider_or_tool_result
+            || input.settlement_claimed_unproven_completion
+            || input.settlement_implied_routing_approval_mutation_or_completion_without_proof
+            || input.raw_provider_output_present
+            || input.raw_search_dump_present
+            || input.raw_media_present
+            || input.raw_connector_credential_field_present
+            || input.unverified_source_evidence_present
+            || input.unsupported_claim_candidate_present
+            || input.fake_settlement_source_carrier_present
+            || input
+                .attention_continuity_automation_outbound_memory_ingress_orchestration_execution_used_as_truth_authority
+            || input.protected_action_candidate_present
+            || input.simulation_candidate_present
+            || input.approved_execution_plan_present
+        {
+            return Stage27SettlementReconciliationDisposition::NoInventionBlocked;
+        }
+        if !input.native_settlement_declarative_only
+            || input.native_settlement_mutates_state
+            || input.native_settlement_connector_writes
+            || input.native_settlement_dispatches_or_executes
+            || input.native_settlement_calls_providers_or_tools
+            || input.native_settlement_emits_tts_or_playback
+            || input.native_settlement_creates_user_turn
+            || input.native_settlement_treats_visible_readiness_as_action_success
+        {
+            return Stage27SettlementReconciliationDisposition::NativeSettlementHandoffBlocked;
+        }
+        if input.protected_action_like_request
+            || input.protected_slot_or_authority_ambiguous
+            || input.unsafe_identity_posture
+        {
+            return Stage27SettlementReconciliationDisposition::PublicProtectedBoundaryBlocked;
+        }
+        if input.stale_or_cancelled_or_superseded_output
+            || input.session_closed
+            || input.record_artifact_only_turn
+            || input.stale_settlement_state
+            || input.stale_work_state
+            || input.stale_lease_state
+            || input.stale_route_state
+            || input.stale_connector_state
+            || input.stale_protected_gate_state
+            || !input.settlement_identity_matches_current_output_session
+            || input.replay_upgrades_blocked_authority
+        {
+            return Stage27SettlementReconciliationDisposition::StaleSettlementBlocked;
+        }
+        if !input.authority_bounded
+            || !input.tenant_user_device_session_scoped
+            || !input.secret_safe
+            || !input.redacted
+            || !input.stale_aware
+            || !input.revocation_aware
+            || !input.connector_ref_present
+            || !input.protected_gate_ref_present
+            || !input.route_ref_present
+            || !input.execution_plan_ref_present
+            || !input.work_ref_present
+            || !input.settlement_ref_present
+            || input.unverifiable
+            || input.stale
+            || input.secret_unsafe
+            || input.cross_tenant
+            || input.cross_route
+            || input.cross_connector
+            || input.connector_mismatch
+            || input.route_mismatch
+            || input.action_graph_mismatch
+            || input.lease_mismatch
+            || input.settlement_mismatch
+            || input.protected_gate_mismatch
+            || input.tenant_mismatch
+            || input.missing_proof
+            || input.ownership_drift
+        {
+            return Stage27SettlementReconciliationDisposition::SettlementAuthorityBlocked;
+        }
+
+        match input.settlement_kind {
+            Stage27SettlementReconciliationKind::RemoteSideEffectSettlement => {
+                if input.settlement_id.is_some()
+                    && input.connector_execution_id.is_some()
+                    && input.work_id.is_some()
+                    && input.lease_id.is_some()
+                {
+                    Stage27SettlementReconciliationDisposition::RemoteSideEffectSettlementReady
+                } else {
+                    Stage27SettlementReconciliationDisposition::SettlementAuthorityBlocked
+                }
+            }
+            Stage27SettlementReconciliationKind::MutationCommitBoundary => {
+                if input.settlement_id.is_some()
+                    && input.mutation_commit_id.is_some()
+                    && input.work_id.is_some()
+                    && input.lease_id.is_some()
+                    && input.mutation_commit_ref_present
+                {
+                    Stage27SettlementReconciliationDisposition::MutationCommitBoundaryReady
+                } else {
+                    Stage27SettlementReconciliationDisposition::SettlementAuthorityBlocked
+                }
+            }
+            Stage27SettlementReconciliationKind::PostExecutionReconciliation => {
+                if input.settlement_id.is_some()
+                    && input.reconciliation_id.is_some()
+                    && input.execution_plan_ref.is_some()
+                    && input.work_id.is_some()
+                    && input.reconciliation_ref_present
+                {
+                    Stage27SettlementReconciliationDisposition::PostExecutionReconciliationReady
+                } else {
+                    Stage27SettlementReconciliationDisposition::SettlementAuthorityBlocked
+                }
+            }
+            Stage27SettlementReconciliationKind::ExecutionCompletionVisibilityPosture => {
+                if input.reconciliation_id.is_some()
+                    && input.connector_execution_id.is_some()
+                    && input.protected_gate_id.is_some()
+                    && input.reconciliation_ref_present
+                {
+                    Stage27SettlementReconciliationDisposition::ExecutionCompletionVisibilityPostureReady
+                } else {
+                    Stage27SettlementReconciliationDisposition::SettlementAuthorityBlocked
+                }
+            }
+            Stage27SettlementReconciliationKind::ConnectorOutcomeContinuityReference => {
+                if input.settlement_id.is_some()
+                    && input.connector_execution_id.is_some()
+                    && input.execution_plan_ref.is_some()
+                    && input.work_id.is_some()
+                {
+                    Stage27SettlementReconciliationDisposition::ConnectorOutcomeContinuityReferenceReady
+                } else {
+                    Stage27SettlementReconciliationDisposition::SettlementAuthorityBlocked
+                }
+            }
+        }
+    }
+
+    const fn work_authority_for(
+        disposition: Stage27SettlementReconciliationDisposition,
+    ) -> Stage27SettlementReconciliationWorkAuthority {
+        match disposition {
+            Stage27SettlementReconciliationDisposition::RemoteSideEffectSettlementReady => {
+                Stage27SettlementReconciliationWorkAuthority::remote_side_effect_settlement_ready()
+            }
+            Stage27SettlementReconciliationDisposition::MutationCommitBoundaryReady => {
+                Stage27SettlementReconciliationWorkAuthority::mutation_commit_boundary_ready()
+            }
+            Stage27SettlementReconciliationDisposition::PostExecutionReconciliationReady => {
+                Stage27SettlementReconciliationWorkAuthority::post_execution_reconciliation_ready()
+            }
+            Stage27SettlementReconciliationDisposition::ExecutionCompletionVisibilityPostureReady => {
+                Stage27SettlementReconciliationWorkAuthority::execution_completion_visibility_posture_ready()
+            }
+            Stage27SettlementReconciliationDisposition::ConnectorOutcomeContinuityReferenceReady => {
+                Stage27SettlementReconciliationWorkAuthority::connector_outcome_continuity_reference_ready()
+            }
+            _ => Stage27SettlementReconciliationWorkAuthority::fail_closed(),
+        }
+    }
+}
+
+impl Validate for Stage27SettlementReconciliationPacket {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        validate_stage4_optional_ref(
+            "stage27_settlement_reconciliation_packet.activation_id",
+            self.activation_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage27_settlement_reconciliation_packet.continuity_packet_id",
+            self.continuity_packet_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage27_settlement_reconciliation_packet.automation_candidate_id",
+            self.automation_candidate_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage27_settlement_reconciliation_packet.connector_action_stage_id",
+            self.connector_action_stage_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage27_settlement_reconciliation_packet.memory_candidate_id",
+            self.memory_candidate_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage27_settlement_reconciliation_packet.capture_session_id",
+            self.capture_session_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage27_settlement_reconciliation_packet.orchestration_stage_id",
+            self.orchestration_stage_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage27_settlement_reconciliation_packet.action_graph_id",
+            self.action_graph_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage27_settlement_reconciliation_packet.tool_invocation_stage_id",
+            self.tool_invocation_stage_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage27_settlement_reconciliation_packet.execution_plan_ref",
+            self.execution_plan_ref.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage27_settlement_reconciliation_packet.connector_execution_id",
+            self.connector_execution_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage27_settlement_reconciliation_packet.protected_gate_id",
+            self.protected_gate_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage27_settlement_reconciliation_packet.settlement_id",
+            self.settlement_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage27_settlement_reconciliation_packet.mutation_commit_id",
+            self.mutation_commit_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage27_settlement_reconciliation_packet.reconciliation_id",
+            self.reconciliation_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage27_settlement_reconciliation_packet.work_id",
+            self.work_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage27_settlement_reconciliation_packet.lease_id",
+            self.lease_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage27_settlement_reconciliation_packet.device_id",
+            self.device_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage27_settlement_reconciliation_packet.access_context_id",
+            self.access_context_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage27_settlement_reconciliation_packet.policy_context_id",
+            self.policy_context_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage27_settlement_reconciliation_packet.tenant_id",
+            self.tenant_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage27_settlement_reconciliation_packet.audit_id",
+            self.audit_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage27_settlement_reconciliation_packet.ph1j_proof_ref",
+            self.ph1j_proof_ref.as_deref(),
+        )?;
+        if self.reason_code != self.disposition.default_reason_code() {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage27_settlement_reconciliation_packet.reason_code",
+                reason: "must match Stage 27A settlement disposition",
+            });
+        }
+        if self.work_authority.can_mutate_or_execute() {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage27_settlement_reconciliation_packet.work_authority",
+                reason: "Stage 27A cannot invent settlement authority, connector-write, approve, dispatch, execute, mutation commit, or treat visible readiness as action success",
+            });
+        }
+        if self.disposition.is_ready()
+            && (self.audit_id.is_none() || self.ph1j_proof_ref.is_none())
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage27_settlement_reconciliation_packet.audit_proof",
+                reason: "ready Stage 27A settlement output requires PH1.J audit/proof refs",
+            });
+        }
+        Ok(())
+    }
+}
+
+pub fn stage27_settlement_reconciliation_symbol_anchor() {
+    let _ = Stage27SettlementReconciliationKind::RemoteSideEffectSettlement;
+    let _ = Stage27SettlementReconciliationKind::MutationCommitBoundary;
+    let _ = Stage27SettlementReconciliationKind::PostExecutionReconciliation;
+    let _ = Stage27SettlementReconciliationKind::ExecutionCompletionVisibilityPosture;
+    let _ = Stage27SettlementReconciliationKind::ConnectorOutcomeContinuityReference;
+    let disposition = Stage27SettlementReconciliationDisposition::StageInputBlocked;
+    let _ = disposition.default_reason_code();
+    let _ = disposition.is_ready();
+    let _ = Stage27SettlementReconciliationWorkAuthority::fail_closed().can_mutate_or_execute();
+    let _ = Stage27SettlementReconciliationWorkAuthority::remote_side_effect_settlement_ready();
+    let _ = Stage27SettlementReconciliationWorkAuthority::mutation_commit_boundary_ready();
+    let _ = Stage27SettlementReconciliationWorkAuthority::post_execution_reconciliation_ready();
+    let _ =
+        Stage27SettlementReconciliationWorkAuthority::execution_completion_visibility_posture_ready();
+    let _ =
+        Stage27SettlementReconciliationWorkAuthority::connector_outcome_continuity_reference_ready();
+    let _ = core::mem::size_of::<Stage27SettlementReconciliationInput>();
+    let _ = core::mem::size_of::<Stage27SettlementReconciliationPacket>();
+    let _ = Stage27SettlementReconciliationPacket::from_stage26_execution_authority
+        as fn(
+            &Stage11ReasoningRouterPacket,
+            Option<&Stage12ProtectedActionGatePacket>,
+            Option<&Stage20ContinuityHandoffPacket>,
+            Option<&Stage21AutomationOrchestrationPacket>,
+            Option<&Stage22ConnectorOutboundPacket>,
+            Option<&Stage23MemoryRetentionPacket>,
+            Option<&Stage24IngressCapturePacket>,
+            Option<&Stage25ToolOrchestrationPacket>,
+            Option<&Stage26ExecutionAuthorityPacket>,
+            Stage27SettlementReconciliationInput,
+        ) -> Result<Stage27SettlementReconciliationPacket, ContractViolation>;
+    let _ = Stage27SettlementReconciliationPacket::can_mutate_or_execute
+        as fn(&Stage27SettlementReconciliationPacket) -> bool;
+}
+const _: fn() = stage27_settlement_reconciliation_symbol_anchor;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -38433,6 +39711,566 @@ mod tests {
             runtime_mock,
         )
         .is_err());
+    }
+
+    fn stage27_execution_authority_identity() -> super::Stage26ExecutionAuthorityPacket {
+        let route = stage12_protected_route();
+        let gate = Stage12ProtectedActionGatePacket::from_stage11_candidate(
+            &route,
+            stage12_gate_input(),
+        )
+        .expect("stage27 protected gate");
+        let continuity = stage21_continuity_identity();
+        let automation = stage22_automation_identity();
+        let outbound = stage23_outbound_identity();
+        let memory = stage24_memory_identity();
+        let ingress = stage25_ingress_identity();
+        let orchestration = stage26_orchestration_identity();
+        let mut input =
+            super::Stage26ExecutionAuthorityInput::fixture_connector_execution_authority_ready(
+                "connector-execution-stage27-identity",
+                "execution-plan-stage27-identity",
+                "work-stage27-identity",
+                "lease-stage27-identity",
+                "audit-stage27-identity",
+            );
+        input.stage20_continuity_ref_present = true;
+        input.stage20_continuity_ref_non_authoritative = true;
+        input.stage21_automation_ref_present = true;
+        input.stage21_automation_ref_non_authoritative = true;
+        input.stage22_outbound_ref_present = true;
+        input.stage22_outbound_ref_non_authoritative = true;
+        input.stage23_memory_ref_present = true;
+        input.stage23_memory_ref_non_authoritative = true;
+        input.stage24_ingress_ref_present = true;
+        input.stage24_ingress_ref_non_authoritative = true;
+        input.stage25_orchestration_ref_present = true;
+        input.stage25_orchestration_ref_non_authoritative = true;
+        super::Stage26ExecutionAuthorityPacket::from_stage25_orchestration(
+            &route,
+            Some(&gate),
+            Some(&continuity),
+            Some(&automation),
+            Some(&outbound),
+            Some(&memory),
+            Some(&ingress),
+            Some(&orchestration),
+            input,
+        )
+        .expect("stage27 execution authority identity")
+    }
+
+    #[test]
+    fn stage_27a_settlement_consumes_stage20_stage21_stage22_stage23_stage24_stage25_stage26_non_authoritatively(
+    ) {
+        let route = stage12_protected_route();
+        let gate = Stage12ProtectedActionGatePacket::from_stage11_candidate(
+            &route,
+            stage12_gate_input(),
+        )
+        .expect("stage27 protected gate");
+        let continuity = stage21_continuity_identity();
+        let automation = stage22_automation_identity();
+        let outbound = stage23_outbound_identity();
+        let memory = stage24_memory_identity();
+        let ingress = stage25_ingress_identity();
+        let orchestration = stage26_orchestration_identity();
+        let execution = stage27_execution_authority_identity();
+        let mut input =
+            super::Stage27SettlementReconciliationInput::fixture_remote_side_effect_settlement_ready(
+                "settlement-stage27-ready",
+                "connector-execution-stage27-ready",
+                "work-stage27-ready",
+                "lease-stage27-ready",
+                "audit-stage27-ready",
+            );
+        input.stage20_continuity_ref_present = true;
+        input.stage20_continuity_ref_non_authoritative = true;
+        input.stage21_automation_ref_present = true;
+        input.stage21_automation_ref_non_authoritative = true;
+        input.stage22_outbound_ref_present = true;
+        input.stage22_outbound_ref_non_authoritative = true;
+        input.stage23_memory_ref_present = true;
+        input.stage23_memory_ref_non_authoritative = true;
+        input.stage24_ingress_ref_present = true;
+        input.stage24_ingress_ref_non_authoritative = true;
+        input.stage25_orchestration_ref_present = true;
+        input.stage25_orchestration_ref_non_authoritative = true;
+        let packet = super::Stage27SettlementReconciliationPacket::from_stage26_execution_authority(
+            &route,
+            Some(&gate),
+            Some(&continuity),
+            Some(&automation),
+            Some(&outbound),
+            Some(&memory),
+            Some(&ingress),
+            Some(&orchestration),
+            Some(&execution),
+            input,
+        )
+        .expect("stage27 settlement ready");
+
+        assert_eq!(
+            packet.disposition,
+            super::Stage27SettlementReconciliationDisposition::RemoteSideEffectSettlementReady
+        );
+        assert_eq!(
+            packet.stage20_disposition,
+            Some(Stage20ContinuityHandoffDisposition::SessionContinuityReady)
+        );
+        assert_eq!(
+            packet.stage21_disposition,
+            Some(Stage21AutomationOrchestrationDisposition::AutomationCandidateReady)
+        );
+        assert_eq!(
+            packet.stage22_disposition,
+            Some(super::Stage22ConnectorOutboundDisposition::StagedDispatchPostureReady)
+        );
+        assert_eq!(
+            packet.stage23_disposition,
+            Some(super::Stage23MemoryRetentionDisposition::IdentitySafeRetentionReady)
+        );
+        assert_eq!(
+            packet.stage24_disposition,
+            Some(super::Stage24IngressCaptureDisposition::StreamSafetyReady)
+        );
+        assert_eq!(
+            packet.stage25_disposition,
+            Some(super::Stage25ToolOrchestrationDisposition::ManagedExecutionStagingReady)
+        );
+        assert_eq!(
+            packet.stage26_disposition,
+            Some(super::Stage26ExecutionAuthorityDisposition::ConnectorExecutionAuthorityReady)
+        );
+        assert!(packet.stage26_ref_non_authoritative);
+        assert!(
+            packet
+                .work_authority
+                .can_emit_remote_side_effect_settlement_packet
+        );
+        assert!(!packet.can_mutate_or_execute());
+    }
+
+    #[test]
+    fn stage_27a_packets_cannot_invent_or_claim_settlement_success() {
+        let route = stage12_protected_route();
+        let gate = Stage12ProtectedActionGatePacket::from_stage11_candidate(
+            &route,
+            stage12_gate_input(),
+        )
+        .expect("stage27 protected gate");
+        let execution = stage27_execution_authority_identity();
+
+        for input in [
+            {
+                let mut input =
+                    super::Stage27SettlementReconciliationInput::fixture_remote_side_effect_settlement_ready(
+                        "settlement-stage27-invent-settlement",
+                        "connector-execution-stage27-invent-settlement",
+                        "work-stage27-invent-settlement",
+                        "lease-stage27-invent-settlement",
+                        "audit-stage27-invent-settlement",
+                    );
+                input.settlement_invented_settlement_success = true;
+                input
+            },
+            {
+                let mut input =
+                    super::Stage27SettlementReconciliationInput::fixture_mutation_commit_boundary_ready(
+                        "settlement-stage27-invent-commit",
+                        "mutation-commit-stage27-invent-commit",
+                        "work-stage27-invent-commit",
+                        "lease-stage27-invent-commit",
+                        "audit-stage27-invent-commit",
+                    );
+                input.settlement_invented_mutation_commit_success = true;
+                input
+            },
+            {
+                let mut input =
+                    super::Stage27SettlementReconciliationInput::fixture_post_execution_reconciliation_ready(
+                        "settlement-stage27-invent-reconcile",
+                        "reconciliation-stage27-invent-reconcile",
+                        "execution-plan-stage27-invent-reconcile",
+                        "work-stage27-invent-reconcile",
+                        "audit-stage27-invent-reconcile",
+                    );
+                input.settlement_invented_reconciliation_success = true;
+                input
+            },
+            {
+                let mut input =
+                    super::Stage27SettlementReconciliationInput::fixture_execution_completion_visibility_posture_ready(
+                        "reconciliation-stage27-unproven",
+                        "connector-execution-stage27-unproven",
+                        "protected-gate-stage27-unproven",
+                        "audit-stage27-unproven",
+                    );
+                input.settlement_claimed_unproven_completion = true;
+                input
+            },
+        ] {
+            let packet =
+                super::Stage27SettlementReconciliationPacket::from_stage26_execution_authority(
+                    &route,
+                    Some(&gate),
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    Some(&execution),
+                    input,
+                )
+                .expect("stage27 no-invention blocked");
+            assert_eq!(
+                packet.disposition,
+                super::Stage27SettlementReconciliationDisposition::NoInventionBlocked
+            );
+            assert!(packet.work_authority.can_fail_closed);
+            assert!(!packet.can_mutate_or_execute());
+        }
+    }
+
+    #[test]
+    fn stage_27a_settlement_requires_scoped_secret_safe_refs() {
+        let route = stage12_protected_route();
+        let gate = Stage12ProtectedActionGatePacket::from_stage11_candidate(
+            &route,
+            stage12_gate_input(),
+        )
+        .expect("stage27 protected gate");
+        let execution = stage27_execution_authority_identity();
+        let ready = super::Stage27SettlementReconciliationPacket::from_stage26_execution_authority(
+            &route,
+            Some(&gate),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(&execution),
+            super::Stage27SettlementReconciliationInput::fixture_remote_side_effect_settlement_ready(
+                "settlement-stage27-dispatch-ready",
+                "connector-execution-stage27-dispatch-ready",
+                "work-stage27-dispatch-ready",
+                "lease-stage27-dispatch-ready",
+                "audit-stage27-dispatch-ready",
+            ),
+        )
+        .expect("stage27 settlement authority ready");
+        assert_eq!(
+            ready.disposition,
+            super::Stage27SettlementReconciliationDisposition::RemoteSideEffectSettlementReady
+        );
+        assert!(
+            ready
+                .work_authority
+                .can_emit_remote_side_effect_settlement_packet
+        );
+        assert!(!ready.can_mutate_or_execute());
+
+        for input in [
+            {
+                let mut input =
+                    super::Stage27SettlementReconciliationInput::fixture_mutation_commit_boundary_ready(
+                        "settlement-stage27-unbounded",
+                        "mutation-commit-stage27-unbounded",
+                        "work-stage27-unbounded",
+                        "lease-stage27-unbounded",
+                        "audit-stage27-unbounded",
+                    );
+                input.authority_bounded = false;
+                input
+            },
+            {
+                let mut input =
+                    super::Stage27SettlementReconciliationInput::fixture_post_execution_reconciliation_ready(
+                        "settlement-stage27-secret",
+                        "reconciliation-stage27-secret",
+                        "execution-plan-stage27-secret",
+                        "work-stage27-secret",
+                        "audit-stage27-secret",
+                    );
+                input.secret_unsafe = true;
+                input
+            },
+            {
+                let mut input =
+                    super::Stage27SettlementReconciliationInput::fixture_remote_side_effect_settlement_ready(
+                        "settlement-stage27-cross-route",
+                        "connector-execution-stage27-cross-route",
+                        "work-stage27-cross-route",
+                        "lease-stage27-cross-route",
+                        "audit-stage27-cross-route",
+                    );
+                input.cross_route = true;
+                input
+            },
+            {
+                let mut input =
+                    super::Stage27SettlementReconciliationInput::fixture_connector_outcome_continuity_reference_ready(
+                        "settlement-stage27-missing-proof",
+                        "connector-execution-stage27-missing-proof",
+                        "execution-plan-stage27-missing-proof",
+                        "work-stage27-missing-proof",
+                        "audit-stage27-missing-proof",
+                    );
+                input.missing_proof = true;
+                input
+            },
+        ] {
+            let packet =
+                super::Stage27SettlementReconciliationPacket::from_stage26_execution_authority(
+                    &route,
+                    Some(&gate),
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    Some(&execution),
+                    input,
+                )
+                .expect("stage27 authority blocked");
+            assert_eq!(
+                packet.disposition,
+                super::Stage27SettlementReconciliationDisposition::SettlementAuthorityBlocked
+            );
+            assert!(packet.work_authority.can_fail_closed);
+            assert!(!packet.can_mutate_or_execute());
+        }
+    }
+
+    #[test]
+    fn stage_27a_native_protected_and_stale_cases_fail_closed() {
+        let route = stage12_protected_route();
+        let gate = Stage12ProtectedActionGatePacket::from_stage11_candidate(
+            &route,
+            stage12_gate_input(),
+        )
+        .expect("stage27 protected gate");
+        let execution = stage27_execution_authority_identity();
+
+        for input in [
+            {
+                let mut input =
+                    super::Stage27SettlementReconciliationInput::fixture_remote_side_effect_settlement_ready(
+                        "settlement-stage27-native-mutate",
+                        "connector-execution-stage27-native-mutate",
+                        "work-stage27-native-mutate",
+                        "lease-stage27-native-mutate",
+                        "audit-stage27-native-mutate",
+                    );
+                input.native_settlement_mutates_state = true;
+                input
+            },
+            {
+                let mut input =
+                    super::Stage27SettlementReconciliationInput::fixture_mutation_commit_boundary_ready(
+                        "settlement-stage27-protected",
+                        "mutation-commit-stage27-protected",
+                        "work-stage27-protected",
+                        "lease-stage27-protected",
+                        "audit-stage27-protected",
+                    );
+                input.protected_action_like_request = true;
+                input
+            },
+        ] {
+            let packet =
+                super::Stage27SettlementReconciliationPacket::from_stage26_execution_authority(
+                    &route,
+                    Some(&gate),
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    Some(&execution),
+                    input,
+                )
+                .expect("stage27 native/protected blocked");
+            assert!(matches!(
+                packet.disposition,
+                super::Stage27SettlementReconciliationDisposition::NativeSettlementHandoffBlocked
+                    | super::Stage27SettlementReconciliationDisposition::PublicProtectedBoundaryBlocked
+            ));
+            assert!(packet.work_authority.can_fail_closed);
+        }
+
+        for input in [
+            {
+                let mut input =
+                    super::Stage27SettlementReconciliationInput::fixture_post_execution_reconciliation_ready(
+                        "settlement-stage27-stale",
+                        "reconciliation-stage27-stale",
+                        "execution-plan-stage27-stale",
+                        "work-stage27-stale",
+                        "audit-stage27-stale",
+                    );
+                input.stale_or_cancelled_or_superseded_output = true;
+                input
+            },
+            {
+                let mut input =
+                    super::Stage27SettlementReconciliationInput::fixture_execution_completion_visibility_posture_ready(
+                        "reconciliation-stage27-replay",
+                        "connector-execution-stage27-replay",
+                        "protected-gate-stage27-replay",
+                        "audit-stage27-replay",
+                    );
+                input.replay_upgrades_blocked_authority = true;
+                input
+            },
+        ] {
+            let packet =
+                super::Stage27SettlementReconciliationPacket::from_stage26_execution_authority(
+                    &route,
+                    Some(&gate),
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    Some(&execution),
+                    input,
+                )
+                .expect("stage27 stale blocked");
+            assert_eq!(
+                packet.disposition,
+                super::Stage27SettlementReconciliationDisposition::StaleSettlementBlocked
+            );
+            assert!(packet.work_authority.can_fail_closed);
+            assert!(!packet.can_mutate_or_execute());
+        }
+    }
+
+    #[test]
+    fn stage_27a_blocks_live_paths_and_runtime_mocks() {
+        let route = stage12_protected_route();
+        let gate = Stage12ProtectedActionGatePacket::from_stage11_candidate(
+            &route,
+            stage12_gate_input(),
+        )
+        .expect("stage27 protected gate");
+        let execution = stage27_execution_authority_identity();
+        let packet = super::Stage27SettlementReconciliationPacket::from_stage26_execution_authority(
+            &route,
+            Some(&gate),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(&execution),
+            super::Stage27SettlementReconciliationInput::fixture_execution_completion_visibility_posture_ready(
+                "reconciliation-stage27-posture",
+                "connector-execution-stage27-posture",
+                "protected-gate-stage27-posture",
+                "audit-stage27-posture",
+            ),
+        )
+        .expect("stage27 no-exec packet");
+        assert!(!packet.work_authority.can_invent_facts);
+        assert!(!packet.work_authority.can_invent_settlement_success);
+        assert!(!packet.work_authority.can_invent_mutation_commit_success);
+        assert!(!packet.work_authority.can_invent_reconciliation_success);
+        assert!(!packet.work_authority.can_invent_settlement_authority);
+        assert!(!packet.work_authority.can_connector_write);
+        assert!(!packet.work_authority.can_approve);
+        assert!(!packet.work_authority.can_dispatch);
+        assert!(!packet.work_authority.can_execute);
+        assert!(!packet.work_authority.can_create_user_turn);
+        assert!(!packet.work_authority.can_treat_visible_readiness_as_action_success);
+        assert!(!packet.can_mutate_or_execute());
+
+        for input in [
+            {
+                let mut input =
+                    super::Stage27SettlementReconciliationInput::fixture_remote_side_effect_settlement_ready(
+                        "settlement-stage27-live-provider",
+                        "connector-execution-stage27-live-provider",
+                        "work-stage27-live-provider",
+                        "lease-stage27-live-provider",
+                        "audit-stage27-live-provider",
+                    );
+                input.attempted_live_provider_in_build = true;
+                input
+            },
+            {
+                let mut input =
+                    super::Stage27SettlementReconciliationInput::fixture_mutation_commit_boundary_ready(
+                        "settlement-stage27-live-mutation",
+                        "mutation-commit-stage27-live-mutation",
+                        "work-stage27-live-mutation",
+                        "lease-stage27-live-mutation",
+                        "audit-stage27-live-mutation",
+                    );
+                input.ran_live_connector_mutation_in_build = true;
+                input
+            },
+            {
+                let mut input =
+                    super::Stage27SettlementReconciliationInput::fixture_post_execution_reconciliation_ready(
+                        "settlement-stage27-live-settlement",
+                        "reconciliation-stage27-live-settlement",
+                        "execution-plan-stage27-live-settlement",
+                        "work-stage27-live-settlement",
+                        "audit-stage27-live-settlement",
+                    );
+                input.ran_live_remote_settlement_in_build = true;
+                input
+            },
+        ] {
+            assert!(
+                super::Stage27SettlementReconciliationPacket::from_stage26_execution_authority(
+                    &route,
+                    Some(&gate),
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    Some(&execution),
+                    input,
+                )
+                .is_err()
+            );
+        }
+
+        let mut runtime_mock =
+            super::Stage27SettlementReconciliationInput::fixture_remote_side_effect_settlement_ready(
+                "settlement-stage27-runtime-mock",
+                "connector-execution-stage27-runtime-mock",
+                "work-stage27-runtime-mock",
+                "lease-stage27-runtime-mock",
+                "audit-stage27-runtime-mock",
+            );
+        runtime_mock.fake_settlement_detected = true;
+        runtime_mock.fixture_only_test_path = false;
+        assert!(
+            super::Stage27SettlementReconciliationPacket::from_stage26_execution_authority(
+                &route,
+                Some(&gate),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some(&execution),
+                runtime_mock,
+            )
+            .is_err()
+        );
     }
 
     #[test]
