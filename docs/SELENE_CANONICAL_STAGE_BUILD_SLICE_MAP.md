@@ -112,10 +112,10 @@ Large stages are build families. A future Codex build must select one exact slic
 | 30E | Custom assistant builder/store | AssistantDefinitionPacket | assistant release artifact | governance proof |
 | 30F | Self-heal/dev lane | dev route | proposal artifact | no uncontrolled shell/tool bypass |
 
-## Next Slice After Stage 8F
+## Next Slice After Stage 9A
 
 ```text
-Stage 9A - Voice ID Stack Reconciliation
+Stage 10A - Understanding, Intent, Slot, And Meaning Reconstruction Foundation Reconciliation
 ```
 
 Stage 8A is PROVEN_COMPLETE. It added the minimal runtime-owned `Stage8TranscriptGatePacket` carrier, preserved PH1.K, PH1.C, PH1.LISTEN, Stage 7 activation, Stage 5 current-turn authority, and adapter voice surfaces as repo truth, and did not build live mic capture, live STT/TTS, Voice ID matching, understanding, routing, search, native UI redesign, protected execution, or provider/model routing.
@@ -130,4 +130,6 @@ Stage 8D is PROVEN_COMPLETE. It adds deterministic PH1.J-backed listening-lab be
 
 Stage 8E is PROVEN_COMPLETE. It adds deterministic PH1.J-backed repair benchmark packets and fixture-only scoring for accent metadata, mixed-language/code-switch preservation, domain vocabulary/pronunciation references, bounded alternative transcript candidate sets, and second-pass repair/no-repair decisions while preserving protected-token no-guess continuity and no-live-mic/no-live-STT/no-provider/no-execution scope.
 
-Stage 8F is PROVEN_COMPLETE. It adds `Stage8FOutputInteractionPacket` and `Stage8FOutputInteractionAuthority` on top of Stage 8A-E carriers, PH1.TTS, PH1.X, and Stage 5 current-turn authority. Barge-in, interruption, cancel, pause, resume, output-stopped, stale-output quarantine, and TTS self-echo blocking remain output-control evidence only; stale output cannot render as current; self-echo cannot create user turns; and no live playback, live STT/TTS, provider call, Voice ID matching, native UI, routing, connector write, or protected execution behavior is added. Stage 9A is the next exact build for Voice ID stack reconciliation.
+Stage 8F is PROVEN_COMPLETE. It adds `Stage8FOutputInteractionPacket` and `Stage8FOutputInteractionAuthority` on top of Stage 8A-E carriers, PH1.TTS, PH1.X, and Stage 5 current-turn authority. Barge-in, interruption, cancel, pause, resume, output-stopped, stale-output quarantine, and TTS self-echo blocking remain output-control evidence only; stale output cannot render as current; self-echo cannot create user turns; and no live playback, live STT/TTS, provider call, Voice ID matching, native UI, routing, connector write, or protected execution behavior is added.
+
+Stage 9A is PROVEN_COMPLETE. It adds `Stage9VoiceIdentityPosturePacket`, `Stage9VoiceIdentityEvidence`, `Stage9VoiceIdentityPostureInput`, `Stage9VoiceIdentityDisposition`, and `Stage9VoiceIdentityWorkAuthority` on top of PH1.VOICE.ID, PH1.F voice artifact/enrollment truth, Stage 5 current-turn authority, Stage 6 access context, and safe Stage 8 final-transcript metadata. Voice ID posture is receipt-only identity evidence; it can inform access context but cannot authorize, execute, search, call providers, capture live audio, transcribe live audio, route, speak, connector-write, mutate, update memory, or replace access/policy gates. Unknown, low-confidence, wrong-speaker, multi-speaker, revoked consent/artifact, cross-tenant, device-mismatch, stale-sample, unsafe Stage 8 signal, stale-turn, and record-artifact-only cases fail closed. Stage 10A is the next exact build for understanding, intent, slot, and meaning reconstruction foundation reconciliation.

@@ -78,10 +78,10 @@ After every build, update this section before final reporting.
 
 | Field | Current Value |
 |---|---|
-| Current active stage | Stage 9 |
-| Current active build | Stage 9A - Voice ID Stack Reconciliation |
-| Next build after current stage passes | Stage 9A - Voice ID Stack Reconciliation |
-| Last completed stage | Stage 8F - Barge-In, Interruption, Cancel, Pause, Resume, And Output-Interaction Boundary Reconciliation |
+| Current active stage | Stage 10 |
+| Current active build | Stage 10A - Understanding, Intent, Slot, And Meaning Reconstruction Foundation Reconciliation |
+| Next build after current stage passes | Stage 10A - Understanding, Intent, Slot, And Meaning Reconstruction Foundation Reconciliation |
+| Last completed stage | Stage 9A - Voice ID Stack Reconciliation |
 | Stages blocked | None yet |
 | Plan drift allowed | No |
 
@@ -2024,7 +2024,9 @@ Next if passed:
 
 ## Stage 9 - Voice ID Stack
 
-Status: PARTIALLY_BUILT
+Status: PROVEN_COMPLETE_BY_STAGE_9A
+
+Stage 9A status: PROVEN_COMPLETE
 
 Build:
 
@@ -2068,9 +2070,20 @@ Proof:
 - session binding proof;
 - protected action still fails closed without access/authority/simulation.
 
+Stage 9A proof update:
+
+- Existing PH1.VOICE.ID contracts, `ph1_voice_id` OS runtime, PH1.F voice enrollment/sample/profile/sync/revocation storage, Stage 6 access context, Stage 7 activation references, Stage 8A-F voice/listen/output boundaries, consent, tenant, device-trust, provider-safety, KMS, audit, and storage surfaces were inspected and crosswalked rather than rebuilt as duplicate Voice ID, access, consent, audio/listen, or artifact engines.
+- `Stage9VoiceIdentityPosturePacket`, `Stage9VoiceIdentityEvidence`, `Stage9VoiceIdentityPostureInput`, `Stage9VoiceIdentityInputKind`, `Stage9VoiceIdentityDisposition`, and `Stage9VoiceIdentityWorkAuthority` now provide the minimal runtime-owned Voice ID posture carrier in `runtime_ingress_turn_foundation.rs`.
+- Stage 9A proves Voice ID can emit receipt-only speaker posture and inform access context, but cannot grant authority by itself. Unknown, low-confidence, wrong-speaker, multi-speaker, revoked-consent, revoked-artifact, cross-tenant, device-mismatch, stale-sample, stale-turn, unsafe Stage 8 signal, and record-artifact-only cases fail closed for protected authority.
+- Stage 9A consumes only safe references: Stage 5 current-turn authority, Stage 6 access-context references, Stage 7 activation ids through Stage 8, Stage 8 final transcript metadata, or governed enrollment/artifact references. Partial transcript, VAD-only, endpoint-only, audio-scene-only, addressed-to-Selene-only, foreground-speaker-only, self-echo, background, record-artifact-only, stale, cancelled, superseded, or closed-session inputs cannot update Voice ID posture.
+- Voice ID posture packets carry ids, hashes/receipts, reason codes, scope references, and audit references only. Source voice material, model vectors, secrets, provider metadata, and governed artifacts are not exposed to native clients, logs, benchmark packets, or public response paths by Stage 9A.
+- Stage 9A did not add live microphone capture, live STT/TTS/playback, provider calls, live search, live Voice ID enrollment/matching, native UI redesign, understanding, routing, connector writes, protected execution, source-audio retention, or duplicate Voice ID/access/consent/artifact/listen engines.
+- Voice ID carrier, consent/enrollment, posture, revocation/artifact, Stage 8 input-boundary, privacy/redaction, and no-execution proof is certified for Stage 9A. Live Voice ID FAR/FRR, ROC/EER, spoof resistance, room/noise robustness, cross-device matching, native enrollment UX, and production speaker-verification benchmarks remain deferred to later explicitly approved live/native-lab stages.
+- Stage 10A is ready to start. Broad Stage 9 is complete enough for understanding and meaning reconstruction; live/native Voice ID quality certification remains a later Stage 34 or explicitly approved native-lab obligation.
+
 Next if passed:
 
-- Stage 10 - Universal Understanding And Perception Assist Spine.
+- Stage 10A - Understanding, Intent, Slot, And Meaning Reconstruction Foundation Reconciliation.
 
 ## Stage 10 - Universal Understanding And Perception Assist Spine
 

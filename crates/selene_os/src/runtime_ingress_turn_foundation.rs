@@ -1,7 +1,9 @@
 #![forbid(unsafe_code)]
 
 use crate::app_ingress::{AppOnboardingContinueAction, AppOnboardingContinueRequest};
-use selene_kernel_contracts::ph1_voice_id::UserId;
+use selene_kernel_contracts::ph1_voice_id::{
+    IdentityTierV2, Ph1VoiceIdResponse, UserId, VoiceIdDecision,
+};
 use selene_kernel_contracts::ph1j::{
     BenchmarkComparisonOutcome, BenchmarkResultPacket, BenchmarkTargetPacket,
     BenchmarkTargetStatus, CorrelationId, DeviceId, TurnId,
@@ -29,6 +31,7 @@ use crate::runtime_session_foundation::{
     RuntimeSessionFoundation, SessionAccessClass, SessionFoundationError,
     SessionFoundationErrorKind, SessionRuntimeProjection, SessionTurnDeferred, SessionTurnPermit,
     SessionTurnResolution, Stage5TurnAuthorityDisposition, Stage5TurnAuthorityPacket,
+    Stage6AccessContextDisposition, Stage6AccessContextPacket,
 };
 
 const MAX_AUTHORIZATION_LEN: usize = 512;
@@ -68,6 +71,21 @@ mod reason_codes {
     pub const STAGE8F_OUTPUT_STOPPED: &str = "stage8f_output_stopped";
     pub const STAGE8F_STALE_OUTPUT_QUARANTINED: &str = "stage8f_stale_output_quarantined";
     pub const STAGE8F_SELF_ECHO_BLOCKED: &str = "stage8f_self_echo_blocked";
+    pub const STAGE9_VOICE_POSTURE_VERIFIED: &str = "stage9_voice_posture_verified";
+    pub const STAGE9_VOICE_POSTURE_LIKELY_STEP_UP: &str = "stage9_voice_posture_likely_step_up";
+    pub const STAGE9_UNKNOWN_SPEAKER_FAIL_CLOSED: &str = "stage9_unknown_speaker_fail_closed";
+    pub const STAGE9_LOW_CONFIDENCE_FAIL_CLOSED: &str = "stage9_low_confidence_fail_closed";
+    pub const STAGE9_WRONG_SPEAKER_FAIL_CLOSED: &str = "stage9_wrong_speaker_fail_closed";
+    pub const STAGE9_MULTI_SPEAKER_FAIL_CLOSED: &str = "stage9_multi_speaker_fail_closed";
+    pub const STAGE9_CONSENT_REVOKED_FAIL_CLOSED: &str = "stage9_consent_revoked_fail_closed";
+    pub const STAGE9_ARTIFACT_REVOKED_FAIL_CLOSED: &str = "stage9_artifact_revoked_fail_closed";
+    pub const STAGE9_TENANT_MISMATCH_FAIL_CLOSED: &str = "stage9_tenant_mismatch_fail_closed";
+    pub const STAGE9_DEVICE_TRUST_FAIL_CLOSED: &str = "stage9_device_trust_fail_closed";
+    pub const STAGE9_STAGE5_AUTHORITY_BLOCKED: &str = "stage9_stage5_authority_blocked";
+    pub const STAGE9_STAGE6_ACCESS_BLOCKED: &str = "stage9_stage6_access_blocked";
+    pub const STAGE9_STAGE8_INPUT_BLOCKED: &str = "stage9_stage8_input_blocked";
+    pub const STAGE9_RECORD_ARTIFACT_ONLY: &str = "stage9_record_artifact_only";
+    pub const STAGE9_STALE_SAMPLE_FAIL_CLOSED: &str = "stage9_stale_sample_fail_closed";
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2704,6 +2722,755 @@ impl Stage8FOutputInteractionAuthority {
             || self.can_connector_write
             || self.can_execute_protected_mutation
             || self.can_update_memory_persona_emotion
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stage9VoiceIdentityInputKind {
+    GovernedArtifactReference,
+    Stage8FinalTranscriptMetadata,
+    Stage8UnsafeBoundarySignal,
+    RecordArtifactOnly,
+}
+
+impl Stage9VoiceIdentityInputKind {
+    pub const fn can_update_posture(self) -> bool {
+        matches!(
+            self,
+            Stage9VoiceIdentityInputKind::GovernedArtifactReference
+                | Stage9VoiceIdentityInputKind::Stage8FinalTranscriptMetadata
+        )
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stage9VoiceIdentityDisposition {
+    VerifiedSpeakerPosture,
+    LikelySpeakerStepUp,
+    UnknownSpeakerFailClosed,
+    LowConfidenceFailClosed,
+    WrongSpeakerFailClosed,
+    MultiSpeakerFailClosed,
+    ConsentRevokedFailClosed,
+    ArtifactRevokedFailClosed,
+    TenantMismatchFailClosed,
+    DeviceTrustFailClosed,
+    Stage5AuthorityBlocked,
+    Stage6AccessBlocked,
+    Stage8InputBlocked,
+    RecordArtifactOnly,
+    StaleSampleFailClosed,
+}
+
+impl Stage9VoiceIdentityDisposition {
+    pub const fn default_reason_code(self) -> &'static str {
+        match self {
+            Stage9VoiceIdentityDisposition::VerifiedSpeakerPosture => {
+                reason_codes::STAGE9_VOICE_POSTURE_VERIFIED
+            }
+            Stage9VoiceIdentityDisposition::LikelySpeakerStepUp => {
+                reason_codes::STAGE9_VOICE_POSTURE_LIKELY_STEP_UP
+            }
+            Stage9VoiceIdentityDisposition::UnknownSpeakerFailClosed => {
+                reason_codes::STAGE9_UNKNOWN_SPEAKER_FAIL_CLOSED
+            }
+            Stage9VoiceIdentityDisposition::LowConfidenceFailClosed => {
+                reason_codes::STAGE9_LOW_CONFIDENCE_FAIL_CLOSED
+            }
+            Stage9VoiceIdentityDisposition::WrongSpeakerFailClosed => {
+                reason_codes::STAGE9_WRONG_SPEAKER_FAIL_CLOSED
+            }
+            Stage9VoiceIdentityDisposition::MultiSpeakerFailClosed => {
+                reason_codes::STAGE9_MULTI_SPEAKER_FAIL_CLOSED
+            }
+            Stage9VoiceIdentityDisposition::ConsentRevokedFailClosed => {
+                reason_codes::STAGE9_CONSENT_REVOKED_FAIL_CLOSED
+            }
+            Stage9VoiceIdentityDisposition::ArtifactRevokedFailClosed => {
+                reason_codes::STAGE9_ARTIFACT_REVOKED_FAIL_CLOSED
+            }
+            Stage9VoiceIdentityDisposition::TenantMismatchFailClosed => {
+                reason_codes::STAGE9_TENANT_MISMATCH_FAIL_CLOSED
+            }
+            Stage9VoiceIdentityDisposition::DeviceTrustFailClosed => {
+                reason_codes::STAGE9_DEVICE_TRUST_FAIL_CLOSED
+            }
+            Stage9VoiceIdentityDisposition::Stage5AuthorityBlocked => {
+                reason_codes::STAGE9_STAGE5_AUTHORITY_BLOCKED
+            }
+            Stage9VoiceIdentityDisposition::Stage6AccessBlocked => {
+                reason_codes::STAGE9_STAGE6_ACCESS_BLOCKED
+            }
+            Stage9VoiceIdentityDisposition::Stage8InputBlocked => {
+                reason_codes::STAGE9_STAGE8_INPUT_BLOCKED
+            }
+            Stage9VoiceIdentityDisposition::RecordArtifactOnly => {
+                reason_codes::STAGE9_RECORD_ARTIFACT_ONLY
+            }
+            Stage9VoiceIdentityDisposition::StaleSampleFailClosed => {
+                reason_codes::STAGE9_STALE_SAMPLE_FAIL_CLOSED
+            }
+        }
+    }
+
+    pub const fn is_fail_closed(self) -> bool {
+        !matches!(self, Stage9VoiceIdentityDisposition::VerifiedSpeakerPosture)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Stage9VoiceIdentityWorkAuthority {
+    pub can_emit_speaker_posture: bool,
+    pub can_inform_access_context: bool,
+    pub can_hold_artifact_reference: bool,
+    pub can_emit_audit_trace: bool,
+    pub can_grant_authority: bool,
+    pub can_understand_intent: bool,
+    pub can_answer: bool,
+    pub can_search: bool,
+    pub can_call_providers: bool,
+    pub can_capture_microphone_audio: bool,
+    pub can_transcribe_live_audio: bool,
+    pub can_start_voice_matching: bool,
+    pub can_emit_tts: bool,
+    pub can_route_tools: bool,
+    pub can_connector_write: bool,
+    pub can_execute_protected_mutation: bool,
+    pub can_update_memory_persona_emotion: bool,
+}
+
+impl Stage9VoiceIdentityWorkAuthority {
+    pub const fn posture_only() -> Self {
+        Self {
+            can_emit_speaker_posture: true,
+            can_inform_access_context: true,
+            can_hold_artifact_reference: true,
+            can_emit_audit_trace: true,
+            can_grant_authority: false,
+            can_understand_intent: false,
+            can_answer: false,
+            can_search: false,
+            can_call_providers: false,
+            can_capture_microphone_audio: false,
+            can_transcribe_live_audio: false,
+            can_start_voice_matching: false,
+            can_emit_tts: false,
+            can_route_tools: false,
+            can_connector_write: false,
+            can_execute_protected_mutation: false,
+            can_update_memory_persona_emotion: false,
+        }
+    }
+
+    pub const fn blocked_posture() -> Self {
+        Self {
+            can_inform_access_context: false,
+            ..Self::posture_only()
+        }
+    }
+
+    pub const fn unsafe_input_blocked() -> Self {
+        Self {
+            can_emit_speaker_posture: false,
+            can_inform_access_context: false,
+            can_hold_artifact_reference: false,
+            can_emit_audit_trace: true,
+            can_grant_authority: false,
+            can_understand_intent: false,
+            can_answer: false,
+            can_search: false,
+            can_call_providers: false,
+            can_capture_microphone_audio: false,
+            can_transcribe_live_audio: false,
+            can_start_voice_matching: false,
+            can_emit_tts: false,
+            can_route_tools: false,
+            can_connector_write: false,
+            can_execute_protected_mutation: false,
+            can_update_memory_persona_emotion: false,
+        }
+    }
+
+    pub const fn can_route_or_mutate(self) -> bool {
+        self.can_understand_intent
+            || self.can_answer
+            || self.can_search
+            || self.can_call_providers
+            || self.can_capture_microphone_audio
+            || self.can_transcribe_live_audio
+            || self.can_start_voice_matching
+            || self.can_emit_tts
+            || self.can_route_tools
+            || self.can_connector_write
+            || self.can_execute_protected_mutation
+            || self.can_update_memory_persona_emotion
+    }
+
+    pub const fn can_authorize_or_execute(self) -> bool {
+        self.can_grant_authority || self.can_connector_write || self.can_execute_protected_mutation
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Stage9VoiceIdentityEvidence {
+    pub speaker_assertion_id: String,
+    pub voice_identity_id: Option<String>,
+    pub speaker_id: Option<String>,
+    pub actor_user_id: Option<String>,
+    pub voice_decision: VoiceIdDecision,
+    pub identity_tier: IdentityTierV2,
+    pub confidence_bp: u16,
+    pub margin_to_next_bp: Option<u16>,
+    pub multi_speaker_evidence: bool,
+}
+
+impl Stage9VoiceIdentityEvidence {
+    pub fn from_voice_id_response(
+        speaker_assertion_id: impl Into<String>,
+        response: &Ph1VoiceIdResponse,
+    ) -> Result<Self, ContractViolation> {
+        response.validate()?;
+        let evidence = match response {
+            Ph1VoiceIdResponse::SpeakerAssertionOk(ok) => Self {
+                speaker_assertion_id: speaker_assertion_id.into(),
+                voice_identity_id: Some(ok.speaker_id.as_str().to_string()),
+                speaker_id: Some(ok.speaker_id.as_str().to_string()),
+                actor_user_id: ok.user_id.as_ref().map(|user| user.as_str().to_string()),
+                voice_decision: ok.decision,
+                identity_tier: ok.identity_v2.identity_tier_v2,
+                confidence_bp: ok.score_bp,
+                margin_to_next_bp: ok.margin_to_next_bp,
+                multi_speaker_evidence: ok.diarization_segments.len() > 1,
+            },
+            Ph1VoiceIdResponse::SpeakerAssertionUnknown(unknown) => Self {
+                speaker_assertion_id: speaker_assertion_id.into(),
+                voice_identity_id: None,
+                speaker_id: None,
+                actor_user_id: unknown
+                    .candidate_user_id
+                    .as_ref()
+                    .map(|user| user.as_str().to_string()),
+                voice_decision: unknown.decision,
+                identity_tier: unknown.identity_v2.identity_tier_v2,
+                confidence_bp: unknown.score_bp,
+                margin_to_next_bp: unknown.margin_to_next_bp,
+                multi_speaker_evidence: unknown.diarization_segments.len() > 1,
+            },
+        };
+        evidence.validate()?;
+        Ok(evidence)
+    }
+}
+
+impl Validate for Stage9VoiceIdentityEvidence {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        validate_stage4_ref(
+            "stage9_voice_identity_evidence.speaker_assertion_id",
+            &self.speaker_assertion_id,
+        )?;
+        validate_stage4_optional_ref(
+            "stage9_voice_identity_evidence.voice_identity_id",
+            self.voice_identity_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage9_voice_identity_evidence.speaker_id",
+            self.speaker_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage9_voice_identity_evidence.actor_user_id",
+            self.actor_user_id.as_deref(),
+        )?;
+        if self.confidence_bp > 10_000 {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage9_voice_identity_evidence.confidence_bp",
+                reason: "must be <= 10000",
+            });
+        }
+        if let Some(margin) = self.margin_to_next_bp {
+            if margin > 10_000 {
+                return Err(ContractViolation::InvalidValue {
+                    field: "stage9_voice_identity_evidence.margin_to_next_bp",
+                    reason: "must be <= 10000",
+                });
+            }
+        }
+        if self.voice_decision == VoiceIdDecision::Ok && self.voice_identity_id.is_none() {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage9_voice_identity_evidence.voice_identity_id",
+                reason: "accepted speaker posture requires a governed voice identity reference",
+            });
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Stage9VoiceIdentityPostureInput {
+    pub evidence: Stage9VoiceIdentityEvidence,
+    pub voice_enrollment_id: Option<String>,
+    pub voice_sample_id: Option<String>,
+    pub voice_artifact_id: Option<String>,
+    pub voice_artifact_manifest_id: Option<String>,
+    pub consent_active: bool,
+    pub artifact_revoked: bool,
+    pub tenant_matches: bool,
+    pub device_trusted: bool,
+    pub wrong_speaker: bool,
+    pub multi_speaker: bool,
+    pub stale_sample: bool,
+    pub record_artifact_only: bool,
+    pub threshold_bp: u16,
+}
+
+impl Validate for Stage9VoiceIdentityPostureInput {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        self.evidence.validate()?;
+        validate_stage4_optional_ref(
+            "stage9_voice_identity_posture_input.voice_enrollment_id",
+            self.voice_enrollment_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage9_voice_identity_posture_input.voice_sample_id",
+            self.voice_sample_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage9_voice_identity_posture_input.voice_artifact_id",
+            self.voice_artifact_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage9_voice_identity_posture_input.voice_artifact_manifest_id",
+            self.voice_artifact_manifest_id.as_deref(),
+        )?;
+        if self.threshold_bp > 10_000 {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage9_voice_identity_posture_input.threshold_bp",
+                reason: "must be <= 10000",
+            });
+        }
+        if self.artifact_revoked && self.voice_artifact_id.is_none() {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage9_voice_identity_posture_input.voice_artifact_id",
+                reason: "revocation posture requires an artifact reference",
+            });
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Stage9VoiceIdentityPosturePacket {
+    pub session_id: SessionId,
+    pub turn_id: Option<TurnId>,
+    pub activation_id: Option<String>,
+    pub tenant_id: Option<String>,
+    pub actor_user_id: Option<String>,
+    pub device_trust_id: Option<String>,
+    pub consent_state_id: Option<String>,
+    pub voice_identity_id: Option<String>,
+    pub voice_enrollment_id: Option<String>,
+    pub voice_sample_id: Option<String>,
+    pub voice_artifact_id: Option<String>,
+    pub voice_artifact_manifest_id: Option<String>,
+    pub speaker_assertion_id: String,
+    pub access_context_id: Option<String>,
+    pub policy_context_id: Option<String>,
+    pub audit_id: Option<String>,
+    pub stage5_turn_disposition: Stage5TurnAuthorityDisposition,
+    pub stage6_access_disposition: Stage6AccessContextDisposition,
+    pub stage8_input_kind: Stage9VoiceIdentityInputKind,
+    pub disposition: Stage9VoiceIdentityDisposition,
+    pub reason_code: &'static str,
+    pub voice_decision: VoiceIdDecision,
+    pub identity_tier: IdentityTierV2,
+    pub confidence_bp: u16,
+    pub threshold_bp: u16,
+    pub margin_to_next_bp: Option<u16>,
+    pub consent_active: bool,
+    pub artifact_revoked: bool,
+    pub tenant_matches: bool,
+    pub device_trusted: bool,
+    pub wrong_speaker: bool,
+    pub multi_speaker: bool,
+    pub stale_sample: bool,
+    pub stores_audio_or_voice_model_material: bool,
+    pub native_client_receipt_only: bool,
+    pub work_authority: Stage9VoiceIdentityWorkAuthority,
+}
+
+impl Stage9VoiceIdentityPosturePacket {
+    pub fn from_stage_references(
+        stage5_turn_authority: &Stage5TurnAuthorityPacket,
+        access_context: &Stage6AccessContextPacket,
+        transcript_gate: Option<&Stage8TranscriptGatePacket>,
+        input: Stage9VoiceIdentityPostureInput,
+    ) -> Result<Self, ContractViolation> {
+        stage5_turn_authority.validate()?;
+        access_context.validate()?;
+        input.validate()?;
+        let stage8_input_kind =
+            Self::classify_stage8_input(transcript_gate, input.record_artifact_only)?;
+        Self::validate_stage_links(stage5_turn_authority, access_context, transcript_gate)?;
+        let disposition = Self::decide_disposition(
+            stage5_turn_authority,
+            access_context,
+            stage8_input_kind,
+            &input,
+        );
+        let work_authority = Self::work_authority_for(disposition);
+        let activation_id =
+            transcript_gate.map(|gate| gate.activation_context.activation_id.clone());
+        let packet = Self {
+            session_id: stage5_turn_authority.session_id,
+            turn_id: stage5_turn_authority.turn_id,
+            activation_id,
+            tenant_id: access_context.tenant_id.clone(),
+            actor_user_id: access_context
+                .actor_user_id
+                .clone()
+                .or_else(|| input.evidence.actor_user_id.clone()),
+            device_trust_id: access_context.device_trust_id.clone(),
+            consent_state_id: access_context.consent_state_id.clone(),
+            voice_identity_id: input.evidence.voice_identity_id.clone(),
+            voice_enrollment_id: input.voice_enrollment_id,
+            voice_sample_id: input.voice_sample_id,
+            voice_artifact_id: input.voice_artifact_id,
+            voice_artifact_manifest_id: input.voice_artifact_manifest_id,
+            speaker_assertion_id: input.evidence.speaker_assertion_id,
+            access_context_id: access_context.access_context_id.clone(),
+            policy_context_id: access_context.policy_context_id.clone(),
+            audit_id: access_context
+                .audit_id
+                .clone()
+                .or_else(|| transcript_gate.and_then(|gate| gate.audit_id.clone())),
+            stage5_turn_disposition: stage5_turn_authority.disposition,
+            stage6_access_disposition: access_context.disposition,
+            stage8_input_kind,
+            disposition,
+            reason_code: disposition.default_reason_code(),
+            voice_decision: input.evidence.voice_decision,
+            identity_tier: input.evidence.identity_tier,
+            confidence_bp: input.evidence.confidence_bp,
+            threshold_bp: input.threshold_bp,
+            margin_to_next_bp: input.evidence.margin_to_next_bp,
+            consent_active: input.consent_active,
+            artifact_revoked: input.artifact_revoked,
+            tenant_matches: input.tenant_matches,
+            device_trusted: input.device_trusted,
+            wrong_speaker: input.wrong_speaker,
+            multi_speaker: input.multi_speaker || input.evidence.multi_speaker_evidence,
+            stale_sample: input.stale_sample,
+            stores_audio_or_voice_model_material: false,
+            native_client_receipt_only: true,
+            work_authority,
+        };
+        packet.validate()?;
+        Ok(packet)
+    }
+
+    pub const fn can_route_or_mutate(&self) -> bool {
+        self.work_authority.can_route_or_mutate()
+    }
+
+    pub const fn can_authorize_or_execute(&self) -> bool {
+        self.work_authority.can_authorize_or_execute()
+    }
+
+    pub const fn can_authorize_protected_action_by_itself(&self) -> bool {
+        self.work_authority.can_grant_authority
+    }
+
+    pub const fn fails_closed_for_protected_authority(&self) -> bool {
+        self.disposition.is_fail_closed() || !self.work_authority.can_grant_authority
+    }
+
+    fn classify_stage8_input(
+        transcript_gate: Option<&Stage8TranscriptGatePacket>,
+        record_artifact_only: bool,
+    ) -> Result<Stage9VoiceIdentityInputKind, ContractViolation> {
+        if record_artifact_only {
+            return Ok(Stage9VoiceIdentityInputKind::RecordArtifactOnly);
+        }
+        let Some(gate) = transcript_gate else {
+            return Ok(Stage9VoiceIdentityInputKind::GovernedArtifactReference);
+        };
+        gate.validate()?;
+        if gate.record_mode_audio
+            || gate.boundary_kind == Stage8TranscriptGateKind::RecordAudioArtifactOnly
+        {
+            return Ok(Stage9VoiceIdentityInputKind::RecordArtifactOnly);
+        }
+        if gate.boundary_kind == Stage8TranscriptGateKind::FinalTranscriptCommitBoundary
+            && gate.endpoint_state == Stage8EndpointState::EndpointFinal
+            && gate.confidence_gate == Stage8ConfidenceGateDisposition::Passed
+            && gate.committed_turn.is_some()
+            && gate.stage5_turn_authority.is_some()
+            && !gate.can_route_or_mutate()
+            && !gate.tts_self_echo_active
+            && !gate.background_speech_detected
+        {
+            return Ok(Stage9VoiceIdentityInputKind::Stage8FinalTranscriptMetadata);
+        }
+        Ok(Stage9VoiceIdentityInputKind::Stage8UnsafeBoundarySignal)
+    }
+
+    fn validate_stage_links(
+        stage5_turn_authority: &Stage5TurnAuthorityPacket,
+        access_context: &Stage6AccessContextPacket,
+        transcript_gate: Option<&Stage8TranscriptGatePacket>,
+    ) -> Result<(), ContractViolation> {
+        if access_context.session_id != stage5_turn_authority.session_id
+            || access_context.turn_id != stage5_turn_authority.turn_id
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage9_voice_identity_posture_packet.access_context",
+                reason: "Stage 6 access context must match Stage 5 session and turn",
+            });
+        }
+        if let Some(gate) = transcript_gate {
+            if gate
+                .session_id
+                .is_some_and(|session| session != stage5_turn_authority.session_id)
+                || gate
+                    .turn_id
+                    .is_some_and(|turn| Some(turn) != stage5_turn_authority.turn_id)
+            {
+                return Err(ContractViolation::InvalidValue {
+                    field: "stage9_voice_identity_posture_packet.transcript_gate",
+                    reason:
+                        "Stage 8 voice metadata must match Stage 5 session and turn when present",
+                });
+            }
+        }
+        Ok(())
+    }
+
+    fn decide_disposition(
+        stage5_turn_authority: &Stage5TurnAuthorityPacket,
+        access_context: &Stage6AccessContextPacket,
+        stage8_input_kind: Stage9VoiceIdentityInputKind,
+        input: &Stage9VoiceIdentityPostureInput,
+    ) -> Stage9VoiceIdentityDisposition {
+        if stage5_turn_authority.disposition != Stage5TurnAuthorityDisposition::CurrentCommittedTurn
+            || !stage5_turn_authority.can_enter_understanding()
+            || stage5_turn_authority.can_route_any_work()
+        {
+            return Stage9VoiceIdentityDisposition::Stage5AuthorityBlocked;
+        }
+        if access_context.can_route_any_work() || access_context.can_execute_or_mutate() {
+            return Stage9VoiceIdentityDisposition::Stage6AccessBlocked;
+        }
+        if stage8_input_kind == Stage9VoiceIdentityInputKind::RecordArtifactOnly {
+            return Stage9VoiceIdentityDisposition::RecordArtifactOnly;
+        }
+        if !stage8_input_kind.can_update_posture() {
+            return Stage9VoiceIdentityDisposition::Stage8InputBlocked;
+        }
+        if access_context.disposition == Stage6AccessContextDisposition::TenantMismatch
+            || !input.tenant_matches
+        {
+            return Stage9VoiceIdentityDisposition::TenantMismatchFailClosed;
+        }
+        if access_context.disposition == Stage6AccessContextDisposition::ConsentRevoked
+            || !input.consent_active
+        {
+            return Stage9VoiceIdentityDisposition::ConsentRevokedFailClosed;
+        }
+        if access_context.disposition == Stage6AccessContextDisposition::DeviceTrustMismatch
+            || !input.device_trusted
+        {
+            return Stage9VoiceIdentityDisposition::DeviceTrustFailClosed;
+        }
+        if input.artifact_revoked {
+            return Stage9VoiceIdentityDisposition::ArtifactRevokedFailClosed;
+        }
+        if input.stale_sample {
+            return Stage9VoiceIdentityDisposition::StaleSampleFailClosed;
+        }
+        if input.multi_speaker || input.evidence.multi_speaker_evidence {
+            return Stage9VoiceIdentityDisposition::MultiSpeakerFailClosed;
+        }
+        if input.wrong_speaker {
+            return Stage9VoiceIdentityDisposition::WrongSpeakerFailClosed;
+        }
+        if input.evidence.voice_decision != VoiceIdDecision::Ok
+            || input.evidence.identity_tier == IdentityTierV2::Unknown
+        {
+            return Stage9VoiceIdentityDisposition::UnknownSpeakerFailClosed;
+        }
+        if input.evidence.confidence_bp < input.threshold_bp {
+            return Stage9VoiceIdentityDisposition::LowConfidenceFailClosed;
+        }
+        if input.evidence.identity_tier == IdentityTierV2::Probable {
+            return Stage9VoiceIdentityDisposition::LikelySpeakerStepUp;
+        }
+        if access_context.disposition != Stage6AccessContextDisposition::ProtectedContextReady {
+            return Stage9VoiceIdentityDisposition::Stage6AccessBlocked;
+        }
+        Stage9VoiceIdentityDisposition::VerifiedSpeakerPosture
+    }
+
+    const fn work_authority_for(
+        disposition: Stage9VoiceIdentityDisposition,
+    ) -> Stage9VoiceIdentityWorkAuthority {
+        match disposition {
+            Stage9VoiceIdentityDisposition::Stage5AuthorityBlocked
+            | Stage9VoiceIdentityDisposition::Stage6AccessBlocked => {
+                Stage9VoiceIdentityWorkAuthority::blocked_posture()
+            }
+            Stage9VoiceIdentityDisposition::Stage8InputBlocked
+            | Stage9VoiceIdentityDisposition::RecordArtifactOnly => {
+                Stage9VoiceIdentityWorkAuthority::unsafe_input_blocked()
+            }
+            _ => Stage9VoiceIdentityWorkAuthority::posture_only(),
+        }
+    }
+}
+
+impl Validate for Stage9VoiceIdentityPosturePacket {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        validate_stage4_optional_ref(
+            "stage9_voice_identity_posture_packet.activation_id",
+            self.activation_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage9_voice_identity_posture_packet.tenant_id",
+            self.tenant_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage9_voice_identity_posture_packet.actor_user_id",
+            self.actor_user_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage9_voice_identity_posture_packet.device_trust_id",
+            self.device_trust_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage9_voice_identity_posture_packet.consent_state_id",
+            self.consent_state_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage9_voice_identity_posture_packet.voice_identity_id",
+            self.voice_identity_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage9_voice_identity_posture_packet.voice_enrollment_id",
+            self.voice_enrollment_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage9_voice_identity_posture_packet.voice_sample_id",
+            self.voice_sample_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage9_voice_identity_posture_packet.voice_artifact_id",
+            self.voice_artifact_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage9_voice_identity_posture_packet.voice_artifact_manifest_id",
+            self.voice_artifact_manifest_id.as_deref(),
+        )?;
+        validate_stage4_ref(
+            "stage9_voice_identity_posture_packet.speaker_assertion_id",
+            &self.speaker_assertion_id,
+        )?;
+        validate_stage4_optional_ref(
+            "stage9_voice_identity_posture_packet.access_context_id",
+            self.access_context_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage9_voice_identity_posture_packet.policy_context_id",
+            self.policy_context_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage9_voice_identity_posture_packet.audit_id",
+            self.audit_id.as_deref(),
+        )?;
+        if self.reason_code != self.disposition.default_reason_code() {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage9_voice_identity_posture_packet.reason_code",
+                reason: "must match Voice ID posture disposition",
+            });
+        }
+        if self.confidence_bp > 10_000 || self.threshold_bp > 10_000 {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage9_voice_identity_posture_packet.confidence",
+                reason: "confidence fields must be <= 10000",
+            });
+        }
+        if self.work_authority.can_route_or_mutate()
+            || self.work_authority.can_authorize_or_execute()
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage9_voice_identity_posture_packet.work_authority",
+                reason: "Voice ID posture cannot execute, route, speak, capture, call providers, authorize, or mutate",
+            });
+        }
+        if self.stores_audio_or_voice_model_material || !self.native_client_receipt_only {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage9_voice_identity_posture_packet.privacy",
+                reason: "Voice ID posture may carry ids, hashes, receipts, and reason codes only",
+            });
+        }
+        match self.disposition {
+            Stage9VoiceIdentityDisposition::VerifiedSpeakerPosture => {
+                if self.stage5_turn_disposition
+                    != Stage5TurnAuthorityDisposition::CurrentCommittedTurn
+                    || self.stage6_access_disposition
+                        != Stage6AccessContextDisposition::ProtectedContextReady
+                    || !self.stage8_input_kind.can_update_posture()
+                    || self.voice_decision != VoiceIdDecision::Ok
+                    || self.identity_tier != IdentityTierV2::Confirmed
+                    || self.confidence_bp < self.threshold_bp
+                    || !self.consent_active
+                    || self.artifact_revoked
+                    || !self.tenant_matches
+                    || !self.device_trusted
+                    || self.wrong_speaker
+                    || self.multi_speaker
+                    || self.stale_sample
+                    || self.voice_identity_id.is_none()
+                    || !self.work_authority.can_emit_speaker_posture
+                    || !self.work_authority.can_inform_access_context
+                    || self.work_authority.can_grant_authority
+                {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "stage9_voice_identity_posture_packet",
+                        reason: "verified posture requires current turn, protected access context, safe Voice ID evidence, active consent, matching tenant/device, and no authority grant",
+                    });
+                }
+            }
+            Stage9VoiceIdentityDisposition::LikelySpeakerStepUp => {
+                if self.identity_tier != IdentityTierV2::Probable
+                    || self.voice_decision != VoiceIdDecision::Ok
+                    || self.work_authority.can_grant_authority
+                {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "stage9_voice_identity_posture_packet",
+                        reason: "likely speaker posture remains step-up evidence only",
+                    });
+                }
+            }
+            Stage9VoiceIdentityDisposition::Stage8InputBlocked
+            | Stage9VoiceIdentityDisposition::RecordArtifactOnly => {
+                if self.work_authority.can_emit_speaker_posture
+                    || self.work_authority.can_inform_access_context
+                    || self.work_authority.can_hold_artifact_reference
+                {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "stage9_voice_identity_posture_packet.work_authority",
+                        reason: "unsafe or record-only audio cannot update Voice ID posture",
+                    });
+                }
+            }
+            _ => {
+                if self.work_authority.can_grant_authority {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "stage9_voice_identity_posture_packet.work_authority",
+                        reason: "failed Voice ID posture cannot grant authority",
+                    });
+                }
+            }
+        }
+        Ok(())
     }
 }
 
@@ -7393,8 +8160,8 @@ mod tests {
     use std::cell::Cell;
 
     use selene_kernel_contracts::ph1_voice_id::{
-        DiarizationSegment, IdentityConfidence, Ph1VoiceIdResponse, SpeakerAssertionUnknown,
-        SpeakerLabel,
+        DiarizationSegment, IdentityConfidence, Ph1VoiceIdResponse, SpeakerAssertionOk,
+        SpeakerAssertionUnknown, SpeakerId, SpeakerLabel,
     };
     use selene_kernel_contracts::ph1link::TokenId;
     use selene_kernel_contracts::provider_secrets::ProviderSecretId;
@@ -7405,6 +8172,7 @@ mod tests {
     use crate::runtime_request_foundation::{
         RuntimeRequestFoundationErrorKind, RuntimeRequestOrigin,
     };
+    use crate::runtime_session_foundation::Stage6AccessContextInput;
 
     #[derive(Debug, Default)]
     struct FixedClock {
@@ -7868,6 +8636,88 @@ mod tests {
             SessionState::Active,
         )
         .expect("stage 8 current turn authority")
+    }
+
+    fn stage9_access_context(authority: &Stage5TurnAuthorityPacket) -> Stage6AccessContextPacket {
+        Stage6AccessContextPacket::from_stage5_authority(
+            authority,
+            None,
+            Stage6AccessContextInput::protected_action_context(
+                "tenant-stage9",
+                "workspace-stage9",
+                "user-stage9",
+                "device-trust-stage9",
+                "consent-stage9",
+                "speaker-stage9",
+                "policy-stage9",
+                "access-stage9",
+                "audit-stage9",
+            ),
+        )
+        .expect("stage9 access context")
+    }
+
+    fn stage9_voice_response(score_bp: u16) -> Ph1VoiceIdResponse {
+        Ph1VoiceIdResponse::SpeakerAssertionOk(
+            SpeakerAssertionOk::v1_with_metrics(
+                SpeakerId::new("speaker-stage9").expect("speaker id"),
+                Some(user("user-stage9")),
+                vec![DiarizationSegment::v1(
+                    MonotonicTimeNs(10),
+                    MonotonicTimeNs(20),
+                    Some(SpeakerLabel::speaker_a()),
+                )
+                .expect("diarization segment")],
+                SpeakerLabel::speaker_a(),
+                score_bp,
+                Some(700),
+                None,
+                selene_kernel_contracts::ph1_voice_id::SpoofLivenessStatus::Live,
+                Vec::new(),
+            )
+            .expect("speaker assertion"),
+        )
+    }
+
+    fn stage9_voice_input(response: &Ph1VoiceIdResponse) -> Stage9VoiceIdentityPostureInput {
+        Stage9VoiceIdentityPostureInput {
+            evidence: Stage9VoiceIdentityEvidence::from_voice_id_response(
+                "speaker-assertion-stage9",
+                response,
+            )
+            .expect("stage9 evidence"),
+            voice_enrollment_id: Some("voice-enrollment-stage9".to_string()),
+            voice_sample_id: Some("voice-sample-stage9".to_string()),
+            voice_artifact_id: Some("voice-artifact-stage9".to_string()),
+            voice_artifact_manifest_id: Some("voice-manifest-stage9".to_string()),
+            consent_active: true,
+            artifact_revoked: false,
+            tenant_matches: true,
+            device_trusted: true,
+            wrong_speaker: false,
+            multi_speaker: false,
+            stale_sample: false,
+            record_artifact_only: false,
+            threshold_bp: 9_300,
+        }
+    }
+
+    fn stage9_final_transcript_gate(
+        authority: Stage5TurnAuthorityPacket,
+    ) -> Stage8TranscriptGatePacket {
+        Stage8TranscriptGatePacket::final_transcript_commit(
+            stage8_explicit_mic_activation(Some(SessionId(88))),
+            authority,
+            "audio-scene-stage9",
+            "endpoint-stage9",
+            "confidence-gate-stage9",
+            "transcript-stage9",
+            "hello selene",
+            "en-US",
+            9_500,
+            9_700,
+        )
+        .expect("stage9 final transcript gate")
     }
 
     fn stage8c_foreground(
@@ -9012,6 +9862,237 @@ mod tests {
         let mut invalid = packet.clone();
         invalid.current_output_identity = true;
         assert!(invalid.validate().is_err());
+    }
+
+    #[test]
+    fn stage_9a_verified_voice_posture_informs_access_without_authority() {
+        let authority = stage8_current_authority();
+        let access = stage9_access_context(&authority);
+        let transcript_gate = stage9_final_transcript_gate(authority.clone());
+        let input = stage9_voice_input(&stage9_voice_response(9_600));
+
+        let packet = Stage9VoiceIdentityPosturePacket::from_stage_references(
+            &authority,
+            &access,
+            Some(&transcript_gate),
+            input,
+        )
+        .expect("stage9 verified posture packet");
+
+        assert_eq!(
+            packet.disposition,
+            Stage9VoiceIdentityDisposition::VerifiedSpeakerPosture
+        );
+        assert_eq!(
+            packet.stage8_input_kind,
+            Stage9VoiceIdentityInputKind::Stage8FinalTranscriptMetadata
+        );
+        assert!(packet.work_authority.can_emit_speaker_posture);
+        assert!(packet.work_authority.can_inform_access_context);
+        assert!(!packet.can_authorize_protected_action_by_itself());
+        assert!(!packet.can_authorize_or_execute());
+        assert!(!packet.can_route_or_mutate());
+        assert!(!packet.stores_audio_or_voice_model_material);
+        assert!(packet.native_client_receipt_only);
+    }
+
+    #[test]
+    fn stage_9a_unknown_low_wrong_multi_revoked_and_boundary_cases_fail_closed() {
+        let authority = stage8_current_authority();
+        let access = stage9_access_context(&authority);
+        let transcript_gate = stage9_final_transcript_gate(authority.clone());
+        let response = stage9_voice_response(9_600);
+
+        let unknown_response = sample_voice_identity_assertion();
+        let unknown = stage9_voice_input(&unknown_response);
+        let mut low_confidence = stage9_voice_input(&stage9_voice_response(8_700));
+        low_confidence.threshold_bp = 9_300;
+        let mut wrong_speaker = stage9_voice_input(&response);
+        wrong_speaker.wrong_speaker = true;
+        let mut multi_speaker = stage9_voice_input(&response);
+        multi_speaker.multi_speaker = true;
+        let mut revoked_consent = stage9_voice_input(&response);
+        revoked_consent.consent_active = false;
+        let mut revoked_artifact = stage9_voice_input(&response);
+        revoked_artifact.artifact_revoked = true;
+        let mut tenant_mismatch = stage9_voice_input(&response);
+        tenant_mismatch.tenant_matches = false;
+        let mut device_mismatch = stage9_voice_input(&response);
+        device_mismatch.device_trusted = false;
+        let mut stale_sample = stage9_voice_input(&response);
+        stale_sample.stale_sample = true;
+
+        let cases = [
+            (
+                unknown,
+                Stage9VoiceIdentityDisposition::UnknownSpeakerFailClosed,
+            ),
+            (
+                low_confidence,
+                Stage9VoiceIdentityDisposition::LowConfidenceFailClosed,
+            ),
+            (
+                wrong_speaker,
+                Stage9VoiceIdentityDisposition::WrongSpeakerFailClosed,
+            ),
+            (
+                multi_speaker,
+                Stage9VoiceIdentityDisposition::MultiSpeakerFailClosed,
+            ),
+            (
+                revoked_consent,
+                Stage9VoiceIdentityDisposition::ConsentRevokedFailClosed,
+            ),
+            (
+                revoked_artifact,
+                Stage9VoiceIdentityDisposition::ArtifactRevokedFailClosed,
+            ),
+            (
+                tenant_mismatch,
+                Stage9VoiceIdentityDisposition::TenantMismatchFailClosed,
+            ),
+            (
+                device_mismatch,
+                Stage9VoiceIdentityDisposition::DeviceTrustFailClosed,
+            ),
+            (
+                stale_sample,
+                Stage9VoiceIdentityDisposition::StaleSampleFailClosed,
+            ),
+        ];
+
+        for (input, expected) in cases {
+            let packet = Stage9VoiceIdentityPosturePacket::from_stage_references(
+                &authority,
+                &access,
+                Some(&transcript_gate),
+                input,
+            )
+            .expect("stage9 fail-closed packet");
+
+            assert_eq!(packet.disposition, expected);
+            assert!(packet.fails_closed_for_protected_authority());
+            assert!(!packet.can_authorize_or_execute());
+            assert!(!packet.can_route_or_mutate());
+            assert!(packet.native_client_receipt_only);
+        }
+    }
+
+    #[test]
+    fn stage_9a_partial_vad_scene_record_and_stale_turn_inputs_cannot_update_posture() {
+        let authority = stage8_current_authority();
+        let access = stage9_access_context(&authority);
+        let response = stage9_voice_response(9_600);
+        let input = stage9_voice_input(&response);
+
+        let partial = Stage8TranscriptGatePacket::partial_transcript_preview(
+            stage8_explicit_mic_activation(Some(SessionId(88))),
+            "audio-scene-stage9-partial",
+            "transcript-stage9-partial",
+            "hello",
+            8_000,
+            1,
+        )
+        .expect("stage9 partial preview");
+        let vad = Stage8TranscriptGatePacket::vad_endpoint_boundary(
+            stage8_explicit_mic_activation(Some(SessionId(88))),
+            "audio-scene-stage9-vad",
+            "vad-stage9",
+            "endpoint-stage9-vad",
+            Stage8EndpointState::EndpointCandidate,
+        )
+        .expect("stage9 vad boundary");
+        let scene = Stage8TranscriptGatePacket::audio_scene_boundary(
+            stage8_explicit_mic_activation(Some(SessionId(88))),
+            stage8c_clean_scene("audio-scene-stage9-scene"),
+        )
+        .expect("stage9 scene boundary");
+        let record = Stage8TranscriptGatePacket::record_audio_artifact_only(
+            stage8_record_activation(),
+            "audio-scene-stage9-record",
+        )
+        .expect("stage9 record artifact");
+
+        for blocked_gate in [&partial, &vad, &scene] {
+            let packet = Stage9VoiceIdentityPosturePacket::from_stage_references(
+                &authority,
+                &access,
+                Some(blocked_gate),
+                input.clone(),
+            )
+            .expect("stage9 blocked Stage 8 input");
+
+            assert_eq!(
+                packet.disposition,
+                Stage9VoiceIdentityDisposition::Stage8InputBlocked
+            );
+            assert!(!packet.work_authority.can_emit_speaker_posture);
+            assert!(!packet.work_authority.can_inform_access_context);
+            assert!(!packet.can_route_or_mutate());
+        }
+
+        let record_packet = Stage9VoiceIdentityPosturePacket::from_stage_references(
+            &authority,
+            &access,
+            Some(&record),
+            input.clone(),
+        )
+        .expect("stage9 record input");
+        assert_eq!(
+            record_packet.disposition,
+            Stage9VoiceIdentityDisposition::RecordArtifactOnly
+        );
+        assert!(!record_packet.work_authority.can_emit_speaker_posture);
+
+        let stale = Stage5TurnAuthorityPacket::quarantined(
+            SessionId(88),
+            Some(TurnId(8)),
+            Some("device-stage8".to_string()),
+            Some(4),
+            SessionState::Active,
+            Stage5TurnAuthorityDisposition::StaleTurnQuarantined,
+        )
+        .expect("stage9 stale turn");
+        let stale_packet =
+            Stage9VoiceIdentityPosturePacket::from_stage_references(&stale, &access, None, input)
+                .expect("stage9 stale authority packet");
+        assert_eq!(
+            stale_packet.disposition,
+            Stage9VoiceIdentityDisposition::Stage5AuthorityBlocked
+        );
+        assert!(stale_packet.fails_closed_for_protected_authority());
+        assert!(!stale_packet.can_authorize_or_execute());
+    }
+
+    #[test]
+    fn stage_9a_voice_id_posture_is_receipt_only_and_rejects_authority_drift() {
+        let authority = stage8_current_authority();
+        let access = stage9_access_context(&authority);
+        let transcript_gate = stage9_final_transcript_gate(authority.clone());
+        let input = stage9_voice_input(&stage9_voice_response(9_600));
+        let packet = Stage9VoiceIdentityPosturePacket::from_stage_references(
+            &authority,
+            &access,
+            Some(&transcript_gate),
+            input,
+        )
+        .expect("stage9 posture packet");
+
+        assert!(!packet.work_authority.can_call_providers);
+        assert!(!packet.work_authority.can_capture_microphone_audio);
+        assert!(!packet.work_authority.can_transcribe_live_audio);
+        assert!(!packet.work_authority.can_start_voice_matching);
+        assert!(!packet.work_authority.can_emit_tts);
+        assert!(!packet.work_authority.can_route_tools);
+        assert!(!packet.work_authority.can_update_memory_persona_emotion);
+
+        let mut authority_drift = packet.clone();
+        authority_drift.work_authority.can_grant_authority = true;
+        assert!(authority_drift.validate().is_err());
+
+        let mut material_drift = packet;
+        material_drift.stores_audio_or_voice_model_material = true;
+        assert!(material_drift.validate().is_err());
     }
 
     #[test]
