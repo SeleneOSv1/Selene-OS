@@ -86,6 +86,19 @@ mod reason_codes {
     pub const STAGE9_STAGE8_INPUT_BLOCKED: &str = "stage9_stage8_input_blocked";
     pub const STAGE9_RECORD_ARTIFACT_ONLY: &str = "stage9_record_artifact_only";
     pub const STAGE9_STALE_SAMPLE_FAIL_CLOSED: &str = "stage9_stale_sample_fail_closed";
+    pub const STAGE10_UNDERSTANDING_READY: &str = "stage10_understanding_ready";
+    pub const STAGE10_CLARIFICATION_REQUIRED: &str = "stage10_clarification_required";
+    pub const STAGE10_PROTECTED_SLOT_CLARIFICATION_REQUIRED: &str =
+        "stage10_protected_slot_clarification_required";
+    pub const STAGE10_PROTECTED_SLOT_FAIL_CLOSED: &str = "stage10_protected_slot_fail_closed";
+    pub const STAGE10_MEANING_CANDIDATE_BOUNDED: &str = "stage10_meaning_candidate_bounded";
+    pub const STAGE10_STAGE5_AUTHORITY_BLOCKED: &str = "stage10_stage5_authority_blocked";
+    pub const STAGE10_STAGE6_ACCESS_CONTEXT_BLOCKED: &str = "stage10_stage6_access_context_blocked";
+    pub const STAGE10_STAGE8_INPUT_BLOCKED: &str = "stage10_stage8_input_blocked";
+    pub const STAGE10_STAGE9_POSTURE_BLOCKED: &str = "stage10_stage9_posture_blocked";
+    pub const STAGE10_RECORD_ARTIFACT_ONLY: &str = "stage10_record_artifact_only";
+    pub const STAGE10_MEANING_RECONSTRUCTION_REJECTED: &str =
+        "stage10_meaning_reconstruction_rejected";
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -5033,6 +5046,980 @@ impl Validate for Stage8TranscriptGatePacket {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stage10UnderstandingInputKind {
+    CurrentCommittedTurnText,
+    Stage8FinalTranscriptText,
+    UnsafeVoiceBoundarySignal,
+    RecordArtifactOnly,
+}
+
+impl Stage10UnderstandingInputKind {
+    pub const fn can_update_understanding(self) -> bool {
+        matches!(
+            self,
+            Stage10UnderstandingInputKind::CurrentCommittedTurnText
+                | Stage10UnderstandingInputKind::Stage8FinalTranscriptText
+        )
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stage10VoicePostureContextKind {
+    NotProvided,
+    SafeReceiptContext,
+    UnsafePostureBlocked,
+}
+
+impl Stage10VoicePostureContextKind {
+    pub const fn can_update_understanding(self) -> bool {
+        matches!(
+            self,
+            Stage10VoicePostureContextKind::NotProvided
+                | Stage10VoicePostureContextKind::SafeReceiptContext
+        )
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stage10ProtectedSlotDisposition {
+    NoProtectedSlots,
+    EvidenceBacked,
+    ClarificationRequired,
+    FailClosed,
+}
+
+impl Stage10ProtectedSlotDisposition {
+    pub const fn blocks_final_understanding(self) -> bool {
+        matches!(
+            self,
+            Stage10ProtectedSlotDisposition::ClarificationRequired
+                | Stage10ProtectedSlotDisposition::FailClosed
+        )
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stage10UnderstandingDisposition {
+    UnderstandingReady,
+    ClarificationRequired,
+    ProtectedSlotClarificationRequired,
+    ProtectedSlotFailClosed,
+    MeaningCandidateBounded,
+    Stage5AuthorityBlocked,
+    Stage6AccessContextBlocked,
+    Stage8InputBlocked,
+    Stage9PostureBlocked,
+    RecordArtifactOnly,
+    MeaningReconstructionRejected,
+}
+
+impl Stage10UnderstandingDisposition {
+    pub const fn default_reason_code(self) -> &'static str {
+        match self {
+            Stage10UnderstandingDisposition::UnderstandingReady => {
+                reason_codes::STAGE10_UNDERSTANDING_READY
+            }
+            Stage10UnderstandingDisposition::ClarificationRequired => {
+                reason_codes::STAGE10_CLARIFICATION_REQUIRED
+            }
+            Stage10UnderstandingDisposition::ProtectedSlotClarificationRequired => {
+                reason_codes::STAGE10_PROTECTED_SLOT_CLARIFICATION_REQUIRED
+            }
+            Stage10UnderstandingDisposition::ProtectedSlotFailClosed => {
+                reason_codes::STAGE10_PROTECTED_SLOT_FAIL_CLOSED
+            }
+            Stage10UnderstandingDisposition::MeaningCandidateBounded => {
+                reason_codes::STAGE10_MEANING_CANDIDATE_BOUNDED
+            }
+            Stage10UnderstandingDisposition::Stage5AuthorityBlocked => {
+                reason_codes::STAGE10_STAGE5_AUTHORITY_BLOCKED
+            }
+            Stage10UnderstandingDisposition::Stage6AccessContextBlocked => {
+                reason_codes::STAGE10_STAGE6_ACCESS_CONTEXT_BLOCKED
+            }
+            Stage10UnderstandingDisposition::Stage8InputBlocked => {
+                reason_codes::STAGE10_STAGE8_INPUT_BLOCKED
+            }
+            Stage10UnderstandingDisposition::Stage9PostureBlocked => {
+                reason_codes::STAGE10_STAGE9_POSTURE_BLOCKED
+            }
+            Stage10UnderstandingDisposition::RecordArtifactOnly => {
+                reason_codes::STAGE10_RECORD_ARTIFACT_ONLY
+            }
+            Stage10UnderstandingDisposition::MeaningReconstructionRejected => {
+                reason_codes::STAGE10_MEANING_RECONSTRUCTION_REJECTED
+            }
+        }
+    }
+
+    pub const fn is_blocked(self) -> bool {
+        matches!(
+            self,
+            Stage10UnderstandingDisposition::Stage5AuthorityBlocked
+                | Stage10UnderstandingDisposition::Stage6AccessContextBlocked
+                | Stage10UnderstandingDisposition::Stage8InputBlocked
+                | Stage10UnderstandingDisposition::Stage9PostureBlocked
+                | Stage10UnderstandingDisposition::RecordArtifactOnly
+                | Stage10UnderstandingDisposition::MeaningReconstructionRejected
+                | Stage10UnderstandingDisposition::ProtectedSlotFailClosed
+        )
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Stage10ProtectedSlotUncertainty {
+    pub slot_kind: Stage8ProtectedSlotKind,
+    pub field_hint: String,
+    pub evidence_span_id: Option<String>,
+    pub confidence_bp: u16,
+}
+
+impl Stage10ProtectedSlotUncertainty {
+    pub fn v1(
+        slot_kind: Stage8ProtectedSlotKind,
+        field_hint: impl Into<String>,
+        evidence_span_id: Option<String>,
+        confidence_bp: u16,
+    ) -> Result<Self, ContractViolation> {
+        let uncertainty = Self {
+            slot_kind,
+            field_hint: field_hint.into(),
+            evidence_span_id,
+            confidence_bp,
+        };
+        uncertainty.validate()?;
+        Ok(uncertainty)
+    }
+}
+
+impl Validate for Stage10ProtectedSlotUncertainty {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        validate_stage4_ref(
+            "stage10_protected_slot_uncertainty.field_hint",
+            &self.field_hint,
+        )?;
+        validate_stage4_optional_ref(
+            "stage10_protected_slot_uncertainty.evidence_span_id",
+            self.evidence_span_id.as_deref(),
+        )?;
+        if self.confidence_bp > 10_000 {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage10_protected_slot_uncertainty.confidence_bp",
+                reason: "must be <= 10000",
+            });
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Stage10MeaningReconstructionCandidate {
+    pub candidate_id: String,
+    pub candidate_text_hash: String,
+    pub evidence_span_ids: Vec<String>,
+    pub punctuation_spacing_or_casing_only: bool,
+    pub introduces_protected_fact: bool,
+    pub invents_authority_relevant_fact: bool,
+    pub meaning_drift_detected: bool,
+}
+
+impl Stage10MeaningReconstructionCandidate {
+    pub fn bounded(
+        candidate_id: impl Into<String>,
+        candidate_text_hash: impl Into<String>,
+        evidence_span_ids: Vec<String>,
+    ) -> Result<Self, ContractViolation> {
+        let candidate = Self {
+            candidate_id: candidate_id.into(),
+            candidate_text_hash: candidate_text_hash.into(),
+            evidence_span_ids,
+            punctuation_spacing_or_casing_only: false,
+            introduces_protected_fact: false,
+            invents_authority_relevant_fact: false,
+            meaning_drift_detected: false,
+        };
+        candidate.validate()?;
+        Ok(candidate)
+    }
+
+    pub const fn is_safe_bounded_candidate(&self) -> bool {
+        !self.introduces_protected_fact
+            && !self.invents_authority_relevant_fact
+            && !self.meaning_drift_detected
+    }
+}
+
+impl Validate for Stage10MeaningReconstructionCandidate {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        validate_stage4_ref(
+            "stage10_meaning_reconstruction_candidate.candidate_id",
+            &self.candidate_id,
+        )?;
+        validate_stage4_ref(
+            "stage10_meaning_reconstruction_candidate.candidate_text_hash",
+            &self.candidate_text_hash,
+        )?;
+        if self.evidence_span_ids.is_empty() || self.evidence_span_ids.len() > 8 {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage10_meaning_reconstruction_candidate.evidence_span_ids",
+                reason: "bounded meaning reconstruction requires 1..=8 evidence spans",
+            });
+        }
+        for evidence_span_id in &self.evidence_span_ids {
+            validate_stage4_ref(
+                "stage10_meaning_reconstruction_candidate.evidence_span_id",
+                evidence_span_id,
+            )?;
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Stage10UnderstandingInput {
+    pub understanding_id: String,
+    pub committed_text_hash: String,
+    pub intent_id: Option<String>,
+    pub slot_id: Option<String>,
+    pub semantic_frame_id: Option<String>,
+    pub language_context_id: Option<String>,
+    pub pronunciation_context_id: Option<String>,
+    pub ambiguity_id: Option<String>,
+    pub protected_slot_disposition: Stage10ProtectedSlotDisposition,
+    pub protected_slot_uncertainties: Vec<Stage10ProtectedSlotUncertainty>,
+    pub meaning_reconstruction_candidate: Option<Stage10MeaningReconstructionCandidate>,
+    pub one_best_clarification_question_id: Option<String>,
+    pub language_context_advisory_only: bool,
+    pub pronunciation_context_advisory_only: bool,
+    pub audit_id: Option<String>,
+}
+
+impl Stage10UnderstandingInput {
+    pub fn evidence_backed(
+        understanding_id: impl Into<String>,
+        committed_text_hash: impl Into<String>,
+        intent_id: impl Into<String>,
+        slot_id: impl Into<String>,
+        semantic_frame_id: impl Into<String>,
+        language_context_id: Option<String>,
+        pronunciation_context_id: Option<String>,
+        audit_id: Option<String>,
+    ) -> Result<Self, ContractViolation> {
+        let input = Self {
+            understanding_id: understanding_id.into(),
+            committed_text_hash: committed_text_hash.into(),
+            intent_id: Some(intent_id.into()),
+            slot_id: Some(slot_id.into()),
+            semantic_frame_id: Some(semantic_frame_id.into()),
+            language_context_id,
+            pronunciation_context_id,
+            ambiguity_id: None,
+            protected_slot_disposition: Stage10ProtectedSlotDisposition::EvidenceBacked,
+            protected_slot_uncertainties: Vec::new(),
+            meaning_reconstruction_candidate: None,
+            one_best_clarification_question_id: None,
+            language_context_advisory_only: true,
+            pronunciation_context_advisory_only: true,
+            audit_id,
+        };
+        input.validate()?;
+        Ok(input)
+    }
+
+    pub fn clarify(
+        understanding_id: impl Into<String>,
+        committed_text_hash: impl Into<String>,
+        ambiguity_id: impl Into<String>,
+        one_best_clarification_question_id: impl Into<String>,
+        audit_id: Option<String>,
+    ) -> Result<Self, ContractViolation> {
+        let input = Self {
+            understanding_id: understanding_id.into(),
+            committed_text_hash: committed_text_hash.into(),
+            intent_id: None,
+            slot_id: None,
+            semantic_frame_id: None,
+            language_context_id: None,
+            pronunciation_context_id: None,
+            ambiguity_id: Some(ambiguity_id.into()),
+            protected_slot_disposition: Stage10ProtectedSlotDisposition::NoProtectedSlots,
+            protected_slot_uncertainties: Vec::new(),
+            meaning_reconstruction_candidate: None,
+            one_best_clarification_question_id: Some(one_best_clarification_question_id.into()),
+            language_context_advisory_only: true,
+            pronunciation_context_advisory_only: true,
+            audit_id,
+        };
+        input.validate()?;
+        Ok(input)
+    }
+}
+
+impl Validate for Stage10UnderstandingInput {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        validate_stage4_ref(
+            "stage10_understanding_input.understanding_id",
+            &self.understanding_id,
+        )?;
+        validate_stage4_ref(
+            "stage10_understanding_input.committed_text_hash",
+            &self.committed_text_hash,
+        )?;
+        validate_stage4_optional_ref(
+            "stage10_understanding_input.intent_id",
+            self.intent_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage10_understanding_input.slot_id",
+            self.slot_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage10_understanding_input.semantic_frame_id",
+            self.semantic_frame_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage10_understanding_input.language_context_id",
+            self.language_context_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage10_understanding_input.pronunciation_context_id",
+            self.pronunciation_context_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage10_understanding_input.ambiguity_id",
+            self.ambiguity_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage10_understanding_input.one_best_clarification_question_id",
+            self.one_best_clarification_question_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage10_understanding_input.audit_id",
+            self.audit_id.as_deref(),
+        )?;
+        if self.protected_slot_uncertainties.len() > 8 {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage10_understanding_input.protected_slot_uncertainties",
+                reason: "must contain <= 8 entries",
+            });
+        }
+        for uncertainty in &self.protected_slot_uncertainties {
+            uncertainty.validate()?;
+        }
+        match self.protected_slot_disposition {
+            Stage10ProtectedSlotDisposition::ClarificationRequired
+            | Stage10ProtectedSlotDisposition::FailClosed => {
+                if self.protected_slot_uncertainties.is_empty() {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "stage10_understanding_input.protected_slot_uncertainties",
+                        reason: "protected-slot clarify/fail-closed requires uncertainty evidence",
+                    });
+                }
+            }
+            Stage10ProtectedSlotDisposition::NoProtectedSlots
+            | Stage10ProtectedSlotDisposition::EvidenceBacked => {
+                if !self.protected_slot_uncertainties.is_empty() {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "stage10_understanding_input.protected_slot_uncertainties",
+                        reason: "uncertain protected slots must clarify or fail closed",
+                    });
+                }
+            }
+        }
+        if let Some(candidate) = self.meaning_reconstruction_candidate.as_ref() {
+            candidate.validate()?;
+        }
+        if self.one_best_clarification_question_id.is_some() && self.ambiguity_id.is_none() {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage10_understanding_input.one_best_clarification_question_id",
+                reason: "a clarification handoff must be tied to bounded ambiguity evidence",
+            });
+        }
+        if !self.language_context_advisory_only || !self.pronunciation_context_advisory_only {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage10_understanding_input.context_authority",
+                reason: "language and pronunciation context are advisory only",
+            });
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Stage10UnderstandingWorkAuthority {
+    pub can_emit_understanding_packet: bool,
+    pub can_emit_intent_slot_frame: bool,
+    pub can_emit_ambiguity_packet: bool,
+    pub can_emit_clarification_handoff: bool,
+    pub can_emit_bounded_meaning_candidate: bool,
+    pub can_use_language_context: bool,
+    pub can_use_pronunciation_context: bool,
+    pub can_emit_audit_trace: bool,
+    pub can_answer: bool,
+    pub can_search: bool,
+    pub can_call_providers: bool,
+    pub can_capture_microphone_audio: bool,
+    pub can_transcribe_live_audio: bool,
+    pub can_trigger_voice_id_matching: bool,
+    pub can_authorize: bool,
+    pub can_emit_tts: bool,
+    pub can_route_tools: bool,
+    pub can_connector_write: bool,
+    pub can_execute_protected_mutation: bool,
+    pub can_update_memory_persona_emotion: bool,
+}
+
+impl Stage10UnderstandingWorkAuthority {
+    pub const fn evidence_backed_understanding() -> Self {
+        Self {
+            can_emit_understanding_packet: true,
+            can_emit_intent_slot_frame: true,
+            can_emit_ambiguity_packet: false,
+            can_emit_clarification_handoff: false,
+            can_emit_bounded_meaning_candidate: false,
+            can_use_language_context: true,
+            can_use_pronunciation_context: true,
+            can_emit_audit_trace: true,
+            can_answer: false,
+            can_search: false,
+            can_call_providers: false,
+            can_capture_microphone_audio: false,
+            can_transcribe_live_audio: false,
+            can_trigger_voice_id_matching: false,
+            can_authorize: false,
+            can_emit_tts: false,
+            can_route_tools: false,
+            can_connector_write: false,
+            can_execute_protected_mutation: false,
+            can_update_memory_persona_emotion: false,
+        }
+    }
+
+    pub const fn clarification_only() -> Self {
+        Self {
+            can_emit_understanding_packet: false,
+            can_emit_intent_slot_frame: false,
+            can_emit_ambiguity_packet: true,
+            can_emit_clarification_handoff: true,
+            can_emit_bounded_meaning_candidate: false,
+            ..Self::evidence_backed_understanding()
+        }
+    }
+
+    pub const fn bounded_meaning_candidate() -> Self {
+        Self {
+            can_emit_intent_slot_frame: false,
+            can_emit_bounded_meaning_candidate: true,
+            ..Self::evidence_backed_understanding()
+        }
+    }
+
+    pub const fn blocked() -> Self {
+        Self {
+            can_emit_understanding_packet: false,
+            can_emit_intent_slot_frame: false,
+            can_emit_ambiguity_packet: false,
+            can_emit_clarification_handoff: false,
+            can_emit_bounded_meaning_candidate: false,
+            can_use_language_context: false,
+            can_use_pronunciation_context: false,
+            can_emit_audit_trace: true,
+            can_answer: false,
+            can_search: false,
+            can_call_providers: false,
+            can_capture_microphone_audio: false,
+            can_transcribe_live_audio: false,
+            can_trigger_voice_id_matching: false,
+            can_authorize: false,
+            can_emit_tts: false,
+            can_route_tools: false,
+            can_connector_write: false,
+            can_execute_protected_mutation: false,
+            can_update_memory_persona_emotion: false,
+        }
+    }
+
+    pub const fn can_update_understanding(self) -> bool {
+        self.can_emit_understanding_packet
+            || self.can_emit_intent_slot_frame
+            || self.can_emit_ambiguity_packet
+            || self.can_emit_clarification_handoff
+            || self.can_emit_bounded_meaning_candidate
+    }
+
+    pub const fn can_route_or_mutate(self) -> bool {
+        self.can_answer
+            || self.can_search
+            || self.can_call_providers
+            || self.can_capture_microphone_audio
+            || self.can_transcribe_live_audio
+            || self.can_trigger_voice_id_matching
+            || self.can_authorize
+            || self.can_emit_tts
+            || self.can_route_tools
+            || self.can_connector_write
+            || self.can_execute_protected_mutation
+            || self.can_update_memory_persona_emotion
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Stage10UnderstandingPacket {
+    pub session_id: SessionId,
+    pub turn_id: Option<TurnId>,
+    pub activation_id: Option<String>,
+    pub transcript_id: Option<String>,
+    pub understanding_id: String,
+    pub intent_id: Option<String>,
+    pub slot_id: Option<String>,
+    pub semantic_frame_id: Option<String>,
+    pub language_context_id: Option<String>,
+    pub pronunciation_context_id: Option<String>,
+    pub voice_identity_id: Option<String>,
+    pub access_context_id: Option<String>,
+    pub audit_id: Option<String>,
+    pub reason_code: &'static str,
+    pub committed_text_hash: String,
+    pub input_kind: Stage10UnderstandingInputKind,
+    pub voice_posture_context: Stage10VoicePostureContextKind,
+    pub disposition: Stage10UnderstandingDisposition,
+    pub stage5_turn_disposition: Stage5TurnAuthorityDisposition,
+    pub stage6_access_disposition: Stage6AccessContextDisposition,
+    pub stage8_boundary_kind: Option<Stage8TranscriptGateKind>,
+    pub stage9_posture_disposition: Option<Stage9VoiceIdentityDisposition>,
+    pub protected_slot_disposition: Stage10ProtectedSlotDisposition,
+    pub protected_slot_uncertainties: Vec<Stage10ProtectedSlotUncertainty>,
+    pub meaning_reconstruction_candidate: Option<Stage10MeaningReconstructionCandidate>,
+    pub ambiguity_id: Option<String>,
+    pub one_best_clarification_question_id: Option<String>,
+    pub language_context_advisory_only: bool,
+    pub pronunciation_context_advisory_only: bool,
+    pub work_authority: Stage10UnderstandingWorkAuthority,
+}
+
+impl Stage10UnderstandingPacket {
+    pub fn from_stage_references(
+        stage5_turn_authority: &Stage5TurnAuthorityPacket,
+        access_context: &Stage6AccessContextPacket,
+        transcript_gate: Option<&Stage8TranscriptGatePacket>,
+        voice_posture: Option<&Stage9VoiceIdentityPosturePacket>,
+        input: Stage10UnderstandingInput,
+    ) -> Result<Self, ContractViolation> {
+        stage5_turn_authority.validate()?;
+        access_context.validate()?;
+        input.validate()?;
+        let input_kind = Self::classify_input(transcript_gate)?;
+        let voice_posture_context = Self::classify_voice_posture(voice_posture)?;
+        Self::validate_stage_links(
+            stage5_turn_authority,
+            access_context,
+            transcript_gate,
+            voice_posture,
+        )?;
+        let disposition = Self::decide_disposition(
+            stage5_turn_authority,
+            access_context,
+            input_kind,
+            voice_posture_context,
+            &input,
+        );
+        let transcript_id = transcript_gate.and_then(|gate| gate.transcript_id.clone());
+        let activation_id =
+            transcript_gate.map(|gate| gate.activation_context.activation_id.clone());
+        let voice_identity_id = voice_posture
+            .and_then(|posture| posture.voice_identity_id.clone())
+            .or_else(|| access_context.voice_identity_id.clone());
+        let packet = Self {
+            session_id: stage5_turn_authority.session_id,
+            turn_id: stage5_turn_authority.turn_id,
+            activation_id,
+            transcript_id,
+            understanding_id: input.understanding_id,
+            intent_id: input.intent_id,
+            slot_id: input.slot_id,
+            semantic_frame_id: input.semantic_frame_id,
+            language_context_id: input.language_context_id,
+            pronunciation_context_id: input.pronunciation_context_id,
+            voice_identity_id,
+            access_context_id: access_context.access_context_id.clone(),
+            audit_id: input
+                .audit_id
+                .or_else(|| access_context.audit_id.clone())
+                .or_else(|| transcript_gate.and_then(|gate| gate.audit_id.clone())),
+            reason_code: disposition.default_reason_code(),
+            committed_text_hash: input.committed_text_hash,
+            input_kind,
+            voice_posture_context,
+            disposition,
+            stage5_turn_disposition: stage5_turn_authority.disposition,
+            stage6_access_disposition: access_context.disposition,
+            stage8_boundary_kind: transcript_gate.map(|gate| gate.boundary_kind),
+            stage9_posture_disposition: voice_posture.map(|posture| posture.disposition),
+            protected_slot_disposition: input.protected_slot_disposition,
+            protected_slot_uncertainties: input.protected_slot_uncertainties,
+            meaning_reconstruction_candidate: input.meaning_reconstruction_candidate,
+            ambiguity_id: input.ambiguity_id,
+            one_best_clarification_question_id: input.one_best_clarification_question_id,
+            language_context_advisory_only: input.language_context_advisory_only,
+            pronunciation_context_advisory_only: input.pronunciation_context_advisory_only,
+            work_authority: Self::work_authority_for(disposition),
+        };
+        packet.validate()?;
+        Ok(packet)
+    }
+
+    pub const fn can_update_understanding(&self) -> bool {
+        self.work_authority.can_update_understanding()
+    }
+
+    pub const fn can_route_or_mutate(&self) -> bool {
+        self.work_authority.can_route_or_mutate()
+    }
+
+    fn classify_input(
+        transcript_gate: Option<&Stage8TranscriptGatePacket>,
+    ) -> Result<Stage10UnderstandingInputKind, ContractViolation> {
+        let Some(gate) = transcript_gate else {
+            return Ok(Stage10UnderstandingInputKind::CurrentCommittedTurnText);
+        };
+        gate.validate()?;
+        if gate.record_mode_audio
+            || gate.boundary_kind == Stage8TranscriptGateKind::RecordAudioArtifactOnly
+        {
+            return Ok(Stage10UnderstandingInputKind::RecordArtifactOnly);
+        }
+        if gate.boundary_kind == Stage8TranscriptGateKind::FinalTranscriptCommitBoundary
+            && gate.endpoint_state == Stage8EndpointState::EndpointFinal
+            && gate.confidence_gate == Stage8ConfidenceGateDisposition::Passed
+            && gate.committed_turn.is_some()
+            && gate.stage5_turn_authority.is_some()
+            && gate.work_authority.can_enter_understanding
+            && !gate.can_route_or_mutate()
+            && !gate.protected_slot_disposition.blocks_commit()
+            && gate.protected_slot_uncertainties.is_empty()
+            && !gate.tts_self_echo_active
+            && !gate.background_speech_detected
+        {
+            return Ok(Stage10UnderstandingInputKind::Stage8FinalTranscriptText);
+        }
+        Ok(Stage10UnderstandingInputKind::UnsafeVoiceBoundarySignal)
+    }
+
+    fn classify_voice_posture(
+        voice_posture: Option<&Stage9VoiceIdentityPosturePacket>,
+    ) -> Result<Stage10VoicePostureContextKind, ContractViolation> {
+        let Some(posture) = voice_posture else {
+            return Ok(Stage10VoicePostureContextKind::NotProvided);
+        };
+        posture.validate()?;
+        match posture.disposition {
+            Stage9VoiceIdentityDisposition::VerifiedSpeakerPosture
+            | Stage9VoiceIdentityDisposition::LikelySpeakerStepUp => {
+                Ok(Stage10VoicePostureContextKind::SafeReceiptContext)
+            }
+            _ => Ok(Stage10VoicePostureContextKind::UnsafePostureBlocked),
+        }
+    }
+
+    fn validate_stage_links(
+        stage5_turn_authority: &Stage5TurnAuthorityPacket,
+        access_context: &Stage6AccessContextPacket,
+        transcript_gate: Option<&Stage8TranscriptGatePacket>,
+        voice_posture: Option<&Stage9VoiceIdentityPosturePacket>,
+    ) -> Result<(), ContractViolation> {
+        if access_context.session_id != stage5_turn_authority.session_id
+            || access_context.turn_id != stage5_turn_authority.turn_id
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage10_understanding_packet.access_context",
+                reason: "Stage 6 access context must match Stage 5 session and turn",
+            });
+        }
+        if let Some(gate) = transcript_gate {
+            if gate
+                .session_id
+                .is_some_and(|session| session != stage5_turn_authority.session_id)
+                || gate
+                    .turn_id
+                    .is_some_and(|turn| Some(turn) != stage5_turn_authority.turn_id)
+            {
+                return Err(ContractViolation::InvalidValue {
+                    field: "stage10_understanding_packet.transcript_gate",
+                    reason:
+                        "Stage 8 transcript metadata must match Stage 5 session and turn when present",
+                });
+            }
+        }
+        if let Some(posture) = voice_posture {
+            if posture.session_id != stage5_turn_authority.session_id
+                || posture.turn_id != stage5_turn_authority.turn_id
+            {
+                return Err(ContractViolation::InvalidValue {
+                    field: "stage10_understanding_packet.voice_posture",
+                    reason: "Stage 9 Voice ID posture must match Stage 5 session and turn",
+                });
+            }
+        }
+        Ok(())
+    }
+
+    fn decide_disposition(
+        stage5_turn_authority: &Stage5TurnAuthorityPacket,
+        access_context: &Stage6AccessContextPacket,
+        input_kind: Stage10UnderstandingInputKind,
+        voice_posture_context: Stage10VoicePostureContextKind,
+        input: &Stage10UnderstandingInput,
+    ) -> Stage10UnderstandingDisposition {
+        if stage5_turn_authority.disposition != Stage5TurnAuthorityDisposition::CurrentCommittedTurn
+            || !stage5_turn_authority.can_enter_understanding()
+            || stage5_turn_authority.can_route_any_work()
+        {
+            return Stage10UnderstandingDisposition::Stage5AuthorityBlocked;
+        }
+        if access_context.disposition == Stage6AccessContextDisposition::Stage5AuthorityBlocked
+            || access_context.can_route_any_work()
+            || access_context.can_execute_or_mutate()
+        {
+            return Stage10UnderstandingDisposition::Stage6AccessContextBlocked;
+        }
+        if input_kind == Stage10UnderstandingInputKind::RecordArtifactOnly {
+            return Stage10UnderstandingDisposition::RecordArtifactOnly;
+        }
+        if !input_kind.can_update_understanding() {
+            return Stage10UnderstandingDisposition::Stage8InputBlocked;
+        }
+        if !voice_posture_context.can_update_understanding() {
+            return Stage10UnderstandingDisposition::Stage9PostureBlocked;
+        }
+        match input.protected_slot_disposition {
+            Stage10ProtectedSlotDisposition::ClarificationRequired => {
+                return Stage10UnderstandingDisposition::ProtectedSlotClarificationRequired;
+            }
+            Stage10ProtectedSlotDisposition::FailClosed => {
+                return Stage10UnderstandingDisposition::ProtectedSlotFailClosed;
+            }
+            Stage10ProtectedSlotDisposition::NoProtectedSlots
+            | Stage10ProtectedSlotDisposition::EvidenceBacked => {}
+        }
+        if let Some(candidate) = input.meaning_reconstruction_candidate.as_ref() {
+            if !candidate.is_safe_bounded_candidate() {
+                return Stage10UnderstandingDisposition::MeaningReconstructionRejected;
+            }
+            return Stage10UnderstandingDisposition::MeaningCandidateBounded;
+        }
+        if input.ambiguity_id.is_some() {
+            return Stage10UnderstandingDisposition::ClarificationRequired;
+        }
+        Stage10UnderstandingDisposition::UnderstandingReady
+    }
+
+    const fn work_authority_for(
+        disposition: Stage10UnderstandingDisposition,
+    ) -> Stage10UnderstandingWorkAuthority {
+        match disposition {
+            Stage10UnderstandingDisposition::UnderstandingReady => {
+                Stage10UnderstandingWorkAuthority::evidence_backed_understanding()
+            }
+            Stage10UnderstandingDisposition::ClarificationRequired
+            | Stage10UnderstandingDisposition::ProtectedSlotClarificationRequired => {
+                Stage10UnderstandingWorkAuthority::clarification_only()
+            }
+            Stage10UnderstandingDisposition::MeaningCandidateBounded => {
+                Stage10UnderstandingWorkAuthority::bounded_meaning_candidate()
+            }
+            _ => Stage10UnderstandingWorkAuthority::blocked(),
+        }
+    }
+}
+
+impl Validate for Stage10UnderstandingPacket {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        validate_stage4_optional_ref(
+            "stage10_understanding_packet.activation_id",
+            self.activation_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage10_understanding_packet.transcript_id",
+            self.transcript_id.as_deref(),
+        )?;
+        validate_stage4_ref(
+            "stage10_understanding_packet.understanding_id",
+            &self.understanding_id,
+        )?;
+        validate_stage4_optional_ref(
+            "stage10_understanding_packet.intent_id",
+            self.intent_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage10_understanding_packet.slot_id",
+            self.slot_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage10_understanding_packet.semantic_frame_id",
+            self.semantic_frame_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage10_understanding_packet.language_context_id",
+            self.language_context_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage10_understanding_packet.pronunciation_context_id",
+            self.pronunciation_context_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage10_understanding_packet.voice_identity_id",
+            self.voice_identity_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage10_understanding_packet.access_context_id",
+            self.access_context_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage10_understanding_packet.audit_id",
+            self.audit_id.as_deref(),
+        )?;
+        validate_stage4_ref(
+            "stage10_understanding_packet.committed_text_hash",
+            &self.committed_text_hash,
+        )?;
+        if self.reason_code != self.disposition.default_reason_code() {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage10_understanding_packet.reason_code",
+                reason: "must match Stage 10 understanding disposition",
+            });
+        }
+        if self.work_authority.can_route_or_mutate() {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage10_understanding_packet.work_authority",
+                reason: "understanding cannot answer, search, call providers, speak, route tools, authorize, connector-write, mutate, or update memory/persona/emotion",
+            });
+        }
+        if self.stage5_turn_disposition != Stage5TurnAuthorityDisposition::CurrentCommittedTurn
+            && self.work_authority.can_update_understanding()
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage10_understanding_packet.stage5_turn_disposition",
+                reason: "only current committed turns can update understanding",
+            });
+        }
+        if !self.input_kind.can_update_understanding()
+            && self.work_authority.can_update_understanding()
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage10_understanding_packet.input_kind",
+                reason: "partial, VAD-only, audio-scene-only, and record-artifact inputs cannot update understanding",
+            });
+        }
+        if !self.voice_posture_context.can_update_understanding()
+            && self.work_authority.can_update_understanding()
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage10_understanding_packet.voice_posture_context",
+                reason: "unsafe Voice ID posture cannot update understanding",
+            });
+        }
+        if self.protected_slot_uncertainties.len() > 8 {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage10_understanding_packet.protected_slot_uncertainties",
+                reason: "must contain <= 8 entries",
+            });
+        }
+        for uncertainty in &self.protected_slot_uncertainties {
+            uncertainty.validate()?;
+        }
+        if self.protected_slot_disposition.blocks_final_understanding()
+            && self.protected_slot_uncertainties.is_empty()
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage10_understanding_packet.protected_slot_uncertainties",
+                reason: "protected-slot clarify/fail-closed requires uncertainty evidence",
+            });
+        }
+        validate_stage4_optional_ref(
+            "stage10_understanding_packet.ambiguity_id",
+            self.ambiguity_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage10_understanding_packet.one_best_clarification_question_id",
+            self.one_best_clarification_question_id.as_deref(),
+        )?;
+        if let Some(candidate) = self.meaning_reconstruction_candidate.as_ref() {
+            candidate.validate()?;
+            if !candidate.is_safe_bounded_candidate()
+                && self.disposition
+                    != Stage10UnderstandingDisposition::MeaningReconstructionRejected
+            {
+                return Err(ContractViolation::InvalidValue {
+                    field: "stage10_understanding_packet.meaning_reconstruction_candidate",
+                    reason:
+                        "meaning reconstruction cannot invent protected or authority-relevant facts",
+                });
+            }
+        }
+        match self.disposition {
+            Stage10UnderstandingDisposition::UnderstandingReady => {
+                if self.intent_id.is_none()
+                    || self.slot_id.is_none()
+                    || self.semantic_frame_id.is_none()
+                    || self.protected_slot_disposition
+                        == Stage10ProtectedSlotDisposition::ClarificationRequired
+                    || self.protected_slot_disposition
+                        == Stage10ProtectedSlotDisposition::FailClosed
+                    || self.ambiguity_id.is_some()
+                    || self.one_best_clarification_question_id.is_some()
+                    || !self.work_authority.can_emit_understanding_packet
+                    || !self.work_authority.can_emit_intent_slot_frame
+                    || self.work_authority.can_emit_clarification_handoff
+                {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "stage10_understanding_packet",
+                        reason: "ready understanding requires evidence-backed intent, slot, and semantic-frame ids without ambiguity or protected-slot uncertainty",
+                    });
+                }
+            }
+            Stage10UnderstandingDisposition::ClarificationRequired
+            | Stage10UnderstandingDisposition::ProtectedSlotClarificationRequired => {
+                if self.one_best_clarification_question_id.is_none()
+                    || !self.work_authority.can_emit_clarification_handoff
+                    || self.work_authority.can_emit_intent_slot_frame
+                {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "stage10_understanding_packet",
+                        reason: "ambiguity and protected-slot uncertainty may emit one bounded clarification only",
+                    });
+                }
+            }
+            Stage10UnderstandingDisposition::MeaningCandidateBounded => {
+                if self.meaning_reconstruction_candidate.is_none()
+                    || !self.work_authority.can_emit_bounded_meaning_candidate
+                    || self.work_authority.can_emit_intent_slot_frame
+                {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "stage10_understanding_packet",
+                        reason: "meaning reconstruction remains a bounded candidate and cannot become slot authority",
+                    });
+                }
+            }
+            _ => {
+                if self.work_authority.can_update_understanding() {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "stage10_understanding_packet.work_authority",
+                        reason: "blocked understanding dispositions cannot update understanding",
+                    });
+                }
+            }
+        }
+        if !self.language_context_advisory_only || !self.pronunciation_context_advisory_only {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage10_understanding_packet.context_authority",
+                reason: "language and pronunciation context cannot authorize, route, translate silently, or mutate memory",
+            });
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RawTurnPayload {
     Text {
@@ -8720,6 +9707,34 @@ mod tests {
         .expect("stage9 final transcript gate")
     }
 
+    fn stage10_understanding_input() -> Stage10UnderstandingInput {
+        Stage10UnderstandingInput::evidence_backed(
+            "understanding-stage10",
+            stage8_exact_transcript_hash("hello selene"),
+            "intent-stage10",
+            "slot-stage10",
+            "semantic-frame-stage10",
+            Some("language-context-stage10".to_string()),
+            Some("pronunciation-context-stage10".to_string()),
+            Some("audit-stage10".to_string()),
+        )
+        .expect("stage10 understanding input")
+    }
+
+    fn stage10_verified_voice_posture(
+        authority: &Stage5TurnAuthorityPacket,
+        access: &Stage6AccessContextPacket,
+        transcript_gate: &Stage8TranscriptGatePacket,
+    ) -> Stage9VoiceIdentityPosturePacket {
+        Stage9VoiceIdentityPosturePacket::from_stage_references(
+            authority,
+            access,
+            Some(transcript_gate),
+            stage9_voice_input(&stage9_voice_response(9_600)),
+        )
+        .expect("stage10 verified voice posture")
+    }
+
     fn stage8c_foreground(
         confidence_bp: u16,
         is_user_speech_candidate: bool,
@@ -10093,6 +11108,311 @@ mod tests {
         let mut material_drift = packet;
         material_drift.stores_audio_or_voice_model_material = true;
         assert!(material_drift.validate().is_err());
+    }
+
+    #[test]
+    fn stage_10a_current_committed_text_builds_advisory_understanding_only() {
+        let authority = stage8_current_authority();
+        let access = stage9_access_context(&authority);
+        let transcript_gate = stage9_final_transcript_gate(authority.clone());
+        let voice_posture = stage10_verified_voice_posture(&authority, &access, &transcript_gate);
+
+        let packet = Stage10UnderstandingPacket::from_stage_references(
+            &authority,
+            &access,
+            Some(&transcript_gate),
+            Some(&voice_posture),
+            stage10_understanding_input(),
+        )
+        .expect("stage10 understanding packet");
+
+        assert_eq!(
+            packet.disposition,
+            Stage10UnderstandingDisposition::UnderstandingReady
+        );
+        assert_eq!(
+            packet.input_kind,
+            Stage10UnderstandingInputKind::Stage8FinalTranscriptText
+        );
+        assert_eq!(
+            packet.voice_posture_context,
+            Stage10VoicePostureContextKind::SafeReceiptContext
+        );
+        assert!(packet.can_update_understanding());
+        assert!(packet.work_authority.can_emit_intent_slot_frame);
+        assert!(packet.language_context_advisory_only);
+        assert!(packet.pronunciation_context_advisory_only);
+        assert!(!packet.can_route_or_mutate());
+        assert!(!packet.work_authority.can_answer);
+        assert!(!packet.work_authority.can_search);
+        assert!(!packet.work_authority.can_call_providers);
+        assert!(!packet.work_authority.can_authorize);
+        assert!(!packet.work_authority.can_route_tools);
+        assert!(!packet.work_authority.can_connector_write);
+        assert!(!packet.work_authority.can_execute_protected_mutation);
+        assert!(!packet.work_authority.can_update_memory_persona_emotion);
+    }
+
+    #[test]
+    fn stage_10a_partial_scene_record_stale_and_unsafe_voice_inputs_cannot_update() {
+        let authority = stage8_current_authority();
+        let access = stage9_access_context(&authority);
+        let partial = Stage8TranscriptGatePacket::partial_transcript_preview(
+            stage8_explicit_mic_activation(Some(SessionId(88))),
+            "audio-scene-stage10-partial",
+            "transcript-stage10-partial",
+            "hello",
+            8_000,
+            1,
+        )
+        .expect("stage10 partial preview");
+        let scene = Stage8TranscriptGatePacket::audio_scene_boundary(
+            stage8_explicit_mic_activation(Some(SessionId(88))),
+            stage8c_clean_scene("audio-scene-stage10-scene"),
+        )
+        .expect("stage10 audio scene");
+        let record = Stage8TranscriptGatePacket::record_audio_artifact_only(
+            stage8_record_activation(),
+            "audio-scene-stage10-record",
+        )
+        .expect("stage10 record artifact");
+
+        for gate in [&partial, &scene] {
+            let packet = Stage10UnderstandingPacket::from_stage_references(
+                &authority,
+                &access,
+                Some(gate),
+                None,
+                stage10_understanding_input(),
+            )
+            .expect("stage10 blocked voice boundary");
+            assert_eq!(
+                packet.disposition,
+                Stage10UnderstandingDisposition::Stage8InputBlocked
+            );
+            assert!(!packet.can_update_understanding());
+            assert!(!packet.can_route_or_mutate());
+        }
+
+        let record_packet = Stage10UnderstandingPacket::from_stage_references(
+            &authority,
+            &access,
+            Some(&record),
+            None,
+            stage10_understanding_input(),
+        )
+        .expect("stage10 record artifact");
+        assert_eq!(
+            record_packet.disposition,
+            Stage10UnderstandingDisposition::RecordArtifactOnly
+        );
+        assert!(!record_packet.can_update_understanding());
+
+        let stale = Stage5TurnAuthorityPacket::quarantined(
+            SessionId(88),
+            Some(TurnId(8)),
+            Some("device-stage8".to_string()),
+            Some(4),
+            SessionState::Active,
+            Stage5TurnAuthorityDisposition::StaleTurnQuarantined,
+        )
+        .expect("stage10 stale turn");
+        let stale_packet = Stage10UnderstandingPacket::from_stage_references(
+            &stale,
+            &access,
+            None,
+            None,
+            stage10_understanding_input(),
+        )
+        .expect("stage10 stale packet");
+        assert_eq!(
+            stale_packet.disposition,
+            Stage10UnderstandingDisposition::Stage5AuthorityBlocked
+        );
+        assert!(!stale_packet.can_update_understanding());
+
+        let transcript_gate = stage9_final_transcript_gate(authority.clone());
+        let unknown_posture = Stage9VoiceIdentityPosturePacket::from_stage_references(
+            &authority,
+            &access,
+            Some(&transcript_gate),
+            stage9_voice_input(&sample_voice_identity_assertion()),
+        )
+        .expect("stage10 unsafe voice posture");
+        let blocked_voice = Stage10UnderstandingPacket::from_stage_references(
+            &authority,
+            &access,
+            Some(&transcript_gate),
+            Some(&unknown_posture),
+            stage10_understanding_input(),
+        )
+        .expect("stage10 voice posture blocked");
+        assert_eq!(
+            blocked_voice.disposition,
+            Stage10UnderstandingDisposition::Stage9PostureBlocked
+        );
+        assert!(!blocked_voice.can_update_understanding());
+        assert!(!blocked_voice.can_route_or_mutate());
+    }
+
+    #[test]
+    fn stage_10a_protected_slots_clarify_or_fail_closed_without_guessing() {
+        let authority = stage8_current_authority();
+        let access = stage9_access_context(&authority);
+        let uncertainty = Stage10ProtectedSlotUncertainty::v1(
+            Stage8ProtectedSlotKind::Amount,
+            "amount",
+            Some("evidence-span-stage10-amount".to_string()),
+            4_900,
+        )
+        .expect("protected slot uncertainty");
+        let clarify_input = Stage10UnderstandingInput {
+            understanding_id: "understanding-stage10-clarify".to_string(),
+            committed_text_hash: stage8_exact_transcript_hash("send the money"),
+            intent_id: None,
+            slot_id: None,
+            semantic_frame_id: None,
+            language_context_id: None,
+            pronunciation_context_id: None,
+            ambiguity_id: Some("ambiguity-stage10-amount".to_string()),
+            protected_slot_disposition: Stage10ProtectedSlotDisposition::ClarificationRequired,
+            protected_slot_uncertainties: vec![uncertainty.clone()],
+            meaning_reconstruction_candidate: None,
+            one_best_clarification_question_id: Some("clarify-question-stage10-amount".to_string()),
+            language_context_advisory_only: true,
+            pronunciation_context_advisory_only: true,
+            audit_id: Some("audit-stage10-clarify".to_string()),
+        };
+
+        let clarify_packet = Stage10UnderstandingPacket::from_stage_references(
+            &authority,
+            &access,
+            None,
+            None,
+            clarify_input,
+        )
+        .expect("stage10 protected slot clarify");
+        assert_eq!(
+            clarify_packet.disposition,
+            Stage10UnderstandingDisposition::ProtectedSlotClarificationRequired
+        );
+        assert!(clarify_packet.work_authority.can_emit_clarification_handoff);
+        assert!(!clarify_packet.work_authority.can_emit_intent_slot_frame);
+        assert!(!clarify_packet.can_route_or_mutate());
+
+        let fail_closed_input = Stage10UnderstandingInput {
+            understanding_id: "understanding-stage10-fail".to_string(),
+            committed_text_hash: stage8_exact_transcript_hash("send it to the account"),
+            intent_id: None,
+            slot_id: None,
+            semantic_frame_id: None,
+            language_context_id: None,
+            pronunciation_context_id: None,
+            ambiguity_id: None,
+            protected_slot_disposition: Stage10ProtectedSlotDisposition::FailClosed,
+            protected_slot_uncertainties: vec![uncertainty],
+            meaning_reconstruction_candidate: None,
+            one_best_clarification_question_id: None,
+            language_context_advisory_only: true,
+            pronunciation_context_advisory_only: true,
+            audit_id: Some("audit-stage10-fail".to_string()),
+        };
+        let fail_closed_packet = Stage10UnderstandingPacket::from_stage_references(
+            &authority,
+            &access,
+            None,
+            None,
+            fail_closed_input,
+        )
+        .expect("stage10 protected slot fail closed");
+        assert_eq!(
+            fail_closed_packet.disposition,
+            Stage10UnderstandingDisposition::ProtectedSlotFailClosed
+        );
+        assert!(!fail_closed_packet.can_update_understanding());
+        assert!(!fail_closed_packet.can_route_or_mutate());
+    }
+
+    #[test]
+    fn stage_10a_meaning_reconstruction_cannot_invent_authority_facts() {
+        let authority = stage8_current_authority();
+        let access = stage9_access_context(&authority);
+        let safe_candidate = Stage10MeaningReconstructionCandidate::bounded(
+            "meaning-candidate-stage10",
+            "meaning-hash-stage10",
+            vec!["evidence-span-stage10".to_string()],
+        )
+        .expect("bounded meaning candidate");
+        let safe_input = Stage10UnderstandingInput {
+            meaning_reconstruction_candidate: Some(safe_candidate),
+            ..stage10_understanding_input()
+        };
+        let safe_packet = Stage10UnderstandingPacket::from_stage_references(
+            &authority, &access, None, None, safe_input,
+        )
+        .expect("stage10 safe meaning candidate");
+        assert_eq!(
+            safe_packet.disposition,
+            Stage10UnderstandingDisposition::MeaningCandidateBounded
+        );
+        assert!(
+            safe_packet
+                .work_authority
+                .can_emit_bounded_meaning_candidate
+        );
+        assert!(!safe_packet.work_authority.can_emit_intent_slot_frame);
+        assert!(!safe_packet.can_route_or_mutate());
+
+        let mut invented_candidate = Stage10MeaningReconstructionCandidate::bounded(
+            "meaning-candidate-stage10-invented",
+            "meaning-hash-stage10-invented",
+            vec!["evidence-span-stage10-invented".to_string()],
+        )
+        .expect("invented meaning candidate");
+        invented_candidate.introduces_protected_fact = true;
+        invented_candidate.invents_authority_relevant_fact = true;
+        let invented_input = Stage10UnderstandingInput {
+            meaning_reconstruction_candidate: Some(invented_candidate),
+            ..stage10_understanding_input()
+        };
+        let rejected = Stage10UnderstandingPacket::from_stage_references(
+            &authority,
+            &access,
+            None,
+            None,
+            invented_input,
+        )
+        .expect("stage10 rejected meaning candidate");
+        assert_eq!(
+            rejected.disposition,
+            Stage10UnderstandingDisposition::MeaningReconstructionRejected
+        );
+        assert!(!rejected.can_update_understanding());
+        assert!(!rejected.can_route_or_mutate());
+    }
+
+    #[test]
+    fn stage_10a_language_and_pronunciation_context_are_advisory_only() {
+        let authority = stage8_current_authority();
+        let access = stage9_access_context(&authority);
+        let packet = Stage10UnderstandingPacket::from_stage_references(
+            &authority,
+            &access,
+            None,
+            None,
+            stage10_understanding_input(),
+        )
+        .expect("stage10 advisory context");
+
+        assert!(packet.work_authority.can_use_language_context);
+        assert!(packet.work_authority.can_use_pronunciation_context);
+        assert!(!packet.work_authority.can_authorize);
+        assert!(!packet.work_authority.can_call_providers);
+        assert!(!packet.work_authority.can_update_memory_persona_emotion);
+
+        let mut drift = packet;
+        drift.language_context_advisory_only = false;
+        assert!(drift.validate().is_err());
     }
 
     #[test]

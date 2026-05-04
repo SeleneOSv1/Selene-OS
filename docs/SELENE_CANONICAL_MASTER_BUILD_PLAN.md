@@ -78,10 +78,10 @@ After every build, update this section before final reporting.
 
 | Field | Current Value |
 |---|---|
-| Current active stage | Stage 10 |
-| Current active build | Stage 10A - Understanding, Intent, Slot, And Meaning Reconstruction Foundation Reconciliation |
-| Next build after current stage passes | Stage 10A - Understanding, Intent, Slot, And Meaning Reconstruction Foundation Reconciliation |
-| Last completed stage | Stage 9A - Voice ID Stack Reconciliation |
+| Current active stage | Stage 11 |
+| Current active build | Stage 11A - Reasoning, Capability Registry, Router, And Tool-Selection Boundary Reconciliation |
+| Next build after current stage passes | Stage 11A - Reasoning, Capability Registry, Router, And Tool-Selection Boundary Reconciliation |
+| Last completed stage | Stage 10A - Understanding, Intent, Slot, And Meaning Reconstruction Foundation Reconciliation |
 | Stages blocked | None yet |
 | Plan drift allowed | No |
 
@@ -1446,7 +1446,9 @@ Next if passed:
 
 ## Stage 3 - Provider, Secret, KMS, Cost, Quota, Vault, And Early Consent Baseline
 
-Status: PARTIALLY_BUILT
+Status: FOUNDATION_PROVEN_BY_STAGE_10A
+
+Stage 10A status: PROVEN_COMPLETE
 
 Stage 3A status: PROVEN_COMPLETE
 
@@ -2178,9 +2180,20 @@ Proof:
 - memory/persona candidate no-override proof;
 - no protected-slot guessing.
 
+Stage 10A proof update:
+
+- Existing PH1.N/PH1.NLP, PH1.SRL, PH1.CONTEXT, PH1.LANG, PH1.PRON, PH1.X, PH1.D model-boundary context, Stage 5 current-turn authority, Stage 6 access context, Stage 7 activation references, Stage 8 final transcript/listening/output boundaries, and Stage 9 Voice ID posture were inspected and crosswalked rather than rebuilt as duplicate understanding, intent, slot, SRL, context, language, pronunciation, or repair engines.
+- `Stage10UnderstandingPacket`, `Stage10UnderstandingInput`, `Stage10UnderstandingInputKind`, `Stage10VoicePostureContextKind`, `Stage10ProtectedSlotDisposition`, `Stage10ProtectedSlotUncertainty`, `Stage10MeaningReconstructionCandidate`, `Stage10UnderstandingDisposition`, and `Stage10UnderstandingWorkAuthority` provide the minimal runtime-owned understanding foundation in `runtime_ingress_turn_foundation.rs`.
+- Stage 10A proves understanding can consume only Stage 5 current committed turn authority, Stage 6 non-executing access context, safe Stage 8 final transcript metadata, optional receipt-safe Stage 9 Voice ID posture, and governed repo-truth equivalents. Partial transcript, VAD-only, audio-scene-only, stale, cancelled, superseded, closed-session, record-artifact-only, and unsafe Voice ID posture inputs cannot update understanding.
+- Intent, slot, semantic-role, language, pronunciation, ambiguity, and meaning-candidate outputs are advisory only. They cannot answer, search, call providers, capture live audio, transcribe live audio, trigger Voice ID matching, emit TTS, route tools, connector-write, authorize, execute protected mutations, or update memory/persona/emotion.
+- Protected slots clarify or fail closed when uncertain. Meaning reconstruction is evidence-bounded and cannot invent names, dates, amounts, addresses, recipients, account/action identifiers, or authority-relevant facts. Ambiguity produces one bounded clarification handoff and cannot become execution or routing.
+- Stage 10A did not add provider calls, live search, live microphone capture, live STT/TTS/playback, live Voice ID matching, router/capability registry work, tools/search, native UI redesign, memory/persona/emotion updates, protected execution, connector writes, raw-audio retention, or duplicate understanding/repair engines.
+- Understanding/intent/slot/SRL/context/language/pronunciation/meaning-boundary proof is certified for Stage 10A. Full natural-language quality corpora, robust multi-turn reasoning, provider-assisted understanding, deeper grammar/spelling repair benchmarks, emotional-context product quality, and memory/persona candidate handoff quality remain deferred to their later owning stages.
+- Stage 11A is ready to start. Broad Stage 10 remains partial for product-quality and deeper repair/evaluation work, but the non-executing understanding foundation is complete enough for router/capability-selection boundary reconciliation.
+
 Next if passed:
 
-- Stage 11 - Reasoning Orchestrator, Capability Registry, And Tool Route.
+- Stage 11A - Reasoning, Capability Registry, Router, And Tool-Selection Boundary Reconciliation.
 
 ## Stage 11 - Reasoning Orchestrator, Capability Registry, And Tool Route
 
