@@ -238,6 +238,23 @@ mod reason_codes {
     pub const STAGE18_UNSAFE_INPUT_BLOCKED: &str = "stage18_unsafe_input_blocked";
     pub const STAGE18_RUNTIME_MOCK_BLOCKED: &str = "stage18_runtime_mock_blocked";
     pub const STAGE18_AUDIT_PROOF_MISSING: &str = "stage18_audit_proof_missing";
+    pub const STAGE19_NOTIFICATION_CANDIDATE_READY: &str = "stage19_notification_candidate_ready";
+    pub const STAGE19_PROACTIVE_OUTPUT_READY: &str = "stage19_proactive_output_ready";
+    pub const STAGE19_BACKGROUND_POSTURE_READY: &str = "stage19_background_posture_ready";
+    pub const STAGE19_REMINDER_ATTENTION_READY: &str = "stage19_reminder_attention_ready";
+    pub const STAGE19_NOTIFICATION_TOKEN_READY: &str = "stage19_notification_token_ready";
+    pub const STAGE19_DELIVERY_VISIBILITY_READY: &str = "stage19_delivery_visibility_ready";
+    pub const STAGE19_NATIVE_BRIDGE_HANDOFF_READY: &str = "stage19_native_bridge_handoff_ready";
+    pub const STAGE19_STAGE_INPUT_BLOCKED: &str = "stage19_stage_input_blocked";
+    pub const STAGE19_NO_INVENTION_BLOCKED: &str = "stage19_no_invention_blocked";
+    pub const STAGE19_REMINDER_ATTENTION_BLOCKED: &str = "stage19_reminder_attention_blocked";
+    pub const STAGE19_NATIVE_BRIDGE_BLOCKED: &str = "stage19_native_bridge_blocked";
+    pub const STAGE19_PROTECTED_NOTIFICATION_BLOCKED: &str =
+        "stage19_protected_notification_blocked";
+    pub const STAGE19_BACKGROUND_STALE_BLOCKED: &str = "stage19_background_stale_blocked";
+    pub const STAGE19_UNSAFE_INPUT_BLOCKED: &str = "stage19_unsafe_input_blocked";
+    pub const STAGE19_RUNTIME_MOCK_BLOCKED: &str = "stage19_runtime_mock_blocked";
+    pub const STAGE19_AUDIT_PROOF_MISSING: &str = "stage19_audit_proof_missing";
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -17243,6 +17260,1217 @@ fn map_request_error(error: RuntimeRequestFoundationError) -> RuntimeIngressTurn
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stage19NotificationAttentionKind {
+    NotificationCandidate,
+    ProactiveOutputCandidate,
+    BackgroundTaskPosture,
+    ReminderFollowupAttention,
+    NotificationTokenBinding,
+    DeliveryVisibility,
+    NativeBridgeHandoff,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stage19NotificationAttentionDisposition {
+    NotificationCandidateReady,
+    ProactiveOutputReady,
+    BackgroundTaskPostureReady,
+    ReminderAttentionReady,
+    NotificationTokenReady,
+    DeliveryVisibilityReady,
+    NativeBridgeHandoffReady,
+    StageInputBlocked,
+    NoInventionBlocked,
+    ReminderAttentionBlocked,
+    NativeBridgeBlocked,
+    ProtectedNotificationBlocked,
+    BackgroundStaleBlocked,
+    UnsafeInputBlocked,
+    RuntimeMockBlocked,
+    AuditProofMissing,
+}
+
+impl Stage19NotificationAttentionDisposition {
+    pub const fn default_reason_code(self) -> &'static str {
+        match self {
+            Stage19NotificationAttentionDisposition::NotificationCandidateReady => {
+                reason_codes::STAGE19_NOTIFICATION_CANDIDATE_READY
+            }
+            Stage19NotificationAttentionDisposition::ProactiveOutputReady => {
+                reason_codes::STAGE19_PROACTIVE_OUTPUT_READY
+            }
+            Stage19NotificationAttentionDisposition::BackgroundTaskPostureReady => {
+                reason_codes::STAGE19_BACKGROUND_POSTURE_READY
+            }
+            Stage19NotificationAttentionDisposition::ReminderAttentionReady => {
+                reason_codes::STAGE19_REMINDER_ATTENTION_READY
+            }
+            Stage19NotificationAttentionDisposition::NotificationTokenReady => {
+                reason_codes::STAGE19_NOTIFICATION_TOKEN_READY
+            }
+            Stage19NotificationAttentionDisposition::DeliveryVisibilityReady => {
+                reason_codes::STAGE19_DELIVERY_VISIBILITY_READY
+            }
+            Stage19NotificationAttentionDisposition::NativeBridgeHandoffReady => {
+                reason_codes::STAGE19_NATIVE_BRIDGE_HANDOFF_READY
+            }
+            Stage19NotificationAttentionDisposition::StageInputBlocked => {
+                reason_codes::STAGE19_STAGE_INPUT_BLOCKED
+            }
+            Stage19NotificationAttentionDisposition::NoInventionBlocked => {
+                reason_codes::STAGE19_NO_INVENTION_BLOCKED
+            }
+            Stage19NotificationAttentionDisposition::ReminderAttentionBlocked => {
+                reason_codes::STAGE19_REMINDER_ATTENTION_BLOCKED
+            }
+            Stage19NotificationAttentionDisposition::NativeBridgeBlocked => {
+                reason_codes::STAGE19_NATIVE_BRIDGE_BLOCKED
+            }
+            Stage19NotificationAttentionDisposition::ProtectedNotificationBlocked => {
+                reason_codes::STAGE19_PROTECTED_NOTIFICATION_BLOCKED
+            }
+            Stage19NotificationAttentionDisposition::BackgroundStaleBlocked => {
+                reason_codes::STAGE19_BACKGROUND_STALE_BLOCKED
+            }
+            Stage19NotificationAttentionDisposition::UnsafeInputBlocked => {
+                reason_codes::STAGE19_UNSAFE_INPUT_BLOCKED
+            }
+            Stage19NotificationAttentionDisposition::RuntimeMockBlocked => {
+                reason_codes::STAGE19_RUNTIME_MOCK_BLOCKED
+            }
+            Stage19NotificationAttentionDisposition::AuditProofMissing => {
+                reason_codes::STAGE19_AUDIT_PROOF_MISSING
+            }
+        }
+    }
+
+    pub const fn is_ready(self) -> bool {
+        matches!(
+            self,
+            Stage19NotificationAttentionDisposition::NotificationCandidateReady
+                | Stage19NotificationAttentionDisposition::ProactiveOutputReady
+                | Stage19NotificationAttentionDisposition::BackgroundTaskPostureReady
+                | Stage19NotificationAttentionDisposition::ReminderAttentionReady
+                | Stage19NotificationAttentionDisposition::NotificationTokenReady
+                | Stage19NotificationAttentionDisposition::DeliveryVisibilityReady
+                | Stage19NotificationAttentionDisposition::NativeBridgeHandoffReady
+        )
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Stage19NotificationAttentionWorkAuthority {
+    pub can_emit_notification_candidate_packet: bool,
+    pub can_emit_proactive_output_candidate_packet: bool,
+    pub can_emit_background_task_posture_packet: bool,
+    pub can_emit_reminder_attention_packet: bool,
+    pub can_emit_notification_token_binding_ref: bool,
+    pub can_emit_delivery_visibility_ref: bool,
+    pub can_emit_native_bridge_handoff: bool,
+    pub can_emit_display_notification_identity: bool,
+    pub can_emit_honest_uncertainty: bool,
+    pub can_emit_audit_proof: bool,
+    pub can_fail_closed: bool,
+    pub can_invent_facts: bool,
+    pub can_invent_delivery_success: bool,
+    pub can_invent_attachments_or_citations: bool,
+    pub can_claim_unproven_completion: bool,
+    pub can_mutate_external_state: bool,
+    pub can_connector_write: bool,
+    pub can_send_message: bool,
+    pub can_post_content: bool,
+    pub can_purchase: bool,
+    pub can_delete_remote: bool,
+    pub can_invite: bool,
+    pub can_schedule: bool,
+    pub can_approve: bool,
+    pub can_dispatch: bool,
+    pub can_execute_simulation: bool,
+    pub can_execute_protected_action: bool,
+    pub can_call_live_provider: bool,
+    pub can_run_live_search: bool,
+    pub can_call_live_external_tool: bool,
+    pub can_generate_live_media: bool,
+    pub can_emit_live_notification_delivery: bool,
+    pub can_run_live_background_execution: bool,
+    pub can_emit_tts_or_playback: bool,
+    pub can_capture_microphone_audio: bool,
+    pub can_transcribe_live_audio: bool,
+    pub can_trigger_voice_id_matching: bool,
+    pub can_update_memory_persona_emotion: bool,
+    pub can_add_native_ui_behavior: bool,
+    pub can_create_user_turn: bool,
+    pub can_treat_visible_notification_as_action_success: bool,
+}
+
+impl Stage19NotificationAttentionWorkAuthority {
+    pub const fn notification_ready() -> Self {
+        Self {
+            can_emit_notification_candidate_packet: true,
+            can_emit_display_notification_identity: true,
+            can_emit_audit_proof: true,
+            can_fail_closed: false,
+            ..Self::fail_closed()
+        }
+    }
+
+    pub const fn proactive_ready() -> Self {
+        Self {
+            can_emit_proactive_output_candidate_packet: true,
+            can_emit_display_notification_identity: true,
+            can_emit_audit_proof: true,
+            can_fail_closed: false,
+            ..Self::fail_closed()
+        }
+    }
+
+    pub const fn background_ready() -> Self {
+        Self {
+            can_emit_background_task_posture_packet: true,
+            can_emit_honest_uncertainty: true,
+            can_emit_audit_proof: true,
+            can_fail_closed: false,
+            ..Self::fail_closed()
+        }
+    }
+
+    pub const fn attention_ready() -> Self {
+        Self {
+            can_emit_reminder_attention_packet: true,
+            can_emit_notification_token_binding_ref: true,
+            can_emit_delivery_visibility_ref: true,
+            can_emit_display_notification_identity: true,
+            can_emit_honest_uncertainty: true,
+            can_emit_audit_proof: true,
+            can_fail_closed: false,
+            ..Self::fail_closed()
+        }
+    }
+
+    pub const fn native_bridge_ready() -> Self {
+        Self {
+            can_emit_native_bridge_handoff: true,
+            can_emit_display_notification_identity: true,
+            can_emit_audit_proof: true,
+            can_fail_closed: false,
+            ..Self::fail_closed()
+        }
+    }
+
+    pub const fn fail_closed() -> Self {
+        Self {
+            can_emit_notification_candidate_packet: false,
+            can_emit_proactive_output_candidate_packet: false,
+            can_emit_background_task_posture_packet: false,
+            can_emit_reminder_attention_packet: false,
+            can_emit_notification_token_binding_ref: false,
+            can_emit_delivery_visibility_ref: false,
+            can_emit_native_bridge_handoff: false,
+            can_emit_display_notification_identity: false,
+            can_emit_honest_uncertainty: true,
+            can_emit_audit_proof: false,
+            can_fail_closed: true,
+            can_invent_facts: false,
+            can_invent_delivery_success: false,
+            can_invent_attachments_or_citations: false,
+            can_claim_unproven_completion: false,
+            can_mutate_external_state: false,
+            can_connector_write: false,
+            can_send_message: false,
+            can_post_content: false,
+            can_purchase: false,
+            can_delete_remote: false,
+            can_invite: false,
+            can_schedule: false,
+            can_approve: false,
+            can_dispatch: false,
+            can_execute_simulation: false,
+            can_execute_protected_action: false,
+            can_call_live_provider: false,
+            can_run_live_search: false,
+            can_call_live_external_tool: false,
+            can_generate_live_media: false,
+            can_emit_live_notification_delivery: false,
+            can_run_live_background_execution: false,
+            can_emit_tts_or_playback: false,
+            can_capture_microphone_audio: false,
+            can_transcribe_live_audio: false,
+            can_trigger_voice_id_matching: false,
+            can_update_memory_persona_emotion: false,
+            can_add_native_ui_behavior: false,
+            can_create_user_turn: false,
+            can_treat_visible_notification_as_action_success: false,
+        }
+    }
+
+    pub const fn can_mutate_or_execute(self) -> bool {
+        self.can_invent_facts
+            || self.can_invent_delivery_success
+            || self.can_invent_attachments_or_citations
+            || self.can_claim_unproven_completion
+            || self.can_mutate_external_state
+            || self.can_connector_write
+            || self.can_send_message
+            || self.can_post_content
+            || self.can_purchase
+            || self.can_delete_remote
+            || self.can_invite
+            || self.can_schedule
+            || self.can_approve
+            || self.can_dispatch
+            || self.can_execute_simulation
+            || self.can_execute_protected_action
+            || self.can_call_live_provider
+            || self.can_run_live_search
+            || self.can_call_live_external_tool
+            || self.can_generate_live_media
+            || self.can_emit_live_notification_delivery
+            || self.can_run_live_background_execution
+            || self.can_emit_tts_or_playback
+            || self.can_capture_microphone_audio
+            || self.can_transcribe_live_audio
+            || self.can_trigger_voice_id_matching
+            || self.can_update_memory_persona_emotion
+            || self.can_add_native_ui_behavior
+            || self.can_create_user_turn
+            || self.can_treat_visible_notification_as_action_success
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Stage19NotificationAttentionInput {
+    pub attention_kind: Stage19NotificationAttentionKind,
+    pub notification_candidate_id: Option<String>,
+    pub proactive_output_id: Option<String>,
+    pub background_task_id: Option<String>,
+    pub attention_state_id: Option<String>,
+    pub reminder_id: Option<String>,
+    pub delivery_id: Option<String>,
+    pub work_id: Option<String>,
+    pub lease_id: Option<String>,
+    pub notification_token_binding_id: Option<String>,
+    pub native_bridge_handoff_id: Option<String>,
+    pub audit_id: Option<String>,
+    pub ph1j_proof_ref: Option<String>,
+    pub stage15_response_output_ref_present: bool,
+    pub stage17_output_identity_ref_present: bool,
+    pub stage17_output_identity_non_authoritative: bool,
+    pub stage18_display_ref_present: bool,
+    pub stage18_display_ref_non_authoritative: bool,
+    pub notification_candidate_bounded: bool,
+    pub proactive_candidate_bounded: bool,
+    pub background_posture_bounded: bool,
+    pub uncertainty_preserved: bool,
+    pub notification_invented_fact: bool,
+    pub notification_invented_delivery_success: bool,
+    pub notification_invented_attachment_or_citation: bool,
+    pub notification_invented_provider_or_tool_result: bool,
+    pub notification_claimed_unproven_completion: bool,
+    pub notification_implied_mutation: bool,
+    pub reminder_delivery_from_bounded_ref: bool,
+    pub reminder_delivery_tenant_scoped: bool,
+    pub reminder_delivery_secret_safe: bool,
+    pub reminder_delivery_redacted: bool,
+    pub reminder_delivery_stale_aware: bool,
+    pub reminder_delivery_revocation_aware: bool,
+    pub reminder_delivery_unverifiable: bool,
+    pub reminder_delivery_stale: bool,
+    pub reminder_delivery_secret_unsafe: bool,
+    pub reminder_delivery_cross_tenant: bool,
+    pub notification_token_binding_present: bool,
+    pub notification_token_binding_secret_safe: bool,
+    pub fake_notification_detected: bool,
+    pub fake_reminder_delivery_detected: bool,
+    pub fake_background_completion_detected: bool,
+    pub fake_attention_state_detected: bool,
+    pub runtime_mock_detected: bool,
+    pub fixture_only_test_path: bool,
+    pub native_bridge_declarative_only: bool,
+    pub native_bridge_mutates_state: bool,
+    pub native_bridge_connector_writes: bool,
+    pub native_bridge_dispatches_or_executes: bool,
+    pub native_bridge_calls_providers_or_tools: bool,
+    pub native_bridge_emits_tts_or_playback: bool,
+    pub native_bridge_creates_user_turn: bool,
+    pub native_bridge_treats_visible_notification_as_action_success: bool,
+    pub protected_action_like_request: bool,
+    pub protected_slot_or_authority_ambiguous: bool,
+    pub unsafe_identity_posture: bool,
+    pub notification_implies_stage12_mutation_without_proof: bool,
+    pub stale_or_cancelled_or_superseded_output: bool,
+    pub session_closed: bool,
+    pub record_artifact_only_turn: bool,
+    pub stale_attention_state: bool,
+    pub stale_delivery_state: bool,
+    pub background_task_creates_turn: bool,
+    pub background_task_reopens_session: bool,
+    pub background_task_silently_completes_work: bool,
+    pub notification_identity_matches_current_output: bool,
+    pub replay_upgrades_blocked_delivery: bool,
+    pub raw_provider_output_present: bool,
+    pub raw_search_dump_present: bool,
+    pub raw_media_present: bool,
+    pub raw_push_token_present: bool,
+    pub unverified_source_evidence_present: bool,
+    pub unsupported_claim_candidate_present: bool,
+    pub fake_notification_source_carrier_present: bool,
+    pub speech_or_playback_used_as_truth_authority: bool,
+    pub protected_action_candidate_present: bool,
+    pub simulation_candidate_present: bool,
+    pub approved_execution_plan_present: bool,
+    pub secrets_exposed: bool,
+    pub raw_audio_or_voice_material_exposed: bool,
+    pub internal_trace_exposed: bool,
+    pub missing_notification_token: bool,
+    pub access_denied: bool,
+    pub policy_denied: bool,
+    pub tenant_mismatch: bool,
+    pub attempted_live_provider_in_build: bool,
+    pub generated_live_media_in_build: bool,
+    pub ran_live_search_in_build: bool,
+    pub called_live_external_tool_in_build: bool,
+    pub connector_write_requested: bool,
+    pub ran_live_notification_delivery_in_build: bool,
+    pub ran_live_background_execution_in_build: bool,
+    pub ran_live_tts_or_playback_in_build: bool,
+    pub captured_microphone_audio: bool,
+    pub transcribed_live_audio: bool,
+    pub voice_id_matching_attempted: bool,
+    pub native_ui_behavior_added: bool,
+}
+
+impl Stage19NotificationAttentionInput {
+    pub fn fixture_notification_candidate_ready(
+        notification_candidate_id: impl Into<String>,
+        audit_id: impl Into<String>,
+    ) -> Self {
+        let audit_id = audit_id.into();
+        Self {
+            attention_kind: Stage19NotificationAttentionKind::NotificationCandidate,
+            notification_candidate_id: Some(notification_candidate_id.into()),
+            proactive_output_id: None,
+            background_task_id: None,
+            attention_state_id: Some("attention-state-stage19-ready".to_string()),
+            reminder_id: Some("reminder-stage19-ready".to_string()),
+            delivery_id: Some("delivery-stage19-ready".to_string()),
+            work_id: Some("work-stage19-ready".to_string()),
+            lease_id: Some("lease-stage19-ready".to_string()),
+            notification_token_binding_id: Some("notification-token-stage19-ready".to_string()),
+            native_bridge_handoff_id: None,
+            audit_id: Some(audit_id.clone()),
+            ph1j_proof_ref: Some(audit_id),
+            stage15_response_output_ref_present: true,
+            stage17_output_identity_ref_present: false,
+            stage17_output_identity_non_authoritative: false,
+            stage18_display_ref_present: false,
+            stage18_display_ref_non_authoritative: false,
+            notification_candidate_bounded: true,
+            proactive_candidate_bounded: true,
+            background_posture_bounded: true,
+            uncertainty_preserved: true,
+            notification_invented_fact: false,
+            notification_invented_delivery_success: false,
+            notification_invented_attachment_or_citation: false,
+            notification_invented_provider_or_tool_result: false,
+            notification_claimed_unproven_completion: false,
+            notification_implied_mutation: false,
+            reminder_delivery_from_bounded_ref: true,
+            reminder_delivery_tenant_scoped: true,
+            reminder_delivery_secret_safe: true,
+            reminder_delivery_redacted: true,
+            reminder_delivery_stale_aware: true,
+            reminder_delivery_revocation_aware: true,
+            reminder_delivery_unverifiable: false,
+            reminder_delivery_stale: false,
+            reminder_delivery_secret_unsafe: false,
+            reminder_delivery_cross_tenant: false,
+            notification_token_binding_present: true,
+            notification_token_binding_secret_safe: true,
+            fake_notification_detected: false,
+            fake_reminder_delivery_detected: false,
+            fake_background_completion_detected: false,
+            fake_attention_state_detected: false,
+            runtime_mock_detected: false,
+            fixture_only_test_path: true,
+            native_bridge_declarative_only: true,
+            native_bridge_mutates_state: false,
+            native_bridge_connector_writes: false,
+            native_bridge_dispatches_or_executes: false,
+            native_bridge_calls_providers_or_tools: false,
+            native_bridge_emits_tts_or_playback: false,
+            native_bridge_creates_user_turn: false,
+            native_bridge_treats_visible_notification_as_action_success: false,
+            protected_action_like_request: false,
+            protected_slot_or_authority_ambiguous: false,
+            unsafe_identity_posture: false,
+            notification_implies_stage12_mutation_without_proof: false,
+            stale_or_cancelled_or_superseded_output: false,
+            session_closed: false,
+            record_artifact_only_turn: false,
+            stale_attention_state: false,
+            stale_delivery_state: false,
+            background_task_creates_turn: false,
+            background_task_reopens_session: false,
+            background_task_silently_completes_work: false,
+            notification_identity_matches_current_output: true,
+            replay_upgrades_blocked_delivery: false,
+            raw_provider_output_present: false,
+            raw_search_dump_present: false,
+            raw_media_present: false,
+            raw_push_token_present: false,
+            unverified_source_evidence_present: false,
+            unsupported_claim_candidate_present: false,
+            fake_notification_source_carrier_present: false,
+            speech_or_playback_used_as_truth_authority: false,
+            protected_action_candidate_present: false,
+            simulation_candidate_present: false,
+            approved_execution_plan_present: false,
+            secrets_exposed: false,
+            raw_audio_or_voice_material_exposed: false,
+            internal_trace_exposed: false,
+            missing_notification_token: false,
+            access_denied: false,
+            policy_denied: false,
+            tenant_mismatch: false,
+            attempted_live_provider_in_build: false,
+            generated_live_media_in_build: false,
+            ran_live_search_in_build: false,
+            called_live_external_tool_in_build: false,
+            connector_write_requested: false,
+            ran_live_notification_delivery_in_build: false,
+            ran_live_background_execution_in_build: false,
+            ran_live_tts_or_playback_in_build: false,
+            captured_microphone_audio: false,
+            transcribed_live_audio: false,
+            voice_id_matching_attempted: false,
+            native_ui_behavior_added: false,
+        }
+    }
+
+    pub fn fixture_proactive_output_ready(
+        proactive_output_id: impl Into<String>,
+        audit_id: impl Into<String>,
+    ) -> Self {
+        let mut input = Self::fixture_notification_candidate_ready(
+            "notification-candidate-stage19-proactive",
+            audit_id,
+        );
+        input.attention_kind = Stage19NotificationAttentionKind::ProactiveOutputCandidate;
+        input.notification_candidate_id = None;
+        input.proactive_output_id = Some(proactive_output_id.into());
+        input
+    }
+
+    pub fn fixture_background_posture_ready(
+        background_task_id: impl Into<String>,
+        work_id: impl Into<String>,
+        lease_id: impl Into<String>,
+        audit_id: impl Into<String>,
+    ) -> Self {
+        let mut input = Self::fixture_notification_candidate_ready(
+            "notification-candidate-stage19-background",
+            audit_id,
+        );
+        input.attention_kind = Stage19NotificationAttentionKind::BackgroundTaskPosture;
+        input.notification_candidate_id = None;
+        input.background_task_id = Some(background_task_id.into());
+        input.work_id = Some(work_id.into());
+        input.lease_id = Some(lease_id.into());
+        input
+    }
+
+    pub fn fixture_reminder_attention_ready(
+        attention_state_id: impl Into<String>,
+        reminder_id: impl Into<String>,
+        delivery_id: impl Into<String>,
+        notification_token_binding_id: impl Into<String>,
+        audit_id: impl Into<String>,
+    ) -> Self {
+        let mut input = Self::fixture_notification_candidate_ready(
+            "notification-candidate-stage19-attention",
+            audit_id,
+        );
+        input.attention_kind = Stage19NotificationAttentionKind::ReminderFollowupAttention;
+        input.notification_candidate_id = None;
+        input.attention_state_id = Some(attention_state_id.into());
+        input.reminder_id = Some(reminder_id.into());
+        input.delivery_id = Some(delivery_id.into());
+        input.notification_token_binding_id = Some(notification_token_binding_id.into());
+        input
+    }
+
+    pub fn fixture_native_bridge_handoff_ready(
+        native_bridge_handoff_id: impl Into<String>,
+        audit_id: impl Into<String>,
+    ) -> Self {
+        let mut input = Self::fixture_notification_candidate_ready(
+            "notification-candidate-stage19-native",
+            audit_id,
+        );
+        input.attention_kind = Stage19NotificationAttentionKind::NativeBridgeHandoff;
+        input.notification_candidate_id = None;
+        input.native_bridge_handoff_id = Some(native_bridge_handoff_id.into());
+        input
+    }
+}
+
+impl Validate for Stage19NotificationAttentionInput {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        validate_stage4_optional_ref(
+            "stage19_notification_attention_input.notification_candidate_id",
+            self.notification_candidate_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage19_notification_attention_input.proactive_output_id",
+            self.proactive_output_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage19_notification_attention_input.background_task_id",
+            self.background_task_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage19_notification_attention_input.attention_state_id",
+            self.attention_state_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage19_notification_attention_input.reminder_id",
+            self.reminder_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage19_notification_attention_input.delivery_id",
+            self.delivery_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage19_notification_attention_input.work_id",
+            self.work_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage19_notification_attention_input.lease_id",
+            self.lease_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage19_notification_attention_input.notification_token_binding_id",
+            self.notification_token_binding_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage19_notification_attention_input.native_bridge_handoff_id",
+            self.native_bridge_handoff_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage19_notification_attention_input.audit_id",
+            self.audit_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage19_notification_attention_input.ph1j_proof_ref",
+            self.ph1j_proof_ref.as_deref(),
+        )?;
+        if (self.fake_notification_detected
+            || self.fake_reminder_delivery_detected
+            || self.fake_background_completion_detected
+            || self.fake_attention_state_detected
+            || self.runtime_mock_detected)
+            && !self.fixture_only_test_path
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage19_notification_attention_input.runtime_mock",
+                reason: "runtime mocks and fake notification, reminder, background, or attention success are forbidden outside explicit fixture-only paths",
+            });
+        }
+        if self.attempted_live_provider_in_build
+            || self.generated_live_media_in_build
+            || self.ran_live_search_in_build
+            || self.called_live_external_tool_in_build
+            || self.connector_write_requested
+            || self.ran_live_notification_delivery_in_build
+            || self.ran_live_background_execution_in_build
+            || self.ran_live_tts_or_playback_in_build
+            || self.captured_microphone_audio
+            || self.transcribed_live_audio
+            || self.voice_id_matching_attempted
+            || self.native_ui_behavior_added
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage19_notification_attention_input.live_behavior",
+                reason: "Stage 19A cannot add live provider/search/tool/media/notification/background/TTS/playback/mic/STT/Voice ID/native behavior",
+            });
+        }
+        Ok(())
+    }
+}
+
+// Stage19 packet and validation follow Stage15/17/18 evidence-bound output continuity and keep
+// notifications, proactive output, and attention surfaces declarative until later live-delivery stages.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Stage19NotificationAttentionPacket {
+    pub session_id: SessionId,
+    pub turn_id: Option<TurnId>,
+    pub activation_id: Option<String>,
+    pub response_output_id: String,
+    pub response_hash: String,
+    pub public_answer_id: String,
+    pub speech_output_id: Option<String>,
+    pub display_output_id: Option<String>,
+    pub notification_candidate_id: Option<String>,
+    pub proactive_output_id: Option<String>,
+    pub background_task_id: Option<String>,
+    pub attention_state_id: Option<String>,
+    pub reminder_id: Option<String>,
+    pub delivery_id: Option<String>,
+    pub work_id: Option<String>,
+    pub lease_id: Option<String>,
+    pub notification_token_binding_id: Option<String>,
+    pub native_bridge_handoff_id: Option<String>,
+    pub access_context_id: Option<String>,
+    pub policy_context_id: Option<String>,
+    pub tenant_id: Option<String>,
+    pub audit_id: Option<String>,
+    pub ph1j_proof_ref: Option<String>,
+    pub attention_kind: Stage19NotificationAttentionKind,
+    pub reason_code: &'static str,
+    pub disposition: Stage19NotificationAttentionDisposition,
+    pub stage15_disposition: Stage15ResponseOutputDisposition,
+    pub stage17_disposition: Option<Stage17SpeechOutputDisposition>,
+    pub stage18_disposition: Option<Stage18MultimodalDisplayDisposition>,
+    pub stage15_response_output_ref_present: bool,
+    pub stage17_output_identity_ref_present: bool,
+    pub stage17_output_identity_non_authoritative: bool,
+    pub stage18_display_ref_present: bool,
+    pub stage18_display_ref_non_authoritative: bool,
+    pub notification_candidate_bounded: bool,
+    pub proactive_candidate_bounded: bool,
+    pub background_posture_bounded: bool,
+    pub uncertainty_preserved: bool,
+    pub notification_invented_fact: bool,
+    pub notification_invented_delivery_success: bool,
+    pub notification_invented_attachment_or_citation: bool,
+    pub notification_invented_provider_or_tool_result: bool,
+    pub notification_claimed_unproven_completion: bool,
+    pub notification_implied_mutation: bool,
+    pub reminder_delivery_from_bounded_ref: bool,
+    pub reminder_delivery_tenant_scoped: bool,
+    pub reminder_delivery_secret_safe: bool,
+    pub reminder_delivery_redacted: bool,
+    pub reminder_delivery_stale_aware: bool,
+    pub reminder_delivery_revocation_aware: bool,
+    pub reminder_delivery_unverifiable: bool,
+    pub reminder_delivery_stale: bool,
+    pub reminder_delivery_secret_unsafe: bool,
+    pub reminder_delivery_cross_tenant: bool,
+    pub notification_token_binding_present: bool,
+    pub notification_token_binding_secret_safe: bool,
+    pub fake_notification_detected: bool,
+    pub fake_reminder_delivery_detected: bool,
+    pub fake_background_completion_detected: bool,
+    pub fake_attention_state_detected: bool,
+    pub runtime_mock_detected: bool,
+    pub native_bridge_declarative_only: bool,
+    pub native_bridge_mutates_state: bool,
+    pub native_bridge_connector_writes: bool,
+    pub native_bridge_dispatches_or_executes: bool,
+    pub native_bridge_calls_providers_or_tools: bool,
+    pub native_bridge_emits_tts_or_playback: bool,
+    pub native_bridge_creates_user_turn: bool,
+    pub native_bridge_treats_visible_notification_as_action_success: bool,
+    pub protected_action_like_request: bool,
+    pub protected_slot_or_authority_ambiguous: bool,
+    pub unsafe_identity_posture: bool,
+    pub notification_implies_stage12_mutation_without_proof: bool,
+    pub stale_or_cancelled_or_superseded_output: bool,
+    pub session_closed: bool,
+    pub record_artifact_only_turn: bool,
+    pub stale_attention_state: bool,
+    pub stale_delivery_state: bool,
+    pub background_task_creates_turn: bool,
+    pub background_task_reopens_session: bool,
+    pub background_task_silently_completes_work: bool,
+    pub notification_identity_matches_current_output: bool,
+    pub replay_upgrades_blocked_delivery: bool,
+    pub raw_provider_output_present: bool,
+    pub raw_search_dump_present: bool,
+    pub raw_media_present: bool,
+    pub raw_push_token_present: bool,
+    pub unverified_source_evidence_present: bool,
+    pub unsupported_claim_candidate_present: bool,
+    pub fake_notification_source_carrier_present: bool,
+    pub speech_or_playback_used_as_truth_authority: bool,
+    pub protected_action_candidate_present: bool,
+    pub simulation_candidate_present: bool,
+    pub approved_execution_plan_present: bool,
+    pub secrets_exposed: bool,
+    pub raw_audio_or_voice_material_exposed: bool,
+    pub internal_trace_exposed: bool,
+    pub missing_notification_token: bool,
+    pub access_denied: bool,
+    pub policy_denied: bool,
+    pub tenant_mismatch: bool,
+    pub work_authority: Stage19NotificationAttentionWorkAuthority,
+}
+
+impl Stage19NotificationAttentionPacket {
+    pub fn from_stage15_output(
+        output: &Stage15ResponseOutputPacket,
+        speech_output: Option<&Stage17SpeechOutputPacket>,
+        display_output: Option<&Stage18MultimodalDisplayPacket>,
+        input: Stage19NotificationAttentionInput,
+    ) -> Result<Self, ContractViolation> {
+        output.validate()?;
+        if let Some(speech_output) = speech_output {
+            speech_output.validate()?;
+        }
+        if let Some(display_output) = display_output {
+            display_output.validate()?;
+        }
+        input.validate()?;
+        let disposition = Self::decide_disposition(output, speech_output, display_output, &input);
+        let work_authority = Self::work_authority_for(disposition);
+        let audit_id = input.audit_id.clone().or_else(|| output.audit_id.clone());
+        let ph1j_proof_ref = input
+            .ph1j_proof_ref
+            .clone()
+            .or_else(|| output.ph1j_proof_ref.clone())
+            .or_else(|| audit_id.clone());
+        let packet = Self {
+            session_id: output.session_id,
+            turn_id: output.turn_id,
+            activation_id: output.activation_id.clone(),
+            response_output_id: output.response_output_id.clone(),
+            response_hash: output.response_hash.clone(),
+            public_answer_id: output.public_answer_id.clone(),
+            speech_output_id: speech_output.map(|speech| speech.speech_output_id.clone()),
+            display_output_id: display_output.map(|display| display.display_output_id.clone()),
+            notification_candidate_id: input.notification_candidate_id,
+            proactive_output_id: input.proactive_output_id,
+            background_task_id: input.background_task_id,
+            attention_state_id: input.attention_state_id,
+            reminder_id: input.reminder_id,
+            delivery_id: input.delivery_id,
+            work_id: input.work_id,
+            lease_id: input.lease_id,
+            notification_token_binding_id: input.notification_token_binding_id,
+            native_bridge_handoff_id: input.native_bridge_handoff_id,
+            access_context_id: output.access_context_id.clone(),
+            policy_context_id: output.policy_context_id.clone(),
+            tenant_id: output.tenant_id.clone(),
+            audit_id,
+            ph1j_proof_ref,
+            attention_kind: input.attention_kind,
+            reason_code: disposition.default_reason_code(),
+            disposition,
+            stage15_disposition: output.disposition,
+            stage17_disposition: speech_output.map(|speech| speech.disposition),
+            stage18_disposition: display_output.map(|display| display.disposition),
+            stage15_response_output_ref_present: input.stage15_response_output_ref_present,
+            stage17_output_identity_ref_present: input.stage17_output_identity_ref_present,
+            stage17_output_identity_non_authoritative: input
+                .stage17_output_identity_non_authoritative,
+            stage18_display_ref_present: input.stage18_display_ref_present,
+            stage18_display_ref_non_authoritative: input.stage18_display_ref_non_authoritative,
+            notification_candidate_bounded: input.notification_candidate_bounded,
+            proactive_candidate_bounded: input.proactive_candidate_bounded,
+            background_posture_bounded: input.background_posture_bounded,
+            uncertainty_preserved: input.uncertainty_preserved,
+            notification_invented_fact: input.notification_invented_fact,
+            notification_invented_delivery_success: input.notification_invented_delivery_success,
+            notification_invented_attachment_or_citation: input
+                .notification_invented_attachment_or_citation,
+            notification_invented_provider_or_tool_result: input
+                .notification_invented_provider_or_tool_result,
+            notification_claimed_unproven_completion: input
+                .notification_claimed_unproven_completion,
+            notification_implied_mutation: input.notification_implied_mutation,
+            reminder_delivery_from_bounded_ref: input.reminder_delivery_from_bounded_ref,
+            reminder_delivery_tenant_scoped: input.reminder_delivery_tenant_scoped,
+            reminder_delivery_secret_safe: input.reminder_delivery_secret_safe,
+            reminder_delivery_redacted: input.reminder_delivery_redacted,
+            reminder_delivery_stale_aware: input.reminder_delivery_stale_aware,
+            reminder_delivery_revocation_aware: input.reminder_delivery_revocation_aware,
+            reminder_delivery_unverifiable: input.reminder_delivery_unverifiable,
+            reminder_delivery_stale: input.reminder_delivery_stale,
+            reminder_delivery_secret_unsafe: input.reminder_delivery_secret_unsafe,
+            reminder_delivery_cross_tenant: input.reminder_delivery_cross_tenant,
+            notification_token_binding_present: input.notification_token_binding_present,
+            notification_token_binding_secret_safe: input.notification_token_binding_secret_safe,
+            fake_notification_detected: input.fake_notification_detected,
+            fake_reminder_delivery_detected: input.fake_reminder_delivery_detected,
+            fake_background_completion_detected: input.fake_background_completion_detected,
+            fake_attention_state_detected: input.fake_attention_state_detected,
+            runtime_mock_detected: input.runtime_mock_detected,
+            native_bridge_declarative_only: input.native_bridge_declarative_only,
+            native_bridge_mutates_state: input.native_bridge_mutates_state,
+            native_bridge_connector_writes: input.native_bridge_connector_writes,
+            native_bridge_dispatches_or_executes: input.native_bridge_dispatches_or_executes,
+            native_bridge_calls_providers_or_tools: input.native_bridge_calls_providers_or_tools,
+            native_bridge_emits_tts_or_playback: input.native_bridge_emits_tts_or_playback,
+            native_bridge_creates_user_turn: input.native_bridge_creates_user_turn,
+            native_bridge_treats_visible_notification_as_action_success: input
+                .native_bridge_treats_visible_notification_as_action_success,
+            protected_action_like_request: input.protected_action_like_request,
+            protected_slot_or_authority_ambiguous: input.protected_slot_or_authority_ambiguous,
+            unsafe_identity_posture: input.unsafe_identity_posture,
+            notification_implies_stage12_mutation_without_proof: input
+                .notification_implies_stage12_mutation_without_proof,
+            stale_or_cancelled_or_superseded_output: input.stale_or_cancelled_or_superseded_output,
+            session_closed: input.session_closed,
+            record_artifact_only_turn: input.record_artifact_only_turn,
+            stale_attention_state: input.stale_attention_state,
+            stale_delivery_state: input.stale_delivery_state,
+            background_task_creates_turn: input.background_task_creates_turn,
+            background_task_reopens_session: input.background_task_reopens_session,
+            background_task_silently_completes_work: input.background_task_silently_completes_work,
+            notification_identity_matches_current_output: input
+                .notification_identity_matches_current_output,
+            replay_upgrades_blocked_delivery: input.replay_upgrades_blocked_delivery,
+            raw_provider_output_present: input.raw_provider_output_present,
+            raw_search_dump_present: input.raw_search_dump_present,
+            raw_media_present: input.raw_media_present,
+            raw_push_token_present: input.raw_push_token_present,
+            unverified_source_evidence_present: input.unverified_source_evidence_present,
+            unsupported_claim_candidate_present: input.unsupported_claim_candidate_present,
+            fake_notification_source_carrier_present: input
+                .fake_notification_source_carrier_present,
+            speech_or_playback_used_as_truth_authority: input
+                .speech_or_playback_used_as_truth_authority,
+            protected_action_candidate_present: input.protected_action_candidate_present,
+            simulation_candidate_present: input.simulation_candidate_present,
+            approved_execution_plan_present: input.approved_execution_plan_present,
+            secrets_exposed: input.secrets_exposed,
+            raw_audio_or_voice_material_exposed: input.raw_audio_or_voice_material_exposed,
+            internal_trace_exposed: input.internal_trace_exposed,
+            missing_notification_token: input.missing_notification_token,
+            access_denied: input.access_denied,
+            policy_denied: input.policy_denied,
+            tenant_mismatch: input.tenant_mismatch,
+            work_authority,
+        };
+        packet.validate()?;
+        Ok(packet)
+    }
+
+    pub const fn can_mutate_or_execute(&self) -> bool {
+        self.work_authority.can_mutate_or_execute()
+    }
+
+    fn decide_disposition(
+        output: &Stage15ResponseOutputPacket,
+        speech_output: Option<&Stage17SpeechOutputPacket>,
+        display_output: Option<&Stage18MultimodalDisplayPacket>,
+        input: &Stage19NotificationAttentionInput,
+    ) -> Stage19NotificationAttentionDisposition {
+        if input.runtime_mock_detected
+            || input.fake_notification_detected
+            || input.fake_reminder_delivery_detected
+            || input.fake_background_completion_detected
+            || input.fake_attention_state_detected
+        {
+            return Stage19NotificationAttentionDisposition::RuntimeMockBlocked;
+        }
+        if input.raw_provider_output_present
+            || input.raw_search_dump_present
+            || input.raw_media_present
+            || input.raw_push_token_present
+            || input.unverified_source_evidence_present
+            || input.unsupported_claim_candidate_present
+            || input.fake_notification_source_carrier_present
+            || input.speech_or_playback_used_as_truth_authority
+            || input.protected_action_candidate_present
+            || input.simulation_candidate_present
+            || input.approved_execution_plan_present
+            || input.secrets_exposed
+            || input.raw_audio_or_voice_material_exposed
+            || input.internal_trace_exposed
+            || input.missing_notification_token
+            || input.access_denied
+            || input.policy_denied
+            || input.tenant_mismatch
+        {
+            return Stage19NotificationAttentionDisposition::UnsafeInputBlocked;
+        }
+        if !output.disposition.is_ready()
+            || output.can_mutate_or_execute()
+            || output.work_authority.can_add_native_ui_behavior
+            || !input.stage15_response_output_ref_present
+        {
+            return Stage19NotificationAttentionDisposition::StageInputBlocked;
+        }
+        if let Some(speech_output) = speech_output {
+            if speech_output.can_mutate_or_execute()
+                || speech_output.stale_or_cancelled_or_superseded_output
+                || speech_output.session_closed
+                || speech_output.record_artifact_only_turn
+                || speech_output.playback_creates_user_turn
+                || speech_output.playback_authorizes_or_executes
+                || !input.stage17_output_identity_ref_present
+                || !input.stage17_output_identity_non_authoritative
+            {
+                return Stage19NotificationAttentionDisposition::StageInputBlocked;
+            }
+        }
+        if let Some(display_output) = display_output {
+            if display_output.can_mutate_or_execute()
+                || display_output.stale_or_cancelled_or_superseded_output
+                || display_output.session_closed
+                || display_output.record_artifact_only_turn
+                || !input.stage18_display_ref_present
+                || !input.stage18_display_ref_non_authoritative
+            {
+                return Stage19NotificationAttentionDisposition::StageInputBlocked;
+            }
+        }
+        if input.audit_id.is_none()
+            && input.ph1j_proof_ref.is_none()
+            && output.audit_id.is_none()
+            && output.ph1j_proof_ref.is_none()
+        {
+            return Stage19NotificationAttentionDisposition::AuditProofMissing;
+        }
+        if !input.notification_candidate_bounded
+            || !input.proactive_candidate_bounded
+            || !input.background_posture_bounded
+            || !input.uncertainty_preserved
+            || input.notification_invented_fact
+            || input.notification_invented_delivery_success
+            || input.notification_invented_attachment_or_citation
+            || input.notification_invented_provider_or_tool_result
+            || input.notification_claimed_unproven_completion
+            || input.notification_implied_mutation
+        {
+            return Stage19NotificationAttentionDisposition::NoInventionBlocked;
+        }
+        if !input.reminder_delivery_from_bounded_ref
+            || !input.reminder_delivery_tenant_scoped
+            || !input.reminder_delivery_secret_safe
+            || !input.reminder_delivery_redacted
+            || !input.reminder_delivery_stale_aware
+            || !input.reminder_delivery_revocation_aware
+            || input.reminder_delivery_unverifiable
+            || input.reminder_delivery_stale
+            || input.reminder_delivery_secret_unsafe
+            || input.reminder_delivery_cross_tenant
+            || !input.notification_token_binding_present
+            || !input.notification_token_binding_secret_safe
+        {
+            return Stage19NotificationAttentionDisposition::ReminderAttentionBlocked;
+        }
+        if !input.native_bridge_declarative_only
+            || input.native_bridge_mutates_state
+            || input.native_bridge_connector_writes
+            || input.native_bridge_dispatches_or_executes
+            || input.native_bridge_calls_providers_or_tools
+            || input.native_bridge_emits_tts_or_playback
+            || input.native_bridge_creates_user_turn
+            || input.native_bridge_treats_visible_notification_as_action_success
+        {
+            return Stage19NotificationAttentionDisposition::NativeBridgeBlocked;
+        }
+        if input.protected_action_like_request
+            || input.protected_slot_or_authority_ambiguous
+            || input.unsafe_identity_posture
+            || input.notification_implies_stage12_mutation_without_proof
+        {
+            return Stage19NotificationAttentionDisposition::ProtectedNotificationBlocked;
+        }
+        if input.stale_or_cancelled_or_superseded_output
+            || input.session_closed
+            || input.record_artifact_only_turn
+            || input.stale_attention_state
+            || input.stale_delivery_state
+            || input.background_task_creates_turn
+            || input.background_task_reopens_session
+            || input.background_task_silently_completes_work
+            || !input.notification_identity_matches_current_output
+            || input.replay_upgrades_blocked_delivery
+        {
+            return Stage19NotificationAttentionDisposition::BackgroundStaleBlocked;
+        }
+
+        match input.attention_kind {
+            Stage19NotificationAttentionKind::NotificationCandidate => {
+                if input.notification_candidate_id.is_some() {
+                    Stage19NotificationAttentionDisposition::NotificationCandidateReady
+                } else {
+                    Stage19NotificationAttentionDisposition::NoInventionBlocked
+                }
+            }
+            Stage19NotificationAttentionKind::ProactiveOutputCandidate => {
+                if input.proactive_output_id.is_some() {
+                    Stage19NotificationAttentionDisposition::ProactiveOutputReady
+                } else {
+                    Stage19NotificationAttentionDisposition::NoInventionBlocked
+                }
+            }
+            Stage19NotificationAttentionKind::BackgroundTaskPosture => {
+                if input.background_task_id.is_some()
+                    && input.work_id.is_some()
+                    && input.lease_id.is_some()
+                {
+                    Stage19NotificationAttentionDisposition::BackgroundTaskPostureReady
+                } else {
+                    Stage19NotificationAttentionDisposition::BackgroundStaleBlocked
+                }
+            }
+            Stage19NotificationAttentionKind::ReminderFollowupAttention => {
+                if input.attention_state_id.is_some()
+                    && input.reminder_id.is_some()
+                    && input.delivery_id.is_some()
+                {
+                    Stage19NotificationAttentionDisposition::ReminderAttentionReady
+                } else {
+                    Stage19NotificationAttentionDisposition::ReminderAttentionBlocked
+                }
+            }
+            Stage19NotificationAttentionKind::NotificationTokenBinding => {
+                if input.notification_token_binding_id.is_some() {
+                    Stage19NotificationAttentionDisposition::NotificationTokenReady
+                } else {
+                    Stage19NotificationAttentionDisposition::ReminderAttentionBlocked
+                }
+            }
+            Stage19NotificationAttentionKind::DeliveryVisibility => {
+                if input.delivery_id.is_some() {
+                    Stage19NotificationAttentionDisposition::DeliveryVisibilityReady
+                } else {
+                    Stage19NotificationAttentionDisposition::ReminderAttentionBlocked
+                }
+            }
+            Stage19NotificationAttentionKind::NativeBridgeHandoff => {
+                if input.native_bridge_handoff_id.is_some() {
+                    Stage19NotificationAttentionDisposition::NativeBridgeHandoffReady
+                } else {
+                    Stage19NotificationAttentionDisposition::NativeBridgeBlocked
+                }
+            }
+        }
+    }
+
+    const fn work_authority_for(
+        disposition: Stage19NotificationAttentionDisposition,
+    ) -> Stage19NotificationAttentionWorkAuthority {
+        match disposition {
+            Stage19NotificationAttentionDisposition::NotificationCandidateReady => {
+                Stage19NotificationAttentionWorkAuthority::notification_ready()
+            }
+            Stage19NotificationAttentionDisposition::ProactiveOutputReady => {
+                Stage19NotificationAttentionWorkAuthority::proactive_ready()
+            }
+            Stage19NotificationAttentionDisposition::BackgroundTaskPostureReady => {
+                Stage19NotificationAttentionWorkAuthority::background_ready()
+            }
+            Stage19NotificationAttentionDisposition::ReminderAttentionReady
+            | Stage19NotificationAttentionDisposition::NotificationTokenReady
+            | Stage19NotificationAttentionDisposition::DeliveryVisibilityReady => {
+                Stage19NotificationAttentionWorkAuthority::attention_ready()
+            }
+            Stage19NotificationAttentionDisposition::NativeBridgeHandoffReady => {
+                Stage19NotificationAttentionWorkAuthority::native_bridge_ready()
+            }
+            _ => Stage19NotificationAttentionWorkAuthority::fail_closed(),
+        }
+    }
+}
+
+impl Validate for Stage19NotificationAttentionPacket {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        validate_stage4_optional_ref(
+            "stage19_notification_attention_packet.activation_id",
+            self.activation_id.as_deref(),
+        )?;
+        validate_stage4_ref(
+            "stage19_notification_attention_packet.response_output_id",
+            &self.response_output_id,
+        )?;
+        validate_stage4_ref(
+            "stage19_notification_attention_packet.response_hash",
+            &self.response_hash,
+        )?;
+        validate_stage4_ref(
+            "stage19_notification_attention_packet.public_answer_id",
+            &self.public_answer_id,
+        )?;
+        validate_stage4_optional_ref(
+            "stage19_notification_attention_packet.speech_output_id",
+            self.speech_output_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage19_notification_attention_packet.display_output_id",
+            self.display_output_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage19_notification_attention_packet.notification_candidate_id",
+            self.notification_candidate_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage19_notification_attention_packet.proactive_output_id",
+            self.proactive_output_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage19_notification_attention_packet.background_task_id",
+            self.background_task_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage19_notification_attention_packet.attention_state_id",
+            self.attention_state_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage19_notification_attention_packet.reminder_id",
+            self.reminder_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage19_notification_attention_packet.delivery_id",
+            self.delivery_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage19_notification_attention_packet.work_id",
+            self.work_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage19_notification_attention_packet.lease_id",
+            self.lease_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage19_notification_attention_packet.notification_token_binding_id",
+            self.notification_token_binding_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage19_notification_attention_packet.native_bridge_handoff_id",
+            self.native_bridge_handoff_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage19_notification_attention_packet.access_context_id",
+            self.access_context_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage19_notification_attention_packet.policy_context_id",
+            self.policy_context_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage19_notification_attention_packet.tenant_id",
+            self.tenant_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage19_notification_attention_packet.audit_id",
+            self.audit_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage19_notification_attention_packet.ph1j_proof_ref",
+            self.ph1j_proof_ref.as_deref(),
+        )?;
+        if self.reason_code != self.disposition.default_reason_code() {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage19_notification_attention_packet.reason_code",
+                reason: "must match Stage 19A notification/proactive/background disposition",
+            });
+        }
+        if self.work_authority.can_mutate_or_execute() {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage19_notification_attention_packet.work_authority",
+                reason: "Stage 19A cannot invent notifications or delivery success, mutate, connector-write, approve, dispatch, execute, call live providers/search/tools, emit live notification delivery/background execution/TTS/playback, create turns, or add native UI behavior",
+            });
+        }
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -23324,6 +24552,480 @@ mod tests {
             Stage18MultimodalDisplayPacket::from_stage15_output(&output, None, runtime_mock)
                 .is_err()
         );
+    }
+
+    fn stage19_response_output_packet() -> Stage15ResponseOutputPacket {
+        stage18_response_output_packet()
+    }
+
+    fn stage19_speech_output_identity() -> Stage17SpeechOutputPacket {
+        stage18_speech_output_identity()
+    }
+
+    fn stage19_display_identity() -> Stage18MultimodalDisplayPacket {
+        let output = stage19_response_output_packet();
+        let speech = stage19_speech_output_identity();
+        let mut input = stage18_renderer_input(
+            "display-output-stage19-identity",
+            "renderer-payload-stage19-identity",
+            "display-surface-stage19-identity",
+            "audit-stage19-identity",
+        );
+        input.stage17_output_identity_ref_present = true;
+        input.stage17_output_identity_non_authoritative = true;
+        Stage18MultimodalDisplayPacket::from_stage15_output(&output, Some(&speech), input)
+            .expect("stage19 display identity")
+    }
+
+    #[test]
+    fn stage_19a_notification_candidate_consumes_stage15_stage17_stage18_non_authoritatively() {
+        let output = stage19_response_output_packet();
+        let speech = stage19_speech_output_identity();
+        let display = stage19_display_identity();
+        let mut input = Stage19NotificationAttentionInput::fixture_notification_candidate_ready(
+            "notification-candidate-stage19-ready",
+            "audit-stage19-ready",
+        );
+        input.stage17_output_identity_ref_present = true;
+        input.stage17_output_identity_non_authoritative = true;
+        input.stage18_display_ref_present = true;
+        input.stage18_display_ref_non_authoritative = true;
+        let packet = Stage19NotificationAttentionPacket::from_stage15_output(
+            &output,
+            Some(&speech),
+            Some(&display),
+            input,
+        )
+        .expect("stage19 notification candidate ready");
+
+        assert_eq!(
+            packet.disposition,
+            Stage19NotificationAttentionDisposition::NotificationCandidateReady
+        );
+        assert_eq!(packet.response_output_id, output.response_output_id);
+        assert_eq!(packet.response_hash, output.response_hash);
+        assert_eq!(
+            packet.stage17_disposition,
+            Some(Stage17SpeechOutputDisposition::SpeechOutputReady)
+        );
+        assert_eq!(
+            packet.stage18_disposition,
+            Some(Stage18MultimodalDisplayDisposition::RendererPayloadReady)
+        );
+        assert!(packet.stage17_output_identity_non_authoritative);
+        assert!(packet.stage18_display_ref_non_authoritative);
+        assert!(packet.work_authority.can_emit_notification_candidate_packet);
+        assert!(packet.work_authority.can_emit_display_notification_identity);
+        assert!(!packet.work_authority.can_emit_live_notification_delivery);
+        assert!(!packet.work_authority.can_run_live_background_execution);
+        assert!(!packet.can_mutate_or_execute());
+    }
+
+    #[test]
+    fn stage_19a_notification_and_proactive_packets_cannot_invent_or_claim_completion() {
+        let output = stage19_response_output_packet();
+
+        for input in [
+            {
+                let mut input =
+                    Stage19NotificationAttentionInput::fixture_notification_candidate_ready(
+                        "notification-candidate-stage19-invent-fact",
+                        "audit-stage19-invent-fact",
+                    );
+                input.notification_invented_fact = true;
+                input
+            },
+            {
+                let mut input =
+                    Stage19NotificationAttentionInput::fixture_notification_candidate_ready(
+                        "notification-candidate-stage19-delivery-success",
+                        "audit-stage19-delivery-success",
+                    );
+                input.notification_invented_delivery_success = true;
+                input
+            },
+            {
+                let mut input = Stage19NotificationAttentionInput::fixture_proactive_output_ready(
+                    "proactive-output-stage19-completion",
+                    "audit-stage19-completion",
+                );
+                input.notification_claimed_unproven_completion = true;
+                input
+            },
+            {
+                let mut input = Stage19NotificationAttentionInput::fixture_proactive_output_ready(
+                    "proactive-output-stage19-mutation",
+                    "audit-stage19-mutation",
+                );
+                input.notification_implied_mutation = true;
+                input
+            },
+        ] {
+            let packet =
+                Stage19NotificationAttentionPacket::from_stage15_output(&output, None, None, input)
+                    .expect("stage19 no-invention blocked");
+            assert_eq!(
+                packet.disposition,
+                Stage19NotificationAttentionDisposition::NoInventionBlocked
+            );
+            assert!(packet.work_authority.can_fail_closed);
+            assert!(!packet.work_authority.can_emit_notification_candidate_packet);
+            assert!(
+                !packet
+                    .work_authority
+                    .can_emit_proactive_output_candidate_packet
+            );
+            assert!(!packet.can_mutate_or_execute());
+        }
+    }
+
+    #[test]
+    fn stage_19a_reminder_delivery_attention_requires_scoped_secret_safe_refs() {
+        let output = stage19_response_output_packet();
+        let ready = Stage19NotificationAttentionPacket::from_stage15_output(
+            &output,
+            None,
+            None,
+            Stage19NotificationAttentionInput::fixture_reminder_attention_ready(
+                "attention-state-stage19-ready",
+                "reminder-stage19-ready",
+                "delivery-stage19-ready",
+                "notification-token-stage19-ready",
+                "audit-stage19-attention-ready",
+            ),
+        )
+        .expect("stage19 attention ready");
+        assert_eq!(
+            ready.disposition,
+            Stage19NotificationAttentionDisposition::ReminderAttentionReady
+        );
+        assert!(ready.work_authority.can_emit_reminder_attention_packet);
+        assert!(ready.work_authority.can_emit_notification_token_binding_ref);
+        assert!(ready.work_authority.can_emit_delivery_visibility_ref);
+        assert!(!ready.can_mutate_or_execute());
+
+        for input in [
+            {
+                let mut input = Stage19NotificationAttentionInput::fixture_reminder_attention_ready(
+                    "attention-state-stage19-unbounded",
+                    "reminder-stage19-unbounded",
+                    "delivery-stage19-unbounded",
+                    "notification-token-stage19-unbounded",
+                    "audit-stage19-unbounded",
+                );
+                input.reminder_delivery_from_bounded_ref = false;
+                input
+            },
+            {
+                let mut input = Stage19NotificationAttentionInput::fixture_reminder_attention_ready(
+                    "attention-state-stage19-secret",
+                    "reminder-stage19-secret",
+                    "delivery-stage19-secret",
+                    "notification-token-stage19-secret",
+                    "audit-stage19-secret",
+                );
+                input.reminder_delivery_secret_unsafe = true;
+                input
+            },
+            {
+                let mut input = Stage19NotificationAttentionInput::fixture_reminder_attention_ready(
+                    "attention-state-stage19-cross-tenant",
+                    "reminder-stage19-cross-tenant",
+                    "delivery-stage19-cross-tenant",
+                    "notification-token-stage19-cross-tenant",
+                    "audit-stage19-cross-tenant",
+                );
+                input.reminder_delivery_cross_tenant = true;
+                input
+            },
+            {
+                let mut input = Stage19NotificationAttentionInput::fixture_reminder_attention_ready(
+                    "attention-state-stage19-token-missing",
+                    "reminder-stage19-token-missing",
+                    "delivery-stage19-token-missing",
+                    "notification-token-stage19-token-missing",
+                    "audit-stage19-token-missing",
+                );
+                input.notification_token_binding_present = false;
+                input
+            },
+        ] {
+            let packet =
+                Stage19NotificationAttentionPacket::from_stage15_output(&output, None, None, input)
+                    .expect("stage19 reminder attention blocked");
+            assert_eq!(
+                packet.disposition,
+                Stage19NotificationAttentionDisposition::ReminderAttentionBlocked
+            );
+            assert!(packet.work_authority.can_fail_closed);
+            assert!(!packet.work_authority.can_emit_reminder_attention_packet);
+            assert!(!packet.can_mutate_or_execute());
+        }
+    }
+
+    #[test]
+    fn stage_19a_native_handoff_and_background_posture_remain_declarative_only() {
+        let output = stage19_response_output_packet();
+        let ready = Stage19NotificationAttentionPacket::from_stage15_output(
+            &output,
+            None,
+            None,
+            Stage19NotificationAttentionInput::fixture_native_bridge_handoff_ready(
+                "native-bridge-handoff-stage19-ready",
+                "audit-stage19-native-ready",
+            ),
+        )
+        .expect("stage19 native handoff ready");
+        assert_eq!(
+            ready.disposition,
+            Stage19NotificationAttentionDisposition::NativeBridgeHandoffReady
+        );
+        assert!(ready.native_bridge_declarative_only);
+        assert!(ready.work_authority.can_emit_native_bridge_handoff);
+        assert!(!ready.can_mutate_or_execute());
+
+        for input in [
+            {
+                let mut input =
+                    Stage19NotificationAttentionInput::fixture_native_bridge_handoff_ready(
+                        "native-bridge-handoff-stage19-mutate",
+                        "audit-stage19-native-mutate",
+                    );
+                input.native_bridge_mutates_state = true;
+                input
+            },
+            {
+                let mut input =
+                    Stage19NotificationAttentionInput::fixture_native_bridge_handoff_ready(
+                        "native-bridge-handoff-stage19-dispatch",
+                        "audit-stage19-native-dispatch",
+                    );
+                input.native_bridge_dispatches_or_executes = true;
+                input
+            },
+            {
+                let mut input =
+                    Stage19NotificationAttentionInput::fixture_native_bridge_handoff_ready(
+                        "native-bridge-handoff-stage19-turn",
+                        "audit-stage19-native-turn",
+                    );
+                input.native_bridge_creates_user_turn = true;
+                input
+            },
+        ] {
+            let packet =
+                Stage19NotificationAttentionPacket::from_stage15_output(&output, None, None, input)
+                    .expect("stage19 native blocked");
+            assert_eq!(
+                packet.disposition,
+                Stage19NotificationAttentionDisposition::NativeBridgeBlocked
+            );
+            assert!(packet.work_authority.can_fail_closed);
+            assert!(!packet.work_authority.can_emit_native_bridge_handoff);
+            assert!(!packet.can_mutate_or_execute());
+        }
+
+        for input in [
+            {
+                let mut input = Stage19NotificationAttentionInput::fixture_background_posture_ready(
+                    "background-task-stage19-stale",
+                    "work-stage19-stale",
+                    "lease-stage19-stale",
+                    "audit-stage19-stale",
+                );
+                input.stale_or_cancelled_or_superseded_output = true;
+                input
+            },
+            {
+                let mut input = Stage19NotificationAttentionInput::fixture_background_posture_ready(
+                    "background-task-stage19-turn",
+                    "work-stage19-turn",
+                    "lease-stage19-turn",
+                    "audit-stage19-turn",
+                );
+                input.background_task_creates_turn = true;
+                input
+            },
+            {
+                let mut input = Stage19NotificationAttentionInput::fixture_background_posture_ready(
+                    "background-task-stage19-complete",
+                    "work-stage19-complete",
+                    "lease-stage19-complete",
+                    "audit-stage19-complete",
+                );
+                input.background_task_silently_completes_work = true;
+                input
+            },
+        ] {
+            let packet =
+                Stage19NotificationAttentionPacket::from_stage15_output(&output, None, None, input)
+                    .expect("stage19 background/stale blocked");
+            assert_eq!(
+                packet.disposition,
+                Stage19NotificationAttentionDisposition::BackgroundStaleBlocked
+            );
+            assert!(packet.work_authority.can_fail_closed);
+            assert!(
+                !packet
+                    .work_authority
+                    .can_emit_background_task_posture_packet
+            );
+            assert!(!packet.can_mutate_or_execute());
+        }
+    }
+
+    #[test]
+    fn stage_19a_blocks_raw_inputs_live_paths_and_runtime_mocks() {
+        let output = stage19_response_output_packet();
+        let packet = Stage19NotificationAttentionPacket::from_stage15_output(
+            &output,
+            None,
+            None,
+            Stage19NotificationAttentionInput::fixture_notification_candidate_ready(
+                "notification-candidate-stage19-no-exec",
+                "audit-stage19-no-exec",
+            ),
+        )
+        .expect("stage19 no-exec packet");
+
+        assert!(!packet.work_authority.can_invent_facts);
+        assert!(!packet.work_authority.can_invent_delivery_success);
+        assert!(!packet.work_authority.can_invent_attachments_or_citations);
+        assert!(!packet.work_authority.can_claim_unproven_completion);
+        assert!(!packet.work_authority.can_mutate_external_state);
+        assert!(!packet.work_authority.can_connector_write);
+        assert!(!packet.work_authority.can_approve);
+        assert!(!packet.work_authority.can_dispatch);
+        assert!(!packet.work_authority.can_execute_simulation);
+        assert!(!packet.work_authority.can_execute_protected_action);
+        assert!(!packet.work_authority.can_call_live_provider);
+        assert!(!packet.work_authority.can_run_live_search);
+        assert!(!packet.work_authority.can_call_live_external_tool);
+        assert!(!packet.work_authority.can_generate_live_media);
+        assert!(!packet.work_authority.can_emit_live_notification_delivery);
+        assert!(!packet.work_authority.can_run_live_background_execution);
+        assert!(!packet.work_authority.can_emit_tts_or_playback);
+        assert!(!packet.work_authority.can_capture_microphone_audio);
+        assert!(!packet.work_authority.can_transcribe_live_audio);
+        assert!(!packet.work_authority.can_trigger_voice_id_matching);
+        assert!(!packet.work_authority.can_update_memory_persona_emotion);
+        assert!(!packet.work_authority.can_add_native_ui_behavior);
+        assert!(!packet.work_authority.can_create_user_turn);
+        assert!(
+            !packet
+                .work_authority
+                .can_treat_visible_notification_as_action_success
+        );
+        assert!(!packet.can_mutate_or_execute());
+
+        for input in [
+            {
+                let mut input =
+                    Stage19NotificationAttentionInput::fixture_notification_candidate_ready(
+                        "notification-candidate-stage19-raw-provider",
+                        "audit-stage19-raw-provider",
+                    );
+                input.raw_provider_output_present = true;
+                input
+            },
+            {
+                let mut input =
+                    Stage19NotificationAttentionInput::fixture_notification_candidate_ready(
+                        "notification-candidate-stage19-raw-push",
+                        "audit-stage19-raw-push",
+                    );
+                input.raw_push_token_present = true;
+                input
+            },
+            {
+                let mut input =
+                    Stage19NotificationAttentionInput::fixture_notification_candidate_ready(
+                        "notification-candidate-stage19-unverified",
+                        "audit-stage19-unverified",
+                    );
+                input.unverified_source_evidence_present = true;
+                input
+            },
+            {
+                let mut input =
+                    Stage19NotificationAttentionInput::fixture_notification_candidate_ready(
+                        "notification-candidate-stage19-protected",
+                        "audit-stage19-protected",
+                    );
+                input.protected_action_candidate_present = true;
+                input
+            },
+            {
+                let mut input =
+                    Stage19NotificationAttentionInput::fixture_notification_candidate_ready(
+                        "notification-candidate-stage19-policy",
+                        "audit-stage19-policy",
+                    );
+                input.policy_denied = true;
+                input
+            },
+        ] {
+            let packet =
+                Stage19NotificationAttentionPacket::from_stage15_output(&output, None, None, input)
+                    .expect("stage19 unsafe input blocked");
+            assert_eq!(
+                packet.disposition,
+                Stage19NotificationAttentionDisposition::UnsafeInputBlocked
+            );
+            assert!(packet.work_authority.can_fail_closed);
+            assert!(!packet.can_mutate_or_execute());
+        }
+
+        for mut input in [
+            {
+                let mut input =
+                    Stage19NotificationAttentionInput::fixture_notification_candidate_ready(
+                        "notification-candidate-stage19-live-provider",
+                        "audit-stage19-live-provider",
+                    );
+                input.attempted_live_provider_in_build = true;
+                input
+            },
+            {
+                let mut input =
+                    Stage19NotificationAttentionInput::fixture_notification_candidate_ready(
+                        "notification-candidate-stage19-live-notification",
+                        "audit-stage19-live-notification",
+                    );
+                input.ran_live_notification_delivery_in_build = true;
+                input
+            },
+            {
+                let mut input =
+                    Stage19NotificationAttentionInput::fixture_notification_candidate_ready(
+                        "notification-candidate-stage19-live-background",
+                        "audit-stage19-live-background",
+                    );
+                input.ran_live_background_execution_in_build = true;
+                input
+            },
+        ] {
+            input.fixture_only_test_path = true;
+            assert!(Stage19NotificationAttentionPacket::from_stage15_output(
+                &output, None, None, input
+            )
+            .is_err());
+        }
+
+        let mut runtime_mock =
+            Stage19NotificationAttentionInput::fixture_notification_candidate_ready(
+                "notification-candidate-stage19-runtime-mock",
+                "audit-stage19-runtime-mock",
+            );
+        runtime_mock.fake_notification_detected = true;
+        runtime_mock.fixture_only_test_path = false;
+        assert!(Stage19NotificationAttentionPacket::from_stage15_output(
+            &output,
+            None,
+            None,
+            runtime_mock,
+        )
+        .is_err());
     }
 
     #[test]
