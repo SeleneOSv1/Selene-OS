@@ -4,7 +4,7 @@ Status: CANONICAL_BUILD_ROADMAP
 Created: 2026-05-02
 Last Updated: 2026-05-04
 Repo Root: `/Users/selene/Documents/Selene-OS`
-Current Next Build: Stage 18A - Multimodal Output, Display Surfaces, Attachments, And Renderer Boundary Reconciliation
+Current Next Build: Stage 19A - Notifications, Proactive Output, Background Tasks, And User-Attention Boundary Reconciliation
 
 ## Purpose
 
@@ -78,10 +78,10 @@ After every build, update this section before final reporting.
 
 | Field | Current Value |
 |---|---|
-| Current active stage | Stage 17 |
-| Current active build | Stage 17A - TTS, Speech Output, Playback, Voice Style, And Audio Output Boundary Reconciliation |
-| Next build after current stage passes | Stage 18A - Multimodal Output, Display Surfaces, Attachments, And Renderer Boundary Reconciliation |
-| Last completed stage | Stage 17A - TTS, Speech Output, Playback, Voice Style, And Audio Output Boundary Reconciliation |
+| Current active stage | Stage 18 |
+| Current active build | Stage 18A - Multimodal Output, Display Surfaces, Attachments, And Renderer Boundary Reconciliation |
+| Next build after current stage passes | Stage 19A - Notifications, Proactive Output, Background Tasks, And User-Attention Boundary Reconciliation |
+| Last completed stage | Stage 18A - Multimodal Output, Display Surfaces, Attachments, And Renderer Boundary Reconciliation |
 | Stages blocked | None yet |
 | Plan drift allowed | No |
 
@@ -2619,6 +2619,24 @@ Stage 17A proof update:
 Next if passed:
 
 - Stage 18A - Multimodal Output, Display Surfaces, Attachments, And Renderer Boundary Reconciliation.
+
+Stage 18A status: PROVEN_COMPLETE
+
+Stage 18A proof update:
+
+- Existing PH1.X, PH1.WRITE, PH1.SUMMARY, PH1.E, PH1.SEARCH, PH1.J audit/proof-ledger, PH1.C, PH1.K, PH1.POLICY, PH1.GOV, PH1.OS, runtime law/governance, Stage 13 source-evidence, Stage 14 public-answer/citation, Stage 15 response-output, Stage 17 speech-output identity, `web_search_plan` synthesis/write/runtime rendering truth, adapter, storage, PH1.MULTI/PH1.DELIVERY inspect-only repo truth, and native bridge inspect-only surfaces were inspected and crosswalked rather than rebuilt as duplicate multimodal, renderer, display, attachment, source-card, citation, native bridge, search, provider-control, or runtime-law engines. PH1.D/model-provider surfaces, native Swift files, and `simulation_executor.rs` remained inspect-only.
+- `Stage18MultimodalDisplayPacket`, `Stage18MultimodalDisplayInput`, `Stage18MultimodalDisplayKind`, `Stage18MultimodalDisplayDisposition`, and `Stage18MultimodalDisplayWorkAuthority` provide the minimal runtime-owned multimodal/display/renderer boundary in `runtime_ingress_turn_foundation.rs`.
+- Stage 18A consumes only Stage 13 bounded evidence/source refs, Stage 14 evidence-bound public answer refs, Stage 15 response output refs, optional Stage 17 speech/output identity refs as non-authoritative continuity, PH1.J audit/proof refs, Stage 5 current-turn/session authority, Stage 6 access context as non-executing context, and governed repo-truth equivalents. Raw provider output, raw search dumps, raw media, raw attachment bytes without governed refs, unverified evidence, unsupported claim candidates, fake citation/source carriers, speech/playback state as truth authority, protected-action candidates, simulation candidates, approved execution plans without a bounded display contract, stale/cancelled/superseded/closed-session turns, and record-artifact-only turns cannot become render authority.
+- Renderer payloads preserve Stage 15 response meaning and cannot invent facts, citations, attachments, media, provider/tool results, approvals, completed actions, mutations, dates, URLs, or provenance. Missing or unsafe renderer identity, stale/cancelled/superseded output, replay upgrade, stale source cards, or stale attachments fail closed.
+- Attachments and source cards render only from bounded, verified, secret-safe, tenant-scoped, redacted, stale-aware, and revocation-aware refs. Missing, stale, unverifiable, secret-unsafe, cross-tenant, fake, or raw attachment/source evidence fails closed or preserves honest uncertainty.
+- Native/display bridge handoff is declarative metadata only. It cannot mutate, connector-write, dispatch, approve, execute, route, call providers/search/tools, emit TTS/playback, create user turns, bypass Stage 12 protected-action gates, bypass Stage 13/14 evidence gates, or treat UI render success as action success.
+- Runtime mocks, fake attachments, fake media, fake render success, fake source cards, and fake citation cards are blocked outside explicit fixture-only test paths. Stage 18A did not add native UI behavior, live provider calls, live image/video/audio generation, live web search, live external tool calls, connector writes, protected execution, live TTS/playback, live microphone capture, live STT, live Voice ID matching, memory/persona/emotion/preference mutation, raw audio/biometric/secret exposure, new business workflows, or duplicate renderer/display engines.
+- Multimodal/display/attachment/renderer/no-mutation/no-execution boundary proof is certified for Stage 18A. Production renderer UX, native display polish, rich attachment previews, live media generation, broad multimodal answer quality, visual citation UX, cross-device rendering quality, and Stage 33 native parity remain deferred to later owning stages.
+- Stage 19A is ready to start. Broad Stage 18 remains partial, but the display/renderer boundary is complete enough for notifications, proactive output, background tasks, and user-attention boundary reconciliation to proceed without native UI or mutation authority.
+
+Next if passed:
+
+- Stage 19A - Notifications, Proactive Output, Background Tasks, And User-Attention Boundary Reconciliation.
 
 ## Stage 14 - Web Search Enterprise Sublanes And Release Proof
 

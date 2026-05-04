@@ -221,6 +221,23 @@ mod reason_codes {
     pub const STAGE17_UNSAFE_INPUT_BLOCKED: &str = "stage17_unsafe_input_blocked";
     pub const STAGE17_RUNTIME_MOCK_BLOCKED: &str = "stage17_runtime_mock_blocked";
     pub const STAGE17_AUDIT_PROOF_MISSING: &str = "stage17_audit_proof_missing";
+    pub const STAGE18_RENDERER_PAYLOAD_READY: &str = "stage18_renderer_payload_ready";
+    pub const STAGE18_DISPLAY_SURFACE_READY: &str = "stage18_display_surface_ready";
+    pub const STAGE18_ATTACHMENT_RENDER_READY: &str = "stage18_attachment_render_ready";
+    pub const STAGE18_SOURCE_CARD_RENDER_READY: &str = "stage18_source_card_render_ready";
+    pub const STAGE18_MEDIA_OUTPUT_DISPOSITION_READY: &str =
+        "stage18_media_output_disposition_ready";
+    pub const STAGE18_NATIVE_BRIDGE_HANDOFF_READY: &str = "stage18_native_bridge_handoff_ready";
+    pub const STAGE18_STAGE_INPUT_BLOCKED: &str = "stage18_stage_input_blocked";
+    pub const STAGE18_RENDERER_NO_INVENTION_BLOCKED: &str = "stage18_renderer_no_invention_blocked";
+    pub const STAGE18_ATTACHMENT_SOURCE_CARD_BLOCKED: &str =
+        "stage18_attachment_source_card_blocked";
+    pub const STAGE18_NATIVE_BRIDGE_BLOCKED: &str = "stage18_native_bridge_blocked";
+    pub const STAGE18_PROTECTED_DISPLAY_BLOCKED: &str = "stage18_protected_display_blocked";
+    pub const STAGE18_STALE_RENDER_BLOCKED: &str = "stage18_stale_render_blocked";
+    pub const STAGE18_UNSAFE_INPUT_BLOCKED: &str = "stage18_unsafe_input_blocked";
+    pub const STAGE18_RUNTIME_MOCK_BLOCKED: &str = "stage18_runtime_mock_blocked";
+    pub const STAGE18_AUDIT_PROOF_MISSING: &str = "stage18_audit_proof_missing";
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -12830,6 +12847,1281 @@ impl Validate for Stage17SpeechOutputPacket {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stage18MultimodalDisplayKind {
+    RendererPayload,
+    DisplaySurface,
+    AttachmentRender,
+    SourceCardRender,
+    MediaOutputDisposition,
+    NativeBridgeHandoff,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stage18MultimodalDisplayDisposition {
+    RendererPayloadReady,
+    DisplaySurfaceReady,
+    AttachmentRenderReady,
+    SourceCardRenderReady,
+    MediaOutputDispositionReady,
+    NativeBridgeHandoffReady,
+    StageInputBlocked,
+    RendererNoInventionBlocked,
+    AttachmentSourceCardBlocked,
+    NativeBridgeBlocked,
+    ProtectedDisplayBlocked,
+    StaleRenderBlocked,
+    UnsafeInputBlocked,
+    RuntimeMockBlocked,
+    AuditProofMissing,
+}
+
+impl Stage18MultimodalDisplayDisposition {
+    pub const fn default_reason_code(self) -> &'static str {
+        match self {
+            Stage18MultimodalDisplayDisposition::RendererPayloadReady => {
+                reason_codes::STAGE18_RENDERER_PAYLOAD_READY
+            }
+            Stage18MultimodalDisplayDisposition::DisplaySurfaceReady => {
+                reason_codes::STAGE18_DISPLAY_SURFACE_READY
+            }
+            Stage18MultimodalDisplayDisposition::AttachmentRenderReady => {
+                reason_codes::STAGE18_ATTACHMENT_RENDER_READY
+            }
+            Stage18MultimodalDisplayDisposition::SourceCardRenderReady => {
+                reason_codes::STAGE18_SOURCE_CARD_RENDER_READY
+            }
+            Stage18MultimodalDisplayDisposition::MediaOutputDispositionReady => {
+                reason_codes::STAGE18_MEDIA_OUTPUT_DISPOSITION_READY
+            }
+            Stage18MultimodalDisplayDisposition::NativeBridgeHandoffReady => {
+                reason_codes::STAGE18_NATIVE_BRIDGE_HANDOFF_READY
+            }
+            Stage18MultimodalDisplayDisposition::StageInputBlocked => {
+                reason_codes::STAGE18_STAGE_INPUT_BLOCKED
+            }
+            Stage18MultimodalDisplayDisposition::RendererNoInventionBlocked => {
+                reason_codes::STAGE18_RENDERER_NO_INVENTION_BLOCKED
+            }
+            Stage18MultimodalDisplayDisposition::AttachmentSourceCardBlocked => {
+                reason_codes::STAGE18_ATTACHMENT_SOURCE_CARD_BLOCKED
+            }
+            Stage18MultimodalDisplayDisposition::NativeBridgeBlocked => {
+                reason_codes::STAGE18_NATIVE_BRIDGE_BLOCKED
+            }
+            Stage18MultimodalDisplayDisposition::ProtectedDisplayBlocked => {
+                reason_codes::STAGE18_PROTECTED_DISPLAY_BLOCKED
+            }
+            Stage18MultimodalDisplayDisposition::StaleRenderBlocked => {
+                reason_codes::STAGE18_STALE_RENDER_BLOCKED
+            }
+            Stage18MultimodalDisplayDisposition::UnsafeInputBlocked => {
+                reason_codes::STAGE18_UNSAFE_INPUT_BLOCKED
+            }
+            Stage18MultimodalDisplayDisposition::RuntimeMockBlocked => {
+                reason_codes::STAGE18_RUNTIME_MOCK_BLOCKED
+            }
+            Stage18MultimodalDisplayDisposition::AuditProofMissing => {
+                reason_codes::STAGE18_AUDIT_PROOF_MISSING
+            }
+        }
+    }
+
+    pub const fn is_ready(self) -> bool {
+        matches!(
+            self,
+            Stage18MultimodalDisplayDisposition::RendererPayloadReady
+                | Stage18MultimodalDisplayDisposition::DisplaySurfaceReady
+                | Stage18MultimodalDisplayDisposition::AttachmentRenderReady
+                | Stage18MultimodalDisplayDisposition::SourceCardRenderReady
+                | Stage18MultimodalDisplayDisposition::MediaOutputDispositionReady
+                | Stage18MultimodalDisplayDisposition::NativeBridgeHandoffReady
+        )
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Stage18MultimodalDisplayWorkAuthority {
+    pub can_emit_multimodal_output_packet: bool,
+    pub can_emit_display_surface_packet: bool,
+    pub can_emit_renderer_payload_packet: bool,
+    pub can_emit_render_safe_text_block: bool,
+    pub can_emit_citation_source_card_ref: bool,
+    pub can_emit_attachment_ref: bool,
+    pub can_emit_media_output_disposition: bool,
+    pub can_emit_native_bridge_handoff: bool,
+    pub can_emit_honest_uncertainty: bool,
+    pub can_emit_audit_proof: bool,
+    pub can_fail_closed: bool,
+    pub can_invent_facts_or_citations: bool,
+    pub can_invent_attachments_or_media: bool,
+    pub can_claim_unproven_completion: bool,
+    pub can_mutate_external_state: bool,
+    pub can_connector_write: bool,
+    pub can_send_message: bool,
+    pub can_post_content: bool,
+    pub can_purchase: bool,
+    pub can_delete_remote: bool,
+    pub can_invite: bool,
+    pub can_schedule: bool,
+    pub can_approve: bool,
+    pub can_dispatch: bool,
+    pub can_execute_simulation: bool,
+    pub can_execute_protected_action: bool,
+    pub can_call_live_provider: bool,
+    pub can_run_live_search: bool,
+    pub can_call_live_external_tool: bool,
+    pub can_generate_live_media: bool,
+    pub can_emit_tts_or_playback: bool,
+    pub can_capture_microphone_audio: bool,
+    pub can_transcribe_live_audio: bool,
+    pub can_trigger_voice_id_matching: bool,
+    pub can_update_memory_persona_emotion: bool,
+    pub can_add_native_ui_behavior: bool,
+    pub can_treat_render_success_as_action_success: bool,
+}
+
+impl Stage18MultimodalDisplayWorkAuthority {
+    pub const fn renderer_ready() -> Self {
+        Self {
+            can_emit_multimodal_output_packet: true,
+            can_emit_display_surface_packet: true,
+            can_emit_renderer_payload_packet: true,
+            can_emit_render_safe_text_block: true,
+            can_emit_citation_source_card_ref: true,
+            can_emit_audit_proof: true,
+            can_fail_closed: false,
+            ..Self::fail_closed()
+        }
+    }
+
+    pub const fn attachment_ready() -> Self {
+        Self {
+            can_emit_multimodal_output_packet: true,
+            can_emit_display_surface_packet: true,
+            can_emit_attachment_ref: true,
+            can_emit_audit_proof: true,
+            can_fail_closed: false,
+            ..Self::fail_closed()
+        }
+    }
+
+    pub const fn source_card_ready() -> Self {
+        Self {
+            can_emit_multimodal_output_packet: true,
+            can_emit_display_surface_packet: true,
+            can_emit_citation_source_card_ref: true,
+            can_emit_audit_proof: true,
+            can_fail_closed: false,
+            ..Self::fail_closed()
+        }
+    }
+
+    pub const fn media_disposition_ready() -> Self {
+        Self {
+            can_emit_multimodal_output_packet: true,
+            can_emit_display_surface_packet: true,
+            can_emit_media_output_disposition: true,
+            can_emit_honest_uncertainty: true,
+            can_emit_audit_proof: true,
+            can_fail_closed: false,
+            ..Self::fail_closed()
+        }
+    }
+
+    pub const fn native_bridge_ready() -> Self {
+        Self {
+            can_emit_multimodal_output_packet: true,
+            can_emit_display_surface_packet: true,
+            can_emit_native_bridge_handoff: true,
+            can_emit_audit_proof: true,
+            can_fail_closed: false,
+            ..Self::fail_closed()
+        }
+    }
+
+    pub const fn fail_closed() -> Self {
+        Self {
+            can_emit_multimodal_output_packet: false,
+            can_emit_display_surface_packet: false,
+            can_emit_renderer_payload_packet: false,
+            can_emit_render_safe_text_block: false,
+            can_emit_citation_source_card_ref: false,
+            can_emit_attachment_ref: false,
+            can_emit_media_output_disposition: false,
+            can_emit_native_bridge_handoff: false,
+            can_emit_honest_uncertainty: true,
+            can_emit_audit_proof: false,
+            can_fail_closed: true,
+            can_invent_facts_or_citations: false,
+            can_invent_attachments_or_media: false,
+            can_claim_unproven_completion: false,
+            can_mutate_external_state: false,
+            can_connector_write: false,
+            can_send_message: false,
+            can_post_content: false,
+            can_purchase: false,
+            can_delete_remote: false,
+            can_invite: false,
+            can_schedule: false,
+            can_approve: false,
+            can_dispatch: false,
+            can_execute_simulation: false,
+            can_execute_protected_action: false,
+            can_call_live_provider: false,
+            can_run_live_search: false,
+            can_call_live_external_tool: false,
+            can_generate_live_media: false,
+            can_emit_tts_or_playback: false,
+            can_capture_microphone_audio: false,
+            can_transcribe_live_audio: false,
+            can_trigger_voice_id_matching: false,
+            can_update_memory_persona_emotion: false,
+            can_add_native_ui_behavior: false,
+            can_treat_render_success_as_action_success: false,
+        }
+    }
+
+    pub const fn can_mutate_or_execute(self) -> bool {
+        self.can_invent_facts_or_citations
+            || self.can_invent_attachments_or_media
+            || self.can_claim_unproven_completion
+            || self.can_mutate_external_state
+            || self.can_connector_write
+            || self.can_send_message
+            || self.can_post_content
+            || self.can_purchase
+            || self.can_delete_remote
+            || self.can_invite
+            || self.can_schedule
+            || self.can_approve
+            || self.can_dispatch
+            || self.can_execute_simulation
+            || self.can_execute_protected_action
+            || self.can_call_live_provider
+            || self.can_run_live_search
+            || self.can_call_live_external_tool
+            || self.can_generate_live_media
+            || self.can_emit_tts_or_playback
+            || self.can_capture_microphone_audio
+            || self.can_transcribe_live_audio
+            || self.can_trigger_voice_id_matching
+            || self.can_update_memory_persona_emotion
+            || self.can_add_native_ui_behavior
+            || self.can_treat_render_success_as_action_success
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Stage18MultimodalDisplayInput {
+    pub display_kind: Stage18MultimodalDisplayKind,
+    pub display_output_id: String,
+    pub renderer_payload_id: Option<String>,
+    pub display_surface_id: Option<String>,
+    pub attachment_id: Option<String>,
+    pub attachment_ref: Option<String>,
+    pub source_card_id: Option<String>,
+    pub media_output_id: Option<String>,
+    pub native_bridge_handoff_id: Option<String>,
+    pub audit_id: Option<String>,
+    pub ph1j_proof_ref: Option<String>,
+    pub stage13_evidence_ref_present: bool,
+    pub stage14_public_answer_ref_present: bool,
+    pub stage15_response_output_ref_present: bool,
+    pub stage17_output_identity_ref_present: bool,
+    pub stage17_output_identity_non_authoritative: bool,
+    pub renderer_payload_bounded: bool,
+    pub renderer_payload_secret_safe: bool,
+    pub renderer_payload_preserves_response_meaning: bool,
+    pub renderer_invented_fact: bool,
+    pub renderer_invented_citation: bool,
+    pub renderer_invented_attachment: bool,
+    pub renderer_invented_media: bool,
+    pub renderer_invented_provider_or_tool_result: bool,
+    pub renderer_claimed_unproven_completion: bool,
+    pub renderer_implied_mutation: bool,
+    pub uncertainty_preserved: bool,
+    pub attachment_or_source_from_bounded_ref: bool,
+    pub attachment_or_source_tenant_scoped: bool,
+    pub attachment_or_source_secret_safe: bool,
+    pub attachment_or_source_redacted: bool,
+    pub attachment_or_source_stale_aware: bool,
+    pub attachment_or_source_revocation_aware: bool,
+    pub attachment_or_source_unverifiable: bool,
+    pub attachment_or_source_stale: bool,
+    pub attachment_or_source_secret_unsafe: bool,
+    pub attachment_or_source_cross_tenant: bool,
+    pub fake_attachment_detected: bool,
+    pub fake_media_detected: bool,
+    pub fake_render_success_detected: bool,
+    pub fake_source_card_detected: bool,
+    pub fake_citation_card_detected: bool,
+    pub runtime_mock_detected: bool,
+    pub fixture_only_test_path: bool,
+    pub native_bridge_declarative_only: bool,
+    pub native_bridge_mutates_state: bool,
+    pub native_bridge_connector_writes: bool,
+    pub native_bridge_dispatches_or_executes: bool,
+    pub native_bridge_calls_providers_or_tools: bool,
+    pub native_bridge_emits_tts_or_playback: bool,
+    pub native_bridge_creates_user_turn: bool,
+    pub native_bridge_treats_render_as_action_success: bool,
+    pub protected_action_like_request: bool,
+    pub protected_slot_or_authority_ambiguous: bool,
+    pub unsafe_identity_posture: bool,
+    pub display_implies_stage12_mutation_without_proof: bool,
+    pub stale_or_cancelled_or_superseded_output: bool,
+    pub session_closed: bool,
+    pub record_artifact_only_turn: bool,
+    pub stale_source_card: bool,
+    pub stale_attachment: bool,
+    pub renderer_identity_matches_current_response: bool,
+    pub replay_upgrades_blocked_render: bool,
+    pub raw_provider_output_present: bool,
+    pub raw_search_dump_present: bool,
+    pub raw_media_present: bool,
+    pub raw_attachment_bytes_present: bool,
+    pub unverified_source_evidence_present: bool,
+    pub unsupported_claim_candidate_present: bool,
+    pub fake_citation_source_carrier_present: bool,
+    pub speech_or_playback_used_as_truth_authority: bool,
+    pub protected_action_candidate_present: bool,
+    pub simulation_candidate_present: bool,
+    pub approved_execution_plan_present: bool,
+    pub secrets_exposed: bool,
+    pub raw_audio_or_voice_material_exposed: bool,
+    pub internal_trace_exposed: bool,
+    pub attempted_live_provider_in_build: bool,
+    pub generated_live_media_in_build: bool,
+    pub ran_live_search_in_build: bool,
+    pub called_live_external_tool_in_build: bool,
+    pub connector_write_requested: bool,
+    pub ran_live_tts_or_playback_in_build: bool,
+    pub captured_microphone_audio: bool,
+    pub transcribed_live_audio: bool,
+    pub voice_id_matching_attempted: bool,
+    pub native_ui_behavior_added: bool,
+}
+
+impl Stage18MultimodalDisplayInput {
+    pub fn fixture_renderer_payload_ready(
+        display_output_id: impl Into<String>,
+        renderer_payload_id: impl Into<String>,
+        display_surface_id: impl Into<String>,
+        audit_id: impl Into<String>,
+    ) -> Self {
+        let audit_id = audit_id.into();
+        Self {
+            display_kind: Stage18MultimodalDisplayKind::RendererPayload,
+            display_output_id: display_output_id.into(),
+            renderer_payload_id: Some(renderer_payload_id.into()),
+            display_surface_id: Some(display_surface_id.into()),
+            attachment_id: None,
+            attachment_ref: None,
+            source_card_id: None,
+            media_output_id: None,
+            native_bridge_handoff_id: None,
+            audit_id: Some(audit_id.clone()),
+            ph1j_proof_ref: Some(audit_id),
+            stage13_evidence_ref_present: true,
+            stage14_public_answer_ref_present: true,
+            stage15_response_output_ref_present: true,
+            stage17_output_identity_ref_present: false,
+            stage17_output_identity_non_authoritative: true,
+            renderer_payload_bounded: true,
+            renderer_payload_secret_safe: true,
+            renderer_payload_preserves_response_meaning: true,
+            renderer_invented_fact: false,
+            renderer_invented_citation: false,
+            renderer_invented_attachment: false,
+            renderer_invented_media: false,
+            renderer_invented_provider_or_tool_result: false,
+            renderer_claimed_unproven_completion: false,
+            renderer_implied_mutation: false,
+            uncertainty_preserved: true,
+            attachment_or_source_from_bounded_ref: true,
+            attachment_or_source_tenant_scoped: true,
+            attachment_or_source_secret_safe: true,
+            attachment_or_source_redacted: true,
+            attachment_or_source_stale_aware: true,
+            attachment_or_source_revocation_aware: true,
+            attachment_or_source_unverifiable: false,
+            attachment_or_source_stale: false,
+            attachment_or_source_secret_unsafe: false,
+            attachment_or_source_cross_tenant: false,
+            fake_attachment_detected: false,
+            fake_media_detected: false,
+            fake_render_success_detected: false,
+            fake_source_card_detected: false,
+            fake_citation_card_detected: false,
+            runtime_mock_detected: false,
+            fixture_only_test_path: true,
+            native_bridge_declarative_only: true,
+            native_bridge_mutates_state: false,
+            native_bridge_connector_writes: false,
+            native_bridge_dispatches_or_executes: false,
+            native_bridge_calls_providers_or_tools: false,
+            native_bridge_emits_tts_or_playback: false,
+            native_bridge_creates_user_turn: false,
+            native_bridge_treats_render_as_action_success: false,
+            protected_action_like_request: false,
+            protected_slot_or_authority_ambiguous: false,
+            unsafe_identity_posture: false,
+            display_implies_stage12_mutation_without_proof: false,
+            stale_or_cancelled_or_superseded_output: false,
+            session_closed: false,
+            record_artifact_only_turn: false,
+            stale_source_card: false,
+            stale_attachment: false,
+            renderer_identity_matches_current_response: true,
+            replay_upgrades_blocked_render: false,
+            raw_provider_output_present: false,
+            raw_search_dump_present: false,
+            raw_media_present: false,
+            raw_attachment_bytes_present: false,
+            unverified_source_evidence_present: false,
+            unsupported_claim_candidate_present: false,
+            fake_citation_source_carrier_present: false,
+            speech_or_playback_used_as_truth_authority: false,
+            protected_action_candidate_present: false,
+            simulation_candidate_present: false,
+            approved_execution_plan_present: false,
+            secrets_exposed: false,
+            raw_audio_or_voice_material_exposed: false,
+            internal_trace_exposed: false,
+            attempted_live_provider_in_build: false,
+            generated_live_media_in_build: false,
+            ran_live_search_in_build: false,
+            called_live_external_tool_in_build: false,
+            connector_write_requested: false,
+            ran_live_tts_or_playback_in_build: false,
+            captured_microphone_audio: false,
+            transcribed_live_audio: false,
+            voice_id_matching_attempted: false,
+            native_ui_behavior_added: false,
+        }
+    }
+
+    pub fn fixture_attachment_render_ready(
+        display_output_id: impl Into<String>,
+        attachment_id: impl Into<String>,
+        attachment_ref: impl Into<String>,
+        audit_id: impl Into<String>,
+    ) -> Self {
+        let mut input = Self::fixture_renderer_payload_ready(
+            display_output_id,
+            "renderer-payload-stage18-attachment",
+            "display-surface-stage18-attachment",
+            audit_id,
+        );
+        input.display_kind = Stage18MultimodalDisplayKind::AttachmentRender;
+        input.renderer_payload_id = None;
+        input.attachment_id = Some(attachment_id.into());
+        input.attachment_ref = Some(attachment_ref.into());
+        input
+    }
+
+    pub fn fixture_source_card_render_ready(
+        display_output_id: impl Into<String>,
+        source_card_id: impl Into<String>,
+        audit_id: impl Into<String>,
+    ) -> Self {
+        let mut input = Self::fixture_renderer_payload_ready(
+            display_output_id,
+            "renderer-payload-stage18-source-card",
+            "display-surface-stage18-source-card",
+            audit_id,
+        );
+        input.display_kind = Stage18MultimodalDisplayKind::SourceCardRender;
+        input.renderer_payload_id = None;
+        input.source_card_id = Some(source_card_id.into());
+        input
+    }
+
+    pub fn fixture_native_bridge_handoff_ready(
+        display_output_id: impl Into<String>,
+        native_bridge_handoff_id: impl Into<String>,
+        audit_id: impl Into<String>,
+    ) -> Self {
+        let mut input = Self::fixture_renderer_payload_ready(
+            display_output_id,
+            "renderer-payload-stage18-native",
+            "display-surface-stage18-native",
+            audit_id,
+        );
+        input.display_kind = Stage18MultimodalDisplayKind::NativeBridgeHandoff;
+        input.renderer_payload_id = None;
+        input.native_bridge_handoff_id = Some(native_bridge_handoff_id.into());
+        input
+    }
+
+    pub fn fixture_media_output_disposition_ready(
+        display_output_id: impl Into<String>,
+        media_output_id: impl Into<String>,
+        audit_id: impl Into<String>,
+    ) -> Self {
+        let mut input = Self::fixture_renderer_payload_ready(
+            display_output_id,
+            "renderer-payload-stage18-media",
+            "display-surface-stage18-media",
+            audit_id,
+        );
+        input.display_kind = Stage18MultimodalDisplayKind::MediaOutputDisposition;
+        input.renderer_payload_id = None;
+        input.media_output_id = Some(media_output_id.into());
+        input
+    }
+}
+
+impl Validate for Stage18MultimodalDisplayInput {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        validate_stage4_ref(
+            "stage18_multimodal_display_input.display_output_id",
+            &self.display_output_id,
+        )?;
+        validate_stage4_optional_ref(
+            "stage18_multimodal_display_input.renderer_payload_id",
+            self.renderer_payload_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage18_multimodal_display_input.display_surface_id",
+            self.display_surface_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage18_multimodal_display_input.attachment_id",
+            self.attachment_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage18_multimodal_display_input.attachment_ref",
+            self.attachment_ref.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage18_multimodal_display_input.source_card_id",
+            self.source_card_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage18_multimodal_display_input.media_output_id",
+            self.media_output_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage18_multimodal_display_input.native_bridge_handoff_id",
+            self.native_bridge_handoff_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage18_multimodal_display_input.audit_id",
+            self.audit_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage18_multimodal_display_input.ph1j_proof_ref",
+            self.ph1j_proof_ref.as_deref(),
+        )?;
+        if self.attempted_live_provider_in_build
+            || self.generated_live_media_in_build
+            || self.ran_live_search_in_build
+            || self.called_live_external_tool_in_build
+            || self.connector_write_requested
+            || self.ran_live_tts_or_playback_in_build
+            || self.captured_microphone_audio
+            || self.transcribed_live_audio
+            || self.voice_id_matching_attempted
+            || self.native_ui_behavior_added
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage18_multimodal_display_input.no_live_build",
+                reason: "Stage 18A cannot call live providers/search/tools, generate live media, connector-write, run TTS/playback, capture mic, transcribe, match Voice ID, or add native UI",
+            });
+        }
+        if (self.runtime_mock_detected
+            || self.fake_attachment_detected
+            || self.fake_media_detected
+            || self.fake_render_success_detected
+            || self.fake_source_card_detected
+            || self.fake_citation_card_detected)
+            && !self.fixture_only_test_path
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage18_multimodal_display_input.runtime_mock",
+                reason: "runtime mocks and fake attachments/media/render/source-card/citation-card success are forbidden outside explicit fixture-only paths",
+            });
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Stage18MultimodalDisplayPacket {
+    pub session_id: SessionId,
+    pub turn_id: Option<TurnId>,
+    pub activation_id: Option<String>,
+    pub response_output_id: String,
+    pub response_hash: String,
+    pub public_answer_id: String,
+    pub source_evidence_id: Option<String>,
+    pub citation_id: Option<String>,
+    pub provenance_id: Option<String>,
+    pub verifier_id: Option<String>,
+    pub speech_output_id: Option<String>,
+    pub display_output_id: String,
+    pub renderer_payload_id: Option<String>,
+    pub display_surface_id: Option<String>,
+    pub attachment_id: Option<String>,
+    pub attachment_ref: Option<String>,
+    pub source_card_id: Option<String>,
+    pub media_output_id: Option<String>,
+    pub native_bridge_handoff_id: Option<String>,
+    pub access_context_id: Option<String>,
+    pub policy_context_id: Option<String>,
+    pub tenant_id: Option<String>,
+    pub audit_id: Option<String>,
+    pub ph1j_proof_ref: Option<String>,
+    pub display_kind: Stage18MultimodalDisplayKind,
+    pub reason_code: &'static str,
+    pub disposition: Stage18MultimodalDisplayDisposition,
+    pub stage15_disposition: Stage15ResponseOutputDisposition,
+    pub stage17_disposition: Option<Stage17SpeechOutputDisposition>,
+    pub provider_off_state: bool,
+    pub provider_call_attempt_count: u32,
+    pub provider_network_dispatch_count: u32,
+    pub stage13_evidence_ref_present: bool,
+    pub stage14_public_answer_ref_present: bool,
+    pub stage15_response_output_ref_present: bool,
+    pub stage17_output_identity_ref_present: bool,
+    pub stage17_output_identity_non_authoritative: bool,
+    pub renderer_payload_bounded: bool,
+    pub renderer_payload_secret_safe: bool,
+    pub renderer_payload_preserves_response_meaning: bool,
+    pub renderer_invented_fact: bool,
+    pub renderer_invented_citation: bool,
+    pub renderer_invented_attachment: bool,
+    pub renderer_invented_media: bool,
+    pub renderer_invented_provider_or_tool_result: bool,
+    pub renderer_claimed_unproven_completion: bool,
+    pub renderer_implied_mutation: bool,
+    pub uncertainty_preserved: bool,
+    pub attachment_or_source_from_bounded_ref: bool,
+    pub attachment_or_source_tenant_scoped: bool,
+    pub attachment_or_source_secret_safe: bool,
+    pub attachment_or_source_redacted: bool,
+    pub attachment_or_source_stale_aware: bool,
+    pub attachment_or_source_revocation_aware: bool,
+    pub attachment_or_source_unverifiable: bool,
+    pub attachment_or_source_stale: bool,
+    pub attachment_or_source_secret_unsafe: bool,
+    pub attachment_or_source_cross_tenant: bool,
+    pub fake_attachment_detected: bool,
+    pub fake_media_detected: bool,
+    pub fake_render_success_detected: bool,
+    pub fake_source_card_detected: bool,
+    pub fake_citation_card_detected: bool,
+    pub runtime_mock_detected: bool,
+    pub native_bridge_declarative_only: bool,
+    pub native_bridge_mutates_state: bool,
+    pub native_bridge_connector_writes: bool,
+    pub native_bridge_dispatches_or_executes: bool,
+    pub native_bridge_calls_providers_or_tools: bool,
+    pub native_bridge_emits_tts_or_playback: bool,
+    pub native_bridge_creates_user_turn: bool,
+    pub native_bridge_treats_render_as_action_success: bool,
+    pub protected_action_like_request: bool,
+    pub protected_slot_or_authority_ambiguous: bool,
+    pub unsafe_identity_posture: bool,
+    pub display_implies_stage12_mutation_without_proof: bool,
+    pub stale_or_cancelled_or_superseded_output: bool,
+    pub session_closed: bool,
+    pub record_artifact_only_turn: bool,
+    pub stale_source_card: bool,
+    pub stale_attachment: bool,
+    pub renderer_identity_matches_current_response: bool,
+    pub replay_upgrades_blocked_render: bool,
+    pub raw_provider_output_present: bool,
+    pub raw_search_dump_present: bool,
+    pub raw_media_present: bool,
+    pub raw_attachment_bytes_present: bool,
+    pub unverified_source_evidence_present: bool,
+    pub unsupported_claim_candidate_present: bool,
+    pub fake_citation_source_carrier_present: bool,
+    pub speech_or_playback_used_as_truth_authority: bool,
+    pub protected_action_candidate_present: bool,
+    pub simulation_candidate_present: bool,
+    pub approved_execution_plan_present: bool,
+    pub secrets_exposed: bool,
+    pub raw_audio_or_voice_material_exposed: bool,
+    pub internal_trace_exposed: bool,
+    pub work_authority: Stage18MultimodalDisplayWorkAuthority,
+}
+
+impl Stage18MultimodalDisplayPacket {
+    pub fn from_stage15_output(
+        output: &Stage15ResponseOutputPacket,
+        speech_output: Option<&Stage17SpeechOutputPacket>,
+        input: Stage18MultimodalDisplayInput,
+    ) -> Result<Self, ContractViolation> {
+        output.validate()?;
+        if let Some(speech_output) = speech_output {
+            speech_output.validate()?;
+        }
+        input.validate()?;
+        let disposition = Self::decide_disposition(output, speech_output, &input);
+        let work_authority = Self::work_authority_for(disposition);
+        let audit_id = input.audit_id.clone().or_else(|| output.audit_id.clone());
+        let ph1j_proof_ref = input
+            .ph1j_proof_ref
+            .clone()
+            .or_else(|| output.ph1j_proof_ref.clone())
+            .or_else(|| audit_id.clone());
+        let packet = Self {
+            session_id: output.session_id,
+            turn_id: output.turn_id,
+            activation_id: output.activation_id.clone(),
+            response_output_id: output.response_output_id.clone(),
+            response_hash: output.response_hash.clone(),
+            public_answer_id: output.public_answer_id.clone(),
+            source_evidence_id: output.source_evidence_id.clone(),
+            citation_id: output.citation_id.clone(),
+            provenance_id: output.provenance_id.clone(),
+            verifier_id: output.verifier_id.clone(),
+            speech_output_id: speech_output.map(|speech| speech.speech_output_id.clone()),
+            display_output_id: input.display_output_id,
+            renderer_payload_id: input.renderer_payload_id,
+            display_surface_id: input.display_surface_id,
+            attachment_id: input.attachment_id,
+            attachment_ref: input.attachment_ref,
+            source_card_id: input.source_card_id,
+            media_output_id: input.media_output_id,
+            native_bridge_handoff_id: input.native_bridge_handoff_id,
+            access_context_id: output.access_context_id.clone(),
+            policy_context_id: output.policy_context_id.clone(),
+            tenant_id: output.tenant_id.clone(),
+            audit_id,
+            ph1j_proof_ref,
+            display_kind: input.display_kind,
+            reason_code: disposition.default_reason_code(),
+            disposition,
+            stage15_disposition: output.disposition,
+            stage17_disposition: speech_output.map(|speech| speech.disposition),
+            provider_off_state: output.provider_off_state,
+            provider_call_attempt_count: output.provider_call_attempt_count,
+            provider_network_dispatch_count: output.provider_network_dispatch_count,
+            stage13_evidence_ref_present: input.stage13_evidence_ref_present,
+            stage14_public_answer_ref_present: input.stage14_public_answer_ref_present,
+            stage15_response_output_ref_present: input.stage15_response_output_ref_present,
+            stage17_output_identity_ref_present: input.stage17_output_identity_ref_present,
+            stage17_output_identity_non_authoritative: input
+                .stage17_output_identity_non_authoritative,
+            renderer_payload_bounded: input.renderer_payload_bounded,
+            renderer_payload_secret_safe: input.renderer_payload_secret_safe,
+            renderer_payload_preserves_response_meaning: input
+                .renderer_payload_preserves_response_meaning,
+            renderer_invented_fact: input.renderer_invented_fact,
+            renderer_invented_citation: input.renderer_invented_citation,
+            renderer_invented_attachment: input.renderer_invented_attachment,
+            renderer_invented_media: input.renderer_invented_media,
+            renderer_invented_provider_or_tool_result: input
+                .renderer_invented_provider_or_tool_result,
+            renderer_claimed_unproven_completion: input.renderer_claimed_unproven_completion,
+            renderer_implied_mutation: input.renderer_implied_mutation,
+            uncertainty_preserved: input.uncertainty_preserved,
+            attachment_or_source_from_bounded_ref: input.attachment_or_source_from_bounded_ref,
+            attachment_or_source_tenant_scoped: input.attachment_or_source_tenant_scoped,
+            attachment_or_source_secret_safe: input.attachment_or_source_secret_safe,
+            attachment_or_source_redacted: input.attachment_or_source_redacted,
+            attachment_or_source_stale_aware: input.attachment_or_source_stale_aware,
+            attachment_or_source_revocation_aware: input.attachment_or_source_revocation_aware,
+            attachment_or_source_unverifiable: input.attachment_or_source_unverifiable,
+            attachment_or_source_stale: input.attachment_or_source_stale,
+            attachment_or_source_secret_unsafe: input.attachment_or_source_secret_unsafe,
+            attachment_or_source_cross_tenant: input.attachment_or_source_cross_tenant,
+            fake_attachment_detected: input.fake_attachment_detected,
+            fake_media_detected: input.fake_media_detected,
+            fake_render_success_detected: input.fake_render_success_detected,
+            fake_source_card_detected: input.fake_source_card_detected,
+            fake_citation_card_detected: input.fake_citation_card_detected,
+            runtime_mock_detected: input.runtime_mock_detected,
+            native_bridge_declarative_only: input.native_bridge_declarative_only,
+            native_bridge_mutates_state: input.native_bridge_mutates_state,
+            native_bridge_connector_writes: input.native_bridge_connector_writes,
+            native_bridge_dispatches_or_executes: input.native_bridge_dispatches_or_executes,
+            native_bridge_calls_providers_or_tools: input.native_bridge_calls_providers_or_tools,
+            native_bridge_emits_tts_or_playback: input.native_bridge_emits_tts_or_playback,
+            native_bridge_creates_user_turn: input.native_bridge_creates_user_turn,
+            native_bridge_treats_render_as_action_success: input
+                .native_bridge_treats_render_as_action_success,
+            protected_action_like_request: input.protected_action_like_request,
+            protected_slot_or_authority_ambiguous: input.protected_slot_or_authority_ambiguous,
+            unsafe_identity_posture: input.unsafe_identity_posture,
+            display_implies_stage12_mutation_without_proof: input
+                .display_implies_stage12_mutation_without_proof,
+            stale_or_cancelled_or_superseded_output: input.stale_or_cancelled_or_superseded_output,
+            session_closed: input.session_closed,
+            record_artifact_only_turn: input.record_artifact_only_turn,
+            stale_source_card: input.stale_source_card,
+            stale_attachment: input.stale_attachment,
+            renderer_identity_matches_current_response: input
+                .renderer_identity_matches_current_response,
+            replay_upgrades_blocked_render: input.replay_upgrades_blocked_render,
+            raw_provider_output_present: input.raw_provider_output_present,
+            raw_search_dump_present: input.raw_search_dump_present,
+            raw_media_present: input.raw_media_present,
+            raw_attachment_bytes_present: input.raw_attachment_bytes_present,
+            unverified_source_evidence_present: input.unverified_source_evidence_present,
+            unsupported_claim_candidate_present: input.unsupported_claim_candidate_present,
+            fake_citation_source_carrier_present: input.fake_citation_source_carrier_present,
+            speech_or_playback_used_as_truth_authority: input
+                .speech_or_playback_used_as_truth_authority,
+            protected_action_candidate_present: input.protected_action_candidate_present,
+            simulation_candidate_present: input.simulation_candidate_present,
+            approved_execution_plan_present: input.approved_execution_plan_present,
+            secrets_exposed: input.secrets_exposed,
+            raw_audio_or_voice_material_exposed: input.raw_audio_or_voice_material_exposed,
+            internal_trace_exposed: input.internal_trace_exposed,
+            work_authority,
+        };
+        packet.validate()?;
+        Ok(packet)
+    }
+
+    pub const fn can_mutate_or_execute(&self) -> bool {
+        self.work_authority.can_mutate_or_execute()
+    }
+
+    fn decide_disposition(
+        output: &Stage15ResponseOutputPacket,
+        speech_output: Option<&Stage17SpeechOutputPacket>,
+        input: &Stage18MultimodalDisplayInput,
+    ) -> Stage18MultimodalDisplayDisposition {
+        if input.runtime_mock_detected
+            || input.fake_attachment_detected
+            || input.fake_media_detected
+            || input.fake_render_success_detected
+            || input.fake_source_card_detected
+            || input.fake_citation_card_detected
+        {
+            return Stage18MultimodalDisplayDisposition::RuntimeMockBlocked;
+        }
+        if input.raw_provider_output_present
+            || input.raw_search_dump_present
+            || input.raw_media_present
+            || input.raw_attachment_bytes_present
+            || input.unverified_source_evidence_present
+            || input.unsupported_claim_candidate_present
+            || input.fake_citation_source_carrier_present
+            || input.speech_or_playback_used_as_truth_authority
+            || input.protected_action_candidate_present
+            || input.simulation_candidate_present
+            || input.approved_execution_plan_present
+            || input.secrets_exposed
+            || input.raw_audio_or_voice_material_exposed
+            || input.internal_trace_exposed
+        {
+            return Stage18MultimodalDisplayDisposition::UnsafeInputBlocked;
+        }
+        if !output.disposition.is_ready()
+            || output.can_mutate_or_execute()
+            || output.work_authority.can_add_native_ui_behavior
+            || !input.stage13_evidence_ref_present
+            || !input.stage14_public_answer_ref_present
+            || !input.stage15_response_output_ref_present
+        {
+            return Stage18MultimodalDisplayDisposition::StageInputBlocked;
+        }
+        if let Some(speech_output) = speech_output {
+            if speech_output.can_mutate_or_execute()
+                || speech_output.stale_or_cancelled_or_superseded_output
+                || speech_output.session_closed
+                || speech_output.record_artifact_only_turn
+                || speech_output.playback_creates_user_turn
+                || speech_output.playback_authorizes_or_executes
+                || !input.stage17_output_identity_ref_present
+                || !input.stage17_output_identity_non_authoritative
+            {
+                return Stage18MultimodalDisplayDisposition::StageInputBlocked;
+            }
+        }
+        if input.audit_id.is_none()
+            && input.ph1j_proof_ref.is_none()
+            && output.audit_id.is_none()
+            && output.ph1j_proof_ref.is_none()
+        {
+            return Stage18MultimodalDisplayDisposition::AuditProofMissing;
+        }
+        if !input.renderer_payload_bounded
+            || !input.renderer_payload_secret_safe
+            || !input.renderer_payload_preserves_response_meaning
+            || input.renderer_invented_fact
+            || input.renderer_invented_citation
+            || input.renderer_invented_attachment
+            || input.renderer_invented_media
+            || input.renderer_invented_provider_or_tool_result
+            || input.renderer_claimed_unproven_completion
+            || input.renderer_implied_mutation
+            || !input.uncertainty_preserved
+        {
+            return Stage18MultimodalDisplayDisposition::RendererNoInventionBlocked;
+        }
+        if !input.attachment_or_source_from_bounded_ref
+            || !input.attachment_or_source_tenant_scoped
+            || !input.attachment_or_source_secret_safe
+            || !input.attachment_or_source_redacted
+            || !input.attachment_or_source_stale_aware
+            || !input.attachment_or_source_revocation_aware
+            || input.attachment_or_source_unverifiable
+            || input.attachment_or_source_stale
+            || input.attachment_or_source_secret_unsafe
+            || input.attachment_or_source_cross_tenant
+        {
+            return Stage18MultimodalDisplayDisposition::AttachmentSourceCardBlocked;
+        }
+        if !input.native_bridge_declarative_only
+            || input.native_bridge_mutates_state
+            || input.native_bridge_connector_writes
+            || input.native_bridge_dispatches_or_executes
+            || input.native_bridge_calls_providers_or_tools
+            || input.native_bridge_emits_tts_or_playback
+            || input.native_bridge_creates_user_turn
+            || input.native_bridge_treats_render_as_action_success
+        {
+            return Stage18MultimodalDisplayDisposition::NativeBridgeBlocked;
+        }
+        if input.protected_action_like_request
+            || input.protected_slot_or_authority_ambiguous
+            || input.unsafe_identity_posture
+            || input.display_implies_stage12_mutation_without_proof
+        {
+            return Stage18MultimodalDisplayDisposition::ProtectedDisplayBlocked;
+        }
+        if input.stale_or_cancelled_or_superseded_output
+            || input.session_closed
+            || input.record_artifact_only_turn
+            || input.stale_source_card
+            || input.stale_attachment
+            || !input.renderer_identity_matches_current_response
+            || input.replay_upgrades_blocked_render
+        {
+            return Stage18MultimodalDisplayDisposition::StaleRenderBlocked;
+        }
+
+        match input.display_kind {
+            Stage18MultimodalDisplayKind::RendererPayload => {
+                if input.renderer_payload_id.is_some() && input.display_surface_id.is_some() {
+                    Stage18MultimodalDisplayDisposition::RendererPayloadReady
+                } else {
+                    Stage18MultimodalDisplayDisposition::RendererNoInventionBlocked
+                }
+            }
+            Stage18MultimodalDisplayKind::DisplaySurface => {
+                if input.display_surface_id.is_some() {
+                    Stage18MultimodalDisplayDisposition::DisplaySurfaceReady
+                } else {
+                    Stage18MultimodalDisplayDisposition::RendererNoInventionBlocked
+                }
+            }
+            Stage18MultimodalDisplayKind::AttachmentRender => {
+                if input.attachment_id.is_some() && input.attachment_ref.is_some() {
+                    Stage18MultimodalDisplayDisposition::AttachmentRenderReady
+                } else {
+                    Stage18MultimodalDisplayDisposition::AttachmentSourceCardBlocked
+                }
+            }
+            Stage18MultimodalDisplayKind::SourceCardRender => {
+                if input.source_card_id.is_some()
+                    && output.source_evidence_id.is_some()
+                    && output.citation_id.is_some()
+                    && output.provenance_id.is_some()
+                    && output.verifier_id.is_some()
+                {
+                    Stage18MultimodalDisplayDisposition::SourceCardRenderReady
+                } else {
+                    Stage18MultimodalDisplayDisposition::AttachmentSourceCardBlocked
+                }
+            }
+            Stage18MultimodalDisplayKind::MediaOutputDisposition => {
+                if input.media_output_id.is_some() {
+                    Stage18MultimodalDisplayDisposition::MediaOutputDispositionReady
+                } else {
+                    Stage18MultimodalDisplayDisposition::AttachmentSourceCardBlocked
+                }
+            }
+            Stage18MultimodalDisplayKind::NativeBridgeHandoff => {
+                if input.native_bridge_handoff_id.is_some() {
+                    Stage18MultimodalDisplayDisposition::NativeBridgeHandoffReady
+                } else {
+                    Stage18MultimodalDisplayDisposition::NativeBridgeBlocked
+                }
+            }
+        }
+    }
+
+    const fn work_authority_for(
+        disposition: Stage18MultimodalDisplayDisposition,
+    ) -> Stage18MultimodalDisplayWorkAuthority {
+        match disposition {
+            Stage18MultimodalDisplayDisposition::RendererPayloadReady
+            | Stage18MultimodalDisplayDisposition::DisplaySurfaceReady => {
+                Stage18MultimodalDisplayWorkAuthority::renderer_ready()
+            }
+            Stage18MultimodalDisplayDisposition::AttachmentRenderReady => {
+                Stage18MultimodalDisplayWorkAuthority::attachment_ready()
+            }
+            Stage18MultimodalDisplayDisposition::SourceCardRenderReady => {
+                Stage18MultimodalDisplayWorkAuthority::source_card_ready()
+            }
+            Stage18MultimodalDisplayDisposition::MediaOutputDispositionReady => {
+                Stage18MultimodalDisplayWorkAuthority::media_disposition_ready()
+            }
+            Stage18MultimodalDisplayDisposition::NativeBridgeHandoffReady => {
+                Stage18MultimodalDisplayWorkAuthority::native_bridge_ready()
+            }
+            _ => Stage18MultimodalDisplayWorkAuthority::fail_closed(),
+        }
+    }
+}
+
+impl Validate for Stage18MultimodalDisplayPacket {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        validate_stage4_optional_ref(
+            "stage18_multimodal_display_packet.activation_id",
+            self.activation_id.as_deref(),
+        )?;
+        validate_stage4_ref(
+            "stage18_multimodal_display_packet.response_output_id",
+            &self.response_output_id,
+        )?;
+        validate_stage4_ref(
+            "stage18_multimodal_display_packet.response_hash",
+            &self.response_hash,
+        )?;
+        validate_stage4_ref(
+            "stage18_multimodal_display_packet.public_answer_id",
+            &self.public_answer_id,
+        )?;
+        validate_stage4_optional_ref(
+            "stage18_multimodal_display_packet.source_evidence_id",
+            self.source_evidence_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage18_multimodal_display_packet.citation_id",
+            self.citation_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage18_multimodal_display_packet.provenance_id",
+            self.provenance_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage18_multimodal_display_packet.verifier_id",
+            self.verifier_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage18_multimodal_display_packet.speech_output_id",
+            self.speech_output_id.as_deref(),
+        )?;
+        validate_stage4_ref(
+            "stage18_multimodal_display_packet.display_output_id",
+            &self.display_output_id,
+        )?;
+        validate_stage4_optional_ref(
+            "stage18_multimodal_display_packet.renderer_payload_id",
+            self.renderer_payload_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage18_multimodal_display_packet.display_surface_id",
+            self.display_surface_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage18_multimodal_display_packet.attachment_id",
+            self.attachment_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage18_multimodal_display_packet.attachment_ref",
+            self.attachment_ref.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage18_multimodal_display_packet.source_card_id",
+            self.source_card_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage18_multimodal_display_packet.media_output_id",
+            self.media_output_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage18_multimodal_display_packet.native_bridge_handoff_id",
+            self.native_bridge_handoff_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage18_multimodal_display_packet.access_context_id",
+            self.access_context_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage18_multimodal_display_packet.policy_context_id",
+            self.policy_context_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage18_multimodal_display_packet.tenant_id",
+            self.tenant_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage18_multimodal_display_packet.audit_id",
+            self.audit_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage18_multimodal_display_packet.ph1j_proof_ref",
+            self.ph1j_proof_ref.as_deref(),
+        )?;
+        if self.reason_code != self.disposition.default_reason_code() {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage18_multimodal_display_packet.reason_code",
+                reason: "must match Stage 18A multimodal/display disposition",
+            });
+        }
+        if self.work_authority.can_mutate_or_execute() {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage18_multimodal_display_packet.work_authority",
+                reason: "Stage 18A cannot invent renderer output, mutate, connector-write, approve, dispatch, execute, call live providers/search/tools, generate media, emit TTS/playback, capture mic, transcribe, Voice ID match, add native UI, or treat render success as action success",
+            });
+        }
+        if self.provider_off_state
+            && (self.provider_call_attempt_count != 0 || self.provider_network_dispatch_count != 0)
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage18_multimodal_display_packet.provider_off_state",
+                reason: "provider-off display proof must preserve zero provider attempts and network dispatches",
+            });
+        }
+        if self.disposition.is_ready() && (self.audit_id.is_none() || self.ph1j_proof_ref.is_none())
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage18_multimodal_display_packet.audit_proof",
+                reason: "ready Stage 18A display output requires PH1.J audit/proof refs",
+            });
+        }
+        if self.disposition.is_ready()
+            && (!self.stage13_evidence_ref_present
+                || !self.stage14_public_answer_ref_present
+                || !self.stage15_response_output_ref_present
+                || self.stage15_disposition
+                    != Stage15ResponseOutputDisposition::ResponseOutputReady
+                || self.source_evidence_id.is_none()
+                || self.citation_id.is_none()
+                || self.provenance_id.is_none()
+                || self.verifier_id.is_none())
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage18_multimodal_display_packet.stage_inputs",
+                reason: "ready Stage 18A output requires bounded Stage 13/14/15 evidence, response, citation, provenance, and verifier refs",
+            });
+        }
+
+        match self.disposition {
+            Stage18MultimodalDisplayDisposition::RendererPayloadReady
+            | Stage18MultimodalDisplayDisposition::DisplaySurfaceReady => {
+                if self.display_surface_id.is_none()
+                    || (self.disposition
+                        == Stage18MultimodalDisplayDisposition::RendererPayloadReady
+                        && self.renderer_payload_id.is_none())
+                    || !self.renderer_payload_bounded
+                    || !self.renderer_payload_secret_safe
+                    || !self.renderer_payload_preserves_response_meaning
+                    || self.renderer_invented_fact
+                    || self.renderer_invented_citation
+                    || self.renderer_invented_attachment
+                    || self.renderer_invented_media
+                    || self.renderer_invented_provider_or_tool_result
+                    || self.renderer_claimed_unproven_completion
+                    || self.renderer_implied_mutation
+                    || !self.uncertainty_preserved
+                    || !self.renderer_identity_matches_current_response
+                    || !self.work_authority.can_emit_renderer_payload_packet
+                {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "stage18_multimodal_display_packet.renderer_payload",
+                        reason: "renderer/display payloads must preserve Stage 15 meaning and cannot invent facts, citations, media, attachments, provider/tool results, completion, or mutation",
+                    });
+                }
+            }
+            Stage18MultimodalDisplayDisposition::AttachmentRenderReady => {
+                if self.attachment_id.is_none()
+                    || self.attachment_ref.is_none()
+                    || !self.attachment_or_source_from_bounded_ref
+                    || !self.attachment_or_source_tenant_scoped
+                    || !self.attachment_or_source_secret_safe
+                    || self.attachment_or_source_unverifiable
+                    || self.attachment_or_source_stale
+                    || self.attachment_or_source_secret_unsafe
+                    || self.attachment_or_source_cross_tenant
+                    || !self.work_authority.can_emit_attachment_ref
+                {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "stage18_multimodal_display_packet.attachment",
+                        reason: "attachments must render only from bounded, tenant-scoped, current, verified, secret-safe artifact refs",
+                    });
+                }
+            }
+            Stage18MultimodalDisplayDisposition::SourceCardRenderReady => {
+                if self.source_card_id.is_none()
+                    || self.source_evidence_id.is_none()
+                    || self.citation_id.is_none()
+                    || self.provenance_id.is_none()
+                    || self.verifier_id.is_none()
+                    || !self.attachment_or_source_from_bounded_ref
+                    || !self.attachment_or_source_secret_safe
+                    || self.stale_source_card
+                    || !self.work_authority.can_emit_citation_source_card_ref
+                {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "stage18_multimodal_display_packet.source_card",
+                        reason: "source cards must render only from bounded verified Stage 13/14 citation, source, provenance, and verifier refs",
+                    });
+                }
+            }
+            Stage18MultimodalDisplayDisposition::MediaOutputDispositionReady => {
+                if self.media_output_id.is_none()
+                    || self.fake_media_detected
+                    || !self.work_authority.can_emit_media_output_disposition
+                {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "stage18_multimodal_display_packet.media_output",
+                        reason: "media output can only emit a bounded non-live disposition and cannot fabricate media",
+                    });
+                }
+            }
+            Stage18MultimodalDisplayDisposition::NativeBridgeHandoffReady => {
+                if self.native_bridge_handoff_id.is_none()
+                    || !self.native_bridge_declarative_only
+                    || self.native_bridge_mutates_state
+                    || self.native_bridge_connector_writes
+                    || self.native_bridge_dispatches_or_executes
+                    || self.native_bridge_calls_providers_or_tools
+                    || self.native_bridge_emits_tts_or_playback
+                    || self.native_bridge_creates_user_turn
+                    || self.native_bridge_treats_render_as_action_success
+                    || !self.work_authority.can_emit_native_bridge_handoff
+                {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "stage18_multimodal_display_packet.native_bridge",
+                        reason: "native/display bridge handoff must be declarative metadata only and cannot mutate, execute, dispatch, call providers/tools, emit TTS/playback, create turns, or treat render success as action success",
+                    });
+                }
+            }
+            _ => {
+                if !self.work_authority.can_fail_closed
+                    || self.work_authority.can_emit_multimodal_output_packet
+                    || self.work_authority.can_emit_display_surface_packet
+                    || self.work_authority.can_emit_renderer_payload_packet
+                    || self.work_authority.can_emit_citation_source_card_ref
+                    || self.work_authority.can_emit_attachment_ref
+                    || self.work_authority.can_emit_media_output_disposition
+                    || self.work_authority.can_emit_native_bridge_handoff
+                {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "stage18_multimodal_display_packet.blocked_display",
+                        reason: "blocked Stage 18A packets fail closed and cannot emit fake renderer, display, attachment, media, source-card, or native bridge success",
+                    });
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RawTurnPayload {
     Text {
@@ -21483,6 +22775,555 @@ mod tests {
                 Stage17SpeechOutputPacket::from_stage15_output(&output, None, None, input).is_err()
             );
         }
+    }
+
+    fn stage18_response_output_packet() -> Stage15ResponseOutputPacket {
+        stage17_response_output_packet()
+    }
+
+    fn stage18_speech_output_identity() -> Stage17SpeechOutputPacket {
+        let output = stage18_response_output_packet();
+        Stage17SpeechOutputPacket::from_stage15_output(
+            &output,
+            None,
+            None,
+            Stage17SpeechOutputInput::fixture_speakable_ready(
+                "speech-output-stage18-identity",
+                "tts-request-stage18-identity",
+                "tts-hash-stage18-identity",
+                "audio-output-stage18-identity",
+                "voice-style-stage18-identity",
+                "audit-stage18-identity",
+            ),
+        )
+        .expect("stage18 speech output identity")
+    }
+
+    fn stage18_renderer_input(
+        display_output_id: &str,
+        renderer_payload_id: &str,
+        display_surface_id: &str,
+        audit_id: &str,
+    ) -> Stage18MultimodalDisplayInput {
+        Stage18MultimodalDisplayInput::fixture_renderer_payload_ready(
+            display_output_id,
+            renderer_payload_id,
+            display_surface_id,
+            audit_id,
+        )
+    }
+
+    #[test]
+    fn stage_18a_renderer_payload_consumes_stage15_and_stage17_identity_only() {
+        let output = stage18_response_output_packet();
+        let speech = stage18_speech_output_identity();
+        let mut input = stage18_renderer_input(
+            "display-output-stage18-ready",
+            "renderer-payload-stage18-ready",
+            "display-surface-stage18-ready",
+            "audit-stage18-ready",
+        );
+        input.stage17_output_identity_ref_present = true;
+        input.stage17_output_identity_non_authoritative = true;
+        let packet =
+            Stage18MultimodalDisplayPacket::from_stage15_output(&output, Some(&speech), input)
+                .expect("stage18 renderer ready");
+
+        assert_eq!(
+            packet.disposition,
+            Stage18MultimodalDisplayDisposition::RendererPayloadReady
+        );
+        assert_eq!(packet.response_output_id, output.response_output_id);
+        assert_eq!(packet.response_hash, output.response_hash);
+        assert_eq!(
+            packet.stage17_disposition,
+            Some(Stage17SpeechOutputDisposition::SpeechOutputReady)
+        );
+        assert_eq!(
+            packet.speech_output_id.as_deref(),
+            Some("speech-output-stage18-identity")
+        );
+        assert!(packet.stage13_evidence_ref_present);
+        assert!(packet.stage14_public_answer_ref_present);
+        assert!(packet.stage15_response_output_ref_present);
+        assert!(packet.stage17_output_identity_non_authoritative);
+        assert!(packet.work_authority.can_emit_renderer_payload_packet);
+        assert!(!packet.work_authority.can_generate_live_media);
+        assert!(!packet.work_authority.can_add_native_ui_behavior);
+        assert!(!packet.can_mutate_or_execute());
+    }
+
+    #[test]
+    fn stage_18a_renderer_payload_cannot_invent_or_claim_completion() {
+        let output = stage18_response_output_packet();
+
+        for input in [
+            {
+                let mut input = stage18_renderer_input(
+                    "display-output-stage18-invent-fact",
+                    "renderer-payload-stage18-invent-fact",
+                    "display-surface-stage18-invent-fact",
+                    "audit-stage18-invent-fact",
+                );
+                input.renderer_invented_fact = true;
+                input
+            },
+            {
+                let mut input = stage18_renderer_input(
+                    "display-output-stage18-invent-citation",
+                    "renderer-payload-stage18-invent-citation",
+                    "display-surface-stage18-invent-citation",
+                    "audit-stage18-invent-citation",
+                );
+                input.renderer_invented_citation = true;
+                input
+            },
+            {
+                let mut input = stage18_renderer_input(
+                    "display-output-stage18-invent-attachment",
+                    "renderer-payload-stage18-invent-attachment",
+                    "display-surface-stage18-invent-attachment",
+                    "audit-stage18-invent-attachment",
+                );
+                input.renderer_invented_attachment = true;
+                input
+            },
+            {
+                let mut input = stage18_renderer_input(
+                    "display-output-stage18-invent-media",
+                    "renderer-payload-stage18-invent-media",
+                    "display-surface-stage18-invent-media",
+                    "audit-stage18-invent-media",
+                );
+                input.renderer_invented_media = true;
+                input
+            },
+            {
+                let mut input = stage18_renderer_input(
+                    "display-output-stage18-completion",
+                    "renderer-payload-stage18-completion",
+                    "display-surface-stage18-completion",
+                    "audit-stage18-completion",
+                );
+                input.renderer_claimed_unproven_completion = true;
+                input
+            },
+            {
+                let mut input = stage18_renderer_input(
+                    "display-output-stage18-mutation",
+                    "renderer-payload-stage18-mutation",
+                    "display-surface-stage18-mutation",
+                    "audit-stage18-mutation",
+                );
+                input.renderer_implied_mutation = true;
+                input
+            },
+        ] {
+            let packet = Stage18MultimodalDisplayPacket::from_stage15_output(&output, None, input)
+                .expect("stage18 no-invention blocked");
+            assert_eq!(
+                packet.disposition,
+                Stage18MultimodalDisplayDisposition::RendererNoInventionBlocked
+            );
+            assert!(packet.work_authority.can_fail_closed);
+            assert!(!packet.work_authority.can_emit_renderer_payload_packet);
+            assert!(!packet.can_mutate_or_execute());
+        }
+    }
+
+    #[test]
+    fn stage_18a_attachments_and_source_cards_require_bounded_secret_safe_refs() {
+        let output = stage18_response_output_packet();
+        let attachment = Stage18MultimodalDisplayPacket::from_stage15_output(
+            &output,
+            None,
+            Stage18MultimodalDisplayInput::fixture_attachment_render_ready(
+                "display-output-stage18-attachment",
+                "attachment-stage18",
+                "attachment-ref-stage18",
+                "audit-stage18-attachment",
+            ),
+        )
+        .expect("stage18 attachment ready");
+        assert_eq!(
+            attachment.disposition,
+            Stage18MultimodalDisplayDisposition::AttachmentRenderReady
+        );
+        assert!(attachment.work_authority.can_emit_attachment_ref);
+        assert!(!attachment.can_mutate_or_execute());
+
+        let source_card = Stage18MultimodalDisplayPacket::from_stage15_output(
+            &output,
+            None,
+            Stage18MultimodalDisplayInput::fixture_source_card_render_ready(
+                "display-output-stage18-source-card",
+                "source-card-stage18",
+                "audit-stage18-source-card",
+            ),
+        )
+        .expect("stage18 source card ready");
+        assert_eq!(
+            source_card.disposition,
+            Stage18MultimodalDisplayDisposition::SourceCardRenderReady
+        );
+        assert!(source_card.work_authority.can_emit_citation_source_card_ref);
+        assert!(!source_card.can_mutate_or_execute());
+
+        for input in [
+            {
+                let mut input = Stage18MultimodalDisplayInput::fixture_attachment_render_ready(
+                    "display-output-stage18-unbounded",
+                    "attachment-stage18-unbounded",
+                    "attachment-ref-stage18-unbounded",
+                    "audit-stage18-unbounded",
+                );
+                input.attachment_or_source_from_bounded_ref = false;
+                input
+            },
+            {
+                let mut input = Stage18MultimodalDisplayInput::fixture_source_card_render_ready(
+                    "display-output-stage18-secret",
+                    "source-card-stage18-secret",
+                    "audit-stage18-secret",
+                );
+                input.attachment_or_source_secret_unsafe = true;
+                input
+            },
+            {
+                let mut input = Stage18MultimodalDisplayInput::fixture_attachment_render_ready(
+                    "display-output-stage18-cross-tenant",
+                    "attachment-stage18-cross-tenant",
+                    "attachment-ref-stage18-cross-tenant",
+                    "audit-stage18-cross-tenant",
+                );
+                input.attachment_or_source_cross_tenant = true;
+                input
+            },
+        ] {
+            let packet = Stage18MultimodalDisplayPacket::from_stage15_output(&output, None, input)
+                .expect("stage18 attachment/source blocked");
+            assert_eq!(
+                packet.disposition,
+                Stage18MultimodalDisplayDisposition::AttachmentSourceCardBlocked
+            );
+            assert!(packet.work_authority.can_fail_closed);
+            assert!(!packet.work_authority.can_emit_attachment_ref);
+            assert!(!packet.can_mutate_or_execute());
+        }
+    }
+
+    #[test]
+    fn stage_18a_native_bridge_handoff_is_declarative_only() {
+        let output = stage18_response_output_packet();
+        let ready = Stage18MultimodalDisplayPacket::from_stage15_output(
+            &output,
+            None,
+            Stage18MultimodalDisplayInput::fixture_native_bridge_handoff_ready(
+                "display-output-stage18-native",
+                "native-bridge-handoff-stage18",
+                "audit-stage18-native",
+            ),
+        )
+        .expect("stage18 native bridge ready");
+        assert_eq!(
+            ready.disposition,
+            Stage18MultimodalDisplayDisposition::NativeBridgeHandoffReady
+        );
+        assert!(ready.native_bridge_declarative_only);
+        assert!(ready.work_authority.can_emit_native_bridge_handoff);
+        assert!(!ready.can_mutate_or_execute());
+
+        for input in [
+            {
+                let mut input = Stage18MultimodalDisplayInput::fixture_native_bridge_handoff_ready(
+                    "display-output-stage18-native-mutate",
+                    "native-bridge-handoff-stage18-mutate",
+                    "audit-stage18-native-mutate",
+                );
+                input.native_bridge_mutates_state = true;
+                input
+            },
+            {
+                let mut input = Stage18MultimodalDisplayInput::fixture_native_bridge_handoff_ready(
+                    "display-output-stage18-native-dispatch",
+                    "native-bridge-handoff-stage18-dispatch",
+                    "audit-stage18-native-dispatch",
+                );
+                input.native_bridge_dispatches_or_executes = true;
+                input
+            },
+            {
+                let mut input = Stage18MultimodalDisplayInput::fixture_native_bridge_handoff_ready(
+                    "display-output-stage18-native-turn",
+                    "native-bridge-handoff-stage18-turn",
+                    "audit-stage18-native-turn",
+                );
+                input.native_bridge_creates_user_turn = true;
+                input
+            },
+            {
+                let mut input = Stage18MultimodalDisplayInput::fixture_native_bridge_handoff_ready(
+                    "display-output-stage18-native-success",
+                    "native-bridge-handoff-stage18-success",
+                    "audit-stage18-native-success",
+                );
+                input.native_bridge_treats_render_as_action_success = true;
+                input
+            },
+        ] {
+            let packet = Stage18MultimodalDisplayPacket::from_stage15_output(&output, None, input)
+                .expect("stage18 native bridge blocked");
+            assert_eq!(
+                packet.disposition,
+                Stage18MultimodalDisplayDisposition::NativeBridgeBlocked
+            );
+            assert!(packet.work_authority.can_fail_closed);
+            assert!(!packet.work_authority.can_emit_native_bridge_handoff);
+            assert!(!packet.can_mutate_or_execute());
+        }
+    }
+
+    #[test]
+    fn stage_18a_protected_like_and_stale_display_fail_closed() {
+        let output = stage18_response_output_packet();
+
+        for input in [
+            {
+                let mut input = stage18_renderer_input(
+                    "display-output-stage18-protected",
+                    "renderer-payload-stage18-protected",
+                    "display-surface-stage18-protected",
+                    "audit-stage18-protected",
+                );
+                input.protected_action_like_request = true;
+                input
+            },
+            {
+                let mut input = stage18_renderer_input(
+                    "display-output-stage18-ambiguous",
+                    "renderer-payload-stage18-ambiguous",
+                    "display-surface-stage18-ambiguous",
+                    "audit-stage18-ambiguous",
+                );
+                input.protected_slot_or_authority_ambiguous = true;
+                input
+            },
+            {
+                let mut input = stage18_renderer_input(
+                    "display-output-stage18-identity",
+                    "renderer-payload-stage18-identity",
+                    "display-surface-stage18-identity",
+                    "audit-stage18-identity",
+                );
+                input.unsafe_identity_posture = true;
+                input
+            },
+        ] {
+            let packet = Stage18MultimodalDisplayPacket::from_stage15_output(&output, None, input)
+                .expect("stage18 protected display blocked");
+            assert_eq!(
+                packet.disposition,
+                Stage18MultimodalDisplayDisposition::ProtectedDisplayBlocked
+            );
+            assert!(packet.work_authority.can_fail_closed);
+            assert!(!packet.can_mutate_or_execute());
+        }
+
+        for input in [
+            {
+                let mut input = stage18_renderer_input(
+                    "display-output-stage18-stale",
+                    "renderer-payload-stage18-stale",
+                    "display-surface-stage18-stale",
+                    "audit-stage18-stale",
+                );
+                input.stale_or_cancelled_or_superseded_output = true;
+                input
+            },
+            {
+                let mut input = Stage18MultimodalDisplayInput::fixture_source_card_render_ready(
+                    "display-output-stage18-stale-source",
+                    "source-card-stage18-stale",
+                    "audit-stage18-stale-source",
+                );
+                input.stale_source_card = true;
+                input
+            },
+            {
+                let mut input = Stage18MultimodalDisplayInput::fixture_attachment_render_ready(
+                    "display-output-stage18-stale-attachment",
+                    "attachment-stage18-stale",
+                    "attachment-ref-stage18-stale",
+                    "audit-stage18-stale-attachment",
+                );
+                input.stale_attachment = true;
+                input
+            },
+            {
+                let mut input = stage18_renderer_input(
+                    "display-output-stage18-identity-mismatch",
+                    "renderer-payload-stage18-identity-mismatch",
+                    "display-surface-stage18-identity-mismatch",
+                    "audit-stage18-identity-mismatch",
+                );
+                input.renderer_identity_matches_current_response = false;
+                input
+            },
+        ] {
+            let packet = Stage18MultimodalDisplayPacket::from_stage15_output(&output, None, input)
+                .expect("stage18 stale render blocked");
+            assert_eq!(
+                packet.disposition,
+                Stage18MultimodalDisplayDisposition::StaleRenderBlocked
+            );
+            assert!(packet.work_authority.can_fail_closed);
+            assert!(!packet.can_mutate_or_execute());
+        }
+    }
+
+    #[test]
+    fn stage_18a_blocks_raw_inputs_live_paths_and_runtime_mocks() {
+        let output = stage18_response_output_packet();
+        let packet = Stage18MultimodalDisplayPacket::from_stage15_output(
+            &output,
+            None,
+            stage18_renderer_input(
+                "display-output-stage18-no-exec",
+                "renderer-payload-stage18-no-exec",
+                "display-surface-stage18-no-exec",
+                "audit-stage18-no-exec",
+            ),
+        )
+        .expect("stage18 no-exec packet");
+
+        assert!(!packet.work_authority.can_invent_facts_or_citations);
+        assert!(!packet.work_authority.can_invent_attachments_or_media);
+        assert!(!packet.work_authority.can_claim_unproven_completion);
+        assert!(!packet.work_authority.can_mutate_external_state);
+        assert!(!packet.work_authority.can_connector_write);
+        assert!(!packet.work_authority.can_approve);
+        assert!(!packet.work_authority.can_dispatch);
+        assert!(!packet.work_authority.can_execute_simulation);
+        assert!(!packet.work_authority.can_execute_protected_action);
+        assert!(!packet.work_authority.can_call_live_provider);
+        assert!(!packet.work_authority.can_run_live_search);
+        assert!(!packet.work_authority.can_call_live_external_tool);
+        assert!(!packet.work_authority.can_generate_live_media);
+        assert!(!packet.work_authority.can_emit_tts_or_playback);
+        assert!(!packet.work_authority.can_capture_microphone_audio);
+        assert!(!packet.work_authority.can_transcribe_live_audio);
+        assert!(!packet.work_authority.can_trigger_voice_id_matching);
+        assert!(!packet.work_authority.can_update_memory_persona_emotion);
+        assert!(!packet.work_authority.can_add_native_ui_behavior);
+        assert!(
+            !packet
+                .work_authority
+                .can_treat_render_success_as_action_success
+        );
+        assert!(!packet.can_mutate_or_execute());
+
+        for input in [
+            {
+                let mut input = stage18_renderer_input(
+                    "display-output-stage18-raw-provider",
+                    "renderer-payload-stage18-raw-provider",
+                    "display-surface-stage18-raw-provider",
+                    "audit-stage18-raw-provider",
+                );
+                input.raw_provider_output_present = true;
+                input
+            },
+            {
+                let mut input = stage18_renderer_input(
+                    "display-output-stage18-raw-media",
+                    "renderer-payload-stage18-raw-media",
+                    "display-surface-stage18-raw-media",
+                    "audit-stage18-raw-media",
+                );
+                input.raw_media_present = true;
+                input
+            },
+            {
+                let mut input = stage18_renderer_input(
+                    "display-output-stage18-unverified",
+                    "renderer-payload-stage18-unverified",
+                    "display-surface-stage18-unverified",
+                    "audit-stage18-unverified",
+                );
+                input.unverified_source_evidence_present = true;
+                input
+            },
+            {
+                let mut input = stage18_renderer_input(
+                    "display-output-stage18-speech-truth",
+                    "renderer-payload-stage18-speech-truth",
+                    "display-surface-stage18-speech-truth",
+                    "audit-stage18-speech-truth",
+                );
+                input.speech_or_playback_used_as_truth_authority = true;
+                input
+            },
+            {
+                let mut input = stage18_renderer_input(
+                    "display-output-stage18-approved-plan",
+                    "renderer-payload-stage18-approved-plan",
+                    "display-surface-stage18-approved-plan",
+                    "audit-stage18-approved-plan",
+                );
+                input.approved_execution_plan_present = true;
+                input
+            },
+        ] {
+            let packet = Stage18MultimodalDisplayPacket::from_stage15_output(&output, None, input)
+                .expect("stage18 unsafe input blocked");
+            assert_eq!(
+                packet.disposition,
+                Stage18MultimodalDisplayDisposition::UnsafeInputBlocked
+            );
+            assert!(packet.work_authority.can_fail_closed);
+            assert!(!packet.can_mutate_or_execute());
+        }
+
+        let media = Stage18MultimodalDisplayPacket::from_stage15_output(
+            &output,
+            None,
+            Stage18MultimodalDisplayInput::fixture_media_output_disposition_ready(
+                "display-output-stage18-media",
+                "media-output-stage18",
+                "audit-stage18-media",
+            ),
+        )
+        .expect("stage18 media disposition ready");
+        assert_eq!(
+            media.disposition,
+            Stage18MultimodalDisplayDisposition::MediaOutputDispositionReady
+        );
+        assert!(!media.work_authority.can_generate_live_media);
+        assert!(!media.can_mutate_or_execute());
+
+        let mut live_media = stage18_renderer_input(
+            "display-output-stage18-live-media",
+            "renderer-payload-stage18-live-media",
+            "display-surface-stage18-live-media",
+            "audit-stage18-live-media",
+        );
+        live_media.generated_live_media_in_build = true;
+        assert!(
+            Stage18MultimodalDisplayPacket::from_stage15_output(&output, None, live_media).is_err()
+        );
+
+        let mut runtime_mock = stage18_renderer_input(
+            "display-output-stage18-runtime-mock",
+            "renderer-payload-stage18-runtime-mock",
+            "display-surface-stage18-runtime-mock",
+            "audit-stage18-runtime-mock",
+        );
+        runtime_mock.fake_render_success_detected = true;
+        runtime_mock.fixture_only_test_path = false;
+        assert!(
+            Stage18MultimodalDisplayPacket::from_stage15_output(&output, None, runtime_mock)
+                .is_err()
+        );
     }
 
     #[test]
