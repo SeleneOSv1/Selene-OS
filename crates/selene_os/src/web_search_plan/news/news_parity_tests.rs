@@ -194,6 +194,8 @@ fn runtime(brave_endpoint: &str, gdelt_endpoint: &str) -> NewsRuntimeConfig {
         },
         health_policy: HealthPolicy::default(),
         brave_api_key_override: Some("test_brave_key".to_string()),
+        brave_news_fixture_json: None,
+        gdelt_fixture_json: None,
     }
 }
 

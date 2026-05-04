@@ -142,6 +142,8 @@ fn base_runtime(brave_endpoint: &str, gdelt_endpoint: &str) -> NewsRuntimeConfig
         },
         health_policy: HealthPolicy::default(),
         brave_api_key_override: Some("test_brave_key".to_string()),
+        brave_news_fixture_json: None,
+        gdelt_fixture_json: None,
     }
 }
 
@@ -212,10 +214,24 @@ fn test_t1_brave_success_no_assist() {
         2,
     );
 
-    let config = base_runtime(
+    let mut config = base_runtime(
         &format!("{}/res/v1/news/search", base),
         &format!("{}/api/v2/doc/doc", base),
     );
+    config.brave_news_fixture_json = Some(brave_news_payload(&[
+        (
+            "Alpha",
+            "https://news.example.com/a",
+            "Alpha snippet",
+            "2026-03-02T00:00:00Z",
+        ),
+        (
+            "Beta",
+            "https://world.example.com/b",
+            "Beta snippet",
+            "2026-03-02T01:00:00Z",
+        ),
+    ]));
 
     let result = execute_news_ladder_from_tool_request(
         &tool_request_packet("latest market news", "medium"),
@@ -266,10 +282,17 @@ fn test_t2_brave_empty_assist_executed() {
         2,
     );
 
-    let config = base_runtime(
+    let mut config = base_runtime(
         &format!("{}/res/v1/news/search", base),
         &format!("{}/api/v2/doc/doc", base),
     );
+    config.brave_news_fixture_json = Some(json!({"results": []}));
+    config.gdelt_fixture_json = Some(gdelt_payload(&[(
+        "Fallback",
+        "https://gdelt.example.org/item",
+        "Fallback snippet",
+        "20260303T010203Z",
+    )]));
 
     let result = execute_news_ladder_from_tool_request(
         &tool_request_packet("earthquake updates", "medium"),
@@ -334,10 +357,24 @@ fn test_t3_recency_filtering_removes_stale_items() {
         2,
     );
 
-    let config = base_runtime(
+    let mut config = base_runtime(
         &format!("{}/res/v1/news/search", base),
         &format!("{}/api/v2/doc/doc", base),
     );
+    config.brave_news_fixture_json = Some(brave_news_payload(&[
+        (
+            "Fresh",
+            "https://fresh.example.com/story",
+            "Fresh snippet",
+            "2026-03-02T00:00:00Z",
+        ),
+        (
+            "Stale",
+            "https://stale.example.com/story",
+            "Stale snippet",
+            "2025-01-01T00:00:00Z",
+        ),
+    ]));
 
     let result = execute_news_ladder_from_tool_request(
         &tool_request_packet("policy updates", "medium"),
@@ -428,6 +465,34 @@ fn test_t5_dedup_preserves_brave_precedence() {
         &format!("{}/api/v2/doc/doc", base),
     );
     config.max_results = 5;
+    config.brave_news_fixture_json = Some(brave_news_payload(&[
+        (
+            "Dup",
+            "https://dup.example.com/story?utm_source=ads",
+            "Brave version",
+            "2026-03-02T00:00:00Z",
+        ),
+        (
+            "Second",
+            "https://dup.example.com/second",
+            "Second brave item",
+            "2026-03-02T00:10:00Z",
+        ),
+    ]));
+    config.gdelt_fixture_json = Some(gdelt_payload(&[
+        (
+            "Dup GDELT",
+            "https://dup.example.com/story",
+            "GDELT corroboration",
+            "20260302T020203Z",
+        ),
+        (
+            "Unique GDELT",
+            "https://other.example.net/unique",
+            "Unique gdelt item",
+            "20260302T030203Z",
+        ),
+    ]));
 
     let result = execute_news_ladder_from_tool_request(
         &tool_request_packet("merger rumors", "high"),
@@ -498,10 +563,22 @@ fn test_t6_diversity_threshold_deterministic() {
         4,
     );
 
-    let config = base_runtime(
+    let mut config = base_runtime(
         &format!("{}/res/v1/news/search", base),
         &format!("{}/api/v2/doc/doc", base),
     );
+    config.brave_news_fixture_json = Some(brave_news_payload(&[(
+        "Lead",
+        "https://solo.example.com/lead",
+        "Lead snippet",
+        "2026-03-02T00:00:00Z",
+    )]));
+    config.gdelt_fixture_json = Some(gdelt_payload(&[(
+        "Assist",
+        "https://other.example.org/assist",
+        "Assist snippet",
+        "20260302T010203Z",
+    )]));
 
     let result_a = execute_news_ladder_from_tool_request(
         &tool_request_packet("supply chain", "high"),
@@ -562,10 +639,22 @@ fn test_t7_conflict_clustering_reproducible() {
         2,
     );
 
-    let config = base_runtime(
+    let mut config = base_runtime(
         &format!("{}/res/v1/news/search", base),
         &format!("{}/api/v2/doc/doc", base),
     );
+    config.brave_news_fixture_json = Some(brave_news_payload(&[(
+        "Acme merger update today",
+        "https://finance.example.com/acme",
+        "Officials confirmed merger completed",
+        "2026-03-02T00:00:00Z",
+    )]));
+    config.gdelt_fixture_json = Some(gdelt_payload(&[(
+        "Acme merger update today",
+        "https://wire.example.net/acme",
+        "Officials deny merger completed",
+        "20260302T010203Z",
+    )]));
 
     let result = execute_news_ladder_from_tool_request(
         &tool_request_packet("acme merger", "high"),
@@ -623,10 +712,16 @@ fn test_t8_evidence_packet_completeness_news_mode() {
         2,
     );
 
-    let config = base_runtime(
+    let mut config = base_runtime(
         &format!("{}/res/v1/news/search", base),
         &format!("{}/api/v2/doc/doc", base),
     );
+    config.brave_news_fixture_json = Some(brave_news_payload(&[(
+        "Completeness",
+        "https://complete.example.com/a",
+        "Complete snippet",
+        "2026-03-02T00:00:00Z",
+    )]));
 
     let result = execute_news_ladder_from_tool_request(
         &tool_request_packet("completeness", "medium"),

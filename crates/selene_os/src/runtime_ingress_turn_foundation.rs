@@ -140,6 +140,22 @@ mod reason_codes {
     pub const STAGE12_IDEMPOTENCY_REPLAY_BLOCKED: &str = "stage12_idempotency_replay_blocked";
     pub const STAGE12_WORK_LEASE_BLOCKED: &str = "stage12_work_lease_blocked";
     pub const STAGE12_AUDIT_PROOF_MISSING: &str = "stage12_audit_proof_missing";
+    pub const STAGE13_PUBLIC_READ_ONLY_EVIDENCE_READY: &str =
+        "stage13_public_read_only_evidence_ready";
+    pub const STAGE13_STAGE11_CANDIDATE_BLOCKED: &str = "stage13_stage11_candidate_blocked";
+    pub const STAGE13_STAGE12_NO_MUTATION_PROOF_MISSING: &str =
+        "stage13_stage12_no_mutation_proof_missing";
+    pub const STAGE13_PROTECTED_ACTION_CANDIDATE_BLOCKED: &str =
+        "stage13_protected_action_candidate_blocked";
+    pub const STAGE13_UNSAFE_OR_STALE_INPUT_BLOCKED: &str = "stage13_unsafe_or_stale_input_blocked";
+    pub const STAGE13_PROVIDER_OFF_NO_EVIDENCE: &str = "stage13_provider_off_no_evidence";
+    pub const STAGE13_MISSING_SECRET_NO_EVIDENCE: &str = "stage13_missing_secret_no_evidence";
+    pub const STAGE13_PROVIDER_FAILURE_NO_EVIDENCE: &str = "stage13_provider_failure_no_evidence";
+    pub const STAGE13_UNVERIFIABLE_EVIDENCE_BLOCKED: &str = "stage13_unverifiable_evidence_blocked";
+    pub const STAGE13_STALE_EVIDENCE_BLOCKED: &str = "stage13_stale_evidence_blocked";
+    pub const STAGE13_CITATION_MISSING_BLOCKED: &str = "stage13_citation_missing_blocked";
+    pub const STAGE13_PROTECTED_PHRASE_BLOCKED: &str = "stage13_protected_phrase_blocked";
+    pub const STAGE13_AUDIT_PROOF_MISSING: &str = "stage13_audit_proof_missing";
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -7983,6 +7999,684 @@ impl Validate for Stage12ProtectedActionGatePacket {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stage13PublicReadOnlyDisposition {
+    EvidenceReady,
+    Stage11CandidateBlocked,
+    Stage12NoMutationProofMissing,
+    ProtectedActionCandidateBlocked,
+    UnsafeOrStaleInputBlocked,
+    ProviderOffNoEvidence,
+    MissingSecretNoEvidence,
+    ProviderFailureNoEvidence,
+    UnverifiableEvidenceBlocked,
+    StaleEvidenceBlocked,
+    CitationMissingBlocked,
+    ProtectedPhraseBlocked,
+    AuditProofMissing,
+}
+
+impl Stage13PublicReadOnlyDisposition {
+    pub const fn default_reason_code(self) -> &'static str {
+        match self {
+            Stage13PublicReadOnlyDisposition::EvidenceReady => {
+                reason_codes::STAGE13_PUBLIC_READ_ONLY_EVIDENCE_READY
+            }
+            Stage13PublicReadOnlyDisposition::Stage11CandidateBlocked => {
+                reason_codes::STAGE13_STAGE11_CANDIDATE_BLOCKED
+            }
+            Stage13PublicReadOnlyDisposition::Stage12NoMutationProofMissing => {
+                reason_codes::STAGE13_STAGE12_NO_MUTATION_PROOF_MISSING
+            }
+            Stage13PublicReadOnlyDisposition::ProtectedActionCandidateBlocked => {
+                reason_codes::STAGE13_PROTECTED_ACTION_CANDIDATE_BLOCKED
+            }
+            Stage13PublicReadOnlyDisposition::UnsafeOrStaleInputBlocked => {
+                reason_codes::STAGE13_UNSAFE_OR_STALE_INPUT_BLOCKED
+            }
+            Stage13PublicReadOnlyDisposition::ProviderOffNoEvidence => {
+                reason_codes::STAGE13_PROVIDER_OFF_NO_EVIDENCE
+            }
+            Stage13PublicReadOnlyDisposition::MissingSecretNoEvidence => {
+                reason_codes::STAGE13_MISSING_SECRET_NO_EVIDENCE
+            }
+            Stage13PublicReadOnlyDisposition::ProviderFailureNoEvidence => {
+                reason_codes::STAGE13_PROVIDER_FAILURE_NO_EVIDENCE
+            }
+            Stage13PublicReadOnlyDisposition::UnverifiableEvidenceBlocked => {
+                reason_codes::STAGE13_UNVERIFIABLE_EVIDENCE_BLOCKED
+            }
+            Stage13PublicReadOnlyDisposition::StaleEvidenceBlocked => {
+                reason_codes::STAGE13_STALE_EVIDENCE_BLOCKED
+            }
+            Stage13PublicReadOnlyDisposition::CitationMissingBlocked => {
+                reason_codes::STAGE13_CITATION_MISSING_BLOCKED
+            }
+            Stage13PublicReadOnlyDisposition::ProtectedPhraseBlocked => {
+                reason_codes::STAGE13_PROTECTED_PHRASE_BLOCKED
+            }
+            Stage13PublicReadOnlyDisposition::AuditProofMissing => {
+                reason_codes::STAGE13_AUDIT_PROOF_MISSING
+            }
+        }
+    }
+
+    pub const fn is_ready(self) -> bool {
+        matches!(self, Stage13PublicReadOnlyDisposition::EvidenceReady)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Stage13PublicReadOnlyWorkAuthority {
+    pub can_emit_public_read_only_evidence: bool,
+    pub can_emit_source_evidence: bool,
+    pub can_emit_citation: bool,
+    pub can_emit_provenance: bool,
+    pub can_emit_verifier_result: bool,
+    pub can_emit_source_chip: bool,
+    pub can_fail_closed: bool,
+    pub can_mutate: bool,
+    pub can_connector_write: bool,
+    pub can_send_message: bool,
+    pub can_post_content: bool,
+    pub can_purchase: bool,
+    pub can_delete_remote: bool,
+    pub can_invite: bool,
+    pub can_schedule: bool,
+    pub can_approve: bool,
+    pub can_dispatch: bool,
+    pub can_execute_simulation: bool,
+    pub can_execute_protected_action: bool,
+    pub can_call_live_provider: bool,
+    pub can_run_live_search: bool,
+    pub can_call_live_external_tool: bool,
+    pub can_emit_tts: bool,
+    pub can_update_memory_persona_emotion: bool,
+    pub can_add_native_ui_behavior: bool,
+}
+
+impl Stage13PublicReadOnlyWorkAuthority {
+    pub const fn evidence_ready() -> Self {
+        Self {
+            can_emit_public_read_only_evidence: true,
+            can_emit_source_evidence: true,
+            can_emit_citation: true,
+            can_emit_provenance: true,
+            can_emit_verifier_result: true,
+            can_emit_source_chip: true,
+            can_fail_closed: false,
+            can_mutate: false,
+            can_connector_write: false,
+            can_send_message: false,
+            can_post_content: false,
+            can_purchase: false,
+            can_delete_remote: false,
+            can_invite: false,
+            can_schedule: false,
+            can_approve: false,
+            can_dispatch: false,
+            can_execute_simulation: false,
+            can_execute_protected_action: false,
+            can_call_live_provider: false,
+            can_run_live_search: false,
+            can_call_live_external_tool: false,
+            can_emit_tts: false,
+            can_update_memory_persona_emotion: false,
+            can_add_native_ui_behavior: false,
+        }
+    }
+
+    pub const fn fail_closed() -> Self {
+        Self {
+            can_emit_public_read_only_evidence: false,
+            can_emit_source_evidence: false,
+            can_emit_citation: false,
+            can_emit_provenance: false,
+            can_emit_verifier_result: false,
+            can_emit_source_chip: false,
+            can_fail_closed: true,
+            ..Self::evidence_ready()
+        }
+    }
+
+    pub const fn can_mutate_or_execute(self) -> bool {
+        self.can_mutate
+            || self.can_connector_write
+            || self.can_send_message
+            || self.can_post_content
+            || self.can_purchase
+            || self.can_delete_remote
+            || self.can_invite
+            || self.can_schedule
+            || self.can_approve
+            || self.can_dispatch
+            || self.can_execute_simulation
+            || self.can_execute_protected_action
+            || self.can_call_live_provider
+            || self.can_run_live_search
+            || self.can_call_live_external_tool
+            || self.can_emit_tts
+            || self.can_update_memory_persona_emotion
+            || self.can_add_native_ui_behavior
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Stage13PublicReadOnlyEvidenceInput {
+    pub public_read_only_evidence_id: String,
+    pub tool_route_id: String,
+    pub source_evidence_id: Option<String>,
+    pub citation_id: Option<String>,
+    pub provenance_id: Option<String>,
+    pub verifier_id: Option<String>,
+    pub provider_budget_id: Option<String>,
+    pub provider_off_state: bool,
+    pub provider_call_attempt_count: u32,
+    pub provider_network_dispatch_count: u32,
+    pub missing_secret: bool,
+    pub provider_failure: bool,
+    pub source_evidence_present: bool,
+    pub source_evidence_current: bool,
+    pub citation_coverage_passed: bool,
+    pub source_verification_passed: bool,
+    pub source_packet_bounded: bool,
+    pub source_packet_secret_safe: bool,
+    pub protected_action_like_request: bool,
+    pub attempted_live_provider_in_build: bool,
+    pub ran_live_search_in_build: bool,
+    pub called_live_external_tool_in_build: bool,
+    pub connector_write_requested: bool,
+    pub policy_context_id: Option<String>,
+    pub tenant_id: Option<String>,
+    pub audit_id: Option<String>,
+    pub ph1j_proof_ref: Option<String>,
+}
+
+impl Stage13PublicReadOnlyEvidenceInput {
+    pub fn fixture_evidence_ready(
+        public_read_only_evidence_id: impl Into<String>,
+        tool_route_id: impl Into<String>,
+        source_evidence_id: impl Into<String>,
+        citation_id: impl Into<String>,
+        provenance_id: impl Into<String>,
+        verifier_id: impl Into<String>,
+        provider_budget_id: impl Into<String>,
+        audit_id: impl Into<String>,
+    ) -> Self {
+        let audit_id = audit_id.into();
+        Self {
+            public_read_only_evidence_id: public_read_only_evidence_id.into(),
+            tool_route_id: tool_route_id.into(),
+            source_evidence_id: Some(source_evidence_id.into()),
+            citation_id: Some(citation_id.into()),
+            provenance_id: Some(provenance_id.into()),
+            verifier_id: Some(verifier_id.into()),
+            provider_budget_id: Some(provider_budget_id.into()),
+            provider_off_state: false,
+            provider_call_attempt_count: 0,
+            provider_network_dispatch_count: 0,
+            missing_secret: false,
+            provider_failure: false,
+            source_evidence_present: true,
+            source_evidence_current: true,
+            citation_coverage_passed: true,
+            source_verification_passed: true,
+            source_packet_bounded: true,
+            source_packet_secret_safe: true,
+            protected_action_like_request: false,
+            attempted_live_provider_in_build: false,
+            ran_live_search_in_build: false,
+            called_live_external_tool_in_build: false,
+            connector_write_requested: false,
+            policy_context_id: Some("policy-context-stage13-public".to_string()),
+            tenant_id: Some("tenant-stage13-public".to_string()),
+            audit_id: Some(audit_id.clone()),
+            ph1j_proof_ref: Some(audit_id),
+        }
+    }
+}
+
+impl Validate for Stage13PublicReadOnlyEvidenceInput {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        validate_stage4_ref(
+            "stage13_public_read_only_evidence_input.public_read_only_evidence_id",
+            &self.public_read_only_evidence_id,
+        )?;
+        validate_stage4_ref(
+            "stage13_public_read_only_evidence_input.tool_route_id",
+            &self.tool_route_id,
+        )?;
+        validate_stage4_optional_ref(
+            "stage13_public_read_only_evidence_input.source_evidence_id",
+            self.source_evidence_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage13_public_read_only_evidence_input.citation_id",
+            self.citation_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage13_public_read_only_evidence_input.provenance_id",
+            self.provenance_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage13_public_read_only_evidence_input.verifier_id",
+            self.verifier_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage13_public_read_only_evidence_input.provider_budget_id",
+            self.provider_budget_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage13_public_read_only_evidence_input.policy_context_id",
+            self.policy_context_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage13_public_read_only_evidence_input.tenant_id",
+            self.tenant_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage13_public_read_only_evidence_input.audit_id",
+            self.audit_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage13_public_read_only_evidence_input.ph1j_proof_ref",
+            self.ph1j_proof_ref.as_deref(),
+        )?;
+        if self.attempted_live_provider_in_build
+            || self.ran_live_search_in_build
+            || self.called_live_external_tool_in_build
+            || self.connector_write_requested
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage13_public_read_only_evidence_input.no_live_build",
+                reason:
+                    "Stage 13A proof cannot call live providers/search/tools or connector-write",
+            });
+        }
+        if self.provider_off_state
+            && (self.provider_call_attempt_count != 0 || self.provider_network_dispatch_count != 0)
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage13_public_read_only_evidence_input.provider_off",
+                reason: "provider-off proof requires zero provider attempts and network dispatches",
+            });
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Stage13PublicReadOnlyEvidencePacket {
+    pub session_id: SessionId,
+    pub turn_id: Option<TurnId>,
+    pub activation_id: Option<String>,
+    pub understanding_id: String,
+    pub reasoning_id: String,
+    pub router_id: String,
+    pub capability_id: Option<String>,
+    pub capability_map_id: Option<String>,
+    pub read_only_candidate_id: Option<String>,
+    pub tool_route_id: String,
+    pub source_evidence_id: Option<String>,
+    pub citation_id: Option<String>,
+    pub provenance_id: Option<String>,
+    pub verifier_id: Option<String>,
+    pub provider_budget_id: Option<String>,
+    pub provider_off_state: bool,
+    pub provider_call_attempt_count: u32,
+    pub provider_network_dispatch_count: u32,
+    pub missing_secret: bool,
+    pub provider_failure: bool,
+    pub access_context_id: Option<String>,
+    pub policy_context_id: Option<String>,
+    pub tenant_id: Option<String>,
+    pub audit_id: Option<String>,
+    pub ph1j_proof_ref: Option<String>,
+    pub runtime_action_gate_id: String,
+    pub reason_code: &'static str,
+    pub disposition: Stage13PublicReadOnlyDisposition,
+    pub stage11_disposition: Stage11RouterDisposition,
+    pub stage12_disposition: Stage12ProtectedActionDisposition,
+    pub candidate_kind: Stage11RouteCandidateKind,
+    pub stage5_turn_disposition: Stage5TurnAuthorityDisposition,
+    pub stage6_access_disposition: Stage6AccessContextDisposition,
+    pub source_evidence_present: bool,
+    pub source_evidence_current: bool,
+    pub citation_coverage_passed: bool,
+    pub source_verification_passed: bool,
+    pub source_packet_bounded: bool,
+    pub source_packet_secret_safe: bool,
+    pub protected_action_like_request: bool,
+    pub work_authority: Stage13PublicReadOnlyWorkAuthority,
+}
+
+impl Stage13PublicReadOnlyEvidencePacket {
+    pub fn from_public_read_only_route(
+        route: &Stage11ReasoningRouterPacket,
+        stage12_no_mutation: &Stage12ProtectedActionGatePacket,
+        input: Stage13PublicReadOnlyEvidenceInput,
+    ) -> Result<Self, ContractViolation> {
+        route.validate()?;
+        stage12_no_mutation.validate()?;
+        input.validate()?;
+        if route.reasoning_id != stage12_no_mutation.reasoning_id
+            || route.router_id != stage12_no_mutation.router_id
+            || route.tool_candidate_id != stage12_no_mutation.tool_candidate_id
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage13_public_read_only_evidence_packet.stage12_link",
+                reason: "Stage 13A must consume the Stage 12 no-mutation proof for the same Stage 11 route",
+            });
+        }
+        let disposition = Self::decide_disposition(route, stage12_no_mutation, &input);
+        let work_authority = Self::work_authority_for(disposition);
+        let audit_id = input
+            .audit_id
+            .clone()
+            .or_else(|| stage12_no_mutation.audit_id.clone())
+            .or_else(|| route.audit_id.clone());
+        let ph1j_proof_ref = input.ph1j_proof_ref.clone().or_else(|| audit_id.clone());
+        let packet = Self {
+            session_id: route.session_id,
+            turn_id: route.turn_id,
+            activation_id: route.activation_id.clone(),
+            understanding_id: route.understanding_id.clone(),
+            reasoning_id: route.reasoning_id.clone(),
+            router_id: route.router_id.clone(),
+            capability_id: route.capability_id.clone(),
+            capability_map_id: route.capability_map_id.clone(),
+            read_only_candidate_id: route.tool_candidate_id.clone(),
+            tool_route_id: input.tool_route_id,
+            source_evidence_id: input.source_evidence_id,
+            citation_id: input.citation_id,
+            provenance_id: input.provenance_id,
+            verifier_id: input.verifier_id,
+            provider_budget_id: input.provider_budget_id,
+            provider_off_state: input.provider_off_state,
+            provider_call_attempt_count: input.provider_call_attempt_count,
+            provider_network_dispatch_count: input.provider_network_dispatch_count,
+            missing_secret: input.missing_secret,
+            provider_failure: input.provider_failure,
+            access_context_id: route.access_context_id.clone(),
+            policy_context_id: input
+                .policy_context_id
+                .or_else(|| stage12_no_mutation.policy_context_id.clone()),
+            tenant_id: input
+                .tenant_id
+                .or_else(|| stage12_no_mutation.tenant_id.clone()),
+            audit_id,
+            ph1j_proof_ref,
+            runtime_action_gate_id: stage12_no_mutation.runtime_action_gate_id.clone(),
+            reason_code: disposition.default_reason_code(),
+            disposition,
+            stage11_disposition: route.disposition,
+            stage12_disposition: stage12_no_mutation.disposition,
+            candidate_kind: route.candidate_kind,
+            stage5_turn_disposition: route.stage5_turn_disposition,
+            stage6_access_disposition: route.stage6_access_disposition,
+            source_evidence_present: input.source_evidence_present,
+            source_evidence_current: input.source_evidence_current,
+            citation_coverage_passed: input.citation_coverage_passed,
+            source_verification_passed: input.source_verification_passed,
+            source_packet_bounded: input.source_packet_bounded,
+            source_packet_secret_safe: input.source_packet_secret_safe,
+            protected_action_like_request: input.protected_action_like_request,
+            work_authority,
+        };
+        packet.validate()?;
+        Ok(packet)
+    }
+
+    pub const fn can_mutate_or_execute(&self) -> bool {
+        self.work_authority.can_mutate_or_execute()
+    }
+
+    fn decide_disposition(
+        route: &Stage11ReasoningRouterPacket,
+        stage12_no_mutation: &Stage12ProtectedActionGatePacket,
+        input: &Stage13PublicReadOnlyEvidenceInput,
+    ) -> Stage13PublicReadOnlyDisposition {
+        if route.candidate_kind.is_protected_action()
+            || route.protected_action
+            || route.requires_stage12_gate
+        {
+            return Stage13PublicReadOnlyDisposition::ProtectedActionCandidateBlocked;
+        }
+        if route.disposition != Stage11RouterDisposition::PublicReadOnlyCandidate
+            || !route.candidate_kind.is_public_read_only()
+            || !route.public_read_only
+        {
+            return Stage13PublicReadOnlyDisposition::Stage11CandidateBlocked;
+        }
+        if route.stage5_turn_disposition != Stage5TurnAuthorityDisposition::CurrentCommittedTurn
+            || !route.stage8_input_kind.can_update_understanding()
+        {
+            return Stage13PublicReadOnlyDisposition::UnsafeOrStaleInputBlocked;
+        }
+        if stage12_no_mutation.disposition
+            != Stage12ProtectedActionDisposition::PublicReadOnlyCandidateBlocked
+            || stage12_no_mutation.approved_execution_plan_id.is_some()
+            || !stage12_no_mutation
+                .work_authority
+                .can_emit_fail_closed_response
+            || stage12_no_mutation
+                .work_authority
+                .has_forbidden_live_or_mutation_power()
+        {
+            return Stage13PublicReadOnlyDisposition::Stage12NoMutationProofMissing;
+        }
+        if input.protected_action_like_request {
+            return Stage13PublicReadOnlyDisposition::ProtectedPhraseBlocked;
+        }
+        if input.audit_id.is_none()
+            && input.ph1j_proof_ref.is_none()
+            && stage12_no_mutation.audit_id.is_none()
+            && route.audit_id.is_none()
+        {
+            return Stage13PublicReadOnlyDisposition::AuditProofMissing;
+        }
+        if input.provider_off_state {
+            return Stage13PublicReadOnlyDisposition::ProviderOffNoEvidence;
+        }
+        if input.missing_secret {
+            return Stage13PublicReadOnlyDisposition::MissingSecretNoEvidence;
+        }
+        if input.provider_failure {
+            return Stage13PublicReadOnlyDisposition::ProviderFailureNoEvidence;
+        }
+        if !input.source_evidence_current {
+            return Stage13PublicReadOnlyDisposition::StaleEvidenceBlocked;
+        }
+        if !input.source_evidence_present || input.source_evidence_id.is_none() {
+            return Stage13PublicReadOnlyDisposition::UnverifiableEvidenceBlocked;
+        }
+        if !input.citation_coverage_passed || input.citation_id.is_none() {
+            return Stage13PublicReadOnlyDisposition::CitationMissingBlocked;
+        }
+        if !input.source_verification_passed
+            || input.verifier_id.is_none()
+            || input.provenance_id.is_none()
+            || !input.source_packet_bounded
+            || !input.source_packet_secret_safe
+        {
+            return Stage13PublicReadOnlyDisposition::UnverifiableEvidenceBlocked;
+        }
+        Stage13PublicReadOnlyDisposition::EvidenceReady
+    }
+
+    const fn work_authority_for(
+        disposition: Stage13PublicReadOnlyDisposition,
+    ) -> Stage13PublicReadOnlyWorkAuthority {
+        if disposition.is_ready() {
+            Stage13PublicReadOnlyWorkAuthority::evidence_ready()
+        } else {
+            Stage13PublicReadOnlyWorkAuthority::fail_closed()
+        }
+    }
+}
+
+impl Validate for Stage13PublicReadOnlyEvidencePacket {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        validate_stage4_optional_ref(
+            "stage13_public_read_only_evidence_packet.activation_id",
+            self.activation_id.as_deref(),
+        )?;
+        validate_stage4_ref(
+            "stage13_public_read_only_evidence_packet.understanding_id",
+            &self.understanding_id,
+        )?;
+        validate_stage4_ref(
+            "stage13_public_read_only_evidence_packet.reasoning_id",
+            &self.reasoning_id,
+        )?;
+        validate_stage4_ref(
+            "stage13_public_read_only_evidence_packet.router_id",
+            &self.router_id,
+        )?;
+        validate_stage4_optional_ref(
+            "stage13_public_read_only_evidence_packet.capability_id",
+            self.capability_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage13_public_read_only_evidence_packet.capability_map_id",
+            self.capability_map_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage13_public_read_only_evidence_packet.read_only_candidate_id",
+            self.read_only_candidate_id.as_deref(),
+        )?;
+        validate_stage4_ref(
+            "stage13_public_read_only_evidence_packet.tool_route_id",
+            &self.tool_route_id,
+        )?;
+        validate_stage4_optional_ref(
+            "stage13_public_read_only_evidence_packet.source_evidence_id",
+            self.source_evidence_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage13_public_read_only_evidence_packet.citation_id",
+            self.citation_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage13_public_read_only_evidence_packet.provenance_id",
+            self.provenance_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage13_public_read_only_evidence_packet.verifier_id",
+            self.verifier_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage13_public_read_only_evidence_packet.provider_budget_id",
+            self.provider_budget_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage13_public_read_only_evidence_packet.access_context_id",
+            self.access_context_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage13_public_read_only_evidence_packet.policy_context_id",
+            self.policy_context_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage13_public_read_only_evidence_packet.tenant_id",
+            self.tenant_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage13_public_read_only_evidence_packet.audit_id",
+            self.audit_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage13_public_read_only_evidence_packet.ph1j_proof_ref",
+            self.ph1j_proof_ref.as_deref(),
+        )?;
+        validate_stage4_ref(
+            "stage13_public_read_only_evidence_packet.runtime_action_gate_id",
+            &self.runtime_action_gate_id,
+        )?;
+        if self.reason_code != self.disposition.default_reason_code() {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage13_public_read_only_evidence_packet.reason_code",
+                reason: "must match Stage 13 public read-only evidence disposition",
+            });
+        }
+        if self.work_authority.can_mutate_or_execute() {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage13_public_read_only_evidence_packet.work_authority",
+                reason: "Stage 13A cannot mutate, connector-write, dispatch, approve, execute, call live providers/search/tools, emit TTS, add native UI, or update memory/persona/emotion",
+            });
+        }
+        if self.provider_off_state
+            && (self.provider_call_attempt_count != 0 || self.provider_network_dispatch_count != 0)
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage13_public_read_only_evidence_packet.provider_off_state",
+                reason: "provider-off read-only proof must preserve zero provider attempts and network dispatches",
+            });
+        }
+        if self.disposition.is_ready() {
+            if self.stage11_disposition != Stage11RouterDisposition::PublicReadOnlyCandidate
+                || self.stage12_disposition
+                    != Stage12ProtectedActionDisposition::PublicReadOnlyCandidateBlocked
+                || !self.candidate_kind.is_public_read_only()
+                || self.read_only_candidate_id.is_none()
+                || self.source_evidence_id.is_none()
+                || self.citation_id.is_none()
+                || self.provenance_id.is_none()
+                || self.verifier_id.is_none()
+                || self.audit_id.is_none()
+                || self.ph1j_proof_ref.is_none()
+                || self.provider_off_state
+                || self.missing_secret
+                || self.provider_failure
+                || self.protected_action_like_request
+                || !self.source_evidence_present
+                || !self.source_evidence_current
+                || !self.citation_coverage_passed
+                || !self.source_verification_passed
+                || !self.source_packet_bounded
+                || !self.source_packet_secret_safe
+                || !self.work_authority.can_emit_public_read_only_evidence
+                || !self.work_authority.can_emit_source_evidence
+                || !self.work_authority.can_emit_citation
+                || !self.work_authority.can_emit_provenance
+                || !self.work_authority.can_emit_verifier_result
+                || !self.work_authority.can_emit_source_chip
+                || self.work_authority.can_fail_closed
+            {
+                return Err(ContractViolation::InvalidValue {
+                    field: "stage13_public_read_only_evidence_packet.evidence_ready",
+                    reason: "evidence-ready public read-only packets require current Stage 11 route, Stage 12 no-mutation proof, bounded source evidence, citation, verifier, and PH1.J audit refs",
+                });
+            }
+        } else if !self.work_authority.can_fail_closed
+            || self.work_authority.can_emit_source_evidence
+            || self.work_authority.can_emit_citation
+            || self.work_authority.can_emit_provenance
+            || self.work_authority.can_emit_verifier_result
+            || self.work_authority.can_emit_source_chip
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage13_public_read_only_evidence_packet.fail_closed",
+                reason: "blocked Stage 13A packets fail closed and cannot fabricate source chips, citations, provenance, or verifier results",
+            });
+        }
+        if matches!(
+            self.disposition,
+            Stage13PublicReadOnlyDisposition::ProtectedActionCandidateBlocked
+                | Stage13PublicReadOnlyDisposition::ProtectedPhraseBlocked
+        ) && self.candidate_kind.is_public_read_only()
+            && !self.protected_action_like_request
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage13_public_read_only_evidence_packet.protected_boundary",
+                reason:
+                    "protected-action blocks require protected route or protected phrase evidence",
+            });
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RawTurnPayload {
     Text {
@@ -13712,6 +14406,42 @@ mod tests {
         .expect("stage12 simulation route")
     }
 
+    fn stage13_public_read_only_route() -> Stage11ReasoningRouterPacket {
+        let understanding = stage11_ready_understanding();
+        Stage11ReasoningRouterPacket::from_stage10_understanding(
+            &understanding,
+            Stage11RouteCandidateInput::public_read_only_tool(
+                "reasoning-stage13-public",
+                "router-stage13-public",
+                "capability-stage13-public",
+                "capability-map-stage13-public",
+                "tool-candidate-stage13-public",
+                "audit-stage13-route-public",
+            ),
+        )
+        .expect("stage13 public read-only route")
+    }
+
+    fn stage13_no_mutation_proof(
+        route: &Stage11ReasoningRouterPacket,
+    ) -> Stage12ProtectedActionGatePacket {
+        Stage12ProtectedActionGatePacket::from_stage11_candidate(route, stage12_gate_input())
+            .expect("stage13 stage12 no-mutation proof")
+    }
+
+    fn stage13_evidence_input() -> Stage13PublicReadOnlyEvidenceInput {
+        Stage13PublicReadOnlyEvidenceInput::fixture_evidence_ready(
+            "public-evidence-stage13",
+            "tool-route-stage13",
+            "source-evidence-stage13",
+            "citation-stage13",
+            "provenance-stage13",
+            "verifier-stage13",
+            "provider-budget-stage13",
+            "audit-stage13",
+        )
+    }
+
     #[test]
     fn stage_12a_protected_action_requires_all_gates_and_emits_approved_plan() {
         let route = stage12_protected_route();
@@ -13964,6 +14694,223 @@ mod tests {
         );
         assert!(stale_lease_packet.fail_closed_response.is_some());
         assert!(!stale_lease_packet.can_call_live_or_mutate_without_gate());
+    }
+
+    #[test]
+    fn stage_13a_public_read_only_route_emits_bounded_source_evidence() {
+        let route = stage13_public_read_only_route();
+        let no_mutation = stage13_no_mutation_proof(&route);
+        let packet = Stage13PublicReadOnlyEvidencePacket::from_public_read_only_route(
+            &route,
+            &no_mutation,
+            stage13_evidence_input(),
+        )
+        .expect("stage13 public read-only evidence packet");
+
+        assert_eq!(
+            packet.disposition,
+            Stage13PublicReadOnlyDisposition::EvidenceReady
+        );
+        assert_eq!(
+            packet.stage11_disposition,
+            Stage11RouterDisposition::PublicReadOnlyCandidate
+        );
+        assert_eq!(
+            packet.stage12_disposition,
+            Stage12ProtectedActionDisposition::PublicReadOnlyCandidateBlocked
+        );
+        assert_eq!(
+            packet.read_only_candidate_id.as_deref(),
+            Some("tool-candidate-stage13-public")
+        );
+        assert_eq!(
+            packet.source_evidence_id.as_deref(),
+            Some("source-evidence-stage13")
+        );
+        assert_eq!(packet.citation_id.as_deref(), Some("citation-stage13"));
+        assert_eq!(packet.verifier_id.as_deref(), Some("verifier-stage13"));
+        assert!(packet.work_authority.can_emit_source_evidence);
+        assert!(packet.work_authority.can_emit_citation);
+        assert!(packet.work_authority.can_emit_verifier_result);
+        assert!(!packet.can_mutate_or_execute());
+        assert!(!packet.work_authority.can_run_live_search);
+        assert!(!packet.work_authority.can_call_live_provider);
+        assert!(!packet.work_authority.can_connector_write);
+    }
+
+    #[test]
+    fn stage_13a_requires_stage12_no_mutation_proof() {
+        let route = stage13_public_read_only_route();
+        let protected_route = stage12_protected_route();
+        let wrong_stage12 = Stage12ProtectedActionGatePacket::from_stage11_candidate(
+            &protected_route,
+            stage12_gate_input(),
+        )
+        .expect("stage12 protected proof");
+
+        let mismatched = Stage13PublicReadOnlyEvidencePacket::from_public_read_only_route(
+            &route,
+            &wrong_stage12,
+            stage13_evidence_input(),
+        );
+        assert!(mismatched.is_err());
+
+        let no_mutation = stage13_no_mutation_proof(&route);
+        let protected_stage13 = Stage13PublicReadOnlyEvidencePacket::from_public_read_only_route(
+            &protected_route,
+            &no_mutation,
+            stage13_evidence_input(),
+        );
+        assert!(protected_stage13.is_err());
+    }
+
+    #[test]
+    fn stage_13a_provider_off_missing_secret_and_failure_do_not_fabricate_sources() {
+        let route = stage13_public_read_only_route();
+        let no_mutation = stage13_no_mutation_proof(&route);
+
+        for (mut input, expected) in [
+            {
+                let mut input = stage13_evidence_input();
+                input.provider_off_state = true;
+                input.source_evidence_present = false;
+                input.source_evidence_id = None;
+                input.citation_id = None;
+                input.provenance_id = None;
+                input.verifier_id = None;
+                (
+                    input,
+                    Stage13PublicReadOnlyDisposition::ProviderOffNoEvidence,
+                )
+            },
+            {
+                let mut input = stage13_evidence_input();
+                input.missing_secret = true;
+                input.source_evidence_present = false;
+                input.source_evidence_id = None;
+                input.citation_id = None;
+                (
+                    input,
+                    Stage13PublicReadOnlyDisposition::MissingSecretNoEvidence,
+                )
+            },
+            {
+                let mut input = stage13_evidence_input();
+                input.provider_failure = true;
+                input.source_evidence_present = false;
+                input.source_evidence_id = None;
+                input.citation_id = None;
+                (
+                    input,
+                    Stage13PublicReadOnlyDisposition::ProviderFailureNoEvidence,
+                )
+            },
+        ] {
+            input.provider_call_attempt_count = 0;
+            input.provider_network_dispatch_count = 0;
+            let packet = Stage13PublicReadOnlyEvidencePacket::from_public_read_only_route(
+                &route,
+                &no_mutation,
+                input,
+            )
+            .expect("stage13 provider unavailable fail-closed packet");
+
+            assert_eq!(packet.disposition, expected);
+            assert!(packet.work_authority.can_fail_closed);
+            assert!(!packet.work_authority.can_emit_source_chip);
+            assert!(!packet.work_authority.can_emit_citation);
+            assert_eq!(packet.provider_call_attempt_count, 0);
+            assert_eq!(packet.provider_network_dispatch_count, 0);
+            assert!(!packet.can_mutate_or_execute());
+        }
+
+        let mut invalid_provider_off = stage13_evidence_input();
+        invalid_provider_off.provider_off_state = true;
+        invalid_provider_off.provider_call_attempt_count = 1;
+        let invalid = Stage13PublicReadOnlyEvidencePacket::from_public_read_only_route(
+            &route,
+            &no_mutation,
+            invalid_provider_off,
+        );
+        assert!(invalid.is_err());
+    }
+
+    #[test]
+    fn stage_13a_public_route_cannot_launder_protected_action_phrase() {
+        let route = stage13_public_read_only_route();
+        let no_mutation = stage13_no_mutation_proof(&route);
+        let mut input = stage13_evidence_input();
+        input.protected_action_like_request = true;
+
+        let packet = Stage13PublicReadOnlyEvidencePacket::from_public_read_only_route(
+            &route,
+            &no_mutation,
+            input,
+        )
+        .expect("stage13 protected phrase block");
+
+        assert_eq!(
+            packet.disposition,
+            Stage13PublicReadOnlyDisposition::ProtectedPhraseBlocked
+        );
+        assert!(packet.work_authority.can_fail_closed);
+        assert!(!packet.work_authority.can_emit_source_evidence);
+        assert!(!packet.can_mutate_or_execute());
+    }
+
+    #[test]
+    fn stage_13a_stale_uncited_unverifiable_or_secret_unsafe_evidence_fails_closed() {
+        let route = stage13_public_read_only_route();
+        let no_mutation = stage13_no_mutation_proof(&route);
+
+        for (input, expected) in [
+            {
+                let mut input = stage13_evidence_input();
+                input.source_evidence_current = false;
+                (
+                    input,
+                    Stage13PublicReadOnlyDisposition::StaleEvidenceBlocked,
+                )
+            },
+            {
+                let mut input = stage13_evidence_input();
+                input.citation_coverage_passed = false;
+                input.citation_id = None;
+                (
+                    input,
+                    Stage13PublicReadOnlyDisposition::CitationMissingBlocked,
+                )
+            },
+            {
+                let mut input = stage13_evidence_input();
+                input.source_verification_passed = false;
+                (
+                    input,
+                    Stage13PublicReadOnlyDisposition::UnverifiableEvidenceBlocked,
+                )
+            },
+            {
+                let mut input = stage13_evidence_input();
+                input.source_packet_secret_safe = false;
+                (
+                    input,
+                    Stage13PublicReadOnlyDisposition::UnverifiableEvidenceBlocked,
+                )
+            },
+        ] {
+            let packet = Stage13PublicReadOnlyEvidencePacket::from_public_read_only_route(
+                &route,
+                &no_mutation,
+                input,
+            )
+            .expect("stage13 evidence fail closed");
+
+            assert_eq!(packet.disposition, expected);
+            assert!(packet.work_authority.can_fail_closed);
+            assert!(!packet.work_authority.can_emit_source_chip);
+            assert!(!packet.work_authority.can_emit_verifier_result);
+            assert!(!packet.can_mutate_or_execute());
+        }
     }
 
     #[test]

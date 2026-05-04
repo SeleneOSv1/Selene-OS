@@ -7,7 +7,10 @@ use crate::web_search_plan::cache::{lookup_typed, store_typed};
 use crate::web_search_plan::perf_cost::tiers::ImportanceTier;
 use crate::web_search_plan::planning::{OpenFailure, OpenSuccess, SearchCandidate};
 use crate::web_search_plan::proxy::proxy_config::ProxyConfig;
-use crate::web_search_plan::url::{fetch_url_to_evidence_packet, UrlFetchPolicy, UrlFetchRequest};
+use crate::web_search_plan::url::{
+    fetch_url_to_evidence_packet, UrlFetchFixture, UrlFetchFixtureResponse, UrlFetchPolicy,
+    UrlFetchRequest,
+};
 
 const CACHE_SCHEMA_VERSION: &str = "1.0.0";
 const URL_FETCH_PROVIDER_ID: &str = "url_fetch_open";
@@ -26,6 +29,7 @@ pub struct UrlOpenContext {
     pub url_open_cap: usize,
     pub cache_enabled: bool,
     pub cache_policy_snapshot_id: String,
+    pub allow_local_fake_url_fetch_fixtures: bool,
 }
 
 pub fn open_candidate_with_url_fetch(
@@ -78,7 +82,7 @@ pub fn open_candidate_with_url_fetch(
         intended_consumers: context.intended_consumers.clone(),
         proxy_config: context.proxy_config.clone(),
         policy: context.url_fetch_policy.clone(),
-        test_fixture: None,
+        test_fixture: local_fake_fixture(context, candidate),
     };
 
     match fetch_url_to_evidence_packet(&request) {
@@ -128,4 +132,46 @@ pub fn open_candidate_with_url_fetch(
             message: failure.message,
         }),
     }
+}
+
+fn local_fake_fixture(
+    context: &UrlOpenContext,
+    candidate: &SearchCandidate,
+) -> Option<UrlFetchFixture> {
+    if !context.allow_local_fake_url_fetch_fixtures || !is_local_fake_url(candidate.url.as_str()) {
+        return None;
+    }
+
+    let body = format!(
+        "<html><body><h1>{}</h1><p>{}</p></body></html>",
+        escape_html(candidate.title.as_str()),
+        escape_html(candidate.snippet.as_str())
+    );
+
+    Some(UrlFetchFixture::single(
+        UrlFetchFixtureResponse::new(200, body.into_bytes())
+            .with_header("Content-Type", "text/html; charset=utf-8"),
+    ))
+}
+
+fn is_local_fake_url(url: &str) -> bool {
+    let lowered = url.trim().to_ascii_lowercase();
+    lowered.starts_with("http://127.0.0.1:")
+        || lowered.starts_with("http://localhost:")
+        || lowered.starts_with("http://[::1]:")
+}
+
+fn escape_html(value: &str) -> String {
+    let mut escaped = String::with_capacity(value.len());
+    for ch in value.chars() {
+        match ch {
+            '&' => escaped.push_str("&amp;"),
+            '<' => escaped.push_str("&lt;"),
+            '>' => escaped.push_str("&gt;"),
+            '"' => escaped.push_str("&quot;"),
+            '\'' => escaped.push_str("&#39;"),
+            _ => escaped.push(ch),
+        }
+    }
+    escaped
 }

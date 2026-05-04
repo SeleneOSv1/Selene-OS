@@ -36,6 +36,7 @@ use crate::web_search_plan::web_provider::{
 use crate::web_search_plan::write::{
     append_write_audit_fields, render_write_packet, WriteFormatMode,
 };
+use selene_engines::ph1providerctl::is_local_fake_endpoint;
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
@@ -341,6 +342,11 @@ impl<'a, C: MonotonicClock> RuntimeOrchestrator<'a, C> {
                     url_open_cap,
                     cache_enabled: true,
                     cache_policy_snapshot_id: self.policy_snapshot_id.clone(),
+                    allow_local_fake_url_fetch_fixtures: is_local_fake_endpoint(
+                        self.deps.web_runtime_config.brave_endpoint.as_str(),
+                    ) && is_local_fake_endpoint(
+                        self.deps.web_runtime_config.openai_endpoint.as_str(),
+                    ),
                 };
 
                 let planning_result = execute_search_topk_pipeline_with_url_fetch(
@@ -348,7 +354,8 @@ impl<'a, C: MonotonicClock> RuntimeOrchestrator<'a, C> {
                     &planning_policy,
                     &open_context,
                 )
-                .map_err(|_| {
+                .map_err(|err| {
+                    let _ = err;
                     self.fail_closed("provider_upstream_failed", "UrlFetch", "transport_failed")
                         .expect_err("fail_closed always errors")
                 })?;

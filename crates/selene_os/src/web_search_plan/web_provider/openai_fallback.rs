@@ -99,23 +99,31 @@ pub fn execute_openai_web_search(
             latency_ms: start.elapsed().as_millis() as u64,
         })?;
 
-    let citation_urls = collect_citation_urls(&body);
+    openai_web_search_from_body(&body, max_results, start.elapsed().as_millis() as u64)
+}
+
+pub fn openai_web_search_from_body(
+    body: &Value,
+    max_results: usize,
+    latency_ms: u64,
+) -> Result<ProviderCallSuccess, ProviderError> {
+    let citation_urls = collect_citation_urls(body);
     if citation_urls.is_empty() {
         return Err(ProviderError {
             provider_id: ProviderId::OpenAiWebSearch,
             kind: ProviderErrorKind::ParseFailed,
             status_code: None,
             message: "openai response did not include explicit citation URLs".to_string(),
-            latency_ms: start.elapsed().as_millis() as u64,
+            latency_ms,
         });
     }
 
-    let raw_items = extract_result_items(&body, max_results).ok_or_else(|| ProviderError {
+    let raw_items = extract_result_items(body, max_results).ok_or_else(|| ProviderError {
         provider_id: ProviderId::OpenAiWebSearch,
         kind: ProviderErrorKind::ParseFailed,
         status_code: None,
         message: "openai response did not contain parseable results".to_string(),
-        latency_ms: start.elapsed().as_millis() as u64,
+        latency_ms,
     })?;
 
     let mut results = Vec::new();
@@ -125,7 +133,7 @@ pub fn execute_openai_web_search(
             kind: ProviderErrorKind::ParseFailed,
             status_code: None,
             message: "openai result URL is not canonicalizable".to_string(),
-            latency_ms: start.elapsed().as_millis() as u64,
+            latency_ms,
         })?;
 
         if !citation_urls.contains(canonical.canonical_url.as_str()) {
@@ -134,7 +142,7 @@ pub fn execute_openai_web_search(
                 kind: ProviderErrorKind::ParseFailed,
                 status_code: None,
                 message: "openai result URL is missing explicit citation coverage".to_string(),
-                latency_ms: start.elapsed().as_millis() as u64,
+                latency_ms,
             });
         }
 
@@ -155,13 +163,13 @@ pub fn execute_openai_web_search(
             kind: ProviderErrorKind::EmptyResults,
             status_code: None,
             message: "openai returned zero usable results".to_string(),
-            latency_ms: start.elapsed().as_millis() as u64,
+            latency_ms,
         });
     }
 
     Ok(ProviderCallSuccess {
         results,
-        latency_ms: start.elapsed().as_millis() as u64,
+        latency_ms,
     })
 }
 

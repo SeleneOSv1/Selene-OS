@@ -176,6 +176,8 @@ fn base_runtime(brave_endpoint: &str, openai_endpoint: &str) -> WebProviderRunti
         health_policy: HealthPolicy::default(),
         brave_api_key_override: Some("test_brave_key".to_string()),
         openai_api_key_override: Some("test_openai_key".to_string()),
+        brave_fixture_json: None,
+        openai_fixture_json: None,
     }
 }
 
@@ -275,10 +277,14 @@ fn test_t1_brave_success_no_fallback() {
         2,
     );
 
-    let config = base_runtime(
+    let mut config = base_runtime(
         &format!("{}/res/v1/web/search", base),
         &format!("{}/v1/responses", base),
     );
+    config.brave_fixture_json = Some(brave_success_payload(&[
+        ("A", "https://example.com/a", "Snippet A."),
+        ("B", "https://example.com/b", "Snippet B."),
+    ]));
 
     let mut health = ProviderHealthTracker::default();
     let result = execute_web_provider_ladder_from_tool_request(
@@ -331,6 +337,12 @@ fn test_t2_brave_transport_failure_triggers_fallback() {
         "http://127.0.0.1:9/res/v1/web/search",
         &format!("{}/v1/responses", openai_base),
     );
+    let mut config = config;
+    config.timeout_ms = 50;
+    config.openai_fixture_json = Some(openai_success_payload(
+        &[("OA", "https://fallback.example.com/1", "Fallback snippet")],
+        &["https://fallback.example.com/1"],
+    ));
 
     let mut health = ProviderHealthTracker::default();
     let result = execute_web_provider_ladder_from_tool_request(
@@ -386,10 +398,15 @@ fn test_t3_brave_empty_results_triggers_fallback() {
         4,
     );
 
-    let config = base_runtime(
+    let mut config = base_runtime(
         &format!("{}/res/v1/web/search", base),
         &format!("{}/v1/responses", base),
     );
+    config.brave_fixture_json = Some(json!({"web": {"results": []}}));
+    config.openai_fixture_json = Some(openai_success_payload(
+        &[("OA", "https://fallback.example.com/2", "Fallback snippet")],
+        &["https://fallback.example.com/2"],
+    ));
 
     let mut health = ProviderHealthTracker::default();
     let result = execute_web_provider_ladder_from_tool_request(
@@ -430,6 +447,11 @@ fn test_t4_health_cooldown_skips_brave_deterministically() {
         "http://127.0.0.1:9/res/v1/web/search",
         &format!("{}/v1/responses", openai_base),
     );
+    config.timeout_ms = 50;
+    config.openai_fixture_json = Some(openai_success_payload(
+        &[("OA", "https://fallback.example.com/3", "Fallback snippet")],
+        &["https://fallback.example.com/3"],
+    ));
     config.health_policy = HealthPolicy {
         failures_before_cooldown: 1,
         cooldown_ms: 60_000,
@@ -554,10 +576,14 @@ fn test_t6_merge_order_stable_across_identical_runs() {
         4,
     );
 
-    let config = base_runtime(
+    let mut config = base_runtime(
         &format!("{}/res/v1/web/search", base),
         &format!("{}/v1/responses", base),
     );
+    config.brave_fixture_json = Some(brave_success_payload(&[
+        ("A", "https://stable.example.com/a", "Stable A"),
+        ("B", "https://stable.example.com/b", "Stable B"),
+    ]));
 
     let mut health = ProviderHealthTracker::default();
     let first = execute_web_provider_ladder_from_tool_request(
@@ -630,10 +656,15 @@ fn test_t7_evidence_packet_contains_provenance_fields() {
         2,
     );
 
-    let config = base_runtime(
+    let mut config = base_runtime(
         &format!("{}/res/v1/web/search", base),
         &format!("{}/v1/responses", base),
     );
+    config.brave_fixture_json = Some(brave_success_payload(&[(
+        "A",
+        "https://prov.example.com/a",
+        "Provenance snippet",
+    )]));
 
     let mut health = ProviderHealthTracker::default();
     let result = execute_web_provider_ladder_from_tool_request(
@@ -707,10 +738,15 @@ fn test_t8_openai_requires_explicit_citations() {
         4,
     );
 
-    let config = base_runtime(
+    let mut config = base_runtime(
         &format!("{}/res/v1/web/search", base),
         &format!("{}/v1/responses", base),
     );
+    config.brave_fixture_json = Some(json!({"web": {"results": []}}));
+    config.openai_fixture_json = Some(openai_success_payload(
+        &[("OA", "https://no-citation.example.com/1", "Snippet")],
+        &["https://different.example.com/1"],
+    ));
 
     let mut health = ProviderHealthTracker::default();
     let err = execute_web_provider_ladder_from_tool_request(

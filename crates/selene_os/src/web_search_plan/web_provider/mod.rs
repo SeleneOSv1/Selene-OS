@@ -166,6 +166,8 @@ pub struct WebProviderRuntimeConfig {
     pub health_policy: HealthPolicy,
     pub brave_api_key_override: Option<String>,
     pub openai_api_key_override: Option<String>,
+    pub brave_fixture_json: Option<Value>,
+    pub openai_fixture_json: Option<Value>,
 }
 
 impl WebProviderRuntimeConfig {
@@ -189,6 +191,8 @@ impl WebProviderRuntimeConfig {
             health_policy: HealthPolicy::default(),
             brave_api_key_override: None,
             openai_api_key_override: None,
+            brave_fixture_json: None,
+            openai_fixture_json: None,
         }
     }
 }
@@ -471,17 +475,21 @@ fn execute_web_provider_ladder(
             cache_policy_snapshot_id.as_str(),
             now_ms,
             || {
-                let openai_key = resolve_openai_api_key(config)?;
-                openai_fallback::execute_openai_web_search(
-                    &config.openai_endpoint,
-                    &openai_key,
-                    &config.openai_model,
-                    &request.query,
-                    effective_max_results,
-                    effective_timeout_ms,
-                    &config.user_agent,
-                    &config.proxy_config,
-                )
+                if let Some(body) = config.openai_fixture_json.as_ref() {
+                    openai_fallback::openai_web_search_from_body(body, effective_max_results, 0)
+                } else {
+                    let openai_key = resolve_openai_api_key(config)?;
+                    openai_fallback::execute_openai_web_search(
+                        &config.openai_endpoint,
+                        &openai_key,
+                        &config.openai_model,
+                        &request.query,
+                        effective_max_results,
+                        effective_timeout_ms,
+                        &config.user_agent,
+                        &config.proxy_config,
+                    )
+                }
             },
         )?;
         if let Some(hit) = cache_hit {
@@ -515,16 +523,20 @@ fn execute_web_provider_ladder(
             cache_policy_snapshot_id.as_str(),
             now_ms,
             || {
-                let brave_key = resolve_brave_api_key(config)?;
-                brave_adapter::execute_brave_web_search(
-                    &config.brave_endpoint,
-                    &brave_key,
-                    &request.query,
-                    effective_max_results,
-                    effective_timeout_ms,
-                    &config.user_agent,
-                    &config.proxy_config,
-                )
+                if let Some(body) = config.brave_fixture_json.as_ref() {
+                    brave_adapter::brave_web_search_from_body(body, effective_max_results, 0)
+                } else {
+                    let brave_key = resolve_brave_api_key(config)?;
+                    brave_adapter::execute_brave_web_search(
+                        &config.brave_endpoint,
+                        &brave_key,
+                        &request.query,
+                        effective_max_results,
+                        effective_timeout_ms,
+                        &config.user_agent,
+                        &config.proxy_config,
+                    )
+                }
             },
         ) {
             Ok(brave) => {
@@ -594,17 +606,25 @@ fn execute_web_provider_ladder(
                         cache_policy_snapshot_id.as_str(),
                         now_ms,
                         || {
-                            let openai_key = resolve_openai_api_key(config)?;
-                            openai_fallback::execute_openai_web_search(
-                                &config.openai_endpoint,
-                                &openai_key,
-                                &config.openai_model,
-                                &request.query,
-                                effective_max_results,
-                                effective_timeout_ms,
-                                &config.user_agent,
-                                &config.proxy_config,
-                            )
+                            if let Some(body) = config.openai_fixture_json.as_ref() {
+                                openai_fallback::openai_web_search_from_body(
+                                    body,
+                                    effective_max_results,
+                                    0,
+                                )
+                            } else {
+                                let openai_key = resolve_openai_api_key(config)?;
+                                openai_fallback::execute_openai_web_search(
+                                    &config.openai_endpoint,
+                                    &openai_key,
+                                    &config.openai_model,
+                                    &request.query,
+                                    effective_max_results,
+                                    effective_timeout_ms,
+                                    &config.user_agent,
+                                    &config.proxy_config,
+                                )
+                            }
                         },
                     ) {
                         Ok(openai) => {

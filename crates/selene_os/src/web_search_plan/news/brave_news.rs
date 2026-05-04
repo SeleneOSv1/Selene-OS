@@ -87,8 +87,16 @@ pub fn execute_brave_news_search(
             latency_ms: start.elapsed().as_millis() as u64,
         })?;
 
+    brave_news_search_from_body(&body, max_results, start.elapsed().as_millis() as u64)
+}
+
+pub fn brave_news_search_from_body(
+    body: &Value,
+    max_results: usize,
+    latency_ms: u64,
+) -> Result<ProviderCallSuccess, NewsProviderError> {
     let mut results = Vec::new();
-    for item in candidate_results(&body) {
+    for item in candidate_results(body) {
         if results.len() >= max_results {
             break;
         }
@@ -108,7 +116,7 @@ pub fn execute_brave_news_search(
             kind: NewsProviderErrorKind::ParseFailed,
             status_code: None,
             message: format!("invalid brave news URL {}", url),
-            latency_ms: start.elapsed().as_millis() as u64,
+            latency_ms,
         })?;
 
         let title = item
@@ -165,13 +173,13 @@ pub fn execute_brave_news_search(
             kind: NewsProviderErrorKind::EmptyResults,
             status_code: None,
             message: "brave news returned no usable results".to_string(),
-            latency_ms: start.elapsed().as_millis() as u64,
+            latency_ms,
         });
     }
 
     Ok(ProviderCallSuccess {
         results,
-        latency_ms: start.elapsed().as_millis() as u64,
+        latency_ms,
     })
 }
 

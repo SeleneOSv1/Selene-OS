@@ -182,6 +182,8 @@ pub struct NewsRuntimeConfig {
     pub proxy_config: ProxyConfig,
     pub health_policy: HealthPolicy,
     pub brave_api_key_override: Option<String>,
+    pub brave_news_fixture_json: Option<Value>,
+    pub gdelt_fixture_json: Option<Value>,
 }
 
 impl NewsRuntimeConfig {
@@ -202,6 +204,8 @@ impl NewsRuntimeConfig {
             proxy_config: ProxyConfig::from_env(proxy_mode, &env),
             health_policy: HealthPolicy::default(),
             brave_api_key_override: None,
+            brave_news_fixture_json: None,
+            gdelt_fixture_json: None,
         }
     }
 }
@@ -507,14 +511,18 @@ fn execute_news_provider_ladder(
             cache_policy_snapshot_id.as_str(),
             now_ms,
             || {
-                gdelt::execute_gdelt_news_search(
-                    &config.gdelt_endpoint,
-                    &request.query,
-                    effective_max_results,
-                    effective_timeout_ms,
-                    &config.user_agent,
-                    &config.proxy_config,
-                )
+                if let Some(body) = config.gdelt_fixture_json.as_ref() {
+                    gdelt::gdelt_news_search_from_body(body, effective_max_results, 0)
+                } else {
+                    gdelt::execute_gdelt_news_search(
+                        &config.gdelt_endpoint,
+                        &request.query,
+                        effective_max_results,
+                        effective_timeout_ms,
+                        &config.user_agent,
+                        &config.proxy_config,
+                    )
+                }
                 .map(|value| NewsProviderCallPayload {
                     results: value.results,
                     latency_ms: value.latency_ms,
@@ -553,15 +561,19 @@ fn execute_news_provider_ladder(
             cache_policy_snapshot_id.as_str(),
             now_ms,
             || {
-                brave_news::execute_brave_news_search(
-                    &config.brave_news_endpoint,
-                    &brave_key,
-                    &request.query,
-                    effective_max_results,
-                    effective_timeout_ms,
-                    &config.user_agent,
-                    &config.proxy_config,
-                )
+                if let Some(body) = config.brave_news_fixture_json.as_ref() {
+                    brave_news::brave_news_search_from_body(body, effective_max_results, 0)
+                } else {
+                    brave_news::execute_brave_news_search(
+                        &config.brave_news_endpoint,
+                        &brave_key,
+                        &request.query,
+                        effective_max_results,
+                        effective_timeout_ms,
+                        &config.user_agent,
+                        &config.proxy_config,
+                    )
+                }
                 .map(|value| NewsProviderCallPayload {
                     results: value.results,
                     latency_ms: value.latency_ms,
@@ -640,14 +652,18 @@ fn execute_news_provider_ladder(
                         cache_policy_snapshot_id.as_str(),
                         now_ms,
                         || {
-                            gdelt::execute_gdelt_news_search(
-                                &config.gdelt_endpoint,
-                                &request.query,
-                                effective_max_results,
-                                effective_timeout_ms,
-                                &config.user_agent,
-                                &config.proxy_config,
-                            )
+                            if let Some(body) = config.gdelt_fixture_json.as_ref() {
+                                gdelt::gdelt_news_search_from_body(body, effective_max_results, 0)
+                            } else {
+                                gdelt::execute_gdelt_news_search(
+                                    &config.gdelt_endpoint,
+                                    &request.query,
+                                    effective_max_results,
+                                    effective_timeout_ms,
+                                    &config.user_agent,
+                                    &config.proxy_config,
+                                )
+                            }
                             .map(|value| NewsProviderCallPayload {
                                 results: value.results,
                                 latency_ms: value.latency_ms,
@@ -739,14 +755,18 @@ fn execute_news_provider_ladder(
                 cache_policy_snapshot_id.as_str(),
                 now_ms,
                 || {
-                    gdelt::execute_gdelt_news_search(
-                        &config.gdelt_endpoint,
-                        &request.query,
-                        effective_max_results,
-                        effective_timeout_ms,
-                        &config.user_agent,
-                        &config.proxy_config,
-                    )
+                    if let Some(body) = config.gdelt_fixture_json.as_ref() {
+                        gdelt::gdelt_news_search_from_body(body, effective_max_results, 0)
+                    } else {
+                        gdelt::execute_gdelt_news_search(
+                            &config.gdelt_endpoint,
+                            &request.query,
+                            effective_max_results,
+                            effective_timeout_ms,
+                            &config.user_agent,
+                            &config.proxy_config,
+                        )
+                    }
                     .map(|value| NewsProviderCallPayload {
                         results: value.results,
                         latency_ms: value.latency_ms,

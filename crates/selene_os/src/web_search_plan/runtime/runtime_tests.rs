@@ -212,6 +212,8 @@ fn runtime_deps_for_base(base: &str) -> RuntimeDependencies {
                 crate::web_search_plan::web_provider::health_state::HealthPolicy::default(),
             brave_api_key_override: Some("test_brave_key".to_string()),
             openai_api_key_override: Some("test_openai_key".to_string()),
+            brave_fixture_json: None,
+            openai_fixture_json: None,
         },
         news_runtime_config: NewsRuntimeConfig {
             brave_news_endpoint: format!("{}/res/v1/news/search", base),
@@ -227,6 +229,8 @@ fn runtime_deps_for_base(base: &str) -> RuntimeDependencies {
             health_policy:
                 crate::web_search_plan::web_provider::health_state::HealthPolicy::default(),
             brave_api_key_override: Some("test_brave_key".to_string()),
+            brave_news_fixture_json: None,
+            gdelt_fixture_json: None,
         },
         planning_policy: crate::web_search_plan::planning::PlanningPolicy::default(),
         write_format_mode: WriteFormatMode::Standard,
@@ -327,8 +331,26 @@ fn test_t1_web_happy_path_returns_all_packets_with_citations_and_stable_hashes()
         8,
     );
 
+    let brave_fixture = json!({
+        "web": {
+            "results": [
+                {
+                    "title": "Selene Determinism Notes",
+                    "url": format!("{}/page/determinism", base),
+                    "description": "Selene enforces deterministic ordering and fail-closed behavior."
+                },
+                {
+                    "title": "Selene Reliability",
+                    "url": format!("{}/page/reliability", base),
+                    "description": "Reliability controls are evidence-bound and citation-backed."
+                }
+            ]
+        }
+    });
     let mut deps_a = runtime_deps_for_base(&base);
+    deps_a.web_runtime_config.brave_fixture_json = Some(brave_fixture.clone());
     let mut deps_b = runtime_deps_for_base(&base);
+    deps_b.web_runtime_config.brave_fixture_json = Some(brave_fixture);
 
     let run_a = execute_web_search_turn_with_dependencies(
         make_turn_input(trace_id, created_at_ms, query),
@@ -490,8 +512,26 @@ fn test_t3_news_path_is_deterministic_and_citation_backed() {
         6,
     );
 
+    let news_fixture = json!({
+        "results": [
+            {
+                "title": "Selene Runtime Launch",
+                "url": "https://news.example.com/selene-launch",
+                "description": "Selene runtime launch emphasizes deterministic evidence handling.",
+                "published": "2026-03-03T10:00:00Z"
+            },
+            {
+                "title": "Selene Audit Enhancements",
+                "url": "https://analysis.example.org/selene-audit",
+                "description": "Audit trail now captures state transitions and reason codes.",
+                "published": "2026-03-03T11:00:00Z"
+            }
+        ]
+    });
     let mut deps_a = runtime_deps_for_base(&base);
+    deps_a.news_runtime_config.brave_news_fixture_json = Some(news_fixture.clone());
     let mut deps_b = runtime_deps_for_base(&base);
+    deps_b.news_runtime_config.brave_news_fixture_json = Some(news_fixture);
 
     let run_a = execute_web_search_turn_with_dependencies(
         make_turn_input(trace_id, created_at_ms, query),
@@ -620,6 +660,38 @@ fn test_all_modes_route_through_orchestrator() {
     );
 
     let mut deps = runtime_deps_for_base(&base);
+    deps.web_runtime_config.brave_fixture_json = Some(json!({
+        "web": {
+            "results": [
+                {
+                    "title": "Runtime Mode Routing",
+                    "url": format!("{}/page/mode-routing", base),
+                    "description": "Mode routing remains deterministic and evidence-bound."
+                },
+                {
+                    "title": "Runtime Mode Routing Companion",
+                    "url": format!("{}/page/mode-routing-2", base),
+                    "description": "Companion source for deterministic synthesis sufficiency."
+                }
+            ]
+        }
+    }));
+    deps.news_runtime_config.brave_news_fixture_json = Some(json!({
+        "results": [
+            {
+                "title": "Runtime News Routing",
+                "url": "https://news.example.com/runtime-routing",
+                "description": "News lane remains deterministic.",
+                "published": "2026-03-03T10:00:00Z"
+            },
+            {
+                "title": "Runtime News Routing Companion",
+                "url": "https://analysis.example.org/runtime-routing",
+                "description": "Companion source for deterministic news synthesis.",
+                "published": "2026-03-03T11:00:00Z"
+            }
+        ]
+    }));
 
     for mode in ["web", "news", "deep_research"] {
         let query = "runtime orchestrator route check".to_string();
@@ -779,6 +851,22 @@ fn test_t5_parallel_service_trace_invoked_on_web_execution() {
     );
 
     let mut deps = runtime_deps_for_base(&base);
+    deps.web_runtime_config.brave_fixture_json = Some(json!({
+        "web": {
+            "results": [
+                {
+                    "title": "Parallel Hook Source A",
+                    "url": format!("{}/page/parallel-a", base),
+                    "description": "Source A for runtime parallel hook trace."
+                },
+                {
+                    "title": "Parallel Hook Source B",
+                    "url": format!("{}/page/parallel-b", base),
+                    "description": "Source B for runtime parallel hook trace."
+                }
+            ]
+        }
+    }));
     deps.service_trace = Some(trace.clone());
 
     let run = execute_web_search_turn_with_dependencies(
