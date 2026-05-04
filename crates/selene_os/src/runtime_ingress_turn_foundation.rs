@@ -156,6 +156,19 @@ mod reason_codes {
     pub const STAGE13_CITATION_MISSING_BLOCKED: &str = "stage13_citation_missing_blocked";
     pub const STAGE13_PROTECTED_PHRASE_BLOCKED: &str = "stage13_protected_phrase_blocked";
     pub const STAGE13_AUDIT_PROOF_MISSING: &str = "stage13_audit_proof_missing";
+    pub const STAGE14_PUBLIC_ANSWER_READY: &str = "stage14_public_answer_ready";
+    pub const STAGE14_STAGE13_EVIDENCE_BLOCKED: &str = "stage14_stage13_evidence_blocked";
+    pub const STAGE14_UNSUPPORTED_CLAIM_BLOCKED: &str = "stage14_unsupported_claim_blocked";
+    pub const STAGE14_CITATION_RENDER_BLOCKED: &str = "stage14_citation_render_blocked";
+    pub const STAGE14_SOURCE_RENDER_BLOCKED: &str = "stage14_source_render_blocked";
+    pub const STAGE14_PROVIDER_OFF_HONEST_FAILURE: &str = "stage14_provider_off_honest_failure";
+    pub const STAGE14_MISSING_SECRET_HONEST_FAILURE: &str = "stage14_missing_secret_honest_failure";
+    pub const STAGE14_PROVIDER_FAILURE_HONEST_FAILURE: &str =
+        "stage14_provider_failure_honest_failure";
+    pub const STAGE14_UNSAFE_INPUT_BLOCKED: &str = "stage14_unsafe_input_blocked";
+    pub const STAGE14_PROTECTED_ANSWER_BLOCKED: &str = "stage14_protected_answer_blocked";
+    pub const STAGE14_RUNTIME_MOCK_BLOCKED: &str = "stage14_runtime_mock_blocked";
+    pub const STAGE14_AUDIT_PROOF_MISSING: &str = "stage14_audit_proof_missing";
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -8677,6 +8690,675 @@ impl Validate for Stage13PublicReadOnlyEvidencePacket {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stage14PublicAnswerDisposition {
+    AnswerReady,
+    Stage13EvidenceBlocked,
+    UnsupportedClaimBlocked,
+    CitationRenderBlocked,
+    SourceRenderBlocked,
+    ProviderOffHonestFailure,
+    MissingSecretHonestFailure,
+    ProviderFailureHonestFailure,
+    UnsafeInputBlocked,
+    ProtectedAnswerBlocked,
+    RuntimeMockBlocked,
+    AuditProofMissing,
+}
+
+impl Stage14PublicAnswerDisposition {
+    pub const fn default_reason_code(self) -> &'static str {
+        match self {
+            Stage14PublicAnswerDisposition::AnswerReady => {
+                reason_codes::STAGE14_PUBLIC_ANSWER_READY
+            }
+            Stage14PublicAnswerDisposition::Stage13EvidenceBlocked => {
+                reason_codes::STAGE14_STAGE13_EVIDENCE_BLOCKED
+            }
+            Stage14PublicAnswerDisposition::UnsupportedClaimBlocked => {
+                reason_codes::STAGE14_UNSUPPORTED_CLAIM_BLOCKED
+            }
+            Stage14PublicAnswerDisposition::CitationRenderBlocked => {
+                reason_codes::STAGE14_CITATION_RENDER_BLOCKED
+            }
+            Stage14PublicAnswerDisposition::SourceRenderBlocked => {
+                reason_codes::STAGE14_SOURCE_RENDER_BLOCKED
+            }
+            Stage14PublicAnswerDisposition::ProviderOffHonestFailure => {
+                reason_codes::STAGE14_PROVIDER_OFF_HONEST_FAILURE
+            }
+            Stage14PublicAnswerDisposition::MissingSecretHonestFailure => {
+                reason_codes::STAGE14_MISSING_SECRET_HONEST_FAILURE
+            }
+            Stage14PublicAnswerDisposition::ProviderFailureHonestFailure => {
+                reason_codes::STAGE14_PROVIDER_FAILURE_HONEST_FAILURE
+            }
+            Stage14PublicAnswerDisposition::UnsafeInputBlocked => {
+                reason_codes::STAGE14_UNSAFE_INPUT_BLOCKED
+            }
+            Stage14PublicAnswerDisposition::ProtectedAnswerBlocked => {
+                reason_codes::STAGE14_PROTECTED_ANSWER_BLOCKED
+            }
+            Stage14PublicAnswerDisposition::RuntimeMockBlocked => {
+                reason_codes::STAGE14_RUNTIME_MOCK_BLOCKED
+            }
+            Stage14PublicAnswerDisposition::AuditProofMissing => {
+                reason_codes::STAGE14_AUDIT_PROOF_MISSING
+            }
+        }
+    }
+
+    pub const fn is_ready(self) -> bool {
+        matches!(self, Stage14PublicAnswerDisposition::AnswerReady)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Stage14PublicAnswerWorkAuthority {
+    pub can_emit_public_answer: bool,
+    pub can_render_citations: bool,
+    pub can_render_source_chips: bool,
+    pub can_render_source_links: bool,
+    pub can_emit_honest_uncertainty: bool,
+    pub can_fail_closed: bool,
+    pub can_mutate: bool,
+    pub can_connector_write: bool,
+    pub can_send_message: bool,
+    pub can_post_content: bool,
+    pub can_purchase: bool,
+    pub can_delete_remote: bool,
+    pub can_invite: bool,
+    pub can_schedule: bool,
+    pub can_approve: bool,
+    pub can_dispatch: bool,
+    pub can_execute_simulation: bool,
+    pub can_execute_protected_action: bool,
+    pub can_call_live_provider: bool,
+    pub can_run_live_search: bool,
+    pub can_call_live_external_tool: bool,
+    pub can_emit_tts: bool,
+    pub can_update_memory_persona_emotion: bool,
+    pub can_add_native_ui_behavior: bool,
+}
+
+impl Stage14PublicAnswerWorkAuthority {
+    pub const fn answer_ready() -> Self {
+        Self {
+            can_emit_public_answer: true,
+            can_render_citations: true,
+            can_render_source_chips: true,
+            can_render_source_links: true,
+            can_emit_honest_uncertainty: false,
+            can_fail_closed: false,
+            can_mutate: false,
+            can_connector_write: false,
+            can_send_message: false,
+            can_post_content: false,
+            can_purchase: false,
+            can_delete_remote: false,
+            can_invite: false,
+            can_schedule: false,
+            can_approve: false,
+            can_dispatch: false,
+            can_execute_simulation: false,
+            can_execute_protected_action: false,
+            can_call_live_provider: false,
+            can_run_live_search: false,
+            can_call_live_external_tool: false,
+            can_emit_tts: false,
+            can_update_memory_persona_emotion: false,
+            can_add_native_ui_behavior: false,
+        }
+    }
+
+    pub const fn fail_closed() -> Self {
+        Self {
+            can_emit_public_answer: false,
+            can_render_citations: false,
+            can_render_source_chips: false,
+            can_render_source_links: false,
+            can_emit_honest_uncertainty: true,
+            can_fail_closed: true,
+            ..Self::answer_ready()
+        }
+    }
+
+    pub const fn can_mutate_or_execute(self) -> bool {
+        self.can_mutate
+            || self.can_connector_write
+            || self.can_send_message
+            || self.can_post_content
+            || self.can_purchase
+            || self.can_delete_remote
+            || self.can_invite
+            || self.can_schedule
+            || self.can_approve
+            || self.can_dispatch
+            || self.can_execute_simulation
+            || self.can_execute_protected_action
+            || self.can_call_live_provider
+            || self.can_run_live_search
+            || self.can_call_live_external_tool
+            || self.can_emit_tts
+            || self.can_update_memory_persona_emotion
+            || self.can_add_native_ui_behavior
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Stage14PublicAnswerInput {
+    pub public_answer_id: String,
+    pub answer_hash: String,
+    pub citation_rendering_id: Option<String>,
+    pub source_chip_rendering_id: Option<String>,
+    pub source_link_rendering_id: Option<String>,
+    pub answer_text_present: bool,
+    pub answer_text_bounded: bool,
+    pub answer_text_secret_safe: bool,
+    pub answer_claims_supported_by_stage13: bool,
+    pub unsupported_claim_present: bool,
+    pub citations_rendered: bool,
+    pub citation_refs_bounded: bool,
+    pub citation_refs_current: bool,
+    pub citation_refs_verified: bool,
+    pub source_chips_rendered: bool,
+    pub source_chip_refs_bounded: bool,
+    pub source_chip_refs_secret_safe: bool,
+    pub source_links_text_safe: bool,
+    pub provider_off_public_answer: bool,
+    pub missing_secret_public_answer: bool,
+    pub provider_failure_public_answer: bool,
+    pub protected_action_like_prompt: bool,
+    pub raw_provider_output_present: bool,
+    pub raw_search_dump_present: bool,
+    pub raw_request_url_exposed: bool,
+    pub provider_credentials_exposed: bool,
+    pub runtime_mock_detected: bool,
+    pub fake_citation_detected: bool,
+    pub fake_source_detected: bool,
+    pub fixture_only_test_path: bool,
+    pub attempted_live_provider_in_build: bool,
+    pub ran_live_search_in_build: bool,
+    pub called_live_external_tool_in_build: bool,
+    pub connector_write_requested: bool,
+    pub audit_id: Option<String>,
+    pub ph1j_proof_ref: Option<String>,
+}
+
+impl Stage14PublicAnswerInput {
+    pub fn fixture_answer_ready(
+        public_answer_id: impl Into<String>,
+        answer_hash: impl Into<String>,
+        citation_rendering_id: impl Into<String>,
+        source_chip_rendering_id: impl Into<String>,
+        source_link_rendering_id: impl Into<String>,
+        audit_id: impl Into<String>,
+    ) -> Self {
+        let audit_id = audit_id.into();
+        Self {
+            public_answer_id: public_answer_id.into(),
+            answer_hash: answer_hash.into(),
+            citation_rendering_id: Some(citation_rendering_id.into()),
+            source_chip_rendering_id: Some(source_chip_rendering_id.into()),
+            source_link_rendering_id: Some(source_link_rendering_id.into()),
+            answer_text_present: true,
+            answer_text_bounded: true,
+            answer_text_secret_safe: true,
+            answer_claims_supported_by_stage13: true,
+            unsupported_claim_present: false,
+            citations_rendered: true,
+            citation_refs_bounded: true,
+            citation_refs_current: true,
+            citation_refs_verified: true,
+            source_chips_rendered: true,
+            source_chip_refs_bounded: true,
+            source_chip_refs_secret_safe: true,
+            source_links_text_safe: true,
+            provider_off_public_answer: false,
+            missing_secret_public_answer: false,
+            provider_failure_public_answer: false,
+            protected_action_like_prompt: false,
+            raw_provider_output_present: false,
+            raw_search_dump_present: false,
+            raw_request_url_exposed: false,
+            provider_credentials_exposed: false,
+            runtime_mock_detected: false,
+            fake_citation_detected: false,
+            fake_source_detected: false,
+            fixture_only_test_path: true,
+            attempted_live_provider_in_build: false,
+            ran_live_search_in_build: false,
+            called_live_external_tool_in_build: false,
+            connector_write_requested: false,
+            audit_id: Some(audit_id.clone()),
+            ph1j_proof_ref: Some(audit_id),
+        }
+    }
+}
+
+impl Validate for Stage14PublicAnswerInput {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        validate_stage4_ref(
+            "stage14_public_answer_input.public_answer_id",
+            &self.public_answer_id,
+        )?;
+        validate_stage4_ref("stage14_public_answer_input.answer_hash", &self.answer_hash)?;
+        validate_stage4_optional_ref(
+            "stage14_public_answer_input.citation_rendering_id",
+            self.citation_rendering_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage14_public_answer_input.source_chip_rendering_id",
+            self.source_chip_rendering_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage14_public_answer_input.source_link_rendering_id",
+            self.source_link_rendering_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage14_public_answer_input.audit_id",
+            self.audit_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage14_public_answer_input.ph1j_proof_ref",
+            self.ph1j_proof_ref.as_deref(),
+        )?;
+        if self.attempted_live_provider_in_build
+            || self.ran_live_search_in_build
+            || self.called_live_external_tool_in_build
+            || self.connector_write_requested
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage14_public_answer_input.no_live_build",
+                reason:
+                    "Stage 14A public answer composition cannot call live providers/search/tools or connector-write",
+            });
+        }
+        if (self.runtime_mock_detected || self.fake_citation_detected || self.fake_source_detected)
+            && !self.fixture_only_test_path
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage14_public_answer_input.runtime_mock",
+                reason: "runtime mocks, fake citations, and fake sources are forbidden outside explicit fixture-only test paths",
+            });
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Stage14PublicAnswerPacket {
+    pub session_id: SessionId,
+    pub turn_id: Option<TurnId>,
+    pub activation_id: Option<String>,
+    pub understanding_id: String,
+    pub reasoning_id: String,
+    pub router_id: String,
+    pub read_only_candidate_id: Option<String>,
+    pub tool_route_id: String,
+    pub source_evidence_id: Option<String>,
+    pub citation_id: Option<String>,
+    pub provenance_id: Option<String>,
+    pub verifier_id: Option<String>,
+    pub public_answer_id: String,
+    pub answer_hash: String,
+    pub citation_rendering_id: Option<String>,
+    pub source_chip_rendering_id: Option<String>,
+    pub source_link_rendering_id: Option<String>,
+    pub provider_budget_id: Option<String>,
+    pub provider_off_state: bool,
+    pub provider_call_attempt_count: u32,
+    pub provider_network_dispatch_count: u32,
+    pub access_context_id: Option<String>,
+    pub policy_context_id: Option<String>,
+    pub tenant_id: Option<String>,
+    pub audit_id: Option<String>,
+    pub ph1j_proof_ref: Option<String>,
+    pub reason_code: &'static str,
+    pub disposition: Stage14PublicAnswerDisposition,
+    pub stage13_disposition: Stage13PublicReadOnlyDisposition,
+    pub answer_text_present: bool,
+    pub answer_text_bounded: bool,
+    pub answer_text_secret_safe: bool,
+    pub answer_claims_supported_by_stage13: bool,
+    pub unsupported_claim_present: bool,
+    pub citations_rendered: bool,
+    pub citation_refs_bounded: bool,
+    pub citation_refs_current: bool,
+    pub citation_refs_verified: bool,
+    pub source_chips_rendered: bool,
+    pub source_chip_refs_bounded: bool,
+    pub source_chip_refs_secret_safe: bool,
+    pub source_links_text_safe: bool,
+    pub protected_action_like_prompt: bool,
+    pub raw_provider_output_present: bool,
+    pub raw_search_dump_present: bool,
+    pub raw_request_url_exposed: bool,
+    pub provider_credentials_exposed: bool,
+    pub runtime_mock_detected: bool,
+    pub fake_citation_detected: bool,
+    pub fake_source_detected: bool,
+    pub work_authority: Stage14PublicAnswerWorkAuthority,
+}
+
+impl Stage14PublicAnswerPacket {
+    pub fn from_stage13_evidence(
+        evidence: &Stage13PublicReadOnlyEvidencePacket,
+        input: Stage14PublicAnswerInput,
+    ) -> Result<Self, ContractViolation> {
+        evidence.validate()?;
+        input.validate()?;
+        let disposition = Self::decide_disposition(evidence, &input);
+        let work_authority = Self::work_authority_for(disposition);
+        let audit_id = input.audit_id.clone().or_else(|| evidence.audit_id.clone());
+        let ph1j_proof_ref = input
+            .ph1j_proof_ref
+            .clone()
+            .or_else(|| evidence.ph1j_proof_ref.clone())
+            .or_else(|| audit_id.clone());
+        let packet = Self {
+            session_id: evidence.session_id,
+            turn_id: evidence.turn_id,
+            activation_id: evidence.activation_id.clone(),
+            understanding_id: evidence.understanding_id.clone(),
+            reasoning_id: evidence.reasoning_id.clone(),
+            router_id: evidence.router_id.clone(),
+            read_only_candidate_id: evidence.read_only_candidate_id.clone(),
+            tool_route_id: evidence.tool_route_id.clone(),
+            source_evidence_id: evidence.source_evidence_id.clone(),
+            citation_id: evidence.citation_id.clone(),
+            provenance_id: evidence.provenance_id.clone(),
+            verifier_id: evidence.verifier_id.clone(),
+            public_answer_id: input.public_answer_id,
+            answer_hash: input.answer_hash,
+            citation_rendering_id: input.citation_rendering_id,
+            source_chip_rendering_id: input.source_chip_rendering_id,
+            source_link_rendering_id: input.source_link_rendering_id,
+            provider_budget_id: evidence.provider_budget_id.clone(),
+            provider_off_state: evidence.provider_off_state,
+            provider_call_attempt_count: evidence.provider_call_attempt_count,
+            provider_network_dispatch_count: evidence.provider_network_dispatch_count,
+            access_context_id: evidence.access_context_id.clone(),
+            policy_context_id: evidence.policy_context_id.clone(),
+            tenant_id: evidence.tenant_id.clone(),
+            audit_id,
+            ph1j_proof_ref,
+            reason_code: disposition.default_reason_code(),
+            disposition,
+            stage13_disposition: evidence.disposition,
+            answer_text_present: input.answer_text_present,
+            answer_text_bounded: input.answer_text_bounded,
+            answer_text_secret_safe: input.answer_text_secret_safe,
+            answer_claims_supported_by_stage13: input.answer_claims_supported_by_stage13,
+            unsupported_claim_present: input.unsupported_claim_present,
+            citations_rendered: input.citations_rendered,
+            citation_refs_bounded: input.citation_refs_bounded,
+            citation_refs_current: input.citation_refs_current,
+            citation_refs_verified: input.citation_refs_verified,
+            source_chips_rendered: input.source_chips_rendered,
+            source_chip_refs_bounded: input.source_chip_refs_bounded,
+            source_chip_refs_secret_safe: input.source_chip_refs_secret_safe,
+            source_links_text_safe: input.source_links_text_safe,
+            protected_action_like_prompt: input.protected_action_like_prompt,
+            raw_provider_output_present: input.raw_provider_output_present,
+            raw_search_dump_present: input.raw_search_dump_present,
+            raw_request_url_exposed: input.raw_request_url_exposed,
+            provider_credentials_exposed: input.provider_credentials_exposed,
+            runtime_mock_detected: input.runtime_mock_detected,
+            fake_citation_detected: input.fake_citation_detected,
+            fake_source_detected: input.fake_source_detected,
+            work_authority,
+        };
+        packet.validate()?;
+        Ok(packet)
+    }
+
+    pub const fn can_mutate_or_execute(&self) -> bool {
+        self.work_authority.can_mutate_or_execute()
+    }
+
+    fn decide_disposition(
+        evidence: &Stage13PublicReadOnlyEvidencePacket,
+        input: &Stage14PublicAnswerInput,
+    ) -> Stage14PublicAnswerDisposition {
+        if input.runtime_mock_detected || input.fake_citation_detected || input.fake_source_detected
+        {
+            return Stage14PublicAnswerDisposition::RuntimeMockBlocked;
+        }
+        if evidence.protected_action_like_request || input.protected_action_like_prompt {
+            return Stage14PublicAnswerDisposition::ProtectedAnswerBlocked;
+        }
+        if evidence.provider_off_state || input.provider_off_public_answer {
+            return Stage14PublicAnswerDisposition::ProviderOffHonestFailure;
+        }
+        if evidence.missing_secret || input.missing_secret_public_answer {
+            return Stage14PublicAnswerDisposition::MissingSecretHonestFailure;
+        }
+        if evidence.provider_failure || input.provider_failure_public_answer {
+            return Stage14PublicAnswerDisposition::ProviderFailureHonestFailure;
+        }
+        if !evidence.disposition.is_ready()
+            || !evidence.work_authority.can_emit_public_read_only_evidence
+        {
+            return Stage14PublicAnswerDisposition::Stage13EvidenceBlocked;
+        }
+        if input.raw_provider_output_present
+            || input.raw_search_dump_present
+            || input.raw_request_url_exposed
+            || input.provider_credentials_exposed
+            || !input.answer_text_present
+            || !input.answer_text_bounded
+            || !input.answer_text_secret_safe
+        {
+            return Stage14PublicAnswerDisposition::UnsafeInputBlocked;
+        }
+        if input.unsupported_claim_present || !input.answer_claims_supported_by_stage13 {
+            return Stage14PublicAnswerDisposition::UnsupportedClaimBlocked;
+        }
+        if !input.citations_rendered
+            || !input.citation_refs_bounded
+            || !input.citation_refs_current
+            || !input.citation_refs_verified
+            || evidence.citation_id.is_none()
+            || input.citation_rendering_id.is_none()
+        {
+            return Stage14PublicAnswerDisposition::CitationRenderBlocked;
+        }
+        if !input.source_chips_rendered
+            || !input.source_chip_refs_bounded
+            || !input.source_chip_refs_secret_safe
+            || !input.source_links_text_safe
+            || evidence.source_evidence_id.is_none()
+            || evidence.provenance_id.is_none()
+            || evidence.verifier_id.is_none()
+            || input.source_chip_rendering_id.is_none()
+            || input.source_link_rendering_id.is_none()
+        {
+            return Stage14PublicAnswerDisposition::SourceRenderBlocked;
+        }
+        if input.audit_id.is_none()
+            && input.ph1j_proof_ref.is_none()
+            && evidence.audit_id.is_none()
+            && evidence.ph1j_proof_ref.is_none()
+        {
+            return Stage14PublicAnswerDisposition::AuditProofMissing;
+        }
+        Stage14PublicAnswerDisposition::AnswerReady
+    }
+
+    const fn work_authority_for(
+        disposition: Stage14PublicAnswerDisposition,
+    ) -> Stage14PublicAnswerWorkAuthority {
+        if disposition.is_ready() {
+            Stage14PublicAnswerWorkAuthority::answer_ready()
+        } else {
+            Stage14PublicAnswerWorkAuthority::fail_closed()
+        }
+    }
+}
+
+impl Validate for Stage14PublicAnswerPacket {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        validate_stage4_optional_ref(
+            "stage14_public_answer_packet.activation_id",
+            self.activation_id.as_deref(),
+        )?;
+        validate_stage4_ref(
+            "stage14_public_answer_packet.understanding_id",
+            &self.understanding_id,
+        )?;
+        validate_stage4_ref(
+            "stage14_public_answer_packet.reasoning_id",
+            &self.reasoning_id,
+        )?;
+        validate_stage4_ref("stage14_public_answer_packet.router_id", &self.router_id)?;
+        validate_stage4_optional_ref(
+            "stage14_public_answer_packet.read_only_candidate_id",
+            self.read_only_candidate_id.as_deref(),
+        )?;
+        validate_stage4_ref(
+            "stage14_public_answer_packet.tool_route_id",
+            &self.tool_route_id,
+        )?;
+        validate_stage4_optional_ref(
+            "stage14_public_answer_packet.source_evidence_id",
+            self.source_evidence_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage14_public_answer_packet.citation_id",
+            self.citation_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage14_public_answer_packet.provenance_id",
+            self.provenance_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage14_public_answer_packet.verifier_id",
+            self.verifier_id.as_deref(),
+        )?;
+        validate_stage4_ref(
+            "stage14_public_answer_packet.public_answer_id",
+            &self.public_answer_id,
+        )?;
+        validate_stage4_ref(
+            "stage14_public_answer_packet.answer_hash",
+            &self.answer_hash,
+        )?;
+        validate_stage4_optional_ref(
+            "stage14_public_answer_packet.citation_rendering_id",
+            self.citation_rendering_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage14_public_answer_packet.source_chip_rendering_id",
+            self.source_chip_rendering_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage14_public_answer_packet.source_link_rendering_id",
+            self.source_link_rendering_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage14_public_answer_packet.provider_budget_id",
+            self.provider_budget_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage14_public_answer_packet.access_context_id",
+            self.access_context_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage14_public_answer_packet.policy_context_id",
+            self.policy_context_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage14_public_answer_packet.tenant_id",
+            self.tenant_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage14_public_answer_packet.audit_id",
+            self.audit_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage14_public_answer_packet.ph1j_proof_ref",
+            self.ph1j_proof_ref.as_deref(),
+        )?;
+        if self.reason_code != self.disposition.default_reason_code() {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage14_public_answer_packet.reason_code",
+                reason: "must match Stage 14 public answer disposition",
+            });
+        }
+        if self.work_authority.can_mutate_or_execute() {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage14_public_answer_packet.work_authority",
+                reason: "Stage 14A cannot mutate, connector-write, dispatch, approve, execute, call live providers/search/tools, emit TTS, add native UI, or update memory/persona/emotion",
+            });
+        }
+        if self.provider_off_state
+            && (self.provider_call_attempt_count != 0 || self.provider_network_dispatch_count != 0)
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage14_public_answer_packet.provider_off_state",
+                reason: "provider-off answer proof must preserve zero provider attempts and network dispatches",
+            });
+        }
+        if self.disposition.is_ready() {
+            if self.stage13_disposition != Stage13PublicReadOnlyDisposition::EvidenceReady
+                || self.read_only_candidate_id.is_none()
+                || self.source_evidence_id.is_none()
+                || self.citation_id.is_none()
+                || self.provenance_id.is_none()
+                || self.verifier_id.is_none()
+                || self.citation_rendering_id.is_none()
+                || self.source_chip_rendering_id.is_none()
+                || self.source_link_rendering_id.is_none()
+                || self.audit_id.is_none()
+                || self.ph1j_proof_ref.is_none()
+                || !self.answer_text_present
+                || !self.answer_text_bounded
+                || !self.answer_text_secret_safe
+                || !self.answer_claims_supported_by_stage13
+                || self.unsupported_claim_present
+                || !self.citations_rendered
+                || !self.citation_refs_bounded
+                || !self.citation_refs_current
+                || !self.citation_refs_verified
+                || !self.source_chips_rendered
+                || !self.source_chip_refs_bounded
+                || !self.source_chip_refs_secret_safe
+                || !self.source_links_text_safe
+                || self.protected_action_like_prompt
+                || self.raw_provider_output_present
+                || self.raw_search_dump_present
+                || self.raw_request_url_exposed
+                || self.provider_credentials_exposed
+                || self.runtime_mock_detected
+                || self.fake_citation_detected
+                || self.fake_source_detected
+                || !self.work_authority.can_emit_public_answer
+                || !self.work_authority.can_render_citations
+                || !self.work_authority.can_render_source_chips
+                || !self.work_authority.can_render_source_links
+                || self.work_authority.can_fail_closed
+            {
+                return Err(ContractViolation::InvalidValue {
+                    field: "stage14_public_answer_packet.answer_ready",
+                    reason: "Stage 14A answer-ready packets require Stage 13 evidence-ready input, supported claims, bounded verified citations/source chips, and PH1.J audit refs",
+                });
+            }
+        } else if !self.work_authority.can_fail_closed
+            || self.work_authority.can_emit_public_answer
+            || self.work_authority.can_render_citations
+            || self.work_authority.can_render_source_chips
+            || self.work_authority.can_render_source_links
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage14_public_answer_packet.fail_closed",
+                reason: "blocked Stage 14A packets fail closed and cannot fabricate public answers, citations, source chips, or source links",
+            });
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RawTurnPayload {
     Text {
@@ -14442,6 +15124,28 @@ mod tests {
         )
     }
 
+    fn stage14_evidence_packet() -> Stage13PublicReadOnlyEvidencePacket {
+        let route = stage13_public_read_only_route();
+        let no_mutation = stage13_no_mutation_proof(&route);
+        Stage13PublicReadOnlyEvidencePacket::from_public_read_only_route(
+            &route,
+            &no_mutation,
+            stage13_evidence_input(),
+        )
+        .expect("stage14 stage13 evidence packet")
+    }
+
+    fn stage14_answer_input() -> Stage14PublicAnswerInput {
+        Stage14PublicAnswerInput::fixture_answer_ready(
+            "public-answer-stage14",
+            "answer-hash-stage14",
+            "citation-render-stage14",
+            "source-chip-render-stage14",
+            "source-link-render-stage14",
+            "audit-stage14",
+        )
+    }
+
     #[test]
     fn stage_12a_protected_action_requires_all_gates_and_emits_approved_plan() {
         let route = stage12_protected_route();
@@ -14911,6 +15615,284 @@ mod tests {
             assert!(!packet.work_authority.can_emit_verifier_result);
             assert!(!packet.can_mutate_or_execute());
         }
+    }
+
+    #[test]
+    fn stage_14a_public_answer_renders_only_from_stage13_evidence_ready_packet() {
+        let evidence = stage14_evidence_packet();
+        let packet =
+            Stage14PublicAnswerPacket::from_stage13_evidence(&evidence, stage14_answer_input())
+                .expect("stage14 evidence-bound public answer packet");
+
+        assert_eq!(
+            packet.disposition,
+            Stage14PublicAnswerDisposition::AnswerReady
+        );
+        assert_eq!(
+            packet.stage13_disposition,
+            Stage13PublicReadOnlyDisposition::EvidenceReady
+        );
+        assert_eq!(
+            packet.read_only_candidate_id.as_deref(),
+            Some("tool-candidate-stage13-public")
+        );
+        assert_eq!(
+            packet.source_evidence_id.as_deref(),
+            Some("source-evidence-stage13")
+        );
+        assert_eq!(packet.citation_id.as_deref(), Some("citation-stage13"));
+        assert_eq!(
+            packet.citation_rendering_id.as_deref(),
+            Some("citation-render-stage14")
+        );
+        assert_eq!(packet.audit_id.as_deref(), Some("audit-stage14"));
+        assert_eq!(packet.ph1j_proof_ref.as_deref(), Some("audit-stage14"));
+        assert!(packet.work_authority.can_emit_public_answer);
+        assert!(packet.work_authority.can_render_citations);
+        assert!(packet.work_authority.can_render_source_chips);
+        assert!(packet.work_authority.can_render_source_links);
+        assert!(!packet.can_mutate_or_execute());
+    }
+
+    #[test]
+    fn stage_14a_blocks_unsupported_claims_and_bad_citation_rendering() {
+        let evidence = stage14_evidence_packet();
+        for (mut input, expected) in [
+            {
+                let mut input = stage14_answer_input();
+                input.unsupported_claim_present = true;
+                (
+                    input,
+                    Stage14PublicAnswerDisposition::UnsupportedClaimBlocked,
+                )
+            },
+            {
+                let mut input = stage14_answer_input();
+                input.answer_claims_supported_by_stage13 = false;
+                (
+                    input,
+                    Stage14PublicAnswerDisposition::UnsupportedClaimBlocked,
+                )
+            },
+            {
+                let mut input = stage14_answer_input();
+                input.citation_refs_verified = false;
+                (input, Stage14PublicAnswerDisposition::CitationRenderBlocked)
+            },
+            {
+                let mut input = stage14_answer_input();
+                input.citation_rendering_id = None;
+                (input, Stage14PublicAnswerDisposition::CitationRenderBlocked)
+            },
+            {
+                let mut input = stage14_answer_input();
+                input.source_chip_rendering_id = None;
+                (input, Stage14PublicAnswerDisposition::SourceRenderBlocked)
+            },
+            {
+                let mut input = stage14_answer_input();
+                input.source_links_text_safe = false;
+                (input, Stage14PublicAnswerDisposition::SourceRenderBlocked)
+            },
+        ] {
+            input.fixture_only_test_path = true;
+            let packet = Stage14PublicAnswerPacket::from_stage13_evidence(&evidence, input)
+                .expect("stage14 blocked public answer packet");
+            assert_eq!(packet.disposition, expected);
+            assert!(packet.work_authority.can_fail_closed);
+            assert!(!packet.work_authority.can_emit_public_answer);
+            assert!(!packet.work_authority.can_render_citations);
+            assert!(!packet.work_authority.can_render_source_chips);
+            assert!(!packet.can_mutate_or_execute());
+        }
+    }
+
+    #[test]
+    fn stage_14a_provider_off_missing_secret_and_failure_cannot_fabricate_sources() {
+        let route = stage13_public_read_only_route();
+        let no_mutation = stage13_no_mutation_proof(&route);
+
+        for (mut stage13_input, expected) in [
+            {
+                let mut input = stage13_evidence_input();
+                input.provider_off_state = true;
+                input.source_evidence_present = false;
+                input.source_evidence_id = None;
+                input.citation_id = None;
+                input.provenance_id = None;
+                input.verifier_id = None;
+                (
+                    input,
+                    Stage14PublicAnswerDisposition::ProviderOffHonestFailure,
+                )
+            },
+            {
+                let mut input = stage13_evidence_input();
+                input.missing_secret = true;
+                input.source_evidence_present = false;
+                input.source_evidence_id = None;
+                input.citation_id = None;
+                input.provenance_id = None;
+                input.verifier_id = None;
+                (
+                    input,
+                    Stage14PublicAnswerDisposition::MissingSecretHonestFailure,
+                )
+            },
+            {
+                let mut input = stage13_evidence_input();
+                input.provider_failure = true;
+                input.source_evidence_present = false;
+                input.source_evidence_id = None;
+                input.citation_id = None;
+                input.provenance_id = None;
+                input.verifier_id = None;
+                (
+                    input,
+                    Stage14PublicAnswerDisposition::ProviderFailureHonestFailure,
+                )
+            },
+        ] {
+            stage13_input.provider_call_attempt_count = 0;
+            stage13_input.provider_network_dispatch_count = 0;
+            let evidence = Stage13PublicReadOnlyEvidencePacket::from_public_read_only_route(
+                &route,
+                &no_mutation,
+                stage13_input,
+            )
+            .expect("stage13 unavailable provider evidence packet");
+            let packet =
+                Stage14PublicAnswerPacket::from_stage13_evidence(&evidence, stage14_answer_input())
+                    .expect("stage14 honest provider unavailable answer packet");
+
+            assert_eq!(packet.disposition, expected);
+            assert!(packet.work_authority.can_emit_honest_uncertainty);
+            assert!(packet.work_authority.can_fail_closed);
+            assert!(!packet.work_authority.can_emit_public_answer);
+            assert!(!packet.work_authority.can_render_citations);
+            assert!(packet.citation_rendering_id.is_some());
+            assert_eq!(packet.provider_call_attempt_count, 0);
+            assert_eq!(packet.provider_network_dispatch_count, 0);
+            assert!(!packet.can_mutate_or_execute());
+        }
+    }
+
+    #[test]
+    fn stage_14a_blocks_runtime_mocks_fake_sources_and_raw_dumps() {
+        let evidence = stage14_evidence_packet();
+
+        let mut runtime_mock = stage14_answer_input();
+        runtime_mock.runtime_mock_detected = true;
+        runtime_mock.fixture_only_test_path = false;
+        assert!(Stage14PublicAnswerPacket::from_stage13_evidence(&evidence, runtime_mock).is_err());
+
+        for (mut input, expected) in [
+            {
+                let mut input = stage14_answer_input();
+                input.runtime_mock_detected = true;
+                (input, Stage14PublicAnswerDisposition::RuntimeMockBlocked)
+            },
+            {
+                let mut input = stage14_answer_input();
+                input.fake_citation_detected = true;
+                (input, Stage14PublicAnswerDisposition::RuntimeMockBlocked)
+            },
+            {
+                let mut input = stage14_answer_input();
+                input.fake_source_detected = true;
+                (input, Stage14PublicAnswerDisposition::RuntimeMockBlocked)
+            },
+            {
+                let mut input = stage14_answer_input();
+                input.raw_provider_output_present = true;
+                (input, Stage14PublicAnswerDisposition::UnsafeInputBlocked)
+            },
+            {
+                let mut input = stage14_answer_input();
+                input.raw_search_dump_present = true;
+                (input, Stage14PublicAnswerDisposition::UnsafeInputBlocked)
+            },
+            {
+                let mut input = stage14_answer_input();
+                input.provider_credentials_exposed = true;
+                (input, Stage14PublicAnswerDisposition::UnsafeInputBlocked)
+            },
+        ] {
+            input.fixture_only_test_path = true;
+            let packet = Stage14PublicAnswerPacket::from_stage13_evidence(&evidence, input)
+                .expect("stage14 blocked unsafe rendering packet");
+            assert_eq!(packet.disposition, expected);
+            assert!(packet.work_authority.can_fail_closed);
+            assert!(!packet.work_authority.can_emit_public_answer);
+            assert!(!packet.can_mutate_or_execute());
+        }
+    }
+
+    #[test]
+    fn stage_14a_protected_prompt_and_non_ready_stage13_evidence_fail_closed() {
+        let evidence = stage14_evidence_packet();
+        let mut protected_input = stage14_answer_input();
+        protected_input.protected_action_like_prompt = true;
+        let protected_packet =
+            Stage14PublicAnswerPacket::from_stage13_evidence(&evidence, protected_input)
+                .expect("stage14 protected prompt packet");
+        assert_eq!(
+            protected_packet.disposition,
+            Stage14PublicAnswerDisposition::ProtectedAnswerBlocked
+        );
+        assert!(!protected_packet.work_authority.can_emit_public_answer);
+        assert!(!protected_packet.can_mutate_or_execute());
+
+        let route = stage13_public_read_only_route();
+        let no_mutation = stage13_no_mutation_proof(&route);
+        let mut stale_input = stage13_evidence_input();
+        stale_input.source_evidence_current = false;
+        let stale_evidence = Stage13PublicReadOnlyEvidencePacket::from_public_read_only_route(
+            &route,
+            &no_mutation,
+            stale_input,
+        )
+        .expect("stage13 stale evidence packet");
+        let stale_packet = Stage14PublicAnswerPacket::from_stage13_evidence(
+            &stale_evidence,
+            stage14_answer_input(),
+        )
+        .expect("stage14 stale stage13 evidence packet");
+        assert_eq!(
+            stale_packet.disposition,
+            Stage14PublicAnswerDisposition::Stage13EvidenceBlocked
+        );
+        assert!(stale_packet.work_authority.can_fail_closed);
+        assert!(!stale_packet.work_authority.can_render_citations);
+        assert!(!stale_packet.can_mutate_or_execute());
+    }
+
+    #[test]
+    fn stage_14a_public_answer_authority_cannot_mutate_or_execute() {
+        let evidence = stage14_evidence_packet();
+        let packet =
+            Stage14PublicAnswerPacket::from_stage13_evidence(&evidence, stage14_answer_input())
+                .expect("stage14 no-mutation public answer packet");
+
+        assert!(!packet.work_authority.can_mutate);
+        assert!(!packet.work_authority.can_connector_write);
+        assert!(!packet.work_authority.can_send_message);
+        assert!(!packet.work_authority.can_post_content);
+        assert!(!packet.work_authority.can_purchase);
+        assert!(!packet.work_authority.can_delete_remote);
+        assert!(!packet.work_authority.can_invite);
+        assert!(!packet.work_authority.can_schedule);
+        assert!(!packet.work_authority.can_approve);
+        assert!(!packet.work_authority.can_dispatch);
+        assert!(!packet.work_authority.can_execute_simulation);
+        assert!(!packet.work_authority.can_execute_protected_action);
+        assert!(!packet.work_authority.can_call_live_provider);
+        assert!(!packet.work_authority.can_run_live_search);
+        assert!(!packet.work_authority.can_call_live_external_tool);
+        assert!(!packet.work_authority.can_emit_tts);
+        assert!(!packet.work_authority.can_update_memory_persona_emotion);
+        assert!(!packet.work_authority.can_add_native_ui_behavior);
+        assert!(!packet.can_mutate_or_execute());
     }
 
     #[test]
