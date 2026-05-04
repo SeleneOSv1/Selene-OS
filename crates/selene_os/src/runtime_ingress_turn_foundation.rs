@@ -23783,6 +23783,1284 @@ pub fn stage23_memory_retention_symbol_anchor() {
 }
 const _: fn() = stage23_memory_retention_symbol_anchor;
 
+mod stage24_reason_codes {
+    pub const REALTIME_MULTIMODAL_INGRESS_READY: &str =
+        "STAGE24_REALTIME_MULTIMODAL_INGRESS_READY";
+    pub const CAPTURE_SESSION_BOUNDARY_READY: &str = "STAGE24_CAPTURE_SESSION_BOUNDARY_READY";
+    pub const PARTIAL_FINAL_STREAM_POSTURE_READY: &str =
+        "STAGE24_PARTIAL_FINAL_STREAM_POSTURE_READY";
+    pub const STREAM_SAFETY_READY: &str = "STAGE24_STREAM_SAFETY_READY";
+    pub const MODALITY_SELECTION_REFERENCE_READY: &str =
+        "STAGE24_MODALITY_SELECTION_REFERENCE_READY";
+    pub const STAGE_INPUT_BLOCKED: &str = "STAGE24_STAGE_INPUT_BLOCKED";
+    pub const NO_INVENTION_BLOCKED: &str = "STAGE24_NO_INVENTION_BLOCKED";
+    pub const CAPTURE_SESSION_BLOCKED: &str = "STAGE24_CAPTURE_SESSION_BLOCKED";
+    pub const NATIVE_STREAM_BLOCKED: &str = "STAGE24_NATIVE_STREAM_BLOCKED";
+    pub const PROTECTED_INGRESS_BLOCKED: &str = "STAGE24_PROTECTED_INGRESS_BLOCKED";
+    pub const STALE_STREAM_BLOCKED: &str = "STAGE24_STALE_STREAM_BLOCKED";
+    pub const UNSAFE_INPUT_BLOCKED: &str = "STAGE24_UNSAFE_INPUT_BLOCKED";
+    pub const RUNTIME_MOCK_BLOCKED: &str = "STAGE24_RUNTIME_MOCK_BLOCKED";
+    pub const AUDIT_PROOF_MISSING: &str = "STAGE24_AUDIT_PROOF_MISSING";
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stage24IngressCaptureKind {
+    RealTimeMultimodalIngress,
+    CaptureSessionBoundary,
+    PartialFinalStreamPosture,
+    StreamSafety,
+    ModalitySelectionReference,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stage24IngressCaptureDisposition {
+    RealTimeMultimodalIngressReady,
+    CaptureSessionBoundaryReady,
+    PartialFinalStreamPostureReady,
+    StreamSafetyReady,
+    ModalitySelectionReferenceReady,
+    StageInputBlocked,
+    NoInventionBlocked,
+    CaptureSessionBlocked,
+    NativeStreamBlocked,
+    ProtectedIngressBlocked,
+    StaleStreamBlocked,
+    UnsafeInputBlocked,
+    RuntimeMockBlocked,
+    AuditProofMissing,
+}
+
+impl Stage24IngressCaptureDisposition {
+    pub const fn default_reason_code(self) -> &'static str {
+        match self {
+            Self::RealTimeMultimodalIngressReady => {
+                stage24_reason_codes::REALTIME_MULTIMODAL_INGRESS_READY
+            }
+            Self::CaptureSessionBoundaryReady => {
+                stage24_reason_codes::CAPTURE_SESSION_BOUNDARY_READY
+            }
+            Self::PartialFinalStreamPostureReady => {
+                stage24_reason_codes::PARTIAL_FINAL_STREAM_POSTURE_READY
+            }
+            Self::StreamSafetyReady => stage24_reason_codes::STREAM_SAFETY_READY,
+            Self::ModalitySelectionReferenceReady => {
+                stage24_reason_codes::MODALITY_SELECTION_REFERENCE_READY
+            }
+            Self::StageInputBlocked => stage24_reason_codes::STAGE_INPUT_BLOCKED,
+            Self::NoInventionBlocked => stage24_reason_codes::NO_INVENTION_BLOCKED,
+            Self::CaptureSessionBlocked => stage24_reason_codes::CAPTURE_SESSION_BLOCKED,
+            Self::NativeStreamBlocked => stage24_reason_codes::NATIVE_STREAM_BLOCKED,
+            Self::ProtectedIngressBlocked => stage24_reason_codes::PROTECTED_INGRESS_BLOCKED,
+            Self::StaleStreamBlocked => stage24_reason_codes::STALE_STREAM_BLOCKED,
+            Self::UnsafeInputBlocked => stage24_reason_codes::UNSAFE_INPUT_BLOCKED,
+            Self::RuntimeMockBlocked => stage24_reason_codes::RUNTIME_MOCK_BLOCKED,
+            Self::AuditProofMissing => stage24_reason_codes::AUDIT_PROOF_MISSING,
+        }
+    }
+
+    pub const fn is_ready(self) -> bool {
+        matches!(
+            self,
+            Self::RealTimeMultimodalIngressReady
+                | Self::CaptureSessionBoundaryReady
+                | Self::PartialFinalStreamPostureReady
+                | Self::StreamSafetyReady
+                | Self::ModalitySelectionReferenceReady
+        )
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Stage24IngressCaptureWorkAuthority {
+    pub can_emit_realtime_multimodal_ingress_packet: bool,
+    pub can_emit_capture_session_boundary_packet: bool,
+    pub can_emit_partial_final_stream_posture_packet: bool,
+    pub can_emit_stream_safety_packet: bool,
+    pub can_emit_modality_selection_ref: bool,
+    pub can_fail_closed: bool,
+    pub can_invent_facts: bool,
+    pub can_invent_final_transcript_success: bool,
+    pub can_invent_capture_success: bool,
+    pub can_invent_stream_authority: bool,
+    pub can_route: bool,
+    pub can_execute: bool,
+    pub can_create_user_turn: bool,
+    pub can_treat_visible_partial_or_final_success_as_action_success: bool,
+}
+
+impl Stage24IngressCaptureWorkAuthority {
+    pub const fn fail_closed() -> Self {
+        Self {
+            can_emit_realtime_multimodal_ingress_packet: false,
+            can_emit_capture_session_boundary_packet: false,
+            can_emit_partial_final_stream_posture_packet: false,
+            can_emit_stream_safety_packet: false,
+            can_emit_modality_selection_ref: false,
+            can_fail_closed: true,
+            can_invent_facts: false,
+            can_invent_final_transcript_success: false,
+            can_invent_capture_success: false,
+            can_invent_stream_authority: false,
+            can_route: false,
+            can_execute: false,
+            can_create_user_turn: false,
+            can_treat_visible_partial_or_final_success_as_action_success: false,
+        }
+    }
+
+    pub const fn realtime_multimodal_ingress_ready() -> Self {
+        let mut authority = Self::fail_closed();
+        authority.can_emit_realtime_multimodal_ingress_packet = true;
+        authority
+    }
+
+    pub const fn capture_session_boundary_ready() -> Self {
+        let mut authority = Self::fail_closed();
+        authority.can_emit_capture_session_boundary_packet = true;
+        authority
+    }
+
+    pub const fn partial_final_stream_posture_ready() -> Self {
+        let mut authority = Self::fail_closed();
+        authority.can_emit_partial_final_stream_posture_packet = true;
+        authority
+    }
+
+    pub const fn stream_safety_ready() -> Self {
+        let mut authority = Self::fail_closed();
+        authority.can_emit_stream_safety_packet = true;
+        authority
+    }
+
+    pub const fn modality_selection_reference_ready() -> Self {
+        let mut authority = Self::fail_closed();
+        authority.can_emit_modality_selection_ref = true;
+        authority
+    }
+
+    pub const fn can_mutate_or_execute(&self) -> bool {
+        self.can_invent_facts
+            || self.can_invent_final_transcript_success
+            || self.can_invent_capture_success
+            || self.can_invent_stream_authority
+            || self.can_route
+            || self.can_execute
+            || self.can_create_user_turn
+            || self.can_treat_visible_partial_or_final_success_as_action_success
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Stage24IngressCaptureInput {
+    pub ingress_kind: Stage24IngressCaptureKind,
+    pub capture_session_id: Option<String>,
+    pub stream_packet_id: Option<String>,
+    pub partial_transcript_id: Option<String>,
+    pub final_transcript_id: Option<String>,
+    pub modality_selection_id: Option<String>,
+    pub device_id: Option<String>,
+    pub connector_action_stage_id: Option<String>,
+    pub memory_candidate_id: Option<String>,
+    pub audit_id: Option<String>,
+    pub ph1j_proof_ref: Option<String>,
+    pub stage19_attention_ref_present: bool,
+    pub stage19_attention_ref_non_authoritative: bool,
+    pub stage20_continuity_ref_present: bool,
+    pub stage20_continuity_ref_non_authoritative: bool,
+    pub stage21_automation_ref_present: bool,
+    pub stage21_automation_ref_non_authoritative: bool,
+    pub stage22_outbound_ref_present: bool,
+    pub stage22_outbound_ref_non_authoritative: bool,
+    pub stage23_memory_ref_present: bool,
+    pub stage23_memory_ref_non_authoritative: bool,
+    pub capture_session_bounded: bool,
+    pub tenant_user_device_session_scoped: bool,
+    pub uncertainty_preserved: bool,
+    pub ingress_invented_fact: bool,
+    pub ingress_invented_final_transcript_success: bool,
+    pub ingress_invented_capture_success: bool,
+    pub ingress_invented_modality_fusion_success: bool,
+    pub ingress_invented_session_authority: bool,
+    pub ingress_invented_attachment_or_citation: bool,
+    pub ingress_invented_provider_or_tool_result: bool,
+    pub ingress_claimed_unproven_completion: bool,
+    pub ingress_implied_routing_or_mutation: bool,
+    pub secret_safe: bool,
+    pub redacted: bool,
+    pub stale_aware: bool,
+    pub revocation_aware: bool,
+    pub capture_ref_present: bool,
+    pub session_ref_present: bool,
+    pub turn_ref_present: bool,
+    pub modality_ref_present: bool,
+    pub partial_or_final_state_ref_present: bool,
+    pub partial_state_allowed: bool,
+    pub final_state_allowed: bool,
+    pub stream_safety_ref_present: bool,
+    pub listen_ref_present: bool,
+    pub transcript_gate_ref_present: bool,
+    pub audio_scene_ref_present: bool,
+    pub foreground_or_addressed_posture_present: bool,
+    pub capture_bundle_validated: bool,
+    pub adapter_voice_ingress_ref_present: bool,
+    pub adapter_capture_bundle_ref_present: bool,
+    pub unverifiable: bool,
+    pub stale: bool,
+    pub secret_unsafe: bool,
+    pub cross_tenant: bool,
+    pub cross_device: bool,
+    pub session_mismatch: bool,
+    pub modality_mismatch: bool,
+    pub device_mismatch: bool,
+    pub missing_proof: bool,
+    pub ownership_drift: bool,
+    pub native_stream_declarative_only: bool,
+    pub native_stream_mutates_state: bool,
+    pub native_stream_connector_writes: bool,
+    pub native_stream_dispatches_or_executes: bool,
+    pub native_stream_calls_providers_or_tools: bool,
+    pub native_stream_emits_tts_or_playback: bool,
+    pub native_stream_creates_user_turn: bool,
+    pub native_stream_treats_visible_success_as_action_success: bool,
+    pub protected_action_like_request: bool,
+    pub protected_slot_or_authority_ambiguous: bool,
+    pub unsafe_identity_posture: bool,
+    pub ingress_implies_stage12_routing_or_execution_without_proof: bool,
+    pub stale_or_cancelled_or_superseded_output: bool,
+    pub session_closed: bool,
+    pub record_artifact_only_turn: bool,
+    pub stale_capture_state: bool,
+    pub stale_session_state: bool,
+    pub stale_turn_state: bool,
+    pub stale_modality_state: bool,
+    pub stream_identity_matches_current_output_session: bool,
+    pub replay_upgrades_blocked_stream: bool,
+    pub fake_stream_detected: bool,
+    pub fake_capture_detected: bool,
+    pub fake_partial_final_detected: bool,
+    pub fake_fusion_detected: bool,
+    pub fake_session_authority_detected: bool,
+    pub runtime_mock_detected: bool,
+    pub raw_provider_output_present: bool,
+    pub raw_search_dump_present: bool,
+    pub raw_media_promotion_claim_present: bool,
+    pub unverified_source_evidence_present: bool,
+    pub unsupported_claim_candidate_present: bool,
+    pub fake_stream_source_carrier_present: bool,
+    pub continuity_automation_outbound_memory_used_as_truth_authority: bool,
+    pub protected_action_candidate_present: bool,
+    pub simulation_candidate_present: bool,
+    pub approved_execution_plan_present: bool,
+    pub secrets_exposed: bool,
+    pub raw_biometric_or_voice_material_exposed: bool,
+    pub internal_trace_exposed: bool,
+    pub access_denied: bool,
+    pub policy_denied: bool,
+    pub attempted_live_provider_in_build: bool,
+    pub generated_live_media_in_build: bool,
+    pub ran_live_search_in_build: bool,
+    pub called_live_external_tool_in_build: bool,
+    pub connector_write_requested: bool,
+    pub ran_live_notification_delivery_in_build: bool,
+    pub ran_live_background_execution_in_build: bool,
+    pub ran_live_tts_or_playback_in_build: bool,
+    pub ran_live_outbound_dispatch_in_build: bool,
+    pub voice_id_matching_attempted: bool,
+    pub native_ui_behavior_added: bool,
+    pub fixture_only_test_path: bool,
+}
+
+impl Stage24IngressCaptureInput {
+    #[cfg(test)]
+    fn fixture_base(ingress_kind: Stage24IngressCaptureKind, audit_id: impl Into<String>) -> Self {
+        Self {
+            ingress_kind,
+            capture_session_id: Some("capture-session-stage24".to_string()),
+            stream_packet_id: Some("stream-packet-stage24".to_string()),
+            partial_transcript_id: Some("partial-transcript-stage24".to_string()),
+            final_transcript_id: Some("final-transcript-stage24".to_string()),
+            modality_selection_id: Some("modality-selection-stage24".to_string()),
+            device_id: Some("device-stage24".to_string()),
+            connector_action_stage_id: Some("connector-stage24".to_string()),
+            memory_candidate_id: Some("memory-stage24".to_string()),
+            audit_id: Some(audit_id.into()),
+            ph1j_proof_ref: Some("audit-proof-stage24".to_string()),
+            stage19_attention_ref_present: false,
+            stage19_attention_ref_non_authoritative: false,
+            stage20_continuity_ref_present: false,
+            stage20_continuity_ref_non_authoritative: false,
+            stage21_automation_ref_present: false,
+            stage21_automation_ref_non_authoritative: false,
+            stage22_outbound_ref_present: false,
+            stage22_outbound_ref_non_authoritative: false,
+            stage23_memory_ref_present: false,
+            stage23_memory_ref_non_authoritative: false,
+            capture_session_bounded: true,
+            tenant_user_device_session_scoped: true,
+            uncertainty_preserved: true,
+            ingress_invented_fact: false,
+            ingress_invented_final_transcript_success: false,
+            ingress_invented_capture_success: false,
+            ingress_invented_modality_fusion_success: false,
+            ingress_invented_session_authority: false,
+            ingress_invented_attachment_or_citation: false,
+            ingress_invented_provider_or_tool_result: false,
+            ingress_claimed_unproven_completion: false,
+            ingress_implied_routing_or_mutation: false,
+            secret_safe: true,
+            redacted: true,
+            stale_aware: true,
+            revocation_aware: true,
+            capture_ref_present: true,
+            session_ref_present: true,
+            turn_ref_present: true,
+            modality_ref_present: true,
+            partial_or_final_state_ref_present: true,
+            partial_state_allowed: true,
+            final_state_allowed: true,
+            stream_safety_ref_present: true,
+            listen_ref_present: true,
+            transcript_gate_ref_present: true,
+            audio_scene_ref_present: true,
+            foreground_or_addressed_posture_present: true,
+            capture_bundle_validated: true,
+            adapter_voice_ingress_ref_present: true,
+            adapter_capture_bundle_ref_present: true,
+            unverifiable: false,
+            stale: false,
+            secret_unsafe: false,
+            cross_tenant: false,
+            cross_device: false,
+            session_mismatch: false,
+            modality_mismatch: false,
+            device_mismatch: false,
+            missing_proof: false,
+            ownership_drift: false,
+            native_stream_declarative_only: true,
+            native_stream_mutates_state: false,
+            native_stream_connector_writes: false,
+            native_stream_dispatches_or_executes: false,
+            native_stream_calls_providers_or_tools: false,
+            native_stream_emits_tts_or_playback: false,
+            native_stream_creates_user_turn: false,
+            native_stream_treats_visible_success_as_action_success: false,
+            protected_action_like_request: false,
+            protected_slot_or_authority_ambiguous: false,
+            unsafe_identity_posture: false,
+            ingress_implies_stage12_routing_or_execution_without_proof: false,
+            stale_or_cancelled_or_superseded_output: false,
+            session_closed: false,
+            record_artifact_only_turn: false,
+            stale_capture_state: false,
+            stale_session_state: false,
+            stale_turn_state: false,
+            stale_modality_state: false,
+            stream_identity_matches_current_output_session: true,
+            replay_upgrades_blocked_stream: false,
+            fake_stream_detected: false,
+            fake_capture_detected: false,
+            fake_partial_final_detected: false,
+            fake_fusion_detected: false,
+            fake_session_authority_detected: false,
+            runtime_mock_detected: false,
+            raw_provider_output_present: false,
+            raw_search_dump_present: false,
+            raw_media_promotion_claim_present: false,
+            unverified_source_evidence_present: false,
+            unsupported_claim_candidate_present: false,
+            fake_stream_source_carrier_present: false,
+            continuity_automation_outbound_memory_used_as_truth_authority: false,
+            protected_action_candidate_present: false,
+            simulation_candidate_present: false,
+            approved_execution_plan_present: false,
+            secrets_exposed: false,
+            raw_biometric_or_voice_material_exposed: false,
+            internal_trace_exposed: false,
+            access_denied: false,
+            policy_denied: false,
+            attempted_live_provider_in_build: false,
+            generated_live_media_in_build: false,
+            ran_live_search_in_build: false,
+            called_live_external_tool_in_build: false,
+            connector_write_requested: false,
+            ran_live_notification_delivery_in_build: false,
+            ran_live_background_execution_in_build: false,
+            ran_live_tts_or_playback_in_build: false,
+            ran_live_outbound_dispatch_in_build: false,
+            voice_id_matching_attempted: false,
+            native_ui_behavior_added: false,
+            fixture_only_test_path: true,
+        }
+    }
+
+    #[cfg(test)]
+    pub fn fixture_realtime_multimodal_ingress_ready(
+        capture_session_id: impl Into<String>,
+        stream_packet_id: impl Into<String>,
+        modality_selection_id: impl Into<String>,
+        device_id: impl Into<String>,
+        audit_id: impl Into<String>,
+    ) -> Self {
+        let mut input =
+            Self::fixture_base(Stage24IngressCaptureKind::RealTimeMultimodalIngress, audit_id);
+        input.capture_session_id = Some(capture_session_id.into());
+        input.stream_packet_id = Some(stream_packet_id.into());
+        input.modality_selection_id = Some(modality_selection_id.into());
+        input.device_id = Some(device_id.into());
+        input.partial_transcript_id = None;
+        input.final_transcript_id = None;
+        input.partial_or_final_state_ref_present = false;
+        input
+    }
+
+    #[cfg(test)]
+    pub fn fixture_capture_session_boundary_ready(
+        capture_session_id: impl Into<String>,
+        stream_packet_id: impl Into<String>,
+        device_id: impl Into<String>,
+        audit_id: impl Into<String>,
+    ) -> Self {
+        let mut input =
+            Self::fixture_base(Stage24IngressCaptureKind::CaptureSessionBoundary, audit_id);
+        input.capture_session_id = Some(capture_session_id.into());
+        input.stream_packet_id = Some(stream_packet_id.into());
+        input.device_id = Some(device_id.into());
+        input.partial_transcript_id = None;
+        input.final_transcript_id = None;
+        input.modality_selection_id = None;
+        input.partial_or_final_state_ref_present = false;
+        input.modality_ref_present = false;
+        input
+    }
+
+    #[cfg(test)]
+    pub fn fixture_partial_final_stream_posture_ready(
+        stream_packet_id: impl Into<String>,
+        partial_transcript_id: impl Into<String>,
+        final_transcript_id: impl Into<String>,
+        modality_selection_id: impl Into<String>,
+        audit_id: impl Into<String>,
+    ) -> Self {
+        let mut input =
+            Self::fixture_base(Stage24IngressCaptureKind::PartialFinalStreamPosture, audit_id);
+        input.stream_packet_id = Some(stream_packet_id.into());
+        input.partial_transcript_id = Some(partial_transcript_id.into());
+        input.final_transcript_id = Some(final_transcript_id.into());
+        input.modality_selection_id = Some(modality_selection_id.into());
+        input
+    }
+
+    #[cfg(test)]
+    pub fn fixture_stream_safety_ready(
+        capture_session_id: impl Into<String>,
+        stream_packet_id: impl Into<String>,
+        device_id: impl Into<String>,
+        audit_id: impl Into<String>,
+    ) -> Self {
+        let mut input = Self::fixture_base(Stage24IngressCaptureKind::StreamSafety, audit_id);
+        input.capture_session_id = Some(capture_session_id.into());
+        input.stream_packet_id = Some(stream_packet_id.into());
+        input.device_id = Some(device_id.into());
+        input.partial_transcript_id = None;
+        input.final_transcript_id = None;
+        input.modality_selection_id = None;
+        input.partial_or_final_state_ref_present = false;
+        input.modality_ref_present = false;
+        input
+    }
+
+    #[cfg(test)]
+    pub fn fixture_modality_selection_reference_ready(
+        modality_selection_id: impl Into<String>,
+        device_id: impl Into<String>,
+        audit_id: impl Into<String>,
+    ) -> Self {
+        let mut input =
+            Self::fixture_base(Stage24IngressCaptureKind::ModalitySelectionReference, audit_id);
+        input.modality_selection_id = Some(modality_selection_id.into());
+        input.device_id = Some(device_id.into());
+        input.capture_session_id = None;
+        input.stream_packet_id = None;
+        input.partial_transcript_id = None;
+        input.final_transcript_id = None;
+        input.partial_or_final_state_ref_present = false;
+        input.capture_ref_present = false;
+        input.stream_safety_ref_present = false;
+        input
+    }
+}
+
+impl Validate for Stage24IngressCaptureInput {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        validate_stage4_optional_ref(
+            "stage24_ingress_capture_input.capture_session_id",
+            self.capture_session_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage24_ingress_capture_input.stream_packet_id",
+            self.stream_packet_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage24_ingress_capture_input.partial_transcript_id",
+            self.partial_transcript_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage24_ingress_capture_input.final_transcript_id",
+            self.final_transcript_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage24_ingress_capture_input.modality_selection_id",
+            self.modality_selection_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage24_ingress_capture_input.device_id",
+            self.device_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage24_ingress_capture_input.connector_action_stage_id",
+            self.connector_action_stage_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage24_ingress_capture_input.memory_candidate_id",
+            self.memory_candidate_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage24_ingress_capture_input.audit_id",
+            self.audit_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage24_ingress_capture_input.ph1j_proof_ref",
+            self.ph1j_proof_ref.as_deref(),
+        )?;
+        if self.attempted_live_provider_in_build
+            || self.generated_live_media_in_build
+            || self.ran_live_search_in_build
+            || self.called_live_external_tool_in_build
+            || self.connector_write_requested
+            || self.ran_live_notification_delivery_in_build
+            || self.ran_live_background_execution_in_build
+            || self.ran_live_tts_or_playback_in_build
+            || self.ran_live_outbound_dispatch_in_build
+            || self.voice_id_matching_attempted
+            || self.native_ui_behavior_added
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage24_ingress_capture_input.no_live_build",
+                reason: "Stage 24A cannot call live providers/search/tools, add connector writes, add live TTS/playback or outbound dispatch, match Voice ID, or add native UI",
+            });
+        }
+        if (self.runtime_mock_detected
+            || self.fake_stream_detected
+            || self.fake_capture_detected
+            || self.fake_partial_final_detected
+            || self.fake_fusion_detected
+            || self.fake_session_authority_detected)
+            && !self.fixture_only_test_path
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage24_ingress_capture_input.runtime_mock",
+                reason: "runtime mocks and fake stream/capture/partial-final/fusion/session-authority success are forbidden outside explicit fixture-only paths",
+            });
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Stage24IngressCapturePacket {
+    pub activation_id: Option<String>,
+    pub session_id: Option<SessionId>,
+    pub turn_id: Option<TurnId>,
+    pub attention_state_id: Option<String>,
+    pub continuity_packet_id: Option<String>,
+    pub automation_candidate_id: Option<String>,
+    pub connector_action_stage_id: Option<String>,
+    pub memory_candidate_id: Option<String>,
+    pub capture_session_id: Option<String>,
+    pub stream_packet_id: Option<String>,
+    pub partial_transcript_id: Option<String>,
+    pub final_transcript_id: Option<String>,
+    pub modality_selection_id: Option<String>,
+    pub device_id: Option<String>,
+    pub access_context_id: Option<String>,
+    pub policy_context_id: Option<String>,
+    pub tenant_id: Option<String>,
+    pub audit_id: Option<String>,
+    pub ph1j_proof_ref: Option<String>,
+    pub ingress_kind: Stage24IngressCaptureKind,
+    pub reason_code: &'static str,
+    pub disposition: Stage24IngressCaptureDisposition,
+    pub transcript_boundary_kind: Stage8TranscriptGateKind,
+    pub endpoint_state: Stage8EndpointState,
+    pub confidence_gate: Stage8ConfidenceGateDisposition,
+    pub audio_scene_id: String,
+    pub stage19_disposition: Option<Stage19NotificationAttentionDisposition>,
+    pub stage20_disposition: Option<Stage20ContinuityHandoffDisposition>,
+    pub stage21_disposition: Option<Stage21AutomationOrchestrationDisposition>,
+    pub stage22_disposition: Option<Stage22ConnectorOutboundDisposition>,
+    pub stage23_disposition: Option<Stage23MemoryRetentionDisposition>,
+    pub stage19_attention_ref_non_authoritative: bool,
+    pub stage20_continuity_ref_non_authoritative: bool,
+    pub stage21_automation_ref_non_authoritative: bool,
+    pub stage22_outbound_ref_non_authoritative: bool,
+    pub stage23_memory_ref_non_authoritative: bool,
+    pub capture_session_bounded: bool,
+    pub tenant_user_device_session_scoped: bool,
+    pub uncertainty_preserved: bool,
+    pub ingress_invented_fact: bool,
+    pub ingress_invented_final_transcript_success: bool,
+    pub ingress_invented_capture_success: bool,
+    pub ingress_invented_modality_fusion_success: bool,
+    pub ingress_invented_session_authority: bool,
+    pub ingress_invented_attachment_or_citation: bool,
+    pub ingress_invented_provider_or_tool_result: bool,
+    pub ingress_claimed_unproven_completion: bool,
+    pub ingress_implied_routing_or_mutation: bool,
+    pub secret_safe: bool,
+    pub redacted: bool,
+    pub stale_aware: bool,
+    pub revocation_aware: bool,
+    pub capture_ref_present: bool,
+    pub session_ref_present: bool,
+    pub turn_ref_present: bool,
+    pub modality_ref_present: bool,
+    pub partial_or_final_state_ref_present: bool,
+    pub partial_state_allowed: bool,
+    pub final_state_allowed: bool,
+    pub stream_safety_ref_present: bool,
+    pub listen_ref_present: bool,
+    pub transcript_gate_ref_present: bool,
+    pub audio_scene_ref_present: bool,
+    pub foreground_or_addressed_posture_present: bool,
+    pub capture_bundle_validated: bool,
+    pub adapter_voice_ingress_ref_present: bool,
+    pub adapter_capture_bundle_ref_present: bool,
+    pub unverifiable: bool,
+    pub stale: bool,
+    pub secret_unsafe: bool,
+    pub cross_tenant: bool,
+    pub cross_device: bool,
+    pub session_mismatch: bool,
+    pub modality_mismatch: bool,
+    pub device_mismatch: bool,
+    pub missing_proof: bool,
+    pub ownership_drift: bool,
+    pub native_stream_declarative_only: bool,
+    pub native_stream_mutates_state: bool,
+    pub native_stream_connector_writes: bool,
+    pub native_stream_dispatches_or_executes: bool,
+    pub native_stream_calls_providers_or_tools: bool,
+    pub native_stream_emits_tts_or_playback: bool,
+    pub native_stream_creates_user_turn: bool,
+    pub native_stream_treats_visible_success_as_action_success: bool,
+    pub protected_action_like_request: bool,
+    pub protected_slot_or_authority_ambiguous: bool,
+    pub unsafe_identity_posture: bool,
+    pub ingress_implies_stage12_routing_or_execution_without_proof: bool,
+    pub stale_or_cancelled_or_superseded_output: bool,
+    pub session_closed: bool,
+    pub record_artifact_only_turn: bool,
+    pub stale_capture_state: bool,
+    pub stale_session_state: bool,
+    pub stale_turn_state: bool,
+    pub stale_modality_state: bool,
+    pub stream_identity_matches_current_output_session: bool,
+    pub replay_upgrades_blocked_stream: bool,
+    pub fake_stream_detected: bool,
+    pub fake_capture_detected: bool,
+    pub fake_partial_final_detected: bool,
+    pub fake_fusion_detected: bool,
+    pub fake_session_authority_detected: bool,
+    pub runtime_mock_detected: bool,
+    pub raw_provider_output_present: bool,
+    pub raw_search_dump_present: bool,
+    pub raw_media_promotion_claim_present: bool,
+    pub unverified_source_evidence_present: bool,
+    pub unsupported_claim_candidate_present: bool,
+    pub fake_stream_source_carrier_present: bool,
+    pub continuity_automation_outbound_memory_used_as_truth_authority: bool,
+    pub protected_action_candidate_present: bool,
+    pub simulation_candidate_present: bool,
+    pub approved_execution_plan_present: bool,
+    pub secrets_exposed: bool,
+    pub raw_biometric_or_voice_material_exposed: bool,
+    pub internal_trace_exposed: bool,
+    pub access_denied: bool,
+    pub policy_denied: bool,
+    pub work_authority: Stage24IngressCaptureWorkAuthority,
+}
+
+impl Stage24IngressCapturePacket {
+    pub fn from_stage8_transcript_gate(
+        transcript_gate: &Stage8TranscriptGatePacket,
+        attention_output: Option<&Stage19NotificationAttentionPacket>,
+        continuity_output: Option<&Stage20ContinuityHandoffPacket>,
+        automation_output: Option<&Stage21AutomationOrchestrationPacket>,
+        outbound_output: Option<&Stage22ConnectorOutboundPacket>,
+        memory_output: Option<&Stage23MemoryRetentionPacket>,
+        input: Stage24IngressCaptureInput,
+    ) -> Result<Self, ContractViolation> {
+        input.validate()?;
+        transcript_gate.validate()?;
+        let disposition = Self::decide_disposition(
+            transcript_gate,
+            attention_output,
+            continuity_output,
+            automation_output,
+            outbound_output,
+            memory_output,
+            &input,
+        );
+        let work_authority = Self::work_authority_for(disposition);
+        let packet = Self {
+            activation_id: transcript_gate.candidate_preview.as_ref().and_then(|preview| {
+                preview.activation.audit_id.clone()
+            }).or_else(|| transcript_gate.committed_turn.as_ref().and_then(|turn| {
+                turn.activation.audit_id.clone()
+            })).or_else(|| transcript_gate.audit_id.clone()),
+            session_id: transcript_gate.session_id,
+            turn_id: transcript_gate.turn_id,
+            attention_state_id: attention_output.and_then(|output| output.attention_state_id.clone()),
+            continuity_packet_id: continuity_output
+                .map(|output| output.continuity_packet_id.clone()),
+            automation_candidate_id: automation_output
+                .and_then(|output| output.automation_candidate_id.clone()),
+            connector_action_stage_id: input
+                .connector_action_stage_id
+                .clone()
+                .or_else(|| outbound_output.and_then(|output| output.connector_action_stage_id.clone())),
+            memory_candidate_id: input
+                .memory_candidate_id
+                .clone()
+                .or_else(|| memory_output.and_then(|output| output.memory_candidate_id.clone())),
+            capture_session_id: input.capture_session_id.clone(),
+            stream_packet_id: input.stream_packet_id.clone(),
+            partial_transcript_id: input.partial_transcript_id.clone(),
+            final_transcript_id: input.final_transcript_id.clone(),
+            modality_selection_id: input.modality_selection_id.clone(),
+            device_id: input.device_id.clone(),
+            access_context_id: transcript_gate.access_context_id.clone(),
+            policy_context_id: outbound_output.and_then(|output| output.policy_context_id.clone()).or_else(
+                || memory_output.and_then(|output| output.policy_context_id.clone()),
+            ),
+            tenant_id: outbound_output
+                .and_then(|output| output.tenant_id.clone())
+                .or_else(|| memory_output.and_then(|output| output.tenant_id.clone())),
+            audit_id: input.audit_id.clone().or_else(|| transcript_gate.audit_id.clone()),
+            ph1j_proof_ref: input.ph1j_proof_ref.clone(),
+            ingress_kind: input.ingress_kind,
+            reason_code: disposition.default_reason_code(),
+            disposition,
+            transcript_boundary_kind: transcript_gate.boundary_kind,
+            endpoint_state: transcript_gate.endpoint_state,
+            confidence_gate: transcript_gate.confidence_gate,
+            audio_scene_id: transcript_gate.audio_scene_id.clone(),
+            stage19_disposition: attention_output.map(|output| output.disposition),
+            stage20_disposition: continuity_output.map(|output| output.disposition),
+            stage21_disposition: automation_output.map(|output| output.disposition),
+            stage22_disposition: outbound_output.map(|output| output.disposition),
+            stage23_disposition: memory_output.map(|output| output.disposition),
+            stage19_attention_ref_non_authoritative: input.stage19_attention_ref_non_authoritative,
+            stage20_continuity_ref_non_authoritative: input.stage20_continuity_ref_non_authoritative,
+            stage21_automation_ref_non_authoritative: input.stage21_automation_ref_non_authoritative,
+            stage22_outbound_ref_non_authoritative: input.stage22_outbound_ref_non_authoritative,
+            stage23_memory_ref_non_authoritative: input.stage23_memory_ref_non_authoritative,
+            capture_session_bounded: input.capture_session_bounded,
+            tenant_user_device_session_scoped: input.tenant_user_device_session_scoped,
+            uncertainty_preserved: input.uncertainty_preserved,
+            ingress_invented_fact: input.ingress_invented_fact,
+            ingress_invented_final_transcript_success: input.ingress_invented_final_transcript_success,
+            ingress_invented_capture_success: input.ingress_invented_capture_success,
+            ingress_invented_modality_fusion_success: input.ingress_invented_modality_fusion_success,
+            ingress_invented_session_authority: input.ingress_invented_session_authority,
+            ingress_invented_attachment_or_citation: input.ingress_invented_attachment_or_citation,
+            ingress_invented_provider_or_tool_result: input.ingress_invented_provider_or_tool_result,
+            ingress_claimed_unproven_completion: input.ingress_claimed_unproven_completion,
+            ingress_implied_routing_or_mutation: input.ingress_implied_routing_or_mutation,
+            secret_safe: input.secret_safe,
+            redacted: input.redacted,
+            stale_aware: input.stale_aware,
+            revocation_aware: input.revocation_aware,
+            capture_ref_present: input.capture_ref_present,
+            session_ref_present: input.session_ref_present,
+            turn_ref_present: input.turn_ref_present,
+            modality_ref_present: input.modality_ref_present,
+            partial_or_final_state_ref_present: input.partial_or_final_state_ref_present,
+            partial_state_allowed: input.partial_state_allowed,
+            final_state_allowed: input.final_state_allowed,
+            stream_safety_ref_present: input.stream_safety_ref_present,
+            listen_ref_present: input.listen_ref_present,
+            transcript_gate_ref_present: input.transcript_gate_ref_present,
+            audio_scene_ref_present: input.audio_scene_ref_present,
+            foreground_or_addressed_posture_present: input.foreground_or_addressed_posture_present,
+            capture_bundle_validated: input.capture_bundle_validated,
+            adapter_voice_ingress_ref_present: input.adapter_voice_ingress_ref_present,
+            adapter_capture_bundle_ref_present: input.adapter_capture_bundle_ref_present,
+            unverifiable: input.unverifiable,
+            stale: input.stale,
+            secret_unsafe: input.secret_unsafe,
+            cross_tenant: input.cross_tenant,
+            cross_device: input.cross_device,
+            session_mismatch: input.session_mismatch,
+            modality_mismatch: input.modality_mismatch,
+            device_mismatch: input.device_mismatch,
+            missing_proof: input.missing_proof,
+            ownership_drift: input.ownership_drift,
+            native_stream_declarative_only: input.native_stream_declarative_only,
+            native_stream_mutates_state: input.native_stream_mutates_state,
+            native_stream_connector_writes: input.native_stream_connector_writes,
+            native_stream_dispatches_or_executes: input.native_stream_dispatches_or_executes,
+            native_stream_calls_providers_or_tools: input.native_stream_calls_providers_or_tools,
+            native_stream_emits_tts_or_playback: input.native_stream_emits_tts_or_playback,
+            native_stream_creates_user_turn: input.native_stream_creates_user_turn,
+            native_stream_treats_visible_success_as_action_success: input
+                .native_stream_treats_visible_success_as_action_success,
+            protected_action_like_request: input.protected_action_like_request,
+            protected_slot_or_authority_ambiguous: input.protected_slot_or_authority_ambiguous,
+            unsafe_identity_posture: input.unsafe_identity_posture,
+            ingress_implies_stage12_routing_or_execution_without_proof: input
+                .ingress_implies_stage12_routing_or_execution_without_proof,
+            stale_or_cancelled_or_superseded_output: input.stale_or_cancelled_or_superseded_output,
+            session_closed: input.session_closed,
+            record_artifact_only_turn: input.record_artifact_only_turn,
+            stale_capture_state: input.stale_capture_state,
+            stale_session_state: input.stale_session_state,
+            stale_turn_state: input.stale_turn_state,
+            stale_modality_state: input.stale_modality_state,
+            stream_identity_matches_current_output_session: input
+                .stream_identity_matches_current_output_session,
+            replay_upgrades_blocked_stream: input.replay_upgrades_blocked_stream,
+            fake_stream_detected: input.fake_stream_detected,
+            fake_capture_detected: input.fake_capture_detected,
+            fake_partial_final_detected: input.fake_partial_final_detected,
+            fake_fusion_detected: input.fake_fusion_detected,
+            fake_session_authority_detected: input.fake_session_authority_detected,
+            runtime_mock_detected: input.runtime_mock_detected,
+            raw_provider_output_present: input.raw_provider_output_present,
+            raw_search_dump_present: input.raw_search_dump_present,
+            raw_media_promotion_claim_present: input.raw_media_promotion_claim_present,
+            unverified_source_evidence_present: input.unverified_source_evidence_present,
+            unsupported_claim_candidate_present: input.unsupported_claim_candidate_present,
+            fake_stream_source_carrier_present: input.fake_stream_source_carrier_present,
+            continuity_automation_outbound_memory_used_as_truth_authority: input
+                .continuity_automation_outbound_memory_used_as_truth_authority,
+            protected_action_candidate_present: input.protected_action_candidate_present,
+            simulation_candidate_present: input.simulation_candidate_present,
+            approved_execution_plan_present: input.approved_execution_plan_present,
+            secrets_exposed: input.secrets_exposed,
+            raw_biometric_or_voice_material_exposed: input.raw_biometric_or_voice_material_exposed,
+            internal_trace_exposed: input.internal_trace_exposed,
+            access_denied: input.access_denied,
+            policy_denied: input.policy_denied,
+            work_authority,
+        };
+        packet.validate()?;
+        Ok(packet)
+    }
+
+    pub const fn can_mutate_or_execute(&self) -> bool {
+        self.work_authority.can_mutate_or_execute()
+    }
+
+    fn decide_disposition(
+        transcript_gate: &Stage8TranscriptGatePacket,
+        attention_output: Option<&Stage19NotificationAttentionPacket>,
+        continuity_output: Option<&Stage20ContinuityHandoffPacket>,
+        automation_output: Option<&Stage21AutomationOrchestrationPacket>,
+        outbound_output: Option<&Stage22ConnectorOutboundPacket>,
+        memory_output: Option<&Stage23MemoryRetentionPacket>,
+        input: &Stage24IngressCaptureInput,
+    ) -> Stage24IngressCaptureDisposition {
+        if input.runtime_mock_detected
+            || input.fake_stream_detected
+            || input.fake_capture_detected
+            || input.fake_partial_final_detected
+            || input.fake_fusion_detected
+            || input.fake_session_authority_detected
+        {
+            return Stage24IngressCaptureDisposition::RuntimeMockBlocked;
+        }
+        if input.raw_provider_output_present
+            || input.raw_search_dump_present
+            || input.raw_media_promotion_claim_present
+            || input.unverified_source_evidence_present
+            || input.unsupported_claim_candidate_present
+            || input.fake_stream_source_carrier_present
+            || input.continuity_automation_outbound_memory_used_as_truth_authority
+            || input.protected_action_candidate_present
+            || input.simulation_candidate_present
+            || input.approved_execution_plan_present
+            || input.secrets_exposed
+            || input.raw_biometric_or_voice_material_exposed
+            || input.internal_trace_exposed
+            || input.access_denied
+            || input.policy_denied
+        {
+            return Stage24IngressCaptureDisposition::UnsafeInputBlocked;
+        }
+        if transcript_gate.can_route_or_mutate()
+            || !matches!(
+                transcript_gate.boundary_kind,
+                Stage8TranscriptGateKind::AudioSubstrateOnly
+                    | Stage8TranscriptGateKind::VadEndpointBoundaryOnly
+                    | Stage8TranscriptGateKind::PartialTranscriptPreviewOnly
+                    | Stage8TranscriptGateKind::FinalTranscriptCommitBoundary
+                    | Stage8TranscriptGateKind::AudioSceneBoundaryOnly
+                    | Stage8TranscriptGateKind::ListeningSceneBlocked
+                    | Stage8TranscriptGateKind::BackgroundOrSelfEchoBlocked
+            )
+        {
+            return Stage24IngressCaptureDisposition::StageInputBlocked;
+        }
+        if let Some(attention_output) = attention_output {
+            if attention_output.can_mutate_or_execute()
+                || attention_output.stale_or_cancelled_or_superseded_output
+                || attention_output.session_closed
+                || attention_output.record_artifact_only_turn
+                || !input.stage19_attention_ref_present
+                || !input.stage19_attention_ref_non_authoritative
+            {
+                return Stage24IngressCaptureDisposition::StageInputBlocked;
+            }
+        }
+        if let Some(continuity_output) = continuity_output {
+            if continuity_output.can_mutate_or_execute()
+                || continuity_output.stale_or_cancelled_or_superseded_output
+                || continuity_output.session_closed
+                || continuity_output.record_artifact_only_turn
+                || !input.stage20_continuity_ref_present
+                || !input.stage20_continuity_ref_non_authoritative
+            {
+                return Stage24IngressCaptureDisposition::StageInputBlocked;
+            }
+        }
+        if let Some(automation_output) = automation_output {
+            if automation_output.can_mutate_or_execute()
+                || automation_output.stale_or_cancelled_or_superseded_output
+                || automation_output.session_closed
+                || automation_output.record_artifact_only_turn
+                || !input.stage21_automation_ref_present
+                || !input.stage21_automation_ref_non_authoritative
+            {
+                return Stage24IngressCaptureDisposition::StageInputBlocked;
+            }
+        }
+        if let Some(outbound_output) = outbound_output {
+            if outbound_output.can_mutate_or_execute()
+                || outbound_output.stale_or_cancelled_or_superseded_output
+                || outbound_output.session_closed
+                || outbound_output.record_artifact_only_turn
+                || !input.stage22_outbound_ref_present
+                || !input.stage22_outbound_ref_non_authoritative
+            {
+                return Stage24IngressCaptureDisposition::StageInputBlocked;
+            }
+        }
+        if let Some(memory_output) = memory_output {
+            if memory_output.can_mutate_or_execute()
+                || memory_output.stale_or_revoked_or_deleted_or_superseded_output
+                || memory_output.session_closed
+                || memory_output.record_artifact_only_turn
+                || !input.stage23_memory_ref_present
+                || !input.stage23_memory_ref_non_authoritative
+            {
+                return Stage24IngressCaptureDisposition::StageInputBlocked;
+            }
+        }
+        if input.audit_id.is_none()
+            && input.ph1j_proof_ref.is_none()
+            && transcript_gate.audit_id.is_none()
+        {
+            return Stage24IngressCaptureDisposition::AuditProofMissing;
+        }
+        if !input.uncertainty_preserved
+            || input.ingress_invented_fact
+            || input.ingress_invented_final_transcript_success
+            || input.ingress_invented_capture_success
+            || input.ingress_invented_modality_fusion_success
+            || input.ingress_invented_session_authority
+            || input.ingress_invented_attachment_or_citation
+            || input.ingress_invented_provider_or_tool_result
+            || input.ingress_claimed_unproven_completion
+            || input.ingress_implied_routing_or_mutation
+        {
+            return Stage24IngressCaptureDisposition::NoInventionBlocked;
+        }
+        if !input.capture_session_bounded
+            || !input.tenant_user_device_session_scoped
+            || !input.secret_safe
+            || !input.redacted
+            || !input.stale_aware
+            || !input.revocation_aware
+            || !input.capture_ref_present
+            || !input.session_ref_present
+            || !input.turn_ref_present
+            || !input.listen_ref_present
+            || !input.transcript_gate_ref_present
+            || !input.capture_bundle_validated
+            || !input.adapter_voice_ingress_ref_present
+            || !input.adapter_capture_bundle_ref_present
+            || input.unverifiable
+            || input.stale
+            || input.secret_unsafe
+            || input.cross_tenant
+            || input.cross_device
+            || input.session_mismatch
+            || input.modality_mismatch
+            || input.device_mismatch
+            || input.missing_proof
+            || input.ownership_drift
+        {
+            return Stage24IngressCaptureDisposition::CaptureSessionBlocked;
+        }
+        if !input.native_stream_declarative_only
+            || input.native_stream_mutates_state
+            || input.native_stream_connector_writes
+            || input.native_stream_dispatches_or_executes
+            || input.native_stream_calls_providers_or_tools
+            || input.native_stream_emits_tts_or_playback
+            || input.native_stream_creates_user_turn
+            || input.native_stream_treats_visible_success_as_action_success
+        {
+            return Stage24IngressCaptureDisposition::NativeStreamBlocked;
+        }
+        if input.protected_action_like_request
+            || input.protected_slot_or_authority_ambiguous
+            || input.unsafe_identity_posture
+            || input.ingress_implies_stage12_routing_or_execution_without_proof
+        {
+            return Stage24IngressCaptureDisposition::ProtectedIngressBlocked;
+        }
+        if input.stale_or_cancelled_or_superseded_output
+            || input.session_closed
+            || input.record_artifact_only_turn
+            || input.stale_capture_state
+            || input.stale_session_state
+            || input.stale_turn_state
+            || input.stale_modality_state
+            || !input.stream_identity_matches_current_output_session
+            || input.replay_upgrades_blocked_stream
+        {
+            return Stage24IngressCaptureDisposition::StaleStreamBlocked;
+        }
+
+        match input.ingress_kind {
+            Stage24IngressCaptureKind::RealTimeMultimodalIngress => {
+                if input.capture_session_id.is_some()
+                    && input.stream_packet_id.is_some()
+                    && input.modality_selection_id.is_some()
+                    && input.device_id.is_some()
+                    && input.audio_scene_ref_present
+                {
+                    Stage24IngressCaptureDisposition::RealTimeMultimodalIngressReady
+                } else {
+                    Stage24IngressCaptureDisposition::CaptureSessionBlocked
+                }
+            }
+            Stage24IngressCaptureKind::CaptureSessionBoundary => {
+                if input.capture_session_id.is_some()
+                    && input.stream_packet_id.is_some()
+                    && input.device_id.is_some()
+                {
+                    Stage24IngressCaptureDisposition::CaptureSessionBoundaryReady
+                } else {
+                    Stage24IngressCaptureDisposition::CaptureSessionBlocked
+                }
+            }
+            Stage24IngressCaptureKind::PartialFinalStreamPosture => {
+                let partial_or_final_ready = transcript_gate.is_preview_only()
+                    || transcript_gate.can_emit_committed_turn()
+                    || matches!(
+                        transcript_gate.boundary_kind,
+                        Stage8TranscriptGateKind::VadEndpointBoundaryOnly
+                    );
+                if input.stream_packet_id.is_some()
+                    && input.modality_selection_id.is_some()
+                    && input.partial_or_final_state_ref_present
+                    && input.modality_ref_present
+                    && partial_or_final_ready
+                    && (input.partial_transcript_id.is_some() || input.final_transcript_id.is_some())
+                {
+                    Stage24IngressCaptureDisposition::PartialFinalStreamPostureReady
+                } else {
+                    Stage24IngressCaptureDisposition::CaptureSessionBlocked
+                }
+            }
+            Stage24IngressCaptureKind::StreamSafety => {
+                if input.capture_session_id.is_some()
+                    && input.stream_packet_id.is_some()
+                    && input.stream_safety_ref_present
+                    && input.audio_scene_ref_present
+                {
+                    Stage24IngressCaptureDisposition::StreamSafetyReady
+                } else {
+                    Stage24IngressCaptureDisposition::CaptureSessionBlocked
+                }
+            }
+            Stage24IngressCaptureKind::ModalitySelectionReference => {
+                if input.modality_selection_id.is_some() && input.device_id.is_some() {
+                    Stage24IngressCaptureDisposition::ModalitySelectionReferenceReady
+                } else {
+                    Stage24IngressCaptureDisposition::CaptureSessionBlocked
+                }
+            }
+        }
+    }
+
+    const fn work_authority_for(
+        disposition: Stage24IngressCaptureDisposition,
+    ) -> Stage24IngressCaptureWorkAuthority {
+        match disposition {
+            Stage24IngressCaptureDisposition::RealTimeMultimodalIngressReady => {
+                Stage24IngressCaptureWorkAuthority::realtime_multimodal_ingress_ready()
+            }
+            Stage24IngressCaptureDisposition::CaptureSessionBoundaryReady => {
+                Stage24IngressCaptureWorkAuthority::capture_session_boundary_ready()
+            }
+            Stage24IngressCaptureDisposition::PartialFinalStreamPostureReady => {
+                Stage24IngressCaptureWorkAuthority::partial_final_stream_posture_ready()
+            }
+            Stage24IngressCaptureDisposition::StreamSafetyReady => {
+                Stage24IngressCaptureWorkAuthority::stream_safety_ready()
+            }
+            Stage24IngressCaptureDisposition::ModalitySelectionReferenceReady => {
+                Stage24IngressCaptureWorkAuthority::modality_selection_reference_ready()
+            }
+            _ => Stage24IngressCaptureWorkAuthority::fail_closed(),
+        }
+    }
+}
+
+impl Validate for Stage24IngressCapturePacket {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        validate_stage4_optional_ref(
+            "stage24_ingress_capture_packet.activation_id",
+            self.activation_id.as_deref(),
+        )?;
+        validate_stage4_ref(
+            "stage24_ingress_capture_packet.audio_scene_id",
+            &self.audio_scene_id,
+        )?;
+        validate_stage4_optional_ref(
+            "stage24_ingress_capture_packet.attention_state_id",
+            self.attention_state_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage24_ingress_capture_packet.continuity_packet_id",
+            self.continuity_packet_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage24_ingress_capture_packet.automation_candidate_id",
+            self.automation_candidate_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage24_ingress_capture_packet.connector_action_stage_id",
+            self.connector_action_stage_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage24_ingress_capture_packet.memory_candidate_id",
+            self.memory_candidate_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage24_ingress_capture_packet.capture_session_id",
+            self.capture_session_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage24_ingress_capture_packet.stream_packet_id",
+            self.stream_packet_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage24_ingress_capture_packet.partial_transcript_id",
+            self.partial_transcript_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage24_ingress_capture_packet.final_transcript_id",
+            self.final_transcript_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage24_ingress_capture_packet.modality_selection_id",
+            self.modality_selection_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage24_ingress_capture_packet.device_id",
+            self.device_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage24_ingress_capture_packet.access_context_id",
+            self.access_context_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage24_ingress_capture_packet.policy_context_id",
+            self.policy_context_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage24_ingress_capture_packet.tenant_id",
+            self.tenant_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage24_ingress_capture_packet.audit_id",
+            self.audit_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage24_ingress_capture_packet.ph1j_proof_ref",
+            self.ph1j_proof_ref.as_deref(),
+        )?;
+        if self.reason_code != self.disposition.default_reason_code() {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage24_ingress_capture_packet.reason_code",
+                reason: "must match Stage 24A ingress/capture disposition",
+            });
+        }
+        if self.work_authority.can_mutate_or_execute() {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage24_ingress_capture_packet.work_authority",
+                reason: "Stage 24A cannot invent ingress authority, route, execute, connector-write, or treat visible stream success as action success",
+            });
+        }
+        if self.disposition.is_ready()
+            && (self.audit_id.is_none() || self.ph1j_proof_ref.is_none())
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage24_ingress_capture_packet.audit_proof",
+                reason: "ready Stage 24A ingress output requires PH1.J audit/proof refs",
+            });
+        }
+        Ok(())
+    }
+}
+
+pub fn stage24_ingress_capture_symbol_anchor() {
+    let _ = Stage24IngressCaptureKind::RealTimeMultimodalIngress;
+    let _ = Stage24IngressCaptureKind::CaptureSessionBoundary;
+    let _ = Stage24IngressCaptureKind::PartialFinalStreamPosture;
+    let _ = Stage24IngressCaptureKind::StreamSafety;
+    let _ = Stage24IngressCaptureKind::ModalitySelectionReference;
+    let disposition = Stage24IngressCaptureDisposition::StageInputBlocked;
+    let _ = disposition.default_reason_code();
+    let _ = disposition.is_ready();
+    let _ = Stage24IngressCaptureWorkAuthority::fail_closed().can_mutate_or_execute();
+    let _ = Stage24IngressCaptureWorkAuthority::realtime_multimodal_ingress_ready();
+    let _ = Stage24IngressCaptureWorkAuthority::capture_session_boundary_ready();
+    let _ = Stage24IngressCaptureWorkAuthority::partial_final_stream_posture_ready();
+    let _ = Stage24IngressCaptureWorkAuthority::stream_safety_ready();
+    let _ = Stage24IngressCaptureWorkAuthority::modality_selection_reference_ready();
+    let _ = core::mem::size_of::<Stage24IngressCaptureInput>();
+    let _ = core::mem::size_of::<Stage24IngressCapturePacket>();
+    let _ = Stage24IngressCapturePacket::from_stage8_transcript_gate
+        as fn(
+            &Stage8TranscriptGatePacket,
+            Option<&Stage19NotificationAttentionPacket>,
+            Option<&Stage20ContinuityHandoffPacket>,
+            Option<&Stage21AutomationOrchestrationPacket>,
+            Option<&Stage22ConnectorOutboundPacket>,
+            Option<&Stage23MemoryRetentionPacket>,
+            Stage24IngressCaptureInput,
+        ) -> Result<Stage24IngressCapturePacket, ContractViolation>;
+    let _ = Stage24IngressCapturePacket::can_mutate_or_execute
+        as fn(&Stage24IngressCapturePacket) -> bool;
+}
+const _: fn() = stage24_ingress_capture_symbol_anchor;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -33205,6 +34483,566 @@ mod tests {
             input,
         )
         .expect("stage23 outbound identity")
+    }
+
+    fn stage24_memory_identity() -> super::Stage23MemoryRetentionPacket {
+        let output = stage21_response_output_packet();
+        let attention = stage21_attention_identity();
+        let continuity = stage21_continuity_identity();
+        let automation = stage22_automation_identity();
+        let outbound = stage23_outbound_identity();
+        let mut input = super::Stage23MemoryRetentionInput::fixture_identity_safe_retention_ready(
+            "retention-packet-stage24-chain",
+            "memory-candidate-stage24-chain",
+            "identity-scope-stage24-chain",
+            "user-scope-stage24-chain",
+            "audit-stage24-chain",
+        );
+        input.stage19_attention_ref_present = true;
+        input.stage19_attention_ref_non_authoritative = true;
+        input.stage20_continuity_ref_present = true;
+        input.stage20_continuity_ref_non_authoritative = true;
+        input.stage21_automation_ref_present = true;
+        input.stage21_automation_ref_non_authoritative = true;
+        input.stage22_outbound_ref_present = true;
+        input.stage22_outbound_ref_non_authoritative = true;
+        super::Stage23MemoryRetentionPacket::from_stage15_output(
+            &output,
+            Some(&attention),
+            Some(&continuity),
+            Some(&automation),
+            Some(&outbound),
+            input,
+        )
+        .expect("stage24 memory identity")
+    }
+
+    fn stage24_final_transcript_gate() -> Stage8TranscriptGatePacket {
+        let authority = stage8_current_authority();
+        Stage8TranscriptGatePacket::final_transcript_commit(
+            stage8_explicit_mic_activation(Some(authority.session_id)),
+            authority,
+            "audio-scene-stage24",
+            "endpoint-stage24-final",
+            "confidence-gate-stage24-final",
+            "transcript-stage24-final",
+            "final transcript stage24",
+            "en-US",
+            9_600,
+            9_400,
+        )
+        .expect("stage24 final transcript gate")
+    }
+
+    #[test]
+    fn stage_24a_ingress_consumes_stage19_stage20_stage21_stage22_stage23_non_authoritatively() {
+        let transcript_gate = stage24_final_transcript_gate();
+        let attention = stage21_attention_identity();
+        let continuity = stage21_continuity_identity();
+        let automation = stage22_automation_identity();
+        let outbound = stage23_outbound_identity();
+        let memory = stage24_memory_identity();
+        let mut input = super::Stage24IngressCaptureInput::fixture_realtime_multimodal_ingress_ready(
+            "capture-session-stage24-ready",
+            "stream-packet-stage24-ready",
+            "modality-selection-stage24-ready",
+            "device-stage24-a",
+            "audit-stage24-ready",
+        );
+        input.stage19_attention_ref_present = true;
+        input.stage19_attention_ref_non_authoritative = true;
+        input.stage20_continuity_ref_present = true;
+        input.stage20_continuity_ref_non_authoritative = true;
+        input.stage21_automation_ref_present = true;
+        input.stage21_automation_ref_non_authoritative = true;
+        input.stage22_outbound_ref_present = true;
+        input.stage22_outbound_ref_non_authoritative = true;
+        input.stage23_memory_ref_present = true;
+        input.stage23_memory_ref_non_authoritative = true;
+        let packet = super::Stage24IngressCapturePacket::from_stage8_transcript_gate(
+            &transcript_gate,
+            Some(&attention),
+            Some(&continuity),
+            Some(&automation),
+            Some(&outbound),
+            Some(&memory),
+            input,
+        )
+        .expect("stage24 ingress ready");
+
+        assert_eq!(
+            packet.disposition,
+            super::Stage24IngressCaptureDisposition::RealTimeMultimodalIngressReady
+        );
+        assert_eq!(
+            packet.stage19_disposition,
+            Some(Stage19NotificationAttentionDisposition::NotificationCandidateReady)
+        );
+        assert_eq!(
+            packet.stage20_disposition,
+            Some(Stage20ContinuityHandoffDisposition::SessionContinuityReady)
+        );
+        assert_eq!(
+            packet.stage21_disposition,
+            Some(Stage21AutomationOrchestrationDisposition::AutomationCandidateReady)
+        );
+        assert_eq!(
+            packet.stage22_disposition,
+            Some(super::Stage22ConnectorOutboundDisposition::StagedDispatchPostureReady)
+        );
+        assert_eq!(
+            packet.stage23_disposition,
+            Some(super::Stage23MemoryRetentionDisposition::IdentitySafeRetentionReady)
+        );
+        assert!(packet.stage23_memory_ref_non_authoritative);
+        assert!(packet.work_authority.can_emit_realtime_multimodal_ingress_packet);
+        assert!(!packet.can_mutate_or_execute());
+    }
+
+    #[test]
+    fn stage_24a_ingress_packets_cannot_invent_or_claim_stream_success() {
+        let transcript_gate = stage24_final_transcript_gate();
+
+        for input in [
+            {
+                let mut input = super::Stage24IngressCaptureInput::fixture_realtime_multimodal_ingress_ready(
+                    "capture-session-stage24-invent-fact",
+                    "stream-packet-stage24-invent-fact",
+                    "modality-selection-stage24-invent-fact",
+                    "device-stage24-a",
+                    "audit-stage24-invent-fact",
+                );
+                input.ingress_invented_fact = true;
+                input
+            },
+            {
+                let mut input = super::Stage24IngressCaptureInput::fixture_partial_final_stream_posture_ready(
+                    "stream-packet-stage24-invent-final",
+                    "partial-transcript-stage24-invent-final",
+                    "final-transcript-stage24-invent-final",
+                    "modality-selection-stage24-invent-final",
+                    "audit-stage24-invent-final",
+                );
+                input.ingress_invented_final_transcript_success = true;
+                input
+            },
+            {
+                let mut input = super::Stage24IngressCaptureInput::fixture_capture_session_boundary_ready(
+                    "capture-session-stage24-invent-capture",
+                    "stream-packet-stage24-invent-capture",
+                    "device-stage24-a",
+                    "audit-stage24-invent-capture",
+                );
+                input.ingress_invented_capture_success = true;
+                input
+            },
+            {
+                let mut input = super::Stage24IngressCaptureInput::fixture_stream_safety_ready(
+                    "capture-session-stage24-unproven",
+                    "stream-packet-stage24-unproven",
+                    "device-stage24-a",
+                    "audit-stage24-unproven",
+                );
+                input.ingress_claimed_unproven_completion = true;
+                input
+            },
+        ] {
+            let packet = super::Stage24IngressCapturePacket::from_stage8_transcript_gate(
+                &transcript_gate,
+                None,
+                None,
+                None,
+                None,
+                None,
+                input,
+            )
+            .expect("stage24 no-invention blocked");
+            assert_eq!(
+                packet.disposition,
+                super::Stage24IngressCaptureDisposition::NoInventionBlocked
+            );
+            assert!(packet.work_authority.can_fail_closed);
+            assert!(!packet.can_mutate_or_execute());
+        }
+    }
+
+    #[test]
+    fn stage_24a_capture_session_requires_scoped_secret_safe_refs() {
+        let transcript_gate = stage24_final_transcript_gate();
+        let ready = super::Stage24IngressCapturePacket::from_stage8_transcript_gate(
+            &transcript_gate,
+            None,
+            None,
+            None,
+            None,
+            None,
+            super::Stage24IngressCaptureInput::fixture_capture_session_boundary_ready(
+                "capture-session-stage24-capture-ready",
+                "stream-packet-stage24-capture-ready",
+                "device-stage24-a",
+                "audit-stage24-capture-ready",
+            ),
+        )
+        .expect("stage24 capture ready");
+        assert_eq!(
+            ready.disposition,
+            super::Stage24IngressCaptureDisposition::CaptureSessionBoundaryReady
+        );
+        assert!(ready.work_authority.can_emit_capture_session_boundary_packet);
+        assert!(!ready.can_mutate_or_execute());
+
+        for input in [
+            {
+                let mut input = super::Stage24IngressCaptureInput::fixture_realtime_multimodal_ingress_ready(
+                    "capture-session-stage24-unbounded",
+                    "stream-packet-stage24-unbounded",
+                    "modality-selection-stage24-unbounded",
+                    "device-stage24-a",
+                    "audit-stage24-unbounded",
+                );
+                input.capture_session_bounded = false;
+                input
+            },
+            {
+                let mut input = super::Stage24IngressCaptureInput::fixture_partial_final_stream_posture_ready(
+                    "stream-packet-stage24-secret",
+                    "partial-transcript-stage24-secret",
+                    "final-transcript-stage24-secret",
+                    "modality-selection-stage24-secret",
+                    "audit-stage24-secret",
+                );
+                input.secret_unsafe = true;
+                input
+            },
+            {
+                let mut input = super::Stage24IngressCaptureInput::fixture_stream_safety_ready(
+                    "capture-session-stage24-cross-device",
+                    "stream-packet-stage24-cross-device",
+                    "device-stage24-a",
+                    "audit-stage24-cross-device",
+                );
+                input.cross_device = true;
+                input
+            },
+            {
+                let mut input = super::Stage24IngressCaptureInput::fixture_capture_session_boundary_ready(
+                    "capture-session-stage24-missing-bundle",
+                    "stream-packet-stage24-missing-bundle",
+                    "device-stage24-a",
+                    "audit-stage24-missing-bundle",
+                );
+                input.capture_bundle_validated = false;
+                input
+            },
+            {
+                let mut input = super::Stage24IngressCaptureInput::fixture_realtime_multimodal_ingress_ready(
+                    "capture-session-stage24-modality-mismatch",
+                    "stream-packet-stage24-modality-mismatch",
+                    "modality-selection-stage24-modality-mismatch",
+                    "device-stage24-a",
+                    "audit-stage24-modality-mismatch",
+                );
+                input.modality_mismatch = true;
+                input
+            },
+        ] {
+            let packet = super::Stage24IngressCapturePacket::from_stage8_transcript_gate(
+                &transcript_gate,
+                None,
+                None,
+                None,
+                None,
+                None,
+                input,
+            )
+            .expect("stage24 capture blocked");
+            assert_eq!(
+                packet.disposition,
+                super::Stage24IngressCaptureDisposition::CaptureSessionBlocked
+            );
+            assert!(packet.work_authority.can_fail_closed);
+            assert!(!packet.can_mutate_or_execute());
+        }
+    }
+
+    #[test]
+    fn stage_24a_native_stream_and_stale_cases_fail_closed() {
+        let transcript_gate = stage24_final_transcript_gate();
+        let ready = super::Stage24IngressCapturePacket::from_stage8_transcript_gate(
+            &transcript_gate,
+            None,
+            None,
+            None,
+            None,
+            None,
+            super::Stage24IngressCaptureInput::fixture_stream_safety_ready(
+                "capture-session-stage24-stream-ready",
+                "stream-packet-stage24-stream-ready",
+                "device-stage24-a",
+                "audit-stage24-stream-ready",
+            ),
+        )
+        .expect("stage24 stream ready");
+        assert_eq!(
+            ready.disposition,
+            super::Stage24IngressCaptureDisposition::StreamSafetyReady
+        );
+        assert!(ready.work_authority.can_emit_stream_safety_packet);
+        assert!(!ready.can_mutate_or_execute());
+
+        for input in [
+            {
+                let mut input = super::Stage24IngressCaptureInput::fixture_realtime_multimodal_ingress_ready(
+                    "capture-session-stage24-mutate",
+                    "stream-packet-stage24-mutate",
+                    "modality-selection-stage24-mutate",
+                    "device-stage24-a",
+                    "audit-stage24-mutate",
+                );
+                input.native_stream_mutates_state = true;
+                input
+            },
+            {
+                let mut input = super::Stage24IngressCaptureInput::fixture_stream_safety_ready(
+                    "capture-session-stage24-exec",
+                    "stream-packet-stage24-exec",
+                    "device-stage24-a",
+                    "audit-stage24-exec",
+                );
+                input.native_stream_dispatches_or_executes = true;
+                input
+            },
+        ] {
+            let packet = super::Stage24IngressCapturePacket::from_stage8_transcript_gate(
+                &transcript_gate,
+                None,
+                None,
+                None,
+                None,
+                None,
+                input,
+            )
+            .expect("stage24 native blocked");
+            assert_eq!(
+                packet.disposition,
+                super::Stage24IngressCaptureDisposition::NativeStreamBlocked
+            );
+            assert!(packet.work_authority.can_fail_closed);
+        }
+
+        for input in [
+            {
+                let mut input = super::Stage24IngressCaptureInput::fixture_capture_session_boundary_ready(
+                    "capture-session-stage24-stale",
+                    "stream-packet-stage24-stale",
+                    "device-stage24-a",
+                    "audit-stage24-stale",
+                );
+                input.stale_or_cancelled_or_superseded_output = true;
+                input
+            },
+            {
+                let mut input = super::Stage24IngressCaptureInput::fixture_stream_safety_ready(
+                    "capture-session-stage24-stale-session",
+                    "stream-packet-stage24-stale-session",
+                    "device-stage24-a",
+                    "audit-stage24-stale-session",
+                );
+                input.stale_session_state = true;
+                input
+            },
+            {
+                let mut input = super::Stage24IngressCaptureInput::fixture_partial_final_stream_posture_ready(
+                    "stream-packet-stage24-replay",
+                    "partial-transcript-stage24-replay",
+                    "final-transcript-stage24-replay",
+                    "modality-selection-stage24-replay",
+                    "audit-stage24-replay",
+                );
+                input.replay_upgrades_blocked_stream = true;
+                input
+            },
+        ] {
+            let packet = super::Stage24IngressCapturePacket::from_stage8_transcript_gate(
+                &transcript_gate,
+                None,
+                None,
+                None,
+                None,
+                None,
+                input,
+            )
+            .expect("stage24 stale blocked");
+            assert_eq!(
+                packet.disposition,
+                super::Stage24IngressCaptureDisposition::StaleStreamBlocked
+            );
+            assert!(packet.work_authority.can_fail_closed);
+            assert!(!packet.can_mutate_or_execute());
+        }
+    }
+
+    #[test]
+    fn stage_24a_blocks_raw_inputs_live_paths_and_runtime_mocks() {
+        let transcript_gate = stage24_final_transcript_gate();
+        let packet = super::Stage24IngressCapturePacket::from_stage8_transcript_gate(
+            &transcript_gate,
+            None,
+            None,
+            None,
+            None,
+            None,
+            super::Stage24IngressCaptureInput::fixture_realtime_multimodal_ingress_ready(
+                "capture-session-stage24-no-exec",
+                "stream-packet-stage24-no-exec",
+                "modality-selection-stage24-no-exec",
+                "device-stage24-a",
+                "audit-stage24-no-exec",
+            ),
+        )
+        .expect("stage24 no-exec packet");
+        assert!(!packet.work_authority.can_invent_facts);
+        assert!(!packet.work_authority.can_invent_final_transcript_success);
+        assert!(!packet.work_authority.can_invent_capture_success);
+        assert!(!packet.work_authority.can_invent_stream_authority);
+        assert!(!packet.work_authority.can_route);
+        assert!(!packet.work_authority.can_execute);
+        assert!(!packet.work_authority.can_create_user_turn);
+        assert!(
+            !packet
+                .work_authority
+                .can_treat_visible_partial_or_final_success_as_action_success
+        );
+        assert!(!packet.can_mutate_or_execute());
+
+        for input in [
+            {
+                let mut input = super::Stage24IngressCaptureInput::fixture_stream_safety_ready(
+                    "capture-session-stage24-raw-provider",
+                    "stream-packet-stage24-raw-provider",
+                    "device-stage24-a",
+                    "audit-stage24-raw-provider",
+                );
+                input.raw_provider_output_present = true;
+                input
+            },
+            {
+                let mut input = super::Stage24IngressCaptureInput::fixture_partial_final_stream_posture_ready(
+                    "stream-packet-stage24-unverified",
+                    "partial-transcript-stage24-unverified",
+                    "final-transcript-stage24-unverified",
+                    "modality-selection-stage24-unverified",
+                    "audit-stage24-unverified",
+                );
+                input.unverified_source_evidence_present = true;
+                input
+            },
+            {
+                let mut input = super::Stage24IngressCaptureInput::fixture_realtime_multimodal_ingress_ready(
+                    "capture-session-stage24-protected",
+                    "stream-packet-stage24-protected",
+                    "modality-selection-stage24-protected",
+                    "device-stage24-a",
+                    "audit-stage24-protected",
+                );
+                input.protected_action_candidate_present = true;
+                input
+            },
+            {
+                let mut input = super::Stage24IngressCaptureInput::fixture_capture_session_boundary_ready(
+                    "capture-session-stage24-policy",
+                    "stream-packet-stage24-policy",
+                    "device-stage24-a",
+                    "audit-stage24-policy",
+                );
+                input.policy_denied = true;
+                input
+            },
+        ] {
+            let packet = super::Stage24IngressCapturePacket::from_stage8_transcript_gate(
+                &transcript_gate,
+                None,
+                None,
+                None,
+                None,
+                None,
+                input,
+            )
+            .expect("stage24 unsafe input blocked");
+            assert_eq!(
+                packet.disposition,
+                super::Stage24IngressCaptureDisposition::UnsafeInputBlocked
+            );
+            assert!(packet.work_authority.can_fail_closed);
+            assert!(!packet.can_mutate_or_execute());
+        }
+
+        for mut input in [
+            {
+                let mut input = super::Stage24IngressCaptureInput::fixture_realtime_multimodal_ingress_ready(
+                    "capture-session-stage24-live-provider",
+                    "stream-packet-stage24-live-provider",
+                    "modality-selection-stage24-live-provider",
+                    "device-stage24-a",
+                    "audit-stage24-live-provider",
+                );
+                input.attempted_live_provider_in_build = true;
+                input
+            },
+            {
+                let mut input = super::Stage24IngressCaptureInput::fixture_capture_session_boundary_ready(
+                    "capture-session-stage24-live-media",
+                    "stream-packet-stage24-live-media",
+                    "device-stage24-a",
+                    "audit-stage24-live-media",
+                );
+                input.generated_live_media_in_build = true;
+                input
+            },
+            {
+                let mut input = super::Stage24IngressCaptureInput::fixture_stream_safety_ready(
+                    "capture-session-stage24-live-playback",
+                    "stream-packet-stage24-live-playback",
+                    "device-stage24-a",
+                    "audit-stage24-live-playback",
+                );
+                input.ran_live_tts_or_playback_in_build = true;
+                input
+            },
+        ] {
+            input.fixture_only_test_path = true;
+            assert!(super::Stage24IngressCapturePacket::from_stage8_transcript_gate(
+                &transcript_gate,
+                None,
+                None,
+                None,
+                None,
+                None,
+                input,
+            )
+            .is_err());
+        }
+
+        let mut runtime_mock =
+            super::Stage24IngressCaptureInput::fixture_realtime_multimodal_ingress_ready(
+                "capture-session-stage24-runtime-mock",
+                "stream-packet-stage24-runtime-mock",
+                "modality-selection-stage24-runtime-mock",
+                "device-stage24-a",
+                "audit-stage24-runtime-mock",
+            );
+        runtime_mock.fake_stream_detected = true;
+        runtime_mock.fixture_only_test_path = false;
+        assert!(super::Stage24IngressCapturePacket::from_stage8_transcript_gate(
+            &transcript_gate,
+            None,
+            None,
+            None,
+            None,
+            None,
+            runtime_mock,
+        )
+        .is_err());
     }
 
     #[test]
