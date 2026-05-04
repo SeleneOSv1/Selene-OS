@@ -22552,6 +22552,1237 @@ pub fn stage22_connector_outbound_symbol_anchor() {
 }
 const _: fn() = stage22_connector_outbound_symbol_anchor;
 
+mod stage23_reason_codes {
+    pub const MEMORY_CANDIDATE_READY: &str = "STAGE23_MEMORY_CANDIDATE_READY";
+    pub const STATE_PERSISTENCE_POSTURE_READY: &str =
+        "STAGE23_STATE_PERSISTENCE_POSTURE_READY";
+    pub const LONG_HORIZON_RECALL_READY: &str = "STAGE23_LONG_HORIZON_RECALL_READY";
+    pub const IDENTITY_SAFE_RETENTION_READY: &str = "STAGE23_IDENTITY_SAFE_RETENTION_READY";
+    pub const RECALL_SELECTION_REFERENCE_READY: &str =
+        "STAGE23_RECALL_SELECTION_REFERENCE_READY";
+    pub const STAGE_INPUT_BLOCKED: &str = "STAGE23_STAGE_INPUT_BLOCKED";
+    pub const NO_INVENTION_BLOCKED: &str = "STAGE23_NO_INVENTION_BLOCKED";
+    pub const IDENTITY_SAFE_RETENTION_BLOCKED: &str =
+        "STAGE23_IDENTITY_SAFE_RETENTION_BLOCKED";
+    pub const NATIVE_RETENTION_BLOCKED: &str = "STAGE23_NATIVE_RETENTION_BLOCKED";
+    pub const PROTECTED_RETENTION_BLOCKED: &str = "STAGE23_PROTECTED_RETENTION_BLOCKED";
+    pub const STALE_RETENTION_BLOCKED: &str = "STAGE23_STALE_RETENTION_BLOCKED";
+    pub const UNSAFE_INPUT_BLOCKED: &str = "STAGE23_UNSAFE_INPUT_BLOCKED";
+    pub const RUNTIME_MOCK_BLOCKED: &str = "STAGE23_RUNTIME_MOCK_BLOCKED";
+    pub const AUDIT_PROOF_MISSING: &str = "STAGE23_AUDIT_PROOF_MISSING";
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stage23MemoryRetentionKind {
+    MemoryCandidate,
+    StatePersistencePosture,
+    LongHorizonRecall,
+    IdentitySafeRetention,
+    RecallSelectionReference,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stage23MemoryRetentionDisposition {
+    MemoryCandidateReady,
+    StatePersistencePostureReady,
+    LongHorizonRecallReady,
+    IdentitySafeRetentionReady,
+    RecallSelectionReferenceReady,
+    StageInputBlocked,
+    NoInventionBlocked,
+    IdentitySafeRetentionBlocked,
+    NativeRetentionBlocked,
+    ProtectedRetentionBlocked,
+    StaleRetentionBlocked,
+    UnsafeInputBlocked,
+    RuntimeMockBlocked,
+    AuditProofMissing,
+}
+
+impl Stage23MemoryRetentionDisposition {
+    pub const fn default_reason_code(self) -> &'static str {
+        match self {
+            Self::MemoryCandidateReady => stage23_reason_codes::MEMORY_CANDIDATE_READY,
+            Self::StatePersistencePostureReady => {
+                stage23_reason_codes::STATE_PERSISTENCE_POSTURE_READY
+            }
+            Self::LongHorizonRecallReady => stage23_reason_codes::LONG_HORIZON_RECALL_READY,
+            Self::IdentitySafeRetentionReady => {
+                stage23_reason_codes::IDENTITY_SAFE_RETENTION_READY
+            }
+            Self::RecallSelectionReferenceReady => {
+                stage23_reason_codes::RECALL_SELECTION_REFERENCE_READY
+            }
+            Self::StageInputBlocked => stage23_reason_codes::STAGE_INPUT_BLOCKED,
+            Self::NoInventionBlocked => stage23_reason_codes::NO_INVENTION_BLOCKED,
+            Self::IdentitySafeRetentionBlocked => {
+                stage23_reason_codes::IDENTITY_SAFE_RETENTION_BLOCKED
+            }
+            Self::NativeRetentionBlocked => stage23_reason_codes::NATIVE_RETENTION_BLOCKED,
+            Self::ProtectedRetentionBlocked => {
+                stage23_reason_codes::PROTECTED_RETENTION_BLOCKED
+            }
+            Self::StaleRetentionBlocked => stage23_reason_codes::STALE_RETENTION_BLOCKED,
+            Self::UnsafeInputBlocked => stage23_reason_codes::UNSAFE_INPUT_BLOCKED,
+            Self::RuntimeMockBlocked => stage23_reason_codes::RUNTIME_MOCK_BLOCKED,
+            Self::AuditProofMissing => stage23_reason_codes::AUDIT_PROOF_MISSING,
+        }
+    }
+
+    pub const fn is_ready(self) -> bool {
+        matches!(
+            self,
+            Self::MemoryCandidateReady
+                | Self::StatePersistencePostureReady
+                | Self::LongHorizonRecallReady
+                | Self::IdentitySafeRetentionReady
+                | Self::RecallSelectionReferenceReady
+        )
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Stage23MemoryRetentionWorkAuthority {
+    pub can_emit_memory_candidate_packet: bool,
+    pub can_emit_state_persistence_posture_packet: bool,
+    pub can_emit_long_horizon_recall_packet: bool,
+    pub can_emit_identity_safe_retention_packet: bool,
+    pub can_emit_recall_selection_ref: bool,
+    pub can_fail_closed: bool,
+    pub can_invent_facts: bool,
+    pub can_invent_persisted_memory: bool,
+    pub can_invent_recall_success: bool,
+    pub can_invent_retention_authority: bool,
+    pub can_mutate_persistence_state: bool,
+    pub can_dispatch: bool,
+    pub can_create_user_turn: bool,
+    pub can_treat_visible_recall_or_restore_as_action_success: bool,
+}
+
+impl Stage23MemoryRetentionWorkAuthority {
+    pub const fn fail_closed() -> Self {
+        Self {
+            can_emit_memory_candidate_packet: false,
+            can_emit_state_persistence_posture_packet: false,
+            can_emit_long_horizon_recall_packet: false,
+            can_emit_identity_safe_retention_packet: false,
+            can_emit_recall_selection_ref: false,
+            can_fail_closed: true,
+            can_invent_facts: false,
+            can_invent_persisted_memory: false,
+            can_invent_recall_success: false,
+            can_invent_retention_authority: false,
+            can_mutate_persistence_state: false,
+            can_dispatch: false,
+            can_create_user_turn: false,
+            can_treat_visible_recall_or_restore_as_action_success: false,
+        }
+    }
+
+    pub const fn memory_candidate_ready() -> Self {
+        let mut authority = Self::fail_closed();
+        authority.can_emit_memory_candidate_packet = true;
+        authority
+    }
+
+    pub const fn state_persistence_posture_ready() -> Self {
+        let mut authority = Self::fail_closed();
+        authority.can_emit_state_persistence_posture_packet = true;
+        authority
+    }
+
+    pub const fn long_horizon_recall_ready() -> Self {
+        let mut authority = Self::fail_closed();
+        authority.can_emit_long_horizon_recall_packet = true;
+        authority.can_emit_recall_selection_ref = true;
+        authority
+    }
+
+    pub const fn identity_safe_retention_ready() -> Self {
+        let mut authority = Self::fail_closed();
+        authority.can_emit_identity_safe_retention_packet = true;
+        authority
+    }
+
+    pub const fn recall_selection_reference_ready() -> Self {
+        let mut authority = Self::fail_closed();
+        authority.can_emit_recall_selection_ref = true;
+        authority
+    }
+
+    pub const fn can_mutate_or_execute(&self) -> bool {
+        self.can_invent_facts
+            || self.can_invent_persisted_memory
+            || self.can_invent_recall_success
+            || self.can_invent_retention_authority
+            || self.can_mutate_persistence_state
+            || self.can_dispatch
+            || self.can_create_user_turn
+            || self.can_treat_visible_recall_or_restore_as_action_success
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Stage23MemoryRetentionInput {
+    pub memory_kind: Stage23MemoryRetentionKind,
+    pub memory_candidate_id: Option<String>,
+    pub retention_packet_id: Option<String>,
+    pub recall_reference_id: Option<String>,
+    pub identity_scope_id: Option<String>,
+    pub user_scope_id: Option<String>,
+    pub connector_action_stage_id: Option<String>,
+    pub audit_id: Option<String>,
+    pub ph1j_proof_ref: Option<String>,
+    pub stage15_response_output_ref_present: bool,
+    pub stage19_attention_ref_present: bool,
+    pub stage19_attention_ref_non_authoritative: bool,
+    pub stage20_continuity_ref_present: bool,
+    pub stage20_continuity_ref_non_authoritative: bool,
+    pub stage21_automation_ref_present: bool,
+    pub stage21_automation_ref_non_authoritative: bool,
+    pub stage22_outbound_ref_present: bool,
+    pub stage22_outbound_ref_non_authoritative: bool,
+    pub identity_retention_bounded: bool,
+    pub identity_user_tenant_project_scoped: bool,
+    pub uncertainty_preserved: bool,
+    pub memory_invented_fact: bool,
+    pub memory_invented_persisted_memory: bool,
+    pub memory_invented_recall_success: bool,
+    pub memory_invented_retention_success: bool,
+    pub memory_invented_state_restoration: bool,
+    pub memory_invented_identity_binding: bool,
+    pub memory_invented_attachment_or_citation: bool,
+    pub memory_invented_provider_or_tool_result: bool,
+    pub memory_claimed_unproven_completion: bool,
+    pub memory_implied_persistence_or_mutation: bool,
+    pub secret_safe: bool,
+    pub redacted: bool,
+    pub stale_aware: bool,
+    pub revocation_aware: bool,
+    pub deletion_aware: bool,
+    pub memory_ref_present: bool,
+    pub identity_ref_present: bool,
+    pub user_scope_ref_present: bool,
+    pub unverifiable: bool,
+    pub stale: bool,
+    pub revoked: bool,
+    pub deleted: bool,
+    pub secret_unsafe: bool,
+    pub cross_tenant: bool,
+    pub cross_user: bool,
+    pub cross_project: bool,
+    pub identity_mismatch: bool,
+    pub user_mismatch: bool,
+    pub tenant_mismatch: bool,
+    pub missing_proof: bool,
+    pub ownership_drift: bool,
+    pub native_retention_declarative_only: bool,
+    pub native_retention_mutates_state: bool,
+    pub native_retention_connector_writes: bool,
+    pub native_retention_dispatches_or_executes: bool,
+    pub native_retention_calls_providers_or_tools: bool,
+    pub native_retention_emits_tts_or_playback: bool,
+    pub native_retention_creates_user_turn: bool,
+    pub native_retention_treats_visible_success_as_action_success: bool,
+    pub protected_action_like_request: bool,
+    pub protected_slot_or_authority_ambiguous: bool,
+    pub unsafe_identity_posture: bool,
+    pub memory_implies_stage12_mutation_without_proof: bool,
+    pub stale_or_revoked_or_deleted_or_superseded_output: bool,
+    pub session_closed: bool,
+    pub record_artifact_only_turn: bool,
+    pub stale_identity_state: bool,
+    pub stale_user_scope_state: bool,
+    pub stale_tenant_scope_state: bool,
+    pub retention_identity_matches_current_output_session: bool,
+    pub replay_upgrades_blocked_retention: bool,
+    pub fake_memory_detected: bool,
+    pub fake_recall_detected: bool,
+    pub fake_retention_detected: bool,
+    pub fake_restore_detected: bool,
+    pub fake_identity_binding_detected: bool,
+    pub runtime_mock_detected: bool,
+    pub raw_provider_output_present: bool,
+    pub raw_search_dump_present: bool,
+    pub raw_media_present: bool,
+    pub raw_secret_persistence_field_present: bool,
+    pub unverified_source_evidence_present: bool,
+    pub unsupported_claim_candidate_present: bool,
+    pub fake_memory_source_carrier_present: bool,
+    pub speech_playback_attention_continuity_automation_outbound_used_as_truth_authority: bool,
+    pub protected_action_candidate_present: bool,
+    pub simulation_candidate_present: bool,
+    pub approved_execution_plan_present: bool,
+    pub secrets_exposed: bool,
+    pub raw_audio_or_voice_material_exposed: bool,
+    pub internal_trace_exposed: bool,
+    pub access_denied: bool,
+    pub policy_denied: bool,
+    pub attempted_live_provider_in_build: bool,
+    pub generated_live_media_in_build: bool,
+    pub ran_live_search_in_build: bool,
+    pub called_live_external_tool_in_build: bool,
+    pub connector_write_requested: bool,
+    pub ran_live_notification_delivery_in_build: bool,
+    pub ran_live_background_execution_in_build: bool,
+    pub ran_live_persistence_write_in_build: bool,
+    pub ran_live_memory_promotion_in_build: bool,
+    pub ran_live_retention_mutation_in_build: bool,
+    pub ran_live_tts_or_playback_in_build: bool,
+    pub captured_microphone_audio: bool,
+    pub transcribed_live_audio: bool,
+    pub voice_id_matching_attempted: bool,
+    pub native_ui_behavior_added: bool,
+    pub fixture_only_test_path: bool,
+}
+
+impl Stage23MemoryRetentionInput {
+    #[cfg(test)]
+    fn fixture_base(
+        memory_kind: Stage23MemoryRetentionKind,
+        audit_id: impl Into<String>,
+    ) -> Self {
+        Self {
+            memory_kind,
+            memory_candidate_id: Some("memory-candidate-stage23".to_string()),
+            retention_packet_id: Some("retention-packet-stage23".to_string()),
+            recall_reference_id: Some("recall-reference-stage23".to_string()),
+            identity_scope_id: Some("identity-scope-stage23".to_string()),
+            user_scope_id: Some("user-scope-stage23".to_string()),
+            connector_action_stage_id: Some("connector-stage23".to_string()),
+            audit_id: Some(audit_id.into()),
+            ph1j_proof_ref: Some("audit-proof-stage23".to_string()),
+            stage15_response_output_ref_present: true,
+            stage19_attention_ref_present: false,
+            stage19_attention_ref_non_authoritative: false,
+            stage20_continuity_ref_present: false,
+            stage20_continuity_ref_non_authoritative: false,
+            stage21_automation_ref_present: false,
+            stage21_automation_ref_non_authoritative: false,
+            stage22_outbound_ref_present: false,
+            stage22_outbound_ref_non_authoritative: false,
+            identity_retention_bounded: true,
+            identity_user_tenant_project_scoped: true,
+            uncertainty_preserved: true,
+            memory_invented_fact: false,
+            memory_invented_persisted_memory: false,
+            memory_invented_recall_success: false,
+            memory_invented_retention_success: false,
+            memory_invented_state_restoration: false,
+            memory_invented_identity_binding: false,
+            memory_invented_attachment_or_citation: false,
+            memory_invented_provider_or_tool_result: false,
+            memory_claimed_unproven_completion: false,
+            memory_implied_persistence_or_mutation: false,
+            secret_safe: true,
+            redacted: true,
+            stale_aware: true,
+            revocation_aware: true,
+            deletion_aware: true,
+            memory_ref_present: true,
+            identity_ref_present: true,
+            user_scope_ref_present: true,
+            unverifiable: false,
+            stale: false,
+            revoked: false,
+            deleted: false,
+            secret_unsafe: false,
+            cross_tenant: false,
+            cross_user: false,
+            cross_project: false,
+            identity_mismatch: false,
+            user_mismatch: false,
+            tenant_mismatch: false,
+            missing_proof: false,
+            ownership_drift: false,
+            native_retention_declarative_only: true,
+            native_retention_mutates_state: false,
+            native_retention_connector_writes: false,
+            native_retention_dispatches_or_executes: false,
+            native_retention_calls_providers_or_tools: false,
+            native_retention_emits_tts_or_playback: false,
+            native_retention_creates_user_turn: false,
+            native_retention_treats_visible_success_as_action_success: false,
+            protected_action_like_request: false,
+            protected_slot_or_authority_ambiguous: false,
+            unsafe_identity_posture: false,
+            memory_implies_stage12_mutation_without_proof: false,
+            stale_or_revoked_or_deleted_or_superseded_output: false,
+            session_closed: false,
+            record_artifact_only_turn: false,
+            stale_identity_state: false,
+            stale_user_scope_state: false,
+            stale_tenant_scope_state: false,
+            retention_identity_matches_current_output_session: true,
+            replay_upgrades_blocked_retention: false,
+            fake_memory_detected: false,
+            fake_recall_detected: false,
+            fake_retention_detected: false,
+            fake_restore_detected: false,
+            fake_identity_binding_detected: false,
+            runtime_mock_detected: false,
+            raw_provider_output_present: false,
+            raw_search_dump_present: false,
+            raw_media_present: false,
+            raw_secret_persistence_field_present: false,
+            unverified_source_evidence_present: false,
+            unsupported_claim_candidate_present: false,
+            fake_memory_source_carrier_present: false,
+            speech_playback_attention_continuity_automation_outbound_used_as_truth_authority:
+                false,
+            protected_action_candidate_present: false,
+            simulation_candidate_present: false,
+            approved_execution_plan_present: false,
+            secrets_exposed: false,
+            raw_audio_or_voice_material_exposed: false,
+            internal_trace_exposed: false,
+            access_denied: false,
+            policy_denied: false,
+            attempted_live_provider_in_build: false,
+            generated_live_media_in_build: false,
+            ran_live_search_in_build: false,
+            called_live_external_tool_in_build: false,
+            connector_write_requested: false,
+            ran_live_notification_delivery_in_build: false,
+            ran_live_background_execution_in_build: false,
+            ran_live_persistence_write_in_build: false,
+            ran_live_memory_promotion_in_build: false,
+            ran_live_retention_mutation_in_build: false,
+            ran_live_tts_or_playback_in_build: false,
+            captured_microphone_audio: false,
+            transcribed_live_audio: false,
+            voice_id_matching_attempted: false,
+            native_ui_behavior_added: false,
+            fixture_only_test_path: true,
+        }
+    }
+
+    #[cfg(test)]
+    pub fn fixture_memory_candidate_ready(
+        memory_candidate_id: impl Into<String>,
+        identity_scope_id: impl Into<String>,
+        user_scope_id: impl Into<String>,
+        audit_id: impl Into<String>,
+    ) -> Self {
+        let mut input =
+            Self::fixture_base(Stage23MemoryRetentionKind::MemoryCandidate, audit_id);
+        input.memory_candidate_id = Some(memory_candidate_id.into());
+        input.identity_scope_id = Some(identity_scope_id.into());
+        input.user_scope_id = Some(user_scope_id.into());
+        input.retention_packet_id = None;
+        input.recall_reference_id = None;
+        input
+    }
+
+    #[cfg(test)]
+    pub fn fixture_state_persistence_posture_ready(
+        retention_packet_id: impl Into<String>,
+        identity_scope_id: impl Into<String>,
+        user_scope_id: impl Into<String>,
+        audit_id: impl Into<String>,
+    ) -> Self {
+        let mut input = Self::fixture_base(
+            Stage23MemoryRetentionKind::StatePersistencePosture,
+            audit_id,
+        );
+        input.retention_packet_id = Some(retention_packet_id.into());
+        input.identity_scope_id = Some(identity_scope_id.into());
+        input.user_scope_id = Some(user_scope_id.into());
+        input.recall_reference_id = None;
+        input
+    }
+
+    #[cfg(test)]
+    pub fn fixture_long_horizon_recall_ready(
+        memory_candidate_id: impl Into<String>,
+        recall_reference_id: impl Into<String>,
+        identity_scope_id: impl Into<String>,
+        user_scope_id: impl Into<String>,
+        audit_id: impl Into<String>,
+    ) -> Self {
+        let mut input =
+            Self::fixture_base(Stage23MemoryRetentionKind::LongHorizonRecall, audit_id);
+        input.memory_candidate_id = Some(memory_candidate_id.into());
+        input.recall_reference_id = Some(recall_reference_id.into());
+        input.identity_scope_id = Some(identity_scope_id.into());
+        input.user_scope_id = Some(user_scope_id.into());
+        input.retention_packet_id = None;
+        input
+    }
+
+    #[cfg(test)]
+    pub fn fixture_identity_safe_retention_ready(
+        retention_packet_id: impl Into<String>,
+        memory_candidate_id: impl Into<String>,
+        identity_scope_id: impl Into<String>,
+        user_scope_id: impl Into<String>,
+        audit_id: impl Into<String>,
+    ) -> Self {
+        let mut input = Self::fixture_base(
+            Stage23MemoryRetentionKind::IdentitySafeRetention,
+            audit_id,
+        );
+        input.retention_packet_id = Some(retention_packet_id.into());
+        input.memory_candidate_id = Some(memory_candidate_id.into());
+        input.identity_scope_id = Some(identity_scope_id.into());
+        input.user_scope_id = Some(user_scope_id.into());
+        input.recall_reference_id = None;
+        input
+    }
+
+    #[cfg(test)]
+    pub fn fixture_recall_selection_reference_ready(
+        recall_reference_id: impl Into<String>,
+        identity_scope_id: impl Into<String>,
+        user_scope_id: impl Into<String>,
+        audit_id: impl Into<String>,
+    ) -> Self {
+        let mut input = Self::fixture_base(
+            Stage23MemoryRetentionKind::RecallSelectionReference,
+            audit_id,
+        );
+        input.recall_reference_id = Some(recall_reference_id.into());
+        input.identity_scope_id = Some(identity_scope_id.into());
+        input.user_scope_id = Some(user_scope_id.into());
+        input.memory_candidate_id = None;
+        input.retention_packet_id = None;
+        input
+    }
+}
+
+impl Validate for Stage23MemoryRetentionInput {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        validate_stage4_optional_ref(
+            "stage23_memory_retention_input.memory_candidate_id",
+            self.memory_candidate_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage23_memory_retention_input.retention_packet_id",
+            self.retention_packet_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage23_memory_retention_input.recall_reference_id",
+            self.recall_reference_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage23_memory_retention_input.identity_scope_id",
+            self.identity_scope_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage23_memory_retention_input.user_scope_id",
+            self.user_scope_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage23_memory_retention_input.connector_action_stage_id",
+            self.connector_action_stage_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage23_memory_retention_input.audit_id",
+            self.audit_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage23_memory_retention_input.ph1j_proof_ref",
+            self.ph1j_proof_ref.as_deref(),
+        )?;
+        if self.attempted_live_provider_in_build
+            || self.generated_live_media_in_build
+            || self.ran_live_search_in_build
+            || self.called_live_external_tool_in_build
+            || self.connector_write_requested
+            || self.ran_live_notification_delivery_in_build
+            || self.ran_live_background_execution_in_build
+            || self.ran_live_persistence_write_in_build
+            || self.ran_live_memory_promotion_in_build
+            || self.ran_live_retention_mutation_in_build
+            || self.ran_live_tts_or_playback_in_build
+            || self.captured_microphone_audio
+            || self.transcribed_live_audio
+            || self.voice_id_matching_attempted
+            || self.native_ui_behavior_added
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage23_memory_retention_input.no_live_build",
+                reason: "Stage 23A cannot call live providers/search/tools, connector-write, mutate live persistence or retention state, emit TTS/playback, capture mic, transcribe, match Voice ID, or add native UI",
+            });
+        }
+        if (self.runtime_mock_detected
+            || self.fake_memory_detected
+            || self.fake_recall_detected
+            || self.fake_retention_detected
+            || self.fake_restore_detected
+            || self.fake_identity_binding_detected)
+            && !self.fixture_only_test_path
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage23_memory_retention_input.runtime_mock",
+                reason: "runtime mocks and fake memory/recall/retention/restore/identity success are forbidden outside explicit fixture-only paths",
+            });
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Stage23MemoryRetentionPacket {
+    pub session_id: SessionId,
+    pub turn_id: Option<TurnId>,
+    pub activation_id: Option<String>,
+    pub response_output_id: String,
+    pub response_hash: String,
+    pub attention_state_id: Option<String>,
+    pub continuity_packet_id: Option<String>,
+    pub automation_candidate_id: Option<String>,
+    pub connector_action_stage_id: Option<String>,
+    pub memory_candidate_id: Option<String>,
+    pub retention_packet_id: Option<String>,
+    pub recall_reference_id: Option<String>,
+    pub identity_scope_id: Option<String>,
+    pub user_scope_id: Option<String>,
+    pub tenant_id: Option<String>,
+    pub access_context_id: Option<String>,
+    pub policy_context_id: Option<String>,
+    pub audit_id: Option<String>,
+    pub ph1j_proof_ref: Option<String>,
+    pub retention_kind: Stage23MemoryRetentionKind,
+    pub reason_code: &'static str,
+    pub disposition: Stage23MemoryRetentionDisposition,
+    pub stage15_disposition: Stage15ResponseOutputDisposition,
+    pub stage19_disposition: Option<Stage19NotificationAttentionDisposition>,
+    pub stage20_disposition: Option<Stage20ContinuityHandoffDisposition>,
+    pub stage21_disposition: Option<Stage21AutomationOrchestrationDisposition>,
+    pub stage22_disposition: Option<Stage22ConnectorOutboundDisposition>,
+    pub stage15_response_output_ref_present: bool,
+    pub stage19_attention_ref_present: bool,
+    pub stage19_attention_ref_non_authoritative: bool,
+    pub stage20_continuity_ref_present: bool,
+    pub stage20_continuity_ref_non_authoritative: bool,
+    pub stage21_automation_ref_present: bool,
+    pub stage21_automation_ref_non_authoritative: bool,
+    pub stage22_outbound_ref_present: bool,
+    pub stage22_outbound_ref_non_authoritative: bool,
+    pub identity_retention_bounded: bool,
+    pub identity_user_tenant_project_scoped: bool,
+    pub uncertainty_preserved: bool,
+    pub memory_invented_fact: bool,
+    pub memory_invented_persisted_memory: bool,
+    pub memory_invented_recall_success: bool,
+    pub memory_invented_retention_success: bool,
+    pub memory_invented_state_restoration: bool,
+    pub memory_invented_identity_binding: bool,
+    pub memory_invented_attachment_or_citation: bool,
+    pub memory_invented_provider_or_tool_result: bool,
+    pub memory_claimed_unproven_completion: bool,
+    pub memory_implied_persistence_or_mutation: bool,
+    pub secret_safe: bool,
+    pub redacted: bool,
+    pub stale_aware: bool,
+    pub revocation_aware: bool,
+    pub deletion_aware: bool,
+    pub memory_ref_present: bool,
+    pub identity_ref_present: bool,
+    pub user_scope_ref_present: bool,
+    pub unverifiable: bool,
+    pub stale: bool,
+    pub revoked: bool,
+    pub deleted: bool,
+    pub secret_unsafe: bool,
+    pub cross_tenant: bool,
+    pub cross_user: bool,
+    pub cross_project: bool,
+    pub identity_mismatch: bool,
+    pub user_mismatch: bool,
+    pub tenant_mismatch: bool,
+    pub missing_proof: bool,
+    pub ownership_drift: bool,
+    pub native_retention_declarative_only: bool,
+    pub native_retention_mutates_state: bool,
+    pub native_retention_connector_writes: bool,
+    pub native_retention_dispatches_or_executes: bool,
+    pub native_retention_calls_providers_or_tools: bool,
+    pub native_retention_emits_tts_or_playback: bool,
+    pub native_retention_creates_user_turn: bool,
+    pub native_retention_treats_visible_success_as_action_success: bool,
+    pub protected_action_like_request: bool,
+    pub protected_slot_or_authority_ambiguous: bool,
+    pub unsafe_identity_posture: bool,
+    pub memory_implies_stage12_mutation_without_proof: bool,
+    pub stale_or_revoked_or_deleted_or_superseded_output: bool,
+    pub session_closed: bool,
+    pub record_artifact_only_turn: bool,
+    pub stale_identity_state: bool,
+    pub stale_user_scope_state: bool,
+    pub stale_tenant_scope_state: bool,
+    pub retention_identity_matches_current_output_session: bool,
+    pub replay_upgrades_blocked_retention: bool,
+    pub fake_memory_detected: bool,
+    pub fake_recall_detected: bool,
+    pub fake_retention_detected: bool,
+    pub fake_restore_detected: bool,
+    pub fake_identity_binding_detected: bool,
+    pub runtime_mock_detected: bool,
+    pub raw_provider_output_present: bool,
+    pub raw_search_dump_present: bool,
+    pub raw_media_present: bool,
+    pub raw_secret_persistence_field_present: bool,
+    pub unverified_source_evidence_present: bool,
+    pub unsupported_claim_candidate_present: bool,
+    pub fake_memory_source_carrier_present: bool,
+    pub speech_playback_attention_continuity_automation_outbound_used_as_truth_authority: bool,
+    pub protected_action_candidate_present: bool,
+    pub simulation_candidate_present: bool,
+    pub approved_execution_plan_present: bool,
+    pub secrets_exposed: bool,
+    pub raw_audio_or_voice_material_exposed: bool,
+    pub internal_trace_exposed: bool,
+    pub access_denied: bool,
+    pub policy_denied: bool,
+    pub work_authority: Stage23MemoryRetentionWorkAuthority,
+}
+
+impl Stage23MemoryRetentionPacket {
+    pub fn from_stage15_output(
+        output: &Stage15ResponseOutputPacket,
+        attention_output: Option<&Stage19NotificationAttentionPacket>,
+        continuity_output: Option<&Stage20ContinuityHandoffPacket>,
+        automation_output: Option<&Stage21AutomationOrchestrationPacket>,
+        outbound_output: Option<&Stage22ConnectorOutboundPacket>,
+        input: Stage23MemoryRetentionInput,
+    ) -> Result<Self, ContractViolation> {
+        output.validate()?;
+        if let Some(attention_output) = attention_output {
+            attention_output.validate()?;
+        }
+        if let Some(continuity_output) = continuity_output {
+            continuity_output.validate()?;
+        }
+        if let Some(automation_output) = automation_output {
+            automation_output.validate()?;
+        }
+        if let Some(outbound_output) = outbound_output {
+            outbound_output.validate()?;
+        }
+        input.validate()?;
+        let disposition = Self::decide_disposition(
+            output,
+            attention_output,
+            continuity_output,
+            automation_output,
+            outbound_output,
+            &input,
+        );
+        let work_authority = Self::work_authority_for(disposition);
+        let audit_id = input.audit_id.clone().or_else(|| output.audit_id.clone());
+        let ph1j_proof_ref = input
+            .ph1j_proof_ref
+            .clone()
+            .or_else(|| output.ph1j_proof_ref.clone())
+            .or_else(|| audit_id.clone());
+        let packet = Self {
+            session_id: output.session_id,
+            turn_id: output.turn_id,
+            activation_id: output.activation_id.clone(),
+            response_output_id: output.response_output_id.clone(),
+            response_hash: output.response_hash.clone(),
+            attention_state_id: attention_output
+                .and_then(|attention| attention.attention_state_id.clone()),
+            continuity_packet_id: continuity_output
+                .map(|continuity| continuity.continuity_packet_id.clone()),
+            automation_candidate_id: automation_output
+                .and_then(|automation| automation.automation_candidate_id.clone()),
+            connector_action_stage_id: input
+                .connector_action_stage_id
+                .or_else(|| outbound_output.and_then(|outbound| outbound.connector_action_stage_id.clone())),
+            memory_candidate_id: input.memory_candidate_id,
+            retention_packet_id: input.retention_packet_id,
+            recall_reference_id: input.recall_reference_id,
+            identity_scope_id: input.identity_scope_id,
+            user_scope_id: input.user_scope_id,
+            tenant_id: output.tenant_id.clone(),
+            access_context_id: output.access_context_id.clone(),
+            policy_context_id: output.policy_context_id.clone(),
+            audit_id,
+            ph1j_proof_ref,
+            retention_kind: input.memory_kind,
+            reason_code: disposition.default_reason_code(),
+            disposition,
+            stage15_disposition: output.disposition,
+            stage19_disposition: attention_output.map(|attention| attention.disposition),
+            stage20_disposition: continuity_output.map(|continuity| continuity.disposition),
+            stage21_disposition: automation_output.map(|automation| automation.disposition),
+            stage22_disposition: outbound_output.map(|outbound| outbound.disposition),
+            stage15_response_output_ref_present: input.stage15_response_output_ref_present,
+            stage19_attention_ref_present: input.stage19_attention_ref_present,
+            stage19_attention_ref_non_authoritative: input.stage19_attention_ref_non_authoritative,
+            stage20_continuity_ref_present: input.stage20_continuity_ref_present,
+            stage20_continuity_ref_non_authoritative: input
+                .stage20_continuity_ref_non_authoritative,
+            stage21_automation_ref_present: input.stage21_automation_ref_present,
+            stage21_automation_ref_non_authoritative: input
+                .stage21_automation_ref_non_authoritative,
+            stage22_outbound_ref_present: input.stage22_outbound_ref_present,
+            stage22_outbound_ref_non_authoritative: input.stage22_outbound_ref_non_authoritative,
+            identity_retention_bounded: input.identity_retention_bounded,
+            identity_user_tenant_project_scoped: input.identity_user_tenant_project_scoped,
+            uncertainty_preserved: input.uncertainty_preserved,
+            memory_invented_fact: input.memory_invented_fact,
+            memory_invented_persisted_memory: input.memory_invented_persisted_memory,
+            memory_invented_recall_success: input.memory_invented_recall_success,
+            memory_invented_retention_success: input.memory_invented_retention_success,
+            memory_invented_state_restoration: input.memory_invented_state_restoration,
+            memory_invented_identity_binding: input.memory_invented_identity_binding,
+            memory_invented_attachment_or_citation: input.memory_invented_attachment_or_citation,
+            memory_invented_provider_or_tool_result: input.memory_invented_provider_or_tool_result,
+            memory_claimed_unproven_completion: input.memory_claimed_unproven_completion,
+            memory_implied_persistence_or_mutation: input.memory_implied_persistence_or_mutation,
+            secret_safe: input.secret_safe,
+            redacted: input.redacted,
+            stale_aware: input.stale_aware,
+            revocation_aware: input.revocation_aware,
+            deletion_aware: input.deletion_aware,
+            memory_ref_present: input.memory_ref_present,
+            identity_ref_present: input.identity_ref_present,
+            user_scope_ref_present: input.user_scope_ref_present,
+            unverifiable: input.unverifiable,
+            stale: input.stale,
+            revoked: input.revoked,
+            deleted: input.deleted,
+            secret_unsafe: input.secret_unsafe,
+            cross_tenant: input.cross_tenant,
+            cross_user: input.cross_user,
+            cross_project: input.cross_project,
+            identity_mismatch: input.identity_mismatch,
+            user_mismatch: input.user_mismatch,
+            tenant_mismatch: input.tenant_mismatch,
+            missing_proof: input.missing_proof,
+            ownership_drift: input.ownership_drift,
+            native_retention_declarative_only: input.native_retention_declarative_only,
+            native_retention_mutates_state: input.native_retention_mutates_state,
+            native_retention_connector_writes: input.native_retention_connector_writes,
+            native_retention_dispatches_or_executes: input
+                .native_retention_dispatches_or_executes,
+            native_retention_calls_providers_or_tools: input
+                .native_retention_calls_providers_or_tools,
+            native_retention_emits_tts_or_playback: input.native_retention_emits_tts_or_playback,
+            native_retention_creates_user_turn: input.native_retention_creates_user_turn,
+            native_retention_treats_visible_success_as_action_success: input
+                .native_retention_treats_visible_success_as_action_success,
+            protected_action_like_request: input.protected_action_like_request,
+            protected_slot_or_authority_ambiguous: input.protected_slot_or_authority_ambiguous,
+            unsafe_identity_posture: input.unsafe_identity_posture,
+            memory_implies_stage12_mutation_without_proof: input
+                .memory_implies_stage12_mutation_without_proof,
+            stale_or_revoked_or_deleted_or_superseded_output: input
+                .stale_or_revoked_or_deleted_or_superseded_output,
+            session_closed: input.session_closed,
+            record_artifact_only_turn: input.record_artifact_only_turn,
+            stale_identity_state: input.stale_identity_state,
+            stale_user_scope_state: input.stale_user_scope_state,
+            stale_tenant_scope_state: input.stale_tenant_scope_state,
+            retention_identity_matches_current_output_session: input
+                .retention_identity_matches_current_output_session,
+            replay_upgrades_blocked_retention: input.replay_upgrades_blocked_retention,
+            fake_memory_detected: input.fake_memory_detected,
+            fake_recall_detected: input.fake_recall_detected,
+            fake_retention_detected: input.fake_retention_detected,
+            fake_restore_detected: input.fake_restore_detected,
+            fake_identity_binding_detected: input.fake_identity_binding_detected,
+            runtime_mock_detected: input.runtime_mock_detected,
+            raw_provider_output_present: input.raw_provider_output_present,
+            raw_search_dump_present: input.raw_search_dump_present,
+            raw_media_present: input.raw_media_present,
+            raw_secret_persistence_field_present: input.raw_secret_persistence_field_present,
+            unverified_source_evidence_present: input.unverified_source_evidence_present,
+            unsupported_claim_candidate_present: input.unsupported_claim_candidate_present,
+            fake_memory_source_carrier_present: input.fake_memory_source_carrier_present,
+            speech_playback_attention_continuity_automation_outbound_used_as_truth_authority: input
+                .speech_playback_attention_continuity_automation_outbound_used_as_truth_authority,
+            protected_action_candidate_present: input.protected_action_candidate_present,
+            simulation_candidate_present: input.simulation_candidate_present,
+            approved_execution_plan_present: input.approved_execution_plan_present,
+            secrets_exposed: input.secrets_exposed,
+            raw_audio_or_voice_material_exposed: input.raw_audio_or_voice_material_exposed,
+            internal_trace_exposed: input.internal_trace_exposed,
+            access_denied: input.access_denied,
+            policy_denied: input.policy_denied,
+            work_authority,
+        };
+        packet.validate()?;
+        Ok(packet)
+    }
+
+    pub const fn can_mutate_or_execute(&self) -> bool {
+        self.work_authority.can_mutate_or_execute()
+    }
+
+    fn decide_disposition(
+        output: &Stage15ResponseOutputPacket,
+        attention_output: Option<&Stage19NotificationAttentionPacket>,
+        continuity_output: Option<&Stage20ContinuityHandoffPacket>,
+        automation_output: Option<&Stage21AutomationOrchestrationPacket>,
+        outbound_output: Option<&Stage22ConnectorOutboundPacket>,
+        input: &Stage23MemoryRetentionInput,
+    ) -> Stage23MemoryRetentionDisposition {
+        if input.runtime_mock_detected
+            || input.fake_memory_detected
+            || input.fake_recall_detected
+            || input.fake_retention_detected
+            || input.fake_restore_detected
+            || input.fake_identity_binding_detected
+        {
+            return Stage23MemoryRetentionDisposition::RuntimeMockBlocked;
+        }
+        if input.raw_provider_output_present
+            || input.raw_search_dump_present
+            || input.raw_media_present
+            || input.raw_secret_persistence_field_present
+            || input.unverified_source_evidence_present
+            || input.unsupported_claim_candidate_present
+            || input.fake_memory_source_carrier_present
+            || input.speech_playback_attention_continuity_automation_outbound_used_as_truth_authority
+            || input.protected_action_candidate_present
+            || input.simulation_candidate_present
+            || input.approved_execution_plan_present
+            || input.secrets_exposed
+            || input.raw_audio_or_voice_material_exposed
+            || input.internal_trace_exposed
+            || input.access_denied
+            || input.policy_denied
+            || input.tenant_mismatch
+        {
+            return Stage23MemoryRetentionDisposition::UnsafeInputBlocked;
+        }
+        if !output.disposition.is_ready()
+            || output.can_mutate_or_execute()
+            || !input.stage15_response_output_ref_present
+        {
+            return Stage23MemoryRetentionDisposition::StageInputBlocked;
+        }
+        if let Some(attention_output) = attention_output {
+            if attention_output.can_mutate_or_execute()
+                || attention_output.stale_or_cancelled_or_superseded_output
+                || attention_output.session_closed
+                || attention_output.record_artifact_only_turn
+                || !input.stage19_attention_ref_present
+                || !input.stage19_attention_ref_non_authoritative
+            {
+                return Stage23MemoryRetentionDisposition::StageInputBlocked;
+            }
+        }
+        if let Some(continuity_output) = continuity_output {
+            if continuity_output.can_mutate_or_execute()
+                || continuity_output.stale_or_cancelled_or_superseded_output
+                || continuity_output.session_closed
+                || continuity_output.record_artifact_only_turn
+                || !input.stage20_continuity_ref_present
+                || !input.stage20_continuity_ref_non_authoritative
+            {
+                return Stage23MemoryRetentionDisposition::StageInputBlocked;
+            }
+        }
+        if let Some(automation_output) = automation_output {
+            if automation_output.can_mutate_or_execute()
+                || automation_output.stale_or_cancelled_or_superseded_output
+                || automation_output.session_closed
+                || automation_output.record_artifact_only_turn
+                || !input.stage21_automation_ref_present
+                || !input.stage21_automation_ref_non_authoritative
+            {
+                return Stage23MemoryRetentionDisposition::StageInputBlocked;
+            }
+        }
+        if let Some(outbound_output) = outbound_output {
+            if outbound_output.can_mutate_or_execute()
+                || outbound_output.stale_or_cancelled_or_superseded_output
+                || outbound_output.session_closed
+                || outbound_output.record_artifact_only_turn
+                || !input.stage22_outbound_ref_present
+                || !input.stage22_outbound_ref_non_authoritative
+            {
+                return Stage23MemoryRetentionDisposition::StageInputBlocked;
+            }
+        }
+        if input.audit_id.is_none()
+            && input.ph1j_proof_ref.is_none()
+            && output.audit_id.is_none()
+            && output.ph1j_proof_ref.is_none()
+        {
+            return Stage23MemoryRetentionDisposition::AuditProofMissing;
+        }
+        if !input.uncertainty_preserved
+            || input.memory_invented_fact
+            || input.memory_invented_persisted_memory
+            || input.memory_invented_recall_success
+            || input.memory_invented_retention_success
+            || input.memory_invented_state_restoration
+            || input.memory_invented_identity_binding
+            || input.memory_invented_attachment_or_citation
+            || input.memory_invented_provider_or_tool_result
+            || input.memory_claimed_unproven_completion
+            || input.memory_implied_persistence_or_mutation
+        {
+            return Stage23MemoryRetentionDisposition::NoInventionBlocked;
+        }
+        if !input.identity_retention_bounded
+            || !input.identity_user_tenant_project_scoped
+            || !input.secret_safe
+            || !input.redacted
+            || !input.stale_aware
+            || !input.revocation_aware
+            || !input.deletion_aware
+            || !input.memory_ref_present
+            || !input.identity_ref_present
+            || !input.user_scope_ref_present
+            || input.unverifiable
+            || input.stale
+            || input.revoked
+            || input.deleted
+            || input.secret_unsafe
+            || input.cross_tenant
+            || input.cross_user
+            || input.cross_project
+            || input.identity_mismatch
+            || input.user_mismatch
+            || input.tenant_mismatch
+            || input.missing_proof
+            || input.ownership_drift
+        {
+            return Stage23MemoryRetentionDisposition::IdentitySafeRetentionBlocked;
+        }
+        if !input.native_retention_declarative_only
+            || input.native_retention_mutates_state
+            || input.native_retention_connector_writes
+            || input.native_retention_dispatches_or_executes
+            || input.native_retention_calls_providers_or_tools
+            || input.native_retention_emits_tts_or_playback
+            || input.native_retention_creates_user_turn
+            || input.native_retention_treats_visible_success_as_action_success
+        {
+            return Stage23MemoryRetentionDisposition::NativeRetentionBlocked;
+        }
+        if input.protected_action_like_request
+            || input.protected_slot_or_authority_ambiguous
+            || input.unsafe_identity_posture
+            || input.memory_implies_stage12_mutation_without_proof
+        {
+            return Stage23MemoryRetentionDisposition::ProtectedRetentionBlocked;
+        }
+        if input.stale_or_revoked_or_deleted_or_superseded_output
+            || input.session_closed
+            || input.record_artifact_only_turn
+            || input.stale_identity_state
+            || input.stale_user_scope_state
+            || input.stale_tenant_scope_state
+            || !input.retention_identity_matches_current_output_session
+            || input.replay_upgrades_blocked_retention
+        {
+            return Stage23MemoryRetentionDisposition::StaleRetentionBlocked;
+        }
+
+        match input.memory_kind {
+            Stage23MemoryRetentionKind::MemoryCandidate => {
+                if input.memory_candidate_id.is_some()
+                    && input.identity_scope_id.is_some()
+                    && input.user_scope_id.is_some()
+                {
+                    Stage23MemoryRetentionDisposition::MemoryCandidateReady
+                } else {
+                    Stage23MemoryRetentionDisposition::IdentitySafeRetentionBlocked
+                }
+            }
+            Stage23MemoryRetentionKind::StatePersistencePosture => {
+                if input.retention_packet_id.is_some()
+                    && input.identity_scope_id.is_some()
+                    && input.user_scope_id.is_some()
+                {
+                    Stage23MemoryRetentionDisposition::StatePersistencePostureReady
+                } else {
+                    Stage23MemoryRetentionDisposition::IdentitySafeRetentionBlocked
+                }
+            }
+            Stage23MemoryRetentionKind::LongHorizonRecall => {
+                if input.memory_candidate_id.is_some()
+                    && input.recall_reference_id.is_some()
+                    && input.identity_scope_id.is_some()
+                    && input.user_scope_id.is_some()
+                {
+                    Stage23MemoryRetentionDisposition::LongHorizonRecallReady
+                } else {
+                    Stage23MemoryRetentionDisposition::IdentitySafeRetentionBlocked
+                }
+            }
+            Stage23MemoryRetentionKind::IdentitySafeRetention => {
+                if input.retention_packet_id.is_some()
+                    && input.memory_candidate_id.is_some()
+                    && input.identity_scope_id.is_some()
+                    && input.user_scope_id.is_some()
+                {
+                    Stage23MemoryRetentionDisposition::IdentitySafeRetentionReady
+                } else {
+                    Stage23MemoryRetentionDisposition::IdentitySafeRetentionBlocked
+                }
+            }
+            Stage23MemoryRetentionKind::RecallSelectionReference => {
+                if input.recall_reference_id.is_some()
+                    && input.identity_scope_id.is_some()
+                    && input.user_scope_id.is_some()
+                {
+                    Stage23MemoryRetentionDisposition::RecallSelectionReferenceReady
+                } else {
+                    Stage23MemoryRetentionDisposition::IdentitySafeRetentionBlocked
+                }
+            }
+        }
+    }
+
+    const fn work_authority_for(
+        disposition: Stage23MemoryRetentionDisposition,
+    ) -> Stage23MemoryRetentionWorkAuthority {
+        match disposition {
+            Stage23MemoryRetentionDisposition::MemoryCandidateReady => {
+                Stage23MemoryRetentionWorkAuthority::memory_candidate_ready()
+            }
+            Stage23MemoryRetentionDisposition::StatePersistencePostureReady => {
+                Stage23MemoryRetentionWorkAuthority::state_persistence_posture_ready()
+            }
+            Stage23MemoryRetentionDisposition::LongHorizonRecallReady => {
+                Stage23MemoryRetentionWorkAuthority::long_horizon_recall_ready()
+            }
+            Stage23MemoryRetentionDisposition::IdentitySafeRetentionReady => {
+                Stage23MemoryRetentionWorkAuthority::identity_safe_retention_ready()
+            }
+            Stage23MemoryRetentionDisposition::RecallSelectionReferenceReady => {
+                Stage23MemoryRetentionWorkAuthority::recall_selection_reference_ready()
+            }
+            _ => Stage23MemoryRetentionWorkAuthority::fail_closed(),
+        }
+    }
+}
+
+impl Validate for Stage23MemoryRetentionPacket {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        validate_stage4_optional_ref(
+            "stage23_memory_retention_packet.activation_id",
+            self.activation_id.as_deref(),
+        )?;
+        validate_stage4_ref(
+            "stage23_memory_retention_packet.response_output_id",
+            &self.response_output_id,
+        )?;
+        validate_stage4_ref(
+            "stage23_memory_retention_packet.response_hash",
+            &self.response_hash,
+        )?;
+        validate_stage4_optional_ref(
+            "stage23_memory_retention_packet.attention_state_id",
+            self.attention_state_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage23_memory_retention_packet.continuity_packet_id",
+            self.continuity_packet_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage23_memory_retention_packet.automation_candidate_id",
+            self.automation_candidate_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage23_memory_retention_packet.connector_action_stage_id",
+            self.connector_action_stage_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage23_memory_retention_packet.memory_candidate_id",
+            self.memory_candidate_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage23_memory_retention_packet.retention_packet_id",
+            self.retention_packet_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage23_memory_retention_packet.recall_reference_id",
+            self.recall_reference_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage23_memory_retention_packet.identity_scope_id",
+            self.identity_scope_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage23_memory_retention_packet.user_scope_id",
+            self.user_scope_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage23_memory_retention_packet.tenant_id",
+            self.tenant_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage23_memory_retention_packet.access_context_id",
+            self.access_context_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage23_memory_retention_packet.policy_context_id",
+            self.policy_context_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage23_memory_retention_packet.audit_id",
+            self.audit_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage23_memory_retention_packet.ph1j_proof_ref",
+            self.ph1j_proof_ref.as_deref(),
+        )?;
+        if self.reason_code != self.disposition.default_reason_code() {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage23_memory_retention_packet.reason_code",
+                reason: "must match Stage 23A memory/retention disposition",
+            });
+        }
+        if self.work_authority.can_mutate_or_execute() {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage23_memory_retention_packet.work_authority",
+                reason: "Stage 23A cannot invent retention authority, mutate persistence state, connector-write, approve, dispatch, execute, call live providers/search/tools, emit TTS/playback, create turns, or add native UI behavior",
+            });
+        }
+        if self.disposition.is_ready()
+            && (self.audit_id.is_none() || self.ph1j_proof_ref.is_none())
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage23_memory_retention_packet.audit_proof",
+                reason: "ready Stage 23A retention output requires PH1.J audit/proof refs",
+            });
+        }
+        Ok(())
+    }
+}
+
+pub fn stage23_memory_retention_symbol_anchor() {
+    let _ = Stage23MemoryRetentionKind::MemoryCandidate;
+    let _ = Stage23MemoryRetentionKind::StatePersistencePosture;
+    let _ = Stage23MemoryRetentionKind::LongHorizonRecall;
+    let _ = Stage23MemoryRetentionKind::IdentitySafeRetention;
+    let _ = Stage23MemoryRetentionKind::RecallSelectionReference;
+    let disposition = Stage23MemoryRetentionDisposition::StageInputBlocked;
+    let _ = disposition.default_reason_code();
+    let _ = disposition.is_ready();
+    let _ = Stage23MemoryRetentionWorkAuthority::fail_closed().can_mutate_or_execute();
+    let _ = Stage23MemoryRetentionWorkAuthority::memory_candidate_ready();
+    let _ = Stage23MemoryRetentionWorkAuthority::state_persistence_posture_ready();
+    let _ = Stage23MemoryRetentionWorkAuthority::long_horizon_recall_ready();
+    let _ = Stage23MemoryRetentionWorkAuthority::identity_safe_retention_ready();
+    let _ = Stage23MemoryRetentionWorkAuthority::recall_selection_reference_ready();
+    let _ = core::mem::size_of::<Stage23MemoryRetentionInput>();
+    let _ = core::mem::size_of::<Stage23MemoryRetentionPacket>();
+    let _ = Stage23MemoryRetentionPacket::from_stage15_output
+        as fn(
+            &Stage15ResponseOutputPacket,
+            Option<&Stage19NotificationAttentionPacket>,
+            Option<&Stage20ContinuityHandoffPacket>,
+            Option<&Stage21AutomationOrchestrationPacket>,
+            Option<&Stage22ConnectorOutboundPacket>,
+            Stage23MemoryRetentionInput,
+        ) -> Result<Stage23MemoryRetentionPacket, ContractViolation>;
+    let _ = Stage23MemoryRetentionPacket::can_mutate_or_execute
+        as fn(&Stage23MemoryRetentionPacket) -> bool;
+}
+const _: fn() = stage23_memory_retention_symbol_anchor;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -31938,6 +33169,509 @@ mod tests {
         runtime_mock.fixture_only_test_path = false;
         assert!(Stage22ConnectorOutboundPacket::from_stage15_output(
             &output,
+            None,
+            None,
+            None,
+            runtime_mock,
+        )
+        .is_err());
+    }
+
+    fn stage23_outbound_identity() -> super::Stage22ConnectorOutboundPacket {
+        let output = stage21_response_output_packet();
+        let attention = stage21_attention_identity();
+        let continuity = stage21_continuity_identity();
+        let automation = stage22_automation_identity();
+        let mut input = super::Stage22ConnectorOutboundInput::fixture_staged_dispatch_posture_ready(
+            "connector-stage23-chain",
+            "outbound-intent-stage23-chain",
+            "remote-target-stage23-chain",
+            "work-stage23-chain",
+            "lease-stage23-chain",
+            "device-stage23-a",
+            "audit-stage23-chain",
+        );
+        input.stage19_attention_ref_present = true;
+        input.stage19_attention_ref_non_authoritative = true;
+        input.stage20_continuity_ref_present = true;
+        input.stage20_continuity_ref_non_authoritative = true;
+        input.stage21_automation_ref_present = true;
+        input.stage21_automation_ref_non_authoritative = true;
+        super::Stage22ConnectorOutboundPacket::from_stage15_output(
+            &output,
+            Some(&attention),
+            Some(&continuity),
+            Some(&automation),
+            input,
+        )
+        .expect("stage23 outbound identity")
+    }
+
+    #[test]
+    fn stage_23a_retention_consumes_stage15_stage19_stage20_stage21_stage22_non_authoritatively() {
+        let output = stage21_response_output_packet();
+        let attention = stage21_attention_identity();
+        let continuity = stage21_continuity_identity();
+        let automation = stage22_automation_identity();
+        let outbound = stage23_outbound_identity();
+        let mut input = super::Stage23MemoryRetentionInput::fixture_memory_candidate_ready(
+            "memory-candidate-stage23-ready",
+            "identity-scope-stage23-ready",
+            "user-scope-stage23-ready",
+            "audit-stage23-ready",
+        );
+        input.stage19_attention_ref_present = true;
+        input.stage19_attention_ref_non_authoritative = true;
+        input.stage20_continuity_ref_present = true;
+        input.stage20_continuity_ref_non_authoritative = true;
+        input.stage21_automation_ref_present = true;
+        input.stage21_automation_ref_non_authoritative = true;
+        input.stage22_outbound_ref_present = true;
+        input.stage22_outbound_ref_non_authoritative = true;
+        let packet = super::Stage23MemoryRetentionPacket::from_stage15_output(
+            &output,
+            Some(&attention),
+            Some(&continuity),
+            Some(&automation),
+            Some(&outbound),
+            input,
+        )
+        .expect("stage23 memory candidate ready");
+
+        assert_eq!(
+            packet.disposition,
+            super::Stage23MemoryRetentionDisposition::MemoryCandidateReady
+        );
+        assert_eq!(
+            packet.stage19_disposition,
+            Some(Stage19NotificationAttentionDisposition::NotificationCandidateReady)
+        );
+        assert_eq!(
+            packet.stage20_disposition,
+            Some(Stage20ContinuityHandoffDisposition::SessionContinuityReady)
+        );
+        assert_eq!(
+            packet.stage21_disposition,
+            Some(Stage21AutomationOrchestrationDisposition::AutomationCandidateReady)
+        );
+        assert_eq!(
+            packet.stage22_disposition,
+            Some(super::Stage22ConnectorOutboundDisposition::StagedDispatchPostureReady)
+        );
+        assert!(packet.stage22_outbound_ref_non_authoritative);
+        assert!(packet.work_authority.can_emit_memory_candidate_packet);
+        assert!(!packet.can_mutate_or_execute());
+    }
+
+    #[test]
+    fn stage_23a_retention_packets_cannot_invent_or_claim_persistence() {
+        let output = stage21_response_output_packet();
+
+        for input in [
+            {
+                let mut input = super::Stage23MemoryRetentionInput::fixture_memory_candidate_ready(
+                    "memory-candidate-stage23-invent-fact",
+                    "identity-scope-stage23-invent-fact",
+                    "user-scope-stage23-invent-fact",
+                    "audit-stage23-invent-fact",
+                );
+                input.memory_invented_fact = true;
+                input
+            },
+            {
+                let mut input =
+                    super::Stage23MemoryRetentionInput::fixture_state_persistence_posture_ready(
+                        "retention-packet-stage23-invent-memory",
+                        "identity-scope-stage23-invent-memory",
+                        "user-scope-stage23-invent-memory",
+                        "audit-stage23-invent-memory",
+                    );
+                input.memory_invented_persisted_memory = true;
+                input
+            },
+            {
+                let mut input =
+                    super::Stage23MemoryRetentionInput::fixture_long_horizon_recall_ready(
+                        "memory-candidate-stage23-invent-recall",
+                        "recall-reference-stage23-invent-recall",
+                        "identity-scope-stage23-invent-recall",
+                        "user-scope-stage23-invent-recall",
+                        "audit-stage23-invent-recall",
+                    );
+                input.memory_invented_recall_success = true;
+                input
+            },
+            {
+                let mut input =
+                    super::Stage23MemoryRetentionInput::fixture_identity_safe_retention_ready(
+                        "retention-packet-stage23-unproven",
+                        "memory-candidate-stage23-unproven",
+                        "identity-scope-stage23-unproven",
+                        "user-scope-stage23-unproven",
+                        "audit-stage23-unproven",
+                    );
+                input.memory_claimed_unproven_completion = true;
+                input
+            },
+        ] {
+            let packet = super::Stage23MemoryRetentionPacket::from_stage15_output(
+                &output, None, None, None, None, input,
+            )
+            .expect("stage23 no-invention blocked");
+            assert_eq!(
+                packet.disposition,
+                super::Stage23MemoryRetentionDisposition::NoInventionBlocked
+            );
+            assert!(packet.work_authority.can_fail_closed);
+            assert!(!packet.can_mutate_or_execute());
+        }
+    }
+
+    #[test]
+    fn stage_23a_identity_safe_retention_requires_scoped_secret_safe_refs() {
+        let output = stage21_response_output_packet();
+        let ready = super::Stage23MemoryRetentionPacket::from_stage15_output(
+            &output,
+            None,
+            None,
+            None,
+            None,
+            super::Stage23MemoryRetentionInput::fixture_identity_safe_retention_ready(
+                "retention-packet-stage23-ready",
+                "memory-candidate-stage23-ready",
+                "identity-scope-stage23-ready",
+                "user-scope-stage23-ready",
+                "audit-stage23-retention-ready",
+            ),
+        )
+        .expect("stage23 retention ready");
+        assert_eq!(
+            ready.disposition,
+            super::Stage23MemoryRetentionDisposition::IdentitySafeRetentionReady
+        );
+        assert!(ready.work_authority.can_emit_identity_safe_retention_packet);
+        assert!(!ready.can_mutate_or_execute());
+
+        for input in [
+            {
+                let mut input = super::Stage23MemoryRetentionInput::fixture_memory_candidate_ready(
+                    "memory-candidate-stage23-unbounded",
+                    "identity-scope-stage23-unbounded",
+                    "user-scope-stage23-unbounded",
+                    "audit-stage23-unbounded",
+                );
+                input.identity_retention_bounded = false;
+                input
+            },
+            {
+                let mut input =
+                    super::Stage23MemoryRetentionInput::fixture_recall_selection_reference_ready(
+                        "recall-reference-stage23-secret",
+                        "identity-scope-stage23-secret",
+                        "user-scope-stage23-secret",
+                        "audit-stage23-secret",
+                    );
+                input.secret_unsafe = true;
+                input
+            },
+            {
+                let mut input =
+                    super::Stage23MemoryRetentionInput::fixture_state_persistence_posture_ready(
+                        "retention-packet-stage23-cross-user",
+                        "identity-scope-stage23-cross-user",
+                        "user-scope-stage23-cross-user",
+                        "audit-stage23-cross-user",
+                    );
+                input.cross_user = true;
+                input
+            },
+            {
+                let mut input =
+                    super::Stage23MemoryRetentionInput::fixture_long_horizon_recall_ready(
+                        "memory-candidate-stage23-missing-proof",
+                        "recall-reference-stage23-missing-proof",
+                        "identity-scope-stage23-missing-proof",
+                        "user-scope-stage23-missing-proof",
+                        "audit-stage23-missing-proof",
+                    );
+                input.user_scope_ref_present = false;
+                input
+            },
+            {
+                let mut input =
+                    super::Stage23MemoryRetentionInput::fixture_identity_safe_retention_ready(
+                        "retention-packet-stage23-identity-mismatch",
+                        "memory-candidate-stage23-identity-mismatch",
+                        "identity-scope-stage23-identity-mismatch",
+                        "user-scope-stage23-identity-mismatch",
+                        "audit-stage23-identity-mismatch",
+                    );
+                input.identity_mismatch = true;
+                input
+            },
+        ] {
+            let packet = super::Stage23MemoryRetentionPacket::from_stage15_output(
+                &output, None, None, None, None, input,
+            )
+            .expect("stage23 scoped refs blocked");
+            assert_eq!(
+                packet.disposition,
+                super::Stage23MemoryRetentionDisposition::IdentitySafeRetentionBlocked
+            );
+            assert!(packet.work_authority.can_fail_closed);
+            assert!(!packet.can_mutate_or_execute());
+        }
+    }
+
+    #[test]
+    fn stage_23a_native_retention_and_stale_cases_fail_closed() {
+        let output = stage21_response_output_packet();
+        let ready = super::Stage23MemoryRetentionPacket::from_stage15_output(
+            &output,
+            None,
+            None,
+            None,
+            None,
+            super::Stage23MemoryRetentionInput::fixture_recall_selection_reference_ready(
+                "recall-reference-stage23-ready",
+                "identity-scope-stage23-ready",
+                "user-scope-stage23-ready",
+                "audit-stage23-recall-ready",
+            ),
+        )
+        .expect("stage23 recall ready");
+        assert_eq!(
+            ready.disposition,
+            super::Stage23MemoryRetentionDisposition::RecallSelectionReferenceReady
+        );
+        assert!(ready.work_authority.can_emit_recall_selection_ref);
+        assert!(!ready.can_mutate_or_execute());
+
+        for input in [
+            {
+                let mut input =
+                    super::Stage23MemoryRetentionInput::fixture_memory_candidate_ready(
+                        "memory-candidate-stage23-mutate",
+                        "identity-scope-stage23-mutate",
+                        "user-scope-stage23-mutate",
+                        "audit-stage23-mutate",
+                    );
+                input.native_retention_mutates_state = true;
+                input
+            },
+            {
+                let mut input =
+                    super::Stage23MemoryRetentionInput::fixture_identity_safe_retention_ready(
+                        "retention-packet-stage23-exec",
+                        "memory-candidate-stage23-exec",
+                        "identity-scope-stage23-exec",
+                        "user-scope-stage23-exec",
+                        "audit-stage23-exec",
+                    );
+                input.native_retention_dispatches_or_executes = true;
+                input
+            },
+        ] {
+            let packet = super::Stage23MemoryRetentionPacket::from_stage15_output(
+                &output, None, None, None, None, input,
+            )
+            .expect("stage23 native blocked");
+            assert_eq!(
+                packet.disposition,
+                super::Stage23MemoryRetentionDisposition::NativeRetentionBlocked
+            );
+            assert!(packet.work_authority.can_fail_closed);
+        }
+
+        for input in [
+            {
+                let mut input =
+                    super::Stage23MemoryRetentionInput::fixture_state_persistence_posture_ready(
+                        "retention-packet-stage23-stale",
+                        "identity-scope-stage23-stale",
+                        "user-scope-stage23-stale",
+                        "audit-stage23-stale",
+                    );
+                input.stale_or_revoked_or_deleted_or_superseded_output = true;
+                input
+            },
+            {
+                let mut input =
+                    super::Stage23MemoryRetentionInput::fixture_recall_selection_reference_ready(
+                        "recall-reference-stage23-stale-identity",
+                        "identity-scope-stage23-stale-identity",
+                        "user-scope-stage23-stale-identity",
+                        "audit-stage23-stale-identity",
+                    );
+                input.stale_identity_state = true;
+                input
+            },
+            {
+                let mut input =
+                    super::Stage23MemoryRetentionInput::fixture_long_horizon_recall_ready(
+                        "memory-candidate-stage23-replay",
+                        "recall-reference-stage23-replay",
+                        "identity-scope-stage23-replay",
+                        "user-scope-stage23-replay",
+                        "audit-stage23-replay",
+                    );
+                input.replay_upgrades_blocked_retention = true;
+                input
+            },
+        ] {
+            let packet = super::Stage23MemoryRetentionPacket::from_stage15_output(
+                &output, None, None, None, None, input,
+            )
+            .expect("stage23 stale blocked");
+            assert_eq!(
+                packet.disposition,
+                super::Stage23MemoryRetentionDisposition::StaleRetentionBlocked
+            );
+            assert!(packet.work_authority.can_fail_closed);
+            assert!(!packet.can_mutate_or_execute());
+        }
+    }
+
+    #[test]
+    fn stage_23a_blocks_raw_inputs_live_paths_and_runtime_mocks() {
+        let output = stage21_response_output_packet();
+        let packet = super::Stage23MemoryRetentionPacket::from_stage15_output(
+            &output,
+            None,
+            None,
+            None,
+            None,
+            super::Stage23MemoryRetentionInput::fixture_memory_candidate_ready(
+                "memory-candidate-stage23-no-exec",
+                "identity-scope-stage23-no-exec",
+                "user-scope-stage23-no-exec",
+                "audit-stage23-no-exec",
+            ),
+        )
+        .expect("stage23 no-exec packet");
+        assert!(!packet.work_authority.can_invent_facts);
+        assert!(!packet.work_authority.can_invent_persisted_memory);
+        assert!(!packet.work_authority.can_invent_recall_success);
+        assert!(!packet.work_authority.can_invent_retention_authority);
+        assert!(!packet.work_authority.can_mutate_persistence_state);
+        assert!(!packet.work_authority.can_dispatch);
+        assert!(!packet.work_authority.can_create_user_turn);
+        assert!(!packet.work_authority.can_treat_visible_recall_or_restore_as_action_success);
+        assert!(!packet.can_mutate_or_execute());
+
+        for input in [
+            {
+                let mut input =
+                    super::Stage23MemoryRetentionInput::fixture_state_persistence_posture_ready(
+                        "retention-packet-stage23-raw-provider",
+                        "identity-scope-stage23-raw-provider",
+                        "user-scope-stage23-raw-provider",
+                        "audit-stage23-raw-provider",
+                    );
+                input.raw_provider_output_present = true;
+                input
+            },
+            {
+                let mut input =
+                    super::Stage23MemoryRetentionInput::fixture_long_horizon_recall_ready(
+                        "memory-candidate-stage23-unverified",
+                        "recall-reference-stage23-unverified",
+                        "identity-scope-stage23-unverified",
+                        "user-scope-stage23-unverified",
+                        "audit-stage23-unverified",
+                    );
+                input.unverified_source_evidence_present = true;
+                input
+            },
+            {
+                let mut input =
+                    super::Stage23MemoryRetentionInput::fixture_recall_selection_reference_ready(
+                        "recall-reference-stage23-protected",
+                        "identity-scope-stage23-protected",
+                        "user-scope-stage23-protected",
+                        "audit-stage23-protected",
+                    );
+                input.protected_action_candidate_present = true;
+                input
+            },
+            {
+                let mut input =
+                    super::Stage23MemoryRetentionInput::fixture_memory_candidate_ready(
+                        "memory-candidate-stage23-policy",
+                        "identity-scope-stage23-policy",
+                        "user-scope-stage23-policy",
+                        "audit-stage23-policy",
+                    );
+                input.policy_denied = true;
+                input
+            },
+        ] {
+            let packet = super::Stage23MemoryRetentionPacket::from_stage15_output(
+                &output, None, None, None, None, input,
+            )
+            .expect("stage23 unsafe input blocked");
+            assert_eq!(
+                packet.disposition,
+                super::Stage23MemoryRetentionDisposition::UnsafeInputBlocked
+            );
+            assert!(packet.work_authority.can_fail_closed);
+            assert!(!packet.can_mutate_or_execute());
+        }
+
+        for mut input in [
+            {
+                let mut input =
+                    super::Stage23MemoryRetentionInput::fixture_memory_candidate_ready(
+                        "memory-candidate-stage23-live-provider",
+                        "identity-scope-stage23-live-provider",
+                        "user-scope-stage23-live-provider",
+                        "audit-stage23-live-provider",
+                    );
+                input.attempted_live_provider_in_build = true;
+                input
+            },
+            {
+                let mut input =
+                    super::Stage23MemoryRetentionInput::fixture_state_persistence_posture_ready(
+                        "retention-packet-stage23-live-persistence",
+                        "identity-scope-stage23-live-persistence",
+                        "user-scope-stage23-live-persistence",
+                        "audit-stage23-live-persistence",
+                    );
+                input.ran_live_persistence_write_in_build = true;
+                input
+            },
+            {
+                let mut input =
+                    super::Stage23MemoryRetentionInput::fixture_identity_safe_retention_ready(
+                        "retention-packet-stage23-live-mutation",
+                        "memory-candidate-stage23-live-mutation",
+                        "identity-scope-stage23-live-mutation",
+                        "user-scope-stage23-live-mutation",
+                        "audit-stage23-live-mutation",
+                    );
+                input.ran_live_retention_mutation_in_build = true;
+                input
+            },
+        ] {
+            input.fixture_only_test_path = true;
+            assert!(super::Stage23MemoryRetentionPacket::from_stage15_output(
+                &output, None, None, None, None, input,
+            )
+            .is_err());
+        }
+
+        let mut runtime_mock = super::Stage23MemoryRetentionInput::fixture_memory_candidate_ready(
+            "memory-candidate-stage23-runtime-mock",
+            "identity-scope-stage23-runtime-mock",
+            "user-scope-stage23-runtime-mock",
+            "audit-stage23-runtime-mock",
+        );
+        runtime_mock.fake_memory_detected = true;
+        runtime_mock.fixture_only_test_path = false;
+        assert!(super::Stage23MemoryRetentionPacket::from_stage15_output(
+            &output,
+            None,
             None,
             None,
             None,
