@@ -25061,6 +25061,1238 @@ pub fn stage24_ingress_capture_symbol_anchor() {
 }
 const _: fn() = stage24_ingress_capture_symbol_anchor;
 
+mod stage25_reason_codes {
+    pub const TOOL_ORCHESTRATION_READY: &str = "STAGE25_TOOL_ORCHESTRATION_READY";
+    pub const MANAGED_EXECUTION_STAGING_READY: &str =
+        "STAGE25_MANAGED_EXECUTION_STAGING_READY";
+    pub const ACTION_GRAPH_BOUNDARY_READY: &str = "STAGE25_ACTION_GRAPH_BOUNDARY_READY";
+    pub const STAGED_TOOL_INVOCATION_POSTURE_READY: &str =
+        "STAGE25_STAGED_TOOL_INVOCATION_POSTURE_READY";
+    pub const EXECUTION_PLAN_CONTINUITY_REFERENCE_READY: &str =
+        "STAGE25_EXECUTION_PLAN_CONTINUITY_REFERENCE_READY";
+    pub const STAGE_INPUT_BLOCKED: &str = "STAGE25_STAGE_INPUT_BLOCKED";
+    pub const NO_INVENTION_BLOCKED: &str = "STAGE25_NO_INVENTION_BLOCKED";
+    pub const MANAGED_EXECUTION_STAGE_BLOCKED: &str = "STAGE25_MANAGED_EXECUTION_STAGE_BLOCKED";
+    pub const NATIVE_ORCHESTRATION_BLOCKED: &str = "STAGE25_NATIVE_ORCHESTRATION_BLOCKED";
+    pub const PROTECTED_ORCHESTRATION_BLOCKED: &str =
+        "STAGE25_PROTECTED_ORCHESTRATION_BLOCKED";
+    pub const STALE_ORCHESTRATION_BLOCKED: &str = "STAGE25_STALE_ORCHESTRATION_BLOCKED";
+    pub const UNSAFE_INPUT_BLOCKED: &str = "STAGE25_UNSAFE_INPUT_BLOCKED";
+    pub const RUNTIME_MOCK_BLOCKED: &str = "STAGE25_RUNTIME_MOCK_BLOCKED";
+    pub const AUDIT_PROOF_MISSING: &str = "STAGE25_AUDIT_PROOF_MISSING";
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stage25ToolOrchestrationKind {
+    ToolOrchestration,
+    ManagedExecutionStaging,
+    ActionGraphBoundary,
+    StagedToolInvocationPosture,
+    ExecutionPlanContinuityReference,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stage25ToolOrchestrationDisposition {
+    ToolOrchestrationReady,
+    ManagedExecutionStagingReady,
+    ActionGraphBoundaryReady,
+    StagedToolInvocationPostureReady,
+    ExecutionPlanContinuityReferenceReady,
+    StageInputBlocked,
+    NoInventionBlocked,
+    ManagedExecutionStageBlocked,
+    NativeOrchestrationBlocked,
+    ProtectedOrchestrationBlocked,
+    StaleOrchestrationBlocked,
+    UnsafeInputBlocked,
+    RuntimeMockBlocked,
+    AuditProofMissing,
+}
+
+impl Stage25ToolOrchestrationDisposition {
+    pub const fn default_reason_code(self) -> &'static str {
+        match self {
+            Self::ToolOrchestrationReady => stage25_reason_codes::TOOL_ORCHESTRATION_READY,
+            Self::ManagedExecutionStagingReady => {
+                stage25_reason_codes::MANAGED_EXECUTION_STAGING_READY
+            }
+            Self::ActionGraphBoundaryReady => stage25_reason_codes::ACTION_GRAPH_BOUNDARY_READY,
+            Self::StagedToolInvocationPostureReady => {
+                stage25_reason_codes::STAGED_TOOL_INVOCATION_POSTURE_READY
+            }
+            Self::ExecutionPlanContinuityReferenceReady => {
+                stage25_reason_codes::EXECUTION_PLAN_CONTINUITY_REFERENCE_READY
+            }
+            Self::StageInputBlocked => stage25_reason_codes::STAGE_INPUT_BLOCKED,
+            Self::NoInventionBlocked => stage25_reason_codes::NO_INVENTION_BLOCKED,
+            Self::ManagedExecutionStageBlocked => {
+                stage25_reason_codes::MANAGED_EXECUTION_STAGE_BLOCKED
+            }
+            Self::NativeOrchestrationBlocked => {
+                stage25_reason_codes::NATIVE_ORCHESTRATION_BLOCKED
+            }
+            Self::ProtectedOrchestrationBlocked => {
+                stage25_reason_codes::PROTECTED_ORCHESTRATION_BLOCKED
+            }
+            Self::StaleOrchestrationBlocked => {
+                stage25_reason_codes::STALE_ORCHESTRATION_BLOCKED
+            }
+            Self::UnsafeInputBlocked => stage25_reason_codes::UNSAFE_INPUT_BLOCKED,
+            Self::RuntimeMockBlocked => stage25_reason_codes::RUNTIME_MOCK_BLOCKED,
+            Self::AuditProofMissing => stage25_reason_codes::AUDIT_PROOF_MISSING,
+        }
+    }
+
+    pub const fn is_ready(self) -> bool {
+        matches!(
+            self,
+            Self::ToolOrchestrationReady
+                | Self::ManagedExecutionStagingReady
+                | Self::ActionGraphBoundaryReady
+                | Self::StagedToolInvocationPostureReady
+                | Self::ExecutionPlanContinuityReferenceReady
+        )
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Stage25ToolOrchestrationWorkAuthority {
+    pub can_emit_tool_orchestration_packet: bool,
+    pub can_emit_managed_execution_staging_packet: bool,
+    pub can_emit_action_graph_boundary_packet: bool,
+    pub can_emit_staged_tool_invocation_packet: bool,
+    pub can_emit_execution_plan_continuity_ref: bool,
+    pub can_fail_closed: bool,
+    pub can_invent_facts: bool,
+    pub can_invent_tool_success: bool,
+    pub can_invent_dispatch_success: bool,
+    pub can_invent_execution_authority: bool,
+    pub can_route: bool,
+    pub can_approve: bool,
+    pub can_dispatch: bool,
+    pub can_execute: bool,
+    pub can_create_user_turn: bool,
+    pub can_treat_visible_staging_as_action_success: bool,
+}
+
+impl Stage25ToolOrchestrationWorkAuthority {
+    pub const fn fail_closed() -> Self {
+        Self {
+            can_emit_tool_orchestration_packet: false,
+            can_emit_managed_execution_staging_packet: false,
+            can_emit_action_graph_boundary_packet: false,
+            can_emit_staged_tool_invocation_packet: false,
+            can_emit_execution_plan_continuity_ref: false,
+            can_fail_closed: true,
+            can_invent_facts: false,
+            can_invent_tool_success: false,
+            can_invent_dispatch_success: false,
+            can_invent_execution_authority: false,
+            can_route: false,
+            can_approve: false,
+            can_dispatch: false,
+            can_execute: false,
+            can_create_user_turn: false,
+            can_treat_visible_staging_as_action_success: false,
+        }
+    }
+
+    pub const fn tool_orchestration_ready() -> Self {
+        let mut authority = Self::fail_closed();
+        authority.can_emit_tool_orchestration_packet = true;
+        authority
+    }
+
+    pub const fn managed_execution_staging_ready() -> Self {
+        let mut authority = Self::fail_closed();
+        authority.can_emit_managed_execution_staging_packet = true;
+        authority
+    }
+
+    pub const fn action_graph_boundary_ready() -> Self {
+        let mut authority = Self::fail_closed();
+        authority.can_emit_action_graph_boundary_packet = true;
+        authority
+    }
+
+    pub const fn staged_tool_invocation_posture_ready() -> Self {
+        let mut authority = Self::fail_closed();
+        authority.can_emit_staged_tool_invocation_packet = true;
+        authority
+    }
+
+    pub const fn execution_plan_continuity_reference_ready() -> Self {
+        let mut authority = Self::fail_closed();
+        authority.can_emit_execution_plan_continuity_ref = true;
+        authority
+    }
+
+    pub const fn can_mutate_or_execute(&self) -> bool {
+        self.can_invent_facts
+            || self.can_invent_tool_success
+            || self.can_invent_dispatch_success
+            || self.can_invent_execution_authority
+            || self.can_route
+            || self.can_approve
+            || self.can_dispatch
+            || self.can_execute
+            || self.can_create_user_turn
+            || self.can_treat_visible_staging_as_action_success
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Stage25ToolOrchestrationInput {
+    pub orchestration_kind: Stage25ToolOrchestrationKind,
+    pub orchestration_stage_id: Option<String>,
+    pub action_graph_id: Option<String>,
+    pub tool_invocation_stage_id: Option<String>,
+    pub execution_plan_ref: Option<String>,
+    pub work_id: Option<String>,
+    pub lease_id: Option<String>,
+    pub device_id: Option<String>,
+    pub audit_id: Option<String>,
+    pub ph1j_proof_ref: Option<String>,
+    pub stage20_continuity_ref_present: bool,
+    pub stage20_continuity_ref_non_authoritative: bool,
+    pub stage21_automation_ref_present: bool,
+    pub stage21_automation_ref_non_authoritative: bool,
+    pub stage22_outbound_ref_present: bool,
+    pub stage22_outbound_ref_non_authoritative: bool,
+    pub stage23_memory_ref_present: bool,
+    pub stage23_memory_ref_non_authoritative: bool,
+    pub stage24_ingress_ref_present: bool,
+    pub stage24_ingress_ref_non_authoritative: bool,
+    pub stage11_route_ref_present: bool,
+    pub stage11_route_non_executing_context: bool,
+    pub stage12_gate_ref_present: bool,
+    pub stage12_gate_inspect_only_context: bool,
+    pub orchestration_bounded: bool,
+    pub tenant_user_device_session_scoped: bool,
+    pub uncertainty_preserved: bool,
+    pub orchestration_invented_fact: bool,
+    pub orchestration_invented_tool_success: bool,
+    pub orchestration_invented_staged_execution_success: bool,
+    pub orchestration_invented_action_graph_completion: bool,
+    pub orchestration_invented_approval: bool,
+    pub orchestration_invented_dispatch_success: bool,
+    pub orchestration_invented_remote_completion: bool,
+    pub orchestration_invented_work_or_lease_authority: bool,
+    pub orchestration_invented_attachment_or_citation: bool,
+    pub orchestration_invented_provider_or_tool_result: bool,
+    pub orchestration_claimed_unproven_completion: bool,
+    pub orchestration_implied_routing_or_mutation: bool,
+    pub secret_safe: bool,
+    pub redacted: bool,
+    pub stale_aware: bool,
+    pub revocation_aware: bool,
+    pub orchestration_ref_present: bool,
+    pub action_graph_ref_present: bool,
+    pub tool_route_ref_present: bool,
+    pub execution_plan_ref_present: bool,
+    pub work_ref_present: bool,
+    pub lease_ref_present: bool,
+    pub unverifiable: bool,
+    pub stale: bool,
+    pub secret_unsafe: bool,
+    pub cross_tenant: bool,
+    pub cross_route: bool,
+    pub route_mismatch: bool,
+    pub action_graph_mismatch: bool,
+    pub lease_mismatch: bool,
+    pub tenant_mismatch: bool,
+    pub missing_proof: bool,
+    pub ownership_drift: bool,
+    pub native_orchestration_declarative_only: bool,
+    pub native_orchestration_mutates_state: bool,
+    pub native_orchestration_connector_writes: bool,
+    pub native_orchestration_dispatches_or_executes: bool,
+    pub native_orchestration_calls_providers_or_tools: bool,
+    pub native_orchestration_emits_tts_or_playback: bool,
+    pub native_orchestration_creates_user_turn: bool,
+    pub native_orchestration_treats_visible_staging_as_action_success: bool,
+    pub protected_action_like_request: bool,
+    pub protected_slot_or_authority_ambiguous: bool,
+    pub unsafe_identity_posture: bool,
+    pub orchestration_implies_stage12_routing_or_execution_without_proof: bool,
+    pub stale_or_cancelled_or_superseded_output: bool,
+    pub session_closed: bool,
+    pub record_artifact_only_turn: bool,
+    pub stale_orchestration_state: bool,
+    pub stale_work_state: bool,
+    pub stale_lease_state: bool,
+    pub stale_route_state: bool,
+    pub orchestration_identity_matches_current_output_session: bool,
+    pub replay_upgrades_blocked_staging: bool,
+    pub fake_orchestration_detected: bool,
+    pub fake_tool_detected: bool,
+    pub fake_staged_execution_detected: bool,
+    pub fake_action_graph_detected: bool,
+    pub fake_approval_detected: bool,
+    pub runtime_mock_detected: bool,
+    pub raw_provider_output_present: bool,
+    pub raw_search_dump_present: bool,
+    pub raw_media_present: bool,
+    pub raw_connector_credential_field_present: bool,
+    pub unverified_source_evidence_present: bool,
+    pub unsupported_claim_candidate_present: bool,
+    pub fake_orchestration_source_carrier_present: bool,
+    pub attention_continuity_automation_outbound_memory_ingress_used_as_truth_authority: bool,
+    pub protected_action_candidate_present: bool,
+    pub simulation_candidate_present: bool,
+    pub approved_execution_plan_present: bool,
+    pub secrets_exposed: bool,
+    pub raw_biometric_material_exposed: bool,
+    pub internal_trace_exposed: bool,
+    pub access_denied: bool,
+    pub policy_denied: bool,
+    pub attempted_live_provider_in_build: bool,
+    pub generated_live_media_in_build: bool,
+    pub ran_live_search_in_build: bool,
+    pub called_live_external_tool_in_build: bool,
+    pub connector_write_requested: bool,
+    pub ran_live_notification_delivery_in_build: bool,
+    pub ran_live_background_execution_in_build: bool,
+    pub ran_live_tool_dispatch_in_build: bool,
+    pub ran_live_managed_execution_in_build: bool,
+    pub ran_live_action_graph_execution_in_build: bool,
+    pub ran_live_tts_or_playback_in_build: bool,
+    pub captured_microphone_audio: bool,
+    pub transcribed_live_audio: bool,
+    pub voice_id_matching_attempted: bool,
+    pub native_ui_behavior_added: bool,
+    pub fixture_only_test_path: bool,
+}
+
+impl Stage25ToolOrchestrationInput {
+    #[cfg(test)]
+    fn fixture_base(
+        orchestration_kind: Stage25ToolOrchestrationKind,
+        audit_id: impl Into<String>,
+    ) -> Self {
+        Self {
+            orchestration_kind,
+            orchestration_stage_id: Some("orchestration-stage25".to_string()),
+            action_graph_id: Some("action-graph-stage25".to_string()),
+            tool_invocation_stage_id: Some("tool-invocation-stage25".to_string()),
+            execution_plan_ref: Some("execution-plan-stage25".to_string()),
+            work_id: Some("work-stage25".to_string()),
+            lease_id: Some("lease-stage25".to_string()),
+            device_id: Some("device-stage25".to_string()),
+            audit_id: Some(audit_id.into()),
+            ph1j_proof_ref: Some("audit-proof-stage25".to_string()),
+            stage20_continuity_ref_present: false,
+            stage20_continuity_ref_non_authoritative: false,
+            stage21_automation_ref_present: false,
+            stage21_automation_ref_non_authoritative: false,
+            stage22_outbound_ref_present: false,
+            stage22_outbound_ref_non_authoritative: false,
+            stage23_memory_ref_present: false,
+            stage23_memory_ref_non_authoritative: false,
+            stage24_ingress_ref_present: false,
+            stage24_ingress_ref_non_authoritative: false,
+            stage11_route_ref_present: true,
+            stage11_route_non_executing_context: true,
+            stage12_gate_ref_present: false,
+            stage12_gate_inspect_only_context: true,
+            orchestration_bounded: true,
+            tenant_user_device_session_scoped: true,
+            uncertainty_preserved: true,
+            orchestration_invented_fact: false,
+            orchestration_invented_tool_success: false,
+            orchestration_invented_staged_execution_success: false,
+            orchestration_invented_action_graph_completion: false,
+            orchestration_invented_approval: false,
+            orchestration_invented_dispatch_success: false,
+            orchestration_invented_remote_completion: false,
+            orchestration_invented_work_or_lease_authority: false,
+            orchestration_invented_attachment_or_citation: false,
+            orchestration_invented_provider_or_tool_result: false,
+            orchestration_claimed_unproven_completion: false,
+            orchestration_implied_routing_or_mutation: false,
+            secret_safe: true,
+            redacted: true,
+            stale_aware: true,
+            revocation_aware: true,
+            orchestration_ref_present: true,
+            action_graph_ref_present: true,
+            tool_route_ref_present: true,
+            execution_plan_ref_present: true,
+            work_ref_present: true,
+            lease_ref_present: true,
+            unverifiable: false,
+            stale: false,
+            secret_unsafe: false,
+            cross_tenant: false,
+            cross_route: false,
+            route_mismatch: false,
+            action_graph_mismatch: false,
+            lease_mismatch: false,
+            tenant_mismatch: false,
+            missing_proof: false,
+            ownership_drift: false,
+            native_orchestration_declarative_only: true,
+            native_orchestration_mutates_state: false,
+            native_orchestration_connector_writes: false,
+            native_orchestration_dispatches_or_executes: false,
+            native_orchestration_calls_providers_or_tools: false,
+            native_orchestration_emits_tts_or_playback: false,
+            native_orchestration_creates_user_turn: false,
+            native_orchestration_treats_visible_staging_as_action_success: false,
+            protected_action_like_request: false,
+            protected_slot_or_authority_ambiguous: false,
+            unsafe_identity_posture: false,
+            orchestration_implies_stage12_routing_or_execution_without_proof: false,
+            stale_or_cancelled_or_superseded_output: false,
+            session_closed: false,
+            record_artifact_only_turn: false,
+            stale_orchestration_state: false,
+            stale_work_state: false,
+            stale_lease_state: false,
+            stale_route_state: false,
+            orchestration_identity_matches_current_output_session: true,
+            replay_upgrades_blocked_staging: false,
+            fake_orchestration_detected: false,
+            fake_tool_detected: false,
+            fake_staged_execution_detected: false,
+            fake_action_graph_detected: false,
+            fake_approval_detected: false,
+            runtime_mock_detected: false,
+            raw_provider_output_present: false,
+            raw_search_dump_present: false,
+            raw_media_present: false,
+            raw_connector_credential_field_present: false,
+            unverified_source_evidence_present: false,
+            unsupported_claim_candidate_present: false,
+            fake_orchestration_source_carrier_present: false,
+            attention_continuity_automation_outbound_memory_ingress_used_as_truth_authority: false,
+            protected_action_candidate_present: false,
+            simulation_candidate_present: false,
+            approved_execution_plan_present: false,
+            secrets_exposed: false,
+            raw_biometric_material_exposed: false,
+            internal_trace_exposed: false,
+            access_denied: false,
+            policy_denied: false,
+            attempted_live_provider_in_build: false,
+            generated_live_media_in_build: false,
+            ran_live_search_in_build: false,
+            called_live_external_tool_in_build: false,
+            connector_write_requested: false,
+            ran_live_notification_delivery_in_build: false,
+            ran_live_background_execution_in_build: false,
+            ran_live_tool_dispatch_in_build: false,
+            ran_live_managed_execution_in_build: false,
+            ran_live_action_graph_execution_in_build: false,
+            ran_live_tts_or_playback_in_build: false,
+            captured_microphone_audio: false,
+            transcribed_live_audio: false,
+            voice_id_matching_attempted: false,
+            native_ui_behavior_added: false,
+            fixture_only_test_path: true,
+        }
+    }
+
+    #[cfg(test)]
+    pub fn fixture_tool_orchestration_ready(
+        orchestration_stage_id: impl Into<String>,
+        tool_invocation_stage_id: impl Into<String>,
+        execution_plan_ref: impl Into<String>,
+        audit_id: impl Into<String>,
+    ) -> Self {
+        let mut input =
+            Self::fixture_base(Stage25ToolOrchestrationKind::ToolOrchestration, audit_id);
+        input.orchestration_stage_id = Some(orchestration_stage_id.into());
+        input.tool_invocation_stage_id = Some(tool_invocation_stage_id.into());
+        input.execution_plan_ref = Some(execution_plan_ref.into());
+        input.action_graph_id = None;
+        input
+    }
+
+    #[cfg(test)]
+    pub fn fixture_managed_execution_staging_ready(
+        orchestration_stage_id: impl Into<String>,
+        execution_plan_ref: impl Into<String>,
+        work_id: impl Into<String>,
+        lease_id: impl Into<String>,
+        audit_id: impl Into<String>,
+    ) -> Self {
+        let mut input =
+            Self::fixture_base(Stage25ToolOrchestrationKind::ManagedExecutionStaging, audit_id);
+        input.orchestration_stage_id = Some(orchestration_stage_id.into());
+        input.execution_plan_ref = Some(execution_plan_ref.into());
+        input.work_id = Some(work_id.into());
+        input.lease_id = Some(lease_id.into());
+        input.tool_invocation_stage_id = None;
+        input
+    }
+
+    #[cfg(test)]
+    pub fn fixture_action_graph_boundary_ready(
+        orchestration_stage_id: impl Into<String>,
+        action_graph_id: impl Into<String>,
+        execution_plan_ref: impl Into<String>,
+        audit_id: impl Into<String>,
+    ) -> Self {
+        let mut input =
+            Self::fixture_base(Stage25ToolOrchestrationKind::ActionGraphBoundary, audit_id);
+        input.orchestration_stage_id = Some(orchestration_stage_id.into());
+        input.action_graph_id = Some(action_graph_id.into());
+        input.execution_plan_ref = Some(execution_plan_ref.into());
+        input.tool_invocation_stage_id = None;
+        input.work_id = None;
+        input.lease_id = None;
+        input
+    }
+
+    #[cfg(test)]
+    pub fn fixture_staged_tool_invocation_posture_ready(
+        orchestration_stage_id: impl Into<String>,
+        tool_invocation_stage_id: impl Into<String>,
+        action_graph_id: impl Into<String>,
+        audit_id: impl Into<String>,
+    ) -> Self {
+        let mut input = Self::fixture_base(
+            Stage25ToolOrchestrationKind::StagedToolInvocationPosture,
+            audit_id,
+        );
+        input.orchestration_stage_id = Some(orchestration_stage_id.into());
+        input.tool_invocation_stage_id = Some(tool_invocation_stage_id.into());
+        input.action_graph_id = Some(action_graph_id.into());
+        input.execution_plan_ref = None;
+        input.work_id = None;
+        input.lease_id = None;
+        input.execution_plan_ref_present = false;
+        input.work_ref_present = false;
+        input.lease_ref_present = false;
+        input
+    }
+
+    #[cfg(test)]
+    pub fn fixture_execution_plan_continuity_reference_ready(
+        execution_plan_ref: impl Into<String>,
+        work_id: impl Into<String>,
+        lease_id: impl Into<String>,
+        audit_id: impl Into<String>,
+    ) -> Self {
+        let mut input = Self::fixture_base(
+            Stage25ToolOrchestrationKind::ExecutionPlanContinuityReference,
+            audit_id,
+        );
+        input.execution_plan_ref = Some(execution_plan_ref.into());
+        input.work_id = Some(work_id.into());
+        input.lease_id = Some(lease_id.into());
+        input.orchestration_stage_id = None;
+        input.action_graph_id = None;
+        input.tool_invocation_stage_id = None;
+        input.orchestration_ref_present = false;
+        input.action_graph_ref_present = false;
+        input.tool_route_ref_present = false;
+        input
+    }
+}
+
+impl Validate for Stage25ToolOrchestrationInput {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        validate_stage4_optional_ref(
+            "stage25_tool_orchestration_input.orchestration_stage_id",
+            self.orchestration_stage_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage25_tool_orchestration_input.action_graph_id",
+            self.action_graph_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage25_tool_orchestration_input.tool_invocation_stage_id",
+            self.tool_invocation_stage_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage25_tool_orchestration_input.execution_plan_ref",
+            self.execution_plan_ref.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage25_tool_orchestration_input.work_id",
+            self.work_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage25_tool_orchestration_input.lease_id",
+            self.lease_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage25_tool_orchestration_input.device_id",
+            self.device_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage25_tool_orchestration_input.audit_id",
+            self.audit_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage25_tool_orchestration_input.ph1j_proof_ref",
+            self.ph1j_proof_ref.as_deref(),
+        )?;
+        if self.attempted_live_provider_in_build
+            || self.generated_live_media_in_build
+            || self.ran_live_search_in_build
+            || self.called_live_external_tool_in_build
+            || self.connector_write_requested
+            || self.ran_live_notification_delivery_in_build
+            || self.ran_live_background_execution_in_build
+            || self.ran_live_tool_dispatch_in_build
+            || self.ran_live_managed_execution_in_build
+            || self.ran_live_action_graph_execution_in_build
+            || self.ran_live_tts_or_playback_in_build
+            || self.captured_microphone_audio
+            || self.transcribed_live_audio
+            || self.voice_id_matching_attempted
+            || self.native_ui_behavior_added
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage25_tool_orchestration_input.no_live_build",
+                reason: "Stage 25A cannot call live providers/search/tools, dispatch live tools, execute managed work, execute action graphs, connector-write, emit TTS/playback, capture/transcribe audio, match Voice ID, or add native UI",
+            });
+        }
+        if (self.runtime_mock_detected
+            || self.fake_orchestration_detected
+            || self.fake_tool_detected
+            || self.fake_staged_execution_detected
+            || self.fake_action_graph_detected
+            || self.fake_approval_detected)
+            && !self.fixture_only_test_path
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage25_tool_orchestration_input.runtime_mock",
+                reason: "runtime mocks and fake orchestration/tool/staged-execution/action-graph/approval success are forbidden outside explicit fixture-only paths",
+            });
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Stage25ToolOrchestrationPacket {
+    pub session_id: SessionId,
+    pub turn_id: Option<TurnId>,
+    pub activation_id: Option<String>,
+    pub continuity_packet_id: Option<String>,
+    pub automation_candidate_id: Option<String>,
+    pub connector_action_stage_id: Option<String>,
+    pub memory_candidate_id: Option<String>,
+    pub capture_session_id: Option<String>,
+    pub orchestration_stage_id: Option<String>,
+    pub action_graph_id: Option<String>,
+    pub tool_invocation_stage_id: Option<String>,
+    pub execution_plan_ref: Option<String>,
+    pub work_id: Option<String>,
+    pub lease_id: Option<String>,
+    pub device_id: Option<String>,
+    pub access_context_id: Option<String>,
+    pub policy_context_id: Option<String>,
+    pub tenant_id: Option<String>,
+    pub audit_id: Option<String>,
+    pub ph1j_proof_ref: Option<String>,
+    pub orchestration_kind: Stage25ToolOrchestrationKind,
+    pub reason_code: &'static str,
+    pub disposition: Stage25ToolOrchestrationDisposition,
+    pub stage11_disposition: Stage11RouterDisposition,
+    pub stage12_disposition: Option<Stage12ProtectedActionDisposition>,
+    pub stage20_disposition: Option<Stage20ContinuityHandoffDisposition>,
+    pub stage21_disposition: Option<Stage21AutomationOrchestrationDisposition>,
+    pub stage22_disposition: Option<Stage22ConnectorOutboundDisposition>,
+    pub stage23_disposition: Option<Stage23MemoryRetentionDisposition>,
+    pub stage24_disposition: Option<Stage24IngressCaptureDisposition>,
+    pub stage20_continuity_ref_non_authoritative: bool,
+    pub stage21_automation_ref_non_authoritative: bool,
+    pub stage22_outbound_ref_non_authoritative: bool,
+    pub stage23_memory_ref_non_authoritative: bool,
+    pub stage24_ingress_ref_non_authoritative: bool,
+    pub orchestration_bounded: bool,
+    pub tenant_user_device_session_scoped: bool,
+    pub uncertainty_preserved: bool,
+    pub orchestration_invented_fact: bool,
+    pub orchestration_invented_tool_success: bool,
+    pub orchestration_invented_staged_execution_success: bool,
+    pub orchestration_invented_action_graph_completion: bool,
+    pub orchestration_invented_approval: bool,
+    pub orchestration_invented_dispatch_success: bool,
+    pub orchestration_invented_remote_completion: bool,
+    pub orchestration_invented_work_or_lease_authority: bool,
+    pub orchestration_invented_attachment_or_citation: bool,
+    pub orchestration_invented_provider_or_tool_result: bool,
+    pub orchestration_claimed_unproven_completion: bool,
+    pub orchestration_implied_routing_or_mutation: bool,
+    pub secret_safe: bool,
+    pub redacted: bool,
+    pub stale_aware: bool,
+    pub revocation_aware: bool,
+    pub orchestration_ref_present: bool,
+    pub action_graph_ref_present: bool,
+    pub tool_route_ref_present: bool,
+    pub execution_plan_ref_present: bool,
+    pub work_ref_present: bool,
+    pub lease_ref_present: bool,
+    pub unverifiable: bool,
+    pub stale: bool,
+    pub secret_unsafe: bool,
+    pub cross_tenant: bool,
+    pub cross_route: bool,
+    pub route_mismatch: bool,
+    pub action_graph_mismatch: bool,
+    pub lease_mismatch: bool,
+    pub tenant_mismatch: bool,
+    pub missing_proof: bool,
+    pub ownership_drift: bool,
+    pub native_orchestration_declarative_only: bool,
+    pub native_orchestration_mutates_state: bool,
+    pub native_orchestration_connector_writes: bool,
+    pub native_orchestration_dispatches_or_executes: bool,
+    pub native_orchestration_calls_providers_or_tools: bool,
+    pub native_orchestration_emits_tts_or_playback: bool,
+    pub native_orchestration_creates_user_turn: bool,
+    pub native_orchestration_treats_visible_staging_as_action_success: bool,
+    pub protected_action_like_request: bool,
+    pub protected_slot_or_authority_ambiguous: bool,
+    pub unsafe_identity_posture: bool,
+    pub orchestration_implies_stage12_routing_or_execution_without_proof: bool,
+    pub stale_or_cancelled_or_superseded_output: bool,
+    pub session_closed: bool,
+    pub record_artifact_only_turn: bool,
+    pub stale_orchestration_state: bool,
+    pub stale_work_state: bool,
+    pub stale_lease_state: bool,
+    pub stale_route_state: bool,
+    pub orchestration_identity_matches_current_output_session: bool,
+    pub replay_upgrades_blocked_staging: bool,
+    pub fake_orchestration_detected: bool,
+    pub fake_tool_detected: bool,
+    pub fake_staged_execution_detected: bool,
+    pub fake_action_graph_detected: bool,
+    pub fake_approval_detected: bool,
+    pub runtime_mock_detected: bool,
+    pub raw_provider_output_present: bool,
+    pub raw_search_dump_present: bool,
+    pub raw_media_present: bool,
+    pub raw_connector_credential_field_present: bool,
+    pub unverified_source_evidence_present: bool,
+    pub unsupported_claim_candidate_present: bool,
+    pub fake_orchestration_source_carrier_present: bool,
+    pub attention_continuity_automation_outbound_memory_ingress_used_as_truth_authority: bool,
+    pub protected_action_candidate_present: bool,
+    pub simulation_candidate_present: bool,
+    pub approved_execution_plan_present: bool,
+    pub secrets_exposed: bool,
+    pub raw_biometric_material_exposed: bool,
+    pub internal_trace_exposed: bool,
+    pub access_denied: bool,
+    pub policy_denied: bool,
+    pub work_authority: Stage25ToolOrchestrationWorkAuthority,
+}
+
+impl Stage25ToolOrchestrationPacket {
+    #[allow(clippy::too_many_arguments)]
+    pub fn from_stage11_route(
+        route: &Stage11ReasoningRouterPacket,
+        stage12_gate: Option<&Stage12ProtectedActionGatePacket>,
+        continuity_output: Option<&Stage20ContinuityHandoffPacket>,
+        automation_output: Option<&Stage21AutomationOrchestrationPacket>,
+        outbound_output: Option<&Stage22ConnectorOutboundPacket>,
+        memory_output: Option<&Stage23MemoryRetentionPacket>,
+        ingress_output: Option<&Stage24IngressCapturePacket>,
+        input: Stage25ToolOrchestrationInput,
+    ) -> Result<Self, ContractViolation> {
+        route.validate()?;
+        if let Some(stage12_gate) = stage12_gate {
+            stage12_gate.validate()?;
+            if stage12_gate.reasoning_id != route.reasoning_id || stage12_gate.router_id != route.router_id
+            {
+                return Err(ContractViolation::InvalidValue {
+                    field: "stage25_tool_orchestration_packet.stage12_gate",
+                    reason: "Stage 25A Stage 12 continuity must reference the same Stage 11 route",
+                });
+            }
+        }
+        if let Some(continuity_output) = continuity_output {
+            continuity_output.validate()?;
+        }
+        if let Some(automation_output) = automation_output {
+            automation_output.validate()?;
+        }
+        if let Some(outbound_output) = outbound_output {
+            outbound_output.validate()?;
+        }
+        if let Some(memory_output) = memory_output {
+            memory_output.validate()?;
+        }
+        if let Some(ingress_output) = ingress_output {
+            ingress_output.validate()?;
+        }
+        input.validate()?;
+        let disposition = Self::decide_disposition(route, stage12_gate, &input);
+        let work_authority = Self::work_authority_for(disposition);
+        let packet = Self {
+            session_id: route.session_id,
+            turn_id: route.turn_id,
+            activation_id: route.activation_id.clone(),
+            continuity_packet_id: continuity_output.map(|output| output.continuity_packet_id.clone()),
+            automation_candidate_id: automation_output
+                .and_then(|output| output.automation_candidate_id.clone()),
+            connector_action_stage_id: outbound_output
+                .and_then(|output| output.connector_action_stage_id.clone()),
+            memory_candidate_id: memory_output
+                .and_then(|output| output.memory_candidate_id.clone()),
+            capture_session_id: ingress_output
+                .and_then(|output| output.capture_session_id.clone()),
+            orchestration_stage_id: input.orchestration_stage_id.clone(),
+            action_graph_id: input.action_graph_id.clone(),
+            tool_invocation_stage_id: input.tool_invocation_stage_id.clone(),
+            execution_plan_ref: input.execution_plan_ref.clone().or_else(|| {
+                stage12_gate.and_then(|gate| gate.approved_execution_plan_id.clone())
+            }),
+            work_id: input.work_id.clone().or_else(|| stage12_gate.and_then(|gate| gate.work_id.clone())),
+            lease_id: input.lease_id.clone().or_else(|| stage12_gate.and_then(|gate| gate.lease_id.clone())),
+            device_id: input.device_id.clone().or_else(|| ingress_output.and_then(|output| output.device_id.clone())),
+            access_context_id: route.access_context_id.clone(),
+            policy_context_id: stage12_gate
+                .and_then(|gate| gate.policy_context_id.clone())
+                .or_else(|| outbound_output.and_then(|output| output.policy_context_id.clone()))
+                .or_else(|| memory_output.and_then(|output| output.policy_context_id.clone())),
+            tenant_id: stage12_gate
+                .and_then(|gate| gate.tenant_id.clone())
+                .or_else(|| outbound_output.and_then(|output| output.tenant_id.clone()))
+                .or_else(|| memory_output.and_then(|output| output.tenant_id.clone()))
+                .or_else(|| ingress_output.and_then(|output| output.tenant_id.clone())),
+            audit_id: input
+                .audit_id
+                .clone()
+                .or_else(|| stage12_gate.and_then(|gate| gate.audit_id.clone()))
+                .or_else(|| route.audit_id.clone()),
+            ph1j_proof_ref: input
+                .ph1j_proof_ref
+                .clone()
+                .or_else(|| stage12_gate.and_then(|gate| gate.ph1j_proof_ref.clone()))
+                .or_else(|| route.audit_id.clone()),
+            orchestration_kind: input.orchestration_kind,
+            reason_code: disposition.default_reason_code(),
+            disposition,
+            stage11_disposition: route.disposition,
+            stage12_disposition: stage12_gate.map(|gate| gate.disposition),
+            stage20_disposition: continuity_output.map(|output| output.disposition),
+            stage21_disposition: automation_output.map(|output| output.disposition),
+            stage22_disposition: outbound_output.map(|output| output.disposition),
+            stage23_disposition: memory_output.map(|output| output.disposition),
+            stage24_disposition: ingress_output.map(|output| output.disposition),
+            stage20_continuity_ref_non_authoritative: input.stage20_continuity_ref_non_authoritative,
+            stage21_automation_ref_non_authoritative: input.stage21_automation_ref_non_authoritative,
+            stage22_outbound_ref_non_authoritative: input.stage22_outbound_ref_non_authoritative,
+            stage23_memory_ref_non_authoritative: input.stage23_memory_ref_non_authoritative,
+            stage24_ingress_ref_non_authoritative: input.stage24_ingress_ref_non_authoritative,
+            orchestration_bounded: input.orchestration_bounded,
+            tenant_user_device_session_scoped: input.tenant_user_device_session_scoped,
+            uncertainty_preserved: input.uncertainty_preserved,
+            orchestration_invented_fact: input.orchestration_invented_fact,
+            orchestration_invented_tool_success: input.orchestration_invented_tool_success,
+            orchestration_invented_staged_execution_success: input.orchestration_invented_staged_execution_success,
+            orchestration_invented_action_graph_completion: input.orchestration_invented_action_graph_completion,
+            orchestration_invented_approval: input.orchestration_invented_approval,
+            orchestration_invented_dispatch_success: input.orchestration_invented_dispatch_success,
+            orchestration_invented_remote_completion: input.orchestration_invented_remote_completion,
+            orchestration_invented_work_or_lease_authority: input.orchestration_invented_work_or_lease_authority,
+            orchestration_invented_attachment_or_citation: input.orchestration_invented_attachment_or_citation,
+            orchestration_invented_provider_or_tool_result: input.orchestration_invented_provider_or_tool_result,
+            orchestration_claimed_unproven_completion: input.orchestration_claimed_unproven_completion,
+            orchestration_implied_routing_or_mutation: input.orchestration_implied_routing_or_mutation,
+            secret_safe: input.secret_safe,
+            redacted: input.redacted,
+            stale_aware: input.stale_aware,
+            revocation_aware: input.revocation_aware,
+            orchestration_ref_present: input.orchestration_ref_present,
+            action_graph_ref_present: input.action_graph_ref_present,
+            tool_route_ref_present: input.tool_route_ref_present,
+            execution_plan_ref_present: input.execution_plan_ref_present,
+            work_ref_present: input.work_ref_present,
+            lease_ref_present: input.lease_ref_present,
+            unverifiable: input.unverifiable,
+            stale: input.stale,
+            secret_unsafe: input.secret_unsafe,
+            cross_tenant: input.cross_tenant,
+            cross_route: input.cross_route,
+            route_mismatch: input.route_mismatch,
+            action_graph_mismatch: input.action_graph_mismatch,
+            lease_mismatch: input.lease_mismatch,
+            tenant_mismatch: input.tenant_mismatch,
+            missing_proof: input.missing_proof,
+            ownership_drift: input.ownership_drift,
+            native_orchestration_declarative_only: input.native_orchestration_declarative_only,
+            native_orchestration_mutates_state: input.native_orchestration_mutates_state,
+            native_orchestration_connector_writes: input.native_orchestration_connector_writes,
+            native_orchestration_dispatches_or_executes: input.native_orchestration_dispatches_or_executes,
+            native_orchestration_calls_providers_or_tools: input.native_orchestration_calls_providers_or_tools,
+            native_orchestration_emits_tts_or_playback: input.native_orchestration_emits_tts_or_playback,
+            native_orchestration_creates_user_turn: input.native_orchestration_creates_user_turn,
+            native_orchestration_treats_visible_staging_as_action_success: input.native_orchestration_treats_visible_staging_as_action_success,
+            protected_action_like_request: input.protected_action_like_request,
+            protected_slot_or_authority_ambiguous: input.protected_slot_or_authority_ambiguous,
+            unsafe_identity_posture: input.unsafe_identity_posture,
+            orchestration_implies_stage12_routing_or_execution_without_proof: input.orchestration_implies_stage12_routing_or_execution_without_proof,
+            stale_or_cancelled_or_superseded_output: input.stale_or_cancelled_or_superseded_output,
+            session_closed: input.session_closed,
+            record_artifact_only_turn: input.record_artifact_only_turn,
+            stale_orchestration_state: input.stale_orchestration_state,
+            stale_work_state: input.stale_work_state,
+            stale_lease_state: input.stale_lease_state,
+            stale_route_state: input.stale_route_state,
+            orchestration_identity_matches_current_output_session: input.orchestration_identity_matches_current_output_session,
+            replay_upgrades_blocked_staging: input.replay_upgrades_blocked_staging,
+            fake_orchestration_detected: input.fake_orchestration_detected,
+            fake_tool_detected: input.fake_tool_detected,
+            fake_staged_execution_detected: input.fake_staged_execution_detected,
+            fake_action_graph_detected: input.fake_action_graph_detected,
+            fake_approval_detected: input.fake_approval_detected,
+            runtime_mock_detected: input.runtime_mock_detected,
+            raw_provider_output_present: input.raw_provider_output_present,
+            raw_search_dump_present: input.raw_search_dump_present,
+            raw_media_present: input.raw_media_present,
+            raw_connector_credential_field_present: input.raw_connector_credential_field_present,
+            unverified_source_evidence_present: input.unverified_source_evidence_present,
+            unsupported_claim_candidate_present: input.unsupported_claim_candidate_present,
+            fake_orchestration_source_carrier_present: input.fake_orchestration_source_carrier_present,
+            attention_continuity_automation_outbound_memory_ingress_used_as_truth_authority: input.attention_continuity_automation_outbound_memory_ingress_used_as_truth_authority,
+            protected_action_candidate_present: input.protected_action_candidate_present,
+            simulation_candidate_present: input.simulation_candidate_present,
+            approved_execution_plan_present: input.approved_execution_plan_present,
+            secrets_exposed: input.secrets_exposed,
+            raw_biometric_material_exposed: input.raw_biometric_material_exposed,
+            internal_trace_exposed: input.internal_trace_exposed,
+            access_denied: input.access_denied,
+            policy_denied: input.policy_denied,
+            work_authority,
+        };
+        packet.validate()?;
+        Ok(packet)
+    }
+
+    pub const fn can_mutate_or_execute(&self) -> bool {
+        self.work_authority.can_mutate_or_execute()
+    }
+
+    fn decide_disposition(
+        route: &Stage11ReasoningRouterPacket,
+        stage12_gate: Option<&Stage12ProtectedActionGatePacket>,
+        input: &Stage25ToolOrchestrationInput,
+    ) -> Stage25ToolOrchestrationDisposition {
+        if input.runtime_mock_detected {
+            return Stage25ToolOrchestrationDisposition::RuntimeMockBlocked;
+        }
+        if input.access_denied || input.policy_denied {
+            return Stage25ToolOrchestrationDisposition::UnsafeInputBlocked;
+        }
+        if !input.stage11_route_ref_present
+            || !input.stage11_route_non_executing_context
+            || !matches!(
+                route.disposition,
+                Stage11RouterDisposition::PublicReadOnlyCandidate
+                    | Stage11RouterDisposition::ProtectedActionBlockedUntilStage12
+                    | Stage11RouterDisposition::SimulationCandidateInertHandoff
+            )
+        {
+            return Stage25ToolOrchestrationDisposition::StageInputBlocked;
+        }
+        if input.stage12_gate_ref_present && (!input.stage12_gate_inspect_only_context || stage12_gate.is_none()) {
+            return Stage25ToolOrchestrationDisposition::StageInputBlocked;
+        }
+        if input.audit_id.is_none() && route.audit_id.is_none() && stage12_gate.is_none() {
+            return Stage25ToolOrchestrationDisposition::AuditProofMissing;
+        }
+        if input.orchestration_invented_fact
+            || input.orchestration_invented_tool_success
+            || input.orchestration_invented_staged_execution_success
+            || input.orchestration_invented_action_graph_completion
+            || input.orchestration_invented_approval
+            || input.orchestration_invented_dispatch_success
+            || input.orchestration_invented_remote_completion
+            || input.orchestration_invented_work_or_lease_authority
+            || input.orchestration_invented_attachment_or_citation
+            || input.orchestration_invented_provider_or_tool_result
+            || input.orchestration_claimed_unproven_completion
+            || input.orchestration_implied_routing_or_mutation
+            || input.raw_provider_output_present
+            || input.raw_search_dump_present
+            || input.raw_media_present
+            || input.raw_connector_credential_field_present
+            || input.unverified_source_evidence_present
+            || input.unsupported_claim_candidate_present
+            || input.fake_orchestration_source_carrier_present
+            || input.attention_continuity_automation_outbound_memory_ingress_used_as_truth_authority
+            || input.protected_action_candidate_present
+            || input.simulation_candidate_present
+            || input.approved_execution_plan_present
+        {
+            return Stage25ToolOrchestrationDisposition::NoInventionBlocked;
+        }
+        if !input.native_orchestration_declarative_only
+            || input.native_orchestration_mutates_state
+            || input.native_orchestration_connector_writes
+            || input.native_orchestration_dispatches_or_executes
+            || input.native_orchestration_calls_providers_or_tools
+            || input.native_orchestration_emits_tts_or_playback
+            || input.native_orchestration_creates_user_turn
+            || input.native_orchestration_treats_visible_staging_as_action_success
+        {
+            return Stage25ToolOrchestrationDisposition::NativeOrchestrationBlocked;
+        }
+        if input.protected_action_like_request
+            || input.protected_slot_or_authority_ambiguous
+            || input.unsafe_identity_posture
+            || input.orchestration_implies_stage12_routing_or_execution_without_proof
+        {
+            return Stage25ToolOrchestrationDisposition::ProtectedOrchestrationBlocked;
+        }
+        if input.stale_or_cancelled_or_superseded_output
+            || input.session_closed
+            || input.record_artifact_only_turn
+            || input.stale_orchestration_state
+            || input.stale_work_state
+            || input.stale_lease_state
+            || input.stale_route_state
+            || !input.orchestration_identity_matches_current_output_session
+            || input.replay_upgrades_blocked_staging
+        {
+            return Stage25ToolOrchestrationDisposition::StaleOrchestrationBlocked;
+        }
+        if !input.orchestration_bounded
+            || !input.tenant_user_device_session_scoped
+            || !input.secret_safe
+            || !input.redacted
+            || !input.stale_aware
+            || !input.revocation_aware
+            || !input.action_graph_ref_present
+            || !input.execution_plan_ref_present
+            || !input.work_ref_present
+            || !input.lease_ref_present
+            || input.unverifiable
+            || input.stale
+            || input.secret_unsafe
+            || input.cross_tenant
+            || input.cross_route
+            || input.route_mismatch
+            || input.action_graph_mismatch
+            || input.lease_mismatch
+            || input.tenant_mismatch
+            || input.missing_proof
+            || input.ownership_drift
+        {
+            return Stage25ToolOrchestrationDisposition::ManagedExecutionStageBlocked;
+        }
+
+        match input.orchestration_kind {
+            Stage25ToolOrchestrationKind::ToolOrchestration => {
+                if input.orchestration_stage_id.is_some()
+                    && input.tool_invocation_stage_id.is_some()
+                    && input.execution_plan_ref.is_some()
+                {
+                    Stage25ToolOrchestrationDisposition::ToolOrchestrationReady
+                } else {
+                    Stage25ToolOrchestrationDisposition::ManagedExecutionStageBlocked
+                }
+            }
+            Stage25ToolOrchestrationKind::ManagedExecutionStaging => {
+                if input.orchestration_stage_id.is_some()
+                    && input.execution_plan_ref.is_some()
+                    && input.work_id.is_some()
+                    && input.lease_id.is_some()
+                {
+                    Stage25ToolOrchestrationDisposition::ManagedExecutionStagingReady
+                } else {
+                    Stage25ToolOrchestrationDisposition::ManagedExecutionStageBlocked
+                }
+            }
+            Stage25ToolOrchestrationKind::ActionGraphBoundary => {
+                if input.orchestration_stage_id.is_some()
+                    && input.action_graph_id.is_some()
+                    && input.execution_plan_ref.is_some()
+                {
+                    Stage25ToolOrchestrationDisposition::ActionGraphBoundaryReady
+                } else {
+                    Stage25ToolOrchestrationDisposition::ManagedExecutionStageBlocked
+                }
+            }
+            Stage25ToolOrchestrationKind::StagedToolInvocationPosture => {
+                if input.orchestration_stage_id.is_some()
+                    && input.action_graph_id.is_some()
+                    && input.tool_invocation_stage_id.is_some()
+                {
+                    Stage25ToolOrchestrationDisposition::StagedToolInvocationPostureReady
+                } else {
+                    Stage25ToolOrchestrationDisposition::ManagedExecutionStageBlocked
+                }
+            }
+            Stage25ToolOrchestrationKind::ExecutionPlanContinuityReference => {
+                if input.execution_plan_ref.is_some()
+                    && input.work_id.is_some()
+                    && input.lease_id.is_some()
+                {
+                    Stage25ToolOrchestrationDisposition::ExecutionPlanContinuityReferenceReady
+                } else {
+                    Stage25ToolOrchestrationDisposition::ManagedExecutionStageBlocked
+                }
+            }
+        }
+    }
+
+    const fn work_authority_for(
+        disposition: Stage25ToolOrchestrationDisposition,
+    ) -> Stage25ToolOrchestrationWorkAuthority {
+        match disposition {
+            Stage25ToolOrchestrationDisposition::ToolOrchestrationReady => {
+                Stage25ToolOrchestrationWorkAuthority::tool_orchestration_ready()
+            }
+            Stage25ToolOrchestrationDisposition::ManagedExecutionStagingReady => {
+                Stage25ToolOrchestrationWorkAuthority::managed_execution_staging_ready()
+            }
+            Stage25ToolOrchestrationDisposition::ActionGraphBoundaryReady => {
+                Stage25ToolOrchestrationWorkAuthority::action_graph_boundary_ready()
+            }
+            Stage25ToolOrchestrationDisposition::StagedToolInvocationPostureReady => {
+                Stage25ToolOrchestrationWorkAuthority::staged_tool_invocation_posture_ready()
+            }
+            Stage25ToolOrchestrationDisposition::ExecutionPlanContinuityReferenceReady => {
+                Stage25ToolOrchestrationWorkAuthority::execution_plan_continuity_reference_ready()
+            }
+            _ => Stage25ToolOrchestrationWorkAuthority::fail_closed(),
+        }
+    }
+}
+
+impl Validate for Stage25ToolOrchestrationPacket {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        validate_stage4_optional_ref(
+            "stage25_tool_orchestration_packet.activation_id",
+            self.activation_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage25_tool_orchestration_packet.continuity_packet_id",
+            self.continuity_packet_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage25_tool_orchestration_packet.automation_candidate_id",
+            self.automation_candidate_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage25_tool_orchestration_packet.connector_action_stage_id",
+            self.connector_action_stage_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage25_tool_orchestration_packet.memory_candidate_id",
+            self.memory_candidate_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage25_tool_orchestration_packet.capture_session_id",
+            self.capture_session_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage25_tool_orchestration_packet.orchestration_stage_id",
+            self.orchestration_stage_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage25_tool_orchestration_packet.action_graph_id",
+            self.action_graph_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage25_tool_orchestration_packet.tool_invocation_stage_id",
+            self.tool_invocation_stage_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage25_tool_orchestration_packet.execution_plan_ref",
+            self.execution_plan_ref.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage25_tool_orchestration_packet.work_id",
+            self.work_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage25_tool_orchestration_packet.lease_id",
+            self.lease_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage25_tool_orchestration_packet.device_id",
+            self.device_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage25_tool_orchestration_packet.access_context_id",
+            self.access_context_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage25_tool_orchestration_packet.policy_context_id",
+            self.policy_context_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage25_tool_orchestration_packet.tenant_id",
+            self.tenant_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage25_tool_orchestration_packet.audit_id",
+            self.audit_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage25_tool_orchestration_packet.ph1j_proof_ref",
+            self.ph1j_proof_ref.as_deref(),
+        )?;
+        if self.reason_code != self.disposition.default_reason_code() {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage25_tool_orchestration_packet.reason_code",
+                reason: "must match Stage 25A orchestration disposition",
+            });
+        }
+        if self.work_authority.can_mutate_or_execute() {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage25_tool_orchestration_packet.work_authority",
+                reason: "Stage 25A cannot invent orchestration authority, route, approve, dispatch, execute, connector-write, or treat visible staging as action success",
+            });
+        }
+        if self.disposition.is_ready()
+            && (self.audit_id.is_none() || self.ph1j_proof_ref.is_none())
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage25_tool_orchestration_packet.audit_proof",
+                reason: "ready Stage 25A orchestration output requires PH1.J audit/proof refs",
+            });
+        }
+        Ok(())
+    }
+}
+
+pub fn stage25_tool_orchestration_symbol_anchor() {
+    let _ = Stage25ToolOrchestrationKind::ToolOrchestration;
+    let _ = Stage25ToolOrchestrationKind::ManagedExecutionStaging;
+    let _ = Stage25ToolOrchestrationKind::ActionGraphBoundary;
+    let _ = Stage25ToolOrchestrationKind::StagedToolInvocationPosture;
+    let _ = Stage25ToolOrchestrationKind::ExecutionPlanContinuityReference;
+    let disposition = Stage25ToolOrchestrationDisposition::StageInputBlocked;
+    let _ = disposition.default_reason_code();
+    let _ = disposition.is_ready();
+    let _ = Stage25ToolOrchestrationWorkAuthority::fail_closed().can_mutate_or_execute();
+    let _ = Stage25ToolOrchestrationWorkAuthority::tool_orchestration_ready();
+    let _ = Stage25ToolOrchestrationWorkAuthority::managed_execution_staging_ready();
+    let _ = Stage25ToolOrchestrationWorkAuthority::action_graph_boundary_ready();
+    let _ = Stage25ToolOrchestrationWorkAuthority::staged_tool_invocation_posture_ready();
+    let _ = Stage25ToolOrchestrationWorkAuthority::execution_plan_continuity_reference_ready();
+    let _ = core::mem::size_of::<Stage25ToolOrchestrationInput>();
+    let _ = core::mem::size_of::<Stage25ToolOrchestrationPacket>();
+    let _ = Stage25ToolOrchestrationPacket::from_stage11_route
+        as fn(
+            &Stage11ReasoningRouterPacket,
+            Option<&Stage12ProtectedActionGatePacket>,
+            Option<&Stage20ContinuityHandoffPacket>,
+            Option<&Stage21AutomationOrchestrationPacket>,
+            Option<&Stage22ConnectorOutboundPacket>,
+            Option<&Stage23MemoryRetentionPacket>,
+            Option<&Stage24IngressCapturePacket>,
+            Stage25ToolOrchestrationInput,
+        ) -> Result<Stage25ToolOrchestrationPacket, ContractViolation>;
+    let _ = Stage25ToolOrchestrationPacket::can_mutate_or_execute
+        as fn(&Stage25ToolOrchestrationPacket) -> bool;
+}
+const _: fn() = stage25_tool_orchestration_symbol_anchor;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -35035,6 +36267,432 @@ mod tests {
         runtime_mock.fixture_only_test_path = false;
         assert!(super::Stage24IngressCapturePacket::from_stage8_transcript_gate(
             &transcript_gate,
+            None,
+            None,
+            None,
+            None,
+            None,
+            runtime_mock,
+        )
+        .is_err());
+    }
+
+    fn stage25_ingress_identity() -> super::Stage24IngressCapturePacket {
+        let mut input = super::Stage24IngressCaptureInput::fixture_stream_safety_ready(
+            "capture-session-stage25-ingress",
+            "stream-packet-stage25-ingress",
+            "device-stage25-a",
+            "audit-stage25-ingress",
+        );
+        input.stage19_attention_ref_present = true;
+        input.stage19_attention_ref_non_authoritative = true;
+        input.stage20_continuity_ref_present = true;
+        input.stage20_continuity_ref_non_authoritative = true;
+        input.stage21_automation_ref_present = true;
+        input.stage21_automation_ref_non_authoritative = true;
+        input.stage22_outbound_ref_present = true;
+        input.stage22_outbound_ref_non_authoritative = true;
+        input.stage23_memory_ref_present = true;
+        input.stage23_memory_ref_non_authoritative = true;
+        super::Stage24IngressCapturePacket::from_stage8_transcript_gate(
+            &stage24_final_transcript_gate(),
+            Some(&stage21_attention_identity()),
+            Some(&stage21_continuity_identity()),
+            Some(&stage22_automation_identity()),
+            Some(&stage23_outbound_identity()),
+            Some(&stage24_memory_identity()),
+            input,
+        )
+        .expect("stage25 ingress identity")
+    }
+
+    #[test]
+    fn stage_25a_orchestration_consumes_stage20_stage21_stage22_stage23_stage24_non_authoritatively()
+    {
+        let route = stage12_protected_route();
+        let gate = Stage12ProtectedActionGatePacket::from_stage11_candidate(
+            &route,
+            stage12_gate_input(),
+        )
+        .expect("stage25 protected gate");
+        let continuity = stage21_continuity_identity();
+        let automation = stage22_automation_identity();
+        let outbound = stage23_outbound_identity();
+        let memory = stage24_memory_identity();
+        let ingress = stage25_ingress_identity();
+        let mut input =
+            super::Stage25ToolOrchestrationInput::fixture_managed_execution_staging_ready(
+                "orchestration-stage25-ready",
+                "execution-plan-stage25-ready",
+                "work-stage25-ready",
+                "lease-stage25-ready",
+                "audit-stage25-ready",
+            );
+        input.stage12_gate_ref_present = true;
+        input.stage20_continuity_ref_present = true;
+        input.stage20_continuity_ref_non_authoritative = true;
+        input.stage21_automation_ref_present = true;
+        input.stage21_automation_ref_non_authoritative = true;
+        input.stage22_outbound_ref_present = true;
+        input.stage22_outbound_ref_non_authoritative = true;
+        input.stage23_memory_ref_present = true;
+        input.stage23_memory_ref_non_authoritative = true;
+        input.stage24_ingress_ref_present = true;
+        input.stage24_ingress_ref_non_authoritative = true;
+        let packet = super::Stage25ToolOrchestrationPacket::from_stage11_route(
+            &route,
+            Some(&gate),
+            Some(&continuity),
+            Some(&automation),
+            Some(&outbound),
+            Some(&memory),
+            Some(&ingress),
+            input,
+        )
+        .expect("stage25 managed execution ready");
+
+        assert_eq!(
+            packet.disposition,
+            super::Stage25ToolOrchestrationDisposition::ManagedExecutionStagingReady
+        );
+        assert_eq!(
+            packet.stage20_disposition,
+            Some(Stage20ContinuityHandoffDisposition::SessionContinuityReady)
+        );
+        assert_eq!(
+            packet.stage21_disposition,
+            Some(Stage21AutomationOrchestrationDisposition::AutomationCandidateReady)
+        );
+        assert_eq!(
+            packet.stage22_disposition,
+            Some(super::Stage22ConnectorOutboundDisposition::StagedDispatchPostureReady)
+        );
+        assert_eq!(
+            packet.stage23_disposition,
+            Some(super::Stage23MemoryRetentionDisposition::IdentitySafeRetentionReady)
+        );
+        assert_eq!(
+            packet.stage24_disposition,
+            Some(super::Stage24IngressCaptureDisposition::StreamSafetyReady)
+        );
+        assert_eq!(
+            packet.stage12_disposition,
+            Some(Stage12ProtectedActionDisposition::ApprovedExecutionPlanReady)
+        );
+        assert!(packet.stage24_ingress_ref_non_authoritative);
+        assert!(
+            packet
+                .work_authority
+                .can_emit_managed_execution_staging_packet
+        );
+        assert!(!packet.can_mutate_or_execute());
+    }
+
+    #[test]
+    fn stage_25a_packets_cannot_invent_or_claim_orchestration_success() {
+        let route = stage12_protected_route();
+
+        for input in [
+            {
+                let mut input =
+                    super::Stage25ToolOrchestrationInput::fixture_tool_orchestration_ready(
+                        "orchestration-stage25-invent-fact",
+                        "tool-invocation-stage25-invent-fact",
+                        "execution-plan-stage25-invent-fact",
+                        "audit-stage25-invent-fact",
+                    );
+                input.orchestration_invented_fact = true;
+                input
+            },
+            {
+                let mut input = super::Stage25ToolOrchestrationInput::fixture_action_graph_boundary_ready(
+                    "orchestration-stage25-invent-action-graph",
+                    "action-graph-stage25-invent-action-graph",
+                    "execution-plan-stage25-invent-action-graph",
+                    "audit-stage25-invent-action-graph",
+                );
+                input.orchestration_invented_action_graph_completion = true;
+                input
+            },
+            {
+                let mut input =
+                    super::Stage25ToolOrchestrationInput::fixture_managed_execution_staging_ready(
+                        "orchestration-stage25-invent-approval",
+                        "execution-plan-stage25-invent-approval",
+                        "work-stage25-invent-approval",
+                        "lease-stage25-invent-approval",
+                        "audit-stage25-invent-approval",
+                    );
+                input.orchestration_invented_approval = true;
+                input
+            },
+            {
+                let mut input = super::Stage25ToolOrchestrationInput::fixture_execution_plan_continuity_reference_ready(
+                    "execution-plan-stage25-unproven",
+                    "work-stage25-unproven",
+                    "lease-stage25-unproven",
+                    "audit-stage25-unproven",
+                );
+                input.orchestration_claimed_unproven_completion = true;
+                input
+            },
+        ] {
+            let packet = super::Stage25ToolOrchestrationPacket::from_stage11_route(
+                &route, None, None, None, None, None, None, input,
+            )
+            .expect("stage25 no-invention blocked");
+            assert_eq!(
+                packet.disposition,
+                super::Stage25ToolOrchestrationDisposition::NoInventionBlocked
+            );
+            assert!(packet.work_authority.can_fail_closed);
+            assert!(!packet.can_mutate_or_execute());
+        }
+    }
+
+    #[test]
+    fn stage_25a_staging_requires_scoped_secret_safe_refs() {
+        let route = stage12_protected_route();
+        let ready = super::Stage25ToolOrchestrationPacket::from_stage11_route(
+            &route,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            super::Stage25ToolOrchestrationInput::fixture_tool_orchestration_ready(
+                "orchestration-stage25-tool-ready",
+                "tool-invocation-stage25-tool-ready",
+                "execution-plan-stage25-tool-ready",
+                "audit-stage25-tool-ready",
+            ),
+        )
+        .expect("stage25 tool orchestration ready");
+        assert_eq!(
+            ready.disposition,
+            super::Stage25ToolOrchestrationDisposition::ToolOrchestrationReady
+        );
+        assert!(ready.work_authority.can_emit_tool_orchestration_packet);
+        assert!(!ready.can_mutate_or_execute());
+
+        for input in [
+            {
+                let mut input =
+                    super::Stage25ToolOrchestrationInput::fixture_managed_execution_staging_ready(
+                        "orchestration-stage25-unbounded",
+                        "execution-plan-stage25-unbounded",
+                        "work-stage25-unbounded",
+                        "lease-stage25-unbounded",
+                        "audit-stage25-unbounded",
+                    );
+                input.orchestration_bounded = false;
+                input
+            },
+            {
+                let mut input = super::Stage25ToolOrchestrationInput::fixture_action_graph_boundary_ready(
+                    "orchestration-stage25-secret",
+                    "action-graph-stage25-secret",
+                    "execution-plan-stage25-secret",
+                    "audit-stage25-secret",
+                );
+                input.secret_unsafe = true;
+                input
+            },
+            {
+                let mut input = super::Stage25ToolOrchestrationInput::fixture_tool_orchestration_ready(
+                    "orchestration-stage25-cross-route",
+                    "tool-invocation-stage25-cross-route",
+                    "execution-plan-stage25-cross-route",
+                    "audit-stage25-cross-route",
+                );
+                input.cross_route = true;
+                input
+            },
+            {
+                let mut input = super::Stage25ToolOrchestrationInput::fixture_execution_plan_continuity_reference_ready(
+                    "execution-plan-stage25-missing-proof",
+                    "work-stage25-missing-proof",
+                    "lease-stage25-missing-proof",
+                    "audit-stage25-missing-proof",
+                );
+                input.missing_proof = true;
+                input
+            },
+        ] {
+            let packet = super::Stage25ToolOrchestrationPacket::from_stage11_route(
+                &route, None, None, None, None, None, None, input,
+            )
+            .expect("stage25 staging blocked");
+            assert_eq!(
+                packet.disposition,
+                super::Stage25ToolOrchestrationDisposition::ManagedExecutionStageBlocked
+            );
+            assert!(packet.work_authority.can_fail_closed);
+            assert!(!packet.can_mutate_or_execute());
+        }
+    }
+
+    #[test]
+    fn stage_25a_native_protected_and_stale_cases_fail_closed() {
+        let route = stage12_protected_route();
+
+        for input in [
+            {
+                let mut input =
+                    super::Stage25ToolOrchestrationInput::fixture_tool_orchestration_ready(
+                        "orchestration-stage25-native-mutate",
+                        "tool-invocation-stage25-native-mutate",
+                        "execution-plan-stage25-native-mutate",
+                        "audit-stage25-native-mutate",
+                    );
+                input.native_orchestration_mutates_state = true;
+                input
+            },
+            {
+                let mut input = super::Stage25ToolOrchestrationInput::fixture_action_graph_boundary_ready(
+                    "orchestration-stage25-protected",
+                    "action-graph-stage25-protected",
+                    "execution-plan-stage25-protected",
+                    "audit-stage25-protected",
+                );
+                input.protected_action_like_request = true;
+                input
+            },
+        ] {
+            let packet = super::Stage25ToolOrchestrationPacket::from_stage11_route(
+                &route, None, None, None, None, None, None, input,
+            )
+            .expect("stage25 native/protected blocked");
+            assert!(matches!(
+                packet.disposition,
+                super::Stage25ToolOrchestrationDisposition::NativeOrchestrationBlocked
+                    | super::Stage25ToolOrchestrationDisposition::ProtectedOrchestrationBlocked
+            ));
+            assert!(packet.work_authority.can_fail_closed);
+        }
+
+        for input in [
+            {
+                let mut input =
+                    super::Stage25ToolOrchestrationInput::fixture_managed_execution_staging_ready(
+                        "orchestration-stage25-stale",
+                        "execution-plan-stage25-stale",
+                        "work-stage25-stale",
+                        "lease-stage25-stale",
+                        "audit-stage25-stale",
+                    );
+                input.stale_or_cancelled_or_superseded_output = true;
+                input
+            },
+            {
+                let mut input = super::Stage25ToolOrchestrationInput::fixture_execution_plan_continuity_reference_ready(
+                    "execution-plan-stage25-replay",
+                    "work-stage25-replay",
+                    "lease-stage25-replay",
+                    "audit-stage25-replay",
+                );
+                input.replay_upgrades_blocked_staging = true;
+                input
+            },
+        ] {
+            let packet = super::Stage25ToolOrchestrationPacket::from_stage11_route(
+                &route, None, None, None, None, None, None, input,
+            )
+            .expect("stage25 stale blocked");
+            assert_eq!(
+                packet.disposition,
+                super::Stage25ToolOrchestrationDisposition::StaleOrchestrationBlocked
+            );
+            assert!(packet.work_authority.can_fail_closed);
+            assert!(!packet.can_mutate_or_execute());
+        }
+    }
+
+    #[test]
+    fn stage_25a_blocks_live_paths_and_runtime_mocks() {
+        let route = stage12_protected_route();
+        let packet = super::Stage25ToolOrchestrationPacket::from_stage11_route(
+            &route,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            super::Stage25ToolOrchestrationInput::fixture_staged_tool_invocation_posture_ready(
+                "orchestration-stage25-posture",
+                "tool-invocation-stage25-posture",
+                "action-graph-stage25-posture",
+                "audit-stage25-posture",
+            ),
+        )
+        .expect("stage25 no-exec packet");
+        assert!(!packet.work_authority.can_invent_facts);
+        assert!(!packet.work_authority.can_invent_tool_success);
+        assert!(!packet.work_authority.can_invent_dispatch_success);
+        assert!(!packet.work_authority.can_invent_execution_authority);
+        assert!(!packet.work_authority.can_route);
+        assert!(!packet.work_authority.can_approve);
+        assert!(!packet.work_authority.can_dispatch);
+        assert!(!packet.work_authority.can_execute);
+        assert!(!packet.work_authority.can_create_user_turn);
+        assert!(!packet.work_authority.can_treat_visible_staging_as_action_success);
+        assert!(!packet.can_mutate_or_execute());
+
+        for input in [
+            {
+                let mut input =
+                    super::Stage25ToolOrchestrationInput::fixture_tool_orchestration_ready(
+                        "orchestration-stage25-live-provider",
+                        "tool-invocation-stage25-live-provider",
+                        "execution-plan-stage25-live-provider",
+                        "audit-stage25-live-provider",
+                    );
+                input.attempted_live_provider_in_build = true;
+                input
+            },
+            {
+                let mut input =
+                    super::Stage25ToolOrchestrationInput::fixture_managed_execution_staging_ready(
+                        "orchestration-stage25-live-dispatch",
+                        "execution-plan-stage25-live-dispatch",
+                        "work-stage25-live-dispatch",
+                        "lease-stage25-live-dispatch",
+                        "audit-stage25-live-dispatch",
+                    );
+                input.ran_live_tool_dispatch_in_build = true;
+                input
+            },
+            {
+                let mut input = super::Stage25ToolOrchestrationInput::fixture_action_graph_boundary_ready(
+                    "orchestration-stage25-live-action-graph",
+                    "action-graph-stage25-live-action-graph",
+                    "execution-plan-stage25-live-action-graph",
+                    "audit-stage25-live-action-graph",
+                );
+                input.ran_live_action_graph_execution_in_build = true;
+                input
+            },
+        ] {
+            assert!(super::Stage25ToolOrchestrationPacket::from_stage11_route(
+                &route, None, None, None, None, None, None, input,
+            )
+            .is_err());
+        }
+
+        let mut runtime_mock =
+            super::Stage25ToolOrchestrationInput::fixture_tool_orchestration_ready(
+                "orchestration-stage25-runtime-mock",
+                "tool-invocation-stage25-runtime-mock",
+                "execution-plan-stage25-runtime-mock",
+                "audit-stage25-runtime-mock",
+            );
+        runtime_mock.fake_orchestration_detected = true;
+        runtime_mock.fixture_only_test_path = false;
+        assert!(super::Stage25ToolOrchestrationPacket::from_stage11_route(
+            &route,
+            None,
             None,
             None,
             None,
