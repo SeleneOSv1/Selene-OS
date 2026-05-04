@@ -203,6 +203,24 @@ mod reason_codes {
     pub const STAGE16_UNSAFE_INPUT_BLOCKED: &str = "stage16_unsafe_input_blocked";
     pub const STAGE16_RUNTIME_MOCK_BLOCKED: &str = "stage16_runtime_mock_blocked";
     pub const STAGE16_AUDIT_PROOF_MISSING: &str = "stage16_audit_proof_missing";
+    pub const STAGE17_SPEECH_OUTPUT_READY: &str = "stage17_speech_output_ready";
+    pub const STAGE17_NON_SPEAKABLE_OUTPUT: &str = "stage17_non_speakable_output";
+    pub const STAGE17_VOICE_STYLE_READY: &str = "stage17_voice_style_ready";
+    pub const STAGE17_PLAYBACK_STATE_READY: &str = "stage17_playback_state_ready";
+    pub const STAGE17_SELF_ECHO_BLOCKED: &str = "stage17_self_echo_blocked";
+    pub const STAGE17_PROVIDER_OFF_NO_AUDIO: &str = "stage17_provider_off_no_audio";
+    pub const STAGE17_MISSING_SECRET_NO_AUDIO: &str = "stage17_missing_secret_no_audio";
+    pub const STAGE17_PROVIDER_FAILURE_NO_AUDIO: &str = "stage17_provider_failure_no_audio";
+    pub const STAGE17_STAGE15_OUTPUT_BLOCKED: &str = "stage17_stage15_output_blocked";
+    pub const STAGE17_STAGE16_HINT_BLOCKED: &str = "stage17_stage16_hint_blocked";
+    pub const STAGE17_NO_REWRITE_BLOCKED: &str = "stage17_no_rewrite_blocked";
+    pub const STAGE17_VOICE_STYLE_BLOCKED: &str = "stage17_voice_style_blocked";
+    pub const STAGE17_PLAYBACK_IDENTITY_BLOCKED: &str = "stage17_playback_identity_blocked";
+    pub const STAGE17_STALE_OUTPUT_BLOCKED: &str = "stage17_stale_output_blocked";
+    pub const STAGE17_SOURCE_SPEECH_BLOCKED: &str = "stage17_source_speech_blocked";
+    pub const STAGE17_UNSAFE_INPUT_BLOCKED: &str = "stage17_unsafe_input_blocked";
+    pub const STAGE17_RUNTIME_MOCK_BLOCKED: &str = "stage17_runtime_mock_blocked";
+    pub const STAGE17_AUDIT_PROOF_MISSING: &str = "stage17_audit_proof_missing";
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -11513,6 +11531,1305 @@ impl Validate for Stage16LongTermStatePacket {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stage17SpeechOutputKind {
+    SpeakableText,
+    NonSpeakableDisposition,
+    VoiceStyleMetadata,
+    PlaybackState,
+    PlaybackEvent,
+    SelfEchoBlock,
+    ProviderFailure,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stage17SpeechOutputDisposition {
+    SpeechOutputReady,
+    NonSpeakableOutput,
+    VoiceStyleReady,
+    PlaybackStateReady,
+    SelfEchoBlocked,
+    ProviderOffNoAudio,
+    MissingSecretNoAudio,
+    ProviderFailureNoAudio,
+    Stage15OutputBlocked,
+    Stage16HintBlocked,
+    NoRewriteBlocked,
+    VoiceStyleBlocked,
+    PlaybackIdentityBlocked,
+    StaleOutputBlocked,
+    SourceSpeechBlocked,
+    UnsafeInputBlocked,
+    RuntimeMockBlocked,
+    AuditProofMissing,
+}
+
+impl Stage17SpeechOutputDisposition {
+    pub const fn default_reason_code(self) -> &'static str {
+        match self {
+            Stage17SpeechOutputDisposition::SpeechOutputReady => {
+                reason_codes::STAGE17_SPEECH_OUTPUT_READY
+            }
+            Stage17SpeechOutputDisposition::NonSpeakableOutput => {
+                reason_codes::STAGE17_NON_SPEAKABLE_OUTPUT
+            }
+            Stage17SpeechOutputDisposition::VoiceStyleReady => {
+                reason_codes::STAGE17_VOICE_STYLE_READY
+            }
+            Stage17SpeechOutputDisposition::PlaybackStateReady => {
+                reason_codes::STAGE17_PLAYBACK_STATE_READY
+            }
+            Stage17SpeechOutputDisposition::SelfEchoBlocked => {
+                reason_codes::STAGE17_SELF_ECHO_BLOCKED
+            }
+            Stage17SpeechOutputDisposition::ProviderOffNoAudio => {
+                reason_codes::STAGE17_PROVIDER_OFF_NO_AUDIO
+            }
+            Stage17SpeechOutputDisposition::MissingSecretNoAudio => {
+                reason_codes::STAGE17_MISSING_SECRET_NO_AUDIO
+            }
+            Stage17SpeechOutputDisposition::ProviderFailureNoAudio => {
+                reason_codes::STAGE17_PROVIDER_FAILURE_NO_AUDIO
+            }
+            Stage17SpeechOutputDisposition::Stage15OutputBlocked => {
+                reason_codes::STAGE17_STAGE15_OUTPUT_BLOCKED
+            }
+            Stage17SpeechOutputDisposition::Stage16HintBlocked => {
+                reason_codes::STAGE17_STAGE16_HINT_BLOCKED
+            }
+            Stage17SpeechOutputDisposition::NoRewriteBlocked => {
+                reason_codes::STAGE17_NO_REWRITE_BLOCKED
+            }
+            Stage17SpeechOutputDisposition::VoiceStyleBlocked => {
+                reason_codes::STAGE17_VOICE_STYLE_BLOCKED
+            }
+            Stage17SpeechOutputDisposition::PlaybackIdentityBlocked => {
+                reason_codes::STAGE17_PLAYBACK_IDENTITY_BLOCKED
+            }
+            Stage17SpeechOutputDisposition::StaleOutputBlocked => {
+                reason_codes::STAGE17_STALE_OUTPUT_BLOCKED
+            }
+            Stage17SpeechOutputDisposition::SourceSpeechBlocked => {
+                reason_codes::STAGE17_SOURCE_SPEECH_BLOCKED
+            }
+            Stage17SpeechOutputDisposition::UnsafeInputBlocked => {
+                reason_codes::STAGE17_UNSAFE_INPUT_BLOCKED
+            }
+            Stage17SpeechOutputDisposition::RuntimeMockBlocked => {
+                reason_codes::STAGE17_RUNTIME_MOCK_BLOCKED
+            }
+            Stage17SpeechOutputDisposition::AuditProofMissing => {
+                reason_codes::STAGE17_AUDIT_PROOF_MISSING
+            }
+        }
+    }
+
+    pub const fn is_ready(self) -> bool {
+        matches!(
+            self,
+            Stage17SpeechOutputDisposition::SpeechOutputReady
+                | Stage17SpeechOutputDisposition::NonSpeakableOutput
+                | Stage17SpeechOutputDisposition::VoiceStyleReady
+                | Stage17SpeechOutputDisposition::PlaybackStateReady
+        )
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Stage17SpeechOutputWorkAuthority {
+    pub can_emit_speech_output_packet: bool,
+    pub can_emit_tts_request_packet: bool,
+    pub can_emit_speakable_text: bool,
+    pub can_emit_non_speakable_disposition: bool,
+    pub can_emit_voice_style_metadata: bool,
+    pub can_emit_playback_state: bool,
+    pub can_emit_playback_event: bool,
+    pub can_block_self_echo: bool,
+    pub can_block_stale_output: bool,
+    pub can_emit_provider_failure: bool,
+    pub can_emit_honest_uncertainty: bool,
+    pub can_emit_audit_proof: bool,
+    pub can_fail_closed: bool,
+    pub can_rewrite_meaning: bool,
+    pub can_invent_facts_or_citations: bool,
+    pub can_weaken_refusal: bool,
+    pub can_imply_unproven_completion: bool,
+    pub can_call_live_provider: bool,
+    pub can_run_live_tts_synthesis: bool,
+    pub can_run_live_audio_playback: bool,
+    pub can_run_live_search: bool,
+    pub can_call_live_external_tool: bool,
+    pub can_connector_write: bool,
+    pub can_approve: bool,
+    pub can_dispatch: bool,
+    pub can_execute_simulation: bool,
+    pub can_execute_protected_action: bool,
+    pub can_capture_microphone_audio: bool,
+    pub can_transcribe_live_audio: bool,
+    pub can_trigger_voice_id_matching: bool,
+    pub can_update_memory_persona_emotion: bool,
+    pub can_add_native_ui_behavior: bool,
+}
+
+impl Stage17SpeechOutputWorkAuthority {
+    pub const fn speech_output_ready() -> Self {
+        Self {
+            can_emit_speech_output_packet: true,
+            can_emit_tts_request_packet: true,
+            can_emit_speakable_text: true,
+            can_emit_voice_style_metadata: true,
+            can_emit_audit_proof: true,
+            can_fail_closed: false,
+            ..Self::fail_closed()
+        }
+    }
+
+    pub const fn non_speakable_output() -> Self {
+        Self {
+            can_emit_speech_output_packet: true,
+            can_emit_non_speakable_disposition: true,
+            can_emit_honest_uncertainty: true,
+            can_emit_audit_proof: true,
+            can_fail_closed: false,
+            ..Self::fail_closed()
+        }
+    }
+
+    pub const fn voice_style_ready() -> Self {
+        Self {
+            can_emit_speech_output_packet: true,
+            can_emit_voice_style_metadata: true,
+            can_emit_audit_proof: true,
+            can_fail_closed: false,
+            ..Self::fail_closed()
+        }
+    }
+
+    pub const fn playback_state_ready() -> Self {
+        Self {
+            can_emit_speech_output_packet: true,
+            can_emit_playback_state: true,
+            can_emit_playback_event: true,
+            can_emit_audit_proof: true,
+            can_fail_closed: false,
+            ..Self::fail_closed()
+        }
+    }
+
+    pub const fn self_echo_blocked() -> Self {
+        Self {
+            can_block_self_echo: true,
+            can_emit_honest_uncertainty: true,
+            can_emit_audit_proof: true,
+            ..Self::fail_closed()
+        }
+    }
+
+    pub const fn provider_failure() -> Self {
+        Self {
+            can_emit_provider_failure: true,
+            can_emit_honest_uncertainty: true,
+            can_emit_audit_proof: true,
+            ..Self::fail_closed()
+        }
+    }
+
+    pub const fn stale_output_blocked() -> Self {
+        Self {
+            can_block_stale_output: true,
+            can_emit_honest_uncertainty: true,
+            can_emit_audit_proof: true,
+            ..Self::fail_closed()
+        }
+    }
+
+    pub const fn fail_closed() -> Self {
+        Self {
+            can_emit_speech_output_packet: false,
+            can_emit_tts_request_packet: false,
+            can_emit_speakable_text: false,
+            can_emit_non_speakable_disposition: false,
+            can_emit_voice_style_metadata: false,
+            can_emit_playback_state: false,
+            can_emit_playback_event: false,
+            can_block_self_echo: false,
+            can_block_stale_output: false,
+            can_emit_provider_failure: false,
+            can_emit_honest_uncertainty: true,
+            can_emit_audit_proof: false,
+            can_fail_closed: true,
+            can_rewrite_meaning: false,
+            can_invent_facts_or_citations: false,
+            can_weaken_refusal: false,
+            can_imply_unproven_completion: false,
+            can_call_live_provider: false,
+            can_run_live_tts_synthesis: false,
+            can_run_live_audio_playback: false,
+            can_run_live_search: false,
+            can_call_live_external_tool: false,
+            can_connector_write: false,
+            can_approve: false,
+            can_dispatch: false,
+            can_execute_simulation: false,
+            can_execute_protected_action: false,
+            can_capture_microphone_audio: false,
+            can_transcribe_live_audio: false,
+            can_trigger_voice_id_matching: false,
+            can_update_memory_persona_emotion: false,
+            can_add_native_ui_behavior: false,
+        }
+    }
+
+    pub const fn can_mutate_or_execute(self) -> bool {
+        self.can_rewrite_meaning
+            || self.can_invent_facts_or_citations
+            || self.can_weaken_refusal
+            || self.can_imply_unproven_completion
+            || self.can_call_live_provider
+            || self.can_run_live_tts_synthesis
+            || self.can_run_live_audio_playback
+            || self.can_run_live_search
+            || self.can_call_live_external_tool
+            || self.can_connector_write
+            || self.can_approve
+            || self.can_dispatch
+            || self.can_execute_simulation
+            || self.can_execute_protected_action
+            || self.can_capture_microphone_audio
+            || self.can_transcribe_live_audio
+            || self.can_trigger_voice_id_matching
+            || self.can_update_memory_persona_emotion
+            || self.can_add_native_ui_behavior
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Stage17SpeechOutputInput {
+    pub output_kind: Stage17SpeechOutputKind,
+    pub speech_output_id: String,
+    pub tts_request_id: Option<String>,
+    pub tts_hash: Option<String>,
+    pub audio_output_id: Option<String>,
+    pub playback_id: Option<String>,
+    pub output_interaction_id: Option<String>,
+    pub voice_style_id: Option<String>,
+    pub audit_id: Option<String>,
+    pub ph1j_proof_ref: Option<String>,
+    pub response_meaning_preserved: bool,
+    pub facts_preserved: bool,
+    pub citations_preserved: bool,
+    pub refusal_wording_preserved: bool,
+    pub no_unproven_completion_language: bool,
+    pub no_silent_translation_or_summary: bool,
+    pub speakable_text_present: bool,
+    pub speakable_text_bounded: bool,
+    pub speakable_text_secret_safe: bool,
+    pub non_speakable_reason_present: bool,
+    pub voice_style_delivery_only: bool,
+    pub voice_style_changed_meaning: bool,
+    pub voice_style_changed_policy_or_refusal: bool,
+    pub voice_style_added_unsupported_persona_or_emotion: bool,
+    pub voice_style_inferred_identity: bool,
+    pub voice_style_persisted_preference: bool,
+    pub voice_style_routes_or_executes: bool,
+    pub tts_provider_off_state: bool,
+    pub tts_missing_secret: bool,
+    pub tts_provider_failure: bool,
+    pub tts_provider_call_attempt_count: u32,
+    pub tts_provider_network_dispatch_count: u32,
+    pub fake_audio_detected: bool,
+    pub fake_playback_detected: bool,
+    pub fake_tts_success_detected: bool,
+    pub fake_voice_detected: bool,
+    pub runtime_mock_detected: bool,
+    pub fixture_only_test_path: bool,
+    pub playback_state_evidence_only: bool,
+    pub playback_matches_current_output_identity: bool,
+    pub playback_creates_user_turn: bool,
+    pub playback_authorizes_or_executes: bool,
+    pub playback_reopens_stale_turn: bool,
+    pub playback_mutates_protected_state: bool,
+    pub stale_or_cancelled_or_superseded_output: bool,
+    pub session_closed: bool,
+    pub record_artifact_only_turn: bool,
+    pub pause_resume_cancel_mutates_state: bool,
+    pub tts_self_echo_evidence: bool,
+    pub self_echo_output_originated: bool,
+    pub self_echo_creates_user_turn: bool,
+    pub self_echo_feeds_downstream: bool,
+    pub self_echo_hides_real_user_turn: bool,
+    pub citation_context_required: bool,
+    pub citation_context_bound_to_stage14_15: bool,
+    pub fake_or_stale_citation_spoken: bool,
+    pub secret_unsafe_source_metadata_spoken: bool,
+    pub source_link_native_dispatch: bool,
+    pub raw_provider_output_present: bool,
+    pub raw_search_dump_present: bool,
+    pub raw_audio_present: bool,
+    pub partial_transcript_present: bool,
+    pub unsafe_voice_identity_posture: bool,
+    pub memory_persona_emotion_preference_hint_used_as_truth: bool,
+    pub protected_action_candidate_present: bool,
+    pub simulation_candidate_present: bool,
+    pub approved_execution_plan_present: bool,
+    pub attempted_live_provider_in_build: bool,
+    pub ran_live_tts_synthesis_in_build: bool,
+    pub ran_live_audio_playback_in_build: bool,
+    pub ran_live_search_in_build: bool,
+    pub called_live_external_tool_in_build: bool,
+    pub connector_write_requested: bool,
+    pub captured_microphone_audio: bool,
+    pub transcribed_live_audio: bool,
+    pub voice_id_matching_attempted: bool,
+    pub native_ui_behavior_added: bool,
+}
+
+impl Stage17SpeechOutputInput {
+    pub fn fixture_speakable_ready(
+        speech_output_id: impl Into<String>,
+        tts_request_id: impl Into<String>,
+        tts_hash: impl Into<String>,
+        audio_output_id: impl Into<String>,
+        voice_style_id: impl Into<String>,
+        audit_id: impl Into<String>,
+    ) -> Self {
+        let audit_id = audit_id.into();
+        Self {
+            output_kind: Stage17SpeechOutputKind::SpeakableText,
+            speech_output_id: speech_output_id.into(),
+            tts_request_id: Some(tts_request_id.into()),
+            tts_hash: Some(tts_hash.into()),
+            audio_output_id: Some(audio_output_id.into()),
+            playback_id: None,
+            output_interaction_id: None,
+            voice_style_id: Some(voice_style_id.into()),
+            audit_id: Some(audit_id.clone()),
+            ph1j_proof_ref: Some(audit_id),
+            response_meaning_preserved: true,
+            facts_preserved: true,
+            citations_preserved: true,
+            refusal_wording_preserved: true,
+            no_unproven_completion_language: true,
+            no_silent_translation_or_summary: true,
+            speakable_text_present: true,
+            speakable_text_bounded: true,
+            speakable_text_secret_safe: true,
+            non_speakable_reason_present: false,
+            voice_style_delivery_only: true,
+            voice_style_changed_meaning: false,
+            voice_style_changed_policy_or_refusal: false,
+            voice_style_added_unsupported_persona_or_emotion: false,
+            voice_style_inferred_identity: false,
+            voice_style_persisted_preference: false,
+            voice_style_routes_or_executes: false,
+            tts_provider_off_state: false,
+            tts_missing_secret: false,
+            tts_provider_failure: false,
+            tts_provider_call_attempt_count: 0,
+            tts_provider_network_dispatch_count: 0,
+            fake_audio_detected: false,
+            fake_playback_detected: false,
+            fake_tts_success_detected: false,
+            fake_voice_detected: false,
+            runtime_mock_detected: false,
+            fixture_only_test_path: true,
+            playback_state_evidence_only: true,
+            playback_matches_current_output_identity: true,
+            playback_creates_user_turn: false,
+            playback_authorizes_or_executes: false,
+            playback_reopens_stale_turn: false,
+            playback_mutates_protected_state: false,
+            stale_or_cancelled_or_superseded_output: false,
+            session_closed: false,
+            record_artifact_only_turn: false,
+            pause_resume_cancel_mutates_state: false,
+            tts_self_echo_evidence: false,
+            self_echo_output_originated: false,
+            self_echo_creates_user_turn: false,
+            self_echo_feeds_downstream: false,
+            self_echo_hides_real_user_turn: false,
+            citation_context_required: true,
+            citation_context_bound_to_stage14_15: true,
+            fake_or_stale_citation_spoken: false,
+            secret_unsafe_source_metadata_spoken: false,
+            source_link_native_dispatch: false,
+            raw_provider_output_present: false,
+            raw_search_dump_present: false,
+            raw_audio_present: false,
+            partial_transcript_present: false,
+            unsafe_voice_identity_posture: false,
+            memory_persona_emotion_preference_hint_used_as_truth: false,
+            protected_action_candidate_present: false,
+            simulation_candidate_present: false,
+            approved_execution_plan_present: false,
+            attempted_live_provider_in_build: false,
+            ran_live_tts_synthesis_in_build: false,
+            ran_live_audio_playback_in_build: false,
+            ran_live_search_in_build: false,
+            called_live_external_tool_in_build: false,
+            connector_write_requested: false,
+            captured_microphone_audio: false,
+            transcribed_live_audio: false,
+            voice_id_matching_attempted: false,
+            native_ui_behavior_added: false,
+        }
+    }
+
+    pub fn fixture_non_speakable(
+        speech_output_id: impl Into<String>,
+        audit_id: impl Into<String>,
+    ) -> Self {
+        let mut input = Self::fixture_speakable_ready(
+            speech_output_id,
+            "tts-request-stage17-non-speakable",
+            "tts-hash-stage17-non-speakable",
+            "audio-output-stage17-non-speakable",
+            "voice-style-stage17-non-speakable",
+            audit_id,
+        );
+        input.output_kind = Stage17SpeechOutputKind::NonSpeakableDisposition;
+        input.tts_request_id = None;
+        input.tts_hash = None;
+        input.audio_output_id = None;
+        input.speakable_text_present = false;
+        input.non_speakable_reason_present = true;
+        input.citation_context_required = false;
+        input.citation_context_bound_to_stage14_15 = false;
+        input
+    }
+
+    pub fn fixture_voice_style(
+        speech_output_id: impl Into<String>,
+        voice_style_id: impl Into<String>,
+        audit_id: impl Into<String>,
+    ) -> Self {
+        let mut input = Self::fixture_speakable_ready(
+            speech_output_id,
+            "tts-request-stage17-style",
+            "tts-hash-stage17-style",
+            "audio-output-stage17-style",
+            voice_style_id,
+            audit_id,
+        );
+        input.output_kind = Stage17SpeechOutputKind::VoiceStyleMetadata;
+        input.speakable_text_present = false;
+        input.citation_context_required = false;
+        input.citation_context_bound_to_stage14_15 = false;
+        input
+    }
+
+    pub fn fixture_playback_state(
+        speech_output_id: impl Into<String>,
+        playback_id: impl Into<String>,
+        output_interaction_id: impl Into<String>,
+        audit_id: impl Into<String>,
+    ) -> Self {
+        let mut input = Self::fixture_speakable_ready(
+            speech_output_id,
+            "tts-request-stage17-playback",
+            "tts-hash-stage17-playback",
+            "audio-output-stage17-playback",
+            "voice-style-stage17-playback",
+            audit_id,
+        );
+        input.output_kind = Stage17SpeechOutputKind::PlaybackState;
+        input.playback_id = Some(playback_id.into());
+        input.output_interaction_id = Some(output_interaction_id.into());
+        input.speakable_text_present = false;
+        input.citation_context_required = false;
+        input.citation_context_bound_to_stage14_15 = false;
+        input
+    }
+
+    pub fn fixture_self_echo_blocked(
+        speech_output_id: impl Into<String>,
+        output_interaction_id: impl Into<String>,
+        audit_id: impl Into<String>,
+    ) -> Self {
+        let mut input = Self::fixture_playback_state(
+            speech_output_id,
+            "playback-stage17-self-echo",
+            output_interaction_id,
+            audit_id,
+        );
+        input.output_kind = Stage17SpeechOutputKind::SelfEchoBlock;
+        input.tts_self_echo_evidence = true;
+        input.self_echo_output_originated = true;
+        input.playback_matches_current_output_identity = false;
+        input
+    }
+}
+
+impl Validate for Stage17SpeechOutputInput {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        validate_stage4_ref(
+            "stage17_speech_output_input.speech_output_id",
+            &self.speech_output_id,
+        )?;
+        validate_stage4_optional_ref(
+            "stage17_speech_output_input.tts_request_id",
+            self.tts_request_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage17_speech_output_input.tts_hash",
+            self.tts_hash.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage17_speech_output_input.audio_output_id",
+            self.audio_output_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage17_speech_output_input.playback_id",
+            self.playback_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage17_speech_output_input.output_interaction_id",
+            self.output_interaction_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage17_speech_output_input.voice_style_id",
+            self.voice_style_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage17_speech_output_input.audit_id",
+            self.audit_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage17_speech_output_input.ph1j_proof_ref",
+            self.ph1j_proof_ref.as_deref(),
+        )?;
+        if self.attempted_live_provider_in_build
+            || self.ran_live_tts_synthesis_in_build
+            || self.ran_live_audio_playback_in_build
+            || self.ran_live_search_in_build
+            || self.called_live_external_tool_in_build
+            || self.connector_write_requested
+            || self.captured_microphone_audio
+            || self.transcribed_live_audio
+            || self.voice_id_matching_attempted
+            || self.native_ui_behavior_added
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage17_speech_output_input.no_live_build",
+                reason: "Stage 17A cannot call live providers/search/tools, run live TTS/playback, capture mic, transcribe, match Voice ID, connector-write, or add native UI",
+            });
+        }
+        if (self.runtime_mock_detected
+            || self.fake_audio_detected
+            || self.fake_playback_detected
+            || self.fake_tts_success_detected
+            || self.fake_voice_detected)
+            && !self.fixture_only_test_path
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage17_speech_output_input.runtime_mock",
+                reason: "runtime mocks and fake audio/playback/TTS/voice success are forbidden outside explicit fixture-only paths",
+            });
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Stage17SpeechOutputPacket {
+    pub session_id: SessionId,
+    pub turn_id: Option<TurnId>,
+    pub activation_id: Option<String>,
+    pub response_output_id: String,
+    pub response_hash: String,
+    pub speech_output_id: String,
+    pub tts_request_id: Option<String>,
+    pub tts_hash: Option<String>,
+    pub audio_output_id: Option<String>,
+    pub playback_id: Option<String>,
+    pub output_interaction_id: Option<String>,
+    pub voice_style_id: Option<String>,
+    pub source_evidence_id: Option<String>,
+    pub citation_id: Option<String>,
+    pub provenance_id: Option<String>,
+    pub verifier_id: Option<String>,
+    pub provider_budget_id: Option<String>,
+    pub provider_off_state: bool,
+    pub provider_call_attempt_count: u32,
+    pub provider_network_dispatch_count: u32,
+    pub tts_provider_off_state: bool,
+    pub tts_provider_call_attempt_count: u32,
+    pub tts_provider_network_dispatch_count: u32,
+    pub access_context_id: Option<String>,
+    pub policy_context_id: Option<String>,
+    pub tenant_id: Option<String>,
+    pub voice_identity_id: Option<String>,
+    pub audit_id: Option<String>,
+    pub ph1j_proof_ref: Option<String>,
+    pub output_kind: Stage17SpeechOutputKind,
+    pub reason_code: &'static str,
+    pub disposition: Stage17SpeechOutputDisposition,
+    pub stage15_disposition: Stage15ResponseOutputDisposition,
+    pub stage16_disposition: Option<Stage16LongTermStateDisposition>,
+    pub stage8f_disposition: Option<Stage8FOutputInteractionDisposition>,
+    pub response_meaning_preserved: bool,
+    pub facts_preserved: bool,
+    pub citations_preserved: bool,
+    pub refusal_wording_preserved: bool,
+    pub no_unproven_completion_language: bool,
+    pub no_silent_translation_or_summary: bool,
+    pub speakable_text_present: bool,
+    pub speakable_text_bounded: bool,
+    pub speakable_text_secret_safe: bool,
+    pub non_speakable_reason_present: bool,
+    pub voice_style_delivery_only: bool,
+    pub voice_style_changed_meaning: bool,
+    pub voice_style_changed_policy_or_refusal: bool,
+    pub voice_style_added_unsupported_persona_or_emotion: bool,
+    pub voice_style_inferred_identity: bool,
+    pub voice_style_persisted_preference: bool,
+    pub voice_style_routes_or_executes: bool,
+    pub tts_missing_secret: bool,
+    pub tts_provider_failure: bool,
+    pub fake_audio_detected: bool,
+    pub fake_playback_detected: bool,
+    pub fake_tts_success_detected: bool,
+    pub fake_voice_detected: bool,
+    pub runtime_mock_detected: bool,
+    pub playback_state_evidence_only: bool,
+    pub playback_matches_current_output_identity: bool,
+    pub playback_creates_user_turn: bool,
+    pub playback_authorizes_or_executes: bool,
+    pub playback_reopens_stale_turn: bool,
+    pub playback_mutates_protected_state: bool,
+    pub stale_or_cancelled_or_superseded_output: bool,
+    pub session_closed: bool,
+    pub record_artifact_only_turn: bool,
+    pub pause_resume_cancel_mutates_state: bool,
+    pub tts_self_echo_evidence: bool,
+    pub self_echo_output_originated: bool,
+    pub self_echo_creates_user_turn: bool,
+    pub self_echo_feeds_downstream: bool,
+    pub self_echo_hides_real_user_turn: bool,
+    pub citation_context_required: bool,
+    pub citation_context_bound_to_stage14_15: bool,
+    pub fake_or_stale_citation_spoken: bool,
+    pub secret_unsafe_source_metadata_spoken: bool,
+    pub source_link_native_dispatch: bool,
+    pub raw_provider_output_present: bool,
+    pub raw_search_dump_present: bool,
+    pub raw_audio_present: bool,
+    pub partial_transcript_present: bool,
+    pub unsafe_voice_identity_posture: bool,
+    pub memory_persona_emotion_preference_hint_used_as_truth: bool,
+    pub protected_action_candidate_present: bool,
+    pub simulation_candidate_present: bool,
+    pub approved_execution_plan_present: bool,
+    pub work_authority: Stage17SpeechOutputWorkAuthority,
+}
+
+impl Stage17SpeechOutputPacket {
+    pub fn from_stage15_output(
+        output: &Stage15ResponseOutputPacket,
+        stage16_hint: Option<&Stage16LongTermStatePacket>,
+        output_interaction: Option<&Stage8FOutputInteractionPacket>,
+        input: Stage17SpeechOutputInput,
+    ) -> Result<Self, ContractViolation> {
+        output.validate()?;
+        if let Some(hint) = stage16_hint {
+            hint.validate()?;
+        }
+        if let Some(interaction) = output_interaction {
+            interaction.validate()?;
+        }
+        input.validate()?;
+        let disposition =
+            Self::decide_disposition(output, stage16_hint, output_interaction, &input);
+        let work_authority = Self::work_authority_for(disposition);
+        let audit_id = input.audit_id.clone().or_else(|| output.audit_id.clone());
+        let ph1j_proof_ref = input
+            .ph1j_proof_ref
+            .clone()
+            .or_else(|| output.ph1j_proof_ref.clone())
+            .or_else(|| audit_id.clone());
+        let packet = Self {
+            session_id: output.session_id,
+            turn_id: output.turn_id,
+            activation_id: output.activation_id.clone(),
+            response_output_id: output.response_output_id.clone(),
+            response_hash: output.response_hash.clone(),
+            speech_output_id: input.speech_output_id,
+            tts_request_id: input.tts_request_id,
+            tts_hash: input.tts_hash,
+            audio_output_id: input.audio_output_id,
+            playback_id: input.playback_id,
+            output_interaction_id: input.output_interaction_id,
+            voice_style_id: input.voice_style_id,
+            source_evidence_id: output.source_evidence_id.clone(),
+            citation_id: output.citation_id.clone(),
+            provenance_id: output.provenance_id.clone(),
+            verifier_id: output.verifier_id.clone(),
+            provider_budget_id: output.provider_budget_id.clone(),
+            provider_off_state: output.provider_off_state,
+            provider_call_attempt_count: output.provider_call_attempt_count,
+            provider_network_dispatch_count: output.provider_network_dispatch_count,
+            tts_provider_off_state: input.tts_provider_off_state,
+            tts_provider_call_attempt_count: input.tts_provider_call_attempt_count,
+            tts_provider_network_dispatch_count: input.tts_provider_network_dispatch_count,
+            access_context_id: output.access_context_id.clone(),
+            policy_context_id: output.policy_context_id.clone(),
+            tenant_id: output.tenant_id.clone(),
+            voice_identity_id: stage16_hint.and_then(|hint| hint.voice_identity_id.clone()),
+            audit_id,
+            ph1j_proof_ref,
+            output_kind: input.output_kind,
+            reason_code: disposition.default_reason_code(),
+            disposition,
+            stage15_disposition: output.disposition,
+            stage16_disposition: stage16_hint.map(|hint| hint.disposition),
+            stage8f_disposition: output_interaction.map(|interaction| interaction.disposition),
+            response_meaning_preserved: input.response_meaning_preserved,
+            facts_preserved: input.facts_preserved,
+            citations_preserved: input.citations_preserved,
+            refusal_wording_preserved: input.refusal_wording_preserved,
+            no_unproven_completion_language: input.no_unproven_completion_language,
+            no_silent_translation_or_summary: input.no_silent_translation_or_summary,
+            speakable_text_present: input.speakable_text_present,
+            speakable_text_bounded: input.speakable_text_bounded,
+            speakable_text_secret_safe: input.speakable_text_secret_safe,
+            non_speakable_reason_present: input.non_speakable_reason_present,
+            voice_style_delivery_only: input.voice_style_delivery_only,
+            voice_style_changed_meaning: input.voice_style_changed_meaning,
+            voice_style_changed_policy_or_refusal: input.voice_style_changed_policy_or_refusal,
+            voice_style_added_unsupported_persona_or_emotion: input
+                .voice_style_added_unsupported_persona_or_emotion,
+            voice_style_inferred_identity: input.voice_style_inferred_identity,
+            voice_style_persisted_preference: input.voice_style_persisted_preference,
+            voice_style_routes_or_executes: input.voice_style_routes_or_executes,
+            tts_missing_secret: input.tts_missing_secret,
+            tts_provider_failure: input.tts_provider_failure,
+            fake_audio_detected: input.fake_audio_detected,
+            fake_playback_detected: input.fake_playback_detected,
+            fake_tts_success_detected: input.fake_tts_success_detected,
+            fake_voice_detected: input.fake_voice_detected,
+            runtime_mock_detected: input.runtime_mock_detected,
+            playback_state_evidence_only: input.playback_state_evidence_only,
+            playback_matches_current_output_identity: input
+                .playback_matches_current_output_identity,
+            playback_creates_user_turn: input.playback_creates_user_turn,
+            playback_authorizes_or_executes: input.playback_authorizes_or_executes,
+            playback_reopens_stale_turn: input.playback_reopens_stale_turn,
+            playback_mutates_protected_state: input.playback_mutates_protected_state,
+            stale_or_cancelled_or_superseded_output: input.stale_or_cancelled_or_superseded_output,
+            session_closed: input.session_closed,
+            record_artifact_only_turn: input.record_artifact_only_turn,
+            pause_resume_cancel_mutates_state: input.pause_resume_cancel_mutates_state,
+            tts_self_echo_evidence: input.tts_self_echo_evidence,
+            self_echo_output_originated: input.self_echo_output_originated,
+            self_echo_creates_user_turn: input.self_echo_creates_user_turn,
+            self_echo_feeds_downstream: input.self_echo_feeds_downstream,
+            self_echo_hides_real_user_turn: input.self_echo_hides_real_user_turn,
+            citation_context_required: input.citation_context_required,
+            citation_context_bound_to_stage14_15: input.citation_context_bound_to_stage14_15,
+            fake_or_stale_citation_spoken: input.fake_or_stale_citation_spoken,
+            secret_unsafe_source_metadata_spoken: input.secret_unsafe_source_metadata_spoken,
+            source_link_native_dispatch: input.source_link_native_dispatch,
+            raw_provider_output_present: input.raw_provider_output_present,
+            raw_search_dump_present: input.raw_search_dump_present,
+            raw_audio_present: input.raw_audio_present,
+            partial_transcript_present: input.partial_transcript_present,
+            unsafe_voice_identity_posture: input.unsafe_voice_identity_posture,
+            memory_persona_emotion_preference_hint_used_as_truth: input
+                .memory_persona_emotion_preference_hint_used_as_truth,
+            protected_action_candidate_present: input.protected_action_candidate_present,
+            simulation_candidate_present: input.simulation_candidate_present,
+            approved_execution_plan_present: input.approved_execution_plan_present,
+            work_authority,
+        };
+        packet.validate()?;
+        Ok(packet)
+    }
+
+    pub const fn can_mutate_or_execute(&self) -> bool {
+        self.work_authority.can_mutate_or_execute()
+    }
+
+    fn decide_disposition(
+        output: &Stage15ResponseOutputPacket,
+        stage16_hint: Option<&Stage16LongTermStatePacket>,
+        output_interaction: Option<&Stage8FOutputInteractionPacket>,
+        input: &Stage17SpeechOutputInput,
+    ) -> Stage17SpeechOutputDisposition {
+        if input.runtime_mock_detected
+            || input.fake_audio_detected
+            || input.fake_playback_detected
+            || input.fake_tts_success_detected
+            || input.fake_voice_detected
+        {
+            return Stage17SpeechOutputDisposition::RuntimeMockBlocked;
+        }
+        if input.raw_provider_output_present
+            || input.raw_search_dump_present
+            || input.raw_audio_present
+            || input.partial_transcript_present
+            || input.unsafe_voice_identity_posture
+            || input.memory_persona_emotion_preference_hint_used_as_truth
+            || input.protected_action_candidate_present
+            || input.simulation_candidate_present
+            || input.approved_execution_plan_present
+            || input.source_link_native_dispatch
+        {
+            return Stage17SpeechOutputDisposition::UnsafeInputBlocked;
+        }
+        if !output.disposition.is_ready()
+            || output.can_mutate_or_execute()
+            || output.work_authority.can_emit_tts
+        {
+            return Stage17SpeechOutputDisposition::Stage15OutputBlocked;
+        }
+        if let Some(hint) = stage16_hint {
+            if hint.can_mutate_or_execute()
+                || hint.disposition != Stage16LongTermStateDisposition::PersonaPreferenceHintReady
+                || !hint.persona_tone_only
+                || hint.persona_changes_facts_or_meaning
+                || hint.persona_grants_authority
+                || hint.persona_routes_or_executes
+                || hint.preference_persisted_from_output_only
+            {
+                return Stage17SpeechOutputDisposition::Stage16HintBlocked;
+            }
+        }
+        if input.audit_id.is_none()
+            && input.ph1j_proof_ref.is_none()
+            && output.audit_id.is_none()
+            && output.ph1j_proof_ref.is_none()
+        {
+            return Stage17SpeechOutputDisposition::AuditProofMissing;
+        }
+        if let Some(interaction) = output_interaction {
+            if interaction.kind == Stage8FOutputInteractionKind::SelfEchoBlocked
+                || interaction.disposition == Stage8FOutputInteractionDisposition::BlockedSelfEcho
+            {
+                return if input.tts_self_echo_evidence
+                    && input.self_echo_output_originated
+                    && !input.self_echo_creates_user_turn
+                    && !input.self_echo_feeds_downstream
+                    && !input.self_echo_hides_real_user_turn
+                {
+                    Stage17SpeechOutputDisposition::SelfEchoBlocked
+                } else {
+                    Stage17SpeechOutputDisposition::UnsafeInputBlocked
+                };
+            }
+            if interaction.disposition == Stage8FOutputInteractionDisposition::BlockedStaleOutput {
+                return Stage17SpeechOutputDisposition::StaleOutputBlocked;
+            }
+        }
+        if input.stale_or_cancelled_or_superseded_output
+            || input.session_closed
+            || input.record_artifact_only_turn
+        {
+            return Stage17SpeechOutputDisposition::StaleOutputBlocked;
+        }
+        if input.tts_provider_off_state {
+            return Stage17SpeechOutputDisposition::ProviderOffNoAudio;
+        }
+        if input.tts_missing_secret {
+            return Stage17SpeechOutputDisposition::MissingSecretNoAudio;
+        }
+        if input.tts_provider_failure {
+            return Stage17SpeechOutputDisposition::ProviderFailureNoAudio;
+        }
+        if !input.response_meaning_preserved
+            || !input.facts_preserved
+            || !input.citations_preserved
+            || !input.refusal_wording_preserved
+            || !input.no_unproven_completion_language
+            || !input.no_silent_translation_or_summary
+            || !input.speakable_text_secret_safe
+        {
+            return Stage17SpeechOutputDisposition::NoRewriteBlocked;
+        }
+        if !input.voice_style_delivery_only
+            || input.voice_style_changed_meaning
+            || input.voice_style_changed_policy_or_refusal
+            || input.voice_style_added_unsupported_persona_or_emotion
+            || input.voice_style_inferred_identity
+            || input.voice_style_persisted_preference
+            || input.voice_style_routes_or_executes
+        {
+            return Stage17SpeechOutputDisposition::VoiceStyleBlocked;
+        }
+        if input.playback_creates_user_turn
+            || input.playback_authorizes_or_executes
+            || input.playback_reopens_stale_turn
+            || input.playback_mutates_protected_state
+            || input.pause_resume_cancel_mutates_state
+        {
+            return Stage17SpeechOutputDisposition::PlaybackIdentityBlocked;
+        }
+        if input.citation_context_required
+            && (!input.citation_context_bound_to_stage14_15
+                || input.fake_or_stale_citation_spoken
+                || input.secret_unsafe_source_metadata_spoken
+                || output.citation_id.is_none())
+        {
+            return Stage17SpeechOutputDisposition::SourceSpeechBlocked;
+        }
+
+        match input.output_kind {
+            Stage17SpeechOutputKind::SpeakableText => {
+                if !input.speakable_text_present
+                    || !input.speakable_text_bounded
+                    || input.tts_request_id.is_none()
+                    || input.tts_hash.is_none()
+                    || input.audio_output_id.is_none()
+                {
+                    Stage17SpeechOutputDisposition::NoRewriteBlocked
+                } else {
+                    Stage17SpeechOutputDisposition::SpeechOutputReady
+                }
+            }
+            Stage17SpeechOutputKind::NonSpeakableDisposition => {
+                if input.non_speakable_reason_present {
+                    Stage17SpeechOutputDisposition::NonSpeakableOutput
+                } else {
+                    Stage17SpeechOutputDisposition::NoRewriteBlocked
+                }
+            }
+            Stage17SpeechOutputKind::VoiceStyleMetadata => {
+                if input.voice_style_id.is_some() {
+                    Stage17SpeechOutputDisposition::VoiceStyleReady
+                } else {
+                    Stage17SpeechOutputDisposition::VoiceStyleBlocked
+                }
+            }
+            Stage17SpeechOutputKind::PlaybackState | Stage17SpeechOutputKind::PlaybackEvent => {
+                if input.playback_state_evidence_only
+                    && input.playback_matches_current_output_identity
+                    && input.playback_id.is_some()
+                {
+                    Stage17SpeechOutputDisposition::PlaybackStateReady
+                } else {
+                    Stage17SpeechOutputDisposition::PlaybackIdentityBlocked
+                }
+            }
+            Stage17SpeechOutputKind::SelfEchoBlock => {
+                if input.tts_self_echo_evidence
+                    && input.self_echo_output_originated
+                    && !input.self_echo_creates_user_turn
+                    && !input.self_echo_feeds_downstream
+                    && !input.self_echo_hides_real_user_turn
+                {
+                    Stage17SpeechOutputDisposition::SelfEchoBlocked
+                } else {
+                    Stage17SpeechOutputDisposition::UnsafeInputBlocked
+                }
+            }
+            Stage17SpeechOutputKind::ProviderFailure => {
+                if input.tts_missing_secret {
+                    Stage17SpeechOutputDisposition::MissingSecretNoAudio
+                } else if input.tts_provider_failure {
+                    Stage17SpeechOutputDisposition::ProviderFailureNoAudio
+                } else {
+                    Stage17SpeechOutputDisposition::ProviderOffNoAudio
+                }
+            }
+        }
+    }
+
+    const fn work_authority_for(
+        disposition: Stage17SpeechOutputDisposition,
+    ) -> Stage17SpeechOutputWorkAuthority {
+        match disposition {
+            Stage17SpeechOutputDisposition::SpeechOutputReady => {
+                Stage17SpeechOutputWorkAuthority::speech_output_ready()
+            }
+            Stage17SpeechOutputDisposition::NonSpeakableOutput => {
+                Stage17SpeechOutputWorkAuthority::non_speakable_output()
+            }
+            Stage17SpeechOutputDisposition::VoiceStyleReady => {
+                Stage17SpeechOutputWorkAuthority::voice_style_ready()
+            }
+            Stage17SpeechOutputDisposition::PlaybackStateReady => {
+                Stage17SpeechOutputWorkAuthority::playback_state_ready()
+            }
+            Stage17SpeechOutputDisposition::SelfEchoBlocked => {
+                Stage17SpeechOutputWorkAuthority::self_echo_blocked()
+            }
+            Stage17SpeechOutputDisposition::ProviderOffNoAudio
+            | Stage17SpeechOutputDisposition::MissingSecretNoAudio
+            | Stage17SpeechOutputDisposition::ProviderFailureNoAudio => {
+                Stage17SpeechOutputWorkAuthority::provider_failure()
+            }
+            Stage17SpeechOutputDisposition::StaleOutputBlocked => {
+                Stage17SpeechOutputWorkAuthority::stale_output_blocked()
+            }
+            _ => Stage17SpeechOutputWorkAuthority::fail_closed(),
+        }
+    }
+}
+
+impl Validate for Stage17SpeechOutputPacket {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        validate_stage4_optional_ref(
+            "stage17_speech_output_packet.activation_id",
+            self.activation_id.as_deref(),
+        )?;
+        validate_stage4_ref(
+            "stage17_speech_output_packet.response_output_id",
+            &self.response_output_id,
+        )?;
+        validate_stage4_ref(
+            "stage17_speech_output_packet.response_hash",
+            &self.response_hash,
+        )?;
+        validate_stage4_ref(
+            "stage17_speech_output_packet.speech_output_id",
+            &self.speech_output_id,
+        )?;
+        validate_stage4_optional_ref(
+            "stage17_speech_output_packet.tts_request_id",
+            self.tts_request_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage17_speech_output_packet.tts_hash",
+            self.tts_hash.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage17_speech_output_packet.audio_output_id",
+            self.audio_output_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage17_speech_output_packet.playback_id",
+            self.playback_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage17_speech_output_packet.output_interaction_id",
+            self.output_interaction_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage17_speech_output_packet.voice_style_id",
+            self.voice_style_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage17_speech_output_packet.source_evidence_id",
+            self.source_evidence_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage17_speech_output_packet.citation_id",
+            self.citation_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage17_speech_output_packet.provenance_id",
+            self.provenance_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage17_speech_output_packet.verifier_id",
+            self.verifier_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage17_speech_output_packet.provider_budget_id",
+            self.provider_budget_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage17_speech_output_packet.access_context_id",
+            self.access_context_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage17_speech_output_packet.policy_context_id",
+            self.policy_context_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage17_speech_output_packet.tenant_id",
+            self.tenant_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage17_speech_output_packet.voice_identity_id",
+            self.voice_identity_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage17_speech_output_packet.audit_id",
+            self.audit_id.as_deref(),
+        )?;
+        validate_stage4_optional_ref(
+            "stage17_speech_output_packet.ph1j_proof_ref",
+            self.ph1j_proof_ref.as_deref(),
+        )?;
+        if self.reason_code != self.disposition.default_reason_code() {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage17_speech_output_packet.reason_code",
+                reason: "must match Stage 17A speech-output disposition",
+            });
+        }
+        if self.work_authority.can_mutate_or_execute() {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage17_speech_output_packet.work_authority",
+                reason: "Stage 17A cannot rewrite meaning, invent facts/citations, call live providers/search/tools, run live TTS/playback, capture mic, transcribe, Voice ID match, connector-write, approve, dispatch, execute, update memory, or add native UI",
+            });
+        }
+        if self.provider_off_state
+            && (self.provider_call_attempt_count != 0 || self.provider_network_dispatch_count != 0)
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage17_speech_output_packet.provider_off_state",
+                reason: "provider-off speech-output proof must preserve zero provider attempts and network dispatches",
+            });
+        }
+        if self.tts_provider_off_state
+            && (self.tts_provider_call_attempt_count != 0
+                || self.tts_provider_network_dispatch_count != 0)
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage17_speech_output_packet.tts_provider_off_state",
+                reason: "TTS provider-off proof must preserve zero TTS provider attempts and network dispatches",
+            });
+        }
+        if self.disposition.is_ready() && (self.audit_id.is_none() || self.ph1j_proof_ref.is_none())
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage17_speech_output_packet.audit_proof",
+                reason: "ready Stage 17A speech output requires PH1.J audit/proof refs",
+            });
+        }
+
+        match self.disposition {
+            Stage17SpeechOutputDisposition::SpeechOutputReady => {
+                if self.output_kind != Stage17SpeechOutputKind::SpeakableText
+                    || self.stage15_disposition
+                        == Stage15ResponseOutputDisposition::RuntimeMockBlocked
+                    || !self.response_meaning_preserved
+                    || !self.facts_preserved
+                    || !self.citations_preserved
+                    || !self.refusal_wording_preserved
+                    || !self.no_unproven_completion_language
+                    || !self.no_silent_translation_or_summary
+                    || !self.speakable_text_present
+                    || !self.speakable_text_bounded
+                    || !self.speakable_text_secret_safe
+                    || self.tts_request_id.is_none()
+                    || self.tts_hash.is_none()
+                    || self.audio_output_id.is_none()
+                    || !self.work_authority.can_emit_speech_output_packet
+                    || !self.work_authority.can_emit_tts_request_packet
+                    || !self.work_authority.can_emit_speakable_text
+                {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "stage17_speech_output_packet.speakable_text",
+                        reason: "speakable text must preserve Stage 15 meaning, facts, citations, refusals, and non-completion wording without live synthesis",
+                    });
+                }
+            }
+            Stage17SpeechOutputDisposition::NonSpeakableOutput => {
+                if self.output_kind != Stage17SpeechOutputKind::NonSpeakableDisposition
+                    || !self.non_speakable_reason_present
+                    || self.speakable_text_present
+                    || !self.work_authority.can_emit_non_speakable_disposition
+                {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "stage17_speech_output_packet.non_speakable",
+                        reason:
+                            "non-speakable output must emit only a bounded non-speech disposition",
+                    });
+                }
+            }
+            Stage17SpeechOutputDisposition::VoiceStyleReady => {
+                if self.output_kind != Stage17SpeechOutputKind::VoiceStyleMetadata
+                    || self.voice_style_id.is_none()
+                    || !self.voice_style_delivery_only
+                    || self.voice_style_changed_meaning
+                    || self.voice_style_changed_policy_or_refusal
+                    || self.voice_style_added_unsupported_persona_or_emotion
+                    || self.voice_style_inferred_identity
+                    || self.voice_style_persisted_preference
+                    || self.voice_style_routes_or_executes
+                    || !self.work_authority.can_emit_voice_style_metadata
+                {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "stage17_speech_output_packet.voice_style",
+                        reason: "voice style must be delivery metadata only and cannot change meaning, policy, identity, authority, routing, or persistence",
+                    });
+                }
+            }
+            Stage17SpeechOutputDisposition::PlaybackStateReady => {
+                if !matches!(
+                    self.output_kind,
+                    Stage17SpeechOutputKind::PlaybackState | Stage17SpeechOutputKind::PlaybackEvent
+                ) || self.playback_id.is_none()
+                    || !self.playback_state_evidence_only
+                    || !self.playback_matches_current_output_identity
+                    || self.playback_creates_user_turn
+                    || self.playback_authorizes_or_executes
+                    || self.playback_reopens_stale_turn
+                    || self.playback_mutates_protected_state
+                    || !self.work_authority.can_emit_playback_state
+                {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "stage17_speech_output_packet.playback",
+                        reason: "playback state must be current-output interaction evidence only",
+                    });
+                }
+            }
+            Stage17SpeechOutputDisposition::SelfEchoBlocked => {
+                if self.output_kind != Stage17SpeechOutputKind::SelfEchoBlock
+                    || !self.tts_self_echo_evidence
+                    || !self.self_echo_output_originated
+                    || self.self_echo_creates_user_turn
+                    || self.self_echo_feeds_downstream
+                    || self.self_echo_hides_real_user_turn
+                    || !self.work_authority.can_block_self_echo
+                {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "stage17_speech_output_packet.self_echo",
+                        reason: "TTS self-echo can only be blocked as bounded output-originated non-user audio evidence",
+                    });
+                }
+            }
+            Stage17SpeechOutputDisposition::ProviderOffNoAudio
+            | Stage17SpeechOutputDisposition::MissingSecretNoAudio
+            | Stage17SpeechOutputDisposition::ProviderFailureNoAudio => {
+                if self.fake_audio_detected
+                    || self.fake_playback_detected
+                    || self.fake_tts_success_detected
+                    || self.fake_voice_detected
+                    || self.audio_output_id.is_some()
+                    || !self.work_authority.can_emit_provider_failure
+                {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "stage17_speech_output_packet.provider_failure",
+                        reason: "provider-off, missing-secret, and provider-failure paths cannot emit fake audio, playback, TTS, or voice success",
+                    });
+                }
+            }
+            Stage17SpeechOutputDisposition::StaleOutputBlocked => {
+                if !(self.stale_or_cancelled_or_superseded_output
+                    || self.session_closed
+                    || self.record_artifact_only_turn
+                    || self.stage8f_disposition
+                        == Some(Stage8FOutputInteractionDisposition::BlockedStaleOutput))
+                    || !self.work_authority.can_block_stale_output
+                {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "stage17_speech_output_packet.stale_output",
+                        reason: "stale, cancelled, superseded, closed-session, or record-artifact speech output must be blocked before render/play",
+                    });
+                }
+            }
+            _ => {
+                if !self.work_authority.can_fail_closed
+                    || self.work_authority.can_emit_speech_output_packet
+                    || self.work_authority.can_emit_tts_request_packet
+                    || self.work_authority.can_emit_speakable_text
+                    || self.work_authority.can_emit_voice_style_metadata
+                    || self.work_authority.can_emit_playback_state
+                    || self.work_authority.can_emit_playback_event
+                {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "stage17_speech_output_packet.blocked_output",
+                        reason: "blocked Stage 17A packets fail closed and cannot emit fake speech, playback, TTS, or voice outputs",
+                    });
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RawTurnPayload {
     Text {
@@ -19478,6 +20795,693 @@ mod tests {
         ] {
             input.fixture_only_test_path = true;
             assert!(Stage16LongTermStatePacket::from_stage15_output(&output, input).is_err());
+        }
+    }
+
+    fn stage17_response_output_packet() -> Stage15ResponseOutputPacket {
+        stage16_response_output_packet()
+    }
+
+    fn stage17_persona_delivery_hint() -> Stage16LongTermStatePacket {
+        let output = stage17_response_output_packet();
+        Stage16LongTermStatePacket::from_stage15_output(
+            &output,
+            Stage16LongTermStateInput::fixture_persona_preference_ready(
+                "long-term-state-stage17-delivery",
+                "persona-profile-stage17-delivery",
+                "preference-signal-stage17-delivery",
+                "audit-stage17-delivery",
+            ),
+        )
+        .expect("stage17 persona delivery hint")
+    }
+
+    fn stage17_self_echo_interaction() -> Stage8FOutputInteractionPacket {
+        Stage8FOutputInteractionPacket::self_echo_blocked(
+            stage8_explicit_mic_activation(Some(SessionId(88))),
+            stage8c_blocked_scene(
+                "audio-scene-stage17-self-echo",
+                Stage8AudioSceneDisposition::BlockedSelfEcho,
+            ),
+            SessionId(88),
+            Some(TurnId(8)),
+            "output-stage17-self-echo",
+            "audit-stage17-self-echo",
+        )
+        .expect("stage17 self echo interaction")
+    }
+
+    #[test]
+    fn stage_17a_speech_output_preserves_stage15_meaning_with_stage16_delivery_hint() {
+        let output = stage17_response_output_packet();
+        let hint = stage17_persona_delivery_hint();
+        let packet = Stage17SpeechOutputPacket::from_stage15_output(
+            &output,
+            Some(&hint),
+            None,
+            Stage17SpeechOutputInput::fixture_speakable_ready(
+                "speech-output-stage17-ready",
+                "tts-request-stage17-ready",
+                "tts-hash-stage17-ready",
+                "audio-output-stage17-ready",
+                "voice-style-stage17-ready",
+                "audit-stage17-ready",
+            ),
+        )
+        .expect("stage17 speech output ready");
+
+        assert_eq!(
+            packet.disposition,
+            Stage17SpeechOutputDisposition::SpeechOutputReady
+        );
+        assert_eq!(packet.response_output_id, output.response_output_id);
+        assert_eq!(packet.response_hash, output.response_hash);
+        assert_eq!(
+            packet.stage16_disposition,
+            Some(Stage16LongTermStateDisposition::PersonaPreferenceHintReady)
+        );
+        assert!(packet.response_meaning_preserved);
+        assert!(packet.facts_preserved);
+        assert!(packet.citations_preserved);
+        assert!(packet.refusal_wording_preserved);
+        assert!(packet.no_unproven_completion_language);
+        assert!(packet.work_authority.can_emit_tts_request_packet);
+        assert!(packet.work_authority.can_emit_speakable_text);
+        assert!(!packet.work_authority.can_run_live_tts_synthesis);
+        assert!(!packet.work_authority.can_run_live_audio_playback);
+        assert!(!packet.can_mutate_or_execute());
+    }
+
+    #[test]
+    fn stage_17a_speakable_text_cannot_rewrite_or_invent() {
+        let output = stage17_response_output_packet();
+
+        for mut input in [
+            {
+                let mut input = Stage17SpeechOutputInput::fixture_speakable_ready(
+                    "speech-output-stage17-meaning",
+                    "tts-request-stage17-meaning",
+                    "tts-hash-stage17-meaning",
+                    "audio-output-stage17-meaning",
+                    "voice-style-stage17-meaning",
+                    "audit-stage17-meaning",
+                );
+                input.response_meaning_preserved = false;
+                input
+            },
+            {
+                let mut input = Stage17SpeechOutputInput::fixture_speakable_ready(
+                    "speech-output-stage17-facts",
+                    "tts-request-stage17-facts",
+                    "tts-hash-stage17-facts",
+                    "audio-output-stage17-facts",
+                    "voice-style-stage17-facts",
+                    "audit-stage17-facts",
+                );
+                input.facts_preserved = false;
+                input
+            },
+            {
+                let mut input = Stage17SpeechOutputInput::fixture_speakable_ready(
+                    "speech-output-stage17-citations",
+                    "tts-request-stage17-citations",
+                    "tts-hash-stage17-citations",
+                    "audio-output-stage17-citations",
+                    "voice-style-stage17-citations",
+                    "audit-stage17-citations",
+                );
+                input.citations_preserved = false;
+                input
+            },
+            {
+                let mut input = Stage17SpeechOutputInput::fixture_speakable_ready(
+                    "speech-output-stage17-refusal",
+                    "tts-request-stage17-refusal",
+                    "tts-hash-stage17-refusal",
+                    "audio-output-stage17-refusal",
+                    "voice-style-stage17-refusal",
+                    "audit-stage17-refusal",
+                );
+                input.refusal_wording_preserved = false;
+                input
+            },
+            {
+                let mut input = Stage17SpeechOutputInput::fixture_speakable_ready(
+                    "speech-output-stage17-completion",
+                    "tts-request-stage17-completion",
+                    "tts-hash-stage17-completion",
+                    "audio-output-stage17-completion",
+                    "voice-style-stage17-completion",
+                    "audit-stage17-completion",
+                );
+                input.no_unproven_completion_language = false;
+                input
+            },
+        ] {
+            input.fixture_only_test_path = true;
+            let packet = Stage17SpeechOutputPacket::from_stage15_output(&output, None, None, input)
+                .expect("stage17 no-rewrite blocked");
+            assert_eq!(
+                packet.disposition,
+                Stage17SpeechOutputDisposition::NoRewriteBlocked
+            );
+            assert!(packet.work_authority.can_fail_closed);
+            assert!(!packet.work_authority.can_emit_speakable_text);
+            assert!(!packet.can_mutate_or_execute());
+        }
+    }
+
+    #[test]
+    fn stage_17a_voice_style_is_delivery_metadata_only() {
+        let output = stage17_response_output_packet();
+        let ready = Stage17SpeechOutputPacket::from_stage15_output(
+            &output,
+            Some(&stage17_persona_delivery_hint()),
+            None,
+            Stage17SpeechOutputInput::fixture_voice_style(
+                "speech-output-stage17-style",
+                "voice-style-stage17",
+                "audit-stage17-style",
+            ),
+        )
+        .expect("stage17 voice style ready");
+
+        assert_eq!(
+            ready.disposition,
+            Stage17SpeechOutputDisposition::VoiceStyleReady
+        );
+        assert!(ready.voice_style_delivery_only);
+        assert!(ready.work_authority.can_emit_voice_style_metadata);
+        assert!(!ready.can_mutate_or_execute());
+
+        for mut input in [
+            {
+                let mut input = Stage17SpeechOutputInput::fixture_voice_style(
+                    "speech-output-stage17-style-meaning",
+                    "voice-style-stage17-meaning",
+                    "audit-stage17-style-meaning",
+                );
+                input.voice_style_changed_meaning = true;
+                input
+            },
+            {
+                let mut input = Stage17SpeechOutputInput::fixture_voice_style(
+                    "speech-output-stage17-style-policy",
+                    "voice-style-stage17-policy",
+                    "audit-stage17-style-policy",
+                );
+                input.voice_style_changed_policy_or_refusal = true;
+                input
+            },
+            {
+                let mut input = Stage17SpeechOutputInput::fixture_voice_style(
+                    "speech-output-stage17-style-identity",
+                    "voice-style-stage17-identity",
+                    "audit-stage17-style-identity",
+                );
+                input.voice_style_inferred_identity = true;
+                input
+            },
+            {
+                let mut input = Stage17SpeechOutputInput::fixture_voice_style(
+                    "speech-output-stage17-style-persist",
+                    "voice-style-stage17-persist",
+                    "audit-stage17-style-persist",
+                );
+                input.voice_style_persisted_preference = true;
+                input
+            },
+            {
+                let mut input = Stage17SpeechOutputInput::fixture_voice_style(
+                    "speech-output-stage17-style-route",
+                    "voice-style-stage17-route",
+                    "audit-stage17-style-route",
+                );
+                input.voice_style_routes_or_executes = true;
+                input
+            },
+        ] {
+            input.fixture_only_test_path = true;
+            let packet = Stage17SpeechOutputPacket::from_stage15_output(&output, None, None, input)
+                .expect("stage17 voice style blocked");
+            assert_eq!(
+                packet.disposition,
+                Stage17SpeechOutputDisposition::VoiceStyleBlocked
+            );
+            assert!(packet.work_authority.can_fail_closed);
+            assert!(!packet.work_authority.can_emit_voice_style_metadata);
+            assert!(!packet.can_mutate_or_execute());
+        }
+    }
+
+    #[test]
+    fn stage_17a_provider_off_missing_secret_and_failure_emit_no_fake_audio() {
+        let output = stage17_response_output_packet();
+
+        for (mut input, expected) in [
+            {
+                let mut input = Stage17SpeechOutputInput::fixture_speakable_ready(
+                    "speech-output-stage17-provider-off",
+                    "tts-request-stage17-provider-off",
+                    "tts-hash-stage17-provider-off",
+                    "audio-output-stage17-provider-off",
+                    "voice-style-stage17-provider-off",
+                    "audit-stage17-provider-off",
+                );
+                input.output_kind = Stage17SpeechOutputKind::ProviderFailure;
+                input.tts_provider_off_state = true;
+                input.audio_output_id = None;
+                (input, Stage17SpeechOutputDisposition::ProviderOffNoAudio)
+            },
+            {
+                let mut input = Stage17SpeechOutputInput::fixture_speakable_ready(
+                    "speech-output-stage17-missing-secret",
+                    "tts-request-stage17-missing-secret",
+                    "tts-hash-stage17-missing-secret",
+                    "audio-output-stage17-missing-secret",
+                    "voice-style-stage17-missing-secret",
+                    "audit-stage17-missing-secret",
+                );
+                input.output_kind = Stage17SpeechOutputKind::ProviderFailure;
+                input.tts_missing_secret = true;
+                input.audio_output_id = None;
+                (input, Stage17SpeechOutputDisposition::MissingSecretNoAudio)
+            },
+            {
+                let mut input = Stage17SpeechOutputInput::fixture_speakable_ready(
+                    "speech-output-stage17-provider-failure",
+                    "tts-request-stage17-provider-failure",
+                    "tts-hash-stage17-provider-failure",
+                    "audio-output-stage17-provider-failure",
+                    "voice-style-stage17-provider-failure",
+                    "audit-stage17-provider-failure",
+                );
+                input.output_kind = Stage17SpeechOutputKind::ProviderFailure;
+                input.tts_provider_failure = true;
+                input.audio_output_id = None;
+                (
+                    input,
+                    Stage17SpeechOutputDisposition::ProviderFailureNoAudio,
+                )
+            },
+        ] {
+            input.fixture_only_test_path = true;
+            let packet = Stage17SpeechOutputPacket::from_stage15_output(&output, None, None, input)
+                .expect("stage17 provider failure packet");
+            assert_eq!(packet.disposition, expected);
+            assert!(packet.audio_output_id.is_none());
+            assert_eq!(packet.tts_provider_call_attempt_count, 0);
+            assert_eq!(packet.tts_provider_network_dispatch_count, 0);
+            assert!(packet.work_authority.can_emit_provider_failure);
+            assert!(!packet.work_authority.can_run_live_tts_synthesis);
+            assert!(!packet.work_authority.can_run_live_audio_playback);
+            assert!(!packet.can_mutate_or_execute());
+        }
+
+        let mut runtime_mock = Stage17SpeechOutputInput::fixture_speakable_ready(
+            "speech-output-stage17-runtime-mock",
+            "tts-request-stage17-runtime-mock",
+            "tts-hash-stage17-runtime-mock",
+            "audio-output-stage17-runtime-mock",
+            "voice-style-stage17-runtime-mock",
+            "audit-stage17-runtime-mock",
+        );
+        runtime_mock.fake_audio_detected = true;
+        runtime_mock.fixture_only_test_path = false;
+        assert!(
+            Stage17SpeechOutputPacket::from_stage15_output(&output, None, None, runtime_mock)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn stage_17a_playback_state_is_current_output_evidence_only() {
+        let output = stage17_response_output_packet();
+        let ready = Stage17SpeechOutputPacket::from_stage15_output(
+            &output,
+            None,
+            None,
+            Stage17SpeechOutputInput::fixture_playback_state(
+                "speech-output-stage17-playback",
+                "playback-stage17",
+                "output-interaction-stage17",
+                "audit-stage17-playback",
+            ),
+        )
+        .expect("stage17 playback ready");
+
+        assert_eq!(
+            ready.disposition,
+            Stage17SpeechOutputDisposition::PlaybackStateReady
+        );
+        assert!(ready.playback_state_evidence_only);
+        assert!(ready.playback_matches_current_output_identity);
+        assert!(ready.work_authority.can_emit_playback_state);
+        assert!(!ready.can_mutate_or_execute());
+
+        for mut input in [
+            {
+                let mut input = Stage17SpeechOutputInput::fixture_playback_state(
+                    "speech-output-stage17-playback-turn",
+                    "playback-stage17-turn",
+                    "output-interaction-stage17-turn",
+                    "audit-stage17-playback-turn",
+                );
+                input.playback_creates_user_turn = true;
+                input
+            },
+            {
+                let mut input = Stage17SpeechOutputInput::fixture_playback_state(
+                    "speech-output-stage17-playback-authority",
+                    "playback-stage17-authority",
+                    "output-interaction-stage17-authority",
+                    "audit-stage17-playback-authority",
+                );
+                input.playback_authorizes_or_executes = true;
+                input
+            },
+            {
+                let mut input = Stage17SpeechOutputInput::fixture_playback_state(
+                    "speech-output-stage17-playback-reopen",
+                    "playback-stage17-reopen",
+                    "output-interaction-stage17-reopen",
+                    "audit-stage17-playback-reopen",
+                );
+                input.playback_reopens_stale_turn = true;
+                input
+            },
+            {
+                let mut input = Stage17SpeechOutputInput::fixture_playback_state(
+                    "speech-output-stage17-playback-mutate",
+                    "playback-stage17-mutate",
+                    "output-interaction-stage17-mutate",
+                    "audit-stage17-playback-mutate",
+                );
+                input.playback_mutates_protected_state = true;
+                input
+            },
+        ] {
+            input.fixture_only_test_path = true;
+            let packet = Stage17SpeechOutputPacket::from_stage15_output(&output, None, None, input)
+                .expect("stage17 playback blocked");
+            assert_eq!(
+                packet.disposition,
+                Stage17SpeechOutputDisposition::PlaybackIdentityBlocked
+            );
+            assert!(packet.work_authority.can_fail_closed);
+            assert!(!packet.work_authority.can_emit_playback_state);
+            assert!(!packet.can_mutate_or_execute());
+        }
+
+        let mut stale = Stage17SpeechOutputInput::fixture_playback_state(
+            "speech-output-stage17-stale",
+            "playback-stage17-stale",
+            "output-interaction-stage17-stale",
+            "audit-stage17-stale",
+        );
+        stale.stale_or_cancelled_or_superseded_output = true;
+        let packet = Stage17SpeechOutputPacket::from_stage15_output(&output, None, None, stale)
+            .expect("stage17 stale playback blocked");
+        assert_eq!(
+            packet.disposition,
+            Stage17SpeechOutputDisposition::StaleOutputBlocked
+        );
+        assert!(packet.work_authority.can_block_stale_output);
+    }
+
+    #[test]
+    fn stage_17a_tts_self_echo_cannot_create_turns_or_feed_downstream() {
+        let output = stage17_response_output_packet();
+        let interaction = stage17_self_echo_interaction();
+        let ready = Stage17SpeechOutputPacket::from_stage15_output(
+            &output,
+            None,
+            Some(&interaction),
+            Stage17SpeechOutputInput::fixture_self_echo_blocked(
+                "speech-output-stage17-self-echo",
+                "output-interaction-stage17-self-echo",
+                "audit-stage17-self-echo",
+            ),
+        )
+        .expect("stage17 self echo blocked");
+
+        assert_eq!(
+            ready.disposition,
+            Stage17SpeechOutputDisposition::SelfEchoBlocked
+        );
+        assert_eq!(
+            ready.stage8f_disposition,
+            Some(Stage8FOutputInteractionDisposition::BlockedSelfEcho)
+        );
+        assert!(ready.tts_self_echo_evidence);
+        assert!(ready.self_echo_output_originated);
+        assert!(!ready.self_echo_creates_user_turn);
+        assert!(!ready.self_echo_feeds_downstream);
+        assert!(ready.work_authority.can_block_self_echo);
+        assert!(!ready.can_mutate_or_execute());
+
+        let mut feeds_downstream = Stage17SpeechOutputInput::fixture_self_echo_blocked(
+            "speech-output-stage17-self-echo-feed",
+            "output-interaction-stage17-self-echo-feed",
+            "audit-stage17-self-echo-feed",
+        );
+        feeds_downstream.self_echo_feeds_downstream = true;
+        let packet = Stage17SpeechOutputPacket::from_stage15_output(
+            &output,
+            None,
+            Some(&interaction),
+            feeds_downstream,
+        )
+        .expect("stage17 self echo downstream blocked");
+        assert_eq!(
+            packet.disposition,
+            Stage17SpeechOutputDisposition::UnsafeInputBlocked
+        );
+        assert!(!packet.work_authority.can_block_self_echo);
+        assert!(!packet.can_mutate_or_execute());
+    }
+
+    #[test]
+    fn stage_17a_spoken_citations_remain_bound_and_secret_safe() {
+        let output = stage17_response_output_packet();
+
+        for mut input in [
+            {
+                let mut input = Stage17SpeechOutputInput::fixture_speakable_ready(
+                    "speech-output-stage17-citation-bound",
+                    "tts-request-stage17-citation-bound",
+                    "tts-hash-stage17-citation-bound",
+                    "audio-output-stage17-citation-bound",
+                    "voice-style-stage17-citation-bound",
+                    "audit-stage17-citation-bound",
+                );
+                input.citation_context_bound_to_stage14_15 = false;
+                input
+            },
+            {
+                let mut input = Stage17SpeechOutputInput::fixture_speakable_ready(
+                    "speech-output-stage17-citation-fake",
+                    "tts-request-stage17-citation-fake",
+                    "tts-hash-stage17-citation-fake",
+                    "audio-output-stage17-citation-fake",
+                    "voice-style-stage17-citation-fake",
+                    "audit-stage17-citation-fake",
+                );
+                input.fake_or_stale_citation_spoken = true;
+                input
+            },
+            {
+                let mut input = Stage17SpeechOutputInput::fixture_speakable_ready(
+                    "speech-output-stage17-citation-secret",
+                    "tts-request-stage17-citation-secret",
+                    "tts-hash-stage17-citation-secret",
+                    "audio-output-stage17-citation-secret",
+                    "voice-style-stage17-citation-secret",
+                    "audit-stage17-citation-secret",
+                );
+                input.secret_unsafe_source_metadata_spoken = true;
+                input
+            },
+        ] {
+            input.fixture_only_test_path = true;
+            let packet = Stage17SpeechOutputPacket::from_stage15_output(&output, None, None, input)
+                .expect("stage17 citation speech blocked");
+            assert_eq!(
+                packet.disposition,
+                Stage17SpeechOutputDisposition::SourceSpeechBlocked
+            );
+            assert!(packet.work_authority.can_fail_closed);
+            assert!(!packet.work_authority.can_emit_speakable_text);
+            assert!(!packet.can_mutate_or_execute());
+        }
+    }
+
+    #[test]
+    fn stage_17a_blocks_unsafe_inputs_live_paths_and_execution_authority() {
+        let output = stage17_response_output_packet();
+        let packet = Stage17SpeechOutputPacket::from_stage15_output(
+            &output,
+            None,
+            None,
+            Stage17SpeechOutputInput::fixture_speakable_ready(
+                "speech-output-stage17-no-exec",
+                "tts-request-stage17-no-exec",
+                "tts-hash-stage17-no-exec",
+                "audio-output-stage17-no-exec",
+                "voice-style-stage17-no-exec",
+                "audit-stage17-no-exec",
+            ),
+        )
+        .expect("stage17 no-exec packet");
+
+        assert!(!packet.work_authority.can_rewrite_meaning);
+        assert!(!packet.work_authority.can_invent_facts_or_citations);
+        assert!(!packet.work_authority.can_weaken_refusal);
+        assert!(!packet.work_authority.can_imply_unproven_completion);
+        assert!(!packet.work_authority.can_call_live_provider);
+        assert!(!packet.work_authority.can_run_live_tts_synthesis);
+        assert!(!packet.work_authority.can_run_live_audio_playback);
+        assert!(!packet.work_authority.can_run_live_search);
+        assert!(!packet.work_authority.can_call_live_external_tool);
+        assert!(!packet.work_authority.can_connector_write);
+        assert!(!packet.work_authority.can_approve);
+        assert!(!packet.work_authority.can_dispatch);
+        assert!(!packet.work_authority.can_execute_simulation);
+        assert!(!packet.work_authority.can_execute_protected_action);
+        assert!(!packet.work_authority.can_capture_microphone_audio);
+        assert!(!packet.work_authority.can_transcribe_live_audio);
+        assert!(!packet.work_authority.can_trigger_voice_id_matching);
+        assert!(!packet.work_authority.can_update_memory_persona_emotion);
+        assert!(!packet.work_authority.can_add_native_ui_behavior);
+        assert!(!packet.can_mutate_or_execute());
+
+        for mut input in [
+            {
+                let mut input = Stage17SpeechOutputInput::fixture_speakable_ready(
+                    "speech-output-stage17-raw-provider",
+                    "tts-request-stage17-raw-provider",
+                    "tts-hash-stage17-raw-provider",
+                    "audio-output-stage17-raw-provider",
+                    "voice-style-stage17-raw-provider",
+                    "audit-stage17-raw-provider",
+                );
+                input.raw_provider_output_present = true;
+                input
+            },
+            {
+                let mut input = Stage17SpeechOutputInput::fixture_speakable_ready(
+                    "speech-output-stage17-raw-audio",
+                    "tts-request-stage17-raw-audio",
+                    "tts-hash-stage17-raw-audio",
+                    "audio-output-stage17-raw-audio",
+                    "voice-style-stage17-raw-audio",
+                    "audit-stage17-raw-audio",
+                );
+                input.raw_audio_present = true;
+                input
+            },
+            {
+                let mut input = Stage17SpeechOutputInput::fixture_speakable_ready(
+                    "speech-output-stage17-partial",
+                    "tts-request-stage17-partial",
+                    "tts-hash-stage17-partial",
+                    "audio-output-stage17-partial",
+                    "voice-style-stage17-partial",
+                    "audit-stage17-partial",
+                );
+                input.partial_transcript_present = true;
+                input
+            },
+            {
+                let mut input = Stage17SpeechOutputInput::fixture_speakable_ready(
+                    "speech-output-stage17-memory-truth",
+                    "tts-request-stage17-memory-truth",
+                    "tts-hash-stage17-memory-truth",
+                    "audio-output-stage17-memory-truth",
+                    "voice-style-stage17-memory-truth",
+                    "audit-stage17-memory-truth",
+                );
+                input.memory_persona_emotion_preference_hint_used_as_truth = true;
+                input
+            },
+            {
+                let mut input = Stage17SpeechOutputInput::fixture_speakable_ready(
+                    "speech-output-stage17-protected",
+                    "tts-request-stage17-protected",
+                    "tts-hash-stage17-protected",
+                    "audio-output-stage17-protected",
+                    "voice-style-stage17-protected",
+                    "audit-stage17-protected",
+                );
+                input.protected_action_candidate_present = true;
+                input
+            },
+        ] {
+            input.fixture_only_test_path = true;
+            let packet = Stage17SpeechOutputPacket::from_stage15_output(&output, None, None, input)
+                .expect("stage17 unsafe input blocked");
+            assert_eq!(
+                packet.disposition,
+                Stage17SpeechOutputDisposition::UnsafeInputBlocked
+            );
+            assert!(packet.work_authority.can_fail_closed);
+            assert!(!packet.can_mutate_or_execute());
+        }
+
+        for mut input in [
+            {
+                let mut input = Stage17SpeechOutputInput::fixture_speakable_ready(
+                    "speech-output-stage17-live-provider",
+                    "tts-request-stage17-live-provider",
+                    "tts-hash-stage17-live-provider",
+                    "audio-output-stage17-live-provider",
+                    "voice-style-stage17-live-provider",
+                    "audit-stage17-live-provider",
+                );
+                input.attempted_live_provider_in_build = true;
+                input
+            },
+            {
+                let mut input = Stage17SpeechOutputInput::fixture_speakable_ready(
+                    "speech-output-stage17-live-tts",
+                    "tts-request-stage17-live-tts",
+                    "tts-hash-stage17-live-tts",
+                    "audio-output-stage17-live-tts",
+                    "voice-style-stage17-live-tts",
+                    "audit-stage17-live-tts",
+                );
+                input.ran_live_tts_synthesis_in_build = true;
+                input
+            },
+            {
+                let mut input = Stage17SpeechOutputInput::fixture_speakable_ready(
+                    "speech-output-stage17-live-playback",
+                    "tts-request-stage17-live-playback",
+                    "tts-hash-stage17-live-playback",
+                    "audio-output-stage17-live-playback",
+                    "voice-style-stage17-live-playback",
+                    "audit-stage17-live-playback",
+                );
+                input.ran_live_audio_playback_in_build = true;
+                input
+            },
+            {
+                let mut input = Stage17SpeechOutputInput::fixture_speakable_ready(
+                    "speech-output-stage17-native",
+                    "tts-request-stage17-native",
+                    "tts-hash-stage17-native",
+                    "audio-output-stage17-native",
+                    "voice-style-stage17-native",
+                    "audit-stage17-native",
+                );
+                input.native_ui_behavior_added = true;
+                input
+            },
+        ] {
+            input.fixture_only_test_path = true;
+            assert!(
+                Stage17SpeechOutputPacket::from_stage15_output(&output, None, None, input).is_err()
+            );
         }
     }
 

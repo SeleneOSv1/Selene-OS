@@ -4,7 +4,7 @@ Status: CANONICAL_BUILD_ROADMAP
 Created: 2026-05-02
 Last Updated: 2026-05-04
 Repo Root: `/Users/selene/Documents/Selene-OS`
-Current Next Build: Stage 17A - TTS, Speech Output, Playback, Voice Style, And Audio Output Boundary Reconciliation
+Current Next Build: Stage 18A - Multimodal Output, Display Surfaces, Attachments, And Renderer Boundary Reconciliation
 
 ## Purpose
 
@@ -78,10 +78,10 @@ After every build, update this section before final reporting.
 
 | Field | Current Value |
 |---|---|
-| Current active stage | Stage 16 |
-| Current active build | Stage 16A - Memory, Persona, Emotion, Preference, And Long-Term State Boundary Reconciliation |
-| Next build after current stage passes | Stage 17A - TTS, Speech Output, Playback, Voice Style, And Audio Output Boundary Reconciliation |
-| Last completed stage | Stage 16A - Memory, Persona, Emotion, Preference, And Long-Term State Boundary Reconciliation |
+| Current active stage | Stage 17 |
+| Current active build | Stage 17A - TTS, Speech Output, Playback, Voice Style, And Audio Output Boundary Reconciliation |
+| Next build after current stage passes | Stage 18A - Multimodal Output, Display Surfaces, Attachments, And Renderer Boundary Reconciliation |
+| Last completed stage | Stage 17A - TTS, Speech Output, Playback, Voice Style, And Audio Output Boundary Reconciliation |
 | Stages blocked | None yet |
 | Plan drift allowed | No |
 
@@ -2601,6 +2601,24 @@ Stage 16A proof update:
 Next if passed:
 
 - Stage 17A - TTS, Speech Output, Playback, Voice Style, And Audio Output Boundary Reconciliation.
+
+Stage 17A status: PROVEN_COMPLETE
+
+Stage 17A proof update:
+
+- Existing PH1.TTS, PH1.WRITE, PH1.SUMMARY, PH1.X, PH1.J audit/proof-ledger, PH1.C, PH1.K, PH1.LISTEN, PH1.POLICY, PH1.GOV, PH1.OS, PH1.VOICE.ID, Stage 8F output-interaction, Stage 15 response output, Stage 16 long-term state hint, runtime law/governance, adapter, storage, and native bridge inspect-only surfaces were inspected and crosswalked rather than rebuilt as duplicate TTS, playback, speech-output, voice-style, listen, output-interaction, provider-control, or runtime-law engines. PH1.D/model-provider surfaces, native Swift files, and `simulation_executor.rs` remained inspect-only.
+- `Stage17SpeechOutputPacket`, `Stage17SpeechOutputInput`, `Stage17SpeechOutputKind`, `Stage17SpeechOutputDisposition`, and `Stage17SpeechOutputWorkAuthority` provide the minimal runtime-owned speech-output/playback boundary in `runtime_ingress_turn_foundation.rs`.
+- Stage 17A consumes only `Stage15ResponseOutputPacket`, response/output hashes, bounded source/citation refs where speech must preserve citation wording, Stage 16 persona/preference hints as advisory delivery metadata only, Stage 8F output-interaction refs, PH1.J audit/proof refs, Stage 5 current-turn/session authority, and governed repo-truth equivalents. Raw provider output, raw search dumps, raw audio, partial transcripts, unsafe Voice ID posture, memory/persona/emotion/preference hints as truth authority, protected-action candidates, simulation candidates, approved execution plans without a later bounded completion speech contract, stale/cancelled/superseded/closed-session turns, and record-artifact-only turns cannot become speech authority.
+- Speakable text must preserve Stage 15 response meaning, facts, citations/source refs, refusal/fail-closed wording, and protected non-completion wording. Speech output cannot silently translate or summarize unless future governed repo truth allows it, cannot expose secrets/raw provider payloads/raw search dumps/raw audio/Voice ID material/internal traces, and cannot imply approval, dispatch, execution, sending, posting, purchasing, deleting, inviting, scheduling, or mutation occurred without bounded proof.
+- Voice style is delivery metadata only. It cannot change meaning, policy/refusal wording, identity, authority, memory, provider choice, routing, tools, connector writes, protected execution, or persisted preferences. Playback state is output-interaction evidence only; it cannot create user turns, authorize, execute, reopen stale turns, mutate protected state, or render stale/cancelled/superseded/closed-session output as current.
+- TTS self-echo remains bounded output-originated evidence. It cannot create user turns or feed understanding, Voice ID, memory, router, search, tools, providers, TTS, or protected execution. Provider-off, missing-secret, and provider-failure paths keep TTS provider attempts/network dispatches at zero where required and cannot emit fake audio, fake playback success, fake TTS provider success, or fake voice success.
+- Runtime mocks, fake audio, fake playback, fake TTS, and fake voice paths are blocked outside explicit fixture-only test paths. Stage 17A did not add live provider calls, live TTS synthesis, live audio playback, live microphone capture, live STT, live web search, live external tool calls, connector writes, protected execution, native UI behavior, live Voice ID matching, memory/persona/emotion/preference mutation, raw audio/biometric/secret exposure, new business workflows, or duplicate speech-output engines.
+- TTS/speech-output/playback/voice-style/output-identity/self-echo/no-execution boundary proof is certified for Stage 17A. Live TTS provider quality, real audio playback quality, native audio session UX, voice style quality, latency, interruption UX, multi-device playback sync, human speech-quality evaluation, and Stage 34 native-lab playback/listening quality remain deferred to later owning stages.
+- Stage 18A is ready to start. Broad Stage 17 remains partial, but the speech-output/playback boundary is complete enough for multimodal output, display surfaces, attachments, and renderer boundary reconciliation to proceed without live playback or provider authority.
+
+Next if passed:
+
+- Stage 18A - Multimodal Output, Display Surfaces, Attachments, And Renderer Boundary Reconciliation.
 
 ## Stage 14 - Web Search Enterprise Sublanes And Release Proof
 
