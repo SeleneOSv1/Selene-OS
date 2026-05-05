@@ -31379,6 +31379,1533 @@ pub fn stage29_conversational_continuity_symbol_anchor() {
 }
 const _: fn() = stage29_conversational_continuity_symbol_anchor;
 
+mod stage30_reason_codes {
+    pub const CROSS_TURN_RECOVERY_SEMANTICS_READY: &str =
+        "STAGE30_CROSS_TURN_RECOVERY_SEMANTICS_READY";
+    pub const BOUNDED_PROACTIVE_FOLLOW_UP_POSTURE_READY: &str =
+        "STAGE30_BOUNDED_PROACTIVE_FOLLOW_UP_POSTURE_READY";
+    pub const THREAD_PRESENCE_CONTINUITY_READY: &str =
+        "STAGE30_THREAD_PRESENCE_CONTINUITY_READY";
+    pub const RETURN_CHECK_REOPEN_CONTINUITY_REFERENCE_READY: &str =
+        "STAGE30_RETURN_CHECK_REOPEN_CONTINUITY_REFERENCE_READY";
+    pub const SESSION_POSTURE_CONTINUITY_REFERENCE_READY: &str =
+        "STAGE30_SESSION_POSTURE_CONTINUITY_REFERENCE_READY";
+    pub const COMPLETION_DISCLOSURE_CONTINUITY_REFERENCE_READY: &str =
+        "STAGE30_COMPLETION_DISCLOSURE_CONTINUITY_REFERENCE_READY";
+    pub const STAGE_INPUT_BLOCKED: &str = "STAGE30_STAGE_INPUT_BLOCKED";
+    pub const NO_INVENTION_BLOCKED: &str = "STAGE30_NO_INVENTION_BLOCKED";
+    pub const RECOVERY_AUTHORITY_BLOCKED: &str = "STAGE30_RECOVERY_AUTHORITY_BLOCKED";
+    pub const NATIVE_RECOVERY_HANDOFF_BLOCKED: &str =
+        "STAGE30_NATIVE_RECOVERY_HANDOFF_BLOCKED";
+    pub const PUBLIC_PROTECTED_BOUNDARY_BLOCKED: &str =
+        "STAGE30_PUBLIC_PROTECTED_BOUNDARY_BLOCKED";
+    pub const STALE_RECOVERY_BLOCKED: &str = "STAGE30_STALE_RECOVERY_BLOCKED";
+    pub const UNSAFE_INPUT_BLOCKED: &str = "STAGE30_UNSAFE_INPUT_BLOCKED";
+    pub const RUNTIME_MOCK_BLOCKED: &str = "STAGE30_RUNTIME_MOCK_BLOCKED";
+    pub const AUDIT_PROOF_MISSING: &str = "STAGE30_AUDIT_PROOF_MISSING";
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stage30RecoveryThreadPresenceKind {
+    CrossTurnRecoverySemantics,
+    BoundedProactiveFollowUpPosture,
+    ThreadPresenceContinuity,
+    ReturnCheckReopenContinuityReference,
+    SessionPostureContinuityReference,
+    CompletionDisclosureContinuityReference,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stage30RecoveryThreadPresenceDisposition {
+    CrossTurnRecoverySemanticsReady,
+    BoundedProactiveFollowUpPostureReady,
+    ThreadPresenceContinuityReady,
+    ReturnCheckReopenContinuityReferenceReady,
+    SessionPostureContinuityReferenceReady,
+    CompletionDisclosureContinuityReferenceReady,
+    StageInputBlocked,
+    NoInventionBlocked,
+    RecoveryAuthorityBlocked,
+    NativeRecoveryHandoffBlocked,
+    PublicProtectedBoundaryBlocked,
+    StaleRecoveryBlocked,
+    UnsafeInputBlocked,
+    RuntimeMockBlocked,
+    AuditProofMissing,
+}
+
+impl Stage30RecoveryThreadPresenceDisposition {
+    pub const fn default_reason_code(self) -> &'static str {
+        match self {
+            Self::CrossTurnRecoverySemanticsReady => {
+                stage30_reason_codes::CROSS_TURN_RECOVERY_SEMANTICS_READY
+            }
+            Self::BoundedProactiveFollowUpPostureReady => {
+                stage30_reason_codes::BOUNDED_PROACTIVE_FOLLOW_UP_POSTURE_READY
+            }
+            Self::ThreadPresenceContinuityReady => {
+                stage30_reason_codes::THREAD_PRESENCE_CONTINUITY_READY
+            }
+            Self::ReturnCheckReopenContinuityReferenceReady => {
+                stage30_reason_codes::RETURN_CHECK_REOPEN_CONTINUITY_REFERENCE_READY
+            }
+            Self::SessionPostureContinuityReferenceReady => {
+                stage30_reason_codes::SESSION_POSTURE_CONTINUITY_REFERENCE_READY
+            }
+            Self::CompletionDisclosureContinuityReferenceReady => {
+                stage30_reason_codes::COMPLETION_DISCLOSURE_CONTINUITY_REFERENCE_READY
+            }
+            Self::StageInputBlocked => stage30_reason_codes::STAGE_INPUT_BLOCKED,
+            Self::NoInventionBlocked => stage30_reason_codes::NO_INVENTION_BLOCKED,
+            Self::RecoveryAuthorityBlocked => stage30_reason_codes::RECOVERY_AUTHORITY_BLOCKED,
+            Self::NativeRecoveryHandoffBlocked => {
+                stage30_reason_codes::NATIVE_RECOVERY_HANDOFF_BLOCKED
+            }
+            Self::PublicProtectedBoundaryBlocked => {
+                stage30_reason_codes::PUBLIC_PROTECTED_BOUNDARY_BLOCKED
+            }
+            Self::StaleRecoveryBlocked => stage30_reason_codes::STALE_RECOVERY_BLOCKED,
+            Self::UnsafeInputBlocked => stage30_reason_codes::UNSAFE_INPUT_BLOCKED,
+            Self::RuntimeMockBlocked => stage30_reason_codes::RUNTIME_MOCK_BLOCKED,
+            Self::AuditProofMissing => stage30_reason_codes::AUDIT_PROOF_MISSING,
+        }
+    }
+
+    pub const fn is_ready(self) -> bool {
+        matches!(
+            self,
+            Self::CrossTurnRecoverySemanticsReady
+                | Self::BoundedProactiveFollowUpPostureReady
+                | Self::ThreadPresenceContinuityReady
+                | Self::ReturnCheckReopenContinuityReferenceReady
+                | Self::SessionPostureContinuityReferenceReady
+                | Self::CompletionDisclosureContinuityReferenceReady
+        )
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Stage30RecoveryThreadPresenceWorkAuthority {
+    pub can_emit_cross_turn_recovery_semantics_packet: bool,
+    pub can_emit_bounded_proactive_follow_up_posture_packet: bool,
+    pub can_emit_thread_presence_continuity_packet: bool,
+    pub can_emit_return_check_reopen_continuity_reference: bool,
+    pub can_emit_session_posture_continuity_reference: bool,
+    pub can_emit_completion_disclosure_continuity_reference: bool,
+    pub can_fail_closed: bool,
+    pub can_invent_facts: bool,
+    pub can_invent_recovery_success: bool,
+    pub can_invent_proactive_follow_up_success: bool,
+    pub can_invent_presence_continuity_success: bool,
+    pub can_invent_completion_success: bool,
+    pub can_invent_recovery_authority: bool,
+    pub can_connector_write: bool,
+    pub can_approve: bool,
+    pub can_dispatch: bool,
+    pub can_execute: bool,
+    pub can_create_user_turn: bool,
+    pub can_treat_visible_readiness_as_action_success: bool,
+}
+
+impl Stage30RecoveryThreadPresenceWorkAuthority {
+    pub const fn fail_closed() -> Self {
+        Self {
+            can_emit_cross_turn_recovery_semantics_packet: false,
+            can_emit_bounded_proactive_follow_up_posture_packet: false,
+            can_emit_thread_presence_continuity_packet: false,
+            can_emit_return_check_reopen_continuity_reference: false,
+            can_emit_session_posture_continuity_reference: false,
+            can_emit_completion_disclosure_continuity_reference: false,
+            can_fail_closed: true,
+            can_invent_facts: false,
+            can_invent_recovery_success: false,
+            can_invent_proactive_follow_up_success: false,
+            can_invent_presence_continuity_success: false,
+            can_invent_completion_success: false,
+            can_invent_recovery_authority: false,
+            can_connector_write: false,
+            can_approve: false,
+            can_dispatch: false,
+            can_execute: false,
+            can_create_user_turn: false,
+            can_treat_visible_readiness_as_action_success: false,
+        }
+    }
+
+    pub const fn cross_turn_recovery_semantics_ready() -> Self {
+        let mut authority = Self::fail_closed();
+        authority.can_emit_cross_turn_recovery_semantics_packet = true;
+        authority
+    }
+
+    pub const fn bounded_proactive_follow_up_posture_ready() -> Self {
+        let mut authority = Self::fail_closed();
+        authority.can_emit_bounded_proactive_follow_up_posture_packet = true;
+        authority
+    }
+
+    pub const fn thread_presence_continuity_ready() -> Self {
+        let mut authority = Self::fail_closed();
+        authority.can_emit_thread_presence_continuity_packet = true;
+        authority
+    }
+
+    pub const fn return_check_reopen_continuity_reference_ready() -> Self {
+        let mut authority = Self::fail_closed();
+        authority.can_emit_return_check_reopen_continuity_reference = true;
+        authority
+    }
+
+    pub const fn session_posture_continuity_reference_ready() -> Self {
+        let mut authority = Self::fail_closed();
+        authority.can_emit_session_posture_continuity_reference = true;
+        authority
+    }
+
+    pub const fn completion_disclosure_continuity_reference_ready() -> Self {
+        let mut authority = Self::fail_closed();
+        authority.can_emit_completion_disclosure_continuity_reference = true;
+        authority
+    }
+
+    pub const fn can_mutate_or_execute(&self) -> bool {
+        self.can_invent_facts
+            || self.can_invent_recovery_success
+            || self.can_invent_proactive_follow_up_success
+            || self.can_invent_presence_continuity_success
+            || self.can_invent_completion_success
+            || self.can_invent_recovery_authority
+            || self.can_connector_write
+            || self.can_approve
+            || self.can_dispatch
+            || self.can_execute
+            || self.can_create_user_turn
+            || self.can_treat_visible_readiness_as_action_success
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Stage30RecoveryThreadPresenceInput {
+    pub recovery_kind: Stage30RecoveryThreadPresenceKind,
+    pub output_interaction_id: Option<String>,
+    pub speech_output_id: Option<String>,
+    pub conversation_continuity_id: Option<String>,
+    pub interaction_boundary_id: Option<String>,
+    pub completion_disclosure_id: Option<String>,
+    pub recovery_continuity_id: Option<String>,
+    pub follow_up_posture_id: Option<String>,
+    pub thread_presence_id: Option<String>,
+    pub audit_id: Option<String>,
+    pub ph1j_proof_ref: Option<String>,
+    pub stage11_route_ref_present: bool,
+    pub stage11_route_non_executing_context: bool,
+    pub stage12_gate_ref_present: bool,
+    pub stage12_gate_bounded_authority_context: bool,
+    pub stage8_output_interaction_ref_present: bool,
+    pub stage8_output_interaction_ref_non_authoritative: bool,
+    pub stage17_speech_output_ref_present: bool,
+    pub stage17_speech_output_ref_non_authoritative: bool,
+    pub stage20_continuity_ref_present: bool,
+    pub stage20_continuity_ref_non_authoritative: bool,
+    pub stage21_automation_ref_present: bool,
+    pub stage21_automation_ref_non_authoritative: bool,
+    pub stage22_outbound_ref_present: bool,
+    pub stage22_outbound_ref_non_authoritative: bool,
+    pub stage23_memory_ref_present: bool,
+    pub stage23_memory_ref_non_authoritative: bool,
+    pub stage24_ingress_ref_present: bool,
+    pub stage24_ingress_ref_non_authoritative: bool,
+    pub stage25_orchestration_ref_present: bool,
+    pub stage25_orchestration_ref_non_authoritative: bool,
+    pub stage26_execution_ref_present: bool,
+    pub stage26_execution_ref_non_authoritative: bool,
+    pub stage27_settlement_ref_present: bool,
+    pub stage27_settlement_ref_non_authoritative: bool,
+    pub stage28_publication_ref_present: bool,
+    pub stage28_publication_ref_non_authoritative: bool,
+    pub stage29_conversation_ref_present: bool,
+    pub stage29_conversation_ref_non_authoritative: bool,
+    pub ph1context_ref_present: bool,
+    pub ph1context_ref_non_authoritative: bool,
+    pub ph1l_session_ref_present: bool,
+    pub ph1l_session_ref_non_authoritative: bool,
+    pub ph1rem_ref_present: bool,
+    pub ph1rem_ref_non_authoritative: bool,
+    pub ph1delivery_ref_present: bool,
+    pub ph1delivery_ref_non_authoritative: bool,
+    pub authority_bounded: bool,
+    pub tenant_user_device_session_scoped: bool,
+    pub uncertainty_preserved: bool,
+    pub recovery_invented_fact: bool,
+    pub recovery_invented_recovery_success: bool,
+    pub recovery_invented_proactive_follow_up_success: bool,
+    pub recovery_invented_presence_continuity_success: bool,
+    pub recovery_invented_completion_success: bool,
+    pub recovery_invented_approval: bool,
+    pub recovery_invented_remote_completion: bool,
+    pub recovery_invented_visibility_completion: bool,
+    pub recovery_invented_work_or_lease_authority: bool,
+    pub recovery_invented_route_authority: bool,
+    pub recovery_invented_attachment_or_citation: bool,
+    pub recovery_invented_provider_or_tool_result: bool,
+    pub recovery_claimed_unproven_completion: bool,
+    pub recovery_implied_approval_dispatch_execution_follow_up_publication_or_completion_without_proof:
+        bool,
+    pub secret_safe: bool,
+    pub redacted: bool,
+    pub stale_aware: bool,
+    pub revocation_aware: bool,
+    pub recovery_ref_present: bool,
+    pub follow_up_posture_ref_present: bool,
+    pub thread_presence_ref_present: bool,
+    pub session_posture_ref_present: bool,
+    pub completion_disclosure_ref_present: bool,
+    pub unverifiable: bool,
+    pub stale: bool,
+    pub secret_unsafe: bool,
+    pub cross_tenant: bool,
+    pub cross_route: bool,
+    pub cross_connector: bool,
+    pub recovery_mismatch: bool,
+    pub continuity_mismatch: bool,
+    pub publication_mismatch: bool,
+    pub settlement_mismatch: bool,
+    pub connector_mismatch: bool,
+    pub route_mismatch: bool,
+    pub action_graph_mismatch: bool,
+    pub lease_mismatch: bool,
+    pub protected_gate_mismatch: bool,
+    pub tenant_mismatch: bool,
+    pub missing_proof: bool,
+    pub ownership_drift: bool,
+    pub native_recovery_declarative_only: bool,
+    pub native_recovery_mutates_state: bool,
+    pub native_recovery_connector_writes: bool,
+    pub native_recovery_dispatches_or_executes: bool,
+    pub native_recovery_calls_providers_or_tools: bool,
+    pub native_recovery_emits_tts_or_playback: bool,
+    pub native_recovery_creates_user_turn: bool,
+    pub native_recovery_treats_visible_readiness_as_action_success: bool,
+    pub protected_action_like_request: bool,
+    pub protected_slot_or_authority_ambiguous: bool,
+    pub unsafe_identity_posture: bool,
+    pub follow_up_ambiguity: bool,
+    pub stale_or_cancelled_or_superseded_output: bool,
+    pub session_closed: bool,
+    pub record_artifact_only_turn: bool,
+    pub stale_recovery_state: bool,
+    pub stale_presence_state: bool,
+    pub stale_work_state: bool,
+    pub stale_lease_state: bool,
+    pub stale_route_state: bool,
+    pub stale_connector_state: bool,
+    pub stale_protected_gate_state: bool,
+    pub background_task_reopens_session: bool,
+    pub recovery_identity_matches_current_output_session: bool,
+    pub replay_upgrades_blocked_authority: bool,
+    pub fake_recovery_detected: bool,
+    pub fake_follow_up_detected: bool,
+    pub fake_presence_detected: bool,
+    pub fake_completion_detected: bool,
+    pub fake_approval_detected: bool,
+    pub runtime_mock_detected: bool,
+    pub raw_provider_output_present: bool,
+    pub raw_search_dump_present: bool,
+    pub raw_media_present: bool,
+    pub raw_connector_credential_field_present: bool,
+    pub unverified_source_evidence_present: bool,
+    pub unsupported_claim_candidate_present: bool,
+    pub fake_recovery_source_carrier_present: bool,
+    pub attention_continuity_automation_outbound_memory_ingress_orchestration_execution_settlement_publication_conversation_used_as_truth_authority:
+        bool,
+    pub protected_action_candidate_present: bool,
+    pub simulation_candidate_present: bool,
+    pub approved_execution_plan_present: bool,
+    pub secrets_exposed: bool,
+    pub raw_biometric_material_exposed: bool,
+    pub internal_trace_exposed: bool,
+    pub access_denied: bool,
+    pub policy_denied: bool,
+    pub attempted_live_provider_in_build: bool,
+    pub generated_live_media_in_build: bool,
+    pub ran_live_search_in_build: bool,
+    pub called_live_external_tool_in_build: bool,
+    pub connector_write_requested: bool,
+    pub ran_live_notification_delivery_in_build: bool,
+    pub ran_live_background_execution_in_build: bool,
+    pub ran_live_provider_backed_recovery_in_build: bool,
+    pub ran_live_proactive_follow_up_delivery_in_build: bool,
+    pub ran_live_remote_continuity_mutation_in_build: bool,
+    pub ran_direct_protected_execution_in_build: bool,
+    pub ran_live_tts_or_playback_in_build: bool,
+    pub captured_microphone_audio: bool,
+    pub transcribed_live_audio: bool,
+    pub voice_id_matching_attempted: bool,
+    pub native_ui_behavior_added: bool,
+    pub fixture_only_test_path: bool,
+}
+
+impl Stage30RecoveryThreadPresenceInput {
+    #[cfg(test)]
+    fn fixture_base(
+        recovery_kind: Stage30RecoveryThreadPresenceKind,
+        audit_id: impl Into<String>,
+    ) -> Self {
+        Self {
+            recovery_kind,
+            output_interaction_id: Some("output-interaction-stage30".to_string()),
+            speech_output_id: Some("speech-output-stage30".to_string()),
+            conversation_continuity_id: Some("conversation-continuity-stage30".to_string()),
+            interaction_boundary_id: Some("interaction-boundary-stage30".to_string()),
+            completion_disclosure_id: Some("completion-disclosure-stage30".to_string()),
+            recovery_continuity_id: Some("recovery-continuity-stage30".to_string()),
+            follow_up_posture_id: Some("follow-up-posture-stage30".to_string()),
+            thread_presence_id: Some("thread-presence-stage30".to_string()),
+            audit_id: Some(audit_id.into()),
+            ph1j_proof_ref: Some("audit-proof-stage30".to_string()),
+            stage11_route_ref_present: true,
+            stage11_route_non_executing_context: true,
+            stage12_gate_ref_present: true,
+            stage12_gate_bounded_authority_context: true,
+            stage8_output_interaction_ref_present: true,
+            stage8_output_interaction_ref_non_authoritative: true,
+            stage17_speech_output_ref_present: true,
+            stage17_speech_output_ref_non_authoritative: true,
+            stage20_continuity_ref_present: true,
+            stage20_continuity_ref_non_authoritative: true,
+            stage21_automation_ref_present: true,
+            stage21_automation_ref_non_authoritative: true,
+            stage22_outbound_ref_present: true,
+            stage22_outbound_ref_non_authoritative: true,
+            stage23_memory_ref_present: true,
+            stage23_memory_ref_non_authoritative: true,
+            stage24_ingress_ref_present: true,
+            stage24_ingress_ref_non_authoritative: true,
+            stage25_orchestration_ref_present: true,
+            stage25_orchestration_ref_non_authoritative: true,
+            stage26_execution_ref_present: true,
+            stage26_execution_ref_non_authoritative: true,
+            stage27_settlement_ref_present: true,
+            stage27_settlement_ref_non_authoritative: true,
+            stage28_publication_ref_present: true,
+            stage28_publication_ref_non_authoritative: true,
+            stage29_conversation_ref_present: true,
+            stage29_conversation_ref_non_authoritative: true,
+            ph1context_ref_present: true,
+            ph1context_ref_non_authoritative: true,
+            ph1l_session_ref_present: true,
+            ph1l_session_ref_non_authoritative: true,
+            ph1rem_ref_present: true,
+            ph1rem_ref_non_authoritative: true,
+            ph1delivery_ref_present: true,
+            ph1delivery_ref_non_authoritative: true,
+            authority_bounded: true,
+            tenant_user_device_session_scoped: true,
+            uncertainty_preserved: true,
+            recovery_invented_fact: false,
+            recovery_invented_recovery_success: false,
+            recovery_invented_proactive_follow_up_success: false,
+            recovery_invented_presence_continuity_success: false,
+            recovery_invented_completion_success: false,
+            recovery_invented_approval: false,
+            recovery_invented_remote_completion: false,
+            recovery_invented_visibility_completion: false,
+            recovery_invented_work_or_lease_authority: false,
+            recovery_invented_route_authority: false,
+            recovery_invented_attachment_or_citation: false,
+            recovery_invented_provider_or_tool_result: false,
+            recovery_claimed_unproven_completion: false,
+            recovery_implied_approval_dispatch_execution_follow_up_publication_or_completion_without_proof:
+                false,
+            secret_safe: true,
+            redacted: true,
+            stale_aware: true,
+            revocation_aware: true,
+            recovery_ref_present: true,
+            follow_up_posture_ref_present: true,
+            thread_presence_ref_present: true,
+            session_posture_ref_present: true,
+            completion_disclosure_ref_present: true,
+            unverifiable: false,
+            stale: false,
+            secret_unsafe: false,
+            cross_tenant: false,
+            cross_route: false,
+            cross_connector: false,
+            recovery_mismatch: false,
+            continuity_mismatch: false,
+            publication_mismatch: false,
+            settlement_mismatch: false,
+            connector_mismatch: false,
+            route_mismatch: false,
+            action_graph_mismatch: false,
+            lease_mismatch: false,
+            protected_gate_mismatch: false,
+            tenant_mismatch: false,
+            missing_proof: false,
+            ownership_drift: false,
+            native_recovery_declarative_only: true,
+            native_recovery_mutates_state: false,
+            native_recovery_connector_writes: false,
+            native_recovery_dispatches_or_executes: false,
+            native_recovery_calls_providers_or_tools: false,
+            native_recovery_emits_tts_or_playback: false,
+            native_recovery_creates_user_turn: false,
+            native_recovery_treats_visible_readiness_as_action_success: false,
+            protected_action_like_request: false,
+            protected_slot_or_authority_ambiguous: false,
+            unsafe_identity_posture: false,
+            follow_up_ambiguity: false,
+            stale_or_cancelled_or_superseded_output: false,
+            session_closed: false,
+            record_artifact_only_turn: false,
+            stale_recovery_state: false,
+            stale_presence_state: false,
+            stale_work_state: false,
+            stale_lease_state: false,
+            stale_route_state: false,
+            stale_connector_state: false,
+            stale_protected_gate_state: false,
+            background_task_reopens_session: false,
+            recovery_identity_matches_current_output_session: true,
+            replay_upgrades_blocked_authority: false,
+            fake_recovery_detected: false,
+            fake_follow_up_detected: false,
+            fake_presence_detected: false,
+            fake_completion_detected: false,
+            fake_approval_detected: false,
+            runtime_mock_detected: false,
+            raw_provider_output_present: false,
+            raw_search_dump_present: false,
+            raw_media_present: false,
+            raw_connector_credential_field_present: false,
+            unverified_source_evidence_present: false,
+            unsupported_claim_candidate_present: false,
+            fake_recovery_source_carrier_present: false,
+            attention_continuity_automation_outbound_memory_ingress_orchestration_execution_settlement_publication_conversation_used_as_truth_authority:
+                false,
+            protected_action_candidate_present: false,
+            simulation_candidate_present: false,
+            approved_execution_plan_present: false,
+            secrets_exposed: false,
+            raw_biometric_material_exposed: false,
+            internal_trace_exposed: false,
+            access_denied: false,
+            policy_denied: false,
+            attempted_live_provider_in_build: false,
+            generated_live_media_in_build: false,
+            ran_live_search_in_build: false,
+            called_live_external_tool_in_build: false,
+            connector_write_requested: false,
+            ran_live_notification_delivery_in_build: false,
+            ran_live_background_execution_in_build: false,
+            ran_live_provider_backed_recovery_in_build: false,
+            ran_live_proactive_follow_up_delivery_in_build: false,
+            ran_live_remote_continuity_mutation_in_build: false,
+            ran_direct_protected_execution_in_build: false,
+            ran_live_tts_or_playback_in_build: false,
+            captured_microphone_audio: false,
+            transcribed_live_audio: false,
+            voice_id_matching_attempted: false,
+            native_ui_behavior_added: false,
+            fixture_only_test_path: true,
+        }
+    }
+
+    #[cfg(test)]
+    fn fixture_cross_turn_recovery_semantics_ready(audit_id: impl Into<String>) -> Self {
+        Self::fixture_base(
+            Stage30RecoveryThreadPresenceKind::CrossTurnRecoverySemantics,
+            audit_id,
+        )
+    }
+
+    #[cfg(test)]
+    fn fixture_bounded_proactive_follow_up_posture_ready(
+        follow_up_posture_id: impl Into<String>,
+        audit_id: impl Into<String>,
+    ) -> Self {
+        let mut input = Self::fixture_base(
+            Stage30RecoveryThreadPresenceKind::BoundedProactiveFollowUpPosture,
+            audit_id,
+        );
+        input.follow_up_posture_id = Some(follow_up_posture_id.into());
+        input
+    }
+
+    #[cfg(test)]
+    fn fixture_thread_presence_continuity_ready(
+        thread_presence_id: impl Into<String>,
+        audit_id: impl Into<String>,
+    ) -> Self {
+        let mut input = Self::fixture_base(
+            Stage30RecoveryThreadPresenceKind::ThreadPresenceContinuity,
+            audit_id,
+        );
+        input.thread_presence_id = Some(thread_presence_id.into());
+        input
+    }
+
+    #[cfg(test)]
+    fn fixture_return_check_reopen_continuity_reference_ready(
+        recovery_continuity_id: impl Into<String>,
+        audit_id: impl Into<String>,
+    ) -> Self {
+        let mut input = Self::fixture_base(
+            Stage30RecoveryThreadPresenceKind::ReturnCheckReopenContinuityReference,
+            audit_id,
+        );
+        input.recovery_continuity_id = Some(recovery_continuity_id.into());
+        input
+    }
+
+    #[cfg(test)]
+    fn fixture_session_posture_continuity_reference_ready(
+        thread_presence_id: impl Into<String>,
+        audit_id: impl Into<String>,
+    ) -> Self {
+        let mut input = Self::fixture_base(
+            Stage30RecoveryThreadPresenceKind::SessionPostureContinuityReference,
+            audit_id,
+        );
+        input.thread_presence_id = Some(thread_presence_id.into());
+        input
+    }
+
+    #[cfg(test)]
+    fn fixture_completion_disclosure_continuity_reference_ready(
+        completion_disclosure_id: impl Into<String>,
+        audit_id: impl Into<String>,
+    ) -> Self {
+        let mut input = Self::fixture_base(
+            Stage30RecoveryThreadPresenceKind::CompletionDisclosureContinuityReference,
+            audit_id,
+        );
+        input.completion_disclosure_id = Some(completion_disclosure_id.into());
+        input
+    }
+}
+
+impl Validate for Stage30RecoveryThreadPresenceInput {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        for (field, value) in [
+            (
+                "stage30_recovery_thread_presence_input.output_interaction_id",
+                self.output_interaction_id.as_deref(),
+            ),
+            (
+                "stage30_recovery_thread_presence_input.speech_output_id",
+                self.speech_output_id.as_deref(),
+            ),
+            (
+                "stage30_recovery_thread_presence_input.conversation_continuity_id",
+                self.conversation_continuity_id.as_deref(),
+            ),
+            (
+                "stage30_recovery_thread_presence_input.interaction_boundary_id",
+                self.interaction_boundary_id.as_deref(),
+            ),
+            (
+                "stage30_recovery_thread_presence_input.completion_disclosure_id",
+                self.completion_disclosure_id.as_deref(),
+            ),
+            (
+                "stage30_recovery_thread_presence_input.recovery_continuity_id",
+                self.recovery_continuity_id.as_deref(),
+            ),
+            (
+                "stage30_recovery_thread_presence_input.follow_up_posture_id",
+                self.follow_up_posture_id.as_deref(),
+            ),
+            (
+                "stage30_recovery_thread_presence_input.thread_presence_id",
+                self.thread_presence_id.as_deref(),
+            ),
+            (
+                "stage30_recovery_thread_presence_input.audit_id",
+                self.audit_id.as_deref(),
+            ),
+            (
+                "stage30_recovery_thread_presence_input.ph1j_proof_ref",
+                self.ph1j_proof_ref.as_deref(),
+            ),
+        ] {
+            validate_stage4_optional_ref(field, value)?;
+        }
+
+        if self.attempted_live_provider_in_build
+            || self.generated_live_media_in_build
+            || self.ran_live_search_in_build
+            || self.called_live_external_tool_in_build
+            || self.connector_write_requested
+            || self.ran_live_notification_delivery_in_build
+            || self.ran_live_background_execution_in_build
+            || self.ran_live_provider_backed_recovery_in_build
+            || self.ran_live_proactive_follow_up_delivery_in_build
+            || self.ran_live_remote_continuity_mutation_in_build
+            || self.ran_direct_protected_execution_in_build
+            || self.ran_live_tts_or_playback_in_build
+            || self.captured_microphone_audio
+            || self.transcribed_live_audio
+            || self.voice_id_matching_attempted
+            || self.native_ui_behavior_added
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage30_recovery_thread_presence_input.live_build_boundary",
+                reason: "Stage 30A cannot call live providers/search/tools, deliver live follow-ups, run live recovery or remote continuity mutation, protected execution, TTS/playback, mic/STT, Voice ID, connector-write, or native UI behavior",
+            });
+        }
+
+        if (self.fake_recovery_detected
+            || self.fake_follow_up_detected
+            || self.fake_presence_detected
+            || self.fake_completion_detected
+            || self.fake_approval_detected
+            || self.runtime_mock_detected)
+            && !self.fixture_only_test_path
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage30_recovery_thread_presence_input.runtime_mock_boundary",
+                reason: "runtime mocks and fake recovery/follow-up/presence/completion/approval success are forbidden outside explicit fixture-only paths",
+            });
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Stage30RecoveryThreadPresencePacket {
+    pub session_id: SessionId,
+    pub turn_id: Option<TurnId>,
+    pub activation_id: Option<String>,
+    pub continuity_packet_id: Option<String>,
+    pub automation_candidate_id: Option<String>,
+    pub connector_action_stage_id: Option<String>,
+    pub memory_candidate_id: Option<String>,
+    pub capture_session_id: Option<String>,
+    pub orchestration_stage_id: Option<String>,
+    pub action_graph_id: Option<String>,
+    pub tool_invocation_stage_id: Option<String>,
+    pub execution_plan_ref: Option<String>,
+    pub connector_execution_id: Option<String>,
+    pub protected_gate_id: Option<String>,
+    pub settlement_id: Option<String>,
+    pub mutation_commit_id: Option<String>,
+    pub reconciliation_id: Option<String>,
+    pub publication_id: Option<String>,
+    pub state_sync_id: Option<String>,
+    pub completion_disclosure_id: Option<String>,
+    pub output_interaction_id: Option<String>,
+    pub speech_output_id: Option<String>,
+    pub conversation_continuity_id: Option<String>,
+    pub interaction_boundary_id: Option<String>,
+    pub recovery_continuity_id: Option<String>,
+    pub follow_up_posture_id: Option<String>,
+    pub thread_presence_id: Option<String>,
+    pub work_id: Option<String>,
+    pub lease_id: Option<String>,
+    pub device_id: Option<String>,
+    pub access_context_id: Option<String>,
+    pub policy_context_id: Option<String>,
+    pub tenant_id: Option<String>,
+    pub audit_id: Option<String>,
+    pub ph1j_proof_ref: Option<String>,
+    pub stage8f_disposition: Option<Stage8FOutputInteractionDisposition>,
+    pub stage17_disposition: Option<Stage17SpeechOutputDisposition>,
+    pub stage20_disposition: Option<Stage20ContinuityHandoffDisposition>,
+    pub stage21_disposition: Option<Stage21AutomationOrchestrationDisposition>,
+    pub stage22_disposition: Option<Stage22ConnectorOutboundDisposition>,
+    pub stage23_disposition: Option<Stage23MemoryRetentionDisposition>,
+    pub stage24_disposition: Option<Stage24IngressCaptureDisposition>,
+    pub stage25_disposition: Option<Stage25ToolOrchestrationDisposition>,
+    pub stage26_disposition: Option<Stage26ExecutionAuthorityDisposition>,
+    pub stage27_disposition: Option<Stage27SettlementReconciliationDisposition>,
+    pub stage28_disposition: Option<Stage28PublicationDisclosureDisposition>,
+    pub stage29_disposition: Option<Stage29ConversationalContinuityDisposition>,
+    pub stage12_disposition: Option<Stage12ProtectedActionDisposition>,
+    pub recovery_kind: Stage30RecoveryThreadPresenceKind,
+    pub disposition: Stage30RecoveryThreadPresenceDisposition,
+    pub reason_code: &'static str,
+    pub stage8_ref_non_authoritative: bool,
+    pub stage17_ref_non_authoritative: bool,
+    pub stage20_ref_non_authoritative: bool,
+    pub stage21_ref_non_authoritative: bool,
+    pub stage22_ref_non_authoritative: bool,
+    pub stage23_ref_non_authoritative: bool,
+    pub stage24_ref_non_authoritative: bool,
+    pub stage25_ref_non_authoritative: bool,
+    pub stage26_ref_non_authoritative: bool,
+    pub stage27_ref_non_authoritative: bool,
+    pub stage28_ref_non_authoritative: bool,
+    pub stage29_ref_non_authoritative: bool,
+    pub ph1context_ref_non_authoritative: bool,
+    pub ph1l_ref_non_authoritative: bool,
+    pub ph1rem_ref_non_authoritative: bool,
+    pub ph1delivery_ref_non_authoritative: bool,
+    pub stage12_ref_bounded_authority_context: bool,
+    pub work_authority: Stage30RecoveryThreadPresenceWorkAuthority,
+}
+
+impl Stage30RecoveryThreadPresencePacket {
+    #[allow(clippy::too_many_arguments)]
+    pub fn from_stage29_conversation(
+        route: &Stage11ReasoningRouterPacket,
+        stage12_gate: Option<&Stage12ProtectedActionGatePacket>,
+        output_interaction: Option<&Stage8FOutputInteractionPacket>,
+        speech_output: Option<&Stage17SpeechOutputPacket>,
+        continuity_handoff: Option<&Stage20ContinuityHandoffPacket>,
+        automation_output: Option<&Stage21AutomationOrchestrationPacket>,
+        outbound_output: Option<&Stage22ConnectorOutboundPacket>,
+        memory_output: Option<&Stage23MemoryRetentionPacket>,
+        ingress_output: Option<&Stage24IngressCapturePacket>,
+        orchestration_output: Option<&Stage25ToolOrchestrationPacket>,
+        execution_output: Option<&Stage26ExecutionAuthorityPacket>,
+        settlement_output: Option<&Stage27SettlementReconciliationPacket>,
+        publication_output: Option<&Stage28PublicationDisclosurePacket>,
+        conversation_output: Option<&Stage29ConversationalContinuityPacket>,
+        input: Stage30RecoveryThreadPresenceInput,
+    ) -> Result<Self, ContractViolation> {
+        route.validate()?;
+        if let Some(packet) = stage12_gate {
+            packet.validate()?;
+        }
+        if let Some(packet) = output_interaction {
+            packet.validate()?;
+        }
+        if let Some(packet) = speech_output {
+            packet.validate()?;
+        }
+        if let Some(packet) = continuity_handoff {
+            packet.validate()?;
+        }
+        if let Some(packet) = automation_output {
+            packet.validate()?;
+        }
+        if let Some(packet) = outbound_output {
+            packet.validate()?;
+        }
+        if let Some(packet) = memory_output {
+            packet.validate()?;
+        }
+        if let Some(packet) = ingress_output {
+            packet.validate()?;
+        }
+        if let Some(packet) = orchestration_output {
+            packet.validate()?;
+        }
+        if let Some(packet) = execution_output {
+            packet.validate()?;
+        }
+        if let Some(packet) = settlement_output {
+            packet.validate()?;
+        }
+        if let Some(packet) = publication_output {
+            packet.validate()?;
+        }
+        if let Some(packet) = conversation_output {
+            packet.validate()?;
+        }
+        input.validate()?;
+        if input.stage12_gate_ref_present && stage12_gate.is_none() {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage30_recovery_thread_presence_packet.stage12_gate",
+                reason: "present Stage 12 continuity reference requires the canonical Stage 12 packet",
+            });
+        }
+        if input.stage29_conversation_ref_present && conversation_output.is_none() {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage30_recovery_thread_presence_packet.stage29_conversation",
+                reason: "present Stage 29 continuity reference requires the canonical Stage 29 packet",
+            });
+        }
+        if input.stage28_publication_ref_present && publication_output.is_none() {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage30_recovery_thread_presence_packet.stage28_publication",
+                reason: "present Stage 28 continuity reference requires the canonical Stage 28 packet",
+            });
+        }
+        if input.stage20_continuity_ref_present && continuity_handoff.is_none() {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage30_recovery_thread_presence_packet.stage20_continuity",
+                reason: "present Stage 20 continuity reference requires the canonical Stage 20 packet",
+            });
+        }
+
+        let disposition = Self::decide_disposition(
+            route,
+            stage12_gate,
+            output_interaction,
+            speech_output,
+            continuity_handoff,
+            publication_output,
+            conversation_output,
+            &input,
+        );
+        let work_authority = Self::work_authority_for(disposition);
+        let audit_id = input
+            .audit_id
+            .clone()
+            .or_else(|| conversation_output.and_then(|packet| packet.audit_id.clone()))
+            .or_else(|| publication_output.and_then(|packet| packet.audit_id.clone()))
+            .or_else(|| settlement_output.and_then(|packet| packet.audit_id.clone()))
+            .or_else(|| execution_output.and_then(|packet| packet.audit_id.clone()))
+            .or_else(|| orchestration_output.and_then(|packet| packet.audit_id.clone()))
+            .or_else(|| ingress_output.and_then(|packet| packet.audit_id.clone()))
+            .or_else(|| memory_output.and_then(|packet| packet.audit_id.clone()))
+            .or_else(|| outbound_output.and_then(|packet| packet.audit_id.clone()))
+            .or_else(|| automation_output.and_then(|packet| packet.audit_id.clone()))
+            .or_else(|| continuity_handoff.and_then(|packet| packet.audit_id.clone()))
+            .or_else(|| speech_output.and_then(|packet| packet.audit_id.clone()))
+            .or_else(|| output_interaction.map(|packet| packet.audit_id.clone()))
+            .or_else(|| stage12_gate.and_then(|packet| packet.audit_id.clone()))
+            .or_else(|| route.audit_id.clone());
+        let ph1j_proof_ref = input
+            .ph1j_proof_ref
+            .clone()
+            .or_else(|| conversation_output.and_then(|packet| packet.ph1j_proof_ref.clone()))
+            .or_else(|| publication_output.and_then(|packet| packet.ph1j_proof_ref.clone()))
+            .or_else(|| settlement_output.and_then(|packet| packet.ph1j_proof_ref.clone()))
+            .or_else(|| execution_output.and_then(|packet| packet.ph1j_proof_ref.clone()));
+
+        let packet = Self {
+            session_id: route.session_id,
+            turn_id: route.turn_id,
+            activation_id: continuity_handoff
+                .and_then(|packet| packet.activation_id.clone())
+                .or_else(|| publication_output.and_then(|packet| packet.activation_id.clone()))
+                .or_else(|| conversation_output.and_then(|packet| packet.activation_id.clone())),
+            continuity_packet_id: continuity_handoff
+                .map(|packet| packet.continuity_packet_id.clone())
+                .or_else(|| publication_output.and_then(|packet| packet.continuity_packet_id.clone()))
+                .or_else(|| conversation_output.and_then(|packet| packet.continuity_packet_id.clone())),
+            automation_candidate_id: automation_output
+                .and_then(|packet| packet.automation_candidate_id.clone())
+                .or_else(|| publication_output.and_then(|packet| packet.automation_candidate_id.clone()))
+                .or_else(|| conversation_output.and_then(|packet| packet.automation_candidate_id.clone())),
+            connector_action_stage_id: outbound_output
+                .and_then(|packet| packet.connector_action_stage_id.clone())
+                .or_else(|| publication_output.and_then(|packet| packet.connector_action_stage_id.clone()))
+                .or_else(|| conversation_output.and_then(|packet| packet.connector_action_stage_id.clone())),
+            memory_candidate_id: memory_output
+                .and_then(|packet| packet.memory_candidate_id.clone())
+                .or_else(|| publication_output.and_then(|packet| packet.memory_candidate_id.clone()))
+                .or_else(|| conversation_output.and_then(|packet| packet.memory_candidate_id.clone())),
+            capture_session_id: ingress_output
+                .and_then(|packet| packet.capture_session_id.clone())
+                .or_else(|| publication_output.and_then(|packet| packet.capture_session_id.clone()))
+                .or_else(|| conversation_output.and_then(|packet| packet.capture_session_id.clone())),
+            orchestration_stage_id: conversation_output
+                .and_then(|packet| packet.orchestration_stage_id.clone())
+                .or_else(|| publication_output.and_then(|packet| packet.orchestration_stage_id.clone())),
+            action_graph_id: conversation_output
+                .and_then(|packet| packet.action_graph_id.clone())
+                .or_else(|| publication_output.and_then(|packet| packet.action_graph_id.clone())),
+            tool_invocation_stage_id: conversation_output
+                .and_then(|packet| packet.tool_invocation_stage_id.clone())
+                .or_else(|| publication_output.and_then(|packet| packet.tool_invocation_stage_id.clone())),
+            execution_plan_ref: conversation_output
+                .and_then(|packet| packet.execution_plan_ref.clone())
+                .or_else(|| publication_output.and_then(|packet| packet.execution_plan_ref.clone())),
+            connector_execution_id: conversation_output
+                .and_then(|packet| packet.connector_execution_id.clone())
+                .or_else(|| publication_output.and_then(|packet| packet.connector_execution_id.clone())),
+            protected_gate_id: conversation_output
+                .and_then(|packet| packet.protected_gate_id.clone())
+                .or_else(|| publication_output.and_then(|packet| packet.protected_gate_id.clone())),
+            settlement_id: conversation_output
+                .and_then(|packet| packet.settlement_id.clone())
+                .or_else(|| publication_output.and_then(|packet| packet.settlement_id.clone())),
+            mutation_commit_id: conversation_output
+                .and_then(|packet| packet.mutation_commit_id.clone())
+                .or_else(|| publication_output.and_then(|packet| packet.mutation_commit_id.clone())),
+            reconciliation_id: conversation_output
+                .and_then(|packet| packet.reconciliation_id.clone())
+                .or_else(|| publication_output.and_then(|packet| packet.reconciliation_id.clone())),
+            publication_id: conversation_output
+                .and_then(|packet| packet.publication_id.clone())
+                .or_else(|| publication_output.and_then(|packet| packet.publication_id.clone())),
+            state_sync_id: conversation_output
+                .and_then(|packet| packet.state_sync_id.clone())
+                .or_else(|| publication_output.and_then(|packet| packet.state_sync_id.clone())),
+            completion_disclosure_id: input
+                .completion_disclosure_id
+                .clone()
+                .or_else(|| publication_output.and_then(|packet| packet.completion_disclosure_id.clone()))
+                .or_else(|| conversation_output.and_then(|packet| packet.completion_disclosure_id.clone())),
+            output_interaction_id: input
+                .output_interaction_id
+                .clone()
+                .or_else(|| speech_output.and_then(|packet| packet.output_interaction_id.clone()))
+                .or_else(|| conversation_output.and_then(|packet| packet.output_interaction_id.clone())),
+            speech_output_id: input
+                .speech_output_id
+                .clone()
+                .or_else(|| conversation_output.and_then(|packet| packet.speech_output_id.clone())),
+            conversation_continuity_id: input
+                .conversation_continuity_id
+                .clone()
+                .or_else(|| conversation_output.and_then(|packet| packet.conversation_continuity_id.clone())),
+            interaction_boundary_id: input
+                .interaction_boundary_id
+                .clone()
+                .or_else(|| conversation_output.and_then(|packet| packet.interaction_boundary_id.clone())),
+            recovery_continuity_id: input.recovery_continuity_id.clone(),
+            follow_up_posture_id: input.follow_up_posture_id.clone(),
+            thread_presence_id: input.thread_presence_id.clone(),
+            work_id: conversation_output
+                .and_then(|packet| packet.work_id.clone())
+                .or_else(|| publication_output.and_then(|packet| packet.work_id.clone())),
+            lease_id: conversation_output
+                .and_then(|packet| packet.lease_id.clone())
+                .or_else(|| publication_output.and_then(|packet| packet.lease_id.clone())),
+            device_id: conversation_output
+                .and_then(|packet| packet.device_id.clone())
+                .or_else(|| publication_output.and_then(|packet| packet.device_id.clone())),
+            access_context_id: conversation_output
+                .and_then(|packet| packet.access_context_id.clone())
+                .or_else(|| publication_output.and_then(|packet| packet.access_context_id.clone()))
+                .or_else(|| route.access_context_id.clone()),
+            policy_context_id: conversation_output
+                .and_then(|packet| packet.policy_context_id.clone())
+                .or_else(|| publication_output.and_then(|packet| packet.policy_context_id.clone()))
+                .or_else(|| route.policy_context_id.clone()),
+            tenant_id: conversation_output
+                .and_then(|packet| packet.tenant_id.clone())
+                .or_else(|| publication_output.and_then(|packet| packet.tenant_id.clone())),
+            audit_id,
+            ph1j_proof_ref,
+            stage8f_disposition: output_interaction.map(|packet| packet.disposition),
+            stage17_disposition: speech_output.map(|packet| packet.disposition),
+            stage20_disposition: continuity_handoff
+                .map(|packet| packet.disposition)
+                .or_else(|| conversation_output.and_then(|packet| packet.stage20_disposition)),
+            stage21_disposition: automation_output
+                .map(|packet| packet.disposition)
+                .or_else(|| conversation_output.and_then(|packet| packet.stage21_disposition)),
+            stage22_disposition: outbound_output
+                .map(|packet| packet.disposition)
+                .or_else(|| conversation_output.and_then(|packet| packet.stage22_disposition)),
+            stage23_disposition: memory_output
+                .map(|packet| packet.disposition)
+                .or_else(|| conversation_output.and_then(|packet| packet.stage23_disposition)),
+            stage24_disposition: ingress_output
+                .map(|packet| packet.disposition)
+                .or_else(|| conversation_output.and_then(|packet| packet.stage24_disposition)),
+            stage25_disposition: orchestration_output
+                .map(|packet| packet.disposition)
+                .or_else(|| conversation_output.and_then(|packet| packet.stage25_disposition)),
+            stage26_disposition: execution_output
+                .map(|packet| packet.disposition)
+                .or_else(|| conversation_output.and_then(|packet| packet.stage26_disposition)),
+            stage27_disposition: settlement_output
+                .map(|packet| packet.disposition)
+                .or_else(|| conversation_output.and_then(|packet| packet.stage27_disposition)),
+            stage28_disposition: publication_output
+                .map(|packet| packet.disposition)
+                .or_else(|| conversation_output.and_then(|packet| packet.stage28_disposition)),
+            stage29_disposition: conversation_output.map(|packet| packet.disposition),
+            stage12_disposition: stage12_gate.map(|packet| packet.disposition),
+            recovery_kind: input.recovery_kind,
+            disposition,
+            reason_code: disposition.default_reason_code(),
+            stage8_ref_non_authoritative: input.stage8_output_interaction_ref_non_authoritative,
+            stage17_ref_non_authoritative: input.stage17_speech_output_ref_non_authoritative,
+            stage20_ref_non_authoritative: input.stage20_continuity_ref_non_authoritative,
+            stage21_ref_non_authoritative: input.stage21_automation_ref_non_authoritative,
+            stage22_ref_non_authoritative: input.stage22_outbound_ref_non_authoritative,
+            stage23_ref_non_authoritative: input.stage23_memory_ref_non_authoritative,
+            stage24_ref_non_authoritative: input.stage24_ingress_ref_non_authoritative,
+            stage25_ref_non_authoritative: input.stage25_orchestration_ref_non_authoritative,
+            stage26_ref_non_authoritative: input.stage26_execution_ref_non_authoritative,
+            stage27_ref_non_authoritative: input.stage27_settlement_ref_non_authoritative,
+            stage28_ref_non_authoritative: input.stage28_publication_ref_non_authoritative,
+            stage29_ref_non_authoritative: input.stage29_conversation_ref_non_authoritative,
+            ph1context_ref_non_authoritative: input.ph1context_ref_non_authoritative,
+            ph1l_ref_non_authoritative: input.ph1l_session_ref_non_authoritative,
+            ph1rem_ref_non_authoritative: input.ph1rem_ref_non_authoritative,
+            ph1delivery_ref_non_authoritative: input.ph1delivery_ref_non_authoritative,
+            stage12_ref_bounded_authority_context: input.stage12_gate_bounded_authority_context,
+            work_authority,
+        };
+        packet.validate()?;
+        Ok(packet)
+    }
+
+    pub const fn can_mutate_or_execute(&self) -> bool {
+        self.work_authority.can_mutate_or_execute()
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn decide_disposition(
+        route: &Stage11ReasoningRouterPacket,
+        stage12_gate: Option<&Stage12ProtectedActionGatePacket>,
+        output_interaction: Option<&Stage8FOutputInteractionPacket>,
+        speech_output: Option<&Stage17SpeechOutputPacket>,
+        continuity_handoff: Option<&Stage20ContinuityHandoffPacket>,
+        publication_output: Option<&Stage28PublicationDisclosurePacket>,
+        conversation_output: Option<&Stage29ConversationalContinuityPacket>,
+        input: &Stage30RecoveryThreadPresenceInput,
+    ) -> Stage30RecoveryThreadPresenceDisposition {
+        if input.runtime_mock_detected {
+            return Stage30RecoveryThreadPresenceDisposition::RuntimeMockBlocked;
+        }
+        if input.access_denied || input.policy_denied {
+            return Stage30RecoveryThreadPresenceDisposition::UnsafeInputBlocked;
+        }
+        if !input.stage11_route_ref_present
+            || !input.stage11_route_non_executing_context
+            || !matches!(
+                route.disposition,
+                Stage11RouterDisposition::PublicReadOnlyCandidate
+                    | Stage11RouterDisposition::ProtectedActionBlockedUntilStage12
+                    | Stage11RouterDisposition::SimulationCandidateInertHandoff
+            )
+            || !input.stage12_gate_ref_present
+            || !input.stage12_gate_bounded_authority_context
+            || stage12_gate.is_none()
+            || !input.stage29_conversation_ref_present
+            || !input.stage29_conversation_ref_non_authoritative
+            || conversation_output.is_none()
+            || !conversation_output.is_some_and(|packet| packet.disposition.is_ready())
+            || !input.stage28_publication_ref_present
+            || !input.stage28_publication_ref_non_authoritative
+            || publication_output.is_none()
+            || !publication_output.is_some_and(|packet| packet.disposition.is_ready())
+            || !input.stage20_continuity_ref_present
+            || !input.stage20_continuity_ref_non_authoritative
+            || continuity_handoff.is_none()
+            || !input.stage8_output_interaction_ref_present
+            || !input.stage8_output_interaction_ref_non_authoritative
+            || output_interaction.is_none()
+            || !input.stage17_speech_output_ref_present
+            || !input.stage17_speech_output_ref_non_authoritative
+            || speech_output.is_none()
+        {
+            return Stage30RecoveryThreadPresenceDisposition::StageInputBlocked;
+        }
+        if input.audit_id.is_none()
+            && route.audit_id.is_none()
+            && stage12_gate.and_then(|packet| packet.audit_id.clone()).is_none()
+            && output_interaction.map(|packet| packet.audit_id.clone()).is_none()
+            && speech_output.and_then(|packet| packet.audit_id.clone()).is_none()
+            && continuity_handoff.and_then(|packet| packet.audit_id.clone()).is_none()
+            && publication_output.and_then(|packet| packet.audit_id.clone()).is_none()
+            && conversation_output.and_then(|packet| packet.audit_id.clone()).is_none()
+        {
+            return Stage30RecoveryThreadPresenceDisposition::AuditProofMissing;
+        }
+        if input.recovery_invented_fact
+            || input.recovery_invented_recovery_success
+            || input.recovery_invented_proactive_follow_up_success
+            || input.recovery_invented_presence_continuity_success
+            || input.recovery_invented_completion_success
+            || input.recovery_invented_approval
+            || input.recovery_invented_remote_completion
+            || input.recovery_invented_visibility_completion
+            || input.recovery_invented_work_or_lease_authority
+            || input.recovery_invented_route_authority
+            || input.recovery_invented_attachment_or_citation
+            || input.recovery_invented_provider_or_tool_result
+            || input.recovery_claimed_unproven_completion
+            || input
+                .recovery_implied_approval_dispatch_execution_follow_up_publication_or_completion_without_proof
+            || input.raw_provider_output_present
+            || input.raw_search_dump_present
+            || input.raw_media_present
+            || input.raw_connector_credential_field_present
+            || input.unverified_source_evidence_present
+            || input.unsupported_claim_candidate_present
+            || input.fake_recovery_source_carrier_present
+            || input
+                .attention_continuity_automation_outbound_memory_ingress_orchestration_execution_settlement_publication_conversation_used_as_truth_authority
+            || input.protected_action_candidate_present
+            || input.simulation_candidate_present
+            || input.approved_execution_plan_present
+        {
+            return Stage30RecoveryThreadPresenceDisposition::NoInventionBlocked;
+        }
+        if !input.native_recovery_declarative_only
+            || input.native_recovery_mutates_state
+            || input.native_recovery_connector_writes
+            || input.native_recovery_dispatches_or_executes
+            || input.native_recovery_calls_providers_or_tools
+            || input.native_recovery_emits_tts_or_playback
+            || input.native_recovery_creates_user_turn
+            || input.native_recovery_treats_visible_readiness_as_action_success
+        {
+            return Stage30RecoveryThreadPresenceDisposition::NativeRecoveryHandoffBlocked;
+        }
+        if input.protected_action_like_request
+            || input.protected_slot_or_authority_ambiguous
+            || input.unsafe_identity_posture
+            || input.follow_up_ambiguity
+        {
+            return Stage30RecoveryThreadPresenceDisposition::PublicProtectedBoundaryBlocked;
+        }
+        if input.stale_or_cancelled_or_superseded_output
+            || input.session_closed
+            || input.record_artifact_only_turn
+            || input.stale_recovery_state
+            || input.stale_presence_state
+            || input.stale_work_state
+            || input.stale_lease_state
+            || input.stale_route_state
+            || input.stale_connector_state
+            || input.stale_protected_gate_state
+            || input.background_task_reopens_session
+            || !input.recovery_identity_matches_current_output_session
+            || input.replay_upgrades_blocked_authority
+        {
+            return Stage30RecoveryThreadPresenceDisposition::StaleRecoveryBlocked;
+        }
+        if !input.authority_bounded
+            || !input.tenant_user_device_session_scoped
+            || !input.secret_safe
+            || !input.redacted
+            || !input.stale_aware
+            || !input.revocation_aware
+            || !input.uncertainty_preserved
+            || !input.recovery_ref_present
+            || !input.follow_up_posture_ref_present
+            || !input.thread_presence_ref_present
+            || !input.session_posture_ref_present
+            || !input.completion_disclosure_ref_present
+            || input.unverifiable
+            || input.stale
+            || input.secret_unsafe
+            || input.cross_tenant
+            || input.cross_route
+            || input.cross_connector
+            || input.recovery_mismatch
+            || input.continuity_mismatch
+            || input.publication_mismatch
+            || input.settlement_mismatch
+            || input.connector_mismatch
+            || input.route_mismatch
+            || input.action_graph_mismatch
+            || input.lease_mismatch
+            || input.protected_gate_mismatch
+            || input.tenant_mismatch
+            || input.missing_proof
+            || input.ownership_drift
+            || input.secrets_exposed
+            || input.raw_biometric_material_exposed
+            || input.internal_trace_exposed
+        {
+            return Stage30RecoveryThreadPresenceDisposition::RecoveryAuthorityBlocked;
+        }
+
+        match input.recovery_kind {
+            Stage30RecoveryThreadPresenceKind::CrossTurnRecoverySemantics => {
+                if input.recovery_continuity_id.is_some()
+                    && input.thread_presence_id.is_some()
+                    && input.ph1l_session_ref_present
+                    && continuity_handoff.is_some()
+                    && conversation_output
+                        .is_some_and(|packet| packet.conversation_continuity_id.is_some())
+                {
+                    Stage30RecoveryThreadPresenceDisposition::CrossTurnRecoverySemanticsReady
+                } else {
+                    Stage30RecoveryThreadPresenceDisposition::RecoveryAuthorityBlocked
+                }
+            }
+            Stage30RecoveryThreadPresenceKind::BoundedProactiveFollowUpPosture => {
+                if input.follow_up_posture_id.is_some()
+                    && input.ph1rem_ref_present
+                    && input.ph1delivery_ref_present
+                    && input.follow_up_posture_ref_present
+                    && publication_output
+                        .is_some_and(|packet| packet.completion_disclosure_id.is_some())
+                {
+                    Stage30RecoveryThreadPresenceDisposition::BoundedProactiveFollowUpPostureReady
+                } else {
+                    Stage30RecoveryThreadPresenceDisposition::RecoveryAuthorityBlocked
+                }
+            }
+            Stage30RecoveryThreadPresenceKind::ThreadPresenceContinuity => {
+                if input.thread_presence_id.is_some()
+                    && input.ph1context_ref_present
+                    && input.ph1l_session_ref_present
+                    && input.thread_presence_ref_present
+                    && conversation_output
+                        .is_some_and(|packet| packet.conversation_continuity_id.is_some())
+                {
+                    Stage30RecoveryThreadPresenceDisposition::ThreadPresenceContinuityReady
+                } else {
+                    Stage30RecoveryThreadPresenceDisposition::RecoveryAuthorityBlocked
+                }
+            }
+            Stage30RecoveryThreadPresenceKind::ReturnCheckReopenContinuityReference => {
+                if input.recovery_continuity_id.is_some()
+                    && input.recovery_ref_present
+                    && input.ph1l_session_ref_present
+                    && continuity_handoff.is_some()
+                {
+                    Stage30RecoveryThreadPresenceDisposition::ReturnCheckReopenContinuityReferenceReady
+                } else {
+                    Stage30RecoveryThreadPresenceDisposition::RecoveryAuthorityBlocked
+                }
+            }
+            Stage30RecoveryThreadPresenceKind::SessionPostureContinuityReference => {
+                if input.thread_presence_id.is_some()
+                    && input.session_posture_ref_present
+                    && input.ph1context_ref_present
+                    && publication_output
+                        .is_some_and(|packet| packet.completion_disclosure_id.is_some())
+                {
+                    Stage30RecoveryThreadPresenceDisposition::SessionPostureContinuityReferenceReady
+                } else {
+                    Stage30RecoveryThreadPresenceDisposition::RecoveryAuthorityBlocked
+                }
+            }
+            Stage30RecoveryThreadPresenceKind::CompletionDisclosureContinuityReference => {
+                if input.completion_disclosure_id.is_some()
+                    && input.completion_disclosure_ref_present
+                    && publication_output
+                        .is_some_and(|packet| packet.completion_disclosure_id.is_some())
+                {
+                    Stage30RecoveryThreadPresenceDisposition::CompletionDisclosureContinuityReferenceReady
+                } else {
+                    Stage30RecoveryThreadPresenceDisposition::RecoveryAuthorityBlocked
+                }
+            }
+        }
+    }
+
+    const fn work_authority_for(
+        disposition: Stage30RecoveryThreadPresenceDisposition,
+    ) -> Stage30RecoveryThreadPresenceWorkAuthority {
+        match disposition {
+            Stage30RecoveryThreadPresenceDisposition::CrossTurnRecoverySemanticsReady => {
+                Stage30RecoveryThreadPresenceWorkAuthority::cross_turn_recovery_semantics_ready()
+            }
+            Stage30RecoveryThreadPresenceDisposition::BoundedProactiveFollowUpPostureReady => {
+                Stage30RecoveryThreadPresenceWorkAuthority::bounded_proactive_follow_up_posture_ready()
+            }
+            Stage30RecoveryThreadPresenceDisposition::ThreadPresenceContinuityReady => {
+                Stage30RecoveryThreadPresenceWorkAuthority::thread_presence_continuity_ready()
+            }
+            Stage30RecoveryThreadPresenceDisposition::ReturnCheckReopenContinuityReferenceReady => {
+                Stage30RecoveryThreadPresenceWorkAuthority::return_check_reopen_continuity_reference_ready()
+            }
+            Stage30RecoveryThreadPresenceDisposition::SessionPostureContinuityReferenceReady => {
+                Stage30RecoveryThreadPresenceWorkAuthority::session_posture_continuity_reference_ready()
+            }
+            Stage30RecoveryThreadPresenceDisposition::CompletionDisclosureContinuityReferenceReady => {
+                Stage30RecoveryThreadPresenceWorkAuthority::completion_disclosure_continuity_reference_ready()
+            }
+            _ => Stage30RecoveryThreadPresenceWorkAuthority::fail_closed(),
+        }
+    }
+}
+
+impl Validate for Stage30RecoveryThreadPresencePacket {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        for (field, value) in [
+            (
+                "stage30_recovery_thread_presence_packet.activation_id",
+                self.activation_id.as_deref(),
+            ),
+            (
+                "stage30_recovery_thread_presence_packet.continuity_packet_id",
+                self.continuity_packet_id.as_deref(),
+            ),
+            (
+                "stage30_recovery_thread_presence_packet.automation_candidate_id",
+                self.automation_candidate_id.as_deref(),
+            ),
+            (
+                "stage30_recovery_thread_presence_packet.connector_action_stage_id",
+                self.connector_action_stage_id.as_deref(),
+            ),
+            (
+                "stage30_recovery_thread_presence_packet.memory_candidate_id",
+                self.memory_candidate_id.as_deref(),
+            ),
+            (
+                "stage30_recovery_thread_presence_packet.capture_session_id",
+                self.capture_session_id.as_deref(),
+            ),
+            (
+                "stage30_recovery_thread_presence_packet.orchestration_stage_id",
+                self.orchestration_stage_id.as_deref(),
+            ),
+            (
+                "stage30_recovery_thread_presence_packet.action_graph_id",
+                self.action_graph_id.as_deref(),
+            ),
+            (
+                "stage30_recovery_thread_presence_packet.tool_invocation_stage_id",
+                self.tool_invocation_stage_id.as_deref(),
+            ),
+            (
+                "stage30_recovery_thread_presence_packet.execution_plan_ref",
+                self.execution_plan_ref.as_deref(),
+            ),
+            (
+                "stage30_recovery_thread_presence_packet.connector_execution_id",
+                self.connector_execution_id.as_deref(),
+            ),
+            (
+                "stage30_recovery_thread_presence_packet.protected_gate_id",
+                self.protected_gate_id.as_deref(),
+            ),
+            (
+                "stage30_recovery_thread_presence_packet.settlement_id",
+                self.settlement_id.as_deref(),
+            ),
+            (
+                "stage30_recovery_thread_presence_packet.mutation_commit_id",
+                self.mutation_commit_id.as_deref(),
+            ),
+            (
+                "stage30_recovery_thread_presence_packet.reconciliation_id",
+                self.reconciliation_id.as_deref(),
+            ),
+            (
+                "stage30_recovery_thread_presence_packet.publication_id",
+                self.publication_id.as_deref(),
+            ),
+            (
+                "stage30_recovery_thread_presence_packet.state_sync_id",
+                self.state_sync_id.as_deref(),
+            ),
+            (
+                "stage30_recovery_thread_presence_packet.completion_disclosure_id",
+                self.completion_disclosure_id.as_deref(),
+            ),
+            (
+                "stage30_recovery_thread_presence_packet.output_interaction_id",
+                self.output_interaction_id.as_deref(),
+            ),
+            (
+                "stage30_recovery_thread_presence_packet.speech_output_id",
+                self.speech_output_id.as_deref(),
+            ),
+            (
+                "stage30_recovery_thread_presence_packet.conversation_continuity_id",
+                self.conversation_continuity_id.as_deref(),
+            ),
+            (
+                "stage30_recovery_thread_presence_packet.interaction_boundary_id",
+                self.interaction_boundary_id.as_deref(),
+            ),
+            (
+                "stage30_recovery_thread_presence_packet.recovery_continuity_id",
+                self.recovery_continuity_id.as_deref(),
+            ),
+            (
+                "stage30_recovery_thread_presence_packet.follow_up_posture_id",
+                self.follow_up_posture_id.as_deref(),
+            ),
+            (
+                "stage30_recovery_thread_presence_packet.thread_presence_id",
+                self.thread_presence_id.as_deref(),
+            ),
+            (
+                "stage30_recovery_thread_presence_packet.work_id",
+                self.work_id.as_deref(),
+            ),
+            (
+                "stage30_recovery_thread_presence_packet.lease_id",
+                self.lease_id.as_deref(),
+            ),
+            (
+                "stage30_recovery_thread_presence_packet.device_id",
+                self.device_id.as_deref(),
+            ),
+            (
+                "stage30_recovery_thread_presence_packet.access_context_id",
+                self.access_context_id.as_deref(),
+            ),
+            (
+                "stage30_recovery_thread_presence_packet.policy_context_id",
+                self.policy_context_id.as_deref(),
+            ),
+            (
+                "stage30_recovery_thread_presence_packet.tenant_id",
+                self.tenant_id.as_deref(),
+            ),
+            (
+                "stage30_recovery_thread_presence_packet.audit_id",
+                self.audit_id.as_deref(),
+            ),
+            (
+                "stage30_recovery_thread_presence_packet.ph1j_proof_ref",
+                self.ph1j_proof_ref.as_deref(),
+            ),
+        ] {
+            validate_stage4_optional_ref(field, value)?;
+        }
+        if self.reason_code != self.disposition.default_reason_code() {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage30_recovery_thread_presence_packet.reason_code",
+                reason: "must match Stage 30A recovery disposition",
+            });
+        }
+        if self.work_authority.can_mutate_or_execute() {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage30_recovery_thread_presence_packet.work_authority",
+                reason: "Stage 30A cannot invent recovery authority, connector-write, approve, dispatch, execute, create turns, or treat visible readiness as action success",
+            });
+        }
+        if self.disposition.is_ready()
+            && (self.audit_id.is_none() || self.ph1j_proof_ref.is_none())
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage30_recovery_thread_presence_packet.audit_proof",
+                reason: "ready Stage 30A recovery output requires PH1.J audit/proof refs",
+            });
+        }
+        Ok(())
+    }
+}
+
+pub fn stage30_recovery_thread_presence_symbol_anchor() {
+    let _ = Stage30RecoveryThreadPresenceKind::CrossTurnRecoverySemantics;
+    let _ = Stage30RecoveryThreadPresenceKind::BoundedProactiveFollowUpPosture;
+    let _ = Stage30RecoveryThreadPresenceKind::ThreadPresenceContinuity;
+    let _ = Stage30RecoveryThreadPresenceKind::ReturnCheckReopenContinuityReference;
+    let _ = Stage30RecoveryThreadPresenceKind::SessionPostureContinuityReference;
+    let _ = Stage30RecoveryThreadPresenceKind::CompletionDisclosureContinuityReference;
+    let disposition = Stage30RecoveryThreadPresenceDisposition::StageInputBlocked;
+    let _ = disposition.default_reason_code();
+    let _ = disposition.is_ready();
+    let _ = Stage30RecoveryThreadPresenceWorkAuthority::fail_closed().can_mutate_or_execute();
+    let _ = Stage30RecoveryThreadPresenceWorkAuthority::cross_turn_recovery_semantics_ready();
+    let _ = Stage30RecoveryThreadPresenceWorkAuthority::bounded_proactive_follow_up_posture_ready();
+    let _ = Stage30RecoveryThreadPresenceWorkAuthority::thread_presence_continuity_ready();
+    let _ =
+        Stage30RecoveryThreadPresenceWorkAuthority::return_check_reopen_continuity_reference_ready();
+    let _ =
+        Stage30RecoveryThreadPresenceWorkAuthority::session_posture_continuity_reference_ready();
+    let _ =
+        Stage30RecoveryThreadPresenceWorkAuthority::completion_disclosure_continuity_reference_ready();
+    let _ = core::mem::size_of::<Stage30RecoveryThreadPresenceInput>();
+    let _ = core::mem::size_of::<Stage30RecoveryThreadPresencePacket>();
+    let _ = Stage30RecoveryThreadPresencePacket::from_stage29_conversation
+        as fn(
+            &Stage11ReasoningRouterPacket,
+            Option<&Stage12ProtectedActionGatePacket>,
+            Option<&Stage8FOutputInteractionPacket>,
+            Option<&Stage17SpeechOutputPacket>,
+            Option<&Stage20ContinuityHandoffPacket>,
+            Option<&Stage21AutomationOrchestrationPacket>,
+            Option<&Stage22ConnectorOutboundPacket>,
+            Option<&Stage23MemoryRetentionPacket>,
+            Option<&Stage24IngressCapturePacket>,
+            Option<&Stage25ToolOrchestrationPacket>,
+            Option<&Stage26ExecutionAuthorityPacket>,
+            Option<&Stage27SettlementReconciliationPacket>,
+            Option<&Stage28PublicationDisclosurePacket>,
+            Option<&Stage29ConversationalContinuityPacket>,
+            Stage30RecoveryThreadPresenceInput,
+        ) -> Result<Stage30RecoveryThreadPresencePacket, ContractViolation>;
+    let _ = Stage30RecoveryThreadPresencePacket::can_mutate_or_execute
+        as fn(&Stage30RecoveryThreadPresencePacket) -> bool;
+}
+const _: fn() = stage30_recovery_thread_presence_symbol_anchor;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -42501,6 +44028,47 @@ mod tests {
         .expect("stage29 publication identity")
     }
 
+    fn stage30_conversation_identity() -> super::Stage29ConversationalContinuityPacket {
+        let route = stage12_protected_route();
+        let gate = Stage12ProtectedActionGatePacket::from_stage11_candidate(
+            &route,
+            stage12_gate_input(),
+        )
+        .expect("stage30 protected gate");
+        let conversation = stage29_conversation_control_identity();
+        let output_interaction = stage29_output_interaction_identity();
+        let speech = stage29_speech_output_identity();
+        let continuity = stage21_continuity_identity();
+        let automation = stage22_automation_identity();
+        let outbound = stage23_outbound_identity();
+        let memory = stage24_memory_identity();
+        let ingress = stage25_ingress_identity();
+        let orchestration = stage26_orchestration_identity();
+        let execution = stage27_execution_authority_identity();
+        let settlement = stage28_settlement_identity();
+        let publication = stage29_publication_identity();
+        super::Stage29ConversationalContinuityPacket::from_stage28_publication(
+            &route,
+            Some(&gate),
+            Some(&conversation),
+            Some(&output_interaction),
+            Some(&speech),
+            Some(&continuity),
+            Some(&automation),
+            Some(&outbound),
+            Some(&memory),
+            Some(&ingress),
+            Some(&orchestration),
+            Some(&execution),
+            Some(&settlement),
+            Some(&publication),
+            super::Stage29ConversationalContinuityInput::fixture_same_page_conversational_quality_ready(
+                "audit-stage30-conversation",
+            ),
+        )
+        .expect("stage30 conversation identity")
+    }
+
     #[test]
     fn stage_29a_conversation_consumes_stage8_stage17_stage20_stage21_stage22_stage23_stage24_stage25_stage26_stage27_stage28_non_authoritatively(
     ) {
@@ -42986,6 +44554,502 @@ mod tests {
                 None,
                 None,
                 Some(&publication),
+                runtime_mock,
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn stage_30a_recovery_consumes_stage8_stage17_stage20_stage21_stage22_stage23_stage24_stage25_stage26_stage27_stage28_stage29_non_authoritatively(
+    ) {
+        let route = stage12_protected_route();
+        let gate = Stage12ProtectedActionGatePacket::from_stage11_candidate(
+            &route,
+            stage12_gate_input(),
+        )
+        .expect("stage30 protected gate");
+        let output_interaction = stage29_output_interaction_identity();
+        let speech = stage29_speech_output_identity();
+        let continuity = stage21_continuity_identity();
+        let automation = stage22_automation_identity();
+        let outbound = stage23_outbound_identity();
+        let memory = stage24_memory_identity();
+        let ingress = stage25_ingress_identity();
+        let orchestration = stage26_orchestration_identity();
+        let execution = stage27_execution_authority_identity();
+        let settlement = stage28_settlement_identity();
+        let publication = stage29_publication_identity();
+        let conversation = stage30_conversation_identity();
+
+        let packet = super::Stage30RecoveryThreadPresencePacket::from_stage29_conversation(
+            &route,
+            Some(&gate),
+            Some(&output_interaction),
+            Some(&speech),
+            Some(&continuity),
+            Some(&automation),
+            Some(&outbound),
+            Some(&memory),
+            Some(&ingress),
+            Some(&orchestration),
+            Some(&execution),
+            Some(&settlement),
+            Some(&publication),
+            Some(&conversation),
+            super::Stage30RecoveryThreadPresenceInput::fixture_cross_turn_recovery_semantics_ready(
+                "audit-stage30-ready",
+            ),
+        )
+        .expect("stage30 recovery ready");
+
+        assert_eq!(
+            packet.disposition,
+            super::Stage30RecoveryThreadPresenceDisposition::CrossTurnRecoverySemanticsReady
+        );
+        assert_eq!(
+            packet.stage20_disposition,
+            Some(Stage20ContinuityHandoffDisposition::SessionContinuityReady)
+        );
+        assert_eq!(
+            packet.stage28_disposition,
+            Some(Stage28PublicationDisclosureDisposition::DurableOutcomePublicationReady)
+        );
+        assert_eq!(
+            packet.stage29_disposition,
+            Some(
+                super::Stage29ConversationalContinuityDisposition::SamePageConversationalQualityReady
+            )
+        );
+        assert!(packet.stage8_ref_non_authoritative);
+        assert!(packet.stage17_ref_non_authoritative);
+        assert!(packet.stage29_ref_non_authoritative);
+        assert!(packet.ph1context_ref_non_authoritative);
+        assert!(packet.ph1l_ref_non_authoritative);
+        assert!(packet.ph1rem_ref_non_authoritative);
+        assert!(packet.ph1delivery_ref_non_authoritative);
+        assert!(
+            packet
+                .work_authority
+                .can_emit_cross_turn_recovery_semantics_packet
+        );
+        assert!(!packet.can_mutate_or_execute());
+    }
+
+    #[test]
+    fn stage_30a_packets_cannot_invent_or_claim_recovery_success() {
+        let route = stage12_protected_route();
+        let gate = Stage12ProtectedActionGatePacket::from_stage11_candidate(
+            &route,
+            stage12_gate_input(),
+        )
+        .expect("stage30 protected gate");
+        let output_interaction = stage29_output_interaction_identity();
+        let speech = stage29_speech_output_identity();
+        let continuity = stage21_continuity_identity();
+        let publication = stage29_publication_identity();
+        let conversation = stage30_conversation_identity();
+
+        for input in [
+            {
+                let mut input =
+                    super::Stage30RecoveryThreadPresenceInput::fixture_cross_turn_recovery_semantics_ready(
+                        "audit-stage30-invent-recovery",
+                    );
+                input.recovery_invented_recovery_success = true;
+                input
+            },
+            {
+                let mut input =
+                    super::Stage30RecoveryThreadPresenceInput::fixture_bounded_proactive_follow_up_posture_ready(
+                        "follow-up-stage30-invent",
+                        "audit-stage30-invent-follow-up",
+                    );
+                input.recovery_invented_proactive_follow_up_success = true;
+                input
+            },
+            {
+                let mut input =
+                    super::Stage30RecoveryThreadPresenceInput::fixture_thread_presence_continuity_ready(
+                        "thread-presence-stage30-invent",
+                        "audit-stage30-invent-presence",
+                    );
+                input.recovery_invented_presence_continuity_success = true;
+                input
+            },
+            {
+                let mut input =
+                    super::Stage30RecoveryThreadPresenceInput::fixture_completion_disclosure_continuity_reference_ready(
+                        "completion-stage30-unproven",
+                        "audit-stage30-unproven",
+                    );
+                input.recovery_claimed_unproven_completion = true;
+                input
+            },
+        ] {
+            let packet = super::Stage30RecoveryThreadPresencePacket::from_stage29_conversation(
+                &route,
+                Some(&gate),
+                Some(&output_interaction),
+                Some(&speech),
+                Some(&continuity),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some(&publication),
+                Some(&conversation),
+                input,
+            )
+            .expect("stage30 no-invention blocked");
+            assert_eq!(
+                packet.disposition,
+                super::Stage30RecoveryThreadPresenceDisposition::NoInventionBlocked
+            );
+            assert!(packet.work_authority.can_fail_closed);
+            assert!(!packet.can_mutate_or_execute());
+        }
+    }
+
+    #[test]
+    fn stage_30a_recovery_requires_scoped_secret_safe_refs() {
+        let route = stage12_protected_route();
+        let gate = Stage12ProtectedActionGatePacket::from_stage11_candidate(
+            &route,
+            stage12_gate_input(),
+        )
+        .expect("stage30 protected gate");
+        let output_interaction = stage29_output_interaction_identity();
+        let speech = stage29_speech_output_identity();
+        let continuity = stage21_continuity_identity();
+        let publication = stage29_publication_identity();
+        let conversation = stage30_conversation_identity();
+
+        let ready = super::Stage30RecoveryThreadPresencePacket::from_stage29_conversation(
+            &route,
+            Some(&gate),
+            Some(&output_interaction),
+            Some(&speech),
+            Some(&continuity),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(&publication),
+            Some(&conversation),
+            super::Stage30RecoveryThreadPresenceInput::fixture_cross_turn_recovery_semantics_ready(
+                "audit-stage30-authority-ready",
+            ),
+        )
+        .expect("stage30 authority ready");
+        assert_eq!(
+            ready.disposition,
+            super::Stage30RecoveryThreadPresenceDisposition::CrossTurnRecoverySemanticsReady
+        );
+        assert!(
+            ready
+                .work_authority
+                .can_emit_cross_turn_recovery_semantics_packet
+        );
+        assert!(!ready.can_mutate_or_execute());
+
+        for input in [
+            {
+                let mut input =
+                    super::Stage30RecoveryThreadPresenceInput::fixture_bounded_proactive_follow_up_posture_ready(
+                        "follow-up-stage30-unbounded",
+                        "audit-stage30-unbounded",
+                    );
+                input.authority_bounded = false;
+                input
+            },
+            {
+                let mut input =
+                    super::Stage30RecoveryThreadPresenceInput::fixture_thread_presence_continuity_ready(
+                        "thread-presence-stage30-secret",
+                        "audit-stage30-secret",
+                    );
+                input.secret_unsafe = true;
+                input
+            },
+            {
+                let mut input =
+                    super::Stage30RecoveryThreadPresenceInput::fixture_cross_turn_recovery_semantics_ready(
+                        "audit-stage30-cross-connector",
+                    );
+                input.cross_connector = true;
+                input
+            },
+            {
+                let mut input =
+                    super::Stage30RecoveryThreadPresenceInput::fixture_completion_disclosure_continuity_reference_ready(
+                        "completion-stage30-missing-proof",
+                        "audit-stage30-missing-proof",
+                    );
+                input.missing_proof = true;
+                input
+            },
+        ] {
+            let packet = super::Stage30RecoveryThreadPresencePacket::from_stage29_conversation(
+                &route,
+                Some(&gate),
+                Some(&output_interaction),
+                Some(&speech),
+                Some(&continuity),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some(&publication),
+                Some(&conversation),
+                input,
+            )
+            .expect("stage30 authority blocked");
+            assert_eq!(
+                packet.disposition,
+                super::Stage30RecoveryThreadPresenceDisposition::RecoveryAuthorityBlocked
+            );
+            assert!(packet.work_authority.can_fail_closed);
+            assert!(!packet.can_mutate_or_execute());
+        }
+    }
+
+    #[test]
+    fn stage_30a_native_protected_and_stale_cases_fail_closed() {
+        let route = stage12_protected_route();
+        let gate = Stage12ProtectedActionGatePacket::from_stage11_candidate(
+            &route,
+            stage12_gate_input(),
+        )
+        .expect("stage30 protected gate");
+        let output_interaction = stage29_output_interaction_identity();
+        let speech = stage29_speech_output_identity();
+        let continuity = stage21_continuity_identity();
+        let publication = stage29_publication_identity();
+        let conversation = stage30_conversation_identity();
+
+        for input in [
+            {
+                let mut input =
+                    super::Stage30RecoveryThreadPresenceInput::fixture_cross_turn_recovery_semantics_ready(
+                        "audit-stage30-native-mutate",
+                    );
+                input.native_recovery_mutates_state = true;
+                input
+            },
+            {
+                let mut input =
+                    super::Stage30RecoveryThreadPresenceInput::fixture_bounded_proactive_follow_up_posture_ready(
+                        "follow-up-stage30-protected",
+                        "audit-stage30-protected",
+                    );
+                input.protected_action_like_request = true;
+                input
+            },
+        ] {
+            let packet = super::Stage30RecoveryThreadPresencePacket::from_stage29_conversation(
+                &route,
+                Some(&gate),
+                Some(&output_interaction),
+                Some(&speech),
+                Some(&continuity),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some(&publication),
+                Some(&conversation),
+                input,
+            )
+            .expect("stage30 native/protected blocked");
+            assert!(matches!(
+                packet.disposition,
+                super::Stage30RecoveryThreadPresenceDisposition::NativeRecoveryHandoffBlocked
+                    | super::Stage30RecoveryThreadPresenceDisposition::PublicProtectedBoundaryBlocked
+            ));
+            assert!(packet.work_authority.can_fail_closed);
+        }
+
+        for input in [
+            {
+                let mut input =
+                    super::Stage30RecoveryThreadPresenceInput::fixture_thread_presence_continuity_ready(
+                        "thread-presence-stage30-stale",
+                        "audit-stage30-stale",
+                    );
+                input.stale_or_cancelled_or_superseded_output = true;
+                input
+            },
+            {
+                let mut input =
+                    super::Stage30RecoveryThreadPresenceInput::fixture_return_check_reopen_continuity_reference_ready(
+                        "recovery-stage30-replay",
+                        "audit-stage30-replay",
+                    );
+                input.replay_upgrades_blocked_authority = true;
+                input
+            },
+        ] {
+            let packet = super::Stage30RecoveryThreadPresencePacket::from_stage29_conversation(
+                &route,
+                Some(&gate),
+                Some(&output_interaction),
+                Some(&speech),
+                Some(&continuity),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some(&publication),
+                Some(&conversation),
+                input,
+            )
+            .expect("stage30 stale blocked");
+            assert_eq!(
+                packet.disposition,
+                super::Stage30RecoveryThreadPresenceDisposition::StaleRecoveryBlocked
+            );
+            assert!(packet.work_authority.can_fail_closed);
+            assert!(!packet.can_mutate_or_execute());
+        }
+    }
+
+    #[test]
+    fn stage_30a_blocks_live_paths_and_runtime_mocks() {
+        let route = stage12_protected_route();
+        let gate = Stage12ProtectedActionGatePacket::from_stage11_candidate(
+            &route,
+            stage12_gate_input(),
+        )
+        .expect("stage30 protected gate");
+        let output_interaction = stage29_output_interaction_identity();
+        let speech = stage29_speech_output_identity();
+        let continuity = stage21_continuity_identity();
+        let publication = stage29_publication_identity();
+        let conversation = stage30_conversation_identity();
+
+        let packet = super::Stage30RecoveryThreadPresencePacket::from_stage29_conversation(
+            &route,
+            Some(&gate),
+            Some(&output_interaction),
+            Some(&speech),
+            Some(&continuity),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(&publication),
+            Some(&conversation),
+            super::Stage30RecoveryThreadPresenceInput::fixture_session_posture_continuity_reference_ready(
+                "thread-presence-stage30-no-exec",
+                "audit-stage30-no-exec",
+            ),
+        )
+        .expect("stage30 no-exec packet");
+        assert!(!packet.work_authority.can_invent_facts);
+        assert!(!packet.work_authority.can_invent_recovery_success);
+        assert!(!packet.work_authority.can_invent_proactive_follow_up_success);
+        assert!(!packet.work_authority.can_invent_presence_continuity_success);
+        assert!(!packet.work_authority.can_invent_completion_success);
+        assert!(!packet.work_authority.can_invent_recovery_authority);
+        assert!(!packet.work_authority.can_connector_write);
+        assert!(!packet.work_authority.can_approve);
+        assert!(!packet.work_authority.can_dispatch);
+        assert!(!packet.work_authority.can_execute);
+        assert!(!packet.work_authority.can_create_user_turn);
+        assert!(!packet.work_authority.can_treat_visible_readiness_as_action_success);
+        assert!(!packet.can_mutate_or_execute());
+
+        for input in [
+            {
+                let mut input =
+                    super::Stage30RecoveryThreadPresenceInput::fixture_cross_turn_recovery_semantics_ready(
+                        "audit-stage30-live-provider",
+                    );
+                input.attempted_live_provider_in_build = true;
+                input
+            },
+            {
+                let mut input =
+                    super::Stage30RecoveryThreadPresenceInput::fixture_bounded_proactive_follow_up_posture_ready(
+                        "follow-up-stage30-live-delivery",
+                        "audit-stage30-live-delivery",
+                    );
+                input.ran_live_proactive_follow_up_delivery_in_build = true;
+                input
+            },
+            {
+                let mut input =
+                    super::Stage30RecoveryThreadPresenceInput::fixture_thread_presence_continuity_ready(
+                        "thread-presence-stage30-live-recovery",
+                        "audit-stage30-live-recovery",
+                    );
+                input.ran_live_provider_backed_recovery_in_build = true;
+                input
+            },
+        ] {
+            assert!(
+                super::Stage30RecoveryThreadPresencePacket::from_stage29_conversation(
+                    &route,
+                    Some(&gate),
+                    Some(&output_interaction),
+                    Some(&speech),
+                    Some(&continuity),
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    Some(&publication),
+                    Some(&conversation),
+                    input,
+                )
+                .is_err()
+            );
+        }
+
+        let mut runtime_mock =
+            super::Stage30RecoveryThreadPresenceInput::fixture_cross_turn_recovery_semantics_ready(
+                "audit-stage30-runtime-mock",
+            );
+        runtime_mock.fake_recovery_detected = true;
+        runtime_mock.fixture_only_test_path = false;
+        assert!(
+            super::Stage30RecoveryThreadPresencePacket::from_stage29_conversation(
+                &route,
+                Some(&gate),
+                Some(&output_interaction),
+                Some(&speech),
+                Some(&continuity),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some(&publication),
+                Some(&conversation),
                 runtime_mock,
             )
             .is_err()
