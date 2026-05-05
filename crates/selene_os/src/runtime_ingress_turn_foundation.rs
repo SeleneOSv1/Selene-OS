@@ -287,12 +287,9 @@ mod reason_codes {
     pub const STAGE22_EXTERNAL_INTEGRATION_READY: &str = "stage22_external_integration_ready";
     pub const STAGE22_CONNECTOR_ACTION_STAGING_READY: &str =
         "stage22_connector_action_staging_ready";
-    pub const STAGE22_OUTBOUND_SYSTEM_INTENT_READY: &str =
-        "stage22_outbound_system_intent_ready";
-    pub const STAGE22_STAGED_DISPATCH_POSTURE_READY: &str =
-        "stage22_staged_dispatch_posture_ready";
-    pub const STAGE22_REMOTE_TARGET_REFERENCE_READY: &str =
-        "stage22_remote_target_reference_ready";
+    pub const STAGE22_OUTBOUND_SYSTEM_INTENT_READY: &str = "stage22_outbound_system_intent_ready";
+    pub const STAGE22_STAGED_DISPATCH_POSTURE_READY: &str = "stage22_staged_dispatch_posture_ready";
+    pub const STAGE22_REMOTE_TARGET_REFERENCE_READY: &str = "stage22_remote_target_reference_ready";
     pub const STAGE22_STAGE_INPUT_BLOCKED: &str = "stage22_stage_input_blocked";
     pub const STAGE22_NO_INVENTION_BLOCKED: &str = "stage22_no_invention_blocked";
     pub const STAGE22_CONNECTOR_TARGET_STAGING_BLOCKED: &str =
@@ -21317,12 +21314,8 @@ impl Stage22ConnectorOutboundDisposition {
                 reason_codes::STAGE22_CONNECTOR_ACTION_STAGING_READY
             }
             Self::OutboundSystemIntentReady => reason_codes::STAGE22_OUTBOUND_SYSTEM_INTENT_READY,
-            Self::StagedDispatchPostureReady => {
-                reason_codes::STAGE22_STAGED_DISPATCH_POSTURE_READY
-            }
-            Self::RemoteTargetReferenceReady => {
-                reason_codes::STAGE22_REMOTE_TARGET_REFERENCE_READY
-            }
+            Self::StagedDispatchPostureReady => reason_codes::STAGE22_STAGED_DISPATCH_POSTURE_READY,
+            Self::RemoteTargetReferenceReady => reason_codes::STAGE22_REMOTE_TARGET_REFERENCE_READY,
             Self::StageInputBlocked => reason_codes::STAGE22_STAGE_INPUT_BLOCKED,
             Self::NoInventionBlocked => reason_codes::STAGE22_NO_INVENTION_BLOCKED,
             Self::ConnectorTargetStagingBlocked => {
@@ -21748,8 +21741,11 @@ impl Stage22ConnectorOutboundInput {
         device_id: impl Into<String>,
         audit_id: impl Into<String>,
     ) -> Self {
-        let mut input =
-            Self::fixture_base(Stage22ConnectorOutboundKind::ExternalIntegration, device_id, audit_id);
+        let mut input = Self::fixture_base(
+            Stage22ConnectorOutboundKind::ExternalIntegration,
+            device_id,
+            audit_id,
+        );
         input.external_integration_id = Some(external_integration_id.into());
         input.remote_target_id = Some(remote_target_id.into());
         input.connector_action_stage_id = None;
@@ -21788,8 +21784,11 @@ impl Stage22ConnectorOutboundInput {
         device_id: impl Into<String>,
         audit_id: impl Into<String>,
     ) -> Self {
-        let mut input =
-            Self::fixture_base(Stage22ConnectorOutboundKind::OutboundSystemIntent, device_id, audit_id);
+        let mut input = Self::fixture_base(
+            Stage22ConnectorOutboundKind::OutboundSystemIntent,
+            device_id,
+            audit_id,
+        );
         input.connector_action_stage_id = None;
         input.outbound_intent_id = Some(outbound_intent_id.into());
         input.remote_target_id = Some(remote_target_id.into());
@@ -21827,8 +21826,11 @@ impl Stage22ConnectorOutboundInput {
         device_id: impl Into<String>,
         audit_id: impl Into<String>,
     ) -> Self {
-        let mut input =
-            Self::fixture_base(Stage22ConnectorOutboundKind::RemoteTargetReference, device_id, audit_id);
+        let mut input = Self::fixture_base(
+            Stage22ConnectorOutboundKind::RemoteTargetReference,
+            device_id,
+            audit_id,
+        );
         input.connector_action_stage_id = None;
         input.external_integration_id = None;
         input.outbound_intent_id = None;
@@ -21867,7 +21869,10 @@ impl Validate for Stage22ConnectorOutboundInput {
             "stage22_connector_outbound_input.ownership_ref",
             self.ownership_ref.as_deref(),
         )?;
-        validate_stage4_ref("stage22_connector_outbound_input.device_id", &self.device_id)?;
+        validate_stage4_ref(
+            "stage22_connector_outbound_input.device_id",
+            &self.device_id,
+        )?;
         validate_stage4_optional_ref(
             "stage22_connector_outbound_input.audit_id",
             self.audit_id.as_deref(),
@@ -22138,8 +22143,7 @@ impl Stage22ConnectorOutboundPacket {
             native_outbound_declarative_only: input.native_outbound_declarative_only,
             native_outbound_mutates_state: input.native_outbound_mutates_state,
             native_outbound_connector_writes: input.native_outbound_connector_writes,
-            native_outbound_dispatches_or_executes: input
-                .native_outbound_dispatches_or_executes,
+            native_outbound_dispatches_or_executes: input.native_outbound_dispatches_or_executes,
             native_outbound_calls_providers_or_tools: input
                 .native_outbound_calls_providers_or_tools,
             native_outbound_emits_tts_or_playback: input.native_outbound_emits_tts_or_playback,
@@ -22511,8 +22515,7 @@ impl Validate for Stage22ConnectorOutboundPacket {
                 reason: "Stage 22A cannot invent outbound authority, mutate, connector-write, approve, dispatch, execute, call live providers/search/tools, deliver live outbound actions, emit TTS/playback, create turns, or add native UI behavior",
             });
         }
-        if self.disposition.is_ready()
-            && (self.audit_id.is_none() || self.ph1j_proof_ref.is_none())
+        if self.disposition.is_ready() && (self.audit_id.is_none() || self.ph1j_proof_ref.is_none())
         {
             return Err(ContractViolation::InvalidValue {
                 field: "stage22_connector_outbound_packet.audit_proof",
@@ -22555,16 +22558,13 @@ const _: fn() = stage22_connector_outbound_symbol_anchor;
 
 mod stage23_reason_codes {
     pub const MEMORY_CANDIDATE_READY: &str = "STAGE23_MEMORY_CANDIDATE_READY";
-    pub const STATE_PERSISTENCE_POSTURE_READY: &str =
-        "STAGE23_STATE_PERSISTENCE_POSTURE_READY";
+    pub const STATE_PERSISTENCE_POSTURE_READY: &str = "STAGE23_STATE_PERSISTENCE_POSTURE_READY";
     pub const LONG_HORIZON_RECALL_READY: &str = "STAGE23_LONG_HORIZON_RECALL_READY";
     pub const IDENTITY_SAFE_RETENTION_READY: &str = "STAGE23_IDENTITY_SAFE_RETENTION_READY";
-    pub const RECALL_SELECTION_REFERENCE_READY: &str =
-        "STAGE23_RECALL_SELECTION_REFERENCE_READY";
+    pub const RECALL_SELECTION_REFERENCE_READY: &str = "STAGE23_RECALL_SELECTION_REFERENCE_READY";
     pub const STAGE_INPUT_BLOCKED: &str = "STAGE23_STAGE_INPUT_BLOCKED";
     pub const NO_INVENTION_BLOCKED: &str = "STAGE23_NO_INVENTION_BLOCKED";
-    pub const IDENTITY_SAFE_RETENTION_BLOCKED: &str =
-        "STAGE23_IDENTITY_SAFE_RETENTION_BLOCKED";
+    pub const IDENTITY_SAFE_RETENTION_BLOCKED: &str = "STAGE23_IDENTITY_SAFE_RETENTION_BLOCKED";
     pub const NATIVE_RETENTION_BLOCKED: &str = "STAGE23_NATIVE_RETENTION_BLOCKED";
     pub const PROTECTED_RETENTION_BLOCKED: &str = "STAGE23_PROTECTED_RETENTION_BLOCKED";
     pub const STALE_RETENTION_BLOCKED: &str = "STAGE23_STALE_RETENTION_BLOCKED";
@@ -22608,9 +22608,7 @@ impl Stage23MemoryRetentionDisposition {
                 stage23_reason_codes::STATE_PERSISTENCE_POSTURE_READY
             }
             Self::LongHorizonRecallReady => stage23_reason_codes::LONG_HORIZON_RECALL_READY,
-            Self::IdentitySafeRetentionReady => {
-                stage23_reason_codes::IDENTITY_SAFE_RETENTION_READY
-            }
+            Self::IdentitySafeRetentionReady => stage23_reason_codes::IDENTITY_SAFE_RETENTION_READY,
             Self::RecallSelectionReferenceReady => {
                 stage23_reason_codes::RECALL_SELECTION_REFERENCE_READY
             }
@@ -22620,9 +22618,7 @@ impl Stage23MemoryRetentionDisposition {
                 stage23_reason_codes::IDENTITY_SAFE_RETENTION_BLOCKED
             }
             Self::NativeRetentionBlocked => stage23_reason_codes::NATIVE_RETENTION_BLOCKED,
-            Self::ProtectedRetentionBlocked => {
-                stage23_reason_codes::PROTECTED_RETENTION_BLOCKED
-            }
+            Self::ProtectedRetentionBlocked => stage23_reason_codes::PROTECTED_RETENTION_BLOCKED,
             Self::StaleRetentionBlocked => stage23_reason_codes::STALE_RETENTION_BLOCKED,
             Self::UnsafeInputBlocked => stage23_reason_codes::UNSAFE_INPUT_BLOCKED,
             Self::RuntimeMockBlocked => stage23_reason_codes::RUNTIME_MOCK_BLOCKED,
@@ -22839,10 +22835,7 @@ pub struct Stage23MemoryRetentionInput {
 
 impl Stage23MemoryRetentionInput {
     #[cfg(test)]
-    fn fixture_base(
-        memory_kind: Stage23MemoryRetentionKind,
-        audit_id: impl Into<String>,
-    ) -> Self {
+    fn fixture_base(memory_kind: Stage23MemoryRetentionKind, audit_id: impl Into<String>) -> Self {
         Self {
             memory_kind,
             memory_candidate_id: Some("memory-candidate-stage23".to_string()),
@@ -22929,8 +22922,7 @@ impl Stage23MemoryRetentionInput {
             unverified_source_evidence_present: false,
             unsupported_claim_candidate_present: false,
             fake_memory_source_carrier_present: false,
-            speech_playback_attention_continuity_automation_outbound_used_as_truth_authority:
-                false,
+            speech_playback_attention_continuity_automation_outbound_used_as_truth_authority: false,
             protected_action_candidate_present: false,
             simulation_candidate_present: false,
             approved_execution_plan_present: false,
@@ -22965,8 +22957,7 @@ impl Stage23MemoryRetentionInput {
         user_scope_id: impl Into<String>,
         audit_id: impl Into<String>,
     ) -> Self {
-        let mut input =
-            Self::fixture_base(Stage23MemoryRetentionKind::MemoryCandidate, audit_id);
+        let mut input = Self::fixture_base(Stage23MemoryRetentionKind::MemoryCandidate, audit_id);
         input.memory_candidate_id = Some(memory_candidate_id.into());
         input.identity_scope_id = Some(identity_scope_id.into());
         input.user_scope_id = Some(user_scope_id.into());
@@ -23001,8 +22992,7 @@ impl Stage23MemoryRetentionInput {
         user_scope_id: impl Into<String>,
         audit_id: impl Into<String>,
     ) -> Self {
-        let mut input =
-            Self::fixture_base(Stage23MemoryRetentionKind::LongHorizonRecall, audit_id);
+        let mut input = Self::fixture_base(Stage23MemoryRetentionKind::LongHorizonRecall, audit_id);
         input.memory_candidate_id = Some(memory_candidate_id.into());
         input.recall_reference_id = Some(recall_reference_id.into());
         input.identity_scope_id = Some(identity_scope_id.into());
@@ -23019,10 +23009,8 @@ impl Stage23MemoryRetentionInput {
         user_scope_id: impl Into<String>,
         audit_id: impl Into<String>,
     ) -> Self {
-        let mut input = Self::fixture_base(
-            Stage23MemoryRetentionKind::IdentitySafeRetention,
-            audit_id,
-        );
+        let mut input =
+            Self::fixture_base(Stage23MemoryRetentionKind::IdentitySafeRetention, audit_id);
         input.retention_packet_id = Some(retention_packet_id.into());
         input.memory_candidate_id = Some(memory_candidate_id.into());
         input.identity_scope_id = Some(identity_scope_id.into());
@@ -23290,9 +23278,9 @@ impl Stage23MemoryRetentionPacket {
                 .map(|continuity| continuity.continuity_packet_id.clone()),
             automation_candidate_id: automation_output
                 .and_then(|automation| automation.automation_candidate_id.clone()),
-            connector_action_stage_id: input
-                .connector_action_stage_id
-                .or_else(|| outbound_output.and_then(|outbound| outbound.connector_action_stage_id.clone())),
+            connector_action_stage_id: input.connector_action_stage_id.or_else(|| {
+                outbound_output.and_then(|outbound| outbound.connector_action_stage_id.clone())
+            }),
             memory_candidate_id: input.memory_candidate_id,
             retention_packet_id: input.retention_packet_id,
             recall_reference_id: input.recall_reference_id,
@@ -23359,8 +23347,7 @@ impl Stage23MemoryRetentionPacket {
             native_retention_declarative_only: input.native_retention_declarative_only,
             native_retention_mutates_state: input.native_retention_mutates_state,
             native_retention_connector_writes: input.native_retention_connector_writes,
-            native_retention_dispatches_or_executes: input
-                .native_retention_dispatches_or_executes,
+            native_retention_dispatches_or_executes: input.native_retention_dispatches_or_executes,
             native_retention_calls_providers_or_tools: input
                 .native_retention_calls_providers_or_tools,
             native_retention_emits_tts_or_playback: input.native_retention_emits_tts_or_playback,
@@ -23439,7 +23426,8 @@ impl Stage23MemoryRetentionPacket {
             || input.unverified_source_evidence_present
             || input.unsupported_claim_candidate_present
             || input.fake_memory_source_carrier_present
-            || input.speech_playback_attention_continuity_automation_outbound_used_as_truth_authority
+            || input
+                .speech_playback_attention_continuity_automation_outbound_used_as_truth_authority
             || input.protected_action_candidate_present
             || input.simulation_candidate_present
             || input.approved_execution_plan_present
@@ -23741,8 +23729,7 @@ impl Validate for Stage23MemoryRetentionPacket {
                 reason: "Stage 23A cannot invent retention authority, mutate persistence state, connector-write, approve, dispatch, execute, call live providers/search/tools, emit TTS/playback, create turns, or add native UI behavior",
             });
         }
-        if self.disposition.is_ready()
-            && (self.audit_id.is_none() || self.ph1j_proof_ref.is_none())
+        if self.disposition.is_ready() && (self.audit_id.is_none() || self.ph1j_proof_ref.is_none())
         {
             return Err(ContractViolation::InvalidValue {
                 field: "stage23_memory_retention_packet.audit_proof",
@@ -23785,8 +23772,7 @@ pub fn stage23_memory_retention_symbol_anchor() {
 const _: fn() = stage23_memory_retention_symbol_anchor;
 
 mod stage24_reason_codes {
-    pub const REALTIME_MULTIMODAL_INGRESS_READY: &str =
-        "STAGE24_REALTIME_MULTIMODAL_INGRESS_READY";
+    pub const REALTIME_MULTIMODAL_INGRESS_READY: &str = "STAGE24_REALTIME_MULTIMODAL_INGRESS_READY";
     pub const CAPTURE_SESSION_BOUNDARY_READY: &str = "STAGE24_CAPTURE_SESSION_BOUNDARY_READY";
     pub const PARTIAL_FINAL_STREAM_POSTURE_READY: &str =
         "STAGE24_PARTIAL_FINAL_STREAM_POSTURE_READY";
@@ -24202,8 +24188,10 @@ impl Stage24IngressCaptureInput {
         device_id: impl Into<String>,
         audit_id: impl Into<String>,
     ) -> Self {
-        let mut input =
-            Self::fixture_base(Stage24IngressCaptureKind::RealTimeMultimodalIngress, audit_id);
+        let mut input = Self::fixture_base(
+            Stage24IngressCaptureKind::RealTimeMultimodalIngress,
+            audit_id,
+        );
         input.capture_session_id = Some(capture_session_id.into());
         input.stream_packet_id = Some(stream_packet_id.into());
         input.modality_selection_id = Some(modality_selection_id.into());
@@ -24242,8 +24230,10 @@ impl Stage24IngressCaptureInput {
         modality_selection_id: impl Into<String>,
         audit_id: impl Into<String>,
     ) -> Self {
-        let mut input =
-            Self::fixture_base(Stage24IngressCaptureKind::PartialFinalStreamPosture, audit_id);
+        let mut input = Self::fixture_base(
+            Stage24IngressCaptureKind::PartialFinalStreamPosture,
+            audit_id,
+        );
         input.stream_packet_id = Some(stream_packet_id.into());
         input.partial_transcript_id = Some(partial_transcript_id.into());
         input.final_transcript_id = Some(final_transcript_id.into());
@@ -24276,8 +24266,10 @@ impl Stage24IngressCaptureInput {
         device_id: impl Into<String>,
         audit_id: impl Into<String>,
     ) -> Self {
-        let mut input =
-            Self::fixture_base(Stage24IngressCaptureKind::ModalitySelectionReference, audit_id);
+        let mut input = Self::fixture_base(
+            Stage24IngressCaptureKind::ModalitySelectionReference,
+            audit_id,
+        );
         input.modality_selection_id = Some(modality_selection_id.into());
         input.device_id = Some(device_id.into());
         input.capture_session_id = None;
@@ -24514,22 +24506,28 @@ impl Stage24IngressCapturePacket {
         );
         let work_authority = Self::work_authority_for(disposition);
         let packet = Self {
-            activation_id: transcript_gate.candidate_preview.as_ref().and_then(|preview| {
-                preview.activation.audit_id.clone()
-            }).or_else(|| transcript_gate.committed_turn.as_ref().and_then(|turn| {
-                turn.activation.audit_id.clone()
-            })).or_else(|| transcript_gate.audit_id.clone()),
+            activation_id: transcript_gate
+                .candidate_preview
+                .as_ref()
+                .and_then(|preview| preview.activation.audit_id.clone())
+                .or_else(|| {
+                    transcript_gate
+                        .committed_turn
+                        .as_ref()
+                        .and_then(|turn| turn.activation.audit_id.clone())
+                })
+                .or_else(|| transcript_gate.audit_id.clone()),
             session_id: transcript_gate.session_id,
             turn_id: transcript_gate.turn_id,
-            attention_state_id: attention_output.and_then(|output| output.attention_state_id.clone()),
+            attention_state_id: attention_output
+                .and_then(|output| output.attention_state_id.clone()),
             continuity_packet_id: continuity_output
                 .map(|output| output.continuity_packet_id.clone()),
             automation_candidate_id: automation_output
                 .and_then(|output| output.automation_candidate_id.clone()),
-            connector_action_stage_id: input
-                .connector_action_stage_id
-                .clone()
-                .or_else(|| outbound_output.and_then(|output| output.connector_action_stage_id.clone())),
+            connector_action_stage_id: input.connector_action_stage_id.clone().or_else(|| {
+                outbound_output.and_then(|output| output.connector_action_stage_id.clone())
+            }),
             memory_candidate_id: input
                 .memory_candidate_id
                 .clone()
@@ -24541,13 +24539,16 @@ impl Stage24IngressCapturePacket {
             modality_selection_id: input.modality_selection_id.clone(),
             device_id: input.device_id.clone(),
             access_context_id: transcript_gate.access_context_id.clone(),
-            policy_context_id: outbound_output.and_then(|output| output.policy_context_id.clone()).or_else(
-                || memory_output.and_then(|output| output.policy_context_id.clone()),
-            ),
+            policy_context_id: outbound_output
+                .and_then(|output| output.policy_context_id.clone())
+                .or_else(|| memory_output.and_then(|output| output.policy_context_id.clone())),
             tenant_id: outbound_output
                 .and_then(|output| output.tenant_id.clone())
                 .or_else(|| memory_output.and_then(|output| output.tenant_id.clone())),
-            audit_id: input.audit_id.clone().or_else(|| transcript_gate.audit_id.clone()),
+            audit_id: input
+                .audit_id
+                .clone()
+                .or_else(|| transcript_gate.audit_id.clone()),
             ph1j_proof_ref: input.ph1j_proof_ref.clone(),
             ingress_kind: input.ingress_kind,
             reason_code: disposition.default_reason_code(),
@@ -24562,20 +24563,25 @@ impl Stage24IngressCapturePacket {
             stage22_disposition: outbound_output.map(|output| output.disposition),
             stage23_disposition: memory_output.map(|output| output.disposition),
             stage19_attention_ref_non_authoritative: input.stage19_attention_ref_non_authoritative,
-            stage20_continuity_ref_non_authoritative: input.stage20_continuity_ref_non_authoritative,
-            stage21_automation_ref_non_authoritative: input.stage21_automation_ref_non_authoritative,
+            stage20_continuity_ref_non_authoritative: input
+                .stage20_continuity_ref_non_authoritative,
+            stage21_automation_ref_non_authoritative: input
+                .stage21_automation_ref_non_authoritative,
             stage22_outbound_ref_non_authoritative: input.stage22_outbound_ref_non_authoritative,
             stage23_memory_ref_non_authoritative: input.stage23_memory_ref_non_authoritative,
             capture_session_bounded: input.capture_session_bounded,
             tenant_user_device_session_scoped: input.tenant_user_device_session_scoped,
             uncertainty_preserved: input.uncertainty_preserved,
             ingress_invented_fact: input.ingress_invented_fact,
-            ingress_invented_final_transcript_success: input.ingress_invented_final_transcript_success,
+            ingress_invented_final_transcript_success: input
+                .ingress_invented_final_transcript_success,
             ingress_invented_capture_success: input.ingress_invented_capture_success,
-            ingress_invented_modality_fusion_success: input.ingress_invented_modality_fusion_success,
+            ingress_invented_modality_fusion_success: input
+                .ingress_invented_modality_fusion_success,
             ingress_invented_session_authority: input.ingress_invented_session_authority,
             ingress_invented_attachment_or_citation: input.ingress_invented_attachment_or_citation,
-            ingress_invented_provider_or_tool_result: input.ingress_invented_provider_or_tool_result,
+            ingress_invented_provider_or_tool_result: input
+                .ingress_invented_provider_or_tool_result,
             ingress_claimed_unproven_completion: input.ingress_claimed_unproven_completion,
             ingress_implied_routing_or_mutation: input.ingress_implied_routing_or_mutation,
             secret_safe: input.secret_safe,
@@ -24880,7 +24886,8 @@ impl Stage24IngressCapturePacket {
                     && input.partial_or_final_state_ref_present
                     && input.modality_ref_present
                     && partial_or_final_ready
-                    && (input.partial_transcript_id.is_some() || input.final_transcript_id.is_some())
+                    && (input.partial_transcript_id.is_some()
+                        || input.final_transcript_id.is_some())
                 {
                     Stage24IngressCaptureDisposition::PartialFinalStreamPostureReady
                 } else {
@@ -25018,8 +25025,7 @@ impl Validate for Stage24IngressCapturePacket {
                 reason: "Stage 24A cannot invent ingress authority, route, execute, connector-write, or treat visible stream success as action success",
             });
         }
-        if self.disposition.is_ready()
-            && (self.audit_id.is_none() || self.ph1j_proof_ref.is_none())
+        if self.disposition.is_ready() && (self.audit_id.is_none() || self.ph1j_proof_ref.is_none())
         {
             return Err(ContractViolation::InvalidValue {
                 field: "stage24_ingress_capture_packet.audit_proof",
@@ -25064,8 +25070,7 @@ const _: fn() = stage24_ingress_capture_symbol_anchor;
 
 mod stage25_reason_codes {
     pub const TOOL_ORCHESTRATION_READY: &str = "STAGE25_TOOL_ORCHESTRATION_READY";
-    pub const MANAGED_EXECUTION_STAGING_READY: &str =
-        "STAGE25_MANAGED_EXECUTION_STAGING_READY";
+    pub const MANAGED_EXECUTION_STAGING_READY: &str = "STAGE25_MANAGED_EXECUTION_STAGING_READY";
     pub const ACTION_GRAPH_BOUNDARY_READY: &str = "STAGE25_ACTION_GRAPH_BOUNDARY_READY";
     pub const STAGED_TOOL_INVOCATION_POSTURE_READY: &str =
         "STAGE25_STAGED_TOOL_INVOCATION_POSTURE_READY";
@@ -25075,8 +25080,7 @@ mod stage25_reason_codes {
     pub const NO_INVENTION_BLOCKED: &str = "STAGE25_NO_INVENTION_BLOCKED";
     pub const MANAGED_EXECUTION_STAGE_BLOCKED: &str = "STAGE25_MANAGED_EXECUTION_STAGE_BLOCKED";
     pub const NATIVE_ORCHESTRATION_BLOCKED: &str = "STAGE25_NATIVE_ORCHESTRATION_BLOCKED";
-    pub const PROTECTED_ORCHESTRATION_BLOCKED: &str =
-        "STAGE25_PROTECTED_ORCHESTRATION_BLOCKED";
+    pub const PROTECTED_ORCHESTRATION_BLOCKED: &str = "STAGE25_PROTECTED_ORCHESTRATION_BLOCKED";
     pub const STALE_ORCHESTRATION_BLOCKED: &str = "STAGE25_STALE_ORCHESTRATION_BLOCKED";
     pub const UNSAFE_INPUT_BLOCKED: &str = "STAGE25_UNSAFE_INPUT_BLOCKED";
     pub const RUNTIME_MOCK_BLOCKED: &str = "STAGE25_RUNTIME_MOCK_BLOCKED";
@@ -25129,15 +25133,11 @@ impl Stage25ToolOrchestrationDisposition {
             Self::ManagedExecutionStageBlocked => {
                 stage25_reason_codes::MANAGED_EXECUTION_STAGE_BLOCKED
             }
-            Self::NativeOrchestrationBlocked => {
-                stage25_reason_codes::NATIVE_ORCHESTRATION_BLOCKED
-            }
+            Self::NativeOrchestrationBlocked => stage25_reason_codes::NATIVE_ORCHESTRATION_BLOCKED,
             Self::ProtectedOrchestrationBlocked => {
                 stage25_reason_codes::PROTECTED_ORCHESTRATION_BLOCKED
             }
-            Self::StaleOrchestrationBlocked => {
-                stage25_reason_codes::STALE_ORCHESTRATION_BLOCKED
-            }
+            Self::StaleOrchestrationBlocked => stage25_reason_codes::STALE_ORCHESTRATION_BLOCKED,
             Self::UnsafeInputBlocked => stage25_reason_codes::UNSAFE_INPUT_BLOCKED,
             Self::RuntimeMockBlocked => stage25_reason_codes::RUNTIME_MOCK_BLOCKED,
             Self::AuditProofMissing => stage25_reason_codes::AUDIT_PROOF_MISSING,
@@ -25518,8 +25518,10 @@ impl Stage25ToolOrchestrationInput {
         lease_id: impl Into<String>,
         audit_id: impl Into<String>,
     ) -> Self {
-        let mut input =
-            Self::fixture_base(Stage25ToolOrchestrationKind::ManagedExecutionStaging, audit_id);
+        let mut input = Self::fixture_base(
+            Stage25ToolOrchestrationKind::ManagedExecutionStaging,
+            audit_id,
+        );
         input.orchestration_stage_id = Some(orchestration_stage_id.into());
         input.execution_plan_ref = Some(execution_plan_ref.into());
         input.work_id = Some(work_id.into());
@@ -25803,7 +25805,8 @@ impl Stage25ToolOrchestrationPacket {
         route.validate()?;
         if let Some(stage12_gate) = stage12_gate {
             stage12_gate.validate()?;
-            if stage12_gate.reasoning_id != route.reasoning_id || stage12_gate.router_id != route.router_id
+            if stage12_gate.reasoning_id != route.reasoning_id
+                || stage12_gate.router_id != route.router_id
             {
                 return Err(ContractViolation::InvalidValue {
                     field: "stage25_tool_orchestration_packet.stage12_gate",
@@ -25833,24 +25836,34 @@ impl Stage25ToolOrchestrationPacket {
             session_id: route.session_id,
             turn_id: route.turn_id,
             activation_id: route.activation_id.clone(),
-            continuity_packet_id: continuity_output.map(|output| output.continuity_packet_id.clone()),
+            continuity_packet_id: continuity_output
+                .map(|output| output.continuity_packet_id.clone()),
             automation_candidate_id: automation_output
                 .and_then(|output| output.automation_candidate_id.clone()),
             connector_action_stage_id: outbound_output
                 .and_then(|output| output.connector_action_stage_id.clone()),
             memory_candidate_id: memory_output
                 .and_then(|output| output.memory_candidate_id.clone()),
-            capture_session_id: ingress_output
-                .and_then(|output| output.capture_session_id.clone()),
+            capture_session_id: ingress_output.and_then(|output| output.capture_session_id.clone()),
             orchestration_stage_id: input.orchestration_stage_id.clone(),
             action_graph_id: input.action_graph_id.clone(),
             tool_invocation_stage_id: input.tool_invocation_stage_id.clone(),
-            execution_plan_ref: input.execution_plan_ref.clone().or_else(|| {
-                stage12_gate.and_then(|gate| gate.approved_execution_plan_id.clone())
-            }),
-            work_id: input.work_id.clone().or_else(|| stage12_gate.and_then(|gate| gate.work_id.clone())),
-            lease_id: input.lease_id.clone().or_else(|| stage12_gate.and_then(|gate| gate.lease_id.clone())),
-            device_id: input.device_id.clone().or_else(|| ingress_output.and_then(|output| output.device_id.clone())),
+            execution_plan_ref: input
+                .execution_plan_ref
+                .clone()
+                .or_else(|| stage12_gate.and_then(|gate| gate.approved_execution_plan_id.clone())),
+            work_id: input
+                .work_id
+                .clone()
+                .or_else(|| stage12_gate.and_then(|gate| gate.work_id.clone())),
+            lease_id: input
+                .lease_id
+                .clone()
+                .or_else(|| stage12_gate.and_then(|gate| gate.lease_id.clone())),
+            device_id: input
+                .device_id
+                .clone()
+                .or_else(|| ingress_output.and_then(|output| output.device_id.clone())),
             access_context_id: route.access_context_id.clone(),
             policy_context_id: stage12_gate
                 .and_then(|gate| gate.policy_context_id.clone())
@@ -25881,8 +25894,10 @@ impl Stage25ToolOrchestrationPacket {
             stage22_disposition: outbound_output.map(|output| output.disposition),
             stage23_disposition: memory_output.map(|output| output.disposition),
             stage24_disposition: ingress_output.map(|output| output.disposition),
-            stage20_continuity_ref_non_authoritative: input.stage20_continuity_ref_non_authoritative,
-            stage21_automation_ref_non_authoritative: input.stage21_automation_ref_non_authoritative,
+            stage20_continuity_ref_non_authoritative: input
+                .stage20_continuity_ref_non_authoritative,
+            stage21_automation_ref_non_authoritative: input
+                .stage21_automation_ref_non_authoritative,
             stage22_outbound_ref_non_authoritative: input.stage22_outbound_ref_non_authoritative,
             stage23_memory_ref_non_authoritative: input.stage23_memory_ref_non_authoritative,
             stage24_ingress_ref_non_authoritative: input.stage24_ingress_ref_non_authoritative,
@@ -25891,16 +25906,24 @@ impl Stage25ToolOrchestrationPacket {
             uncertainty_preserved: input.uncertainty_preserved,
             orchestration_invented_fact: input.orchestration_invented_fact,
             orchestration_invented_tool_success: input.orchestration_invented_tool_success,
-            orchestration_invented_staged_execution_success: input.orchestration_invented_staged_execution_success,
-            orchestration_invented_action_graph_completion: input.orchestration_invented_action_graph_completion,
+            orchestration_invented_staged_execution_success: input
+                .orchestration_invented_staged_execution_success,
+            orchestration_invented_action_graph_completion: input
+                .orchestration_invented_action_graph_completion,
             orchestration_invented_approval: input.orchestration_invented_approval,
             orchestration_invented_dispatch_success: input.orchestration_invented_dispatch_success,
-            orchestration_invented_remote_completion: input.orchestration_invented_remote_completion,
-            orchestration_invented_work_or_lease_authority: input.orchestration_invented_work_or_lease_authority,
-            orchestration_invented_attachment_or_citation: input.orchestration_invented_attachment_or_citation,
-            orchestration_invented_provider_or_tool_result: input.orchestration_invented_provider_or_tool_result,
-            orchestration_claimed_unproven_completion: input.orchestration_claimed_unproven_completion,
-            orchestration_implied_routing_or_mutation: input.orchestration_implied_routing_or_mutation,
+            orchestration_invented_remote_completion: input
+                .orchestration_invented_remote_completion,
+            orchestration_invented_work_or_lease_authority: input
+                .orchestration_invented_work_or_lease_authority,
+            orchestration_invented_attachment_or_citation: input
+                .orchestration_invented_attachment_or_citation,
+            orchestration_invented_provider_or_tool_result: input
+                .orchestration_invented_provider_or_tool_result,
+            orchestration_claimed_unproven_completion: input
+                .orchestration_claimed_unproven_completion,
+            orchestration_implied_routing_or_mutation: input
+                .orchestration_implied_routing_or_mutation,
             secret_safe: input.secret_safe,
             redacted: input.redacted,
             stale_aware: input.stale_aware,
@@ -25925,15 +25948,20 @@ impl Stage25ToolOrchestrationPacket {
             native_orchestration_declarative_only: input.native_orchestration_declarative_only,
             native_orchestration_mutates_state: input.native_orchestration_mutates_state,
             native_orchestration_connector_writes: input.native_orchestration_connector_writes,
-            native_orchestration_dispatches_or_executes: input.native_orchestration_dispatches_or_executes,
-            native_orchestration_calls_providers_or_tools: input.native_orchestration_calls_providers_or_tools,
-            native_orchestration_emits_tts_or_playback: input.native_orchestration_emits_tts_or_playback,
+            native_orchestration_dispatches_or_executes: input
+                .native_orchestration_dispatches_or_executes,
+            native_orchestration_calls_providers_or_tools: input
+                .native_orchestration_calls_providers_or_tools,
+            native_orchestration_emits_tts_or_playback: input
+                .native_orchestration_emits_tts_or_playback,
             native_orchestration_creates_user_turn: input.native_orchestration_creates_user_turn,
-            native_orchestration_treats_visible_staging_as_action_success: input.native_orchestration_treats_visible_staging_as_action_success,
+            native_orchestration_treats_visible_staging_as_action_success: input
+                .native_orchestration_treats_visible_staging_as_action_success,
             protected_action_like_request: input.protected_action_like_request,
             protected_slot_or_authority_ambiguous: input.protected_slot_or_authority_ambiguous,
             unsafe_identity_posture: input.unsafe_identity_posture,
-            orchestration_implies_stage12_routing_or_execution_without_proof: input.orchestration_implies_stage12_routing_or_execution_without_proof,
+            orchestration_implies_stage12_routing_or_execution_without_proof: input
+                .orchestration_implies_stage12_routing_or_execution_without_proof,
             stale_or_cancelled_or_superseded_output: input.stale_or_cancelled_or_superseded_output,
             session_closed: input.session_closed,
             record_artifact_only_turn: input.record_artifact_only_turn,
@@ -25941,7 +25969,8 @@ impl Stage25ToolOrchestrationPacket {
             stale_work_state: input.stale_work_state,
             stale_lease_state: input.stale_lease_state,
             stale_route_state: input.stale_route_state,
-            orchestration_identity_matches_current_output_session: input.orchestration_identity_matches_current_output_session,
+            orchestration_identity_matches_current_output_session: input
+                .orchestration_identity_matches_current_output_session,
             replay_upgrades_blocked_staging: input.replay_upgrades_blocked_staging,
             fake_orchestration_detected: input.fake_orchestration_detected,
             fake_tool_detected: input.fake_tool_detected,
@@ -25955,8 +25984,10 @@ impl Stage25ToolOrchestrationPacket {
             raw_connector_credential_field_present: input.raw_connector_credential_field_present,
             unverified_source_evidence_present: input.unverified_source_evidence_present,
             unsupported_claim_candidate_present: input.unsupported_claim_candidate_present,
-            fake_orchestration_source_carrier_present: input.fake_orchestration_source_carrier_present,
-            attention_continuity_automation_outbound_memory_ingress_used_as_truth_authority: input.attention_continuity_automation_outbound_memory_ingress_used_as_truth_authority,
+            fake_orchestration_source_carrier_present: input
+                .fake_orchestration_source_carrier_present,
+            attention_continuity_automation_outbound_memory_ingress_used_as_truth_authority: input
+                .attention_continuity_automation_outbound_memory_ingress_used_as_truth_authority,
             protected_action_candidate_present: input.protected_action_candidate_present,
             simulation_candidate_present: input.simulation_candidate_present,
             approved_execution_plan_present: input.approved_execution_plan_present,
@@ -25997,7 +26028,9 @@ impl Stage25ToolOrchestrationPacket {
         {
             return Stage25ToolOrchestrationDisposition::StageInputBlocked;
         }
-        if input.stage12_gate_ref_present && (!input.stage12_gate_inspect_only_context || stage12_gate.is_none()) {
+        if input.stage12_gate_ref_present
+            && (!input.stage12_gate_inspect_only_context || stage12_gate.is_none())
+        {
             return Stage25ToolOrchestrationDisposition::StageInputBlocked;
         }
         if input.audit_id.is_none() && route.audit_id.is_none() && stage12_gate.is_none() {
@@ -26249,8 +26282,7 @@ impl Validate for Stage25ToolOrchestrationPacket {
                 reason: "Stage 25A cannot invent orchestration authority, route, approve, dispatch, execute, connector-write, or treat visible staging as action success",
             });
         }
-        if self.disposition.is_ready()
-            && (self.audit_id.is_none() || self.ph1j_proof_ref.is_none())
+        if self.disposition.is_ready() && (self.audit_id.is_none() || self.ph1j_proof_ref.is_none())
         {
             return Err(ContractViolation::InvalidValue {
                 field: "stage25_tool_orchestration_packet.audit_proof",
@@ -26308,10 +26340,8 @@ mod stage26_reason_codes {
     pub const STAGE_INPUT_BLOCKED: &str = "STAGE26_STAGE_INPUT_BLOCKED";
     pub const NO_INVENTION_BLOCKED: &str = "STAGE26_NO_INVENTION_BLOCKED";
     pub const EXECUTION_AUTHORITY_BLOCKED: &str = "STAGE26_EXECUTION_AUTHORITY_BLOCKED";
-    pub const NATIVE_PROTECTED_HANDOFF_BLOCKED: &str =
-        "STAGE26_NATIVE_PROTECTED_HANDOFF_BLOCKED";
-    pub const PUBLIC_PROTECTED_BOUNDARY_BLOCKED: &str =
-        "STAGE26_PUBLIC_PROTECTED_BOUNDARY_BLOCKED";
+    pub const NATIVE_PROTECTED_HANDOFF_BLOCKED: &str = "STAGE26_NATIVE_PROTECTED_HANDOFF_BLOCKED";
+    pub const PUBLIC_PROTECTED_BOUNDARY_BLOCKED: &str = "STAGE26_PUBLIC_PROTECTED_BOUNDARY_BLOCKED";
     pub const STALE_EXECUTION_BLOCKED: &str = "STAGE26_STALE_EXECUTION_BLOCKED";
     pub const UNSAFE_INPUT_BLOCKED: &str = "STAGE26_UNSAFE_INPUT_BLOCKED";
     pub const RUNTIME_MOCK_BLOCKED: &str = "STAGE26_RUNTIME_MOCK_BLOCKED";
@@ -26762,8 +26792,10 @@ impl Stage26ExecutionAuthorityInput {
         execution_plan_ref: impl Into<String>,
         audit_id: impl Into<String>,
     ) -> Self {
-        let mut input =
-            Self::fixture_base(Stage26ExecutionAuthorityKind::LiveToolDispatchAuthority, audit_id);
+        let mut input = Self::fixture_base(
+            Stage26ExecutionAuthorityKind::LiveToolDispatchAuthority,
+            audit_id,
+        );
         input.orchestration_stage_id = Some(orchestration_stage_id.into());
         input.action_graph_id = Some(action_graph_id.into());
         input.tool_invocation_stage_id = Some(tool_invocation_stage_id.into());
@@ -27068,29 +27100,28 @@ impl Stage26ExecutionAuthorityPacket {
             session_id: route.session_id,
             turn_id: route.turn_id,
             activation_id: route.activation_id.clone(),
-            continuity_packet_id: continuity_handoff.map(|packet| packet.continuity_packet_id.clone()),
+            continuity_packet_id: continuity_handoff
+                .map(|packet| packet.continuity_packet_id.clone()),
             automation_candidate_id: automation_output
                 .and_then(|packet| packet.automation_candidate_id.clone()),
             connector_action_stage_id: outbound_output
                 .and_then(|packet| packet.connector_action_stage_id.clone()),
-            memory_candidate_id: memory_output.and_then(|packet| packet.memory_candidate_id.clone()),
+            memory_candidate_id: memory_output
+                .and_then(|packet| packet.memory_candidate_id.clone()),
             capture_session_id: ingress_output.and_then(|packet| packet.capture_session_id.clone()),
-            orchestration_stage_id: input
-                .orchestration_stage_id
-                .clone()
-                .or_else(|| orchestration_output.and_then(|packet| packet.orchestration_stage_id.clone())),
+            orchestration_stage_id: input.orchestration_stage_id.clone().or_else(|| {
+                orchestration_output.and_then(|packet| packet.orchestration_stage_id.clone())
+            }),
             action_graph_id: input
                 .action_graph_id
                 .clone()
                 .or_else(|| orchestration_output.and_then(|packet| packet.action_graph_id.clone())),
-            tool_invocation_stage_id: input
-                .tool_invocation_stage_id
-                .clone()
-                .or_else(|| orchestration_output.and_then(|packet| packet.tool_invocation_stage_id.clone())),
-            execution_plan_ref: input
-                .execution_plan_ref
-                .clone()
-                .or_else(|| orchestration_output.and_then(|packet| packet.execution_plan_ref.clone())),
+            tool_invocation_stage_id: input.tool_invocation_stage_id.clone().or_else(|| {
+                orchestration_output.and_then(|packet| packet.tool_invocation_stage_id.clone())
+            }),
+            execution_plan_ref: input.execution_plan_ref.clone().or_else(|| {
+                orchestration_output.and_then(|packet| packet.execution_plan_ref.clone())
+            }),
             connector_execution_id: input.connector_execution_id.clone(),
             protected_gate_id: input
                 .protected_gate_id
@@ -27180,7 +27211,9 @@ impl Stage26ExecutionAuthorityPacket {
         }
         if input.audit_id.is_none()
             && route.audit_id.is_none()
-            && stage12_gate.and_then(|packet| packet.audit_id.clone()).is_none()
+            && stage12_gate
+                .and_then(|packet| packet.audit_id.clone())
+                .is_none()
         {
             return Stage26ExecutionAuthorityDisposition::AuditProofMissing;
         }
@@ -27341,8 +27374,7 @@ impl Stage26ExecutionAuthorityPacket {
                 Stage26ExecutionAuthorityWorkAuthority::protected_execution_integration_ready()
             }
             Stage26ExecutionAuthorityDisposition::StagedExecutionEligibilityPostureReady => {
-                Stage26ExecutionAuthorityWorkAuthority::staged_execution_eligibility_posture_ready(
-                )
+                Stage26ExecutionAuthorityWorkAuthority::staged_execution_eligibility_posture_ready()
             }
             Stage26ExecutionAuthorityDisposition::ProtectedGateContinuityReferenceReady => {
                 Stage26ExecutionAuthorityWorkAuthority::protected_gate_continuity_reference_ready()
@@ -27446,12 +27478,12 @@ impl Validate for Stage26ExecutionAuthorityPacket {
                 reason: "Stage 26A cannot invent execution authority, connector-write, approve, dispatch, execute, or treat visible readiness as action success",
             });
         }
-        if self.disposition.is_ready()
-            && (self.audit_id.is_none() || self.ph1j_proof_ref.is_none())
+        if self.disposition.is_ready() && (self.audit_id.is_none() || self.ph1j_proof_ref.is_none())
         {
             return Err(ContractViolation::InvalidValue {
                 field: "stage26_execution_authority_packet.audit_proof",
-                reason: "ready Stage 26A execution-authority output requires PH1.J audit/proof refs",
+                reason:
+                    "ready Stage 26A execution-authority output requires PH1.J audit/proof refs",
             });
         }
         Ok(())
@@ -27505,10 +27537,8 @@ mod stage27_reason_codes {
     pub const STAGE_INPUT_BLOCKED: &str = "STAGE27_STAGE_INPUT_BLOCKED";
     pub const NO_INVENTION_BLOCKED: &str = "STAGE27_NO_INVENTION_BLOCKED";
     pub const SETTLEMENT_AUTHORITY_BLOCKED: &str = "STAGE27_SETTLEMENT_AUTHORITY_BLOCKED";
-    pub const NATIVE_SETTLEMENT_HANDOFF_BLOCKED: &str =
-        "STAGE27_NATIVE_SETTLEMENT_HANDOFF_BLOCKED";
-    pub const PUBLIC_PROTECTED_BOUNDARY_BLOCKED: &str =
-        "STAGE27_PUBLIC_PROTECTED_BOUNDARY_BLOCKED";
+    pub const NATIVE_SETTLEMENT_HANDOFF_BLOCKED: &str = "STAGE27_NATIVE_SETTLEMENT_HANDOFF_BLOCKED";
+    pub const PUBLIC_PROTECTED_BOUNDARY_BLOCKED: &str = "STAGE27_PUBLIC_PROTECTED_BOUNDARY_BLOCKED";
     pub const STALE_SETTLEMENT_BLOCKED: &str = "STAGE27_STALE_SETTLEMENT_BLOCKED";
     pub const UNSAFE_INPUT_BLOCKED: &str = "STAGE27_UNSAFE_INPUT_BLOCKED";
     pub const RUNTIME_MOCK_BLOCKED: &str = "STAGE27_RUNTIME_MOCK_BLOCKED";
@@ -28279,13 +28309,15 @@ impl Stage27SettlementReconciliationPacket {
         if input.stage12_gate_ref_present && stage12_gate.is_none() {
             return Err(ContractViolation::InvalidValue {
                 field: "stage27_settlement_reconciliation_packet.stage12_gate",
-                reason: "present Stage 12 continuity reference requires the canonical Stage 12 packet",
+                reason:
+                    "present Stage 12 continuity reference requires the canonical Stage 12 packet",
             });
         }
         if input.stage26_execution_authority_ref_present && execution_output.is_none() {
             return Err(ContractViolation::InvalidValue {
                 field: "stage27_settlement_reconciliation_packet.stage26_execution_authority",
-                reason: "present Stage 26 continuity reference requires the canonical Stage 26 packet",
+                reason:
+                    "present Stage 26 continuity reference requires the canonical Stage 26 packet",
             });
         }
         let disposition = Self::decide_disposition(route, stage12_gate, execution_output, &input);
@@ -28310,16 +28342,24 @@ impl Stage27SettlementReconciliationPacket {
             session_id: route.session_id,
             turn_id: route.turn_id,
             activation_id: continuity_handoff.and_then(|packet| packet.activation_id.clone()),
-            continuity_packet_id: continuity_handoff.map(|packet| packet.continuity_packet_id.clone()),
-            automation_candidate_id: automation_output.and_then(|packet| packet.automation_candidate_id.clone()),
-            connector_action_stage_id: outbound_output.and_then(|packet| packet.connector_action_stage_id.clone()),
-            memory_candidate_id: memory_output.and_then(|packet| packet.memory_candidate_id.clone()),
+            continuity_packet_id: continuity_handoff
+                .map(|packet| packet.continuity_packet_id.clone()),
+            automation_candidate_id: automation_output
+                .and_then(|packet| packet.automation_candidate_id.clone()),
+            connector_action_stage_id: outbound_output
+                .and_then(|packet| packet.connector_action_stage_id.clone()),
+            memory_candidate_id: memory_output
+                .and_then(|packet| packet.memory_candidate_id.clone()),
             capture_session_id: ingress_output.and_then(|packet| packet.capture_session_id.clone()),
             orchestration_stage_id: input
                 .orchestration_stage_id
                 .clone()
-                .or_else(|| execution_output.and_then(|packet| packet.orchestration_stage_id.clone()))
-                .or_else(|| orchestration_output.and_then(|packet| packet.orchestration_stage_id.clone())),
+                .or_else(|| {
+                    execution_output.and_then(|packet| packet.orchestration_stage_id.clone())
+                })
+                .or_else(|| {
+                    orchestration_output.and_then(|packet| packet.orchestration_stage_id.clone())
+                }),
             action_graph_id: input
                 .action_graph_id
                 .clone()
@@ -28328,17 +28368,22 @@ impl Stage27SettlementReconciliationPacket {
             tool_invocation_stage_id: input
                 .tool_invocation_stage_id
                 .clone()
-                .or_else(|| execution_output.and_then(|packet| packet.tool_invocation_stage_id.clone()))
-                .or_else(|| orchestration_output.and_then(|packet| packet.tool_invocation_stage_id.clone())),
+                .or_else(|| {
+                    execution_output.and_then(|packet| packet.tool_invocation_stage_id.clone())
+                })
+                .or_else(|| {
+                    orchestration_output.and_then(|packet| packet.tool_invocation_stage_id.clone())
+                }),
             execution_plan_ref: input
                 .execution_plan_ref
                 .clone()
                 .or_else(|| execution_output.and_then(|packet| packet.execution_plan_ref.clone()))
-                .or_else(|| orchestration_output.and_then(|packet| packet.execution_plan_ref.clone())),
-            connector_execution_id: input
-                .connector_execution_id
-                .clone()
-                .or_else(|| execution_output.and_then(|packet| packet.connector_execution_id.clone())),
+                .or_else(|| {
+                    orchestration_output.and_then(|packet| packet.execution_plan_ref.clone())
+                }),
+            connector_execution_id: input.connector_execution_id.clone().or_else(|| {
+                execution_output.and_then(|packet| packet.connector_execution_id.clone())
+            }),
             protected_gate_id: input
                 .protected_gate_id
                 .clone()
@@ -28435,8 +28480,12 @@ impl Stage27SettlementReconciliationPacket {
         }
         if input.audit_id.is_none()
             && route.audit_id.is_none()
-            && stage12_gate.and_then(|packet| packet.audit_id.clone()).is_none()
-            && execution_output.and_then(|packet| packet.audit_id.clone()).is_none()
+            && stage12_gate
+                .and_then(|packet| packet.audit_id.clone())
+                .is_none()
+            && execution_output
+                .and_then(|packet| packet.audit_id.clone())
+                .is_none()
         {
             return Stage27SettlementReconciliationDisposition::AuditProofMissing;
         }
@@ -28721,8 +28770,7 @@ impl Validate for Stage27SettlementReconciliationPacket {
                 reason: "Stage 27A cannot invent settlement authority, connector-write, approve, dispatch, execute, mutation commit, or treat visible readiness as action success",
             });
         }
-        if self.disposition.is_ready()
-            && (self.audit_id.is_none() || self.ph1j_proof_ref.is_none())
+        if self.disposition.is_ready() && (self.audit_id.is_none() || self.ph1j_proof_ref.is_none())
         {
             return Err(ContractViolation::InvalidValue {
                 field: "stage27_settlement_reconciliation_packet.audit_proof",
@@ -28747,9 +28795,11 @@ pub fn stage27_settlement_reconciliation_symbol_anchor() {
     let _ = Stage27SettlementReconciliationWorkAuthority::mutation_commit_boundary_ready();
     let _ = Stage27SettlementReconciliationWorkAuthority::post_execution_reconciliation_ready();
     let _ =
-        Stage27SettlementReconciliationWorkAuthority::execution_completion_visibility_posture_ready();
+        Stage27SettlementReconciliationWorkAuthority::execution_completion_visibility_posture_ready(
+        );
     let _ =
-        Stage27SettlementReconciliationWorkAuthority::connector_outcome_continuity_reference_ready();
+        Stage27SettlementReconciliationWorkAuthority::connector_outcome_continuity_reference_ready(
+        );
     let _ = core::mem::size_of::<Stage27SettlementReconciliationInput>();
     let _ = core::mem::size_of::<Stage27SettlementReconciliationPacket>();
     let _ = Stage27SettlementReconciliationPacket::from_stage26_execution_authority
@@ -28771,12 +28821,10 @@ pub fn stage27_settlement_reconciliation_symbol_anchor() {
 const _: fn() = stage27_settlement_reconciliation_symbol_anchor;
 
 mod stage28_reason_codes {
-    pub const DURABLE_OUTCOME_PUBLICATION_READY: &str =
-        "STAGE28_DURABLE_OUTCOME_PUBLICATION_READY";
+    pub const DURABLE_OUTCOME_PUBLICATION_READY: &str = "STAGE28_DURABLE_OUTCOME_PUBLICATION_READY";
     pub const CROSS_SURFACE_POST_COMMIT_STATE_SYNC_READY: &str =
         "STAGE28_CROSS_SURFACE_POST_COMMIT_STATE_SYNC_READY";
-    pub const FINAL_COMPLETION_DISCLOSURE_READY: &str =
-        "STAGE28_FINAL_COMPLETION_DISCLOSURE_READY";
+    pub const FINAL_COMPLETION_DISCLOSURE_READY: &str = "STAGE28_FINAL_COMPLETION_DISCLOSURE_READY";
     pub const PUBLICATION_VISIBILITY_POSTURE_READY: &str =
         "STAGE28_PUBLICATION_VISIBILITY_POSTURE_READY";
     pub const CONNECTOR_OUTCOME_VISIBILITY_REFERENCE_READY: &str =
@@ -28786,8 +28834,7 @@ mod stage28_reason_codes {
     pub const PUBLICATION_AUTHORITY_BLOCKED: &str = "STAGE28_PUBLICATION_AUTHORITY_BLOCKED";
     pub const NATIVE_PUBLICATION_HANDOFF_BLOCKED: &str =
         "STAGE28_NATIVE_PUBLICATION_HANDOFF_BLOCKED";
-    pub const PUBLIC_PROTECTED_BOUNDARY_BLOCKED: &str =
-        "STAGE28_PUBLIC_PROTECTED_BOUNDARY_BLOCKED";
+    pub const PUBLIC_PROTECTED_BOUNDARY_BLOCKED: &str = "STAGE28_PUBLIC_PROTECTED_BOUNDARY_BLOCKED";
     pub const STALE_PUBLICATION_BLOCKED: &str = "STAGE28_STALE_PUBLICATION_BLOCKED";
     pub const UNSAFE_INPUT_BLOCKED: &str = "STAGE28_UNSAFE_INPUT_BLOCKED";
     pub const RUNTIME_MOCK_BLOCKED: &str = "STAGE28_RUNTIME_MOCK_BLOCKED";
@@ -29201,8 +29248,10 @@ impl Stage28PublicationDisclosureInput {
 
     #[cfg(test)]
     pub fn fixture_durable_outcome_publication_ready(audit_id: impl Into<String>) -> Self {
-        let mut input =
-            Self::fixture_base(Stage28PublicationDisclosureKind::DurableOutcomePublication, audit_id);
+        let mut input = Self::fixture_base(
+            Stage28PublicationDisclosureKind::DurableOutcomePublication,
+            audit_id,
+        );
         input.state_sync_ref_present = false;
         input.completion_disclosure_ref_present = false;
         input
@@ -29434,17 +29483,18 @@ impl Stage28PublicationDisclosurePacket {
         if input.stage12_gate_ref_present && stage12_gate.is_none() {
             return Err(ContractViolation::InvalidValue {
                 field: "stage28_publication_disclosure_packet.stage12_gate",
-                reason: "present Stage 12 continuity reference requires the canonical Stage 12 packet",
+                reason:
+                    "present Stage 12 continuity reference requires the canonical Stage 12 packet",
             });
         }
         if input.stage27_settlement_ref_present && settlement_output.is_none() {
             return Err(ContractViolation::InvalidValue {
                 field: "stage28_publication_disclosure_packet.stage27_settlement",
-                reason: "present Stage 27 continuity reference requires the canonical Stage 27 packet",
+                reason:
+                    "present Stage 27 continuity reference requires the canonical Stage 27 packet",
             });
         }
-        let disposition =
-            Self::decide_disposition(route, stage12_gate, settlement_output, &input);
+        let disposition = Self::decide_disposition(route, stage12_gate, settlement_output, &input);
         let work_authority = Self::work_authority_for(disposition);
         let audit_id = input
             .audit_id
@@ -29472,16 +29522,24 @@ impl Stage28PublicationDisclosurePacket {
                 .or_else(|| settlement_output.and_then(|packet| packet.activation_id.clone())),
             continuity_packet_id: continuity_handoff
                 .map(|packet| packet.continuity_packet_id.clone())
-                .or_else(|| settlement_output.and_then(|packet| packet.continuity_packet_id.clone())),
+                .or_else(|| {
+                    settlement_output.and_then(|packet| packet.continuity_packet_id.clone())
+                }),
             automation_candidate_id: automation_output
                 .and_then(|packet| packet.automation_candidate_id.clone())
-                .or_else(|| settlement_output.and_then(|packet| packet.automation_candidate_id.clone())),
+                .or_else(|| {
+                    settlement_output.and_then(|packet| packet.automation_candidate_id.clone())
+                }),
             connector_action_stage_id: outbound_output
                 .and_then(|packet| packet.connector_action_stage_id.clone())
-                .or_else(|| settlement_output.and_then(|packet| packet.connector_action_stage_id.clone())),
+                .or_else(|| {
+                    settlement_output.and_then(|packet| packet.connector_action_stage_id.clone())
+                }),
             memory_candidate_id: memory_output
                 .and_then(|packet| packet.memory_candidate_id.clone())
-                .or_else(|| settlement_output.and_then(|packet| packet.memory_candidate_id.clone())),
+                .or_else(|| {
+                    settlement_output.and_then(|packet| packet.memory_candidate_id.clone())
+                }),
             capture_session_id: ingress_output
                 .and_then(|packet| packet.capture_session_id.clone())
                 .or_else(|| settlement_output.and_then(|packet| packet.capture_session_id.clone())),
@@ -29490,13 +29548,17 @@ impl Stage28PublicationDisclosurePacket {
             action_graph_id: settlement_output.and_then(|packet| packet.action_graph_id.clone()),
             tool_invocation_stage_id: settlement_output
                 .and_then(|packet| packet.tool_invocation_stage_id.clone()),
-            execution_plan_ref: settlement_output.and_then(|packet| packet.execution_plan_ref.clone()),
+            execution_plan_ref: settlement_output
+                .and_then(|packet| packet.execution_plan_ref.clone()),
             connector_execution_id: settlement_output
                 .and_then(|packet| packet.connector_execution_id.clone()),
-            protected_gate_id: settlement_output.and_then(|packet| packet.protected_gate_id.clone()),
+            protected_gate_id: settlement_output
+                .and_then(|packet| packet.protected_gate_id.clone()),
             settlement_id: settlement_output.and_then(|packet| packet.settlement_id.clone()),
-            mutation_commit_id: settlement_output.and_then(|packet| packet.mutation_commit_id.clone()),
-            reconciliation_id: settlement_output.and_then(|packet| packet.reconciliation_id.clone()),
+            mutation_commit_id: settlement_output
+                .and_then(|packet| packet.mutation_commit_id.clone()),
+            reconciliation_id: settlement_output
+                .and_then(|packet| packet.reconciliation_id.clone()),
             publication_id: input.publication_id.clone(),
             state_sync_id: input.state_sync_id.clone(),
             completion_disclosure_id: input.completion_disclosure_id.clone(),
@@ -29596,8 +29658,12 @@ impl Stage28PublicationDisclosurePacket {
         }
         if input.audit_id.is_none()
             && route.audit_id.is_none()
-            && stage12_gate.and_then(|packet| packet.audit_id.clone()).is_none()
-            && settlement_output.and_then(|packet| packet.audit_id.clone()).is_none()
+            && stage12_gate
+                .and_then(|packet| packet.audit_id.clone())
+                .is_none()
+            && settlement_output
+                .and_then(|packet| packet.audit_id.clone())
+                .is_none()
         {
             return Stage28PublicationDisclosureDisposition::AuditProofMissing;
         }
@@ -29710,9 +29776,8 @@ impl Stage28PublicationDisclosurePacket {
                 if input.publication_id.is_some()
                     && input.state_sync_id.is_some()
                     && input.state_sync_ref_present
-                    && settlement_output.is_some_and(|packet| {
-                        packet.work_id.is_some() && packet.lease_id.is_some()
-                    })
+                    && settlement_output
+                        .is_some_and(|packet| packet.work_id.is_some() && packet.lease_id.is_some())
                 {
                     Stage28PublicationDisclosureDisposition::CrossSurfacePostCommitStateSyncReady
                 } else {
@@ -29723,8 +29788,9 @@ impl Stage28PublicationDisclosurePacket {
                 if input.publication_id.is_some()
                     && input.completion_disclosure_id.is_some()
                     && input.completion_disclosure_ref_present
-                    && settlement_output
-                        .is_some_and(|packet| packet.execution_plan_ref.is_some() && packet.work_id.is_some())
+                    && settlement_output.is_some_and(|packet| {
+                        packet.execution_plan_ref.is_some() && packet.work_id.is_some()
+                    })
                 {
                     Stage28PublicationDisclosureDisposition::FinalCompletionDisclosureReady
                 } else {
@@ -29904,8 +29970,7 @@ impl Validate for Stage28PublicationDisclosurePacket {
                 reason: "Stage 28A cannot invent publication authority, connector-write, approve, dispatch, execute, sync, or treat visible readiness as action success",
             });
         }
-        if self.disposition.is_ready()
-            && (self.audit_id.is_none() || self.ph1j_proof_ref.is_none())
+        if self.disposition.is_ready() && (self.audit_id.is_none() || self.ph1j_proof_ref.is_none())
         {
             return Err(ContractViolation::InvalidValue {
                 field: "stage28_publication_disclosure_packet.audit_proof",
@@ -29927,8 +29992,7 @@ pub fn stage28_publication_disclosure_symbol_anchor() {
     let _ = disposition.is_ready();
     let _ = Stage28PublicationDisclosureWorkAuthority::fail_closed().can_mutate_or_execute();
     let _ = Stage28PublicationDisclosureWorkAuthority::durable_outcome_publication_ready();
-    let _ =
-        Stage28PublicationDisclosureWorkAuthority::cross_surface_post_commit_state_sync_ready();
+    let _ = Stage28PublicationDisclosureWorkAuthority::cross_surface_post_commit_state_sync_ready();
     let _ = Stage28PublicationDisclosureWorkAuthority::final_completion_disclosure_ready();
     let _ = Stage28PublicationDisclosureWorkAuthority::publication_visibility_posture_ready();
     let _ =
@@ -29959,8 +30023,7 @@ mod stage29_reason_codes {
         "STAGE29_SAME_PAGE_CONVERSATIONAL_QUALITY_READY";
     pub const INTERRUPTION_AWARE_CONTINUITY_READY: &str =
         "STAGE29_INTERRUPTION_AWARE_CONTINUITY_READY";
-    pub const HUMAN_INTERACTION_BOUNDARY_READY: &str =
-        "STAGE29_HUMAN_INTERACTION_BOUNDARY_READY";
+    pub const HUMAN_INTERACTION_BOUNDARY_READY: &str = "STAGE29_HUMAN_INTERACTION_BOUNDARY_READY";
     pub const SESSION_POSTURE_CONTINUITY_REFERENCE_READY: &str =
         "STAGE29_SESSION_POSTURE_CONTINUITY_REFERENCE_READY";
     pub const OUTPUT_INTERACTION_CONTINUITY_REFERENCE_READY: &str =
@@ -29972,8 +30035,7 @@ mod stage29_reason_codes {
     pub const CONTINUITY_AUTHORITY_BLOCKED: &str = "STAGE29_CONTINUITY_AUTHORITY_BLOCKED";
     pub const NATIVE_INTERACTION_HANDOFF_BLOCKED: &str =
         "STAGE29_NATIVE_INTERACTION_HANDOFF_BLOCKED";
-    pub const PUBLIC_PROTECTED_BOUNDARY_BLOCKED: &str =
-        "STAGE29_PUBLIC_PROTECTED_BOUNDARY_BLOCKED";
+    pub const PUBLIC_PROTECTED_BOUNDARY_BLOCKED: &str = "STAGE29_PUBLIC_PROTECTED_BOUNDARY_BLOCKED";
     pub const STALE_CONTINUITY_BLOCKED: &str = "STAGE29_STALE_CONTINUITY_BLOCKED";
     pub const UNSAFE_INPUT_BLOCKED: &str = "STAGE29_UNSAFE_INPUT_BLOCKED";
     pub const RUNTIME_MOCK_BLOCKED: &str = "STAGE29_RUNTIME_MOCK_BLOCKED";
@@ -30032,9 +30094,7 @@ impl Stage29ConversationalContinuityDisposition {
             }
             Self::StageInputBlocked => stage29_reason_codes::STAGE_INPUT_BLOCKED,
             Self::NoInventionBlocked => stage29_reason_codes::NO_INVENTION_BLOCKED,
-            Self::ContinuityAuthorityBlocked => {
-                stage29_reason_codes::CONTINUITY_AUTHORITY_BLOCKED
-            }
+            Self::ContinuityAuthorityBlocked => stage29_reason_codes::CONTINUITY_AUTHORITY_BLOCKED,
             Self::NativeInteractionHandoffBlocked => {
                 stage29_reason_codes::NATIVE_INTERACTION_HANDOFF_BLOCKED
             }
@@ -30449,9 +30509,7 @@ impl Stage29ConversationalContinuityInput {
     }
 
     #[cfg(test)]
-    pub fn fixture_same_page_conversational_quality_ready(
-        audit_id: impl Into<String>,
-    ) -> Self {
+    pub fn fixture_same_page_conversational_quality_ready(audit_id: impl Into<String>) -> Self {
         Self::fixture_base(
             Stage29ConversationalContinuityKind::SamePageConversationalQuality,
             audit_id,
@@ -30731,7 +30789,8 @@ impl Stage29ConversationalContinuityPacket {
         if input.stage12_gate_ref_present && stage12_gate.is_none() {
             return Err(ContractViolation::InvalidValue {
                 field: "stage29_conversational_continuity_packet.stage12_gate",
-                reason: "present Stage 12 continuity reference requires the canonical Stage 12 packet",
+                reason:
+                    "present Stage 12 continuity reference requires the canonical Stage 12 packet",
             });
         }
         if input.stage5_conversation_ref_present && conversation_control.is_none() {
@@ -30801,10 +30860,14 @@ impl Stage29ConversationalContinuityPacket {
                 .or_else(|| continuity_handoff.map(|packet| packet.continuity_packet_id.clone())),
             automation_candidate_id: publication_output
                 .and_then(|packet| packet.automation_candidate_id.clone())
-                .or_else(|| automation_output.and_then(|packet| packet.automation_candidate_id.clone())),
+                .or_else(|| {
+                    automation_output.and_then(|packet| packet.automation_candidate_id.clone())
+                }),
             connector_action_stage_id: publication_output
                 .and_then(|packet| packet.connector_action_stage_id.clone())
-                .or_else(|| outbound_output.and_then(|packet| packet.connector_action_stage_id.clone())),
+                .or_else(|| {
+                    outbound_output.and_then(|packet| packet.connector_action_stage_id.clone())
+                }),
             memory_candidate_id: publication_output
                 .and_then(|packet| packet.memory_candidate_id.clone())
                 .or_else(|| memory_output.and_then(|packet| packet.memory_candidate_id.clone())),
@@ -30829,10 +30892,9 @@ impl Stage29ConversationalContinuityPacket {
                 .and_then(|packet| packet.reconciliation_id.clone()),
             publication_id: publication_output.and_then(|packet| packet.publication_id.clone()),
             state_sync_id: publication_output.and_then(|packet| packet.state_sync_id.clone()),
-            completion_disclosure_id: input
-                .completion_disclosure_id
-                .clone()
-                .or_else(|| publication_output.and_then(|packet| packet.completion_disclosure_id.clone())),
+            completion_disclosure_id: input.completion_disclosure_id.clone().or_else(|| {
+                publication_output.and_then(|packet| packet.completion_disclosure_id.clone())
+            }),
             output_interaction_id: input
                 .output_interaction_id
                 .clone()
@@ -30842,10 +30904,9 @@ impl Stage29ConversationalContinuityPacket {
                 .speech_output_id
                 .clone()
                 .or_else(|| speech_output.map(|packet| packet.speech_output_id.clone())),
-            conversation_continuity_id: input
-                .conversation_continuity_id
-                .clone()
-                .or_else(|| publication_output.and_then(|packet| packet.continuity_packet_id.clone())),
+            conversation_continuity_id: input.conversation_continuity_id.clone().or_else(|| {
+                publication_output.and_then(|packet| packet.continuity_packet_id.clone())
+            }),
             interaction_boundary_id: input.interaction_boundary_id.clone(),
             work_id: publication_output
                 .and_then(|packet| packet.work_id.clone())
@@ -30971,7 +31032,10 @@ impl Stage29ConversationalContinuityPacket {
                 || !packet.can_update_conversation_state()
                 || packet.can_route_any_work()
                 || packet.can_become_authoritative()
-                || packet.same_page_state.as_ref().is_some_and(|state| !state.advisory_only)
+                || packet
+                    .same_page_state
+                    .as_ref()
+                    .is_some_and(|state| !state.advisory_only)
         }) {
             return Stage29ConversationalContinuityDisposition::StageInputBlocked;
         }
@@ -30982,9 +31046,15 @@ impl Stage29ConversationalContinuityPacket {
         }
         if input.audit_id.is_none()
             && route.audit_id.is_none()
-            && stage12_gate.and_then(|packet| packet.audit_id.clone()).is_none()
-            && speech_output.and_then(|packet| packet.audit_id.clone()).is_none()
-            && publication_output.and_then(|packet| packet.audit_id.clone()).is_none()
+            && stage12_gate
+                .and_then(|packet| packet.audit_id.clone())
+                .is_none()
+            && speech_output
+                .and_then(|packet| packet.audit_id.clone())
+                .is_none()
+            && publication_output
+                .and_then(|packet| packet.audit_id.clone())
+                .is_none()
         {
             return Stage29ConversationalContinuityDisposition::AuditProofMissing;
         }
@@ -31129,7 +31199,8 @@ impl Stage29ConversationalContinuityPacket {
             Stage29ConversationalContinuityKind::SessionPostureContinuityReference => {
                 if input.conversation_continuity_id.is_some()
                     && input.conversation_ref_present
-                    && publication_output.is_some_and(|packet| packet.continuity_packet_id.is_some())
+                    && publication_output
+                        .is_some_and(|packet| packet.continuity_packet_id.is_some())
                 {
                     Stage29ConversationalContinuityDisposition::SessionPostureContinuityReferenceReady
                 } else {
@@ -31140,7 +31211,10 @@ impl Stage29ConversationalContinuityPacket {
                 if input.output_interaction_id.is_some()
                     && input.speech_output_id.is_some()
                     && input.interaction_boundary_ref_present
-                    && speech_output.is_some_and(|packet| packet.speech_output_id == input.speech_output_id.clone().unwrap_or_default())
+                    && speech_output.is_some_and(|packet| {
+                        packet.speech_output_id
+                            == input.speech_output_id.clone().unwrap_or_default()
+                    })
                 {
                     Stage29ConversationalContinuityDisposition::OutputInteractionContinuityReferenceReady
                 } else {
@@ -31322,8 +31396,7 @@ impl Validate for Stage29ConversationalContinuityPacket {
                 reason: "Stage 29A cannot invent continuity authority, connector-write, approve, dispatch, execute, create turns, or treat visible readiness as action success",
             });
         }
-        if self.disposition.is_ready()
-            && (self.audit_id.is_none() || self.ph1j_proof_ref.is_none())
+        if self.disposition.is_ready() && (self.audit_id.is_none() || self.ph1j_proof_ref.is_none())
         {
             return Err(ContractViolation::InvalidValue {
                 field: "stage29_conversational_continuity_packet.audit_proof",
@@ -31351,7 +31424,8 @@ pub fn stage29_conversational_continuity_symbol_anchor() {
     let _ =
         Stage29ConversationalContinuityWorkAuthority::session_posture_continuity_reference_ready();
     let _ =
-        Stage29ConversationalContinuityWorkAuthority::output_interaction_continuity_reference_ready();
+        Stage29ConversationalContinuityWorkAuthority::output_interaction_continuity_reference_ready(
+        );
     let _ =
         Stage29ConversationalContinuityWorkAuthority::completion_disclosure_continuity_reference_ready();
     let _ = core::mem::size_of::<Stage29ConversationalContinuityInput>();
@@ -31384,8 +31458,7 @@ mod stage30_reason_codes {
         "STAGE30_CROSS_TURN_RECOVERY_SEMANTICS_READY";
     pub const BOUNDED_PROACTIVE_FOLLOW_UP_POSTURE_READY: &str =
         "STAGE30_BOUNDED_PROACTIVE_FOLLOW_UP_POSTURE_READY";
-    pub const THREAD_PRESENCE_CONTINUITY_READY: &str =
-        "STAGE30_THREAD_PRESENCE_CONTINUITY_READY";
+    pub const THREAD_PRESENCE_CONTINUITY_READY: &str = "STAGE30_THREAD_PRESENCE_CONTINUITY_READY";
     pub const RETURN_CHECK_REOPEN_CONTINUITY_REFERENCE_READY: &str =
         "STAGE30_RETURN_CHECK_REOPEN_CONTINUITY_REFERENCE_READY";
     pub const SESSION_POSTURE_CONTINUITY_REFERENCE_READY: &str =
@@ -31395,10 +31468,8 @@ mod stage30_reason_codes {
     pub const STAGE_INPUT_BLOCKED: &str = "STAGE30_STAGE_INPUT_BLOCKED";
     pub const NO_INVENTION_BLOCKED: &str = "STAGE30_NO_INVENTION_BLOCKED";
     pub const RECOVERY_AUTHORITY_BLOCKED: &str = "STAGE30_RECOVERY_AUTHORITY_BLOCKED";
-    pub const NATIVE_RECOVERY_HANDOFF_BLOCKED: &str =
-        "STAGE30_NATIVE_RECOVERY_HANDOFF_BLOCKED";
-    pub const PUBLIC_PROTECTED_BOUNDARY_BLOCKED: &str =
-        "STAGE30_PUBLIC_PROTECTED_BOUNDARY_BLOCKED";
+    pub const NATIVE_RECOVERY_HANDOFF_BLOCKED: &str = "STAGE30_NATIVE_RECOVERY_HANDOFF_BLOCKED";
+    pub const PUBLIC_PROTECTED_BOUNDARY_BLOCKED: &str = "STAGE30_PUBLIC_PROTECTED_BOUNDARY_BLOCKED";
     pub const STALE_RECOVERY_BLOCKED: &str = "STAGE30_STALE_RECOVERY_BLOCKED";
     pub const UNSAFE_INPUT_BLOCKED: &str = "STAGE30_UNSAFE_INPUT_BLOCKED";
     pub const RUNTIME_MOCK_BLOCKED: &str = "STAGE30_RUNTIME_MOCK_BLOCKED";
@@ -32209,25 +32280,29 @@ impl Stage30RecoveryThreadPresencePacket {
         if input.stage12_gate_ref_present && stage12_gate.is_none() {
             return Err(ContractViolation::InvalidValue {
                 field: "stage30_recovery_thread_presence_packet.stage12_gate",
-                reason: "present Stage 12 continuity reference requires the canonical Stage 12 packet",
+                reason:
+                    "present Stage 12 continuity reference requires the canonical Stage 12 packet",
             });
         }
         if input.stage29_conversation_ref_present && conversation_output.is_none() {
             return Err(ContractViolation::InvalidValue {
                 field: "stage30_recovery_thread_presence_packet.stage29_conversation",
-                reason: "present Stage 29 continuity reference requires the canonical Stage 29 packet",
+                reason:
+                    "present Stage 29 continuity reference requires the canonical Stage 29 packet",
             });
         }
         if input.stage28_publication_ref_present && publication_output.is_none() {
             return Err(ContractViolation::InvalidValue {
                 field: "stage30_recovery_thread_presence_packet.stage28_publication",
-                reason: "present Stage 28 continuity reference requires the canonical Stage 28 packet",
+                reason:
+                    "present Stage 28 continuity reference requires the canonical Stage 28 packet",
             });
         }
         if input.stage20_continuity_ref_present && continuity_handoff.is_none() {
             return Err(ContractViolation::InvalidValue {
                 field: "stage30_recovery_thread_presence_packet.stage20_continuity",
-                reason: "present Stage 20 continuity reference requires the canonical Stage 20 packet",
+                reason:
+                    "present Stage 20 continuity reference requires the canonical Stage 20 packet",
             });
         }
 
@@ -32276,39 +32351,65 @@ impl Stage30RecoveryThreadPresencePacket {
                 .or_else(|| conversation_output.and_then(|packet| packet.activation_id.clone())),
             continuity_packet_id: continuity_handoff
                 .map(|packet| packet.continuity_packet_id.clone())
-                .or_else(|| publication_output.and_then(|packet| packet.continuity_packet_id.clone()))
-                .or_else(|| conversation_output.and_then(|packet| packet.continuity_packet_id.clone())),
+                .or_else(|| {
+                    publication_output.and_then(|packet| packet.continuity_packet_id.clone())
+                })
+                .or_else(|| {
+                    conversation_output.and_then(|packet| packet.continuity_packet_id.clone())
+                }),
             automation_candidate_id: automation_output
                 .and_then(|packet| packet.automation_candidate_id.clone())
-                .or_else(|| publication_output.and_then(|packet| packet.automation_candidate_id.clone()))
-                .or_else(|| conversation_output.and_then(|packet| packet.automation_candidate_id.clone())),
+                .or_else(|| {
+                    publication_output.and_then(|packet| packet.automation_candidate_id.clone())
+                })
+                .or_else(|| {
+                    conversation_output.and_then(|packet| packet.automation_candidate_id.clone())
+                }),
             connector_action_stage_id: outbound_output
                 .and_then(|packet| packet.connector_action_stage_id.clone())
-                .or_else(|| publication_output.and_then(|packet| packet.connector_action_stage_id.clone()))
-                .or_else(|| conversation_output.and_then(|packet| packet.connector_action_stage_id.clone())),
+                .or_else(|| {
+                    publication_output.and_then(|packet| packet.connector_action_stage_id.clone())
+                })
+                .or_else(|| {
+                    conversation_output.and_then(|packet| packet.connector_action_stage_id.clone())
+                }),
             memory_candidate_id: memory_output
                 .and_then(|packet| packet.memory_candidate_id.clone())
-                .or_else(|| publication_output.and_then(|packet| packet.memory_candidate_id.clone()))
-                .or_else(|| conversation_output.and_then(|packet| packet.memory_candidate_id.clone())),
+                .or_else(|| {
+                    publication_output.and_then(|packet| packet.memory_candidate_id.clone())
+                })
+                .or_else(|| {
+                    conversation_output.and_then(|packet| packet.memory_candidate_id.clone())
+                }),
             capture_session_id: ingress_output
                 .and_then(|packet| packet.capture_session_id.clone())
                 .or_else(|| publication_output.and_then(|packet| packet.capture_session_id.clone()))
-                .or_else(|| conversation_output.and_then(|packet| packet.capture_session_id.clone())),
+                .or_else(|| {
+                    conversation_output.and_then(|packet| packet.capture_session_id.clone())
+                }),
             orchestration_stage_id: conversation_output
                 .and_then(|packet| packet.orchestration_stage_id.clone())
-                .or_else(|| publication_output.and_then(|packet| packet.orchestration_stage_id.clone())),
+                .or_else(|| {
+                    publication_output.and_then(|packet| packet.orchestration_stage_id.clone())
+                }),
             action_graph_id: conversation_output
                 .and_then(|packet| packet.action_graph_id.clone())
                 .or_else(|| publication_output.and_then(|packet| packet.action_graph_id.clone())),
             tool_invocation_stage_id: conversation_output
                 .and_then(|packet| packet.tool_invocation_stage_id.clone())
-                .or_else(|| publication_output.and_then(|packet| packet.tool_invocation_stage_id.clone())),
+                .or_else(|| {
+                    publication_output.and_then(|packet| packet.tool_invocation_stage_id.clone())
+                }),
             execution_plan_ref: conversation_output
                 .and_then(|packet| packet.execution_plan_ref.clone())
-                .or_else(|| publication_output.and_then(|packet| packet.execution_plan_ref.clone())),
+                .or_else(|| {
+                    publication_output.and_then(|packet| packet.execution_plan_ref.clone())
+                }),
             connector_execution_id: conversation_output
                 .and_then(|packet| packet.connector_execution_id.clone())
-                .or_else(|| publication_output.and_then(|packet| packet.connector_execution_id.clone())),
+                .or_else(|| {
+                    publication_output.and_then(|packet| packet.connector_execution_id.clone())
+                }),
             protected_gate_id: conversation_output
                 .and_then(|packet| packet.protected_gate_id.clone())
                 .or_else(|| publication_output.and_then(|packet| packet.protected_gate_id.clone())),
@@ -32317,7 +32418,9 @@ impl Stage30RecoveryThreadPresencePacket {
                 .or_else(|| publication_output.and_then(|packet| packet.settlement_id.clone())),
             mutation_commit_id: conversation_output
                 .and_then(|packet| packet.mutation_commit_id.clone())
-                .or_else(|| publication_output.and_then(|packet| packet.mutation_commit_id.clone())),
+                .or_else(|| {
+                    publication_output.and_then(|packet| packet.mutation_commit_id.clone())
+                }),
             reconciliation_id: conversation_output
                 .and_then(|packet| packet.reconciliation_id.clone())
                 .or_else(|| publication_output.and_then(|packet| packet.reconciliation_id.clone())),
@@ -32330,25 +32433,29 @@ impl Stage30RecoveryThreadPresencePacket {
             completion_disclosure_id: input
                 .completion_disclosure_id
                 .clone()
-                .or_else(|| publication_output.and_then(|packet| packet.completion_disclosure_id.clone()))
-                .or_else(|| conversation_output.and_then(|packet| packet.completion_disclosure_id.clone())),
+                .or_else(|| {
+                    publication_output.and_then(|packet| packet.completion_disclosure_id.clone())
+                })
+                .or_else(|| {
+                    conversation_output.and_then(|packet| packet.completion_disclosure_id.clone())
+                }),
             output_interaction_id: input
                 .output_interaction_id
                 .clone()
                 .or_else(|| speech_output.and_then(|packet| packet.output_interaction_id.clone()))
-                .or_else(|| conversation_output.and_then(|packet| packet.output_interaction_id.clone())),
+                .or_else(|| {
+                    conversation_output.and_then(|packet| packet.output_interaction_id.clone())
+                }),
             speech_output_id: input
                 .speech_output_id
                 .clone()
                 .or_else(|| conversation_output.and_then(|packet| packet.speech_output_id.clone())),
-            conversation_continuity_id: input
-                .conversation_continuity_id
-                .clone()
-                .or_else(|| conversation_output.and_then(|packet| packet.conversation_continuity_id.clone())),
-            interaction_boundary_id: input
-                .interaction_boundary_id
-                .clone()
-                .or_else(|| conversation_output.and_then(|packet| packet.interaction_boundary_id.clone())),
+            conversation_continuity_id: input.conversation_continuity_id.clone().or_else(|| {
+                conversation_output.and_then(|packet| packet.conversation_continuity_id.clone())
+            }),
+            interaction_boundary_id: input.interaction_boundary_id.clone().or_else(|| {
+                conversation_output.and_then(|packet| packet.interaction_boundary_id.clone())
+            }),
             recovery_continuity_id: input.recovery_continuity_id.clone(),
             follow_up_posture_id: input.follow_up_posture_id.clone(),
             thread_presence_id: input.thread_presence_id.clone(),
@@ -32485,12 +32592,24 @@ impl Stage30RecoveryThreadPresencePacket {
         }
         if input.audit_id.is_none()
             && route.audit_id.is_none()
-            && stage12_gate.and_then(|packet| packet.audit_id.clone()).is_none()
-            && output_interaction.map(|packet| packet.audit_id.clone()).is_none()
-            && speech_output.and_then(|packet| packet.audit_id.clone()).is_none()
-            && continuity_handoff.and_then(|packet| packet.audit_id.clone()).is_none()
-            && publication_output.and_then(|packet| packet.audit_id.clone()).is_none()
-            && conversation_output.and_then(|packet| packet.audit_id.clone()).is_none()
+            && stage12_gate
+                .and_then(|packet| packet.audit_id.clone())
+                .is_none()
+            && output_interaction
+                .map(|packet| packet.audit_id.clone())
+                .is_none()
+            && speech_output
+                .and_then(|packet| packet.audit_id.clone())
+                .is_none()
+            && continuity_handoff
+                .and_then(|packet| packet.audit_id.clone())
+                .is_none()
+            && publication_output
+                .and_then(|packet| packet.audit_id.clone())
+                .is_none()
+            && conversation_output
+                .and_then(|packet| packet.audit_id.clone())
+                .is_none()
         {
             return Stage30RecoveryThreadPresenceDisposition::AuditProofMissing;
         }
@@ -32849,8 +32968,7 @@ impl Validate for Stage30RecoveryThreadPresencePacket {
                 reason: "Stage 30A cannot invent recovery authority, connector-write, approve, dispatch, execute, create turns, or treat visible readiness as action success",
             });
         }
-        if self.disposition.is_ready()
-            && (self.audit_id.is_none() || self.ph1j_proof_ref.is_none())
+        if self.disposition.is_ready() && (self.audit_id.is_none() || self.ph1j_proof_ref.is_none())
         {
             return Err(ContractViolation::InvalidValue {
                 field: "stage30_recovery_thread_presence_packet.audit_proof",
@@ -32876,7 +32994,8 @@ pub fn stage30_recovery_thread_presence_symbol_anchor() {
     let _ = Stage30RecoveryThreadPresenceWorkAuthority::bounded_proactive_follow_up_posture_ready();
     let _ = Stage30RecoveryThreadPresenceWorkAuthority::thread_presence_continuity_ready();
     let _ =
-        Stage30RecoveryThreadPresenceWorkAuthority::return_check_reopen_continuity_reference_ready();
+        Stage30RecoveryThreadPresenceWorkAuthority::return_check_reopen_continuity_reference_ready(
+        );
     let _ =
         Stage30RecoveryThreadPresenceWorkAuthority::session_posture_continuity_reference_ready();
     let _ =
@@ -32909,8 +33028,7 @@ const _: fn() = stage30_recovery_thread_presence_symbol_anchor;
 mod stage31_reason_codes {
     pub const NOTIFICATION_DISCLOSURE_BOUNDARY_READY: &str =
         "STAGE31_NOTIFICATION_DISCLOSURE_BOUNDARY_READY";
-    pub const REMINDER_ESCALATION_TRUTH_READY: &str =
-        "STAGE31_REMINDER_ESCALATION_TRUTH_READY";
+    pub const REMINDER_ESCALATION_TRUTH_READY: &str = "STAGE31_REMINDER_ESCALATION_TRUTH_READY";
     pub const GOVERNED_WAKE_REENTRY_CONTINUITY_READY: &str =
         "STAGE31_GOVERNED_WAKE_REENTRY_CONTINUITY_READY";
     pub const NOTIFICATION_VISIBILITY_POSTURE_REFERENCE_READY: &str =
@@ -32924,8 +33042,7 @@ mod stage31_reason_codes {
     pub const NOTIFICATION_AUTHORITY_BLOCKED: &str = "STAGE31_NOTIFICATION_AUTHORITY_BLOCKED";
     pub const NATIVE_WAKE_REENTRY_HANDOFF_BLOCKED: &str =
         "STAGE31_NATIVE_WAKE_REENTRY_HANDOFF_BLOCKED";
-    pub const PUBLIC_PROTECTED_BOUNDARY_BLOCKED: &str =
-        "STAGE31_PUBLIC_PROTECTED_BOUNDARY_BLOCKED";
+    pub const PUBLIC_PROTECTED_BOUNDARY_BLOCKED: &str = "STAGE31_PUBLIC_PROTECTED_BOUNDARY_BLOCKED";
     pub const STALE_NOTIFICATION_BLOCKED: &str = "STAGE31_STALE_NOTIFICATION_BLOCKED";
     pub const UNSAFE_INPUT_BLOCKED: &str = "STAGE31_UNSAFE_INPUT_BLOCKED";
     pub const RUNTIME_MOCK_BLOCKED: &str = "STAGE31_RUNTIME_MOCK_BLOCKED";
@@ -33723,24 +33840,32 @@ impl Stage31NotificationWakeReentryPacket {
         if input.stage12_gate_ref_present && stage12_gate.is_none() {
             return Err(ContractViolation::InvalidValue {
                 field: "stage31_notification_wake_reentry_packet.stage12_gate",
-                reason: "present Stage 12 continuity reference requires the canonical Stage 12 packet",
+                reason:
+                    "present Stage 12 continuity reference requires the canonical Stage 12 packet",
             });
         }
         if input.stage19_notification_ref_present && attention_output.is_none() {
             return Err(ContractViolation::InvalidValue {
                 field: "stage31_notification_wake_reentry_packet.stage19_notification",
-                reason: "present Stage 19 continuity reference requires the canonical Stage 19 packet",
+                reason:
+                    "present Stage 19 continuity reference requires the canonical Stage 19 packet",
             });
         }
         if input.stage30_recovery_ref_present && recovery_output.is_none() {
             return Err(ContractViolation::InvalidValue {
                 field: "stage31_notification_wake_reentry_packet.stage30_recovery",
-                reason: "present Stage 30 continuity reference requires the canonical Stage 30 packet",
+                reason:
+                    "present Stage 30 continuity reference requires the canonical Stage 30 packet",
             });
         }
 
-        let disposition =
-            Self::decide_disposition(route, stage12_gate, attention_output, recovery_output, &input);
+        let disposition = Self::decide_disposition(
+            route,
+            stage12_gate,
+            attention_output,
+            recovery_output,
+            &input,
+        );
         let work_authority = Self::work_authority_for(disposition);
         let audit_id = input
             .audit_id
@@ -33773,39 +33898,36 @@ impl Stage31NotificationWakeReentryPacket {
             action_graph_id: recovery_output.and_then(|packet| packet.action_graph_id.clone()),
             tool_invocation_stage_id: recovery_output
                 .and_then(|packet| packet.tool_invocation_stage_id.clone()),
-            execution_plan_ref: recovery_output.and_then(|packet| packet.execution_plan_ref.clone()),
+            execution_plan_ref: recovery_output
+                .and_then(|packet| packet.execution_plan_ref.clone()),
             connector_execution_id: recovery_output
                 .and_then(|packet| packet.connector_execution_id.clone()),
             protected_gate_id: recovery_output.and_then(|packet| packet.protected_gate_id.clone()),
             settlement_id: recovery_output.and_then(|packet| packet.settlement_id.clone()),
-            mutation_commit_id: recovery_output.and_then(|packet| packet.mutation_commit_id.clone()),
+            mutation_commit_id: recovery_output
+                .and_then(|packet| packet.mutation_commit_id.clone()),
             reconciliation_id: recovery_output.and_then(|packet| packet.reconciliation_id.clone()),
             publication_id: recovery_output.and_then(|packet| packet.publication_id.clone()),
             state_sync_id: recovery_output.and_then(|packet| packet.state_sync_id.clone()),
-            completion_disclosure_id: input
-                .completion_disclosure_id
-                .clone()
-                .or_else(|| recovery_output.and_then(|packet| packet.completion_disclosure_id.clone())),
-            output_interaction_id: input
-                .output_interaction_id
-                .clone()
-                .or_else(|| recovery_output.and_then(|packet| packet.output_interaction_id.clone())),
+            completion_disclosure_id: input.completion_disclosure_id.clone().or_else(|| {
+                recovery_output.and_then(|packet| packet.completion_disclosure_id.clone())
+            }),
+            output_interaction_id: input.output_interaction_id.clone().or_else(|| {
+                recovery_output.and_then(|packet| packet.output_interaction_id.clone())
+            }),
             speech_output_id: input
                 .speech_output_id
                 .clone()
                 .or_else(|| recovery_output.and_then(|packet| packet.speech_output_id.clone())),
-            conversation_continuity_id: input
-                .conversation_continuity_id
-                .clone()
-                .or_else(|| recovery_output.and_then(|packet| packet.conversation_continuity_id.clone())),
-            interaction_boundary_id: input
-                .interaction_boundary_id
-                .clone()
-                .or_else(|| recovery_output.and_then(|packet| packet.interaction_boundary_id.clone())),
-            recovery_continuity_id: input
-                .recovery_continuity_id
-                .clone()
-                .or_else(|| recovery_output.and_then(|packet| packet.recovery_continuity_id.clone())),
+            conversation_continuity_id: input.conversation_continuity_id.clone().or_else(|| {
+                recovery_output.and_then(|packet| packet.conversation_continuity_id.clone())
+            }),
+            interaction_boundary_id: input.interaction_boundary_id.clone().or_else(|| {
+                recovery_output.and_then(|packet| packet.interaction_boundary_id.clone())
+            }),
+            recovery_continuity_id: input.recovery_continuity_id.clone().or_else(|| {
+                recovery_output.and_then(|packet| packet.recovery_continuity_id.clone())
+            }),
             follow_up_posture_id: input
                 .follow_up_posture_id
                 .clone()
@@ -33902,18 +34024,28 @@ impl Stage31NotificationWakeReentryPacket {
             || !recovery_output.is_some_and(|packet| packet.disposition.is_ready())
             || !input.stage8_output_interaction_ref_present
             || !input.stage8_output_interaction_ref_non_authoritative
-            || recovery_output.and_then(|packet| packet.stage8f_disposition).is_none()
+            || recovery_output
+                .and_then(|packet| packet.stage8f_disposition)
+                .is_none()
             || !input.stage17_speech_output_ref_present
             || !input.stage17_speech_output_ref_non_authoritative
-            || recovery_output.and_then(|packet| packet.stage17_disposition).is_none()
+            || recovery_output
+                .and_then(|packet| packet.stage17_disposition)
+                .is_none()
         {
             return Stage31NotificationWakeReentryDisposition::StageInputBlocked;
         }
         if input.audit_id.is_none()
             && route.audit_id.is_none()
-            && stage12_gate.and_then(|packet| packet.audit_id.clone()).is_none()
-            && attention_output.and_then(|packet| packet.audit_id.clone()).is_none()
-            && recovery_output.and_then(|packet| packet.audit_id.clone()).is_none()
+            && stage12_gate
+                .and_then(|packet| packet.audit_id.clone())
+                .is_none()
+            && attention_output
+                .and_then(|packet| packet.audit_id.clone())
+                .is_none()
+            && recovery_output
+                .and_then(|packet| packet.audit_id.clone())
+                .is_none()
         {
             return Stage31NotificationWakeReentryDisposition::AuditProofMissing;
         }
@@ -34308,8 +34440,7 @@ impl Validate for Stage31NotificationWakeReentryPacket {
                 reason: "Stage 31A cannot invent notification authority, connector-write, approve, dispatch, execute, create turns, or treat visible readiness as action success",
             });
         }
-        if self.disposition.is_ready()
-            && (self.audit_id.is_none() || self.ph1j_proof_ref.is_none())
+        if self.disposition.is_ready() && (self.audit_id.is_none() || self.ph1j_proof_ref.is_none())
         {
             return Err(ContractViolation::InvalidValue {
                 field: "stage31_notification_wake_reentry_packet.audit_proof",
@@ -34331,11 +34462,9 @@ pub fn stage31_notification_wake_reentry_symbol_anchor() {
     let _ = disposition.default_reason_code();
     let _ = disposition.is_ready();
     let _ = Stage31NotificationWakeReentryWorkAuthority::fail_closed().can_mutate_or_execute();
-    let _ =
-        Stage31NotificationWakeReentryWorkAuthority::notification_disclosure_boundary_ready();
+    let _ = Stage31NotificationWakeReentryWorkAuthority::notification_disclosure_boundary_ready();
     let _ = Stage31NotificationWakeReentryWorkAuthority::reminder_escalation_truth_ready();
-    let _ =
-        Stage31NotificationWakeReentryWorkAuthority::governed_wake_reentry_continuity_ready();
+    let _ = Stage31NotificationWakeReentryWorkAuthority::governed_wake_reentry_continuity_ready();
     let _ = Stage31NotificationWakeReentryWorkAuthority::notification_visibility_posture_reference_ready();
     let _ = Stage31NotificationWakeReentryWorkAuthority::reminder_delivery_session_context_continuity_reference_ready();
     let _ = Stage31NotificationWakeReentryWorkAuthority::work_lease_route_protected_gate_recovery_proof_reference_ready();
@@ -34356,8 +34485,7 @@ const _: fn() = stage31_notification_wake_reentry_symbol_anchor;
 
 mod stage32_reason_codes {
     pub const TRUST_CALIBRATION_READY: &str = "STAGE32_TRUST_CALIBRATION_READY";
-    pub const EXPECTATION_SETTING_POSTURE_READY: &str =
-        "STAGE32_EXPECTATION_SETTING_POSTURE_READY";
+    pub const EXPECTATION_SETTING_POSTURE_READY: &str = "STAGE32_EXPECTATION_SETTING_POSTURE_READY";
     pub const RESIDUAL_ASSISTANCE_BOUNDARY_READY: &str =
         "STAGE32_RESIDUAL_ASSISTANCE_BOUNDARY_READY";
     pub const UNCERTAINTY_CONFIDENCE_POSTURE_REFERENCE_READY: &str =
@@ -34371,8 +34499,7 @@ mod stage32_reason_codes {
     pub const TRUST_AUTHORITY_BLOCKED: &str = "STAGE32_TRUST_AUTHORITY_BLOCKED";
     pub const NATIVE_RESIDUAL_ASSISTANCE_HANDOFF_BLOCKED: &str =
         "STAGE32_NATIVE_RESIDUAL_ASSISTANCE_HANDOFF_BLOCKED";
-    pub const PUBLIC_PROTECTED_BOUNDARY_BLOCKED: &str =
-        "STAGE32_PUBLIC_PROTECTED_BOUNDARY_BLOCKED";
+    pub const PUBLIC_PROTECTED_BOUNDARY_BLOCKED: &str = "STAGE32_PUBLIC_PROTECTED_BOUNDARY_BLOCKED";
     pub const STALE_TRUST_BLOCKED: &str = "STAGE32_STALE_TRUST_BLOCKED";
     pub const UNSAFE_INPUT_BLOCKED: &str = "STAGE32_UNSAFE_INPUT_BLOCKED";
     pub const RUNTIME_MOCK_BLOCKED: &str = "STAGE32_RUNTIME_MOCK_BLOCKED";
@@ -34732,10 +34859,7 @@ pub struct Stage32TrustCalibrationInput {
 
 impl Stage32TrustCalibrationInput {
     #[cfg(test)]
-    fn fixture_base(
-        trust_kind: Stage32TrustCalibrationKind,
-        audit_id: impl Into<String>,
-    ) -> Self {
+    fn fixture_base(trust_kind: Stage32TrustCalibrationKind, audit_id: impl Into<String>) -> Self {
         Self {
             trust_kind,
             output_interaction_id: Some("output-interaction-stage32".to_string()),
@@ -34805,7 +34929,8 @@ impl Stage32TrustCalibrationInput {
             trust_invented_attachment_citation_url_date_or_provenance: false,
             trust_invented_provider_or_tool_result: false,
             trust_claimed_unproven_completion: false,
-            trust_implied_approval_dispatch_execution_delivery_wake_or_completion_without_proof: false,
+            trust_implied_approval_dispatch_execution_delivery_wake_or_completion_without_proof:
+                false,
             secret_safe: true,
             redacted: true,
             stale_aware: true,
@@ -34912,12 +35037,18 @@ impl Stage32TrustCalibrationInput {
 
     #[cfg(test)]
     fn fixture_expectation_setting_posture_ready(audit_id: impl Into<String>) -> Self {
-        Self::fixture_base(Stage32TrustCalibrationKind::ExpectationSettingPosture, audit_id)
+        Self::fixture_base(
+            Stage32TrustCalibrationKind::ExpectationSettingPosture,
+            audit_id,
+        )
     }
 
     #[cfg(test)]
     fn fixture_residual_assistance_boundary_ready(audit_id: impl Into<String>) -> Self {
-        Self::fixture_base(Stage32TrustCalibrationKind::ResidualAssistanceBoundary, audit_id)
+        Self::fixture_base(
+            Stage32TrustCalibrationKind::ResidualAssistanceBoundary,
+            audit_id,
+        )
     }
 
     #[cfg(test)]
@@ -35152,17 +35283,20 @@ impl Stage32TrustCalibrationPacket {
         if input.stage12_gate_ref_present && stage12_gate.is_none() {
             return Err(ContractViolation::InvalidValue {
                 field: "stage32_trust_calibration_packet.stage12_gate",
-                reason: "present Stage 12 continuity reference requires the canonical Stage 12 packet",
+                reason:
+                    "present Stage 12 continuity reference requires the canonical Stage 12 packet",
             });
         }
         if input.stage31_notification_ref_present && notification_output.is_none() {
             return Err(ContractViolation::InvalidValue {
                 field: "stage32_trust_calibration_packet.stage31_notification",
-                reason: "present Stage 31 continuity reference requires the canonical Stage 31 packet",
+                reason:
+                    "present Stage 31 continuity reference requires the canonical Stage 31 packet",
             });
         }
 
-        let disposition = Self::decide_disposition(route, stage12_gate, notification_output, &input);
+        let disposition =
+            Self::decide_disposition(route, stage12_gate, notification_output, &input);
         let work_authority = Self::work_authority_for(disposition);
         let audit_id = input
             .audit_id
@@ -35210,46 +35344,37 @@ impl Stage32TrustCalibrationPacket {
             state_sync_id: notification_output.and_then(|packet| packet.state_sync_id.clone()),
             completion_disclosure_id: notification_output
                 .and_then(|packet| packet.completion_disclosure_id.clone()),
-            output_interaction_id: input
-                .output_interaction_id
-                .clone()
-                .or_else(|| notification_output.and_then(|packet| packet.output_interaction_id.clone())),
+            output_interaction_id: input.output_interaction_id.clone().or_else(|| {
+                notification_output.and_then(|packet| packet.output_interaction_id.clone())
+            }),
             speech_output_id: input
                 .speech_output_id
                 .clone()
                 .or_else(|| notification_output.and_then(|packet| packet.speech_output_id.clone())),
-            conversation_continuity_id: input
-                .conversation_continuity_id
-                .clone()
-                .or_else(|| notification_output.and_then(|packet| packet.conversation_continuity_id.clone())),
-            interaction_boundary_id: input
-                .interaction_boundary_id
-                .clone()
-                .or_else(|| notification_output.and_then(|packet| packet.interaction_boundary_id.clone())),
-            recovery_continuity_id: input
-                .recovery_continuity_id
-                .clone()
-                .or_else(|| notification_output.and_then(|packet| packet.recovery_continuity_id.clone())),
-            follow_up_posture_id: input
-                .follow_up_posture_id
-                .clone()
-                .or_else(|| notification_output.and_then(|packet| packet.follow_up_posture_id.clone())),
-            thread_presence_id: input
-                .thread_presence_id
-                .clone()
-                .or_else(|| notification_output.and_then(|packet| packet.thread_presence_id.clone())),
-            notification_disclosure_id: input
-                .notification_disclosure_id
-                .clone()
-                .or_else(|| notification_output.and_then(|packet| packet.notification_disclosure_id.clone())),
-            reminder_truth_id: input
-                .reminder_truth_id
-                .clone()
-                .or_else(|| notification_output.and_then(|packet| packet.reminder_truth_id.clone())),
-            escalation_truth_id: input
-                .escalation_truth_id
-                .clone()
-                .or_else(|| notification_output.and_then(|packet| packet.escalation_truth_id.clone())),
+            conversation_continuity_id: input.conversation_continuity_id.clone().or_else(|| {
+                notification_output.and_then(|packet| packet.conversation_continuity_id.clone())
+            }),
+            interaction_boundary_id: input.interaction_boundary_id.clone().or_else(|| {
+                notification_output.and_then(|packet| packet.interaction_boundary_id.clone())
+            }),
+            recovery_continuity_id: input.recovery_continuity_id.clone().or_else(|| {
+                notification_output.and_then(|packet| packet.recovery_continuity_id.clone())
+            }),
+            follow_up_posture_id: input.follow_up_posture_id.clone().or_else(|| {
+                notification_output.and_then(|packet| packet.follow_up_posture_id.clone())
+            }),
+            thread_presence_id: input.thread_presence_id.clone().or_else(|| {
+                notification_output.and_then(|packet| packet.thread_presence_id.clone())
+            }),
+            notification_disclosure_id: input.notification_disclosure_id.clone().or_else(|| {
+                notification_output.and_then(|packet| packet.notification_disclosure_id.clone())
+            }),
+            reminder_truth_id: input.reminder_truth_id.clone().or_else(|| {
+                notification_output.and_then(|packet| packet.reminder_truth_id.clone())
+            }),
+            escalation_truth_id: input.escalation_truth_id.clone().or_else(|| {
+                notification_output.and_then(|packet| packet.escalation_truth_id.clone())
+            }),
             wake_reentry_id: input
                 .wake_reentry_id
                 .clone()
@@ -35266,8 +35391,7 @@ impl Stage32TrustCalibrationPacket {
             policy_context_id: notification_output
                 .and_then(|packet| packet.policy_context_id.clone())
                 .or_else(|| route.policy_context_id.clone()),
-            tenant_id: notification_output
-                .and_then(|packet| packet.tenant_id.clone()),
+            tenant_id: notification_output.and_then(|packet| packet.tenant_id.clone()),
             audit_id,
             ph1j_proof_ref,
             stage19_disposition: notification_output.and_then(|packet| packet.stage19_disposition),
@@ -35502,8 +35626,7 @@ impl Stage32TrustCalibrationPacket {
                     && input.ph1summary_ref_present
                     && input.ph1write_ref_present
                     && notification_output.is_some_and(|packet| {
-                        packet.wake_reentry_id.is_some()
-                            && packet.recovery_continuity_id.is_some()
+                        packet.wake_reentry_id.is_some() && packet.recovery_continuity_id.is_some()
                     })
                 {
                     Stage32TrustCalibrationDisposition::ResidualAssistanceBoundaryReady
@@ -35758,8 +35881,7 @@ impl Validate for Stage32TrustCalibrationPacket {
                 reason: "Stage 32A cannot invent trust authority, connector-write, approve, dispatch, execute, create turns, or treat visible reassurance as action success",
             });
         }
-        if self.disposition.is_ready()
-            && (self.audit_id.is_none() || self.ph1j_proof_ref.is_none())
+        if self.disposition.is_ready() && (self.audit_id.is_none() || self.ph1j_proof_ref.is_none())
         {
             return Err(ContractViolation::InvalidValue {
                 field: "stage32_trust_calibration_packet.audit_proof",
@@ -35784,10 +35906,10 @@ pub fn stage32_trust_calibration_symbol_anchor() {
     let _ = Stage32TrustCalibrationWorkAuthority::trust_calibration_ready();
     let _ = Stage32TrustCalibrationWorkAuthority::expectation_setting_posture_ready();
     let _ = Stage32TrustCalibrationWorkAuthority::residual_assistance_boundary_ready();
+    let _ = Stage32TrustCalibrationWorkAuthority::uncertainty_confidence_posture_reference_ready();
     let _ =
-        Stage32TrustCalibrationWorkAuthority::uncertainty_confidence_posture_reference_ready();
-    let _ =
-        Stage32TrustCalibrationWorkAuthority::notification_recovery_wake_continuity_reference_ready();
+        Stage32TrustCalibrationWorkAuthority::notification_recovery_wake_continuity_reference_ready(
+        );
     let _ = Stage32TrustCalibrationWorkAuthority::work_lease_route_protected_gate_publication_proof_reference_ready();
     let _ = core::mem::size_of::<Stage32TrustCalibrationInput>();
     let _ = core::mem::size_of::<Stage32TrustCalibrationPacket>();
@@ -35804,8 +35926,7 @@ pub fn stage32_trust_calibration_symbol_anchor() {
 const _: fn() = stage32_trust_calibration_symbol_anchor;
 
 mod stage33_reason_codes {
-    pub const RELATIONSHIP_MEMORY_FRAMING_READY: &str =
-        "STAGE33_RELATIONSHIP_MEMORY_FRAMING_READY";
+    pub const RELATIONSHIP_MEMORY_FRAMING_READY: &str = "STAGE33_RELATIONSHIP_MEMORY_FRAMING_READY";
     pub const USER_FACING_CONTINUITY_BOUNDARY_READY: &str =
         "STAGE33_USER_FACING_CONTINUITY_BOUNDARY_READY";
     pub const LONGER_HORIZON_INTERACTION_GOVERNANCE_READY: &str =
@@ -35821,8 +35942,7 @@ mod stage33_reason_codes {
     pub const RELATIONSHIP_AUTHORITY_BLOCKED: &str = "STAGE33_RELATIONSHIP_AUTHORITY_BLOCKED";
     pub const NATIVE_CONTINUITY_FRAMING_HANDOFF_BLOCKED: &str =
         "STAGE33_NATIVE_CONTINUITY_FRAMING_HANDOFF_BLOCKED";
-    pub const PUBLIC_PROTECTED_BOUNDARY_BLOCKED: &str =
-        "STAGE33_PUBLIC_PROTECTED_BOUNDARY_BLOCKED";
+    pub const PUBLIC_PROTECTED_BOUNDARY_BLOCKED: &str = "STAGE33_PUBLIC_PROTECTED_BOUNDARY_BLOCKED";
     pub const STALE_RELATIONSHIP_BLOCKED: &str = "STAGE33_STALE_RELATIONSHIP_BLOCKED";
     pub const UNSAFE_INPUT_BLOCKED: &str = "STAGE33_UNSAFE_INPUT_BLOCKED";
     pub const RUNTIME_MOCK_BLOCKED: &str = "STAGE33_RUNTIME_MOCK_BLOCKED";
@@ -36401,7 +36521,10 @@ impl Stage33RelationshipMemoryInput {
 
     #[cfg(test)]
     fn fixture_relationship_memory_framing_ready(audit_id: impl Into<String>) -> Self {
-        Self::fixture_base(Stage33RelationshipMemoryKind::RelationshipMemoryFraming, audit_id)
+        Self::fixture_base(
+            Stage33RelationshipMemoryKind::RelationshipMemoryFraming,
+            audit_id,
+        )
     }
 
     #[cfg(test)]
@@ -36413,9 +36536,7 @@ impl Stage33RelationshipMemoryInput {
     }
 
     #[cfg(test)]
-    fn fixture_longer_horizon_interaction_governance_ready(
-        audit_id: impl Into<String>,
-    ) -> Self {
+    fn fixture_longer_horizon_interaction_governance_ready(audit_id: impl Into<String>) -> Self {
         Self::fixture_base(
             Stage33RelationshipMemoryKind::LongerHorizonInteractionGovernance,
             audit_id,
@@ -36465,25 +36586,82 @@ impl Stage33RelationshipMemoryInput {
 impl Validate for Stage33RelationshipMemoryInput {
     fn validate(&self) -> Result<(), ContractViolation> {
         for (field, value) in [
-            ("stage33_relationship_memory_input.output_interaction_id", self.output_interaction_id.as_deref()),
-            ("stage33_relationship_memory_input.speech_output_id", self.speech_output_id.as_deref()),
-            ("stage33_relationship_memory_input.conversation_continuity_id", self.conversation_continuity_id.as_deref()),
-            ("stage33_relationship_memory_input.interaction_boundary_id", self.interaction_boundary_id.as_deref()),
-            ("stage33_relationship_memory_input.recovery_continuity_id", self.recovery_continuity_id.as_deref()),
-            ("stage33_relationship_memory_input.follow_up_posture_id", self.follow_up_posture_id.as_deref()),
-            ("stage33_relationship_memory_input.thread_presence_id", self.thread_presence_id.as_deref()),
-            ("stage33_relationship_memory_input.notification_disclosure_id", self.notification_disclosure_id.as_deref()),
-            ("stage33_relationship_memory_input.reminder_truth_id", self.reminder_truth_id.as_deref()),
-            ("stage33_relationship_memory_input.escalation_truth_id", self.escalation_truth_id.as_deref()),
-            ("stage33_relationship_memory_input.wake_reentry_id", self.wake_reentry_id.as_deref()),
-            ("stage33_relationship_memory_input.trust_calibration_id", self.trust_calibration_id.as_deref()),
-            ("stage33_relationship_memory_input.expectation_posture_id", self.expectation_posture_id.as_deref()),
-            ("stage33_relationship_memory_input.residual_assistance_id", self.residual_assistance_id.as_deref()),
-            ("stage33_relationship_memory_input.relationship_memory_id", self.relationship_memory_id.as_deref()),
-            ("stage33_relationship_memory_input.continuity_framing_id", self.continuity_framing_id.as_deref()),
-            ("stage33_relationship_memory_input.longer_horizon_governance_id", self.longer_horizon_governance_id.as_deref()),
-            ("stage33_relationship_memory_input.audit_id", self.audit_id.as_deref()),
-            ("stage33_relationship_memory_input.ph1j_proof_ref", self.ph1j_proof_ref.as_deref()),
+            (
+                "stage33_relationship_memory_input.output_interaction_id",
+                self.output_interaction_id.as_deref(),
+            ),
+            (
+                "stage33_relationship_memory_input.speech_output_id",
+                self.speech_output_id.as_deref(),
+            ),
+            (
+                "stage33_relationship_memory_input.conversation_continuity_id",
+                self.conversation_continuity_id.as_deref(),
+            ),
+            (
+                "stage33_relationship_memory_input.interaction_boundary_id",
+                self.interaction_boundary_id.as_deref(),
+            ),
+            (
+                "stage33_relationship_memory_input.recovery_continuity_id",
+                self.recovery_continuity_id.as_deref(),
+            ),
+            (
+                "stage33_relationship_memory_input.follow_up_posture_id",
+                self.follow_up_posture_id.as_deref(),
+            ),
+            (
+                "stage33_relationship_memory_input.thread_presence_id",
+                self.thread_presence_id.as_deref(),
+            ),
+            (
+                "stage33_relationship_memory_input.notification_disclosure_id",
+                self.notification_disclosure_id.as_deref(),
+            ),
+            (
+                "stage33_relationship_memory_input.reminder_truth_id",
+                self.reminder_truth_id.as_deref(),
+            ),
+            (
+                "stage33_relationship_memory_input.escalation_truth_id",
+                self.escalation_truth_id.as_deref(),
+            ),
+            (
+                "stage33_relationship_memory_input.wake_reentry_id",
+                self.wake_reentry_id.as_deref(),
+            ),
+            (
+                "stage33_relationship_memory_input.trust_calibration_id",
+                self.trust_calibration_id.as_deref(),
+            ),
+            (
+                "stage33_relationship_memory_input.expectation_posture_id",
+                self.expectation_posture_id.as_deref(),
+            ),
+            (
+                "stage33_relationship_memory_input.residual_assistance_id",
+                self.residual_assistance_id.as_deref(),
+            ),
+            (
+                "stage33_relationship_memory_input.relationship_memory_id",
+                self.relationship_memory_id.as_deref(),
+            ),
+            (
+                "stage33_relationship_memory_input.continuity_framing_id",
+                self.continuity_framing_id.as_deref(),
+            ),
+            (
+                "stage33_relationship_memory_input.longer_horizon_governance_id",
+                self.longer_horizon_governance_id.as_deref(),
+            ),
+            (
+                "stage33_relationship_memory_input.audit_id",
+                self.audit_id.as_deref(),
+            ),
+            (
+                "stage33_relationship_memory_input.ph1j_proof_ref",
+                self.ph1j_proof_ref.as_deref(),
+            ),
         ] {
             validate_stage4_optional_ref(field, value)?;
         }
@@ -36616,13 +36794,15 @@ impl Stage33RelationshipMemoryPacket {
         if input.stage12_gate_ref_present && stage12_gate.is_none() {
             return Err(ContractViolation::InvalidValue {
                 field: "stage33_relationship_memory_packet.stage12_gate",
-                reason: "present Stage 12 continuity reference requires the canonical Stage 12 packet",
+                reason:
+                    "present Stage 12 continuity reference requires the canonical Stage 12 packet",
             });
         }
         if input.stage32_trust_ref_present && trust_output.is_none() {
             return Err(ContractViolation::InvalidValue {
                 field: "stage33_relationship_memory_packet.stage32_trust",
-                reason: "present Stage 32 continuity reference requires the canonical Stage 32 packet",
+                reason:
+                    "present Stage 32 continuity reference requires the canonical Stage 32 packet",
             });
         }
 
@@ -36640,77 +36820,122 @@ impl Stage33RelationshipMemoryPacket {
             .or_else(|| trust_output.and_then(|packet| packet.ph1j_proof_ref.clone()))
             .or_else(|| audit_id.clone());
 
-        let packet = Self {
-            session_id: route.session_id,
-            turn_id: route.turn_id,
-            activation_id: trust_output.and_then(|packet| packet.activation_id.clone()),
-            continuity_packet_id: trust_output.and_then(|packet| packet.continuity_packet_id.clone()),
-            automation_candidate_id: trust_output.and_then(|packet| packet.automation_candidate_id.clone()),
-            connector_action_stage_id: trust_output.and_then(|packet| packet.connector_action_stage_id.clone()),
-            memory_candidate_id: trust_output.and_then(|packet| packet.memory_candidate_id.clone()),
-            capture_session_id: trust_output.and_then(|packet| packet.capture_session_id.clone()),
-            orchestration_stage_id: trust_output.and_then(|packet| packet.orchestration_stage_id.clone()),
-            action_graph_id: trust_output.and_then(|packet| packet.action_graph_id.clone()),
-            tool_invocation_stage_id: trust_output.and_then(|packet| packet.tool_invocation_stage_id.clone()),
-            execution_plan_ref: trust_output.and_then(|packet| packet.execution_plan_ref.clone()),
-            connector_execution_id: trust_output.and_then(|packet| packet.connector_execution_id.clone()),
-            protected_gate_id: trust_output.and_then(|packet| packet.protected_gate_id.clone()),
-            settlement_id: trust_output.and_then(|packet| packet.settlement_id.clone()),
-            mutation_commit_id: trust_output.and_then(|packet| packet.mutation_commit_id.clone()),
-            reconciliation_id: trust_output.and_then(|packet| packet.reconciliation_id.clone()),
-            publication_id: trust_output.and_then(|packet| packet.publication_id.clone()),
-            state_sync_id: trust_output.and_then(|packet| packet.state_sync_id.clone()),
-            completion_disclosure_id: trust_output.and_then(|packet| packet.completion_disclosure_id.clone()),
-            output_interaction_id: input.output_interaction_id.clone().or_else(|| trust_output.and_then(|packet| packet.output_interaction_id.clone())),
-            speech_output_id: input.speech_output_id.clone().or_else(|| trust_output.and_then(|packet| packet.speech_output_id.clone())),
-            conversation_continuity_id: input.conversation_continuity_id.clone().or_else(|| trust_output.and_then(|packet| packet.conversation_continuity_id.clone())),
-            interaction_boundary_id: input.interaction_boundary_id.clone().or_else(|| trust_output.and_then(|packet| packet.interaction_boundary_id.clone())),
-            recovery_continuity_id: input.recovery_continuity_id.clone().or_else(|| trust_output.and_then(|packet| packet.recovery_continuity_id.clone())),
-            follow_up_posture_id: input.follow_up_posture_id.clone().or_else(|| trust_output.and_then(|packet| packet.follow_up_posture_id.clone())),
-            thread_presence_id: input.thread_presence_id.clone().or_else(|| trust_output.and_then(|packet| packet.thread_presence_id.clone())),
-            notification_disclosure_id: input.notification_disclosure_id.clone().or_else(|| trust_output.and_then(|packet| packet.notification_disclosure_id.clone())),
-            reminder_truth_id: input.reminder_truth_id.clone().or_else(|| trust_output.and_then(|packet| packet.reminder_truth_id.clone())),
-            escalation_truth_id: input.escalation_truth_id.clone().or_else(|| trust_output.and_then(|packet| packet.escalation_truth_id.clone())),
-            wake_reentry_id: input.wake_reentry_id.clone().or_else(|| trust_output.and_then(|packet| packet.wake_reentry_id.clone())),
-            trust_calibration_id: input.trust_calibration_id.clone().or_else(|| trust_output.and_then(|packet| packet.trust_calibration_id.clone())),
-            expectation_posture_id: input.expectation_posture_id.clone().or_else(|| trust_output.and_then(|packet| packet.expectation_posture_id.clone())),
-            residual_assistance_id: input.residual_assistance_id.clone().or_else(|| trust_output.and_then(|packet| packet.residual_assistance_id.clone())),
-            relationship_memory_id: input.relationship_memory_id.clone(),
-            continuity_framing_id: input.continuity_framing_id.clone(),
-            longer_horizon_governance_id: input.longer_horizon_governance_id.clone(),
-            work_id: trust_output.and_then(|packet| packet.work_id.clone()),
-            lease_id: trust_output.and_then(|packet| packet.lease_id.clone()),
-            device_id: trust_output.and_then(|packet| packet.device_id.clone()),
-            access_context_id: trust_output
-                .and_then(|packet| packet.access_context_id.clone())
-                .or_else(|| route.access_context_id.clone()),
-            policy_context_id: trust_output
-                .and_then(|packet| packet.policy_context_id.clone())
-                .or_else(|| route.policy_context_id.clone()),
-            tenant_id: trust_output.and_then(|packet| packet.tenant_id.clone()),
-            audit_id,
-            ph1j_proof_ref,
-            stage19_disposition: trust_output.and_then(|packet| packet.stage19_disposition),
-            stage30_disposition: trust_output.and_then(|packet| packet.stage30_disposition),
-            stage31_disposition: trust_output.and_then(|packet| packet.stage31_disposition),
-            stage32_disposition: trust_output.map(|packet| packet.disposition),
-            relationship_kind: input.relationship_kind,
-            disposition,
-            reason_code: disposition.default_reason_code(),
-            stage8_ref_non_authoritative: input.stage8_output_interaction_ref_non_authoritative,
-            stage16_ref_non_authoritative: input.stage16_long_term_state_ref_non_authoritative,
-            stage17_ref_non_authoritative: input.stage17_speech_output_ref_non_authoritative,
-            stage19_ref_non_authoritative: input.stage19_notification_ref_non_authoritative,
-            stage30_ref_non_authoritative: input.stage30_recovery_ref_non_authoritative,
-            stage31_ref_non_authoritative: input.stage31_notification_ref_non_authoritative,
-            stage32_ref_non_authoritative: input.stage32_trust_ref_non_authoritative,
-            ph1voiceid_ref_non_authoritative: input.ph1voiceid_ref_non_authoritative,
-            ph1explain_ref_non_authoritative: input.ph1explain_ref_non_authoritative,
-            ph1write_ref_non_authoritative: input.ph1write_ref_non_authoritative,
-            ph1summary_ref_non_authoritative: input.ph1summary_ref_non_authoritative,
-            stage12_ref_bounded_authority_context: input.stage12_gate_bounded_authority_context,
-            work_authority,
-        };
+        let packet =
+            Self {
+                session_id: route.session_id,
+                turn_id: route.turn_id,
+                activation_id: trust_output.and_then(|packet| packet.activation_id.clone()),
+                continuity_packet_id: trust_output
+                    .and_then(|packet| packet.continuity_packet_id.clone()),
+                automation_candidate_id: trust_output
+                    .and_then(|packet| packet.automation_candidate_id.clone()),
+                connector_action_stage_id: trust_output
+                    .and_then(|packet| packet.connector_action_stage_id.clone()),
+                memory_candidate_id: trust_output
+                    .and_then(|packet| packet.memory_candidate_id.clone()),
+                capture_session_id: trust_output
+                    .and_then(|packet| packet.capture_session_id.clone()),
+                orchestration_stage_id: trust_output
+                    .and_then(|packet| packet.orchestration_stage_id.clone()),
+                action_graph_id: trust_output.and_then(|packet| packet.action_graph_id.clone()),
+                tool_invocation_stage_id: trust_output
+                    .and_then(|packet| packet.tool_invocation_stage_id.clone()),
+                execution_plan_ref: trust_output
+                    .and_then(|packet| packet.execution_plan_ref.clone()),
+                connector_execution_id: trust_output
+                    .and_then(|packet| packet.connector_execution_id.clone()),
+                protected_gate_id: trust_output.and_then(|packet| packet.protected_gate_id.clone()),
+                settlement_id: trust_output.and_then(|packet| packet.settlement_id.clone()),
+                mutation_commit_id: trust_output
+                    .and_then(|packet| packet.mutation_commit_id.clone()),
+                reconciliation_id: trust_output.and_then(|packet| packet.reconciliation_id.clone()),
+                publication_id: trust_output.and_then(|packet| packet.publication_id.clone()),
+                state_sync_id: trust_output.and_then(|packet| packet.state_sync_id.clone()),
+                completion_disclosure_id: trust_output
+                    .and_then(|packet| packet.completion_disclosure_id.clone()),
+                output_interaction_id: input.output_interaction_id.clone().or_else(|| {
+                    trust_output.and_then(|packet| packet.output_interaction_id.clone())
+                }),
+                speech_output_id: input
+                    .speech_output_id
+                    .clone()
+                    .or_else(|| trust_output.and_then(|packet| packet.speech_output_id.clone())),
+                conversation_continuity_id: input.conversation_continuity_id.clone().or_else(
+                    || trust_output.and_then(|packet| packet.conversation_continuity_id.clone()),
+                ),
+                interaction_boundary_id: input.interaction_boundary_id.clone().or_else(|| {
+                    trust_output.and_then(|packet| packet.interaction_boundary_id.clone())
+                }),
+                recovery_continuity_id: input.recovery_continuity_id.clone().or_else(|| {
+                    trust_output.and_then(|packet| packet.recovery_continuity_id.clone())
+                }),
+                follow_up_posture_id: input.follow_up_posture_id.clone().or_else(|| {
+                    trust_output.and_then(|packet| packet.follow_up_posture_id.clone())
+                }),
+                thread_presence_id: input
+                    .thread_presence_id
+                    .clone()
+                    .or_else(|| trust_output.and_then(|packet| packet.thread_presence_id.clone())),
+                notification_disclosure_id: input.notification_disclosure_id.clone().or_else(
+                    || trust_output.and_then(|packet| packet.notification_disclosure_id.clone()),
+                ),
+                reminder_truth_id: input
+                    .reminder_truth_id
+                    .clone()
+                    .or_else(|| trust_output.and_then(|packet| packet.reminder_truth_id.clone())),
+                escalation_truth_id: input
+                    .escalation_truth_id
+                    .clone()
+                    .or_else(|| trust_output.and_then(|packet| packet.escalation_truth_id.clone())),
+                wake_reentry_id: input
+                    .wake_reentry_id
+                    .clone()
+                    .or_else(|| trust_output.and_then(|packet| packet.wake_reentry_id.clone())),
+                trust_calibration_id: input.trust_calibration_id.clone().or_else(|| {
+                    trust_output.and_then(|packet| packet.trust_calibration_id.clone())
+                }),
+                expectation_posture_id: input.expectation_posture_id.clone().or_else(|| {
+                    trust_output.and_then(|packet| packet.expectation_posture_id.clone())
+                }),
+                residual_assistance_id: input.residual_assistance_id.clone().or_else(|| {
+                    trust_output.and_then(|packet| packet.residual_assistance_id.clone())
+                }),
+                relationship_memory_id: input.relationship_memory_id.clone(),
+                continuity_framing_id: input.continuity_framing_id.clone(),
+                longer_horizon_governance_id: input.longer_horizon_governance_id.clone(),
+                work_id: trust_output.and_then(|packet| packet.work_id.clone()),
+                lease_id: trust_output.and_then(|packet| packet.lease_id.clone()),
+                device_id: trust_output.and_then(|packet| packet.device_id.clone()),
+                access_context_id: trust_output
+                    .and_then(|packet| packet.access_context_id.clone())
+                    .or_else(|| route.access_context_id.clone()),
+                policy_context_id: trust_output
+                    .and_then(|packet| packet.policy_context_id.clone())
+                    .or_else(|| route.policy_context_id.clone()),
+                tenant_id: trust_output.and_then(|packet| packet.tenant_id.clone()),
+                audit_id,
+                ph1j_proof_ref,
+                stage19_disposition: trust_output.and_then(|packet| packet.stage19_disposition),
+                stage30_disposition: trust_output.and_then(|packet| packet.stage30_disposition),
+                stage31_disposition: trust_output.and_then(|packet| packet.stage31_disposition),
+                stage32_disposition: trust_output.map(|packet| packet.disposition),
+                relationship_kind: input.relationship_kind,
+                disposition,
+                reason_code: disposition.default_reason_code(),
+                stage8_ref_non_authoritative: input.stage8_output_interaction_ref_non_authoritative,
+                stage16_ref_non_authoritative: input.stage16_long_term_state_ref_non_authoritative,
+                stage17_ref_non_authoritative: input.stage17_speech_output_ref_non_authoritative,
+                stage19_ref_non_authoritative: input.stage19_notification_ref_non_authoritative,
+                stage30_ref_non_authoritative: input.stage30_recovery_ref_non_authoritative,
+                stage31_ref_non_authoritative: input.stage31_notification_ref_non_authoritative,
+                stage32_ref_non_authoritative: input.stage32_trust_ref_non_authoritative,
+                ph1voiceid_ref_non_authoritative: input.ph1voiceid_ref_non_authoritative,
+                ph1explain_ref_non_authoritative: input.ph1explain_ref_non_authoritative,
+                ph1write_ref_non_authoritative: input.ph1write_ref_non_authoritative,
+                ph1summary_ref_non_authoritative: input.ph1summary_ref_non_authoritative,
+                stage12_ref_bounded_authority_context: input.stage12_gate_bounded_authority_context,
+                work_authority,
+            };
         packet.validate()?;
         Ok(packet)
     }
@@ -37018,49 +37243,178 @@ impl Stage33RelationshipMemoryPacket {
 impl Validate for Stage33RelationshipMemoryPacket {
     fn validate(&self) -> Result<(), ContractViolation> {
         for (field, value) in [
-            ("stage33_relationship_memory_packet.activation_id", self.activation_id.as_deref()),
-            ("stage33_relationship_memory_packet.continuity_packet_id", self.continuity_packet_id.as_deref()),
-            ("stage33_relationship_memory_packet.automation_candidate_id", self.automation_candidate_id.as_deref()),
-            ("stage33_relationship_memory_packet.connector_action_stage_id", self.connector_action_stage_id.as_deref()),
-            ("stage33_relationship_memory_packet.memory_candidate_id", self.memory_candidate_id.as_deref()),
-            ("stage33_relationship_memory_packet.capture_session_id", self.capture_session_id.as_deref()),
-            ("stage33_relationship_memory_packet.orchestration_stage_id", self.orchestration_stage_id.as_deref()),
-            ("stage33_relationship_memory_packet.action_graph_id", self.action_graph_id.as_deref()),
-            ("stage33_relationship_memory_packet.tool_invocation_stage_id", self.tool_invocation_stage_id.as_deref()),
-            ("stage33_relationship_memory_packet.execution_plan_ref", self.execution_plan_ref.as_deref()),
-            ("stage33_relationship_memory_packet.connector_execution_id", self.connector_execution_id.as_deref()),
-            ("stage33_relationship_memory_packet.protected_gate_id", self.protected_gate_id.as_deref()),
-            ("stage33_relationship_memory_packet.settlement_id", self.settlement_id.as_deref()),
-            ("stage33_relationship_memory_packet.mutation_commit_id", self.mutation_commit_id.as_deref()),
-            ("stage33_relationship_memory_packet.reconciliation_id", self.reconciliation_id.as_deref()),
-            ("stage33_relationship_memory_packet.publication_id", self.publication_id.as_deref()),
-            ("stage33_relationship_memory_packet.state_sync_id", self.state_sync_id.as_deref()),
-            ("stage33_relationship_memory_packet.completion_disclosure_id", self.completion_disclosure_id.as_deref()),
-            ("stage33_relationship_memory_packet.output_interaction_id", self.output_interaction_id.as_deref()),
-            ("stage33_relationship_memory_packet.speech_output_id", self.speech_output_id.as_deref()),
-            ("stage33_relationship_memory_packet.conversation_continuity_id", self.conversation_continuity_id.as_deref()),
-            ("stage33_relationship_memory_packet.interaction_boundary_id", self.interaction_boundary_id.as_deref()),
-            ("stage33_relationship_memory_packet.recovery_continuity_id", self.recovery_continuity_id.as_deref()),
-            ("stage33_relationship_memory_packet.follow_up_posture_id", self.follow_up_posture_id.as_deref()),
-            ("stage33_relationship_memory_packet.thread_presence_id", self.thread_presence_id.as_deref()),
-            ("stage33_relationship_memory_packet.notification_disclosure_id", self.notification_disclosure_id.as_deref()),
-            ("stage33_relationship_memory_packet.reminder_truth_id", self.reminder_truth_id.as_deref()),
-            ("stage33_relationship_memory_packet.escalation_truth_id", self.escalation_truth_id.as_deref()),
-            ("stage33_relationship_memory_packet.wake_reentry_id", self.wake_reentry_id.as_deref()),
-            ("stage33_relationship_memory_packet.trust_calibration_id", self.trust_calibration_id.as_deref()),
-            ("stage33_relationship_memory_packet.expectation_posture_id", self.expectation_posture_id.as_deref()),
-            ("stage33_relationship_memory_packet.residual_assistance_id", self.residual_assistance_id.as_deref()),
-            ("stage33_relationship_memory_packet.relationship_memory_id", self.relationship_memory_id.as_deref()),
-            ("stage33_relationship_memory_packet.continuity_framing_id", self.continuity_framing_id.as_deref()),
-            ("stage33_relationship_memory_packet.longer_horizon_governance_id", self.longer_horizon_governance_id.as_deref()),
-            ("stage33_relationship_memory_packet.work_id", self.work_id.as_deref()),
-            ("stage33_relationship_memory_packet.lease_id", self.lease_id.as_deref()),
-            ("stage33_relationship_memory_packet.device_id", self.device_id.as_deref()),
-            ("stage33_relationship_memory_packet.access_context_id", self.access_context_id.as_deref()),
-            ("stage33_relationship_memory_packet.policy_context_id", self.policy_context_id.as_deref()),
-            ("stage33_relationship_memory_packet.tenant_id", self.tenant_id.as_deref()),
-            ("stage33_relationship_memory_packet.audit_id", self.audit_id.as_deref()),
-            ("stage33_relationship_memory_packet.ph1j_proof_ref", self.ph1j_proof_ref.as_deref()),
+            (
+                "stage33_relationship_memory_packet.activation_id",
+                self.activation_id.as_deref(),
+            ),
+            (
+                "stage33_relationship_memory_packet.continuity_packet_id",
+                self.continuity_packet_id.as_deref(),
+            ),
+            (
+                "stage33_relationship_memory_packet.automation_candidate_id",
+                self.automation_candidate_id.as_deref(),
+            ),
+            (
+                "stage33_relationship_memory_packet.connector_action_stage_id",
+                self.connector_action_stage_id.as_deref(),
+            ),
+            (
+                "stage33_relationship_memory_packet.memory_candidate_id",
+                self.memory_candidate_id.as_deref(),
+            ),
+            (
+                "stage33_relationship_memory_packet.capture_session_id",
+                self.capture_session_id.as_deref(),
+            ),
+            (
+                "stage33_relationship_memory_packet.orchestration_stage_id",
+                self.orchestration_stage_id.as_deref(),
+            ),
+            (
+                "stage33_relationship_memory_packet.action_graph_id",
+                self.action_graph_id.as_deref(),
+            ),
+            (
+                "stage33_relationship_memory_packet.tool_invocation_stage_id",
+                self.tool_invocation_stage_id.as_deref(),
+            ),
+            (
+                "stage33_relationship_memory_packet.execution_plan_ref",
+                self.execution_plan_ref.as_deref(),
+            ),
+            (
+                "stage33_relationship_memory_packet.connector_execution_id",
+                self.connector_execution_id.as_deref(),
+            ),
+            (
+                "stage33_relationship_memory_packet.protected_gate_id",
+                self.protected_gate_id.as_deref(),
+            ),
+            (
+                "stage33_relationship_memory_packet.settlement_id",
+                self.settlement_id.as_deref(),
+            ),
+            (
+                "stage33_relationship_memory_packet.mutation_commit_id",
+                self.mutation_commit_id.as_deref(),
+            ),
+            (
+                "stage33_relationship_memory_packet.reconciliation_id",
+                self.reconciliation_id.as_deref(),
+            ),
+            (
+                "stage33_relationship_memory_packet.publication_id",
+                self.publication_id.as_deref(),
+            ),
+            (
+                "stage33_relationship_memory_packet.state_sync_id",
+                self.state_sync_id.as_deref(),
+            ),
+            (
+                "stage33_relationship_memory_packet.completion_disclosure_id",
+                self.completion_disclosure_id.as_deref(),
+            ),
+            (
+                "stage33_relationship_memory_packet.output_interaction_id",
+                self.output_interaction_id.as_deref(),
+            ),
+            (
+                "stage33_relationship_memory_packet.speech_output_id",
+                self.speech_output_id.as_deref(),
+            ),
+            (
+                "stage33_relationship_memory_packet.conversation_continuity_id",
+                self.conversation_continuity_id.as_deref(),
+            ),
+            (
+                "stage33_relationship_memory_packet.interaction_boundary_id",
+                self.interaction_boundary_id.as_deref(),
+            ),
+            (
+                "stage33_relationship_memory_packet.recovery_continuity_id",
+                self.recovery_continuity_id.as_deref(),
+            ),
+            (
+                "stage33_relationship_memory_packet.follow_up_posture_id",
+                self.follow_up_posture_id.as_deref(),
+            ),
+            (
+                "stage33_relationship_memory_packet.thread_presence_id",
+                self.thread_presence_id.as_deref(),
+            ),
+            (
+                "stage33_relationship_memory_packet.notification_disclosure_id",
+                self.notification_disclosure_id.as_deref(),
+            ),
+            (
+                "stage33_relationship_memory_packet.reminder_truth_id",
+                self.reminder_truth_id.as_deref(),
+            ),
+            (
+                "stage33_relationship_memory_packet.escalation_truth_id",
+                self.escalation_truth_id.as_deref(),
+            ),
+            (
+                "stage33_relationship_memory_packet.wake_reentry_id",
+                self.wake_reentry_id.as_deref(),
+            ),
+            (
+                "stage33_relationship_memory_packet.trust_calibration_id",
+                self.trust_calibration_id.as_deref(),
+            ),
+            (
+                "stage33_relationship_memory_packet.expectation_posture_id",
+                self.expectation_posture_id.as_deref(),
+            ),
+            (
+                "stage33_relationship_memory_packet.residual_assistance_id",
+                self.residual_assistance_id.as_deref(),
+            ),
+            (
+                "stage33_relationship_memory_packet.relationship_memory_id",
+                self.relationship_memory_id.as_deref(),
+            ),
+            (
+                "stage33_relationship_memory_packet.continuity_framing_id",
+                self.continuity_framing_id.as_deref(),
+            ),
+            (
+                "stage33_relationship_memory_packet.longer_horizon_governance_id",
+                self.longer_horizon_governance_id.as_deref(),
+            ),
+            (
+                "stage33_relationship_memory_packet.work_id",
+                self.work_id.as_deref(),
+            ),
+            (
+                "stage33_relationship_memory_packet.lease_id",
+                self.lease_id.as_deref(),
+            ),
+            (
+                "stage33_relationship_memory_packet.device_id",
+                self.device_id.as_deref(),
+            ),
+            (
+                "stage33_relationship_memory_packet.access_context_id",
+                self.access_context_id.as_deref(),
+            ),
+            (
+                "stage33_relationship_memory_packet.policy_context_id",
+                self.policy_context_id.as_deref(),
+            ),
+            (
+                "stage33_relationship_memory_packet.tenant_id",
+                self.tenant_id.as_deref(),
+            ),
+            (
+                "stage33_relationship_memory_packet.audit_id",
+                self.audit_id.as_deref(),
+            ),
+            (
+                "stage33_relationship_memory_packet.ph1j_proof_ref",
+                self.ph1j_proof_ref.as_deref(),
+            ),
         ] {
             validate_stage4_optional_ref(field, value)?;
         }
@@ -37076,8 +37430,7 @@ impl Validate for Stage33RelationshipMemoryPacket {
                 reason: "Stage 33A cannot invent relationship authority, connector-write, approve, dispatch, execute, create turns, or treat visible familiarity as action success",
             });
         }
-        if self.disposition.is_ready()
-            && (self.audit_id.is_none() || self.ph1j_proof_ref.is_none())
+        if self.disposition.is_ready() && (self.audit_id.is_none() || self.ph1j_proof_ref.is_none())
         {
             return Err(ContractViolation::InvalidValue {
                 field: "stage33_relationship_memory_packet.audit_proof",
@@ -37118,6 +37471,1404 @@ pub fn stage33_relationship_memory_symbol_anchor() {
         as fn(&Stage33RelationshipMemoryPacket) -> bool;
 }
 const _: fn() = stage33_relationship_memory_symbol_anchor;
+
+mod stage34_reason_codes {
+    pub const SOURCE_OF_TRUTH_PRESENTATION_READY: &str =
+        "STAGE34_SOURCE_OF_TRUTH_PRESENTATION_READY";
+    pub const GOVERNED_SELF_DESCRIPTION_READY: &str = "STAGE34_GOVERNED_SELF_DESCRIPTION_READY";
+    pub const OUTWARD_CAPABILITY_NARRATION_READY: &str =
+        "STAGE34_OUTWARD_CAPABILITY_NARRATION_READY";
+    pub const CAPABILITY_BOUNDARY_POSTURE_REFERENCE_READY: &str =
+        "STAGE34_CAPABILITY_BOUNDARY_POSTURE_REFERENCE_READY";
+    pub const SOURCE_CITATION_NARRATION_PROOF_REFERENCE_READY: &str =
+        "STAGE34_SOURCE_CITATION_NARRATION_PROOF_REFERENCE_READY";
+    pub const TRUST_RELATIONSHIP_WAKE_CONTINUITY_REFERENCE_READY: &str =
+        "STAGE34_TRUST_RELATIONSHIP_WAKE_CONTINUITY_REFERENCE_READY";
+    pub const WORK_LEASE_ROUTE_PROTECTED_GATE_CAPABILITY_PROOF_REFERENCE_READY: &str =
+        "STAGE34_WORK_LEASE_ROUTE_PROTECTED_GATE_CAPABILITY_PROOF_REFERENCE_READY";
+    pub const STAGE_INPUT_BLOCKED: &str = "STAGE34_STAGE_INPUT_BLOCKED";
+    pub const NO_INVENTION_BLOCKED: &str = "STAGE34_NO_INVENTION_BLOCKED";
+    pub const SELF_DESCRIPTION_AUTHORITY_BLOCKED: &str =
+        "STAGE34_SELF_DESCRIPTION_AUTHORITY_BLOCKED";
+    pub const NATIVE_SELF_DESCRIPTION_HANDOFF_BLOCKED: &str =
+        "STAGE34_NATIVE_SELF_DESCRIPTION_HANDOFF_BLOCKED";
+    pub const PUBLIC_PROTECTED_BOUNDARY_BLOCKED: &str = "STAGE34_PUBLIC_PROTECTED_BOUNDARY_BLOCKED";
+    pub const STALE_NARRATION_BLOCKED: &str = "STAGE34_STALE_NARRATION_BLOCKED";
+    pub const UNSAFE_INPUT_BLOCKED: &str = "STAGE34_UNSAFE_INPUT_BLOCKED";
+    pub const RUNTIME_MOCK_BLOCKED: &str = "STAGE34_RUNTIME_MOCK_BLOCKED";
+    pub const AUDIT_PROOF_MISSING: &str = "STAGE34_AUDIT_PROOF_MISSING";
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stage34SourceOfTruthKind {
+    SourceOfTruthPresentation,
+    GovernedSelfDescription,
+    OutwardCapabilityNarration,
+    CapabilityBoundaryPostureReference,
+    SourceCitationNarrationProofReference,
+    TrustRelationshipWakeContinuityReference,
+    WorkLeaseRouteProtectedGateCapabilityProofReference,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stage34SourceOfTruthDisposition {
+    SourceOfTruthPresentationReady,
+    GovernedSelfDescriptionReady,
+    OutwardCapabilityNarrationReady,
+    CapabilityBoundaryPostureReferenceReady,
+    SourceCitationNarrationProofReferenceReady,
+    TrustRelationshipWakeContinuityReferenceReady,
+    WorkLeaseRouteProtectedGateCapabilityProofReferenceReady,
+    StageInputBlocked,
+    NoInventionBlocked,
+    SelfDescriptionAuthorityBlocked,
+    NativeSelfDescriptionHandoffBlocked,
+    PublicProtectedBoundaryBlocked,
+    StaleNarrationBlocked,
+    UnsafeInputBlocked,
+    RuntimeMockBlocked,
+    AuditProofMissing,
+}
+
+impl Stage34SourceOfTruthDisposition {
+    pub const fn default_reason_code(self) -> &'static str {
+        match self {
+            Self::SourceOfTruthPresentationReady => {
+                stage34_reason_codes::SOURCE_OF_TRUTH_PRESENTATION_READY
+            }
+            Self::GovernedSelfDescriptionReady => {
+                stage34_reason_codes::GOVERNED_SELF_DESCRIPTION_READY
+            }
+            Self::OutwardCapabilityNarrationReady => {
+                stage34_reason_codes::OUTWARD_CAPABILITY_NARRATION_READY
+            }
+            Self::CapabilityBoundaryPostureReferenceReady => {
+                stage34_reason_codes::CAPABILITY_BOUNDARY_POSTURE_REFERENCE_READY
+            }
+            Self::SourceCitationNarrationProofReferenceReady => {
+                stage34_reason_codes::SOURCE_CITATION_NARRATION_PROOF_REFERENCE_READY
+            }
+            Self::TrustRelationshipWakeContinuityReferenceReady => {
+                stage34_reason_codes::TRUST_RELATIONSHIP_WAKE_CONTINUITY_REFERENCE_READY
+            }
+            Self::WorkLeaseRouteProtectedGateCapabilityProofReferenceReady => {
+                stage34_reason_codes::WORK_LEASE_ROUTE_PROTECTED_GATE_CAPABILITY_PROOF_REFERENCE_READY
+            }
+            Self::StageInputBlocked => stage34_reason_codes::STAGE_INPUT_BLOCKED,
+            Self::NoInventionBlocked => stage34_reason_codes::NO_INVENTION_BLOCKED,
+            Self::SelfDescriptionAuthorityBlocked => {
+                stage34_reason_codes::SELF_DESCRIPTION_AUTHORITY_BLOCKED
+            }
+            Self::NativeSelfDescriptionHandoffBlocked => {
+                stage34_reason_codes::NATIVE_SELF_DESCRIPTION_HANDOFF_BLOCKED
+            }
+            Self::PublicProtectedBoundaryBlocked => {
+                stage34_reason_codes::PUBLIC_PROTECTED_BOUNDARY_BLOCKED
+            }
+            Self::StaleNarrationBlocked => stage34_reason_codes::STALE_NARRATION_BLOCKED,
+            Self::UnsafeInputBlocked => stage34_reason_codes::UNSAFE_INPUT_BLOCKED,
+            Self::RuntimeMockBlocked => stage34_reason_codes::RUNTIME_MOCK_BLOCKED,
+            Self::AuditProofMissing => stage34_reason_codes::AUDIT_PROOF_MISSING,
+        }
+    }
+
+    pub const fn is_ready(self) -> bool {
+        matches!(
+            self,
+            Self::SourceOfTruthPresentationReady
+                | Self::GovernedSelfDescriptionReady
+                | Self::OutwardCapabilityNarrationReady
+                | Self::CapabilityBoundaryPostureReferenceReady
+                | Self::SourceCitationNarrationProofReferenceReady
+                | Self::TrustRelationshipWakeContinuityReferenceReady
+                | Self::WorkLeaseRouteProtectedGateCapabilityProofReferenceReady
+        )
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Stage34SourceOfTruthWorkAuthority {
+    pub can_emit_source_of_truth_presentation_packet: bool,
+    pub can_emit_governed_self_description_packet: bool,
+    pub can_emit_outward_capability_narration_packet: bool,
+    pub can_emit_capability_boundary_posture_reference: bool,
+    pub can_emit_source_citation_narration_proof_reference: bool,
+    pub can_emit_trust_relationship_wake_continuity_reference: bool,
+    pub can_emit_work_lease_route_protected_gate_capability_proof_reference: bool,
+    pub can_emit_honest_uncertainty: bool,
+    pub can_fail_closed: bool,
+    pub can_invent_facts: bool,
+    pub can_invent_capability_certainty: bool,
+    pub can_invent_provider_access: bool,
+    pub can_invent_search_access: bool,
+    pub can_invent_execution_authority: bool,
+    pub can_invent_self_authority: bool,
+    pub can_invent_completion_success: bool,
+    pub can_connector_write: bool,
+    pub can_approve: bool,
+    pub can_dispatch: bool,
+    pub can_execute: bool,
+    pub can_create_user_turn: bool,
+    pub can_treat_visible_capability_wording_as_action_success: bool,
+}
+
+impl Stage34SourceOfTruthWorkAuthority {
+    pub const fn fail_closed() -> Self {
+        Self {
+            can_emit_source_of_truth_presentation_packet: false,
+            can_emit_governed_self_description_packet: false,
+            can_emit_outward_capability_narration_packet: false,
+            can_emit_capability_boundary_posture_reference: false,
+            can_emit_source_citation_narration_proof_reference: false,
+            can_emit_trust_relationship_wake_continuity_reference: false,
+            can_emit_work_lease_route_protected_gate_capability_proof_reference: false,
+            can_emit_honest_uncertainty: true,
+            can_fail_closed: true,
+            can_invent_facts: false,
+            can_invent_capability_certainty: false,
+            can_invent_provider_access: false,
+            can_invent_search_access: false,
+            can_invent_execution_authority: false,
+            can_invent_self_authority: false,
+            can_invent_completion_success: false,
+            can_connector_write: false,
+            can_approve: false,
+            can_dispatch: false,
+            can_execute: false,
+            can_create_user_turn: false,
+            can_treat_visible_capability_wording_as_action_success: false,
+        }
+    }
+
+    pub const fn source_of_truth_presentation_ready() -> Self {
+        let mut authority = Self::fail_closed();
+        authority.can_emit_source_of_truth_presentation_packet = true;
+        authority
+    }
+
+    pub const fn governed_self_description_ready() -> Self {
+        let mut authority = Self::fail_closed();
+        authority.can_emit_governed_self_description_packet = true;
+        authority
+    }
+
+    pub const fn outward_capability_narration_ready() -> Self {
+        let mut authority = Self::fail_closed();
+        authority.can_emit_outward_capability_narration_packet = true;
+        authority
+    }
+
+    pub const fn capability_boundary_posture_reference_ready() -> Self {
+        let mut authority = Self::fail_closed();
+        authority.can_emit_capability_boundary_posture_reference = true;
+        authority
+    }
+
+    pub const fn source_citation_narration_proof_reference_ready() -> Self {
+        let mut authority = Self::fail_closed();
+        authority.can_emit_source_citation_narration_proof_reference = true;
+        authority
+    }
+
+    pub const fn trust_relationship_wake_continuity_reference_ready() -> Self {
+        let mut authority = Self::fail_closed();
+        authority.can_emit_trust_relationship_wake_continuity_reference = true;
+        authority
+    }
+
+    pub const fn work_lease_route_protected_gate_capability_proof_reference_ready() -> Self {
+        let mut authority = Self::fail_closed();
+        authority.can_emit_work_lease_route_protected_gate_capability_proof_reference = true;
+        authority
+    }
+
+    pub const fn can_mutate_or_execute(&self) -> bool {
+        self.can_invent_facts
+            || self.can_invent_capability_certainty
+            || self.can_invent_provider_access
+            || self.can_invent_search_access
+            || self.can_invent_execution_authority
+            || self.can_invent_self_authority
+            || self.can_invent_completion_success
+            || self.can_connector_write
+            || self.can_approve
+            || self.can_dispatch
+            || self.can_execute
+            || self.can_create_user_turn
+            || self.can_treat_visible_capability_wording_as_action_success
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Stage34SourceOfTruthInput {
+    pub source_kind: Stage34SourceOfTruthKind,
+    pub output_interaction_id: Option<String>,
+    pub speech_output_id: Option<String>,
+    pub conversation_continuity_id: Option<String>,
+    pub notification_disclosure_id: Option<String>,
+    pub wake_reentry_id: Option<String>,
+    pub trust_calibration_id: Option<String>,
+    pub relationship_memory_id: Option<String>,
+    pub continuity_framing_id: Option<String>,
+    pub longer_horizon_governance_id: Option<String>,
+    pub source_of_truth_id: Option<String>,
+    pub self_description_id: Option<String>,
+    pub capability_narration_id: Option<String>,
+    pub audit_id: Option<String>,
+    pub ph1j_proof_ref: Option<String>,
+    pub stage11_route_ref_present: bool,
+    pub stage11_route_non_executing_context: bool,
+    pub stage12_gate_ref_present: bool,
+    pub stage12_gate_bounded_authority_context: bool,
+    pub stage13_source_ref_present: bool,
+    pub stage13_source_ref_non_authoritative: bool,
+    pub stage14_public_answer_ref_present: bool,
+    pub stage14_public_answer_ref_non_authoritative: bool,
+    pub stage15_response_output_ref_present: bool,
+    pub stage15_response_output_ref_non_authoritative: bool,
+    pub stage16_long_term_state_ref_present: bool,
+    pub stage16_long_term_state_ref_non_authoritative: bool,
+    pub stage17_speech_output_ref_present: bool,
+    pub stage17_speech_output_ref_non_authoritative: bool,
+    pub stage31_notification_ref_present: bool,
+    pub stage31_notification_ref_non_authoritative: bool,
+    pub stage32_trust_ref_present: bool,
+    pub stage32_trust_ref_non_authoritative: bool,
+    pub stage33_relationship_ref_present: bool,
+    pub stage33_relationship_ref_non_authoritative: bool,
+    pub ph1voiceid_ref_present: bool,
+    pub ph1voiceid_ref_non_authoritative: bool,
+    pub ph1search_ref_present: bool,
+    pub ph1search_ref_non_authoritative: bool,
+    pub ph1doc_ref_present: bool,
+    pub ph1doc_ref_non_authoritative: bool,
+    pub ph1explain_ref_present: bool,
+    pub ph1explain_ref_non_authoritative: bool,
+    pub ph1write_ref_present: bool,
+    pub ph1write_ref_non_authoritative: bool,
+    pub ph1summary_ref_present: bool,
+    pub ph1summary_ref_non_authoritative: bool,
+    pub ph1d_ref_present: bool,
+    pub ph1d_ref_non_authoritative: bool,
+    pub ph1ecm_ref_present: bool,
+    pub ph1ecm_ref_non_authoritative: bool,
+    pub ph1simcat_ref_present: bool,
+    pub ph1simcat_ref_non_authoritative: bool,
+    pub ph1simfinder_ref_present: bool,
+    pub ph1simfinder_ref_non_authoritative: bool,
+    pub authoritative_engine_inventory_ref_present: bool,
+    pub coverage_matrix_ref_present: bool,
+    pub capability_boundary_ref_present: bool,
+    pub source_citation_narration_ref_present: bool,
+    pub trust_relationship_wake_ref_present: bool,
+    pub source_of_truth_surface_ref_present: bool,
+    pub self_description_surface_ref_present: bool,
+    pub capability_narration_surface_ref_present: bool,
+    pub authority_bounded: bool,
+    pub tenant_user_device_session_scoped: bool,
+    pub uncertainty_preserved: bool,
+    pub secret_safe: bool,
+    pub redacted: bool,
+    pub stale_aware: bool,
+    pub revocation_aware: bool,
+    pub voice_identity_inform_only: bool,
+    pub voice_identity_tenant_device_session_scoped: bool,
+    pub voice_identity_cross_speaker_risk: bool,
+    pub source_invented_fact: bool,
+    pub source_invented_capability_availability: bool,
+    pub source_invented_capability_success: bool,
+    pub source_invented_provider_access: bool,
+    pub source_invented_search_access: bool,
+    pub source_invented_execution_authority: bool,
+    pub source_invented_self_knowledge_certainty: bool,
+    pub source_invented_approval: bool,
+    pub source_invented_remote_completion: bool,
+    pub source_invented_work_or_lease_authority: bool,
+    pub source_invented_route_authority: bool,
+    pub source_invented_attachment_citation_url_date_or_provenance: bool,
+    pub source_invented_provider_or_tool_result: bool,
+    pub source_claimed_unproven_completion: bool,
+    pub source_implied_approval_dispatch_execution_delivery_wake_or_completion_without_proof: bool,
+    pub unverifiable: bool,
+    pub stale: bool,
+    pub secret_unsafe: bool,
+    pub cross_tenant: bool,
+    pub cross_route: bool,
+    pub cross_connector: bool,
+    pub source_mismatch: bool,
+    pub narration_mismatch: bool,
+    pub capability_mismatch: bool,
+    pub memory_mismatch: bool,
+    pub relationship_mismatch: bool,
+    pub trust_mismatch: bool,
+    pub wake_mismatch: bool,
+    pub recovery_mismatch: bool,
+    pub continuity_mismatch: bool,
+    pub publication_mismatch: bool,
+    pub settlement_mismatch: bool,
+    pub connector_mismatch: bool,
+    pub route_mismatch: bool,
+    pub action_graph_mismatch: bool,
+    pub lease_mismatch: bool,
+    pub protected_gate_mismatch: bool,
+    pub tenant_mismatch: bool,
+    pub missing_proof: bool,
+    pub ownership_drift: bool,
+    pub native_self_description_declarative_only: bool,
+    pub native_self_description_mutates_state: bool,
+    pub native_self_description_connector_writes: bool,
+    pub native_self_description_dispatches_or_executes: bool,
+    pub native_self_description_calls_providers_or_tools: bool,
+    pub native_self_description_emits_tts_or_playback: bool,
+    pub native_self_description_creates_user_turn: bool,
+    pub native_self_description_treats_visible_capability_wording_as_action_success: bool,
+    pub protected_action_like_request: bool,
+    pub protected_slot_or_authority_ambiguous: bool,
+    pub unsafe_identity_posture: bool,
+    pub self_description_ambiguity: bool,
+    pub stale_or_cancelled_or_superseded_output: bool,
+    pub session_closed: bool,
+    pub record_artifact_only_turn: bool,
+    pub stale_source_state: bool,
+    pub stale_capability_state: bool,
+    pub stale_self_state: bool,
+    pub stale_work_state: bool,
+    pub stale_lease_state: bool,
+    pub stale_route_state: bool,
+    pub stale_connector_state: bool,
+    pub stale_protected_gate_state: bool,
+    pub capability_silently_claims_execution_ability: bool,
+    pub capability_silently_implies_provider_access: bool,
+    pub capability_silently_implies_live_delivery: bool,
+    pub capability_silently_implies_protected_completion: bool,
+    pub self_description_identity_matches_current_output_session: bool,
+    pub replay_upgrades_blocked_authority: bool,
+    pub fake_source_detected: bool,
+    pub fake_self_detected: bool,
+    pub fake_capability_detected: bool,
+    pub fake_completion_detected: bool,
+    pub fake_approval_detected: bool,
+    pub runtime_mock_detected: bool,
+    pub raw_provider_output_present: bool,
+    pub raw_search_dump_present: bool,
+    pub raw_media_present: bool,
+    pub raw_connector_credential_field_present: bool,
+    pub unverified_source_evidence_present: bool,
+    pub unsupported_claim_candidate_present: bool,
+    pub fake_source_self_carrier_present: bool,
+    pub prior_continuity_or_memory_used_as_truth_authority: bool,
+    pub protected_action_candidate_present: bool,
+    pub simulation_candidate_present: bool,
+    pub approved_execution_plan_present: bool,
+    pub secrets_exposed: bool,
+    pub raw_biometric_material_exposed: bool,
+    pub internal_trace_exposed: bool,
+    pub access_denied: bool,
+    pub policy_denied: bool,
+    pub attempted_live_provider_in_build: bool,
+    pub generated_live_media_in_build: bool,
+    pub ran_live_search_in_build: bool,
+    pub called_live_external_tool_in_build: bool,
+    pub connector_write_requested: bool,
+    pub ran_live_notification_delivery_in_build: bool,
+    pub ran_live_remote_continuity_mutation_in_build: bool,
+    pub ran_direct_protected_execution_in_build: bool,
+    pub ran_live_tts_or_playback_in_build: bool,
+    pub captured_microphone_audio: bool,
+    pub transcribed_live_audio: bool,
+    pub voice_id_matching_attempted: bool,
+    pub native_ui_behavior_added: bool,
+    pub fixture_only_test_path: bool,
+}
+
+impl Stage34SourceOfTruthInput {
+    #[cfg(test)]
+    fn fixture_base(source_kind: Stage34SourceOfTruthKind, audit_id: impl Into<String>) -> Self {
+        Self {
+            source_kind,
+            output_interaction_id: Some("output-interaction-stage34".to_string()),
+            speech_output_id: Some("speech-output-stage34".to_string()),
+            conversation_continuity_id: Some("conversation-continuity-stage34".to_string()),
+            notification_disclosure_id: Some("notification-disclosure-stage34".to_string()),
+            wake_reentry_id: Some("wake-reentry-stage34".to_string()),
+            trust_calibration_id: Some("trust-calibration-stage34".to_string()),
+            relationship_memory_id: Some("relationship-memory-stage34".to_string()),
+            continuity_framing_id: Some("continuity-framing-stage34".to_string()),
+            longer_horizon_governance_id: Some("longer-horizon-governance-stage34".to_string()),
+            source_of_truth_id: Some("source-of-truth-stage34".to_string()),
+            self_description_id: Some("self-description-stage34".to_string()),
+            capability_narration_id: Some("capability-narration-stage34".to_string()),
+            audit_id: Some(audit_id.into()),
+            ph1j_proof_ref: Some("audit-proof-stage34".to_string()),
+            stage11_route_ref_present: true,
+            stage11_route_non_executing_context: true,
+            stage12_gate_ref_present: true,
+            stage12_gate_bounded_authority_context: true,
+            stage13_source_ref_present: true,
+            stage13_source_ref_non_authoritative: true,
+            stage14_public_answer_ref_present: true,
+            stage14_public_answer_ref_non_authoritative: true,
+            stage15_response_output_ref_present: true,
+            stage15_response_output_ref_non_authoritative: true,
+            stage16_long_term_state_ref_present: true,
+            stage16_long_term_state_ref_non_authoritative: true,
+            stage17_speech_output_ref_present: true,
+            stage17_speech_output_ref_non_authoritative: true,
+            stage31_notification_ref_present: true,
+            stage31_notification_ref_non_authoritative: true,
+            stage32_trust_ref_present: true,
+            stage32_trust_ref_non_authoritative: true,
+            stage33_relationship_ref_present: true,
+            stage33_relationship_ref_non_authoritative: true,
+            ph1voiceid_ref_present: true,
+            ph1voiceid_ref_non_authoritative: true,
+            ph1search_ref_present: true,
+            ph1search_ref_non_authoritative: true,
+            ph1doc_ref_present: true,
+            ph1doc_ref_non_authoritative: true,
+            ph1explain_ref_present: true,
+            ph1explain_ref_non_authoritative: true,
+            ph1write_ref_present: true,
+            ph1write_ref_non_authoritative: true,
+            ph1summary_ref_present: true,
+            ph1summary_ref_non_authoritative: true,
+            ph1d_ref_present: true,
+            ph1d_ref_non_authoritative: true,
+            ph1ecm_ref_present: true,
+            ph1ecm_ref_non_authoritative: true,
+            ph1simcat_ref_present: true,
+            ph1simcat_ref_non_authoritative: true,
+            ph1simfinder_ref_present: true,
+            ph1simfinder_ref_non_authoritative: true,
+            authoritative_engine_inventory_ref_present: true,
+            coverage_matrix_ref_present: true,
+            capability_boundary_ref_present: true,
+            source_citation_narration_ref_present: true,
+            trust_relationship_wake_ref_present: true,
+            source_of_truth_surface_ref_present: true,
+            self_description_surface_ref_present: true,
+            capability_narration_surface_ref_present: true,
+            authority_bounded: true,
+            tenant_user_device_session_scoped: true,
+            uncertainty_preserved: true,
+            secret_safe: true,
+            redacted: true,
+            stale_aware: true,
+            revocation_aware: true,
+            voice_identity_inform_only: true,
+            voice_identity_tenant_device_session_scoped: true,
+            voice_identity_cross_speaker_risk: false,
+            source_invented_fact: false,
+            source_invented_capability_availability: false,
+            source_invented_capability_success: false,
+            source_invented_provider_access: false,
+            source_invented_search_access: false,
+            source_invented_execution_authority: false,
+            source_invented_self_knowledge_certainty: false,
+            source_invented_approval: false,
+            source_invented_remote_completion: false,
+            source_invented_work_or_lease_authority: false,
+            source_invented_route_authority: false,
+            source_invented_attachment_citation_url_date_or_provenance: false,
+            source_invented_provider_or_tool_result: false,
+            source_claimed_unproven_completion: false,
+            source_implied_approval_dispatch_execution_delivery_wake_or_completion_without_proof:
+                false,
+            unverifiable: false,
+            stale: false,
+            secret_unsafe: false,
+            cross_tenant: false,
+            cross_route: false,
+            cross_connector: false,
+            source_mismatch: false,
+            narration_mismatch: false,
+            capability_mismatch: false,
+            memory_mismatch: false,
+            relationship_mismatch: false,
+            trust_mismatch: false,
+            wake_mismatch: false,
+            recovery_mismatch: false,
+            continuity_mismatch: false,
+            publication_mismatch: false,
+            settlement_mismatch: false,
+            connector_mismatch: false,
+            route_mismatch: false,
+            action_graph_mismatch: false,
+            lease_mismatch: false,
+            protected_gate_mismatch: false,
+            tenant_mismatch: false,
+            missing_proof: false,
+            ownership_drift: false,
+            native_self_description_declarative_only: true,
+            native_self_description_mutates_state: false,
+            native_self_description_connector_writes: false,
+            native_self_description_dispatches_or_executes: false,
+            native_self_description_calls_providers_or_tools: false,
+            native_self_description_emits_tts_or_playback: false,
+            native_self_description_creates_user_turn: false,
+            native_self_description_treats_visible_capability_wording_as_action_success: false,
+            protected_action_like_request: false,
+            protected_slot_or_authority_ambiguous: false,
+            unsafe_identity_posture: false,
+            self_description_ambiguity: false,
+            stale_or_cancelled_or_superseded_output: false,
+            session_closed: false,
+            record_artifact_only_turn: false,
+            stale_source_state: false,
+            stale_capability_state: false,
+            stale_self_state: false,
+            stale_work_state: false,
+            stale_lease_state: false,
+            stale_route_state: false,
+            stale_connector_state: false,
+            stale_protected_gate_state: false,
+            capability_silently_claims_execution_ability: false,
+            capability_silently_implies_provider_access: false,
+            capability_silently_implies_live_delivery: false,
+            capability_silently_implies_protected_completion: false,
+            self_description_identity_matches_current_output_session: true,
+            replay_upgrades_blocked_authority: false,
+            fake_source_detected: false,
+            fake_self_detected: false,
+            fake_capability_detected: false,
+            fake_completion_detected: false,
+            fake_approval_detected: false,
+            runtime_mock_detected: false,
+            raw_provider_output_present: false,
+            raw_search_dump_present: false,
+            raw_media_present: false,
+            raw_connector_credential_field_present: false,
+            unverified_source_evidence_present: false,
+            unsupported_claim_candidate_present: false,
+            fake_source_self_carrier_present: false,
+            prior_continuity_or_memory_used_as_truth_authority: false,
+            protected_action_candidate_present: false,
+            simulation_candidate_present: false,
+            approved_execution_plan_present: false,
+            secrets_exposed: false,
+            raw_biometric_material_exposed: false,
+            internal_trace_exposed: false,
+            access_denied: false,
+            policy_denied: false,
+            attempted_live_provider_in_build: false,
+            generated_live_media_in_build: false,
+            ran_live_search_in_build: false,
+            called_live_external_tool_in_build: false,
+            connector_write_requested: false,
+            ran_live_notification_delivery_in_build: false,
+            ran_live_remote_continuity_mutation_in_build: false,
+            ran_direct_protected_execution_in_build: false,
+            ran_live_tts_or_playback_in_build: false,
+            captured_microphone_audio: false,
+            transcribed_live_audio: false,
+            voice_id_matching_attempted: false,
+            native_ui_behavior_added: false,
+            fixture_only_test_path: true,
+        }
+    }
+
+    #[cfg(test)]
+    fn fixture_source_of_truth_presentation_ready(audit_id: impl Into<String>) -> Self {
+        Self::fixture_base(
+            Stage34SourceOfTruthKind::SourceOfTruthPresentation,
+            audit_id,
+        )
+    }
+
+    #[cfg(test)]
+    fn fixture_governed_self_description_ready(audit_id: impl Into<String>) -> Self {
+        Self::fixture_base(Stage34SourceOfTruthKind::GovernedSelfDescription, audit_id)
+    }
+
+    #[cfg(test)]
+    fn fixture_outward_capability_narration_ready(audit_id: impl Into<String>) -> Self {
+        Self::fixture_base(
+            Stage34SourceOfTruthKind::OutwardCapabilityNarration,
+            audit_id,
+        )
+    }
+
+    #[cfg(test)]
+    fn fixture_capability_boundary_posture_reference_ready(
+        source_of_truth_id: impl Into<String>,
+        audit_id: impl Into<String>,
+    ) -> Self {
+        let mut input = Self::fixture_base(
+            Stage34SourceOfTruthKind::CapabilityBoundaryPostureReference,
+            audit_id,
+        );
+        input.source_of_truth_id = Some(source_of_truth_id.into());
+        input
+    }
+
+    #[cfg(test)]
+    fn fixture_source_citation_narration_proof_reference_ready(
+        source_of_truth_id: impl Into<String>,
+        audit_id: impl Into<String>,
+    ) -> Self {
+        let mut input = Self::fixture_base(
+            Stage34SourceOfTruthKind::SourceCitationNarrationProofReference,
+            audit_id,
+        );
+        input.source_of_truth_id = Some(source_of_truth_id.into());
+        input
+    }
+
+    #[cfg(test)]
+    fn fixture_trust_relationship_wake_continuity_reference_ready(
+        source_of_truth_id: impl Into<String>,
+        audit_id: impl Into<String>,
+    ) -> Self {
+        let mut input = Self::fixture_base(
+            Stage34SourceOfTruthKind::TrustRelationshipWakeContinuityReference,
+            audit_id,
+        );
+        input.source_of_truth_id = Some(source_of_truth_id.into());
+        input
+    }
+
+    #[cfg(test)]
+    fn fixture_work_lease_route_protected_gate_capability_proof_reference_ready(
+        source_of_truth_id: impl Into<String>,
+        audit_id: impl Into<String>,
+    ) -> Self {
+        let mut input = Self::fixture_base(
+            Stage34SourceOfTruthKind::WorkLeaseRouteProtectedGateCapabilityProofReference,
+            audit_id,
+        );
+        input.source_of_truth_id = Some(source_of_truth_id.into());
+        input
+    }
+}
+
+impl Validate for Stage34SourceOfTruthInput {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        for (field, value) in [
+            (
+                "stage34_source_of_truth_input.output_interaction_id",
+                self.output_interaction_id.as_deref(),
+            ),
+            (
+                "stage34_source_of_truth_input.speech_output_id",
+                self.speech_output_id.as_deref(),
+            ),
+            (
+                "stage34_source_of_truth_input.conversation_continuity_id",
+                self.conversation_continuity_id.as_deref(),
+            ),
+            (
+                "stage34_source_of_truth_input.notification_disclosure_id",
+                self.notification_disclosure_id.as_deref(),
+            ),
+            (
+                "stage34_source_of_truth_input.wake_reentry_id",
+                self.wake_reentry_id.as_deref(),
+            ),
+            (
+                "stage34_source_of_truth_input.trust_calibration_id",
+                self.trust_calibration_id.as_deref(),
+            ),
+            (
+                "stage34_source_of_truth_input.relationship_memory_id",
+                self.relationship_memory_id.as_deref(),
+            ),
+            (
+                "stage34_source_of_truth_input.continuity_framing_id",
+                self.continuity_framing_id.as_deref(),
+            ),
+            (
+                "stage34_source_of_truth_input.longer_horizon_governance_id",
+                self.longer_horizon_governance_id.as_deref(),
+            ),
+            (
+                "stage34_source_of_truth_input.source_of_truth_id",
+                self.source_of_truth_id.as_deref(),
+            ),
+            (
+                "stage34_source_of_truth_input.self_description_id",
+                self.self_description_id.as_deref(),
+            ),
+            (
+                "stage34_source_of_truth_input.capability_narration_id",
+                self.capability_narration_id.as_deref(),
+            ),
+            (
+                "stage34_source_of_truth_input.audit_id",
+                self.audit_id.as_deref(),
+            ),
+            (
+                "stage34_source_of_truth_input.ph1j_proof_ref",
+                self.ph1j_proof_ref.as_deref(),
+            ),
+        ] {
+            validate_stage4_optional_ref(field, value)?;
+        }
+
+        if self.attempted_live_provider_in_build
+            || self.generated_live_media_in_build
+            || self.ran_live_search_in_build
+            || self.called_live_external_tool_in_build
+            || self.connector_write_requested
+            || self.ran_live_notification_delivery_in_build
+            || self.ran_live_remote_continuity_mutation_in_build
+            || self.ran_direct_protected_execution_in_build
+            || self.ran_live_tts_or_playback_in_build
+            || self.captured_microphone_audio
+            || self.transcribed_live_audio
+            || self.voice_id_matching_attempted
+            || self.native_ui_behavior_added
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage34_source_of_truth_input.live_build_boundary",
+                reason:
+                    "Stage 34A cannot call live providers/search/tools, probe live capability state, deliver live self-description continuity, protected execution, TTS/playback, mic/STT, Voice ID, connector-write, or native UI behavior",
+            });
+        }
+        if (self.fake_source_detected
+            || self.fake_self_detected
+            || self.fake_capability_detected
+            || self.fake_completion_detected
+            || self.fake_approval_detected
+            || self.runtime_mock_detected)
+            && !self.fixture_only_test_path
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage34_source_of_truth_input.runtime_mock_boundary",
+                reason:
+                    "runtime mocks and fake source/self/capability/completion/approval success are forbidden outside explicit fixture-only paths",
+            });
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Stage34SourceOfTruthPacket {
+    pub session_id: SessionId,
+    pub turn_id: Option<TurnId>,
+    pub activation_id: Option<String>,
+    pub output_interaction_id: Option<String>,
+    pub speech_output_id: Option<String>,
+    pub conversation_continuity_id: Option<String>,
+    pub notification_disclosure_id: Option<String>,
+    pub wake_reentry_id: Option<String>,
+    pub trust_calibration_id: Option<String>,
+    pub relationship_memory_id: Option<String>,
+    pub continuity_framing_id: Option<String>,
+    pub longer_horizon_governance_id: Option<String>,
+    pub source_of_truth_id: Option<String>,
+    pub self_description_id: Option<String>,
+    pub capability_narration_id: Option<String>,
+    pub work_id: Option<String>,
+    pub lease_id: Option<String>,
+    pub access_context_id: Option<String>,
+    pub policy_context_id: Option<String>,
+    pub tenant_id: Option<String>,
+    pub audit_id: Option<String>,
+    pub ph1j_proof_ref: Option<String>,
+    pub stage31_disposition: Option<Stage31NotificationWakeReentryDisposition>,
+    pub stage32_disposition: Option<Stage32TrustCalibrationDisposition>,
+    pub stage33_disposition: Option<Stage33RelationshipMemoryDisposition>,
+    pub source_kind: Stage34SourceOfTruthKind,
+    pub disposition: Stage34SourceOfTruthDisposition,
+    pub reason_code: &'static str,
+    pub stage13_ref_non_authoritative: bool,
+    pub stage14_ref_non_authoritative: bool,
+    pub stage15_ref_non_authoritative: bool,
+    pub stage16_ref_non_authoritative: bool,
+    pub stage17_ref_non_authoritative: bool,
+    pub stage31_ref_non_authoritative: bool,
+    pub stage32_ref_non_authoritative: bool,
+    pub stage33_ref_non_authoritative: bool,
+    pub ph1voiceid_ref_non_authoritative: bool,
+    pub ph1d_ref_non_authoritative: bool,
+    pub ph1ecm_ref_non_authoritative: bool,
+    pub ph1simcat_ref_non_authoritative: bool,
+    pub ph1simfinder_ref_non_authoritative: bool,
+    pub stage12_ref_bounded_authority_context: bool,
+    pub work_authority: Stage34SourceOfTruthWorkAuthority,
+}
+
+impl Stage34SourceOfTruthPacket {
+    pub fn from_stage33_relationship(
+        route: &Stage11ReasoningRouterPacket,
+        stage12_gate: Option<&Stage12ProtectedActionGatePacket>,
+        relationship_output: Option<&Stage33RelationshipMemoryPacket>,
+        input: Stage34SourceOfTruthInput,
+    ) -> Result<Self, ContractViolation> {
+        route.validate()?;
+        if let Some(packet) = stage12_gate {
+            packet.validate()?;
+        }
+        if let Some(packet) = relationship_output {
+            packet.validate()?;
+        }
+        input.validate()?;
+        if input.stage12_gate_ref_present && stage12_gate.is_none() {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage34_source_of_truth_packet.stage12_gate",
+                reason:
+                    "present Stage 12 continuity reference requires the canonical Stage 12 packet",
+            });
+        }
+        if input.stage33_relationship_ref_present && relationship_output.is_none() {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage34_source_of_truth_packet.stage33_relationship",
+                reason:
+                    "present Stage 33 continuity reference requires the canonical Stage 33 packet",
+            });
+        }
+
+        let disposition =
+            Self::decide_disposition(route, stage12_gate, relationship_output, &input);
+        let work_authority = Self::work_authority_for(disposition);
+        let audit_id = input
+            .audit_id
+            .clone()
+            .or_else(|| relationship_output.and_then(|packet| packet.audit_id.clone()))
+            .or_else(|| stage12_gate.and_then(|packet| packet.audit_id.clone()))
+            .or_else(|| route.audit_id.clone());
+        let ph1j_proof_ref = input
+            .ph1j_proof_ref
+            .clone()
+            .or_else(|| relationship_output.and_then(|packet| packet.ph1j_proof_ref.clone()))
+            .or_else(|| audit_id.clone());
+
+        let packet = Self {
+            session_id: route.session_id,
+            turn_id: route.turn_id,
+            activation_id: relationship_output.and_then(|packet| packet.activation_id.clone()),
+            output_interaction_id: input.output_interaction_id.clone().or_else(|| {
+                relationship_output.and_then(|packet| packet.output_interaction_id.clone())
+            }),
+            speech_output_id: input
+                .speech_output_id
+                .clone()
+                .or_else(|| relationship_output.and_then(|packet| packet.speech_output_id.clone())),
+            conversation_continuity_id: input.conversation_continuity_id.clone().or_else(|| {
+                relationship_output.and_then(|packet| packet.conversation_continuity_id.clone())
+            }),
+            notification_disclosure_id: input.notification_disclosure_id.clone().or_else(|| {
+                relationship_output.and_then(|packet| packet.notification_disclosure_id.clone())
+            }),
+            wake_reentry_id: input
+                .wake_reentry_id
+                .clone()
+                .or_else(|| relationship_output.and_then(|packet| packet.wake_reentry_id.clone())),
+            trust_calibration_id: input.trust_calibration_id.clone().or_else(|| {
+                relationship_output.and_then(|packet| packet.trust_calibration_id.clone())
+            }),
+            relationship_memory_id: input.relationship_memory_id.clone().or_else(|| {
+                relationship_output.and_then(|packet| packet.relationship_memory_id.clone())
+            }),
+            continuity_framing_id: input.continuity_framing_id.clone().or_else(|| {
+                relationship_output.and_then(|packet| packet.continuity_framing_id.clone())
+            }),
+            longer_horizon_governance_id: input.longer_horizon_governance_id.clone().or_else(
+                || {
+                    relationship_output
+                        .and_then(|packet| packet.longer_horizon_governance_id.clone())
+                },
+            ),
+            source_of_truth_id: input.source_of_truth_id.clone(),
+            self_description_id: input.self_description_id.clone(),
+            capability_narration_id: input.capability_narration_id.clone(),
+            work_id: relationship_output.and_then(|packet| packet.work_id.clone()),
+            lease_id: relationship_output.and_then(|packet| packet.lease_id.clone()),
+            access_context_id: relationship_output
+                .and_then(|packet| packet.access_context_id.clone())
+                .or_else(|| route.access_context_id.clone()),
+            policy_context_id: relationship_output
+                .and_then(|packet| packet.policy_context_id.clone())
+                .or_else(|| route.policy_context_id.clone()),
+            tenant_id: relationship_output.and_then(|packet| packet.tenant_id.clone()),
+            audit_id,
+            ph1j_proof_ref,
+            stage31_disposition: relationship_output.and_then(|packet| packet.stage31_disposition),
+            stage32_disposition: relationship_output.and_then(|packet| packet.stage32_disposition),
+            stage33_disposition: relationship_output.map(|packet| packet.disposition),
+            source_kind: input.source_kind,
+            disposition,
+            reason_code: disposition.default_reason_code(),
+            stage13_ref_non_authoritative: input.stage13_source_ref_non_authoritative,
+            stage14_ref_non_authoritative: input.stage14_public_answer_ref_non_authoritative,
+            stage15_ref_non_authoritative: input.stage15_response_output_ref_non_authoritative,
+            stage16_ref_non_authoritative: input.stage16_long_term_state_ref_non_authoritative,
+            stage17_ref_non_authoritative: input.stage17_speech_output_ref_non_authoritative,
+            stage31_ref_non_authoritative: input.stage31_notification_ref_non_authoritative,
+            stage32_ref_non_authoritative: input.stage32_trust_ref_non_authoritative,
+            stage33_ref_non_authoritative: input.stage33_relationship_ref_non_authoritative,
+            ph1voiceid_ref_non_authoritative: input.ph1voiceid_ref_non_authoritative,
+            ph1d_ref_non_authoritative: input.ph1d_ref_non_authoritative,
+            ph1ecm_ref_non_authoritative: input.ph1ecm_ref_non_authoritative,
+            ph1simcat_ref_non_authoritative: input.ph1simcat_ref_non_authoritative,
+            ph1simfinder_ref_non_authoritative: input.ph1simfinder_ref_non_authoritative,
+            stage12_ref_bounded_authority_context: input.stage12_gate_bounded_authority_context,
+            work_authority,
+        };
+        packet.validate()?;
+        Ok(packet)
+    }
+
+    pub const fn can_mutate_or_execute(&self) -> bool {
+        self.work_authority.can_mutate_or_execute()
+    }
+
+    fn decide_disposition(
+        route: &Stage11ReasoningRouterPacket,
+        stage12_gate: Option<&Stage12ProtectedActionGatePacket>,
+        relationship_output: Option<&Stage33RelationshipMemoryPacket>,
+        input: &Stage34SourceOfTruthInput,
+    ) -> Stage34SourceOfTruthDisposition {
+        if input.runtime_mock_detected
+            || input.fake_source_detected
+            || input.fake_self_detected
+            || input.fake_capability_detected
+            || input.fake_completion_detected
+            || input.fake_approval_detected
+        {
+            return Stage34SourceOfTruthDisposition::RuntimeMockBlocked;
+        }
+        if input.raw_provider_output_present
+            || input.raw_search_dump_present
+            || input.raw_media_present
+            || input.raw_connector_credential_field_present
+            || input.unverified_source_evidence_present
+            || input.unsupported_claim_candidate_present
+            || input.fake_source_self_carrier_present
+            || input.secrets_exposed
+            || input.raw_biometric_material_exposed
+            || input.internal_trace_exposed
+            || input.access_denied
+            || input.policy_denied
+        {
+            return Stage34SourceOfTruthDisposition::UnsafeInputBlocked;
+        }
+        if !input.stage11_route_ref_present
+            || !input.stage11_route_non_executing_context
+            || !matches!(
+                route.disposition,
+                Stage11RouterDisposition::PublicReadOnlyCandidate
+                    | Stage11RouterDisposition::ProtectedActionBlockedUntilStage12
+                    | Stage11RouterDisposition::SimulationCandidateInertHandoff
+            )
+            || route.can_route_or_mutate()
+            || (input.stage12_gate_ref_present
+                && !matches!(
+                    stage12_gate.map(|packet| packet.disposition),
+                    Some(Stage12ProtectedActionDisposition::ApprovedExecutionPlanReady)
+                        | Some(Stage12ProtectedActionDisposition::SimulationGateApproved)
+                ))
+            || !input.stage13_source_ref_present
+            || !input.stage13_source_ref_non_authoritative
+            || !input.stage14_public_answer_ref_present
+            || !input.stage14_public_answer_ref_non_authoritative
+            || !input.stage15_response_output_ref_present
+            || !input.stage15_response_output_ref_non_authoritative
+            || !input.stage16_long_term_state_ref_present
+            || !input.stage16_long_term_state_ref_non_authoritative
+            || !input.stage17_speech_output_ref_present
+            || !input.stage17_speech_output_ref_non_authoritative
+            || !input.stage31_notification_ref_present
+            || !input.stage31_notification_ref_non_authoritative
+            || !input.stage32_trust_ref_present
+            || !input.stage32_trust_ref_non_authoritative
+            || !input.stage33_relationship_ref_present
+            || !input.stage33_relationship_ref_non_authoritative
+            || !relationship_output.is_some_and(|packet| packet.disposition.is_ready())
+        {
+            return Stage34SourceOfTruthDisposition::StageInputBlocked;
+        }
+        if input.source_invented_fact
+            || input.source_invented_capability_availability
+            || input.source_invented_capability_success
+            || input.source_invented_provider_access
+            || input.source_invented_search_access
+            || input.source_invented_execution_authority
+            || input.source_invented_self_knowledge_certainty
+            || input.source_invented_approval
+            || input.source_invented_remote_completion
+            || input.source_invented_work_or_lease_authority
+            || input.source_invented_route_authority
+            || input.source_invented_attachment_citation_url_date_or_provenance
+            || input.source_invented_provider_or_tool_result
+            || input.source_claimed_unproven_completion
+            || input
+                .source_implied_approval_dispatch_execution_delivery_wake_or_completion_without_proof
+            || input.prior_continuity_or_memory_used_as_truth_authority
+            || input.protected_action_candidate_present
+            || input.simulation_candidate_present
+            || input.approved_execution_plan_present
+        {
+            return Stage34SourceOfTruthDisposition::NoInventionBlocked;
+        }
+        if !input.native_self_description_declarative_only
+            || input.native_self_description_mutates_state
+            || input.native_self_description_connector_writes
+            || input.native_self_description_dispatches_or_executes
+            || input.native_self_description_calls_providers_or_tools
+            || input.native_self_description_emits_tts_or_playback
+            || input.native_self_description_creates_user_turn
+            || input.native_self_description_treats_visible_capability_wording_as_action_success
+        {
+            return Stage34SourceOfTruthDisposition::NativeSelfDescriptionHandoffBlocked;
+        }
+        if input.protected_action_like_request
+            || input.protected_slot_or_authority_ambiguous
+            || input.unsafe_identity_posture
+            || input.self_description_ambiguity
+        {
+            return Stage34SourceOfTruthDisposition::PublicProtectedBoundaryBlocked;
+        }
+        if input.stale_or_cancelled_or_superseded_output
+            || input.session_closed
+            || input.record_artifact_only_turn
+            || input.stale_source_state
+            || input.stale_capability_state
+            || input.stale_self_state
+            || input.stale_work_state
+            || input.stale_lease_state
+            || input.stale_route_state
+            || input.stale_connector_state
+            || input.stale_protected_gate_state
+            || input.capability_silently_claims_execution_ability
+            || input.capability_silently_implies_provider_access
+            || input.capability_silently_implies_live_delivery
+            || input.capability_silently_implies_protected_completion
+            || !input.self_description_identity_matches_current_output_session
+            || input.replay_upgrades_blocked_authority
+        {
+            return Stage34SourceOfTruthDisposition::StaleNarrationBlocked;
+        }
+        if !input.authority_bounded
+            || !input.tenant_user_device_session_scoped
+            || !input.uncertainty_preserved
+            || !input.secret_safe
+            || !input.redacted
+            || !input.stale_aware
+            || !input.revocation_aware
+            || !input.ph1voiceid_ref_present
+            || !input.ph1voiceid_ref_non_authoritative
+            || !input.voice_identity_inform_only
+            || !input.voice_identity_tenant_device_session_scoped
+            || input.voice_identity_cross_speaker_risk
+            || !input.ph1search_ref_present
+            || !input.ph1search_ref_non_authoritative
+            || !input.ph1doc_ref_present
+            || !input.ph1doc_ref_non_authoritative
+            || !input.ph1explain_ref_present
+            || !input.ph1explain_ref_non_authoritative
+            || !input.ph1write_ref_present
+            || !input.ph1write_ref_non_authoritative
+            || !input.ph1summary_ref_present
+            || !input.ph1summary_ref_non_authoritative
+            || !input.ph1d_ref_present
+            || !input.ph1d_ref_non_authoritative
+            || !input.ph1ecm_ref_present
+            || !input.ph1ecm_ref_non_authoritative
+            || !input.ph1simcat_ref_present
+            || !input.ph1simcat_ref_non_authoritative
+            || !input.ph1simfinder_ref_present
+            || !input.ph1simfinder_ref_non_authoritative
+            || !input.authoritative_engine_inventory_ref_present
+            || !input.coverage_matrix_ref_present
+            || !input.capability_boundary_ref_present
+            || !input.source_citation_narration_ref_present
+            || !input.trust_relationship_wake_ref_present
+            || !input.source_of_truth_surface_ref_present
+            || !input.self_description_surface_ref_present
+            || !input.capability_narration_surface_ref_present
+            || input.unverifiable
+            || input.stale
+            || input.secret_unsafe
+            || input.cross_tenant
+            || input.cross_route
+            || input.cross_connector
+            || input.source_mismatch
+            || input.narration_mismatch
+            || input.capability_mismatch
+            || input.memory_mismatch
+            || input.relationship_mismatch
+            || input.trust_mismatch
+            || input.wake_mismatch
+            || input.recovery_mismatch
+            || input.continuity_mismatch
+            || input.publication_mismatch
+            || input.settlement_mismatch
+            || input.connector_mismatch
+            || input.route_mismatch
+            || input.action_graph_mismatch
+            || input.lease_mismatch
+            || input.protected_gate_mismatch
+            || input.tenant_mismatch
+            || input.missing_proof
+            || input.ownership_drift
+        {
+            return Stage34SourceOfTruthDisposition::SelfDescriptionAuthorityBlocked;
+        }
+
+        match input.source_kind {
+            Stage34SourceOfTruthKind::SourceOfTruthPresentation => {
+                if input.source_of_truth_id.is_some()
+                    && input.source_of_truth_surface_ref_present
+                    && input.ph1doc_ref_present
+                    && input.ph1search_ref_present
+                    && input.ph1explain_ref_present
+                {
+                    Stage34SourceOfTruthDisposition::SourceOfTruthPresentationReady
+                } else {
+                    Stage34SourceOfTruthDisposition::SelfDescriptionAuthorityBlocked
+                }
+            }
+            Stage34SourceOfTruthKind::GovernedSelfDescription => {
+                if input.self_description_id.is_some()
+                    && input.self_description_surface_ref_present
+                    && input.ph1write_ref_present
+                    && input.ph1summary_ref_present
+                    && input.ph1d_ref_present
+                    && input.authoritative_engine_inventory_ref_present
+                {
+                    Stage34SourceOfTruthDisposition::GovernedSelfDescriptionReady
+                } else {
+                    Stage34SourceOfTruthDisposition::SelfDescriptionAuthorityBlocked
+                }
+            }
+            Stage34SourceOfTruthKind::OutwardCapabilityNarration => {
+                if input.capability_narration_id.is_some()
+                    && input.capability_narration_surface_ref_present
+                    && input.ph1ecm_ref_present
+                    && input.ph1simcat_ref_present
+                    && input.ph1simfinder_ref_present
+                {
+                    Stage34SourceOfTruthDisposition::OutwardCapabilityNarrationReady
+                } else {
+                    Stage34SourceOfTruthDisposition::SelfDescriptionAuthorityBlocked
+                }
+            }
+            Stage34SourceOfTruthKind::CapabilityBoundaryPostureReference => {
+                if input.source_of_truth_id.is_some()
+                    && input.capability_boundary_ref_present
+                    && input.ph1ecm_ref_present
+                    && input.authoritative_engine_inventory_ref_present
+                {
+                    Stage34SourceOfTruthDisposition::CapabilityBoundaryPostureReferenceReady
+                } else {
+                    Stage34SourceOfTruthDisposition::SelfDescriptionAuthorityBlocked
+                }
+            }
+            Stage34SourceOfTruthKind::SourceCitationNarrationProofReference => {
+                if input.source_of_truth_id.is_some()
+                    && input.source_citation_narration_ref_present
+                    && input.ph1doc_ref_present
+                    && input.ph1search_ref_present
+                    && input.stage13_source_ref_present
+                    && input.stage14_public_answer_ref_present
+                    && input.stage15_response_output_ref_present
+                {
+                    Stage34SourceOfTruthDisposition::SourceCitationNarrationProofReferenceReady
+                } else {
+                    Stage34SourceOfTruthDisposition::SelfDescriptionAuthorityBlocked
+                }
+            }
+            Stage34SourceOfTruthKind::TrustRelationshipWakeContinuityReference => {
+                if input.source_of_truth_id.is_some()
+                    && input.trust_relationship_wake_ref_present
+                    && relationship_output.is_some_and(|packet| {
+                        packet.trust_calibration_id.is_some()
+                            && packet.relationship_memory_id.is_some()
+                            && packet.wake_reentry_id.is_some()
+                    })
+                {
+                    Stage34SourceOfTruthDisposition::TrustRelationshipWakeContinuityReferenceReady
+                } else {
+                    Stage34SourceOfTruthDisposition::SelfDescriptionAuthorityBlocked
+                }
+            }
+            Stage34SourceOfTruthKind::WorkLeaseRouteProtectedGateCapabilityProofReference => {
+                if input.source_of_truth_id.is_some()
+                    && relationship_output
+                        .is_some_and(|packet| packet.work_id.is_some() && packet.lease_id.is_some())
+                    && stage12_gate.is_some()
+                {
+                    Stage34SourceOfTruthDisposition::WorkLeaseRouteProtectedGateCapabilityProofReferenceReady
+                } else {
+                    Stage34SourceOfTruthDisposition::SelfDescriptionAuthorityBlocked
+                }
+            }
+        }
+    }
+
+    const fn work_authority_for(
+        disposition: Stage34SourceOfTruthDisposition,
+    ) -> Stage34SourceOfTruthWorkAuthority {
+        match disposition {
+            Stage34SourceOfTruthDisposition::SourceOfTruthPresentationReady => {
+                Stage34SourceOfTruthWorkAuthority::source_of_truth_presentation_ready()
+            }
+            Stage34SourceOfTruthDisposition::GovernedSelfDescriptionReady => {
+                Stage34SourceOfTruthWorkAuthority::governed_self_description_ready()
+            }
+            Stage34SourceOfTruthDisposition::OutwardCapabilityNarrationReady => {
+                Stage34SourceOfTruthWorkAuthority::outward_capability_narration_ready()
+            }
+            Stage34SourceOfTruthDisposition::CapabilityBoundaryPostureReferenceReady => {
+                Stage34SourceOfTruthWorkAuthority::capability_boundary_posture_reference_ready()
+            }
+            Stage34SourceOfTruthDisposition::SourceCitationNarrationProofReferenceReady => {
+                Stage34SourceOfTruthWorkAuthority::source_citation_narration_proof_reference_ready()
+            }
+            Stage34SourceOfTruthDisposition::TrustRelationshipWakeContinuityReferenceReady => {
+                Stage34SourceOfTruthWorkAuthority::trust_relationship_wake_continuity_reference_ready()
+            }
+            Stage34SourceOfTruthDisposition::WorkLeaseRouteProtectedGateCapabilityProofReferenceReady => {
+                Stage34SourceOfTruthWorkAuthority::work_lease_route_protected_gate_capability_proof_reference_ready()
+            }
+            _ => Stage34SourceOfTruthWorkAuthority::fail_closed(),
+        }
+    }
+}
+
+impl Validate for Stage34SourceOfTruthPacket {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        for (field, value) in [
+            (
+                "stage34_source_of_truth_packet.activation_id",
+                self.activation_id.as_deref(),
+            ),
+            (
+                "stage34_source_of_truth_packet.output_interaction_id",
+                self.output_interaction_id.as_deref(),
+            ),
+            (
+                "stage34_source_of_truth_packet.speech_output_id",
+                self.speech_output_id.as_deref(),
+            ),
+            (
+                "stage34_source_of_truth_packet.conversation_continuity_id",
+                self.conversation_continuity_id.as_deref(),
+            ),
+            (
+                "stage34_source_of_truth_packet.notification_disclosure_id",
+                self.notification_disclosure_id.as_deref(),
+            ),
+            (
+                "stage34_source_of_truth_packet.wake_reentry_id",
+                self.wake_reentry_id.as_deref(),
+            ),
+            (
+                "stage34_source_of_truth_packet.trust_calibration_id",
+                self.trust_calibration_id.as_deref(),
+            ),
+            (
+                "stage34_source_of_truth_packet.relationship_memory_id",
+                self.relationship_memory_id.as_deref(),
+            ),
+            (
+                "stage34_source_of_truth_packet.continuity_framing_id",
+                self.continuity_framing_id.as_deref(),
+            ),
+            (
+                "stage34_source_of_truth_packet.longer_horizon_governance_id",
+                self.longer_horizon_governance_id.as_deref(),
+            ),
+            (
+                "stage34_source_of_truth_packet.source_of_truth_id",
+                self.source_of_truth_id.as_deref(),
+            ),
+            (
+                "stage34_source_of_truth_packet.self_description_id",
+                self.self_description_id.as_deref(),
+            ),
+            (
+                "stage34_source_of_truth_packet.capability_narration_id",
+                self.capability_narration_id.as_deref(),
+            ),
+            (
+                "stage34_source_of_truth_packet.work_id",
+                self.work_id.as_deref(),
+            ),
+            (
+                "stage34_source_of_truth_packet.lease_id",
+                self.lease_id.as_deref(),
+            ),
+            (
+                "stage34_source_of_truth_packet.access_context_id",
+                self.access_context_id.as_deref(),
+            ),
+            (
+                "stage34_source_of_truth_packet.policy_context_id",
+                self.policy_context_id.as_deref(),
+            ),
+            (
+                "stage34_source_of_truth_packet.tenant_id",
+                self.tenant_id.as_deref(),
+            ),
+            (
+                "stage34_source_of_truth_packet.audit_id",
+                self.audit_id.as_deref(),
+            ),
+            (
+                "stage34_source_of_truth_packet.ph1j_proof_ref",
+                self.ph1j_proof_ref.as_deref(),
+            ),
+        ] {
+            validate_stage4_optional_ref(field, value)?;
+        }
+        if self.reason_code != self.disposition.default_reason_code() {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage34_source_of_truth_packet.reason_code",
+                reason: "must match Stage 34A source-of-truth disposition",
+            });
+        }
+        if self.work_authority.can_mutate_or_execute() {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage34_source_of_truth_packet.work_authority",
+                reason: "Stage 34A cannot invent capability authority, connector-write, approve, dispatch, execute, create turns, or treat visible capability wording as action success",
+            });
+        }
+        if self.disposition.is_ready() && (self.audit_id.is_none() || self.ph1j_proof_ref.is_none())
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage34_source_of_truth_packet.audit_proof",
+                reason: "ready Stage 34A source-of-truth output requires PH1.J audit/proof refs",
+            });
+        }
+        Ok(())
+    }
+}
+
+pub fn stage34_source_of_truth_symbol_anchor() {
+    let _ = Stage34SourceOfTruthKind::SourceOfTruthPresentation;
+    let _ = Stage34SourceOfTruthKind::GovernedSelfDescription;
+    let _ = Stage34SourceOfTruthKind::OutwardCapabilityNarration;
+    let _ = Stage34SourceOfTruthKind::CapabilityBoundaryPostureReference;
+    let _ = Stage34SourceOfTruthKind::SourceCitationNarrationProofReference;
+    let _ = Stage34SourceOfTruthKind::TrustRelationshipWakeContinuityReference;
+    let _ = Stage34SourceOfTruthKind::WorkLeaseRouteProtectedGateCapabilityProofReference;
+    let disposition = Stage34SourceOfTruthDisposition::StageInputBlocked;
+    let _ = disposition.default_reason_code();
+    let _ = disposition.is_ready();
+    let _ = Stage34SourceOfTruthWorkAuthority::fail_closed().can_mutate_or_execute();
+    let _ = Stage34SourceOfTruthWorkAuthority::source_of_truth_presentation_ready();
+    let _ = Stage34SourceOfTruthWorkAuthority::governed_self_description_ready();
+    let _ = Stage34SourceOfTruthWorkAuthority::outward_capability_narration_ready();
+    let _ = Stage34SourceOfTruthWorkAuthority::capability_boundary_posture_reference_ready();
+    let _ = Stage34SourceOfTruthWorkAuthority::source_citation_narration_proof_reference_ready();
+    let _ = Stage34SourceOfTruthWorkAuthority::trust_relationship_wake_continuity_reference_ready();
+    let _ = Stage34SourceOfTruthWorkAuthority::work_lease_route_protected_gate_capability_proof_reference_ready();
+    let _ = core::mem::size_of::<Stage34SourceOfTruthInput>();
+    let _ = core::mem::size_of::<Stage34SourceOfTruthPacket>();
+    let _ = Stage34SourceOfTruthPacket::from_stage33_relationship
+        as fn(
+            &Stage11ReasoningRouterPacket,
+            Option<&Stage12ProtectedActionGatePacket>,
+            Option<&Stage33RelationshipMemoryPacket>,
+            Stage34SourceOfTruthInput,
+        ) -> Result<Stage34SourceOfTruthPacket, ContractViolation>;
+    let _ = Stage34SourceOfTruthPacket::can_mutate_or_execute
+        as fn(&Stage34SourceOfTruthPacket) -> bool;
+}
+const _: fn() = stage34_source_of_truth_symbol_anchor;
 
 #[cfg(test)]
 mod tests {
@@ -44731,9 +46482,7 @@ mod tests {
                     reason_codes::STAGE22_CONNECTOR_TARGET_STAGING_BLOCKED
                 }
                 Self::NativeOutboundBlocked => reason_codes::STAGE22_NATIVE_OUTBOUND_BLOCKED,
-                Self::ProtectedOutboundBlocked => {
-                    reason_codes::STAGE22_PROTECTED_OUTBOUND_BLOCKED
-                }
+                Self::ProtectedOutboundBlocked => reason_codes::STAGE22_PROTECTED_OUTBOUND_BLOCKED,
                 Self::StaleOutboundBlocked => reason_codes::STAGE22_STALE_OUTBOUND_BLOCKED,
                 Self::UnsafeInputBlocked => reason_codes::STAGE22_UNSAFE_INPUT_BLOCKED,
                 Self::RuntimeMockBlocked => reason_codes::STAGE22_RUNTIME_MOCK_BLOCKED,
@@ -45274,7 +47023,10 @@ mod tests {
                 "stage22_connector_outbound_input.ownership_ref",
                 self.ownership_ref.as_deref(),
             )?;
-            validate_stage4_ref("stage22_connector_outbound_input.device_id", &self.device_id)?;
+            validate_stage4_ref(
+                "stage22_connector_outbound_input.device_id",
+                &self.device_id,
+            )?;
             validate_stage4_optional_ref(
                 "stage22_connector_outbound_input.audit_id",
                 self.audit_id.as_deref(),
@@ -45550,14 +47302,12 @@ mod tests {
                     .native_outbound_dispatches_or_executes,
                 native_outbound_calls_providers_or_tools: input
                     .native_outbound_calls_providers_or_tools,
-                native_outbound_emits_tts_or_playback: input
-                    .native_outbound_emits_tts_or_playback,
+                native_outbound_emits_tts_or_playback: input.native_outbound_emits_tts_or_playback,
                 native_outbound_creates_user_turn: input.native_outbound_creates_user_turn,
                 native_outbound_treats_visible_success_as_action_success: input
                     .native_outbound_treats_visible_success_as_action_success,
                 protected_action_like_request: input.protected_action_like_request,
-                protected_slot_or_authority_ambiguous: input
-                    .protected_slot_or_authority_ambiguous,
+                protected_slot_or_authority_ambiguous: input.protected_slot_or_authority_ambiguous,
                 unsafe_identity_posture: input.unsafe_identity_posture,
                 outbound_implies_stage12_mutation_without_proof: input
                     .outbound_implies_stage12_mutation_without_proof,
@@ -45923,7 +47673,8 @@ mod tests {
                     reason: "Stage 22A cannot invent outbound authority, mutate, connector-write, approve, dispatch, execute, call live providers/search/tools, deliver live outbound actions, emit TTS/playback, create turns, or add native UI behavior",
                 });
             }
-            if self.disposition.is_ready() && (self.audit_id.is_none() || self.ph1j_proof_ref.is_none())
+            if self.disposition.is_ready()
+                && (self.audit_id.is_none() || self.ph1j_proof_ref.is_none())
             {
                 return Err(ContractViolation::InvalidValue {
                     field: "stage22_connector_outbound_packet.audit_proof",
@@ -45944,8 +47695,7 @@ mod tests {
                     }
                 }
                 Stage22ConnectorOutboundDisposition::ConnectorActionStagingReady => {
-                    if self.outbound_kind
-                        != Stage22ConnectorOutboundKind::ConnectorActionStaging
+                    if self.outbound_kind != Stage22ConnectorOutboundKind::ConnectorActionStaging
                         || self.connector_action_stage_id.is_none()
                         || self.external_integration_id.is_none()
                         || self.work_id.is_none()
@@ -45994,7 +47744,8 @@ mod tests {
                     {
                         return Err(ContractViolation::InvalidValue {
                             field: "stage22_connector_outbound_packet.remote_target_reference",
-                            reason: "remote target readiness requires bounded remote target refs only",
+                            reason:
+                                "remote target readiness requires bounded remote target refs only",
                         });
                     }
                 }
@@ -46079,7 +47830,11 @@ mod tests {
             Some(Stage21AutomationOrchestrationDisposition::AutomationCandidateReady)
         );
         assert!(packet.stage21_automation_ref_non_authoritative);
-        assert!(packet.work_authority.can_emit_connector_action_staging_packet);
+        assert!(
+            packet
+                .work_authority
+                .can_emit_connector_action_staging_packet
+        );
         assert!(!packet.work_authority.can_dispatch);
         assert!(!packet.can_mutate_or_execute());
     }
@@ -46125,15 +47880,16 @@ mod tests {
                 input
             },
             {
-                let mut input = Stage22ConnectorOutboundInput::fixture_staged_dispatch_posture_ready(
-                    "connector-stage22-unproven",
-                    "outbound-intent-stage22-unproven",
-                    "remote-target-stage22-unproven",
-                    "work-stage22-unproven",
-                    "lease-stage22-unproven",
-                    "device-stage22-a",
-                    "audit-stage22-unproven",
-                );
+                let mut input =
+                    Stage22ConnectorOutboundInput::fixture_staged_dispatch_posture_ready(
+                        "connector-stage22-unproven",
+                        "outbound-intent-stage22-unproven",
+                        "remote-target-stage22-unproven",
+                        "work-stage22-unproven",
+                        "lease-stage22-unproven",
+                        "device-stage22-a",
+                        "audit-stage22-unproven",
+                    );
                 input.outbound_claimed_unproven_completion = true;
                 input
             },
@@ -46179,13 +47935,12 @@ mod tests {
 
         for input in [
             {
-                let mut input =
-                    Stage22ConnectorOutboundInput::fixture_external_integration_ready(
-                        "external-integration-stage22-unbounded",
-                        "remote-target-stage22-unbounded",
-                        "device-stage22-a",
-                        "audit-stage22-unbounded",
-                    );
+                let mut input = Stage22ConnectorOutboundInput::fixture_external_integration_ready(
+                    "external-integration-stage22-unbounded",
+                    "remote-target-stage22-unbounded",
+                    "device-stage22-a",
+                    "audit-stage22-unbounded",
+                );
                 input.connector_target_staging_bounded = false;
                 input
             },
@@ -46213,15 +47968,16 @@ mod tests {
                 input
             },
             {
-                let mut input = Stage22ConnectorOutboundInput::fixture_staged_dispatch_posture_ready(
-                    "connector-stage22-missing-lease",
-                    "outbound-intent-stage22-missing-lease",
-                    "remote-target-stage22-missing-lease",
-                    "work-stage22-missing-lease",
-                    "lease-stage22-missing-lease",
-                    "device-stage22-a",
-                    "audit-stage22-missing-lease",
-                );
+                let mut input =
+                    Stage22ConnectorOutboundInput::fixture_staged_dispatch_posture_ready(
+                        "connector-stage22-missing-lease",
+                        "outbound-intent-stage22-missing-lease",
+                        "remote-target-stage22-missing-lease",
+                        "work-stage22-missing-lease",
+                        "lease-stage22-missing-lease",
+                        "device-stage22-a",
+                        "audit-stage22-missing-lease",
+                    );
                 input.lease_ref_present = false;
                 input
             },
@@ -46276,13 +48032,12 @@ mod tests {
 
         for input in [
             {
-                let mut input =
-                    Stage22ConnectorOutboundInput::fixture_external_integration_ready(
-                        "external-integration-stage22-mutate",
-                        "remote-target-stage22-mutate",
-                        "device-stage22-a",
-                        "audit-stage22-mutate",
-                    );
+                let mut input = Stage22ConnectorOutboundInput::fixture_external_integration_ready(
+                    "external-integration-stage22-mutate",
+                    "remote-target-stage22-mutate",
+                    "device-stage22-a",
+                    "audit-stage22-mutate",
+                );
                 input.native_outbound_mutates_state = true;
                 input
             },
@@ -46382,12 +48137,20 @@ mod tests {
         assert!(!packet.work_authority.can_invent_connector_success);
         assert!(!packet.work_authority.can_invent_dispatch_success);
         assert!(!packet.work_authority.can_invent_remote_completion);
-        assert!(!packet.work_authority.can_invent_ownership_or_outbound_authority);
+        assert!(
+            !packet
+                .work_authority
+                .can_invent_ownership_or_outbound_authority
+        );
         assert!(!packet.work_authority.can_mutate_external_state);
         assert!(!packet.work_authority.can_dispatch);
         assert!(!packet.work_authority.can_emit_live_outbound_delivery);
         assert!(!packet.work_authority.can_create_user_turn);
-        assert!(!packet.work_authority.can_treat_visible_outbound_as_action_success);
+        assert!(
+            !packet
+                .work_authority
+                .can_treat_visible_outbound_as_action_success
+        );
         assert!(!packet.can_mutate_or_execute());
 
         for input in [
@@ -46417,22 +48180,22 @@ mod tests {
                 input
             },
             {
-                let mut input = Stage22ConnectorOutboundInput::fixture_remote_target_reference_ready(
-                    "remote-target-stage22-protected",
-                    "device-stage22-a",
-                    "audit-stage22-protected",
-                );
+                let mut input =
+                    Stage22ConnectorOutboundInput::fixture_remote_target_reference_ready(
+                        "remote-target-stage22-protected",
+                        "device-stage22-a",
+                        "audit-stage22-protected",
+                    );
                 input.protected_action_candidate_present = true;
                 input
             },
             {
-                let mut input =
-                    Stage22ConnectorOutboundInput::fixture_external_integration_ready(
-                        "external-integration-stage22-policy",
-                        "remote-target-stage22-policy",
-                        "device-stage22-a",
-                        "audit-stage22-policy",
-                    );
+                let mut input = Stage22ConnectorOutboundInput::fixture_external_integration_ready(
+                    "external-integration-stage22-policy",
+                    "remote-target-stage22-policy",
+                    "device-stage22-a",
+                    "audit-stage22-policy",
+                );
                 input.policy_denied = true;
                 input
             },
@@ -46451,13 +48214,12 @@ mod tests {
 
         for mut input in [
             {
-                let mut input =
-                    Stage22ConnectorOutboundInput::fixture_external_integration_ready(
-                        "external-integration-stage22-live-provider",
-                        "remote-target-stage22-live-provider",
-                        "device-stage22-a",
-                        "audit-stage22-live-provider",
-                    );
+                let mut input = Stage22ConnectorOutboundInput::fixture_external_integration_ready(
+                    "external-integration-stage22-live-provider",
+                    "remote-target-stage22-live-provider",
+                    "device-stage22-a",
+                    "audit-stage22-live-provider",
+                );
                 input.attempted_live_provider_in_build = true;
                 input
             },
@@ -46494,13 +48256,12 @@ mod tests {
             .is_err());
         }
 
-        let mut runtime_mock =
-            Stage22ConnectorOutboundInput::fixture_external_integration_ready(
-                "external-integration-stage22-runtime-mock",
-                "remote-target-stage22-runtime-mock",
-                "device-stage22-a",
-                "audit-stage22-runtime-mock",
-            );
+        let mut runtime_mock = Stage22ConnectorOutboundInput::fixture_external_integration_ready(
+            "external-integration-stage22-runtime-mock",
+            "remote-target-stage22-runtime-mock",
+            "device-stage22-a",
+            "audit-stage22-runtime-mock",
+        );
         runtime_mock.fake_connector_detected = true;
         runtime_mock.fixture_only_test_path = false;
         assert!(Stage22ConnectorOutboundPacket::from_stage15_output(
@@ -46600,13 +48361,14 @@ mod tests {
         let automation = stage22_automation_identity();
         let outbound = stage23_outbound_identity();
         let memory = stage24_memory_identity();
-        let mut input = super::Stage24IngressCaptureInput::fixture_realtime_multimodal_ingress_ready(
-            "capture-session-stage24-ready",
-            "stream-packet-stage24-ready",
-            "modality-selection-stage24-ready",
-            "device-stage24-a",
-            "audit-stage24-ready",
-        );
+        let mut input =
+            super::Stage24IngressCaptureInput::fixture_realtime_multimodal_ingress_ready(
+                "capture-session-stage24-ready",
+                "stream-packet-stage24-ready",
+                "modality-selection-stage24-ready",
+                "device-stage24-a",
+                "audit-stage24-ready",
+            );
         input.stage19_attention_ref_present = true;
         input.stage19_attention_ref_non_authoritative = true;
         input.stage20_continuity_ref_present = true;
@@ -46653,7 +48415,11 @@ mod tests {
             Some(super::Stage23MemoryRetentionDisposition::IdentitySafeRetentionReady)
         );
         assert!(packet.stage23_memory_ref_non_authoritative);
-        assert!(packet.work_authority.can_emit_realtime_multimodal_ingress_packet);
+        assert!(
+            packet
+                .work_authority
+                .can_emit_realtime_multimodal_ingress_packet
+        );
         assert!(!packet.can_mutate_or_execute());
     }
 
@@ -46663,34 +48429,37 @@ mod tests {
 
         for input in [
             {
-                let mut input = super::Stage24IngressCaptureInput::fixture_realtime_multimodal_ingress_ready(
-                    "capture-session-stage24-invent-fact",
-                    "stream-packet-stage24-invent-fact",
-                    "modality-selection-stage24-invent-fact",
-                    "device-stage24-a",
-                    "audit-stage24-invent-fact",
-                );
+                let mut input =
+                    super::Stage24IngressCaptureInput::fixture_realtime_multimodal_ingress_ready(
+                        "capture-session-stage24-invent-fact",
+                        "stream-packet-stage24-invent-fact",
+                        "modality-selection-stage24-invent-fact",
+                        "device-stage24-a",
+                        "audit-stage24-invent-fact",
+                    );
                 input.ingress_invented_fact = true;
                 input
             },
             {
-                let mut input = super::Stage24IngressCaptureInput::fixture_partial_final_stream_posture_ready(
-                    "stream-packet-stage24-invent-final",
-                    "partial-transcript-stage24-invent-final",
-                    "final-transcript-stage24-invent-final",
-                    "modality-selection-stage24-invent-final",
-                    "audit-stage24-invent-final",
-                );
+                let mut input =
+                    super::Stage24IngressCaptureInput::fixture_partial_final_stream_posture_ready(
+                        "stream-packet-stage24-invent-final",
+                        "partial-transcript-stage24-invent-final",
+                        "final-transcript-stage24-invent-final",
+                        "modality-selection-stage24-invent-final",
+                        "audit-stage24-invent-final",
+                    );
                 input.ingress_invented_final_transcript_success = true;
                 input
             },
             {
-                let mut input = super::Stage24IngressCaptureInput::fixture_capture_session_boundary_ready(
-                    "capture-session-stage24-invent-capture",
-                    "stream-packet-stage24-invent-capture",
-                    "device-stage24-a",
-                    "audit-stage24-invent-capture",
-                );
+                let mut input =
+                    super::Stage24IngressCaptureInput::fixture_capture_session_boundary_ready(
+                        "capture-session-stage24-invent-capture",
+                        "stream-packet-stage24-invent-capture",
+                        "device-stage24-a",
+                        "audit-stage24-invent-capture",
+                    );
                 input.ingress_invented_capture_success = true;
                 input
             },
@@ -46746,29 +48515,35 @@ mod tests {
             ready.disposition,
             super::Stage24IngressCaptureDisposition::CaptureSessionBoundaryReady
         );
-        assert!(ready.work_authority.can_emit_capture_session_boundary_packet);
+        assert!(
+            ready
+                .work_authority
+                .can_emit_capture_session_boundary_packet
+        );
         assert!(!ready.can_mutate_or_execute());
 
         for input in [
             {
-                let mut input = super::Stage24IngressCaptureInput::fixture_realtime_multimodal_ingress_ready(
-                    "capture-session-stage24-unbounded",
-                    "stream-packet-stage24-unbounded",
-                    "modality-selection-stage24-unbounded",
-                    "device-stage24-a",
-                    "audit-stage24-unbounded",
-                );
+                let mut input =
+                    super::Stage24IngressCaptureInput::fixture_realtime_multimodal_ingress_ready(
+                        "capture-session-stage24-unbounded",
+                        "stream-packet-stage24-unbounded",
+                        "modality-selection-stage24-unbounded",
+                        "device-stage24-a",
+                        "audit-stage24-unbounded",
+                    );
                 input.capture_session_bounded = false;
                 input
             },
             {
-                let mut input = super::Stage24IngressCaptureInput::fixture_partial_final_stream_posture_ready(
-                    "stream-packet-stage24-secret",
-                    "partial-transcript-stage24-secret",
-                    "final-transcript-stage24-secret",
-                    "modality-selection-stage24-secret",
-                    "audit-stage24-secret",
-                );
+                let mut input =
+                    super::Stage24IngressCaptureInput::fixture_partial_final_stream_posture_ready(
+                        "stream-packet-stage24-secret",
+                        "partial-transcript-stage24-secret",
+                        "final-transcript-stage24-secret",
+                        "modality-selection-stage24-secret",
+                        "audit-stage24-secret",
+                    );
                 input.secret_unsafe = true;
                 input
             },
@@ -46783,23 +48558,25 @@ mod tests {
                 input
             },
             {
-                let mut input = super::Stage24IngressCaptureInput::fixture_capture_session_boundary_ready(
-                    "capture-session-stage24-missing-bundle",
-                    "stream-packet-stage24-missing-bundle",
-                    "device-stage24-a",
-                    "audit-stage24-missing-bundle",
-                );
+                let mut input =
+                    super::Stage24IngressCaptureInput::fixture_capture_session_boundary_ready(
+                        "capture-session-stage24-missing-bundle",
+                        "stream-packet-stage24-missing-bundle",
+                        "device-stage24-a",
+                        "audit-stage24-missing-bundle",
+                    );
                 input.capture_bundle_validated = false;
                 input
             },
             {
-                let mut input = super::Stage24IngressCaptureInput::fixture_realtime_multimodal_ingress_ready(
-                    "capture-session-stage24-modality-mismatch",
-                    "stream-packet-stage24-modality-mismatch",
-                    "modality-selection-stage24-modality-mismatch",
-                    "device-stage24-a",
-                    "audit-stage24-modality-mismatch",
-                );
+                let mut input =
+                    super::Stage24IngressCaptureInput::fixture_realtime_multimodal_ingress_ready(
+                        "capture-session-stage24-modality-mismatch",
+                        "stream-packet-stage24-modality-mismatch",
+                        "modality-selection-stage24-modality-mismatch",
+                        "device-stage24-a",
+                        "audit-stage24-modality-mismatch",
+                    );
                 input.modality_mismatch = true;
                 input
             },
@@ -46850,13 +48627,14 @@ mod tests {
 
         for input in [
             {
-                let mut input = super::Stage24IngressCaptureInput::fixture_realtime_multimodal_ingress_ready(
-                    "capture-session-stage24-mutate",
-                    "stream-packet-stage24-mutate",
-                    "modality-selection-stage24-mutate",
-                    "device-stage24-a",
-                    "audit-stage24-mutate",
-                );
+                let mut input =
+                    super::Stage24IngressCaptureInput::fixture_realtime_multimodal_ingress_ready(
+                        "capture-session-stage24-mutate",
+                        "stream-packet-stage24-mutate",
+                        "modality-selection-stage24-mutate",
+                        "device-stage24-a",
+                        "audit-stage24-mutate",
+                    );
                 input.native_stream_mutates_state = true;
                 input
             },
@@ -46890,12 +48668,13 @@ mod tests {
 
         for input in [
             {
-                let mut input = super::Stage24IngressCaptureInput::fixture_capture_session_boundary_ready(
-                    "capture-session-stage24-stale",
-                    "stream-packet-stage24-stale",
-                    "device-stage24-a",
-                    "audit-stage24-stale",
-                );
+                let mut input =
+                    super::Stage24IngressCaptureInput::fixture_capture_session_boundary_ready(
+                        "capture-session-stage24-stale",
+                        "stream-packet-stage24-stale",
+                        "device-stage24-a",
+                        "audit-stage24-stale",
+                    );
                 input.stale_or_cancelled_or_superseded_output = true;
                 input
             },
@@ -46910,13 +48689,14 @@ mod tests {
                 input
             },
             {
-                let mut input = super::Stage24IngressCaptureInput::fixture_partial_final_stream_posture_ready(
-                    "stream-packet-stage24-replay",
-                    "partial-transcript-stage24-replay",
-                    "final-transcript-stage24-replay",
-                    "modality-selection-stage24-replay",
-                    "audit-stage24-replay",
-                );
+                let mut input =
+                    super::Stage24IngressCaptureInput::fixture_partial_final_stream_posture_ready(
+                        "stream-packet-stage24-replay",
+                        "partial-transcript-stage24-replay",
+                        "final-transcript-stage24-replay",
+                        "modality-selection-stage24-replay",
+                        "audit-stage24-replay",
+                    );
                 input.replay_upgrades_blocked_stream = true;
                 input
             },
@@ -46985,34 +48765,37 @@ mod tests {
                 input
             },
             {
-                let mut input = super::Stage24IngressCaptureInput::fixture_partial_final_stream_posture_ready(
-                    "stream-packet-stage24-unverified",
-                    "partial-transcript-stage24-unverified",
-                    "final-transcript-stage24-unverified",
-                    "modality-selection-stage24-unverified",
-                    "audit-stage24-unverified",
-                );
+                let mut input =
+                    super::Stage24IngressCaptureInput::fixture_partial_final_stream_posture_ready(
+                        "stream-packet-stage24-unverified",
+                        "partial-transcript-stage24-unverified",
+                        "final-transcript-stage24-unverified",
+                        "modality-selection-stage24-unverified",
+                        "audit-stage24-unverified",
+                    );
                 input.unverified_source_evidence_present = true;
                 input
             },
             {
-                let mut input = super::Stage24IngressCaptureInput::fixture_realtime_multimodal_ingress_ready(
-                    "capture-session-stage24-protected",
-                    "stream-packet-stage24-protected",
-                    "modality-selection-stage24-protected",
-                    "device-stage24-a",
-                    "audit-stage24-protected",
-                );
+                let mut input =
+                    super::Stage24IngressCaptureInput::fixture_realtime_multimodal_ingress_ready(
+                        "capture-session-stage24-protected",
+                        "stream-packet-stage24-protected",
+                        "modality-selection-stage24-protected",
+                        "device-stage24-a",
+                        "audit-stage24-protected",
+                    );
                 input.protected_action_candidate_present = true;
                 input
             },
             {
-                let mut input = super::Stage24IngressCaptureInput::fixture_capture_session_boundary_ready(
-                    "capture-session-stage24-policy",
-                    "stream-packet-stage24-policy",
-                    "device-stage24-a",
-                    "audit-stage24-policy",
-                );
+                let mut input =
+                    super::Stage24IngressCaptureInput::fixture_capture_session_boundary_ready(
+                        "capture-session-stage24-policy",
+                        "stream-packet-stage24-policy",
+                        "device-stage24-a",
+                        "audit-stage24-policy",
+                    );
                 input.policy_denied = true;
                 input
             },
@@ -47037,23 +48820,25 @@ mod tests {
 
         for mut input in [
             {
-                let mut input = super::Stage24IngressCaptureInput::fixture_realtime_multimodal_ingress_ready(
-                    "capture-session-stage24-live-provider",
-                    "stream-packet-stage24-live-provider",
-                    "modality-selection-stage24-live-provider",
-                    "device-stage24-a",
-                    "audit-stage24-live-provider",
-                );
+                let mut input =
+                    super::Stage24IngressCaptureInput::fixture_realtime_multimodal_ingress_ready(
+                        "capture-session-stage24-live-provider",
+                        "stream-packet-stage24-live-provider",
+                        "modality-selection-stage24-live-provider",
+                        "device-stage24-a",
+                        "audit-stage24-live-provider",
+                    );
                 input.attempted_live_provider_in_build = true;
                 input
             },
             {
-                let mut input = super::Stage24IngressCaptureInput::fixture_capture_session_boundary_ready(
-                    "capture-session-stage24-live-media",
-                    "stream-packet-stage24-live-media",
-                    "device-stage24-a",
-                    "audit-stage24-live-media",
-                );
+                let mut input =
+                    super::Stage24IngressCaptureInput::fixture_capture_session_boundary_ready(
+                        "capture-session-stage24-live-media",
+                        "stream-packet-stage24-live-media",
+                        "device-stage24-a",
+                        "audit-stage24-live-media",
+                    );
                 input.generated_live_media_in_build = true;
                 input
             },
@@ -47069,16 +48854,18 @@ mod tests {
             },
         ] {
             input.fixture_only_test_path = true;
-            assert!(super::Stage24IngressCapturePacket::from_stage8_transcript_gate(
-                &transcript_gate,
-                None,
-                None,
-                None,
-                None,
-                None,
-                input,
-            )
-            .is_err());
+            assert!(
+                super::Stage24IngressCapturePacket::from_stage8_transcript_gate(
+                    &transcript_gate,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    input,
+                )
+                .is_err()
+            );
         }
 
         let mut runtime_mock =
@@ -47091,16 +48878,18 @@ mod tests {
             );
         runtime_mock.fake_stream_detected = true;
         runtime_mock.fixture_only_test_path = false;
-        assert!(super::Stage24IngressCapturePacket::from_stage8_transcript_gate(
-            &transcript_gate,
-            None,
-            None,
-            None,
-            None,
-            None,
-            runtime_mock,
-        )
-        .is_err());
+        assert!(
+            super::Stage24IngressCapturePacket::from_stage8_transcript_gate(
+                &transcript_gate,
+                None,
+                None,
+                None,
+                None,
+                None,
+                runtime_mock,
+            )
+            .is_err()
+        );
     }
 
     fn stage25_ingress_identity() -> super::Stage24IngressCapturePacket {
@@ -47133,14 +48922,12 @@ mod tests {
     }
 
     #[test]
-    fn stage_25a_orchestration_consumes_stage20_stage21_stage22_stage23_stage24_non_authoritatively()
-    {
+    fn stage_25a_orchestration_consumes_stage20_stage21_stage22_stage23_stage24_non_authoritatively(
+    ) {
         let route = stage12_protected_route();
-        let gate = Stage12ProtectedActionGatePacket::from_stage11_candidate(
-            &route,
-            stage12_gate_input(),
-        )
-        .expect("stage25 protected gate");
+        let gate =
+            Stage12ProtectedActionGatePacket::from_stage11_candidate(&route, stage12_gate_input())
+                .expect("stage25 protected gate");
         let continuity = stage21_continuity_identity();
         let automation = stage22_automation_identity();
         let outbound = stage23_outbound_identity();
@@ -47231,12 +49018,13 @@ mod tests {
                 input
             },
             {
-                let mut input = super::Stage25ToolOrchestrationInput::fixture_action_graph_boundary_ready(
-                    "orchestration-stage25-invent-action-graph",
-                    "action-graph-stage25-invent-action-graph",
-                    "execution-plan-stage25-invent-action-graph",
-                    "audit-stage25-invent-action-graph",
-                );
+                let mut input =
+                    super::Stage25ToolOrchestrationInput::fixture_action_graph_boundary_ready(
+                        "orchestration-stage25-invent-action-graph",
+                        "action-graph-stage25-invent-action-graph",
+                        "execution-plan-stage25-invent-action-graph",
+                        "audit-stage25-invent-action-graph",
+                    );
                 input.orchestration_invented_action_graph_completion = true;
                 input
             },
@@ -47316,22 +49104,24 @@ mod tests {
                 input
             },
             {
-                let mut input = super::Stage25ToolOrchestrationInput::fixture_action_graph_boundary_ready(
-                    "orchestration-stage25-secret",
-                    "action-graph-stage25-secret",
-                    "execution-plan-stage25-secret",
-                    "audit-stage25-secret",
-                );
+                let mut input =
+                    super::Stage25ToolOrchestrationInput::fixture_action_graph_boundary_ready(
+                        "orchestration-stage25-secret",
+                        "action-graph-stage25-secret",
+                        "execution-plan-stage25-secret",
+                        "audit-stage25-secret",
+                    );
                 input.secret_unsafe = true;
                 input
             },
             {
-                let mut input = super::Stage25ToolOrchestrationInput::fixture_tool_orchestration_ready(
-                    "orchestration-stage25-cross-route",
-                    "tool-invocation-stage25-cross-route",
-                    "execution-plan-stage25-cross-route",
-                    "audit-stage25-cross-route",
-                );
+                let mut input =
+                    super::Stage25ToolOrchestrationInput::fixture_tool_orchestration_ready(
+                        "orchestration-stage25-cross-route",
+                        "tool-invocation-stage25-cross-route",
+                        "execution-plan-stage25-cross-route",
+                        "audit-stage25-cross-route",
+                    );
                 input.cross_route = true;
                 input
             },
@@ -47376,12 +49166,13 @@ mod tests {
                 input
             },
             {
-                let mut input = super::Stage25ToolOrchestrationInput::fixture_action_graph_boundary_ready(
-                    "orchestration-stage25-protected",
-                    "action-graph-stage25-protected",
-                    "execution-plan-stage25-protected",
-                    "audit-stage25-protected",
-                );
+                let mut input =
+                    super::Stage25ToolOrchestrationInput::fixture_action_graph_boundary_ready(
+                        "orchestration-stage25-protected",
+                        "action-graph-stage25-protected",
+                        "execution-plan-stage25-protected",
+                        "audit-stage25-protected",
+                    );
                 input.protected_action_like_request = true;
                 input
             },
@@ -47463,7 +49254,11 @@ mod tests {
         assert!(!packet.work_authority.can_dispatch);
         assert!(!packet.work_authority.can_execute);
         assert!(!packet.work_authority.can_create_user_turn);
-        assert!(!packet.work_authority.can_treat_visible_staging_as_action_success);
+        assert!(
+            !packet
+                .work_authority
+                .can_treat_visible_staging_as_action_success
+        );
         assert!(!packet.can_mutate_or_execute());
 
         for input in [
@@ -47491,12 +49286,13 @@ mod tests {
                 input
             },
             {
-                let mut input = super::Stage25ToolOrchestrationInput::fixture_action_graph_boundary_ready(
-                    "orchestration-stage25-live-action-graph",
-                    "action-graph-stage25-live-action-graph",
-                    "execution-plan-stage25-live-action-graph",
-                    "audit-stage25-live-action-graph",
-                );
+                let mut input =
+                    super::Stage25ToolOrchestrationInput::fixture_action_graph_boundary_ready(
+                        "orchestration-stage25-live-action-graph",
+                        "action-graph-stage25-live-action-graph",
+                        "execution-plan-stage25-live-action-graph",
+                        "audit-stage25-live-action-graph",
+                    );
                 input.ran_live_action_graph_execution_in_build = true;
                 input
             },
@@ -47531,11 +49327,9 @@ mod tests {
 
     fn stage26_orchestration_identity() -> super::Stage25ToolOrchestrationPacket {
         let route = stage12_protected_route();
-        let gate = Stage12ProtectedActionGatePacket::from_stage11_candidate(
-            &route,
-            stage12_gate_input(),
-        )
-        .expect("stage26 protected gate");
+        let gate =
+            Stage12ProtectedActionGatePacket::from_stage11_candidate(&route, stage12_gate_input())
+                .expect("stage26 protected gate");
         let continuity = stage21_continuity_identity();
         let automation = stage22_automation_identity();
         let outbound = stage23_outbound_identity();
@@ -47577,11 +49371,9 @@ mod tests {
     fn stage_26a_execution_authority_consumes_stage20_stage21_stage22_stage23_stage24_stage25_non_authoritatively(
     ) {
         let route = stage12_protected_route();
-        let gate = Stage12ProtectedActionGatePacket::from_stage11_candidate(
-            &route,
-            stage12_gate_input(),
-        )
-        .expect("stage26 protected gate");
+        let gate =
+            Stage12ProtectedActionGatePacket::from_stage11_candidate(&route, stage12_gate_input())
+                .expect("stage26 protected gate");
         let continuity = stage21_continuity_identity();
         let automation = stage22_automation_identity();
         let outbound = stage23_outbound_identity();
@@ -47665,11 +49457,9 @@ mod tests {
     #[test]
     fn stage_26a_packets_cannot_invent_or_claim_execution_success() {
         let route = stage12_protected_route();
-        let gate = Stage12ProtectedActionGatePacket::from_stage11_candidate(
-            &route,
-            stage12_gate_input(),
-        )
-        .expect("stage26 protected gate");
+        let gate =
+            Stage12ProtectedActionGatePacket::from_stage11_candidate(&route, stage12_gate_input())
+                .expect("stage26 protected gate");
 
         for input in [
             {
@@ -47744,11 +49534,9 @@ mod tests {
     #[test]
     fn stage_26a_authority_requires_scoped_secret_safe_refs() {
         let route = stage12_protected_route();
-        let gate = Stage12ProtectedActionGatePacket::from_stage11_candidate(
-            &route,
-            stage12_gate_input(),
-        )
-        .expect("stage26 protected gate");
+        let gate =
+            Stage12ProtectedActionGatePacket::from_stage11_candidate(&route, stage12_gate_input())
+                .expect("stage26 protected gate");
         let ready = super::Stage26ExecutionAuthorityPacket::from_stage25_orchestration(
             &route,
             Some(&gate),
@@ -47851,11 +49639,9 @@ mod tests {
     #[test]
     fn stage_26a_native_protected_and_stale_cases_fail_closed() {
         let route = stage12_protected_route();
-        let gate = Stage12ProtectedActionGatePacket::from_stage11_candidate(
-            &route,
-            stage12_gate_input(),
-        )
-        .expect("stage26 protected gate");
+        let gate =
+            Stage12ProtectedActionGatePacket::from_stage11_candidate(&route, stage12_gate_input())
+                .expect("stage26 protected gate");
 
         for input in [
             {
@@ -47952,11 +49738,9 @@ mod tests {
     #[test]
     fn stage_26a_blocks_live_paths_and_runtime_mocks() {
         let route = stage12_protected_route();
-        let gate = Stage12ProtectedActionGatePacket::from_stage11_candidate(
-            &route,
-            stage12_gate_input(),
-        )
-        .expect("stage26 protected gate");
+        let gate =
+            Stage12ProtectedActionGatePacket::from_stage11_candidate(&route, stage12_gate_input())
+                .expect("stage26 protected gate");
         let packet = super::Stage26ExecutionAuthorityPacket::from_stage25_orchestration(
             &route,
             Some(&gate),
@@ -47984,7 +49768,11 @@ mod tests {
         assert!(!packet.work_authority.can_dispatch);
         assert!(!packet.work_authority.can_execute);
         assert!(!packet.work_authority.can_create_user_turn);
-        assert!(!packet.work_authority.can_treat_visible_readiness_as_action_success);
+        assert!(
+            !packet
+                .work_authority
+                .can_treat_visible_readiness_as_action_success
+        );
         assert!(!packet.can_mutate_or_execute());
 
         for input in [
@@ -48025,18 +49813,20 @@ mod tests {
                 input
             },
         ] {
-            assert!(super::Stage26ExecutionAuthorityPacket::from_stage25_orchestration(
-                &route,
-                Some(&gate),
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                input,
-            )
-            .is_err());
+            assert!(
+                super::Stage26ExecutionAuthorityPacket::from_stage25_orchestration(
+                    &route,
+                    Some(&gate),
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    input,
+                )
+                .is_err()
+            );
         }
 
         let mut runtime_mock =
@@ -48049,27 +49839,27 @@ mod tests {
             );
         runtime_mock.fake_dispatch_detected = true;
         runtime_mock.fixture_only_test_path = false;
-        assert!(super::Stage26ExecutionAuthorityPacket::from_stage25_orchestration(
-            &route,
-            Some(&gate),
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            runtime_mock,
-        )
-        .is_err());
+        assert!(
+            super::Stage26ExecutionAuthorityPacket::from_stage25_orchestration(
+                &route,
+                Some(&gate),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                runtime_mock,
+            )
+            .is_err()
+        );
     }
 
     fn stage27_execution_authority_identity() -> super::Stage26ExecutionAuthorityPacket {
         let route = stage12_protected_route();
-        let gate = Stage12ProtectedActionGatePacket::from_stage11_candidate(
-            &route,
-            stage12_gate_input(),
-        )
-        .expect("stage27 protected gate");
+        let gate =
+            Stage12ProtectedActionGatePacket::from_stage11_candidate(&route, stage12_gate_input())
+                .expect("stage27 protected gate");
         let continuity = stage21_continuity_identity();
         let automation = stage22_automation_identity();
         let outbound = stage23_outbound_identity();
@@ -48112,11 +49902,9 @@ mod tests {
 
     fn stage28_settlement_identity() -> super::Stage27SettlementReconciliationPacket {
         let route = stage12_protected_route();
-        let gate = Stage12ProtectedActionGatePacket::from_stage11_candidate(
-            &route,
-            stage12_gate_input(),
-        )
-        .expect("stage28 protected gate");
+        let gate =
+            Stage12ProtectedActionGatePacket::from_stage11_candidate(&route, stage12_gate_input())
+                .expect("stage28 protected gate");
         let continuity = stage21_continuity_identity();
         let automation = stage22_automation_identity();
         let outbound = stage23_outbound_identity();
@@ -48161,17 +49949,18 @@ mod tests {
 
     fn stage29_conversation_control_identity() -> Stage5ConversationControlPacket {
         let authority = stage8_current_authority();
-        let same_page_state = crate::runtime_session_foundation::Stage5SamePageState::advisory_snapshot(
-            "conversation-goal-stage29",
-            "topic-stage29",
-            vec!["entity-stage29".to_string()],
-            vec!["open-loop-stage29".to_string()],
-            vec!["pending-question-stage29".to_string()],
-            vec!["corrected-assumption-stage29".to_string()],
-            true,
-            "snapshot-stage29",
-        )
-        .expect("stage29 same-page state");
+        let same_page_state =
+            crate::runtime_session_foundation::Stage5SamePageState::advisory_snapshot(
+                "conversation-goal-stage29",
+                "topic-stage29",
+                vec!["entity-stage29".to_string()],
+                vec!["open-loop-stage29".to_string()],
+                vec!["pending-question-stage29".to_string()],
+                vec!["corrected-assumption-stage29".to_string()],
+                true,
+                "snapshot-stage29",
+            )
+            .expect("stage29 same-page state");
         Stage5ConversationControlPacket::from_turn_authority(
             &authority,
             Stage5ConversationControlDisposition::SamePageSnapshot,
@@ -48210,11 +49999,9 @@ mod tests {
 
     fn stage29_publication_identity() -> super::Stage28PublicationDisclosurePacket {
         let route = stage12_protected_route();
-        let gate = Stage12ProtectedActionGatePacket::from_stage11_candidate(
-            &route,
-            stage12_gate_input(),
-        )
-        .expect("stage29 protected gate");
+        let gate =
+            Stage12ProtectedActionGatePacket::from_stage11_candidate(&route, stage12_gate_input())
+                .expect("stage29 protected gate");
         let continuity = stage21_continuity_identity();
         let automation = stage22_automation_identity();
         let outbound = stage23_outbound_identity();
@@ -48243,11 +50030,9 @@ mod tests {
 
     fn stage30_conversation_identity() -> super::Stage29ConversationalContinuityPacket {
         let route = stage12_protected_route();
-        let gate = Stage12ProtectedActionGatePacket::from_stage11_candidate(
-            &route,
-            stage12_gate_input(),
-        )
-        .expect("stage30 protected gate");
+        let gate =
+            Stage12ProtectedActionGatePacket::from_stage11_candidate(&route, stage12_gate_input())
+                .expect("stage30 protected gate");
         let conversation = stage29_conversation_control_identity();
         let output_interaction = stage29_output_interaction_identity();
         let speech = stage29_speech_output_identity();
@@ -48288,11 +50073,9 @@ mod tests {
 
     fn stage31_recovery_identity() -> super::Stage30RecoveryThreadPresencePacket {
         let route = stage12_protected_route();
-        let gate = Stage12ProtectedActionGatePacket::from_stage11_candidate(
-            &route,
-            stage12_gate_input(),
-        )
-        .expect("stage31 protected gate");
+        let gate =
+            Stage12ProtectedActionGatePacket::from_stage11_candidate(&route, stage12_gate_input())
+                .expect("stage31 protected gate");
         let output_interaction = stage29_output_interaction_identity();
         let speech = stage29_speech_output_identity();
         let continuity = stage21_continuity_identity();
@@ -48332,11 +50115,9 @@ mod tests {
     fn stage_29a_conversation_consumes_stage8_stage17_stage20_stage21_stage22_stage23_stage24_stage25_stage26_stage27_stage28_non_authoritatively(
     ) {
         let route = stage12_protected_route();
-        let gate = Stage12ProtectedActionGatePacket::from_stage11_candidate(
-            &route,
-            stage12_gate_input(),
-        )
-        .expect("stage29 protected gate");
+        let gate =
+            Stage12ProtectedActionGatePacket::from_stage11_candidate(&route, stage12_gate_input())
+                .expect("stage29 protected gate");
         let conversation = stage29_conversation_control_identity();
         let output_interaction = stage29_output_interaction_identity();
         let speech = stage29_speech_output_identity();
@@ -48404,11 +50185,9 @@ mod tests {
     #[test]
     fn stage_29a_packets_cannot_invent_or_claim_continuity_success() {
         let route = stage12_protected_route();
-        let gate = Stage12ProtectedActionGatePacket::from_stage11_candidate(
-            &route,
-            stage12_gate_input(),
-        )
-        .expect("stage29 protected gate");
+        let gate =
+            Stage12ProtectedActionGatePacket::from_stage11_candidate(&route, stage12_gate_input())
+                .expect("stage29 protected gate");
         let conversation = stage29_conversation_control_identity();
         let output_interaction = stage29_output_interaction_identity();
         let speech = stage29_speech_output_identity();
@@ -48482,11 +50261,9 @@ mod tests {
     #[test]
     fn stage_29a_conversation_requires_scoped_secret_safe_refs() {
         let route = stage12_protected_route();
-        let gate = Stage12ProtectedActionGatePacket::from_stage11_candidate(
-            &route,
-            stage12_gate_input(),
-        )
-        .expect("stage29 protected gate");
+        let gate =
+            Stage12ProtectedActionGatePacket::from_stage11_candidate(&route, stage12_gate_input())
+                .expect("stage29 protected gate");
         let conversation = stage29_conversation_control_identity();
         let output_interaction = stage29_output_interaction_identity();
         let speech = stage29_speech_output_identity();
@@ -48590,11 +50367,9 @@ mod tests {
     #[test]
     fn stage_29a_native_protected_and_stale_cases_fail_closed() {
         let route = stage12_protected_route();
-        let gate = Stage12ProtectedActionGatePacket::from_stage11_candidate(
-            &route,
-            stage12_gate_input(),
-        )
-        .expect("stage29 protected gate");
+        let gate =
+            Stage12ProtectedActionGatePacket::from_stage11_candidate(&route, stage12_gate_input())
+                .expect("stage29 protected gate");
         let conversation = stage29_conversation_control_identity();
         let output_interaction = stage29_output_interaction_identity();
         let speech = stage29_speech_output_identity();
@@ -48696,11 +50471,9 @@ mod tests {
     #[test]
     fn stage_29a_blocks_live_paths_and_runtime_mocks() {
         let route = stage12_protected_route();
-        let gate = Stage12ProtectedActionGatePacket::from_stage11_candidate(
-            &route,
-            stage12_gate_input(),
-        )
-        .expect("stage29 protected gate");
+        let gate =
+            Stage12ProtectedActionGatePacket::from_stage11_candidate(&route, stage12_gate_input())
+                .expect("stage29 protected gate");
         let conversation = stage29_conversation_control_identity();
         let output_interaction = stage29_output_interaction_identity();
         let speech = stage29_speech_output_identity();
@@ -48729,7 +50502,11 @@ mod tests {
         .expect("stage29 no-exec packet");
         assert!(!packet.work_authority.can_invent_facts);
         assert!(!packet.work_authority.can_invent_conversation_success);
-        assert!(!packet.work_authority.can_invent_interruption_recovery_success);
+        assert!(
+            !packet
+                .work_authority
+                .can_invent_interruption_recovery_success
+        );
         assert!(!packet.work_authority.can_invent_completion_success);
         assert!(!packet.work_authority.can_invent_continuity_authority);
         assert!(!packet.work_authority.can_connector_write);
@@ -48737,7 +50514,11 @@ mod tests {
         assert!(!packet.work_authority.can_dispatch);
         assert!(!packet.work_authority.can_execute);
         assert!(!packet.work_authority.can_create_user_turn);
-        assert!(!packet.work_authority.can_treat_visible_readiness_as_action_success);
+        assert!(
+            !packet
+                .work_authority
+                .can_treat_visible_readiness_as_action_success
+        );
         assert!(!packet.can_mutate_or_execute());
 
         for input in [
@@ -48823,11 +50604,9 @@ mod tests {
     fn stage_30a_recovery_consumes_stage8_stage17_stage20_stage21_stage22_stage23_stage24_stage25_stage26_stage27_stage28_stage29_non_authoritatively(
     ) {
         let route = stage12_protected_route();
-        let gate = Stage12ProtectedActionGatePacket::from_stage11_candidate(
-            &route,
-            stage12_gate_input(),
-        )
-        .expect("stage30 protected gate");
+        let gate =
+            Stage12ProtectedActionGatePacket::from_stage11_candidate(&route, stage12_gate_input())
+                .expect("stage30 protected gate");
         let output_interaction = stage29_output_interaction_identity();
         let speech = stage29_speech_output_identity();
         let continuity = stage21_continuity_identity();
@@ -48898,11 +50677,9 @@ mod tests {
     #[test]
     fn stage_30a_packets_cannot_invent_or_claim_recovery_success() {
         let route = stage12_protected_route();
-        let gate = Stage12ProtectedActionGatePacket::from_stage11_candidate(
-            &route,
-            stage12_gate_input(),
-        )
-        .expect("stage30 protected gate");
+        let gate =
+            Stage12ProtectedActionGatePacket::from_stage11_candidate(&route, stage12_gate_input())
+                .expect("stage30 protected gate");
         let output_interaction = stage29_output_interaction_identity();
         let speech = stage29_speech_output_identity();
         let continuity = stage21_continuity_identity();
@@ -48976,11 +50753,9 @@ mod tests {
     #[test]
     fn stage_30a_recovery_requires_scoped_secret_safe_refs() {
         let route = stage12_protected_route();
-        let gate = Stage12ProtectedActionGatePacket::from_stage11_candidate(
-            &route,
-            stage12_gate_input(),
-        )
-        .expect("stage30 protected gate");
+        let gate =
+            Stage12ProtectedActionGatePacket::from_stage11_candidate(&route, stage12_gate_input())
+                .expect("stage30 protected gate");
         let output_interaction = stage29_output_interaction_identity();
         let speech = stage29_speech_output_identity();
         let continuity = stage21_continuity_identity();
@@ -49085,11 +50860,9 @@ mod tests {
     #[test]
     fn stage_30a_native_protected_and_stale_cases_fail_closed() {
         let route = stage12_protected_route();
-        let gate = Stage12ProtectedActionGatePacket::from_stage11_candidate(
-            &route,
-            stage12_gate_input(),
-        )
-        .expect("stage30 protected gate");
+        let gate =
+            Stage12ProtectedActionGatePacket::from_stage11_candidate(&route, stage12_gate_input())
+                .expect("stage30 protected gate");
         let output_interaction = stage29_output_interaction_identity();
         let speech = stage29_speech_output_identity();
         let continuity = stage21_continuity_identity();
@@ -49191,11 +50964,9 @@ mod tests {
     #[test]
     fn stage_30a_blocks_live_paths_and_runtime_mocks() {
         let route = stage12_protected_route();
-        let gate = Stage12ProtectedActionGatePacket::from_stage11_candidate(
-            &route,
-            stage12_gate_input(),
-        )
-        .expect("stage30 protected gate");
+        let gate =
+            Stage12ProtectedActionGatePacket::from_stage11_candidate(&route, stage12_gate_input())
+                .expect("stage30 protected gate");
         let output_interaction = stage29_output_interaction_identity();
         let speech = stage29_speech_output_identity();
         let continuity = stage21_continuity_identity();
@@ -49234,7 +51005,11 @@ mod tests {
         assert!(!packet.work_authority.can_dispatch);
         assert!(!packet.work_authority.can_execute);
         assert!(!packet.work_authority.can_create_user_turn);
-        assert!(!packet.work_authority.can_treat_visible_readiness_as_action_success);
+        assert!(
+            !packet
+                .work_authority
+                .can_treat_visible_readiness_as_action_success
+        );
         assert!(!packet.can_mutate_or_execute());
 
         for input in [
@@ -49319,11 +51094,9 @@ mod tests {
     fn stage_31a_notification_consumes_stage8_stage17_stage19_stage20_stage21_stage22_stage23_stage24_stage25_stage26_stage27_stage28_stage29_stage30_non_authoritatively(
     ) {
         let route = stage12_protected_route();
-        let gate = Stage12ProtectedActionGatePacket::from_stage11_candidate(
-            &route,
-            stage12_gate_input(),
-        )
-        .expect("stage31 protected gate");
+        let gate =
+            Stage12ProtectedActionGatePacket::from_stage11_candidate(&route, stage12_gate_input())
+                .expect("stage31 protected gate");
         let attention = stage31_attention_identity();
         let recovery = stage31_recovery_identity();
 
@@ -49370,11 +51143,9 @@ mod tests {
     #[test]
     fn stage_31a_packets_cannot_invent_or_claim_notification_or_wake_success() {
         let route = stage12_protected_route();
-        let gate = Stage12ProtectedActionGatePacket::from_stage11_candidate(
-            &route,
-            stage12_gate_input(),
-        )
-        .expect("stage31 protected gate");
+        let gate =
+            Stage12ProtectedActionGatePacket::from_stage11_candidate(&route, stage12_gate_input())
+                .expect("stage31 protected gate");
         let attention = stage31_attention_identity();
         let recovery = stage31_recovery_identity();
 
@@ -49436,11 +51207,9 @@ mod tests {
     #[test]
     fn stage_31a_notification_requires_scoped_secret_safe_refs() {
         let route = stage12_protected_route();
-        let gate = Stage12ProtectedActionGatePacket::from_stage11_candidate(
-            &route,
-            stage12_gate_input(),
-        )
-        .expect("stage31 protected gate");
+        let gate =
+            Stage12ProtectedActionGatePacket::from_stage11_candidate(&route, stage12_gate_input())
+                .expect("stage31 protected gate");
         let attention = stage31_attention_identity();
         let recovery = stage31_recovery_identity();
 
@@ -49542,11 +51311,9 @@ mod tests {
     #[test]
     fn stage_31a_native_protected_and_stale_cases_fail_closed() {
         let route = stage12_protected_route();
-        let gate = Stage12ProtectedActionGatePacket::from_stage11_candidate(
-            &route,
-            stage12_gate_input(),
-        )
-        .expect("stage31 protected gate");
+        let gate =
+            Stage12ProtectedActionGatePacket::from_stage11_candidate(&route, stage12_gate_input())
+                .expect("stage31 protected gate");
         let attention = stage31_attention_identity();
         let recovery = stage31_recovery_identity();
 
@@ -49624,11 +51391,9 @@ mod tests {
     #[test]
     fn stage_31a_blocks_live_paths_and_runtime_mocks() {
         let route = stage12_protected_route();
-        let gate = Stage12ProtectedActionGatePacket::from_stage11_candidate(
-            &route,
-            stage12_gate_input(),
-        )
-        .expect("stage31 protected gate");
+        let gate =
+            Stage12ProtectedActionGatePacket::from_stage11_candidate(&route, stage12_gate_input())
+                .expect("stage31 protected gate");
         let attention = stage31_attention_identity();
         let recovery = stage31_recovery_identity();
 
@@ -49655,7 +51420,11 @@ mod tests {
         assert!(!packet.work_authority.can_dispatch);
         assert!(!packet.work_authority.can_execute);
         assert!(!packet.work_authority.can_create_user_turn);
-        assert!(!packet.work_authority.can_treat_visible_readiness_as_action_success);
+        assert!(
+            !packet
+                .work_authority
+                .can_treat_visible_readiness_as_action_success
+        );
         assert!(!packet.can_mutate_or_execute());
 
         for input in [
@@ -49721,11 +51490,9 @@ mod tests {
     fn stage_32a_trust_calibration_consumes_notification_recovery_and_explain_write_refs_non_authoritatively(
     ) {
         let route = stage12_protected_route();
-        let gate = Stage12ProtectedActionGatePacket::from_stage11_candidate(
-            &route,
-            stage12_gate_input(),
-        )
-        .expect("stage32 protected gate");
+        let gate =
+            Stage12ProtectedActionGatePacket::from_stage11_candidate(&route, stage12_gate_input())
+                .expect("stage32 protected gate");
         let attention = stage31_attention_identity();
         let recovery = stage31_recovery_identity();
         let notification = super::Stage31NotificationWakeReentryPacket::from_stage30_recovery(
@@ -49775,11 +51542,9 @@ mod tests {
     #[test]
     fn stage_32a_packets_cannot_invent_confidence_certainty_or_helpfulness() {
         let route = stage12_protected_route();
-        let gate = Stage12ProtectedActionGatePacket::from_stage11_candidate(
-            &route,
-            stage12_gate_input(),
-        )
-        .expect("stage32 protected gate");
+        let gate =
+            Stage12ProtectedActionGatePacket::from_stage11_candidate(&route, stage12_gate_input())
+                .expect("stage32 protected gate");
         let attention = stage31_attention_identity();
         let recovery = stage31_recovery_identity();
         let notification = super::Stage31NotificationWakeReentryPacket::from_stage30_recovery(
@@ -49847,11 +51612,9 @@ mod tests {
     #[test]
     fn stage_32a_trust_requires_scoped_secret_safe_refs_and_explain_write_summary_surfaces() {
         let route = stage12_protected_route();
-        let gate = Stage12ProtectedActionGatePacket::from_stage11_candidate(
-            &route,
-            stage12_gate_input(),
-        )
-        .expect("stage32 protected gate");
+        let gate =
+            Stage12ProtectedActionGatePacket::from_stage11_candidate(&route, stage12_gate_input())
+                .expect("stage32 protected gate");
         let attention = stage31_attention_identity();
         let recovery = stage31_recovery_identity();
         let notification = super::Stage31NotificationWakeReentryPacket::from_stage30_recovery(
@@ -49948,11 +51711,9 @@ mod tests {
     #[test]
     fn stage_32a_native_protected_and_stale_cases_fail_closed() {
         let route = stage12_protected_route();
-        let gate = Stage12ProtectedActionGatePacket::from_stage11_candidate(
-            &route,
-            stage12_gate_input(),
-        )
-        .expect("stage32 protected gate");
+        let gate =
+            Stage12ProtectedActionGatePacket::from_stage11_candidate(&route, stage12_gate_input())
+                .expect("stage32 protected gate");
         let attention = stage31_attention_identity();
         let recovery = stage31_recovery_identity();
         let notification = super::Stage31NotificationWakeReentryPacket::from_stage30_recovery(
@@ -50037,11 +51798,9 @@ mod tests {
     #[test]
     fn stage_32a_blocks_live_paths_and_runtime_mocks() {
         let route = stage12_protected_route();
-        let gate = Stage12ProtectedActionGatePacket::from_stage11_candidate(
-            &route,
-            stage12_gate_input(),
-        )
-        .expect("stage32 protected gate");
+        let gate =
+            Stage12ProtectedActionGatePacket::from_stage11_candidate(&route, stage12_gate_input())
+                .expect("stage32 protected gate");
         let attention = stage31_attention_identity();
         let recovery = stage31_recovery_identity();
         let notification = super::Stage31NotificationWakeReentryPacket::from_stage30_recovery(
@@ -50078,7 +51837,11 @@ mod tests {
         assert!(!packet.work_authority.can_dispatch);
         assert!(!packet.work_authority.can_execute);
         assert!(!packet.work_authority.can_create_user_turn);
-        assert!(!packet.work_authority.can_treat_visible_reassurance_as_action_success);
+        assert!(
+            !packet
+                .work_authority
+                .can_treat_visible_reassurance_as_action_success
+        );
         assert!(!packet.can_mutate_or_execute());
 
         for input in [
@@ -50118,10 +51881,9 @@ mod tests {
             );
         }
 
-        let mut runtime_mock =
-            super::Stage32TrustCalibrationInput::fixture_trust_calibration_ready(
-                "audit-stage32-runtime-mock",
-            );
+        let mut runtime_mock = super::Stage32TrustCalibrationInput::fixture_trust_calibration_ready(
+            "audit-stage32-runtime-mock",
+        );
         runtime_mock.fake_trust_detected = true;
         runtime_mock.fixture_only_test_path = false;
         assert!(
@@ -50139,11 +51901,9 @@ mod tests {
     fn stage_33a_relationship_memory_consumes_trust_memory_and_voice_identity_refs_non_authoritatively(
     ) {
         let route = stage12_protected_route();
-        let gate = Stage12ProtectedActionGatePacket::from_stage11_candidate(
-            &route,
-            stage12_gate_input(),
-        )
-        .expect("stage33 protected gate");
+        let gate =
+            Stage12ProtectedActionGatePacket::from_stage11_candidate(&route, stage12_gate_input())
+                .expect("stage33 protected gate");
         let attention = stage31_attention_identity();
         let recovery = stage31_recovery_identity();
         let notification = super::Stage31NotificationWakeReentryPacket::from_stage30_recovery(
@@ -50208,11 +51968,9 @@ mod tests {
     #[test]
     fn stage_33a_packets_cannot_invent_memory_certainty_relationship_depth_or_familiarity() {
         let route = stage12_protected_route();
-        let gate = Stage12ProtectedActionGatePacket::from_stage11_candidate(
-            &route,
-            stage12_gate_input(),
-        )
-        .expect("stage33 protected gate");
+        let gate =
+            Stage12ProtectedActionGatePacket::from_stage11_candidate(&route, stage12_gate_input())
+                .expect("stage33 protected gate");
         let attention = stage31_attention_identity();
         let recovery = stage31_recovery_identity();
         let notification = super::Stage31NotificationWakeReentryPacket::from_stage30_recovery(
@@ -50288,11 +52046,9 @@ mod tests {
     #[test]
     fn stage_33a_relationship_authority_requires_memory_scoping_and_voice_identity_posture() {
         let route = stage12_protected_route();
-        let gate = Stage12ProtectedActionGatePacket::from_stage11_candidate(
-            &route,
-            stage12_gate_input(),
-        )
-        .expect("stage33 protected gate");
+        let gate =
+            Stage12ProtectedActionGatePacket::from_stage11_candidate(&route, stage12_gate_input())
+                .expect("stage33 protected gate");
         let attention = stage31_attention_identity();
         let recovery = stage31_recovery_identity();
         let notification = super::Stage31NotificationWakeReentryPacket::from_stage30_recovery(
@@ -50387,11 +52143,9 @@ mod tests {
     #[test]
     fn stage_33a_native_protected_and_stale_cases_fail_closed() {
         let route = stage12_protected_route();
-        let gate = Stage12ProtectedActionGatePacket::from_stage11_candidate(
-            &route,
-            stage12_gate_input(),
-        )
-        .expect("stage33 protected gate");
+        let gate =
+            Stage12ProtectedActionGatePacket::from_stage11_candidate(&route, stage12_gate_input())
+                .expect("stage33 protected gate");
         let attention = stage31_attention_identity();
         let recovery = stage31_recovery_identity();
         let notification = super::Stage31NotificationWakeReentryPacket::from_stage30_recovery(
@@ -50483,11 +52237,9 @@ mod tests {
     #[test]
     fn stage_33a_blocks_live_paths_and_runtime_mocks() {
         let route = stage12_protected_route();
-        let gate = Stage12ProtectedActionGatePacket::from_stage11_candidate(
-            &route,
-            stage12_gate_input(),
-        )
-        .expect("stage33 protected gate");
+        let gate =
+            Stage12ProtectedActionGatePacket::from_stage11_candidate(&route, stage12_gate_input())
+                .expect("stage33 protected gate");
         let attention = stage31_attention_identity();
         let recovery = stage31_recovery_identity();
         let notification = super::Stage31NotificationWakeReentryPacket::from_stage30_recovery(
@@ -50523,7 +52275,11 @@ mod tests {
         assert!(!packet.work_authority.can_invent_facts);
         assert!(!packet.work_authority.can_invent_memory_certainty);
         assert!(!packet.work_authority.can_invent_relationship_depth);
-        assert!(!packet.work_authority.can_invent_emotional_knowledge_certainty);
+        assert!(
+            !packet
+                .work_authority
+                .can_invent_emotional_knowledge_certainty
+        );
         assert!(!packet.work_authority.can_invent_bond_continuity);
         assert!(!packet.work_authority.can_invent_completion_success);
         assert!(!packet.work_authority.can_invent_relationship_authority);
@@ -50532,7 +52288,11 @@ mod tests {
         assert!(!packet.work_authority.can_dispatch);
         assert!(!packet.work_authority.can_execute);
         assert!(!packet.work_authority.can_create_user_turn);
-        assert!(!packet.work_authority.can_treat_visible_familiarity_as_action_success);
+        assert!(
+            !packet
+                .work_authority
+                .can_treat_visible_familiarity_as_action_success
+        );
         assert!(!packet.can_mutate_or_execute());
 
         for input in [
@@ -50560,15 +52320,13 @@ mod tests {
                 input
             },
         ] {
-            assert!(
-                super::Stage33RelationshipMemoryPacket::from_stage32_trust(
-                    &route,
-                    Some(&gate),
-                    Some(&trust),
-                    input,
-                )
-                .is_err()
-            );
+            assert!(super::Stage33RelationshipMemoryPacket::from_stage32_trust(
+                &route,
+                Some(&gate),
+                Some(&trust),
+                input,
+            )
+            .is_err());
         }
 
         let mut runtime_mock =
@@ -50577,11 +52335,516 @@ mod tests {
             );
         runtime_mock.fake_relationship_detected = true;
         runtime_mock.fixture_only_test_path = false;
+        assert!(super::Stage33RelationshipMemoryPacket::from_stage32_trust(
+            &route,
+            Some(&gate),
+            Some(&trust),
+            runtime_mock,
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn stage_34a_source_of_truth_consumes_relationship_capability_and_inventory_refs_non_authoritatively(
+    ) {
+        let route = stage12_protected_route();
+        let gate =
+            Stage12ProtectedActionGatePacket::from_stage11_candidate(&route, stage12_gate_input())
+                .expect("stage34 protected gate");
+        let attention = stage31_attention_identity();
+        let recovery = stage31_recovery_identity();
+        let notification = super::Stage31NotificationWakeReentryPacket::from_stage30_recovery(
+            &route,
+            Some(&gate),
+            Some(&attention),
+            Some(&recovery),
+            super::Stage31NotificationWakeReentryInput::fixture_notification_disclosure_boundary_ready(
+                "audit-stage34-stage31",
+            ),
+        )
+        .expect("stage34 stage31 notification");
+        let trust = super::Stage32TrustCalibrationPacket::from_stage31_notification(
+            &route,
+            Some(&gate),
+            Some(&notification),
+            super::Stage32TrustCalibrationInput::fixture_trust_calibration_ready(
+                "audit-stage34-stage32",
+            ),
+        )
+        .expect("stage34 stage32 trust");
+        let relationship = super::Stage33RelationshipMemoryPacket::from_stage32_trust(
+            &route,
+            Some(&gate),
+            Some(&trust),
+            super::Stage33RelationshipMemoryInput::fixture_relationship_memory_framing_ready(
+                "audit-stage34-stage33",
+            ),
+        )
+        .expect("stage34 stage33 relationship");
+
+        let packet = super::Stage34SourceOfTruthPacket::from_stage33_relationship(
+            &route,
+            Some(&gate),
+            Some(&relationship),
+            super::Stage34SourceOfTruthInput::fixture_source_of_truth_presentation_ready(
+                "audit-stage34-source",
+            ),
+        )
+        .expect("stage34 source-of-truth ready");
+
+        assert_eq!(
+            packet.disposition,
+            super::Stage34SourceOfTruthDisposition::SourceOfTruthPresentationReady
+        );
+        assert_eq!(
+            packet.stage33_disposition,
+            Some(super::Stage33RelationshipMemoryDisposition::RelationshipMemoryFramingReady)
+        );
+        assert_eq!(
+            packet.stage32_disposition,
+            Some(super::Stage32TrustCalibrationDisposition::TrustCalibrationReady)
+        );
+        assert_eq!(
+            packet.stage31_disposition,
+            Some(
+                super::Stage31NotificationWakeReentryDisposition::NotificationDisclosureBoundaryReady
+            )
+        );
+        assert!(packet.stage33_ref_non_authoritative);
+        assert!(packet.ph1d_ref_non_authoritative);
+        assert!(packet.ph1ecm_ref_non_authoritative);
+        assert!(packet.ph1simcat_ref_non_authoritative);
+        assert!(packet.ph1simfinder_ref_non_authoritative);
         assert!(
-            super::Stage33RelationshipMemoryPacket::from_stage32_trust(
+            packet
+                .work_authority
+                .can_emit_source_of_truth_presentation_packet
+        );
+        assert!(!packet.can_mutate_or_execute());
+    }
+
+    #[test]
+    fn stage_34a_packets_cannot_invent_capability_or_self_authority() {
+        let route = stage12_protected_route();
+        let gate =
+            Stage12ProtectedActionGatePacket::from_stage11_candidate(&route, stage12_gate_input())
+                .expect("stage34 protected gate");
+        let attention = stage31_attention_identity();
+        let recovery = stage31_recovery_identity();
+        let notification = super::Stage31NotificationWakeReentryPacket::from_stage30_recovery(
+            &route,
+            Some(&gate),
+            Some(&attention),
+            Some(&recovery),
+            super::Stage31NotificationWakeReentryInput::fixture_governed_wake_reentry_continuity_ready(
+                "wake-stage34-stage31",
+                "audit-stage34-stage31",
+            ),
+        )
+        .expect("stage34 stage31 notification");
+        let trust = super::Stage32TrustCalibrationPacket::from_stage31_notification(
+            &route,
+            Some(&gate),
+            Some(&notification),
+            super::Stage32TrustCalibrationInput::fixture_expectation_setting_posture_ready(
+                "audit-stage34-stage32-no-invention",
+            ),
+        )
+        .expect("stage34 stage32 trust");
+        let relationship = super::Stage33RelationshipMemoryPacket::from_stage32_trust(
+            &route,
+            Some(&gate),
+            Some(&trust),
+            super::Stage33RelationshipMemoryInput::fixture_user_facing_continuity_boundary_ready(
+                "audit-stage34-stage33-no-invention",
+            ),
+        )
+        .expect("stage34 stage33 relationship");
+
+        for input in [
+            {
+                let mut input =
+                    super::Stage34SourceOfTruthInput::fixture_source_of_truth_presentation_ready(
+                        "audit-stage34-invent-capability",
+                    );
+                input.source_invented_capability_availability = true;
+                input
+            },
+            {
+                let mut input =
+                    super::Stage34SourceOfTruthInput::fixture_governed_self_description_ready(
+                        "audit-stage34-invent-self-authority",
+                    );
+                input.source_invented_execution_authority = true;
+                input
+            },
+            {
+                let mut input =
+                    super::Stage34SourceOfTruthInput::fixture_outward_capability_narration_ready(
+                        "audit-stage34-invent-provider-access",
+                    );
+                input.source_invented_provider_access = true;
+                input
+            },
+            {
+                let mut input = super::Stage34SourceOfTruthInput::fixture_source_citation_narration_proof_reference_ready(
+                    "source-stage34-invent-search-access",
+                    "audit-stage34-invent-search-access",
+                );
+                input.source_invented_search_access = true;
+                input
+            },
+            {
+                let mut input = super::Stage34SourceOfTruthInput::fixture_trust_relationship_wake_continuity_reference_ready(
+                    "source-stage34-invent-prior-continuity",
+                    "audit-stage34-invent-prior-continuity",
+                );
+                input.prior_continuity_or_memory_used_as_truth_authority = true;
+                input
+            },
+        ] {
+            let packet = super::Stage34SourceOfTruthPacket::from_stage33_relationship(
                 &route,
                 Some(&gate),
-                Some(&trust),
+                Some(&relationship),
+                input,
+            )
+            .expect("stage34 no-invention blocked");
+            assert_eq!(
+                packet.disposition,
+                super::Stage34SourceOfTruthDisposition::NoInventionBlocked
+            );
+            assert!(packet.work_authority.can_fail_closed);
+            assert!(!packet.can_mutate_or_execute());
+        }
+    }
+
+    #[test]
+    fn stage_34a_source_authority_requires_inventory_and_capability_catalog_scoping() {
+        let route = stage12_protected_route();
+        let gate =
+            Stage12ProtectedActionGatePacket::from_stage11_candidate(&route, stage12_gate_input())
+                .expect("stage34 protected gate");
+        let attention = stage31_attention_identity();
+        let recovery = stage31_recovery_identity();
+        let notification = super::Stage31NotificationWakeReentryPacket::from_stage30_recovery(
+            &route,
+            Some(&gate),
+            Some(&attention),
+            Some(&recovery),
+            super::Stage31NotificationWakeReentryInput::fixture_governed_wake_reentry_continuity_ready(
+                "wake-stage34-stage31-authority",
+                "audit-stage34-stage31-authority",
+            ),
+        )
+        .expect("stage34 stage31 notification");
+        let trust = super::Stage32TrustCalibrationPacket::from_stage31_notification(
+            &route,
+            Some(&gate),
+            Some(&notification),
+            super::Stage32TrustCalibrationInput::fixture_residual_assistance_boundary_ready(
+                "audit-stage34-stage32-authority",
+            ),
+        )
+        .expect("stage34 stage32 trust");
+        let relationship = super::Stage33RelationshipMemoryPacket::from_stage32_trust(
+            &route,
+            Some(&gate),
+            Some(&trust),
+            super::Stage33RelationshipMemoryInput::fixture_longer_horizon_interaction_governance_ready(
+                "audit-stage34-stage33-authority",
+            ),
+        )
+        .expect("stage34 stage33 relationship");
+
+        let ready = super::Stage34SourceOfTruthPacket::from_stage33_relationship(
+            &route,
+            Some(&gate),
+            Some(&relationship),
+            super::Stage34SourceOfTruthInput::fixture_outward_capability_narration_ready(
+                "audit-stage34-capability",
+            ),
+        )
+        .expect("stage34 capability ready");
+        assert_eq!(
+            ready.disposition,
+            super::Stage34SourceOfTruthDisposition::OutwardCapabilityNarrationReady
+        );
+        assert!(
+            ready
+                .work_authority
+                .can_emit_outward_capability_narration_packet
+        );
+
+        for input in [
+            {
+                let mut input =
+                    super::Stage34SourceOfTruthInput::fixture_source_of_truth_presentation_ready(
+                        "audit-stage34-unbounded",
+                    );
+                input.authority_bounded = false;
+                input
+            },
+            {
+                let mut input =
+                    super::Stage34SourceOfTruthInput::fixture_governed_self_description_ready(
+                        "audit-stage34-missing-inventory",
+                    );
+                input.authoritative_engine_inventory_ref_present = false;
+                input
+            },
+            {
+                let mut input =
+                    super::Stage34SourceOfTruthInput::fixture_outward_capability_narration_ready(
+                        "audit-stage34-missing-capability-map",
+                    );
+                input.ph1ecm_ref_present = false;
+                input
+            },
+            {
+                let mut input = super::Stage34SourceOfTruthInput::fixture_capability_boundary_posture_reference_ready(
+                    "source-stage34-cross-speaker",
+                    "audit-stage34-cross-speaker",
+                );
+                input.voice_identity_cross_speaker_risk = true;
+                input
+            },
+        ] {
+            let packet = super::Stage34SourceOfTruthPacket::from_stage33_relationship(
+                &route,
+                Some(&gate),
+                Some(&relationship),
+                input,
+            )
+            .expect("stage34 authority blocked");
+            assert_eq!(
+                packet.disposition,
+                super::Stage34SourceOfTruthDisposition::SelfDescriptionAuthorityBlocked
+            );
+            assert!(packet.work_authority.can_fail_closed);
+            assert!(!packet.can_mutate_or_execute());
+        }
+    }
+
+    #[test]
+    fn stage_34a_native_protected_and_stale_cases_fail_closed() {
+        let route = stage12_protected_route();
+        let gate =
+            Stage12ProtectedActionGatePacket::from_stage11_candidate(&route, stage12_gate_input())
+                .expect("stage34 protected gate");
+        let attention = stage31_attention_identity();
+        let recovery = stage31_recovery_identity();
+        let notification = super::Stage31NotificationWakeReentryPacket::from_stage30_recovery(
+            &route,
+            Some(&gate),
+            Some(&attention),
+            Some(&recovery),
+            super::Stage31NotificationWakeReentryInput::fixture_notification_disclosure_boundary_ready(
+                "audit-stage34-stage31-native",
+            ),
+        )
+        .expect("stage34 stage31 notification");
+        let trust = super::Stage32TrustCalibrationPacket::from_stage31_notification(
+            &route,
+            Some(&gate),
+            Some(&notification),
+            super::Stage32TrustCalibrationInput::fixture_trust_calibration_ready(
+                "audit-stage34-stage32-native",
+            ),
+        )
+        .expect("stage34 stage32 trust");
+        let relationship = super::Stage33RelationshipMemoryPacket::from_stage32_trust(
+            &route,
+            Some(&gate),
+            Some(&trust),
+            super::Stage33RelationshipMemoryInput::fixture_user_facing_continuity_boundary_ready(
+                "audit-stage34-stage33-native",
+            ),
+        )
+        .expect("stage34 stage33 relationship");
+
+        for input in [
+            {
+                let mut input =
+                    super::Stage34SourceOfTruthInput::fixture_governed_self_description_ready(
+                        "audit-stage34-native-mutate",
+                    );
+                input.native_self_description_mutates_state = true;
+                input
+            },
+            {
+                let mut input =
+                    super::Stage34SourceOfTruthInput::fixture_outward_capability_narration_ready(
+                        "audit-stage34-protected",
+                    );
+                input.protected_action_like_request = true;
+                input
+            },
+        ] {
+            let packet = super::Stage34SourceOfTruthPacket::from_stage33_relationship(
+                &route,
+                Some(&gate),
+                Some(&relationship),
+                input,
+            )
+            .expect("stage34 native/protected blocked");
+            assert!(matches!(
+                packet.disposition,
+                super::Stage34SourceOfTruthDisposition::NativeSelfDescriptionHandoffBlocked
+                    | super::Stage34SourceOfTruthDisposition::PublicProtectedBoundaryBlocked
+            ));
+            assert!(packet.work_authority.can_fail_closed);
+        }
+
+        for input in [
+            {
+                let mut input =
+                    super::Stage34SourceOfTruthInput::fixture_source_of_truth_presentation_ready(
+                        "audit-stage34-stale",
+                    );
+                input.stale_or_cancelled_or_superseded_output = true;
+                input
+            },
+            {
+                let mut input = super::Stage34SourceOfTruthInput::fixture_trust_relationship_wake_continuity_reference_ready(
+                    "source-stage34-replay",
+                    "audit-stage34-replay",
+                );
+                input.replay_upgrades_blocked_authority = true;
+                input
+            },
+        ] {
+            let packet = super::Stage34SourceOfTruthPacket::from_stage33_relationship(
+                &route,
+                Some(&gate),
+                Some(&relationship),
+                input,
+            )
+            .expect("stage34 stale blocked");
+            assert_eq!(
+                packet.disposition,
+                super::Stage34SourceOfTruthDisposition::StaleNarrationBlocked
+            );
+            assert!(packet.work_authority.can_fail_closed);
+            assert!(!packet.can_mutate_or_execute());
+        }
+    }
+
+    #[test]
+    fn stage_34a_blocks_live_paths_and_runtime_mocks() {
+        let route = stage12_protected_route();
+        let gate =
+            Stage12ProtectedActionGatePacket::from_stage11_candidate(&route, stage12_gate_input())
+                .expect("stage34 protected gate");
+        let attention = stage31_attention_identity();
+        let recovery = stage31_recovery_identity();
+        let notification = super::Stage31NotificationWakeReentryPacket::from_stage30_recovery(
+            &route,
+            Some(&gate),
+            Some(&attention),
+            Some(&recovery),
+            super::Stage31NotificationWakeReentryInput::fixture_notification_disclosure_boundary_ready(
+                "audit-stage34-stage31-no-exec",
+            ),
+        )
+        .expect("stage34 stage31 notification");
+        let trust = super::Stage32TrustCalibrationPacket::from_stage31_notification(
+            &route,
+            Some(&gate),
+            Some(&notification),
+            super::Stage32TrustCalibrationInput::fixture_trust_calibration_ready(
+                "audit-stage34-stage32-no-exec",
+            ),
+        )
+        .expect("stage34 stage32 trust");
+        let relationship = super::Stage33RelationshipMemoryPacket::from_stage32_trust(
+            &route,
+            Some(&gate),
+            Some(&trust),
+            super::Stage33RelationshipMemoryInput::fixture_work_lease_route_protected_gate_publication_proof_reference_ready(
+                "relationship-stage34-stage33-no-exec",
+                "audit-stage34-stage33-no-exec",
+            ),
+        )
+        .expect("stage34 stage33 relationship");
+
+        let packet = super::Stage34SourceOfTruthPacket::from_stage33_relationship(
+            &route,
+            Some(&gate),
+            Some(&relationship),
+            super::Stage34SourceOfTruthInput::fixture_work_lease_route_protected_gate_capability_proof_reference_ready(
+                "source-stage34-no-exec",
+                "audit-stage34-no-exec",
+            ),
+        )
+        .expect("stage34 no-exec packet");
+        assert!(!packet.work_authority.can_invent_facts);
+        assert!(!packet.work_authority.can_invent_capability_certainty);
+        assert!(!packet.work_authority.can_invent_provider_access);
+        assert!(!packet.work_authority.can_invent_search_access);
+        assert!(!packet.work_authority.can_invent_execution_authority);
+        assert!(!packet.work_authority.can_invent_self_authority);
+        assert!(!packet.work_authority.can_invent_completion_success);
+        assert!(!packet.work_authority.can_connector_write);
+        assert!(!packet.work_authority.can_approve);
+        assert!(!packet.work_authority.can_dispatch);
+        assert!(!packet.work_authority.can_execute);
+        assert!(!packet.work_authority.can_create_user_turn);
+        assert!(
+            !packet
+                .work_authority
+                .can_treat_visible_capability_wording_as_action_success
+        );
+        assert!(!packet.can_mutate_or_execute());
+
+        for input in [
+            {
+                let mut input =
+                    super::Stage34SourceOfTruthInput::fixture_source_of_truth_presentation_ready(
+                        "audit-stage34-live-provider",
+                    );
+                input.attempted_live_provider_in_build = true;
+                input
+            },
+            {
+                let mut input =
+                    super::Stage34SourceOfTruthInput::fixture_governed_self_description_ready(
+                        "audit-stage34-live-search",
+                    );
+                input.ran_live_search_in_build = true;
+                input
+            },
+            {
+                let mut input =
+                    super::Stage34SourceOfTruthInput::fixture_outward_capability_narration_ready(
+                        "audit-stage34-live-voice-id",
+                    );
+                input.voice_id_matching_attempted = true;
+                input
+            },
+        ] {
+            assert!(
+                super::Stage34SourceOfTruthPacket::from_stage33_relationship(
+                    &route,
+                    Some(&gate),
+                    Some(&relationship),
+                    input,
+                )
+                .is_err()
+            );
+        }
+
+        let mut runtime_mock =
+            super::Stage34SourceOfTruthInput::fixture_source_of_truth_presentation_ready(
+                "audit-stage34-runtime-mock",
+            );
+        runtime_mock.fake_self_detected = true;
+        runtime_mock.fixture_only_test_path = false;
+        assert!(
+            super::Stage34SourceOfTruthPacket::from_stage33_relationship(
+                &route,
+                Some(&gate),
+                Some(&relationship),
                 runtime_mock,
             )
             .is_err()
@@ -50592,11 +52855,9 @@ mod tests {
     fn stage_27a_settlement_consumes_stage20_stage21_stage22_stage23_stage24_stage25_stage26_non_authoritatively(
     ) {
         let route = stage12_protected_route();
-        let gate = Stage12ProtectedActionGatePacket::from_stage11_candidate(
-            &route,
-            stage12_gate_input(),
-        )
-        .expect("stage27 protected gate");
+        let gate =
+            Stage12ProtectedActionGatePacket::from_stage11_candidate(&route, stage12_gate_input())
+                .expect("stage27 protected gate");
         let continuity = stage21_continuity_identity();
         let automation = stage22_automation_identity();
         let outbound = stage23_outbound_identity();
@@ -50624,19 +52885,20 @@ mod tests {
         input.stage24_ingress_ref_non_authoritative = true;
         input.stage25_orchestration_ref_present = true;
         input.stage25_orchestration_ref_non_authoritative = true;
-        let packet = super::Stage27SettlementReconciliationPacket::from_stage26_execution_authority(
-            &route,
-            Some(&gate),
-            Some(&continuity),
-            Some(&automation),
-            Some(&outbound),
-            Some(&memory),
-            Some(&ingress),
-            Some(&orchestration),
-            Some(&execution),
-            input,
-        )
-        .expect("stage27 settlement ready");
+        let packet =
+            super::Stage27SettlementReconciliationPacket::from_stage26_execution_authority(
+                &route,
+                Some(&gate),
+                Some(&continuity),
+                Some(&automation),
+                Some(&outbound),
+                Some(&memory),
+                Some(&ingress),
+                Some(&orchestration),
+                Some(&execution),
+                input,
+            )
+            .expect("stage27 settlement ready");
 
         assert_eq!(
             packet.disposition,
@@ -50682,11 +52944,9 @@ mod tests {
     #[test]
     fn stage_27a_packets_cannot_invent_or_claim_settlement_success() {
         let route = stage12_protected_route();
-        let gate = Stage12ProtectedActionGatePacket::from_stage11_candidate(
-            &route,
-            stage12_gate_input(),
-        )
-        .expect("stage27 protected gate");
+        let gate =
+            Stage12ProtectedActionGatePacket::from_stage11_candidate(&route, stage12_gate_input())
+                .expect("stage27 protected gate");
         let execution = stage27_execution_authority_identity();
 
         for input in [
@@ -50764,11 +53024,9 @@ mod tests {
     #[test]
     fn stage_27a_settlement_requires_scoped_secret_safe_refs() {
         let route = stage12_protected_route();
-        let gate = Stage12ProtectedActionGatePacket::from_stage11_candidate(
-            &route,
-            stage12_gate_input(),
-        )
-        .expect("stage27 protected gate");
+        let gate =
+            Stage12ProtectedActionGatePacket::from_stage11_candidate(&route, stage12_gate_input())
+                .expect("stage27 protected gate");
         let execution = stage27_execution_authority_identity();
         let ready = super::Stage27SettlementReconciliationPacket::from_stage26_execution_authority(
             &route,
@@ -50876,11 +53134,9 @@ mod tests {
     #[test]
     fn stage_27a_native_protected_and_stale_cases_fail_closed() {
         let route = stage12_protected_route();
-        let gate = Stage12ProtectedActionGatePacket::from_stage11_candidate(
-            &route,
-            stage12_gate_input(),
-        )
-        .expect("stage27 protected gate");
+        let gate =
+            Stage12ProtectedActionGatePacket::from_stage11_candidate(&route, stage12_gate_input())
+                .expect("stage27 protected gate");
         let execution = stage27_execution_authority_identity();
 
         for input in [
@@ -50982,11 +53238,9 @@ mod tests {
     #[test]
     fn stage_27a_blocks_live_paths_and_runtime_mocks() {
         let route = stage12_protected_route();
-        let gate = Stage12ProtectedActionGatePacket::from_stage11_candidate(
-            &route,
-            stage12_gate_input(),
-        )
-        .expect("stage27 protected gate");
+        let gate =
+            Stage12ProtectedActionGatePacket::from_stage11_candidate(&route, stage12_gate_input())
+                .expect("stage27 protected gate");
         let execution = stage27_execution_authority_identity();
         let packet = super::Stage27SettlementReconciliationPacket::from_stage26_execution_authority(
             &route,
@@ -51016,7 +53270,11 @@ mod tests {
         assert!(!packet.work_authority.can_dispatch);
         assert!(!packet.work_authority.can_execute);
         assert!(!packet.work_authority.can_create_user_turn);
-        assert!(!packet.work_authority.can_treat_visible_readiness_as_action_success);
+        assert!(
+            !packet
+                .work_authority
+                .can_treat_visible_readiness_as_action_success
+        );
         assert!(!packet.can_mutate_or_execute());
 
         for input in [
@@ -51105,11 +53363,9 @@ mod tests {
     fn stage_28a_publication_consumes_stage20_stage21_stage22_stage23_stage24_stage25_stage26_stage27_non_authoritatively(
     ) {
         let route = stage12_protected_route();
-        let gate = Stage12ProtectedActionGatePacket::from_stage11_candidate(
-            &route,
-            stage12_gate_input(),
-        )
-        .expect("stage28 protected gate");
+        let gate =
+            Stage12ProtectedActionGatePacket::from_stage11_candidate(&route, stage12_gate_input())
+                .expect("stage28 protected gate");
         let continuity = stage21_continuity_identity();
         let automation = stage22_automation_identity();
         let outbound = stage23_outbound_identity();
@@ -51169,7 +53425,9 @@ mod tests {
         );
         assert_eq!(
             packet.stage27_disposition,
-            Some(super::Stage27SettlementReconciliationDisposition::RemoteSideEffectSettlementReady)
+            Some(
+                super::Stage27SettlementReconciliationDisposition::RemoteSideEffectSettlementReady
+            )
         );
         assert!(packet.stage27_ref_non_authoritative);
         assert!(
@@ -51183,11 +53441,9 @@ mod tests {
     #[test]
     fn stage_28a_packets_cannot_invent_or_claim_publication_success() {
         let route = stage12_protected_route();
-        let gate = Stage12ProtectedActionGatePacket::from_stage11_candidate(
-            &route,
-            stage12_gate_input(),
-        )
-        .expect("stage28 protected gate");
+        let gate =
+            Stage12ProtectedActionGatePacket::from_stage11_candidate(&route, stage12_gate_input())
+                .expect("stage28 protected gate");
         let settlement = stage28_settlement_identity();
 
         for input in [
@@ -51255,11 +53511,9 @@ mod tests {
     #[test]
     fn stage_28a_publication_requires_scoped_secret_safe_refs() {
         let route = stage12_protected_route();
-        let gate = Stage12ProtectedActionGatePacket::from_stage11_candidate(
-            &route,
-            stage12_gate_input(),
-        )
-        .expect("stage28 protected gate");
+        let gate =
+            Stage12ProtectedActionGatePacket::from_stage11_candidate(&route, stage12_gate_input())
+                .expect("stage28 protected gate");
         let settlement = stage28_settlement_identity();
         let ready = super::Stage28PublicationDisclosurePacket::from_stage27_settlement(
             &route,
@@ -51353,11 +53607,9 @@ mod tests {
     #[test]
     fn stage_28a_native_protected_and_stale_cases_fail_closed() {
         let route = stage12_protected_route();
-        let gate = Stage12ProtectedActionGatePacket::from_stage11_candidate(
-            &route,
-            stage12_gate_input(),
-        )
-        .expect("stage28 protected gate");
+        let gate =
+            Stage12ProtectedActionGatePacket::from_stage11_candidate(&route, stage12_gate_input())
+                .expect("stage28 protected gate");
         let settlement = stage28_settlement_identity();
 
         for input in [
@@ -51449,11 +53701,9 @@ mod tests {
     #[test]
     fn stage_28a_blocks_live_paths_and_runtime_mocks() {
         let route = stage12_protected_route();
-        let gate = Stage12ProtectedActionGatePacket::from_stage11_candidate(
-            &route,
-            stage12_gate_input(),
-        )
-        .expect("stage28 protected gate");
+        let gate =
+            Stage12ProtectedActionGatePacket::from_stage11_candidate(&route, stage12_gate_input())
+                .expect("stage28 protected gate");
         let settlement = stage28_settlement_identity();
         let packet = super::Stage28PublicationDisclosurePacket::from_stage27_settlement(
             &route,
@@ -51482,7 +53732,11 @@ mod tests {
         assert!(!packet.work_authority.can_dispatch);
         assert!(!packet.work_authority.can_execute);
         assert!(!packet.work_authority.can_create_user_turn);
-        assert!(!packet.work_authority.can_treat_visible_readiness_as_action_success);
+        assert!(
+            !packet
+                .work_authority
+                .can_treat_visible_readiness_as_action_success
+        );
         assert!(!packet.can_mutate_or_execute());
 
         for input in [
@@ -51799,13 +54053,12 @@ mod tests {
 
         for input in [
             {
-                let mut input =
-                    super::Stage23MemoryRetentionInput::fixture_memory_candidate_ready(
-                        "memory-candidate-stage23-mutate",
-                        "identity-scope-stage23-mutate",
-                        "user-scope-stage23-mutate",
-                        "audit-stage23-mutate",
-                    );
+                let mut input = super::Stage23MemoryRetentionInput::fixture_memory_candidate_ready(
+                    "memory-candidate-stage23-mutate",
+                    "identity-scope-stage23-mutate",
+                    "user-scope-stage23-mutate",
+                    "audit-stage23-mutate",
+                );
                 input.native_retention_mutates_state = true;
                 input
             },
@@ -51906,7 +54159,11 @@ mod tests {
         assert!(!packet.work_authority.can_mutate_persistence_state);
         assert!(!packet.work_authority.can_dispatch);
         assert!(!packet.work_authority.can_create_user_turn);
-        assert!(!packet.work_authority.can_treat_visible_recall_or_restore_as_action_success);
+        assert!(
+            !packet
+                .work_authority
+                .can_treat_visible_recall_or_restore_as_action_success
+        );
         assert!(!packet.can_mutate_or_execute());
 
         for input in [
@@ -51945,13 +54202,12 @@ mod tests {
                 input
             },
             {
-                let mut input =
-                    super::Stage23MemoryRetentionInput::fixture_memory_candidate_ready(
-                        "memory-candidate-stage23-policy",
-                        "identity-scope-stage23-policy",
-                        "user-scope-stage23-policy",
-                        "audit-stage23-policy",
-                    );
+                let mut input = super::Stage23MemoryRetentionInput::fixture_memory_candidate_ready(
+                    "memory-candidate-stage23-policy",
+                    "identity-scope-stage23-policy",
+                    "user-scope-stage23-policy",
+                    "audit-stage23-policy",
+                );
                 input.policy_denied = true;
                 input
             },
@@ -51970,13 +54226,12 @@ mod tests {
 
         for mut input in [
             {
-                let mut input =
-                    super::Stage23MemoryRetentionInput::fixture_memory_candidate_ready(
-                        "memory-candidate-stage23-live-provider",
-                        "identity-scope-stage23-live-provider",
-                        "user-scope-stage23-live-provider",
-                        "audit-stage23-live-provider",
-                    );
+                let mut input = super::Stage23MemoryRetentionInput::fixture_memory_candidate_ready(
+                    "memory-candidate-stage23-live-provider",
+                    "identity-scope-stage23-live-provider",
+                    "user-scope-stage23-live-provider",
+                    "audit-stage23-live-provider",
+                );
                 input.attempted_live_provider_in_build = true;
                 input
             },
