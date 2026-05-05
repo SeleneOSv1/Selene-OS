@@ -1,0 +1,265 @@
+{
+  "head_commit": "155463a91874bc3f55bf6f0ac3782761e6aac390",
+  "branch": "main",
+  "run30_timestamp_utc": "2026-05-05T08:21:53Z",
+  "contract_hash_manifest_hash": "de0fbac1b87610722b3c1ed36e59fd5fa6ee825f573f3c2472333e0cf2bcfce5",
+  "packet_schema_hash": "57f84dd2a567981324fdd4e62b45081977e51d190e482b64664093b85d7fccc8",
+  "reason_code_registry_hash": "bbc5316462c16979a5529af1544078894464cbbbf15372209485c2401a52da24",
+  "idempotency_registry_hash": "5dbeb88408a46e11ad831117a76cda304cd837cb5608ac77c61d10d750ffb2fa",
+  "turn_state_machine_hash": "0a9c474a9cf16f5632b98c3f1f66774390cecfc5341d0eb98a61290727c2ab4d",
+  "handoff_map_hash": "9289ea56ea2257b64074f38d56c8d93216517c5a9be7e1d2537c5f7e73643762",
+  "ownership_matrix_hash": "0b9e49f1f4d3b4732d1489db359ac70926bad59fdf4854c8844feab2ed7265c3",
+  "compat_matrix_hash": "b6fa772f8de4174b71cd27f2762ed957c117f826c1bc07ee9b3d247a75793fb6",
+  "ci_scripts_executed": [
+    "scripts/web_search_plan/check_contracts.sh",
+    "scripts/web_search_plan/check_reason_codes.sh",
+    "scripts/web_search_plan/check_idempotency.sh",
+    "scripts/web_search_plan/check_turn_state_machine.sh",
+    "scripts/web_search_plan/check_handoff_ownership.sh",
+    "scripts/web_search_plan/check_doc_canon.sh",
+    "scripts/web_search_plan/check_trace_matrix.sh",
+    "scripts/web_search_plan/check_proxy_universal.sh",
+    "scripts/web_search_plan/check_url_fetch_core.sh",
+    "scripts/web_search_plan/check_chunk_hash_core.sh",
+    "scripts/web_search_plan/check_web_provider_ladder.sh",
+    "scripts/web_search_plan/check_news_provider_ladder.sh",
+    "scripts/web_search_plan/check_news_parity.sh",
+    "scripts/web_search_plan/check_search_topk_pipeline.sh",
+    "scripts/web_search_plan/check_synthesis_core.sh",
+    "scripts/web_search_plan/check_write_core.sh",
+    "scripts/web_search_plan/check_debug_packet.sh",
+    "scripts/web_search_plan/check_perf_cost_tiers.sh",
+    "scripts/web_search_plan/check_cache_parallel.sh",
+    "scripts/web_search_plan/check_vision_engine.sh",
+    "scripts/web_search_plan/check_learning_layer.sh",
+    "scripts/web_search_plan/check_replay_harness.sh",
+    "scripts/web_search_plan/check_quality_gates.sh",
+    "scripts/web_search_plan/check_continuous_eval.sh",
+    "scripts/web_search_plan/check_structured_connectors.sh",
+    "scripts/web_search_plan/check_document_parsing.sh",
+    "scripts/web_search_plan/check_analytics_numeric_consensus.sh",
+    "scripts/web_search_plan/check_competitive_intel.sh",
+    "scripts/web_search_plan/check_realtime_api_mode.sh",
+    "scripts/web_search_plan/check_regulatory_mode.sh",
+    "scripts/web_search_plan/check_trust_model.sh",
+    "scripts/web_search_plan/check_multihop_research.sh",
+    "scripts/web_search_plan/check_temporal_mode.sh",
+    "scripts/web_search_plan/check_risk_mode.sh",
+    "scripts/web_search_plan/check_merge_mode.sh",
+    "scripts/web_search_plan/check_parity_enhancements.sh",
+    "scripts/web_search_plan/check_gap_closers.sh",
+    "scripts/web_search_plan/check_enterprise_integration_lock.sh",
+    "scripts/web_search_plan/check_slo_lock.sh",
+    "cargo run -p selene_os --bin web_search_turn -- --fixture \"test query\"",
+    "cargo run -p selene_os --bin web_search_enterprise_turn -- --fixture --mode report --query \"test\"",
+    "cargo run -p selene_os --bin web_search_vision_turn -- --fixture --mode image_ocr --asset text_heavy",
+    "cargo test -p selene_os web_search_plan::runtime::runtime_tests --quiet",
+    "cargo test -p selene_os web_search_plan::tests --quiet",
+    "cargo test -p selene_os web_search_plan::release::release_tests --quiet"
+  ],
+  "ci_gate_results": [
+    {
+      "gate": "scripts/web_search_plan/check_contracts.sh",
+      "status": "PASS"
+    },
+    {
+      "gate": "scripts/web_search_plan/check_reason_codes.sh",
+      "status": "PASS"
+    },
+    {
+      "gate": "scripts/web_search_plan/check_idempotency.sh",
+      "status": "PASS"
+    },
+    {
+      "gate": "scripts/web_search_plan/check_turn_state_machine.sh",
+      "status": "PASS"
+    },
+    {
+      "gate": "scripts/web_search_plan/check_handoff_ownership.sh",
+      "status": "PASS"
+    },
+    {
+      "gate": "scripts/web_search_plan/check_doc_canon.sh",
+      "status": "PASS"
+    },
+    {
+      "gate": "scripts/web_search_plan/check_trace_matrix.sh",
+      "status": "PASS"
+    },
+    {
+      "gate": "scripts/web_search_plan/check_proxy_universal.sh",
+      "status": "PASS"
+    },
+    {
+      "gate": "scripts/web_search_plan/check_url_fetch_core.sh",
+      "status": "PASS"
+    },
+    {
+      "gate": "scripts/web_search_plan/check_chunk_hash_core.sh",
+      "status": "PASS"
+    },
+    {
+      "gate": "scripts/web_search_plan/check_web_provider_ladder.sh",
+      "status": "PASS"
+    },
+    {
+      "gate": "scripts/web_search_plan/check_news_provider_ladder.sh",
+      "status": "PASS"
+    },
+    {
+      "gate": "scripts/web_search_plan/check_news_parity.sh",
+      "status": "PASS"
+    },
+    {
+      "gate": "scripts/web_search_plan/check_search_topk_pipeline.sh",
+      "status": "PASS"
+    },
+    {
+      "gate": "scripts/web_search_plan/check_synthesis_core.sh",
+      "status": "PASS"
+    },
+    {
+      "gate": "scripts/web_search_plan/check_write_core.sh",
+      "status": "PASS"
+    },
+    {
+      "gate": "scripts/web_search_plan/check_debug_packet.sh",
+      "status": "PASS"
+    },
+    {
+      "gate": "scripts/web_search_plan/check_perf_cost_tiers.sh",
+      "status": "PASS"
+    },
+    {
+      "gate": "scripts/web_search_plan/check_cache_parallel.sh",
+      "status": "PASS"
+    },
+    {
+      "gate": "scripts/web_search_plan/check_vision_engine.sh",
+      "status": "PASS"
+    },
+    {
+      "gate": "scripts/web_search_plan/check_learning_layer.sh",
+      "status": "PASS"
+    },
+    {
+      "gate": "scripts/web_search_plan/check_replay_harness.sh",
+      "status": "PASS"
+    },
+    {
+      "gate": "scripts/web_search_plan/check_quality_gates.sh",
+      "status": "PASS"
+    },
+    {
+      "gate": "scripts/web_search_plan/check_continuous_eval.sh",
+      "status": "PASS"
+    },
+    {
+      "gate": "scripts/web_search_plan/check_structured_connectors.sh",
+      "status": "PASS"
+    },
+    {
+      "gate": "scripts/web_search_plan/check_document_parsing.sh",
+      "status": "PASS"
+    },
+    {
+      "gate": "scripts/web_search_plan/check_analytics_numeric_consensus.sh",
+      "status": "PASS"
+    },
+    {
+      "gate": "scripts/web_search_plan/check_competitive_intel.sh",
+      "status": "PASS"
+    },
+    {
+      "gate": "scripts/web_search_plan/check_realtime_api_mode.sh",
+      "status": "PASS"
+    },
+    {
+      "gate": "scripts/web_search_plan/check_regulatory_mode.sh",
+      "status": "PASS"
+    },
+    {
+      "gate": "scripts/web_search_plan/check_trust_model.sh",
+      "status": "PASS"
+    },
+    {
+      "gate": "scripts/web_search_plan/check_multihop_research.sh",
+      "status": "PASS"
+    },
+    {
+      "gate": "scripts/web_search_plan/check_temporal_mode.sh",
+      "status": "PASS"
+    },
+    {
+      "gate": "scripts/web_search_plan/check_risk_mode.sh",
+      "status": "PASS"
+    },
+    {
+      "gate": "scripts/web_search_plan/check_merge_mode.sh",
+      "status": "PASS"
+    },
+    {
+      "gate": "scripts/web_search_plan/check_parity_enhancements.sh",
+      "status": "PASS"
+    },
+    {
+      "gate": "scripts/web_search_plan/check_gap_closers.sh",
+      "status": "PASS"
+    },
+    {
+      "gate": "scripts/web_search_plan/check_enterprise_integration_lock.sh",
+      "status": "PASS"
+    },
+    {
+      "gate": "scripts/web_search_plan/check_slo_lock.sh",
+      "status": "PASS"
+    },
+    {
+      "gate": "cargo run -p selene_os --bin web_search_turn -- --fixture \"test query\"",
+      "status": "PASS"
+    },
+    {
+      "gate": "cargo run -p selene_os --bin web_search_enterprise_turn -- --fixture --mode report --query \"test\"",
+      "status": "PASS"
+    },
+    {
+      "gate": "cargo run -p selene_os --bin web_search_vision_turn -- --fixture --mode image_ocr --asset text_heavy",
+      "status": "PASS"
+    },
+    {
+      "gate": "cargo test -p selene_os web_search_plan::runtime::runtime_tests --quiet",
+      "status": "PASS"
+    },
+    {
+      "gate": "cargo test -p selene_os web_search_plan::tests --quiet",
+      "status": "PASS"
+    },
+    {
+      "gate": "cargo test -p selene_os web_search_plan::release::release_tests --quiet",
+      "status": "PASS"
+    }
+  ],
+  "replay_harness_summary": {
+    "pass": true,
+    "snapshot_hash_file_path": "docs/web_search_plan/replay_expected.json"
+  },
+  "slo_gate_summary": {
+    "citation_coverage": {
+      "status": "PASS",
+      "detail": "required=1.0_answer_cases"
+    },
+    "refusal_correctness": {
+      "status": "PASS",
+      "detail": "required=all_refusal_cases_pass"
+    },
+    "freshness_compliance": {
+      "status": "PASS",
+      "detail": "required=stale_refusal_enforced"
+    },
+    "determinism_replay": {
+      "status": "PASS",
+      "detail": "required=replay_snapshot_match"
+    },
+    "overall": "PASS"
+  }
+}
