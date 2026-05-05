@@ -32906,6 +32906,1454 @@ pub fn stage30_recovery_thread_presence_symbol_anchor() {
 }
 const _: fn() = stage30_recovery_thread_presence_symbol_anchor;
 
+mod stage31_reason_codes {
+    pub const NOTIFICATION_DISCLOSURE_BOUNDARY_READY: &str =
+        "STAGE31_NOTIFICATION_DISCLOSURE_BOUNDARY_READY";
+    pub const REMINDER_ESCALATION_TRUTH_READY: &str =
+        "STAGE31_REMINDER_ESCALATION_TRUTH_READY";
+    pub const GOVERNED_WAKE_REENTRY_CONTINUITY_READY: &str =
+        "STAGE31_GOVERNED_WAKE_REENTRY_CONTINUITY_READY";
+    pub const NOTIFICATION_VISIBILITY_POSTURE_REFERENCE_READY: &str =
+        "STAGE31_NOTIFICATION_VISIBILITY_POSTURE_REFERENCE_READY";
+    pub const REMINDER_DELIVERY_SESSION_CONTEXT_CONTINUITY_REFERENCE_READY: &str =
+        "STAGE31_REMINDER_DELIVERY_SESSION_CONTEXT_CONTINUITY_REFERENCE_READY";
+    pub const WORK_LEASE_ROUTE_PROTECTED_GATE_RECOVERY_PROOF_REFERENCE_READY: &str =
+        "STAGE31_WORK_LEASE_ROUTE_PROTECTED_GATE_RECOVERY_PROOF_REFERENCE_READY";
+    pub const STAGE_INPUT_BLOCKED: &str = "STAGE31_STAGE_INPUT_BLOCKED";
+    pub const NO_INVENTION_BLOCKED: &str = "STAGE31_NO_INVENTION_BLOCKED";
+    pub const NOTIFICATION_AUTHORITY_BLOCKED: &str = "STAGE31_NOTIFICATION_AUTHORITY_BLOCKED";
+    pub const NATIVE_WAKE_REENTRY_HANDOFF_BLOCKED: &str =
+        "STAGE31_NATIVE_WAKE_REENTRY_HANDOFF_BLOCKED";
+    pub const PUBLIC_PROTECTED_BOUNDARY_BLOCKED: &str =
+        "STAGE31_PUBLIC_PROTECTED_BOUNDARY_BLOCKED";
+    pub const STALE_NOTIFICATION_BLOCKED: &str = "STAGE31_STALE_NOTIFICATION_BLOCKED";
+    pub const UNSAFE_INPUT_BLOCKED: &str = "STAGE31_UNSAFE_INPUT_BLOCKED";
+    pub const RUNTIME_MOCK_BLOCKED: &str = "STAGE31_RUNTIME_MOCK_BLOCKED";
+    pub const AUDIT_PROOF_MISSING: &str = "STAGE31_AUDIT_PROOF_MISSING";
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stage31NotificationWakeReentryKind {
+    NotificationDisclosureBoundary,
+    ReminderEscalationTruth,
+    GovernedWakeReentryContinuity,
+    NotificationVisibilityPostureReference,
+    ReminderDeliverySessionContextContinuityReference,
+    WorkLeaseRouteProtectedGateRecoveryProofReference,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stage31NotificationWakeReentryDisposition {
+    NotificationDisclosureBoundaryReady,
+    ReminderEscalationTruthReady,
+    GovernedWakeReentryContinuityReady,
+    NotificationVisibilityPostureReferenceReady,
+    ReminderDeliverySessionContextContinuityReferenceReady,
+    WorkLeaseRouteProtectedGateRecoveryProofReferenceReady,
+    StageInputBlocked,
+    NoInventionBlocked,
+    NotificationAuthorityBlocked,
+    NativeWakeReentryHandoffBlocked,
+    PublicProtectedBoundaryBlocked,
+    StaleNotificationBlocked,
+    UnsafeInputBlocked,
+    RuntimeMockBlocked,
+    AuditProofMissing,
+}
+
+impl Stage31NotificationWakeReentryDisposition {
+    pub const fn default_reason_code(self) -> &'static str {
+        match self {
+            Self::NotificationDisclosureBoundaryReady => {
+                stage31_reason_codes::NOTIFICATION_DISCLOSURE_BOUNDARY_READY
+            }
+            Self::ReminderEscalationTruthReady => {
+                stage31_reason_codes::REMINDER_ESCALATION_TRUTH_READY
+            }
+            Self::GovernedWakeReentryContinuityReady => {
+                stage31_reason_codes::GOVERNED_WAKE_REENTRY_CONTINUITY_READY
+            }
+            Self::NotificationVisibilityPostureReferenceReady => {
+                stage31_reason_codes::NOTIFICATION_VISIBILITY_POSTURE_REFERENCE_READY
+            }
+            Self::ReminderDeliverySessionContextContinuityReferenceReady => {
+                stage31_reason_codes::REMINDER_DELIVERY_SESSION_CONTEXT_CONTINUITY_REFERENCE_READY
+            }
+            Self::WorkLeaseRouteProtectedGateRecoveryProofReferenceReady => {
+                stage31_reason_codes::WORK_LEASE_ROUTE_PROTECTED_GATE_RECOVERY_PROOF_REFERENCE_READY
+            }
+            Self::StageInputBlocked => stage31_reason_codes::STAGE_INPUT_BLOCKED,
+            Self::NoInventionBlocked => stage31_reason_codes::NO_INVENTION_BLOCKED,
+            Self::NotificationAuthorityBlocked => {
+                stage31_reason_codes::NOTIFICATION_AUTHORITY_BLOCKED
+            }
+            Self::NativeWakeReentryHandoffBlocked => {
+                stage31_reason_codes::NATIVE_WAKE_REENTRY_HANDOFF_BLOCKED
+            }
+            Self::PublicProtectedBoundaryBlocked => {
+                stage31_reason_codes::PUBLIC_PROTECTED_BOUNDARY_BLOCKED
+            }
+            Self::StaleNotificationBlocked => stage31_reason_codes::STALE_NOTIFICATION_BLOCKED,
+            Self::UnsafeInputBlocked => stage31_reason_codes::UNSAFE_INPUT_BLOCKED,
+            Self::RuntimeMockBlocked => stage31_reason_codes::RUNTIME_MOCK_BLOCKED,
+            Self::AuditProofMissing => stage31_reason_codes::AUDIT_PROOF_MISSING,
+        }
+    }
+
+    pub const fn is_ready(self) -> bool {
+        matches!(
+            self,
+            Self::NotificationDisclosureBoundaryReady
+                | Self::ReminderEscalationTruthReady
+                | Self::GovernedWakeReentryContinuityReady
+                | Self::NotificationVisibilityPostureReferenceReady
+                | Self::ReminderDeliverySessionContextContinuityReferenceReady
+                | Self::WorkLeaseRouteProtectedGateRecoveryProofReferenceReady
+        )
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Stage31NotificationWakeReentryWorkAuthority {
+    pub can_emit_notification_disclosure_boundary_packet: bool,
+    pub can_emit_reminder_escalation_truth_packet: bool,
+    pub can_emit_governed_wake_reentry_continuity_packet: bool,
+    pub can_emit_notification_visibility_posture_reference: bool,
+    pub can_emit_reminder_delivery_session_context_continuity_reference: bool,
+    pub can_emit_work_lease_route_protected_gate_recovery_proof_reference: bool,
+    pub can_fail_closed: bool,
+    pub can_invent_facts: bool,
+    pub can_invent_notification_success: bool,
+    pub can_invent_reminder_success: bool,
+    pub can_invent_escalation_success: bool,
+    pub can_invent_wake_reentry_success: bool,
+    pub can_invent_completion_success: bool,
+    pub can_invent_notification_authority: bool,
+    pub can_connector_write: bool,
+    pub can_approve: bool,
+    pub can_dispatch: bool,
+    pub can_execute: bool,
+    pub can_create_user_turn: bool,
+    pub can_treat_visible_readiness_as_action_success: bool,
+}
+
+impl Stage31NotificationWakeReentryWorkAuthority {
+    pub const fn fail_closed() -> Self {
+        Self {
+            can_emit_notification_disclosure_boundary_packet: false,
+            can_emit_reminder_escalation_truth_packet: false,
+            can_emit_governed_wake_reentry_continuity_packet: false,
+            can_emit_notification_visibility_posture_reference: false,
+            can_emit_reminder_delivery_session_context_continuity_reference: false,
+            can_emit_work_lease_route_protected_gate_recovery_proof_reference: false,
+            can_fail_closed: true,
+            can_invent_facts: false,
+            can_invent_notification_success: false,
+            can_invent_reminder_success: false,
+            can_invent_escalation_success: false,
+            can_invent_wake_reentry_success: false,
+            can_invent_completion_success: false,
+            can_invent_notification_authority: false,
+            can_connector_write: false,
+            can_approve: false,
+            can_dispatch: false,
+            can_execute: false,
+            can_create_user_turn: false,
+            can_treat_visible_readiness_as_action_success: false,
+        }
+    }
+
+    pub const fn notification_disclosure_boundary_ready() -> Self {
+        let mut authority = Self::fail_closed();
+        authority.can_emit_notification_disclosure_boundary_packet = true;
+        authority
+    }
+
+    pub const fn reminder_escalation_truth_ready() -> Self {
+        let mut authority = Self::fail_closed();
+        authority.can_emit_reminder_escalation_truth_packet = true;
+        authority
+    }
+
+    pub const fn governed_wake_reentry_continuity_ready() -> Self {
+        let mut authority = Self::fail_closed();
+        authority.can_emit_governed_wake_reentry_continuity_packet = true;
+        authority
+    }
+
+    pub const fn notification_visibility_posture_reference_ready() -> Self {
+        let mut authority = Self::fail_closed();
+        authority.can_emit_notification_visibility_posture_reference = true;
+        authority
+    }
+
+    pub const fn reminder_delivery_session_context_continuity_reference_ready() -> Self {
+        let mut authority = Self::fail_closed();
+        authority.can_emit_reminder_delivery_session_context_continuity_reference = true;
+        authority
+    }
+
+    pub const fn work_lease_route_protected_gate_recovery_proof_reference_ready() -> Self {
+        let mut authority = Self::fail_closed();
+        authority.can_emit_work_lease_route_protected_gate_recovery_proof_reference = true;
+        authority
+    }
+
+    pub const fn can_mutate_or_execute(&self) -> bool {
+        self.can_invent_facts
+            || self.can_invent_notification_success
+            || self.can_invent_reminder_success
+            || self.can_invent_escalation_success
+            || self.can_invent_wake_reentry_success
+            || self.can_invent_completion_success
+            || self.can_invent_notification_authority
+            || self.can_connector_write
+            || self.can_approve
+            || self.can_dispatch
+            || self.can_execute
+            || self.can_create_user_turn
+            || self.can_treat_visible_readiness_as_action_success
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Stage31NotificationWakeReentryInput {
+    pub notification_kind: Stage31NotificationWakeReentryKind,
+    pub output_interaction_id: Option<String>,
+    pub speech_output_id: Option<String>,
+    pub conversation_continuity_id: Option<String>,
+    pub interaction_boundary_id: Option<String>,
+    pub completion_disclosure_id: Option<String>,
+    pub recovery_continuity_id: Option<String>,
+    pub follow_up_posture_id: Option<String>,
+    pub thread_presence_id: Option<String>,
+    pub notification_disclosure_id: Option<String>,
+    pub reminder_truth_id: Option<String>,
+    pub escalation_truth_id: Option<String>,
+    pub wake_reentry_id: Option<String>,
+    pub audit_id: Option<String>,
+    pub ph1j_proof_ref: Option<String>,
+    pub stage11_route_ref_present: bool,
+    pub stage11_route_non_executing_context: bool,
+    pub stage12_gate_ref_present: bool,
+    pub stage12_gate_bounded_authority_context: bool,
+    pub stage8_output_interaction_ref_present: bool,
+    pub stage8_output_interaction_ref_non_authoritative: bool,
+    pub stage17_speech_output_ref_present: bool,
+    pub stage17_speech_output_ref_non_authoritative: bool,
+    pub stage19_notification_ref_present: bool,
+    pub stage19_notification_ref_non_authoritative: bool,
+    pub stage30_recovery_ref_present: bool,
+    pub stage30_recovery_ref_non_authoritative: bool,
+    pub ph1rem_ref_present: bool,
+    pub ph1rem_ref_non_authoritative: bool,
+    pub ph1delivery_ref_present: bool,
+    pub ph1delivery_ref_non_authoritative: bool,
+    pub ph1l_session_ref_present: bool,
+    pub ph1l_session_ref_non_authoritative: bool,
+    pub ph1context_ref_present: bool,
+    pub ph1context_ref_non_authoritative: bool,
+    pub ph1w_ref_present: bool,
+    pub ph1w_ref_non_authoritative: bool,
+    pub wake_training_ref_present: bool,
+    pub wake_artifact_ref_present: bool,
+    pub wake_policy_ref_present: bool,
+    pub desktop_wake_life_ref_present: bool,
+    pub notification_visibility_ref_present: bool,
+    pub reminder_delivery_session_context_ref_present: bool,
+    pub wake_reentry_ref_present: bool,
+    pub authority_bounded: bool,
+    pub tenant_user_device_session_scoped: bool,
+    pub uncertainty_preserved: bool,
+    pub notification_invented_fact: bool,
+    pub notification_invented_notification_success: bool,
+    pub notification_invented_reminder_success: bool,
+    pub notification_invented_escalation_success: bool,
+    pub notification_invented_wake_reentry_success: bool,
+    pub notification_invented_completion_success: bool,
+    pub notification_invented_approval: bool,
+    pub notification_invented_remote_completion: bool,
+    pub notification_invented_visibility_completion: bool,
+    pub notification_invented_work_or_lease_authority: bool,
+    pub notification_invented_route_authority: bool,
+    pub notification_invented_attachment_or_citation: bool,
+    pub notification_invented_provider_or_tool_result: bool,
+    pub notification_claimed_unproven_completion: bool,
+    pub notification_implied_approval_dispatch_execution_reminder_escalation_wake_or_completion_without_proof:
+        bool,
+    pub secret_safe: bool,
+    pub redacted: bool,
+    pub stale_aware: bool,
+    pub revocation_aware: bool,
+    pub unverifiable: bool,
+    pub stale: bool,
+    pub secret_unsafe: bool,
+    pub cross_tenant: bool,
+    pub cross_route: bool,
+    pub cross_connector: bool,
+    pub notification_mismatch: bool,
+    pub reminder_mismatch: bool,
+    pub escalation_mismatch: bool,
+    pub wake_mismatch: bool,
+    pub recovery_mismatch: bool,
+    pub continuity_mismatch: bool,
+    pub publication_mismatch: bool,
+    pub settlement_mismatch: bool,
+    pub connector_mismatch: bool,
+    pub route_mismatch: bool,
+    pub action_graph_mismatch: bool,
+    pub lease_mismatch: bool,
+    pub protected_gate_mismatch: bool,
+    pub tenant_mismatch: bool,
+    pub missing_proof: bool,
+    pub ownership_drift: bool,
+    pub native_wake_reentry_declarative_only: bool,
+    pub native_wake_reentry_mutates_state: bool,
+    pub native_wake_reentry_connector_writes: bool,
+    pub native_wake_reentry_dispatches_or_executes: bool,
+    pub native_wake_reentry_calls_providers_or_tools: bool,
+    pub native_wake_reentry_emits_tts_or_playback: bool,
+    pub native_wake_reentry_creates_user_turn: bool,
+    pub native_wake_reentry_treats_visible_readiness_as_action_success: bool,
+    pub protected_action_like_request: bool,
+    pub protected_slot_or_authority_ambiguous: bool,
+    pub unsafe_identity_posture: bool,
+    pub disclosure_ambiguity: bool,
+    pub stale_or_cancelled_or_superseded_output: bool,
+    pub session_closed: bool,
+    pub record_artifact_only_turn: bool,
+    pub stale_notification_state: bool,
+    pub stale_reminder_state: bool,
+    pub stale_escalation_state: bool,
+    pub stale_wake_state: bool,
+    pub stale_recovery_state: bool,
+    pub stale_work_state: bool,
+    pub stale_lease_state: bool,
+    pub stale_route_state: bool,
+    pub stale_connector_state: bool,
+    pub stale_protected_gate_state: bool,
+    pub background_task_reopens_session: bool,
+    pub notification_identity_matches_current_output_session: bool,
+    pub replay_upgrades_blocked_authority: bool,
+    pub fake_notification_detected: bool,
+    pub fake_reminder_detected: bool,
+    pub fake_escalation_detected: bool,
+    pub fake_wake_detected: bool,
+    pub fake_reentry_detected: bool,
+    pub fake_completion_detected: bool,
+    pub fake_approval_detected: bool,
+    pub runtime_mock_detected: bool,
+    pub raw_provider_output_present: bool,
+    pub raw_search_dump_present: bool,
+    pub raw_media_present: bool,
+    pub raw_connector_credential_field_present: bool,
+    pub unverified_source_evidence_present: bool,
+    pub unsupported_claim_candidate_present: bool,
+    pub fake_notification_source_carrier_present: bool,
+    pub attention_continuity_automation_outbound_memory_ingress_orchestration_execution_settlement_publication_conversation_recovery_used_as_truth_authority:
+        bool,
+    pub protected_action_candidate_present: bool,
+    pub simulation_candidate_present: bool,
+    pub approved_execution_plan_present: bool,
+    pub secrets_exposed: bool,
+    pub raw_biometric_material_exposed: bool,
+    pub internal_trace_exposed: bool,
+    pub access_denied: bool,
+    pub policy_denied: bool,
+    pub attempted_live_provider_in_build: bool,
+    pub generated_live_media_in_build: bool,
+    pub ran_live_search_in_build: bool,
+    pub called_live_external_tool_in_build: bool,
+    pub connector_write_requested: bool,
+    pub ran_live_notification_delivery_in_build: bool,
+    pub ran_live_reminder_delivery_in_build: bool,
+    pub ran_live_escalation_dispatch_in_build: bool,
+    pub ran_live_wake_mutation_in_build: bool,
+    pub ran_live_remote_continuity_mutation_in_build: bool,
+    pub ran_direct_protected_execution_in_build: bool,
+    pub ran_live_tts_or_playback_in_build: bool,
+    pub captured_microphone_audio: bool,
+    pub transcribed_live_audio: bool,
+    pub voice_id_matching_attempted: bool,
+    pub native_ui_behavior_added: bool,
+    pub fixture_only_test_path: bool,
+}
+
+impl Stage31NotificationWakeReentryInput {
+    #[cfg(test)]
+    fn fixture_base(
+        notification_kind: Stage31NotificationWakeReentryKind,
+        audit_id: impl Into<String>,
+    ) -> Self {
+        Self {
+            notification_kind,
+            output_interaction_id: Some("output-interaction-stage31".to_string()),
+            speech_output_id: Some("speech-output-stage31".to_string()),
+            conversation_continuity_id: Some("conversation-continuity-stage31".to_string()),
+            interaction_boundary_id: Some("interaction-boundary-stage31".to_string()),
+            completion_disclosure_id: Some("completion-disclosure-stage31".to_string()),
+            recovery_continuity_id: Some("recovery-continuity-stage31".to_string()),
+            follow_up_posture_id: Some("follow-up-posture-stage31".to_string()),
+            thread_presence_id: Some("thread-presence-stage31".to_string()),
+            notification_disclosure_id: Some("notification-disclosure-stage31".to_string()),
+            reminder_truth_id: Some("reminder-truth-stage31".to_string()),
+            escalation_truth_id: Some("escalation-truth-stage31".to_string()),
+            wake_reentry_id: Some("wake-reentry-stage31".to_string()),
+            audit_id: Some(audit_id.into()),
+            ph1j_proof_ref: Some("audit-proof-stage31".to_string()),
+            stage11_route_ref_present: true,
+            stage11_route_non_executing_context: true,
+            stage12_gate_ref_present: true,
+            stage12_gate_bounded_authority_context: true,
+            stage8_output_interaction_ref_present: true,
+            stage8_output_interaction_ref_non_authoritative: true,
+            stage17_speech_output_ref_present: true,
+            stage17_speech_output_ref_non_authoritative: true,
+            stage19_notification_ref_present: true,
+            stage19_notification_ref_non_authoritative: true,
+            stage30_recovery_ref_present: true,
+            stage30_recovery_ref_non_authoritative: true,
+            ph1rem_ref_present: true,
+            ph1rem_ref_non_authoritative: true,
+            ph1delivery_ref_present: true,
+            ph1delivery_ref_non_authoritative: true,
+            ph1l_session_ref_present: true,
+            ph1l_session_ref_non_authoritative: true,
+            ph1context_ref_present: true,
+            ph1context_ref_non_authoritative: true,
+            ph1w_ref_present: true,
+            ph1w_ref_non_authoritative: true,
+            wake_training_ref_present: true,
+            wake_artifact_ref_present: true,
+            wake_policy_ref_present: true,
+            desktop_wake_life_ref_present: true,
+            notification_visibility_ref_present: true,
+            reminder_delivery_session_context_ref_present: true,
+            wake_reentry_ref_present: true,
+            authority_bounded: true,
+            tenant_user_device_session_scoped: true,
+            uncertainty_preserved: true,
+            notification_invented_fact: false,
+            notification_invented_notification_success: false,
+            notification_invented_reminder_success: false,
+            notification_invented_escalation_success: false,
+            notification_invented_wake_reentry_success: false,
+            notification_invented_completion_success: false,
+            notification_invented_approval: false,
+            notification_invented_remote_completion: false,
+            notification_invented_visibility_completion: false,
+            notification_invented_work_or_lease_authority: false,
+            notification_invented_route_authority: false,
+            notification_invented_attachment_or_citation: false,
+            notification_invented_provider_or_tool_result: false,
+            notification_claimed_unproven_completion: false,
+            notification_implied_approval_dispatch_execution_reminder_escalation_wake_or_completion_without_proof:
+                false,
+            secret_safe: true,
+            redacted: true,
+            stale_aware: true,
+            revocation_aware: true,
+            unverifiable: false,
+            stale: false,
+            secret_unsafe: false,
+            cross_tenant: false,
+            cross_route: false,
+            cross_connector: false,
+            notification_mismatch: false,
+            reminder_mismatch: false,
+            escalation_mismatch: false,
+            wake_mismatch: false,
+            recovery_mismatch: false,
+            continuity_mismatch: false,
+            publication_mismatch: false,
+            settlement_mismatch: false,
+            connector_mismatch: false,
+            route_mismatch: false,
+            action_graph_mismatch: false,
+            lease_mismatch: false,
+            protected_gate_mismatch: false,
+            tenant_mismatch: false,
+            missing_proof: false,
+            ownership_drift: false,
+            native_wake_reentry_declarative_only: true,
+            native_wake_reentry_mutates_state: false,
+            native_wake_reentry_connector_writes: false,
+            native_wake_reentry_dispatches_or_executes: false,
+            native_wake_reentry_calls_providers_or_tools: false,
+            native_wake_reentry_emits_tts_or_playback: false,
+            native_wake_reentry_creates_user_turn: false,
+            native_wake_reentry_treats_visible_readiness_as_action_success: false,
+            protected_action_like_request: false,
+            protected_slot_or_authority_ambiguous: false,
+            unsafe_identity_posture: false,
+            disclosure_ambiguity: false,
+            stale_or_cancelled_or_superseded_output: false,
+            session_closed: false,
+            record_artifact_only_turn: false,
+            stale_notification_state: false,
+            stale_reminder_state: false,
+            stale_escalation_state: false,
+            stale_wake_state: false,
+            stale_recovery_state: false,
+            stale_work_state: false,
+            stale_lease_state: false,
+            stale_route_state: false,
+            stale_connector_state: false,
+            stale_protected_gate_state: false,
+            background_task_reopens_session: false,
+            notification_identity_matches_current_output_session: true,
+            replay_upgrades_blocked_authority: false,
+            fake_notification_detected: false,
+            fake_reminder_detected: false,
+            fake_escalation_detected: false,
+            fake_wake_detected: false,
+            fake_reentry_detected: false,
+            fake_completion_detected: false,
+            fake_approval_detected: false,
+            runtime_mock_detected: false,
+            raw_provider_output_present: false,
+            raw_search_dump_present: false,
+            raw_media_present: false,
+            raw_connector_credential_field_present: false,
+            unverified_source_evidence_present: false,
+            unsupported_claim_candidate_present: false,
+            fake_notification_source_carrier_present: false,
+            attention_continuity_automation_outbound_memory_ingress_orchestration_execution_settlement_publication_conversation_recovery_used_as_truth_authority:
+                false,
+            protected_action_candidate_present: false,
+            simulation_candidate_present: false,
+            approved_execution_plan_present: false,
+            secrets_exposed: false,
+            raw_biometric_material_exposed: false,
+            internal_trace_exposed: false,
+            access_denied: false,
+            policy_denied: false,
+            attempted_live_provider_in_build: false,
+            generated_live_media_in_build: false,
+            ran_live_search_in_build: false,
+            called_live_external_tool_in_build: false,
+            connector_write_requested: false,
+            ran_live_notification_delivery_in_build: false,
+            ran_live_reminder_delivery_in_build: false,
+            ran_live_escalation_dispatch_in_build: false,
+            ran_live_wake_mutation_in_build: false,
+            ran_live_remote_continuity_mutation_in_build: false,
+            ran_direct_protected_execution_in_build: false,
+            ran_live_tts_or_playback_in_build: false,
+            captured_microphone_audio: false,
+            transcribed_live_audio: false,
+            voice_id_matching_attempted: false,
+            native_ui_behavior_added: false,
+            fixture_only_test_path: true,
+        }
+    }
+
+    #[cfg(test)]
+    fn fixture_notification_disclosure_boundary_ready(audit_id: impl Into<String>) -> Self {
+        Self::fixture_base(
+            Stage31NotificationWakeReentryKind::NotificationDisclosureBoundary,
+            audit_id,
+        )
+    }
+
+    #[cfg(test)]
+    fn fixture_reminder_escalation_truth_ready(
+        reminder_truth_id: impl Into<String>,
+        escalation_truth_id: impl Into<String>,
+        audit_id: impl Into<String>,
+    ) -> Self {
+        let mut input = Self::fixture_base(
+            Stage31NotificationWakeReentryKind::ReminderEscalationTruth,
+            audit_id,
+        );
+        input.reminder_truth_id = Some(reminder_truth_id.into());
+        input.escalation_truth_id = Some(escalation_truth_id.into());
+        input
+    }
+
+    #[cfg(test)]
+    fn fixture_governed_wake_reentry_continuity_ready(
+        wake_reentry_id: impl Into<String>,
+        audit_id: impl Into<String>,
+    ) -> Self {
+        let mut input = Self::fixture_base(
+            Stage31NotificationWakeReentryKind::GovernedWakeReentryContinuity,
+            audit_id,
+        );
+        input.wake_reentry_id = Some(wake_reentry_id.into());
+        input
+    }
+
+    #[cfg(test)]
+    fn fixture_notification_visibility_posture_reference_ready(
+        notification_disclosure_id: impl Into<String>,
+        audit_id: impl Into<String>,
+    ) -> Self {
+        let mut input = Self::fixture_base(
+            Stage31NotificationWakeReentryKind::NotificationVisibilityPostureReference,
+            audit_id,
+        );
+        input.notification_disclosure_id = Some(notification_disclosure_id.into());
+        input
+    }
+
+    #[cfg(test)]
+    fn fixture_reminder_delivery_session_context_continuity_reference_ready(
+        reminder_truth_id: impl Into<String>,
+        audit_id: impl Into<String>,
+    ) -> Self {
+        let mut input = Self::fixture_base(
+            Stage31NotificationWakeReentryKind::ReminderDeliverySessionContextContinuityReference,
+            audit_id,
+        );
+        input.reminder_truth_id = Some(reminder_truth_id.into());
+        input
+    }
+
+    #[cfg(test)]
+    fn fixture_work_lease_route_protected_gate_recovery_proof_reference_ready(
+        notification_disclosure_id: impl Into<String>,
+        audit_id: impl Into<String>,
+    ) -> Self {
+        let mut input = Self::fixture_base(
+            Stage31NotificationWakeReentryKind::WorkLeaseRouteProtectedGateRecoveryProofReference,
+            audit_id,
+        );
+        input.notification_disclosure_id = Some(notification_disclosure_id.into());
+        input
+    }
+}
+
+impl Validate for Stage31NotificationWakeReentryInput {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        for (field, value) in [
+            (
+                "stage31_notification_wake_reentry_input.output_interaction_id",
+                self.output_interaction_id.as_deref(),
+            ),
+            (
+                "stage31_notification_wake_reentry_input.speech_output_id",
+                self.speech_output_id.as_deref(),
+            ),
+            (
+                "stage31_notification_wake_reentry_input.conversation_continuity_id",
+                self.conversation_continuity_id.as_deref(),
+            ),
+            (
+                "stage31_notification_wake_reentry_input.interaction_boundary_id",
+                self.interaction_boundary_id.as_deref(),
+            ),
+            (
+                "stage31_notification_wake_reentry_input.completion_disclosure_id",
+                self.completion_disclosure_id.as_deref(),
+            ),
+            (
+                "stage31_notification_wake_reentry_input.recovery_continuity_id",
+                self.recovery_continuity_id.as_deref(),
+            ),
+            (
+                "stage31_notification_wake_reentry_input.follow_up_posture_id",
+                self.follow_up_posture_id.as_deref(),
+            ),
+            (
+                "stage31_notification_wake_reentry_input.thread_presence_id",
+                self.thread_presence_id.as_deref(),
+            ),
+            (
+                "stage31_notification_wake_reentry_input.notification_disclosure_id",
+                self.notification_disclosure_id.as_deref(),
+            ),
+            (
+                "stage31_notification_wake_reentry_input.reminder_truth_id",
+                self.reminder_truth_id.as_deref(),
+            ),
+            (
+                "stage31_notification_wake_reentry_input.escalation_truth_id",
+                self.escalation_truth_id.as_deref(),
+            ),
+            (
+                "stage31_notification_wake_reentry_input.wake_reentry_id",
+                self.wake_reentry_id.as_deref(),
+            ),
+            (
+                "stage31_notification_wake_reentry_input.audit_id",
+                self.audit_id.as_deref(),
+            ),
+            (
+                "stage31_notification_wake_reentry_input.ph1j_proof_ref",
+                self.ph1j_proof_ref.as_deref(),
+            ),
+        ] {
+            validate_stage4_optional_ref(field, value)?;
+        }
+
+        if self.attempted_live_provider_in_build
+            || self.generated_live_media_in_build
+            || self.ran_live_search_in_build
+            || self.called_live_external_tool_in_build
+            || self.connector_write_requested
+            || self.ran_live_notification_delivery_in_build
+            || self.ran_live_reminder_delivery_in_build
+            || self.ran_live_escalation_dispatch_in_build
+            || self.ran_live_wake_mutation_in_build
+            || self.ran_live_remote_continuity_mutation_in_build
+            || self.ran_direct_protected_execution_in_build
+            || self.ran_live_tts_or_playback_in_build
+            || self.captured_microphone_audio
+            || self.transcribed_live_audio
+            || self.voice_id_matching_attempted
+            || self.native_ui_behavior_added
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage31_notification_wake_reentry_input.live_build_boundary",
+                reason: "Stage 31A cannot call live providers/search/tools, deliver live notifications/reminders/escalations, run wake mutation or remote continuity mutation, protected execution, TTS/playback, mic/STT, Voice ID, connector-write, or native UI behavior",
+            });
+        }
+
+        if (self.fake_notification_detected
+            || self.fake_reminder_detected
+            || self.fake_escalation_detected
+            || self.fake_wake_detected
+            || self.fake_reentry_detected
+            || self.fake_completion_detected
+            || self.fake_approval_detected
+            || self.runtime_mock_detected)
+            && !self.fixture_only_test_path
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage31_notification_wake_reentry_input.runtime_mock_boundary",
+                reason: "runtime mocks and fake notification/reminder/escalation/wake/re-entry/completion/approval success are forbidden outside explicit fixture-only paths",
+            });
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Stage31NotificationWakeReentryPacket {
+    pub session_id: SessionId,
+    pub turn_id: Option<TurnId>,
+    pub activation_id: Option<String>,
+    pub continuity_packet_id: Option<String>,
+    pub automation_candidate_id: Option<String>,
+    pub connector_action_stage_id: Option<String>,
+    pub memory_candidate_id: Option<String>,
+    pub capture_session_id: Option<String>,
+    pub orchestration_stage_id: Option<String>,
+    pub action_graph_id: Option<String>,
+    pub tool_invocation_stage_id: Option<String>,
+    pub execution_plan_ref: Option<String>,
+    pub connector_execution_id: Option<String>,
+    pub protected_gate_id: Option<String>,
+    pub settlement_id: Option<String>,
+    pub mutation_commit_id: Option<String>,
+    pub reconciliation_id: Option<String>,
+    pub publication_id: Option<String>,
+    pub state_sync_id: Option<String>,
+    pub completion_disclosure_id: Option<String>,
+    pub output_interaction_id: Option<String>,
+    pub speech_output_id: Option<String>,
+    pub conversation_continuity_id: Option<String>,
+    pub interaction_boundary_id: Option<String>,
+    pub recovery_continuity_id: Option<String>,
+    pub follow_up_posture_id: Option<String>,
+    pub thread_presence_id: Option<String>,
+    pub notification_disclosure_id: Option<String>,
+    pub reminder_truth_id: Option<String>,
+    pub escalation_truth_id: Option<String>,
+    pub wake_reentry_id: Option<String>,
+    pub work_id: Option<String>,
+    pub lease_id: Option<String>,
+    pub device_id: Option<String>,
+    pub access_context_id: Option<String>,
+    pub policy_context_id: Option<String>,
+    pub tenant_id: Option<String>,
+    pub audit_id: Option<String>,
+    pub ph1j_proof_ref: Option<String>,
+    pub stage8f_disposition: Option<Stage8FOutputInteractionDisposition>,
+    pub stage17_disposition: Option<Stage17SpeechOutputDisposition>,
+    pub stage19_disposition: Option<Stage19NotificationAttentionDisposition>,
+    pub stage20_disposition: Option<Stage20ContinuityHandoffDisposition>,
+    pub stage21_disposition: Option<Stage21AutomationOrchestrationDisposition>,
+    pub stage22_disposition: Option<Stage22ConnectorOutboundDisposition>,
+    pub stage23_disposition: Option<Stage23MemoryRetentionDisposition>,
+    pub stage24_disposition: Option<Stage24IngressCaptureDisposition>,
+    pub stage25_disposition: Option<Stage25ToolOrchestrationDisposition>,
+    pub stage26_disposition: Option<Stage26ExecutionAuthorityDisposition>,
+    pub stage27_disposition: Option<Stage27SettlementReconciliationDisposition>,
+    pub stage28_disposition: Option<Stage28PublicationDisclosureDisposition>,
+    pub stage29_disposition: Option<Stage29ConversationalContinuityDisposition>,
+    pub stage30_disposition: Option<Stage30RecoveryThreadPresenceDisposition>,
+    pub stage12_disposition: Option<Stage12ProtectedActionDisposition>,
+    pub notification_kind: Stage31NotificationWakeReentryKind,
+    pub disposition: Stage31NotificationWakeReentryDisposition,
+    pub reason_code: &'static str,
+    pub stage8_ref_non_authoritative: bool,
+    pub stage17_ref_non_authoritative: bool,
+    pub stage19_ref_non_authoritative: bool,
+    pub stage30_ref_non_authoritative: bool,
+    pub ph1rem_ref_non_authoritative: bool,
+    pub ph1delivery_ref_non_authoritative: bool,
+    pub ph1l_ref_non_authoritative: bool,
+    pub ph1context_ref_non_authoritative: bool,
+    pub ph1w_ref_non_authoritative: bool,
+    pub stage12_ref_bounded_authority_context: bool,
+    pub work_authority: Stage31NotificationWakeReentryWorkAuthority,
+}
+
+impl Stage31NotificationWakeReentryPacket {
+    pub fn from_stage30_recovery(
+        route: &Stage11ReasoningRouterPacket,
+        stage12_gate: Option<&Stage12ProtectedActionGatePacket>,
+        attention_output: Option<&Stage19NotificationAttentionPacket>,
+        recovery_output: Option<&Stage30RecoveryThreadPresencePacket>,
+        input: Stage31NotificationWakeReentryInput,
+    ) -> Result<Self, ContractViolation> {
+        route.validate()?;
+        if let Some(packet) = stage12_gate {
+            packet.validate()?;
+        }
+        if let Some(packet) = attention_output {
+            packet.validate()?;
+        }
+        if let Some(packet) = recovery_output {
+            packet.validate()?;
+        }
+        input.validate()?;
+        if input.stage12_gate_ref_present && stage12_gate.is_none() {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage31_notification_wake_reentry_packet.stage12_gate",
+                reason: "present Stage 12 continuity reference requires the canonical Stage 12 packet",
+            });
+        }
+        if input.stage19_notification_ref_present && attention_output.is_none() {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage31_notification_wake_reentry_packet.stage19_notification",
+                reason: "present Stage 19 continuity reference requires the canonical Stage 19 packet",
+            });
+        }
+        if input.stage30_recovery_ref_present && recovery_output.is_none() {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage31_notification_wake_reentry_packet.stage30_recovery",
+                reason: "present Stage 30 continuity reference requires the canonical Stage 30 packet",
+            });
+        }
+
+        let disposition =
+            Self::decide_disposition(route, stage12_gate, attention_output, recovery_output, &input);
+        let work_authority = Self::work_authority_for(disposition);
+        let audit_id = input
+            .audit_id
+            .clone()
+            .or_else(|| recovery_output.and_then(|packet| packet.audit_id.clone()))
+            .or_else(|| attention_output.and_then(|packet| packet.audit_id.clone()))
+            .or_else(|| stage12_gate.and_then(|packet| packet.audit_id.clone()))
+            .or_else(|| route.audit_id.clone());
+        let ph1j_proof_ref = input
+            .ph1j_proof_ref
+            .clone()
+            .or_else(|| recovery_output.and_then(|packet| packet.ph1j_proof_ref.clone()));
+
+        let packet = Self {
+            session_id: route.session_id,
+            turn_id: route.turn_id,
+            activation_id: recovery_output.and_then(|packet| packet.activation_id.clone()),
+            continuity_packet_id: recovery_output
+                .and_then(|packet| packet.continuity_packet_id.clone()),
+            automation_candidate_id: recovery_output
+                .and_then(|packet| packet.automation_candidate_id.clone()),
+            connector_action_stage_id: recovery_output
+                .and_then(|packet| packet.connector_action_stage_id.clone()),
+            memory_candidate_id: recovery_output
+                .and_then(|packet| packet.memory_candidate_id.clone()),
+            capture_session_id: recovery_output
+                .and_then(|packet| packet.capture_session_id.clone()),
+            orchestration_stage_id: recovery_output
+                .and_then(|packet| packet.orchestration_stage_id.clone()),
+            action_graph_id: recovery_output.and_then(|packet| packet.action_graph_id.clone()),
+            tool_invocation_stage_id: recovery_output
+                .and_then(|packet| packet.tool_invocation_stage_id.clone()),
+            execution_plan_ref: recovery_output.and_then(|packet| packet.execution_plan_ref.clone()),
+            connector_execution_id: recovery_output
+                .and_then(|packet| packet.connector_execution_id.clone()),
+            protected_gate_id: recovery_output.and_then(|packet| packet.protected_gate_id.clone()),
+            settlement_id: recovery_output.and_then(|packet| packet.settlement_id.clone()),
+            mutation_commit_id: recovery_output.and_then(|packet| packet.mutation_commit_id.clone()),
+            reconciliation_id: recovery_output.and_then(|packet| packet.reconciliation_id.clone()),
+            publication_id: recovery_output.and_then(|packet| packet.publication_id.clone()),
+            state_sync_id: recovery_output.and_then(|packet| packet.state_sync_id.clone()),
+            completion_disclosure_id: input
+                .completion_disclosure_id
+                .clone()
+                .or_else(|| recovery_output.and_then(|packet| packet.completion_disclosure_id.clone())),
+            output_interaction_id: input
+                .output_interaction_id
+                .clone()
+                .or_else(|| recovery_output.and_then(|packet| packet.output_interaction_id.clone())),
+            speech_output_id: input
+                .speech_output_id
+                .clone()
+                .or_else(|| recovery_output.and_then(|packet| packet.speech_output_id.clone())),
+            conversation_continuity_id: input
+                .conversation_continuity_id
+                .clone()
+                .or_else(|| recovery_output.and_then(|packet| packet.conversation_continuity_id.clone())),
+            interaction_boundary_id: input
+                .interaction_boundary_id
+                .clone()
+                .or_else(|| recovery_output.and_then(|packet| packet.interaction_boundary_id.clone())),
+            recovery_continuity_id: input
+                .recovery_continuity_id
+                .clone()
+                .or_else(|| recovery_output.and_then(|packet| packet.recovery_continuity_id.clone())),
+            follow_up_posture_id: input
+                .follow_up_posture_id
+                .clone()
+                .or_else(|| recovery_output.and_then(|packet| packet.follow_up_posture_id.clone())),
+            thread_presence_id: input
+                .thread_presence_id
+                .clone()
+                .or_else(|| recovery_output.and_then(|packet| packet.thread_presence_id.clone())),
+            notification_disclosure_id: input.notification_disclosure_id.clone(),
+            reminder_truth_id: input.reminder_truth_id.clone(),
+            escalation_truth_id: input.escalation_truth_id.clone(),
+            wake_reentry_id: input.wake_reentry_id.clone(),
+            work_id: recovery_output.and_then(|packet| packet.work_id.clone()),
+            lease_id: recovery_output.and_then(|packet| packet.lease_id.clone()),
+            device_id: recovery_output.and_then(|packet| packet.device_id.clone()),
+            access_context_id: recovery_output
+                .and_then(|packet| packet.access_context_id.clone())
+                .or_else(|| route.access_context_id.clone()),
+            policy_context_id: recovery_output
+                .and_then(|packet| packet.policy_context_id.clone())
+                .or_else(|| route.policy_context_id.clone()),
+            tenant_id: recovery_output.and_then(|packet| packet.tenant_id.clone()),
+            audit_id,
+            ph1j_proof_ref,
+            stage8f_disposition: recovery_output.and_then(|packet| packet.stage8f_disposition),
+            stage17_disposition: recovery_output.and_then(|packet| packet.stage17_disposition),
+            stage19_disposition: attention_output.map(|packet| packet.disposition),
+            stage20_disposition: recovery_output.and_then(|packet| packet.stage20_disposition),
+            stage21_disposition: recovery_output.and_then(|packet| packet.stage21_disposition),
+            stage22_disposition: recovery_output.and_then(|packet| packet.stage22_disposition),
+            stage23_disposition: recovery_output.and_then(|packet| packet.stage23_disposition),
+            stage24_disposition: recovery_output.and_then(|packet| packet.stage24_disposition),
+            stage25_disposition: recovery_output.and_then(|packet| packet.stage25_disposition),
+            stage26_disposition: recovery_output.and_then(|packet| packet.stage26_disposition),
+            stage27_disposition: recovery_output.and_then(|packet| packet.stage27_disposition),
+            stage28_disposition: recovery_output.and_then(|packet| packet.stage28_disposition),
+            stage29_disposition: recovery_output.and_then(|packet| packet.stage29_disposition),
+            stage30_disposition: recovery_output.map(|packet| packet.disposition),
+            stage12_disposition: stage12_gate.map(|packet| packet.disposition),
+            notification_kind: input.notification_kind,
+            disposition,
+            reason_code: disposition.default_reason_code(),
+            stage8_ref_non_authoritative: input.stage8_output_interaction_ref_non_authoritative,
+            stage17_ref_non_authoritative: input.stage17_speech_output_ref_non_authoritative,
+            stage19_ref_non_authoritative: input.stage19_notification_ref_non_authoritative,
+            stage30_ref_non_authoritative: input.stage30_recovery_ref_non_authoritative,
+            ph1rem_ref_non_authoritative: input.ph1rem_ref_non_authoritative,
+            ph1delivery_ref_non_authoritative: input.ph1delivery_ref_non_authoritative,
+            ph1l_ref_non_authoritative: input.ph1l_session_ref_non_authoritative,
+            ph1context_ref_non_authoritative: input.ph1context_ref_non_authoritative,
+            ph1w_ref_non_authoritative: input.ph1w_ref_non_authoritative,
+            stage12_ref_bounded_authority_context: input.stage12_gate_bounded_authority_context,
+            work_authority,
+        };
+        packet.validate()?;
+        Ok(packet)
+    }
+
+    pub const fn can_mutate_or_execute(&self) -> bool {
+        self.work_authority.can_mutate_or_execute()
+    }
+
+    fn decide_disposition(
+        route: &Stage11ReasoningRouterPacket,
+        stage12_gate: Option<&Stage12ProtectedActionGatePacket>,
+        attention_output: Option<&Stage19NotificationAttentionPacket>,
+        recovery_output: Option<&Stage30RecoveryThreadPresencePacket>,
+        input: &Stage31NotificationWakeReentryInput,
+    ) -> Stage31NotificationWakeReentryDisposition {
+        if input.runtime_mock_detected {
+            return Stage31NotificationWakeReentryDisposition::RuntimeMockBlocked;
+        }
+        if input.access_denied || input.policy_denied {
+            return Stage31NotificationWakeReentryDisposition::UnsafeInputBlocked;
+        }
+        if !input.stage11_route_ref_present
+            || !input.stage11_route_non_executing_context
+            || !matches!(
+                route.disposition,
+                Stage11RouterDisposition::PublicReadOnlyCandidate
+                    | Stage11RouterDisposition::ProtectedActionBlockedUntilStage12
+                    | Stage11RouterDisposition::SimulationCandidateInertHandoff
+            )
+            || !input.stage12_gate_ref_present
+            || !input.stage12_gate_bounded_authority_context
+            || stage12_gate.is_none()
+            || !input.stage19_notification_ref_present
+            || !input.stage19_notification_ref_non_authoritative
+            || attention_output.is_none()
+            || !attention_output.is_some_and(|packet| packet.disposition.is_ready())
+            || !input.stage30_recovery_ref_present
+            || !input.stage30_recovery_ref_non_authoritative
+            || recovery_output.is_none()
+            || !recovery_output.is_some_and(|packet| packet.disposition.is_ready())
+            || !input.stage8_output_interaction_ref_present
+            || !input.stage8_output_interaction_ref_non_authoritative
+            || recovery_output.and_then(|packet| packet.stage8f_disposition).is_none()
+            || !input.stage17_speech_output_ref_present
+            || !input.stage17_speech_output_ref_non_authoritative
+            || recovery_output.and_then(|packet| packet.stage17_disposition).is_none()
+        {
+            return Stage31NotificationWakeReentryDisposition::StageInputBlocked;
+        }
+        if input.audit_id.is_none()
+            && route.audit_id.is_none()
+            && stage12_gate.and_then(|packet| packet.audit_id.clone()).is_none()
+            && attention_output.and_then(|packet| packet.audit_id.clone()).is_none()
+            && recovery_output.and_then(|packet| packet.audit_id.clone()).is_none()
+        {
+            return Stage31NotificationWakeReentryDisposition::AuditProofMissing;
+        }
+        if input.notification_invented_fact
+            || input.notification_invented_notification_success
+            || input.notification_invented_reminder_success
+            || input.notification_invented_escalation_success
+            || input.notification_invented_wake_reentry_success
+            || input.notification_invented_completion_success
+            || input.notification_invented_approval
+            || input.notification_invented_remote_completion
+            || input.notification_invented_visibility_completion
+            || input.notification_invented_work_or_lease_authority
+            || input.notification_invented_route_authority
+            || input.notification_invented_attachment_or_citation
+            || input.notification_invented_provider_or_tool_result
+            || input.notification_claimed_unproven_completion
+            || input
+                .notification_implied_approval_dispatch_execution_reminder_escalation_wake_or_completion_without_proof
+            || input.raw_provider_output_present
+            || input.raw_search_dump_present
+            || input.raw_media_present
+            || input.raw_connector_credential_field_present
+            || input.unverified_source_evidence_present
+            || input.unsupported_claim_candidate_present
+            || input.fake_notification_source_carrier_present
+            || input
+                .attention_continuity_automation_outbound_memory_ingress_orchestration_execution_settlement_publication_conversation_recovery_used_as_truth_authority
+            || input.protected_action_candidate_present
+            || input.simulation_candidate_present
+            || input.approved_execution_plan_present
+        {
+            return Stage31NotificationWakeReentryDisposition::NoInventionBlocked;
+        }
+        if !input.native_wake_reentry_declarative_only
+            || input.native_wake_reentry_mutates_state
+            || input.native_wake_reentry_connector_writes
+            || input.native_wake_reentry_dispatches_or_executes
+            || input.native_wake_reentry_calls_providers_or_tools
+            || input.native_wake_reentry_emits_tts_or_playback
+            || input.native_wake_reentry_creates_user_turn
+            || input.native_wake_reentry_treats_visible_readiness_as_action_success
+        {
+            return Stage31NotificationWakeReentryDisposition::NativeWakeReentryHandoffBlocked;
+        }
+        if input.protected_action_like_request
+            || input.protected_slot_or_authority_ambiguous
+            || input.unsafe_identity_posture
+            || input.disclosure_ambiguity
+        {
+            return Stage31NotificationWakeReentryDisposition::PublicProtectedBoundaryBlocked;
+        }
+        if input.stale_or_cancelled_or_superseded_output
+            || input.session_closed
+            || input.record_artifact_only_turn
+            || input.stale_notification_state
+            || input.stale_reminder_state
+            || input.stale_escalation_state
+            || input.stale_wake_state
+            || input.stale_recovery_state
+            || input.stale_work_state
+            || input.stale_lease_state
+            || input.stale_route_state
+            || input.stale_connector_state
+            || input.stale_protected_gate_state
+            || input.background_task_reopens_session
+            || !input.notification_identity_matches_current_output_session
+            || input.replay_upgrades_blocked_authority
+        {
+            return Stage31NotificationWakeReentryDisposition::StaleNotificationBlocked;
+        }
+        if !input.authority_bounded
+            || !input.tenant_user_device_session_scoped
+            || !input.secret_safe
+            || !input.redacted
+            || !input.stale_aware
+            || !input.revocation_aware
+            || !input.uncertainty_preserved
+            || !input.notification_visibility_ref_present
+            || !input.reminder_delivery_session_context_ref_present
+            || !input.wake_reentry_ref_present
+            || !input.ph1rem_ref_present
+            || !input.ph1delivery_ref_present
+            || !input.ph1l_session_ref_present
+            || !input.ph1context_ref_present
+            || !input.ph1w_ref_present
+            || !input.wake_training_ref_present
+            || !input.wake_artifact_ref_present
+            || !input.wake_policy_ref_present
+            || !input.desktop_wake_life_ref_present
+            || input.unverifiable
+            || input.stale
+            || input.secret_unsafe
+            || input.cross_tenant
+            || input.cross_route
+            || input.cross_connector
+            || input.notification_mismatch
+            || input.reminder_mismatch
+            || input.escalation_mismatch
+            || input.wake_mismatch
+            || input.recovery_mismatch
+            || input.continuity_mismatch
+            || input.publication_mismatch
+            || input.settlement_mismatch
+            || input.connector_mismatch
+            || input.route_mismatch
+            || input.action_graph_mismatch
+            || input.lease_mismatch
+            || input.protected_gate_mismatch
+            || input.tenant_mismatch
+            || input.missing_proof
+            || input.ownership_drift
+            || input.secrets_exposed
+            || input.raw_biometric_material_exposed
+            || input.internal_trace_exposed
+        {
+            return Stage31NotificationWakeReentryDisposition::NotificationAuthorityBlocked;
+        }
+
+        match input.notification_kind {
+            Stage31NotificationWakeReentryKind::NotificationDisclosureBoundary => {
+                if input.notification_disclosure_id.is_some()
+                    && input.notification_visibility_ref_present
+                    && attention_output
+                        .is_some_and(|packet| packet.disposition.is_ready())
+                    && recovery_output
+                        .is_some_and(|packet| packet.completion_disclosure_id.is_some())
+                {
+                    Stage31NotificationWakeReentryDisposition::NotificationDisclosureBoundaryReady
+                } else {
+                    Stage31NotificationWakeReentryDisposition::NotificationAuthorityBlocked
+                }
+            }
+            Stage31NotificationWakeReentryKind::ReminderEscalationTruth => {
+                if input.reminder_truth_id.is_some()
+                    && input.escalation_truth_id.is_some()
+                    && input.ph1rem_ref_present
+                    && input.ph1delivery_ref_present
+                    && input.reminder_delivery_session_context_ref_present
+                    && recovery_output
+                        .is_some_and(|packet| packet.follow_up_posture_id.is_some())
+                {
+                    Stage31NotificationWakeReentryDisposition::ReminderEscalationTruthReady
+                } else {
+                    Stage31NotificationWakeReentryDisposition::NotificationAuthorityBlocked
+                }
+            }
+            Stage31NotificationWakeReentryKind::GovernedWakeReentryContinuity => {
+                if input.wake_reentry_id.is_some()
+                    && input.ph1w_ref_present
+                    && input.wake_training_ref_present
+                    && input.wake_policy_ref_present
+                    && input.desktop_wake_life_ref_present
+                    && recovery_output.is_some_and(|packet| {
+                        packet.thread_presence_id.is_some() && packet.recovery_continuity_id.is_some()
+                    })
+                {
+                    Stage31NotificationWakeReentryDisposition::GovernedWakeReentryContinuityReady
+                } else {
+                    Stage31NotificationWakeReentryDisposition::NotificationAuthorityBlocked
+                }
+            }
+            Stage31NotificationWakeReentryKind::NotificationVisibilityPostureReference => {
+                if input.notification_disclosure_id.is_some()
+                    && input.notification_visibility_ref_present
+                    && attention_output.is_some()
+                {
+                    Stage31NotificationWakeReentryDisposition::NotificationVisibilityPostureReferenceReady
+                } else {
+                    Stage31NotificationWakeReentryDisposition::NotificationAuthorityBlocked
+                }
+            }
+            Stage31NotificationWakeReentryKind::ReminderDeliverySessionContextContinuityReference => {
+                if input.reminder_truth_id.is_some()
+                    && input.reminder_delivery_session_context_ref_present
+                    && input.ph1rem_ref_present
+                    && input.ph1delivery_ref_present
+                    && input.ph1l_session_ref_present
+                    && input.ph1context_ref_present
+                {
+                    Stage31NotificationWakeReentryDisposition::ReminderDeliverySessionContextContinuityReferenceReady
+                } else {
+                    Stage31NotificationWakeReentryDisposition::NotificationAuthorityBlocked
+                }
+            }
+            Stage31NotificationWakeReentryKind::WorkLeaseRouteProtectedGateRecoveryProofReference => {
+                if recovery_output.is_some_and(|packet| {
+                    packet.work_id.is_some()
+                        && packet.lease_id.is_some()
+                        && packet.recovery_continuity_id.is_some()
+                }) && stage12_gate.is_some()
+                    && input.notification_disclosure_id.is_some()
+                {
+                    Stage31NotificationWakeReentryDisposition::WorkLeaseRouteProtectedGateRecoveryProofReferenceReady
+                } else {
+                    Stage31NotificationWakeReentryDisposition::NotificationAuthorityBlocked
+                }
+            }
+        }
+    }
+
+    const fn work_authority_for(
+        disposition: Stage31NotificationWakeReentryDisposition,
+    ) -> Stage31NotificationWakeReentryWorkAuthority {
+        match disposition {
+            Stage31NotificationWakeReentryDisposition::NotificationDisclosureBoundaryReady => {
+                Stage31NotificationWakeReentryWorkAuthority::notification_disclosure_boundary_ready()
+            }
+            Stage31NotificationWakeReentryDisposition::ReminderEscalationTruthReady => {
+                Stage31NotificationWakeReentryWorkAuthority::reminder_escalation_truth_ready()
+            }
+            Stage31NotificationWakeReentryDisposition::GovernedWakeReentryContinuityReady => {
+                Stage31NotificationWakeReentryWorkAuthority::governed_wake_reentry_continuity_ready()
+            }
+            Stage31NotificationWakeReentryDisposition::NotificationVisibilityPostureReferenceReady => {
+                Stage31NotificationWakeReentryWorkAuthority::notification_visibility_posture_reference_ready()
+            }
+            Stage31NotificationWakeReentryDisposition::ReminderDeliverySessionContextContinuityReferenceReady => {
+                Stage31NotificationWakeReentryWorkAuthority::reminder_delivery_session_context_continuity_reference_ready()
+            }
+            Stage31NotificationWakeReentryDisposition::WorkLeaseRouteProtectedGateRecoveryProofReferenceReady => {
+                Stage31NotificationWakeReentryWorkAuthority::work_lease_route_protected_gate_recovery_proof_reference_ready()
+            }
+            _ => Stage31NotificationWakeReentryWorkAuthority::fail_closed(),
+        }
+    }
+}
+
+impl Validate for Stage31NotificationWakeReentryPacket {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        for (field, value) in [
+            (
+                "stage31_notification_wake_reentry_packet.activation_id",
+                self.activation_id.as_deref(),
+            ),
+            (
+                "stage31_notification_wake_reentry_packet.continuity_packet_id",
+                self.continuity_packet_id.as_deref(),
+            ),
+            (
+                "stage31_notification_wake_reentry_packet.automation_candidate_id",
+                self.automation_candidate_id.as_deref(),
+            ),
+            (
+                "stage31_notification_wake_reentry_packet.connector_action_stage_id",
+                self.connector_action_stage_id.as_deref(),
+            ),
+            (
+                "stage31_notification_wake_reentry_packet.memory_candidate_id",
+                self.memory_candidate_id.as_deref(),
+            ),
+            (
+                "stage31_notification_wake_reentry_packet.capture_session_id",
+                self.capture_session_id.as_deref(),
+            ),
+            (
+                "stage31_notification_wake_reentry_packet.orchestration_stage_id",
+                self.orchestration_stage_id.as_deref(),
+            ),
+            (
+                "stage31_notification_wake_reentry_packet.action_graph_id",
+                self.action_graph_id.as_deref(),
+            ),
+            (
+                "stage31_notification_wake_reentry_packet.tool_invocation_stage_id",
+                self.tool_invocation_stage_id.as_deref(),
+            ),
+            (
+                "stage31_notification_wake_reentry_packet.execution_plan_ref",
+                self.execution_plan_ref.as_deref(),
+            ),
+            (
+                "stage31_notification_wake_reentry_packet.connector_execution_id",
+                self.connector_execution_id.as_deref(),
+            ),
+            (
+                "stage31_notification_wake_reentry_packet.protected_gate_id",
+                self.protected_gate_id.as_deref(),
+            ),
+            (
+                "stage31_notification_wake_reentry_packet.settlement_id",
+                self.settlement_id.as_deref(),
+            ),
+            (
+                "stage31_notification_wake_reentry_packet.mutation_commit_id",
+                self.mutation_commit_id.as_deref(),
+            ),
+            (
+                "stage31_notification_wake_reentry_packet.reconciliation_id",
+                self.reconciliation_id.as_deref(),
+            ),
+            (
+                "stage31_notification_wake_reentry_packet.publication_id",
+                self.publication_id.as_deref(),
+            ),
+            (
+                "stage31_notification_wake_reentry_packet.state_sync_id",
+                self.state_sync_id.as_deref(),
+            ),
+            (
+                "stage31_notification_wake_reentry_packet.completion_disclosure_id",
+                self.completion_disclosure_id.as_deref(),
+            ),
+            (
+                "stage31_notification_wake_reentry_packet.output_interaction_id",
+                self.output_interaction_id.as_deref(),
+            ),
+            (
+                "stage31_notification_wake_reentry_packet.speech_output_id",
+                self.speech_output_id.as_deref(),
+            ),
+            (
+                "stage31_notification_wake_reentry_packet.conversation_continuity_id",
+                self.conversation_continuity_id.as_deref(),
+            ),
+            (
+                "stage31_notification_wake_reentry_packet.interaction_boundary_id",
+                self.interaction_boundary_id.as_deref(),
+            ),
+            (
+                "stage31_notification_wake_reentry_packet.recovery_continuity_id",
+                self.recovery_continuity_id.as_deref(),
+            ),
+            (
+                "stage31_notification_wake_reentry_packet.follow_up_posture_id",
+                self.follow_up_posture_id.as_deref(),
+            ),
+            (
+                "stage31_notification_wake_reentry_packet.thread_presence_id",
+                self.thread_presence_id.as_deref(),
+            ),
+            (
+                "stage31_notification_wake_reentry_packet.notification_disclosure_id",
+                self.notification_disclosure_id.as_deref(),
+            ),
+            (
+                "stage31_notification_wake_reentry_packet.reminder_truth_id",
+                self.reminder_truth_id.as_deref(),
+            ),
+            (
+                "stage31_notification_wake_reentry_packet.escalation_truth_id",
+                self.escalation_truth_id.as_deref(),
+            ),
+            (
+                "stage31_notification_wake_reentry_packet.wake_reentry_id",
+                self.wake_reentry_id.as_deref(),
+            ),
+            (
+                "stage31_notification_wake_reentry_packet.work_id",
+                self.work_id.as_deref(),
+            ),
+            (
+                "stage31_notification_wake_reentry_packet.lease_id",
+                self.lease_id.as_deref(),
+            ),
+            (
+                "stage31_notification_wake_reentry_packet.device_id",
+                self.device_id.as_deref(),
+            ),
+            (
+                "stage31_notification_wake_reentry_packet.access_context_id",
+                self.access_context_id.as_deref(),
+            ),
+            (
+                "stage31_notification_wake_reentry_packet.policy_context_id",
+                self.policy_context_id.as_deref(),
+            ),
+            (
+                "stage31_notification_wake_reentry_packet.tenant_id",
+                self.tenant_id.as_deref(),
+            ),
+            (
+                "stage31_notification_wake_reentry_packet.audit_id",
+                self.audit_id.as_deref(),
+            ),
+            (
+                "stage31_notification_wake_reentry_packet.ph1j_proof_ref",
+                self.ph1j_proof_ref.as_deref(),
+            ),
+        ] {
+            validate_stage4_optional_ref(field, value)?;
+        }
+        if self.reason_code != self.disposition.default_reason_code() {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage31_notification_wake_reentry_packet.reason_code",
+                reason: "must match Stage 31A notification/wake disposition",
+            });
+        }
+        if self.work_authority.can_mutate_or_execute() {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage31_notification_wake_reentry_packet.work_authority",
+                reason: "Stage 31A cannot invent notification authority, connector-write, approve, dispatch, execute, create turns, or treat visible readiness as action success",
+            });
+        }
+        if self.disposition.is_ready()
+            && (self.audit_id.is_none() || self.ph1j_proof_ref.is_none())
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage31_notification_wake_reentry_packet.audit_proof",
+                reason: "ready Stage 31A notification/wake output requires PH1.J audit/proof refs",
+            });
+        }
+        Ok(())
+    }
+}
+
+pub fn stage31_notification_wake_reentry_symbol_anchor() {
+    let _ = Stage31NotificationWakeReentryKind::NotificationDisclosureBoundary;
+    let _ = Stage31NotificationWakeReentryKind::ReminderEscalationTruth;
+    let _ = Stage31NotificationWakeReentryKind::GovernedWakeReentryContinuity;
+    let _ = Stage31NotificationWakeReentryKind::NotificationVisibilityPostureReference;
+    let _ = Stage31NotificationWakeReentryKind::ReminderDeliverySessionContextContinuityReference;
+    let _ = Stage31NotificationWakeReentryKind::WorkLeaseRouteProtectedGateRecoveryProofReference;
+    let disposition = Stage31NotificationWakeReentryDisposition::StageInputBlocked;
+    let _ = disposition.default_reason_code();
+    let _ = disposition.is_ready();
+    let _ = Stage31NotificationWakeReentryWorkAuthority::fail_closed().can_mutate_or_execute();
+    let _ =
+        Stage31NotificationWakeReentryWorkAuthority::notification_disclosure_boundary_ready();
+    let _ = Stage31NotificationWakeReentryWorkAuthority::reminder_escalation_truth_ready();
+    let _ =
+        Stage31NotificationWakeReentryWorkAuthority::governed_wake_reentry_continuity_ready();
+    let _ = Stage31NotificationWakeReentryWorkAuthority::notification_visibility_posture_reference_ready();
+    let _ = Stage31NotificationWakeReentryWorkAuthority::reminder_delivery_session_context_continuity_reference_ready();
+    let _ = Stage31NotificationWakeReentryWorkAuthority::work_lease_route_protected_gate_recovery_proof_reference_ready();
+    let _ = core::mem::size_of::<Stage31NotificationWakeReentryInput>();
+    let _ = core::mem::size_of::<Stage31NotificationWakeReentryPacket>();
+    let _ = Stage31NotificationWakeReentryPacket::from_stage30_recovery
+        as fn(
+            &Stage11ReasoningRouterPacket,
+            Option<&Stage12ProtectedActionGatePacket>,
+            Option<&Stage19NotificationAttentionPacket>,
+            Option<&Stage30RecoveryThreadPresencePacket>,
+            Stage31NotificationWakeReentryInput,
+        ) -> Result<Stage31NotificationWakeReentryPacket, ContractViolation>;
+    let _ = Stage31NotificationWakeReentryPacket::can_mutate_or_execute
+        as fn(&Stage31NotificationWakeReentryPacket) -> bool;
+}
+const _: fn() = stage31_notification_wake_reentry_symbol_anchor;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -44069,6 +45517,52 @@ mod tests {
         .expect("stage30 conversation identity")
     }
 
+    fn stage31_attention_identity() -> Stage19NotificationAttentionPacket {
+        stage21_attention_identity()
+    }
+
+    fn stage31_recovery_identity() -> super::Stage30RecoveryThreadPresencePacket {
+        let route = stage12_protected_route();
+        let gate = Stage12ProtectedActionGatePacket::from_stage11_candidate(
+            &route,
+            stage12_gate_input(),
+        )
+        .expect("stage31 protected gate");
+        let output_interaction = stage29_output_interaction_identity();
+        let speech = stage29_speech_output_identity();
+        let continuity = stage21_continuity_identity();
+        let automation = stage22_automation_identity();
+        let outbound = stage23_outbound_identity();
+        let memory = stage24_memory_identity();
+        let ingress = stage25_ingress_identity();
+        let orchestration = stage26_orchestration_identity();
+        let execution = stage27_execution_authority_identity();
+        let settlement = stage28_settlement_identity();
+        let publication = stage29_publication_identity();
+        let conversation = stage30_conversation_identity();
+
+        super::Stage30RecoveryThreadPresencePacket::from_stage29_conversation(
+            &route,
+            Some(&gate),
+            Some(&output_interaction),
+            Some(&speech),
+            Some(&continuity),
+            Some(&automation),
+            Some(&outbound),
+            Some(&memory),
+            Some(&ingress),
+            Some(&orchestration),
+            Some(&execution),
+            Some(&settlement),
+            Some(&publication),
+            Some(&conversation),
+            super::Stage30RecoveryThreadPresenceInput::fixture_cross_turn_recovery_semantics_ready(
+                "audit-stage31-recovery",
+            ),
+        )
+        .expect("stage31 recovery identity")
+    }
+
     #[test]
     fn stage_29a_conversation_consumes_stage8_stage17_stage20_stage21_stage22_stage23_stage24_stage25_stage26_stage27_stage28_non_authoritatively(
     ) {
@@ -45050,6 +46544,408 @@ mod tests {
                 None,
                 Some(&publication),
                 Some(&conversation),
+                runtime_mock,
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn stage_31a_notification_consumes_stage8_stage17_stage19_stage20_stage21_stage22_stage23_stage24_stage25_stage26_stage27_stage28_stage29_stage30_non_authoritatively(
+    ) {
+        let route = stage12_protected_route();
+        let gate = Stage12ProtectedActionGatePacket::from_stage11_candidate(
+            &route,
+            stage12_gate_input(),
+        )
+        .expect("stage31 protected gate");
+        let attention = stage31_attention_identity();
+        let recovery = stage31_recovery_identity();
+
+        let packet = super::Stage31NotificationWakeReentryPacket::from_stage30_recovery(
+            &route,
+            Some(&gate),
+            Some(&attention),
+            Some(&recovery),
+            super::Stage31NotificationWakeReentryInput::fixture_notification_disclosure_boundary_ready(
+                "audit-stage31-ready",
+            ),
+        )
+        .expect("stage31 notification ready");
+
+        assert_eq!(
+            packet.disposition,
+            super::Stage31NotificationWakeReentryDisposition::NotificationDisclosureBoundaryReady
+        );
+        assert_eq!(
+            packet.stage19_disposition,
+            Some(Stage19NotificationAttentionDisposition::NotificationCandidateReady)
+        );
+        assert_eq!(
+            packet.stage30_disposition,
+            Some(super::Stage30RecoveryThreadPresenceDisposition::CrossTurnRecoverySemanticsReady)
+        );
+        assert!(packet.stage8_ref_non_authoritative);
+        assert!(packet.stage17_ref_non_authoritative);
+        assert!(packet.stage19_ref_non_authoritative);
+        assert!(packet.stage30_ref_non_authoritative);
+        assert!(packet.ph1rem_ref_non_authoritative);
+        assert!(packet.ph1delivery_ref_non_authoritative);
+        assert!(packet.ph1l_ref_non_authoritative);
+        assert!(packet.ph1context_ref_non_authoritative);
+        assert!(packet.ph1w_ref_non_authoritative);
+        assert!(
+            packet
+                .work_authority
+                .can_emit_notification_disclosure_boundary_packet
+        );
+        assert!(!packet.can_mutate_or_execute());
+    }
+
+    #[test]
+    fn stage_31a_packets_cannot_invent_or_claim_notification_or_wake_success() {
+        let route = stage12_protected_route();
+        let gate = Stage12ProtectedActionGatePacket::from_stage11_candidate(
+            &route,
+            stage12_gate_input(),
+        )
+        .expect("stage31 protected gate");
+        let attention = stage31_attention_identity();
+        let recovery = stage31_recovery_identity();
+
+        for input in [
+            {
+                let mut input =
+                    super::Stage31NotificationWakeReentryInput::fixture_notification_disclosure_boundary_ready(
+                        "audit-stage31-invent-notification",
+                    );
+                input.notification_invented_notification_success = true;
+                input
+            },
+            {
+                let mut input =
+                    super::Stage31NotificationWakeReentryInput::fixture_reminder_escalation_truth_ready(
+                        "reminder-stage31-invent",
+                        "escalation-stage31-invent",
+                        "audit-stage31-invent-reminder",
+                    );
+                input.notification_invented_reminder_success = true;
+                input
+            },
+            {
+                let mut input =
+                    super::Stage31NotificationWakeReentryInput::fixture_governed_wake_reentry_continuity_ready(
+                        "wake-stage31-invent",
+                        "audit-stage31-invent-wake",
+                    );
+                input.notification_invented_wake_reentry_success = true;
+                input
+            },
+            {
+                let mut input =
+                    super::Stage31NotificationWakeReentryInput::fixture_notification_visibility_posture_reference_ready(
+                        "notification-disclosure-stage31-unproven",
+                        "audit-stage31-unproven",
+                    );
+                input.notification_claimed_unproven_completion = true;
+                input
+            },
+        ] {
+            let packet = super::Stage31NotificationWakeReentryPacket::from_stage30_recovery(
+                &route,
+                Some(&gate),
+                Some(&attention),
+                Some(&recovery),
+                input,
+            )
+            .expect("stage31 no-invention blocked");
+            assert_eq!(
+                packet.disposition,
+                super::Stage31NotificationWakeReentryDisposition::NoInventionBlocked
+            );
+            assert!(packet.work_authority.can_fail_closed);
+            assert!(!packet.can_mutate_or_execute());
+        }
+    }
+
+    #[test]
+    fn stage_31a_notification_requires_scoped_secret_safe_refs() {
+        let route = stage12_protected_route();
+        let gate = Stage12ProtectedActionGatePacket::from_stage11_candidate(
+            &route,
+            stage12_gate_input(),
+        )
+        .expect("stage31 protected gate");
+        let attention = stage31_attention_identity();
+        let recovery = stage31_recovery_identity();
+
+        let ready = super::Stage31NotificationWakeReentryPacket::from_stage30_recovery(
+            &route,
+            Some(&gate),
+            Some(&attention),
+            Some(&recovery),
+            super::Stage31NotificationWakeReentryInput::fixture_governed_wake_reentry_continuity_ready(
+                "wake-stage31-authority-ready",
+                "audit-stage31-authority-ready",
+            ),
+        )
+        .expect("stage31 authority ready");
+        assert_eq!(
+            ready.disposition,
+            super::Stage31NotificationWakeReentryDisposition::GovernedWakeReentryContinuityReady
+        );
+        assert!(
+            ready
+                .work_authority
+                .can_emit_governed_wake_reentry_continuity_packet
+        );
+        assert!(!ready.can_mutate_or_execute());
+
+        for input in [
+            {
+                let mut input =
+                    super::Stage31NotificationWakeReentryInput::fixture_reminder_escalation_truth_ready(
+                        "reminder-stage31-unbounded",
+                        "escalation-stage31-unbounded",
+                        "audit-stage31-unbounded",
+                    );
+                input.authority_bounded = false;
+                input
+            },
+            {
+                let mut input =
+                    super::Stage31NotificationWakeReentryInput::fixture_governed_wake_reentry_continuity_ready(
+                        "wake-stage31-secret",
+                        "audit-stage31-secret",
+                    );
+                input.secret_unsafe = true;
+                input
+            },
+            {
+                let mut input =
+                    super::Stage31NotificationWakeReentryInput::fixture_notification_disclosure_boundary_ready(
+                        "audit-stage31-cross-connector",
+                    );
+                input.cross_connector = true;
+                input
+            },
+            {
+                let mut input =
+                    super::Stage31NotificationWakeReentryInput::fixture_notification_visibility_posture_reference_ready(
+                        "notification-disclosure-stage31-missing-proof",
+                        "audit-stage31-missing-proof",
+                    );
+                input.missing_proof = true;
+                input
+            },
+            {
+                let mut input =
+                    super::Stage31NotificationWakeReentryInput::fixture_governed_wake_reentry_continuity_ready(
+                        "wake-stage31-missing-proof-surface",
+                        "audit-stage31-missing-wake-surface",
+                    );
+                input.ph1w_ref_present = false;
+                input
+            },
+            {
+                let mut input =
+                    super::Stage31NotificationWakeReentryInput::fixture_reminder_delivery_session_context_continuity_reference_ready(
+                        "reminder-stage31-context-missing",
+                        "audit-stage31-context-missing",
+                    );
+                input.ph1context_ref_present = false;
+                input
+            },
+        ] {
+            let packet = super::Stage31NotificationWakeReentryPacket::from_stage30_recovery(
+                &route,
+                Some(&gate),
+                Some(&attention),
+                Some(&recovery),
+                input,
+            )
+            .expect("stage31 authority blocked");
+            assert_eq!(
+                packet.disposition,
+                super::Stage31NotificationWakeReentryDisposition::NotificationAuthorityBlocked
+            );
+            assert!(packet.work_authority.can_fail_closed);
+            assert!(!packet.can_mutate_or_execute());
+        }
+    }
+
+    #[test]
+    fn stage_31a_native_protected_and_stale_cases_fail_closed() {
+        let route = stage12_protected_route();
+        let gate = Stage12ProtectedActionGatePacket::from_stage11_candidate(
+            &route,
+            stage12_gate_input(),
+        )
+        .expect("stage31 protected gate");
+        let attention = stage31_attention_identity();
+        let recovery = stage31_recovery_identity();
+
+        for input in [
+            {
+                let mut input =
+                    super::Stage31NotificationWakeReentryInput::fixture_governed_wake_reentry_continuity_ready(
+                        "wake-stage31-native-mutate",
+                        "audit-stage31-native-mutate",
+                    );
+                input.native_wake_reentry_mutates_state = true;
+                input
+            },
+            {
+                let mut input =
+                    super::Stage31NotificationWakeReentryInput::fixture_notification_disclosure_boundary_ready(
+                        "audit-stage31-protected",
+                    );
+                input.protected_action_like_request = true;
+                input
+            },
+        ] {
+            let packet = super::Stage31NotificationWakeReentryPacket::from_stage30_recovery(
+                &route,
+                Some(&gate),
+                Some(&attention),
+                Some(&recovery),
+                input,
+            )
+            .expect("stage31 native/protected blocked");
+            assert!(matches!(
+                packet.disposition,
+                super::Stage31NotificationWakeReentryDisposition::NativeWakeReentryHandoffBlocked
+                    | super::Stage31NotificationWakeReentryDisposition::PublicProtectedBoundaryBlocked
+            ));
+            assert!(packet.work_authority.can_fail_closed);
+        }
+
+        for input in [
+            {
+                let mut input =
+                    super::Stage31NotificationWakeReentryInput::fixture_notification_disclosure_boundary_ready(
+                        "audit-stage31-stale",
+                    );
+                input.stale_or_cancelled_or_superseded_output = true;
+                input
+            },
+            {
+                let mut input =
+                    super::Stage31NotificationWakeReentryInput::fixture_governed_wake_reentry_continuity_ready(
+                        "wake-stage31-replay",
+                        "audit-stage31-replay",
+                    );
+                input.replay_upgrades_blocked_authority = true;
+                input
+            },
+        ] {
+            let packet = super::Stage31NotificationWakeReentryPacket::from_stage30_recovery(
+                &route,
+                Some(&gate),
+                Some(&attention),
+                Some(&recovery),
+                input,
+            )
+            .expect("stage31 stale blocked");
+            assert_eq!(
+                packet.disposition,
+                super::Stage31NotificationWakeReentryDisposition::StaleNotificationBlocked
+            );
+            assert!(packet.work_authority.can_fail_closed);
+            assert!(!packet.can_mutate_or_execute());
+        }
+    }
+
+    #[test]
+    fn stage_31a_blocks_live_paths_and_runtime_mocks() {
+        let route = stage12_protected_route();
+        let gate = Stage12ProtectedActionGatePacket::from_stage11_candidate(
+            &route,
+            stage12_gate_input(),
+        )
+        .expect("stage31 protected gate");
+        let attention = stage31_attention_identity();
+        let recovery = stage31_recovery_identity();
+
+        let packet = super::Stage31NotificationWakeReentryPacket::from_stage30_recovery(
+            &route,
+            Some(&gate),
+            Some(&attention),
+            Some(&recovery),
+            super::Stage31NotificationWakeReentryInput::fixture_work_lease_route_protected_gate_recovery_proof_reference_ready(
+                "notification-disclosure-stage31-no-exec",
+                "audit-stage31-no-exec",
+            ),
+        )
+        .expect("stage31 no-exec packet");
+        assert!(!packet.work_authority.can_invent_facts);
+        assert!(!packet.work_authority.can_invent_notification_success);
+        assert!(!packet.work_authority.can_invent_reminder_success);
+        assert!(!packet.work_authority.can_invent_escalation_success);
+        assert!(!packet.work_authority.can_invent_wake_reentry_success);
+        assert!(!packet.work_authority.can_invent_completion_success);
+        assert!(!packet.work_authority.can_invent_notification_authority);
+        assert!(!packet.work_authority.can_connector_write);
+        assert!(!packet.work_authority.can_approve);
+        assert!(!packet.work_authority.can_dispatch);
+        assert!(!packet.work_authority.can_execute);
+        assert!(!packet.work_authority.can_create_user_turn);
+        assert!(!packet.work_authority.can_treat_visible_readiness_as_action_success);
+        assert!(!packet.can_mutate_or_execute());
+
+        for input in [
+            {
+                let mut input =
+                    super::Stage31NotificationWakeReentryInput::fixture_notification_disclosure_boundary_ready(
+                        "audit-stage31-live-provider",
+                    );
+                input.attempted_live_provider_in_build = true;
+                input
+            },
+            {
+                let mut input =
+                    super::Stage31NotificationWakeReentryInput::fixture_reminder_escalation_truth_ready(
+                        "reminder-stage31-live",
+                        "escalation-stage31-live",
+                        "audit-stage31-live-reminder",
+                    );
+                input.ran_live_reminder_delivery_in_build = true;
+                input
+            },
+            {
+                let mut input =
+                    super::Stage31NotificationWakeReentryInput::fixture_governed_wake_reentry_continuity_ready(
+                        "wake-stage31-live",
+                        "audit-stage31-live-wake",
+                    );
+                input.ran_live_wake_mutation_in_build = true;
+                input
+            },
+        ] {
+            assert!(
+                super::Stage31NotificationWakeReentryPacket::from_stage30_recovery(
+                    &route,
+                    Some(&gate),
+                    Some(&attention),
+                    Some(&recovery),
+                    input,
+                )
+                .is_err()
+            );
+        }
+
+        let mut runtime_mock =
+            super::Stage31NotificationWakeReentryInput::fixture_notification_disclosure_boundary_ready(
+                "audit-stage31-runtime-mock",
+            );
+        runtime_mock.fake_notification_detected = true;
+        runtime_mock.fixture_only_test_path = false;
+        assert!(
+            super::Stage31NotificationWakeReentryPacket::from_stage30_recovery(
+                &route,
+                Some(&gate),
+                Some(&attention),
+                Some(&recovery),
                 runtime_mock,
             )
             .is_err()
