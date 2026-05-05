@@ -4,7 +4,7 @@ Status: CANONICAL_BUILD_ROADMAP
 Created: 2026-05-02
 Last Updated: 2026-05-05
 Repo Root: `/Users/selene/Documents/Selene-OS`
-Current Next Build: Stage 35A - Multimodal Native Parity, Certification Harness Integration, And Broad Stage 34 Exit Reconciliation
+Current Next Build: Stage 34B - Multimodal Native Parity, Certification Harness Integration, And Broad Stage 34 Exit Reconciliation
 
 ## Purpose
 
@@ -78,10 +78,10 @@ After every build, update this section before final reporting.
 
 | Field | Current Value |
 |---|---|
-| Current active stage | Stage 33 |
-| Current active build | Stage 33A - Relationship-Memory Framing, User-Facing Continuity Boundaries, And Longer-Horizon Interaction Governance Reconciliation |
-| Next build after current stage passes | Stage 35A - Multimodal Native Parity, Certification Harness Integration, And Broad Stage 34 Exit Reconciliation |
-| Last completed stage | Stage 33A - Relationship-Memory Framing, User-Facing Continuity Boundaries, And Longer-Horizon Interaction Governance Reconciliation |
+| Current active stage | Stage 34 |
+| Current active build | Stage 34B - Multimodal Native Parity, Certification Harness Integration, And Broad Stage 34 Exit Reconciliation |
+| Next build after current stage passes | None yet - Stage 34 is the final canonical stage and any post-Stage-34 work must be introduced by an explicit plan revision |
+| Last completed stage | Stage 34A - Source-Of-Truth Presentation, Governed Self-Description Boundaries, And Outward Capability Narration Reconciliation |
 | Stages blocked | None yet |
 | Plan drift allowed | No |
 
@@ -2821,7 +2821,7 @@ Stage 28A proof update:
 
 Next if passed:
 
-- Stage 35A - Multimodal Native Parity, Certification Harness Integration, And Broad Stage 34 Exit Reconciliation.
+- Stage 34B - Multimodal Native Parity, Certification Harness Integration, And Broad Stage 34 Exit Reconciliation.
 
 Stage 34A status: PROVEN_COMPLETE
 
@@ -2835,7 +2835,7 @@ Stage 34A proof update:
 - Stale/cancelled/superseded/closed-session self-description output, stale source/work/lease/session/turn/tool-route/connector/protected-gate/reminder/delivery/context/wake/memory/relationship/trust/explain/write/summary state, replay-upgrade attempts, protected-action-like source or self wording, and connector/route/source/narration/capability/memory/relationship/trust/wake/recovery/continuity/publication/settlement/protected-gate/tenant mismatch cases fail closed. Runtime mocks, fake source success, fake self-description success, fake capability success, fake completion success, fake approval, and fake remote completion are blocked outside explicit fixture-only tests.
 - Stage 34A did not add live provider calls, live image/video/audio generation, live web search, live external tool calls, connector writes, direct protected execution changes, native UI behavior, live source-of-truth mutation, live capability-probe mutation, live outward narration delivery, live wake mutation, live remote continuity mutation, live background execution, live TTS/playback, live microphone capture, live STT, live Voice ID matching, raw biometric/secret exposure, new business workflows, or duplicate source-of-truth, self-description, capability narration, capability-catalog, simulation-catalog, explain/write/summary, wake, notification, reminder-delivery, context, work/lease, action-graph, runtime-law, or runtime-governance engines.
 - Source-of-truth presentation/governed self-description/outward capability narration/no-false-capability/no-silent-self-upgrade boundary proof is certified for Stage 34A. Production self-description UX, real delivery behavior, direct protected execution, live provider-backed narration quality, multimodal/native parity, certification harness integration, and user-perceived self-explanation quality remain deferred to later owning stages.
-- Stage 35A is ready to start. Broad Stage 34 remains partial, but the declarative source-of-truth and capability narration boundary is complete enough for multimodal/native parity closure, certification harness integration, and broad Stage 34 exit reconciliation without silently upgrading Stage 34A into live provider, execution, or native behavior.
+- Stage 34B is ready to start. Broad Stage 34 remains partial, but the declarative source-of-truth and capability narration boundary is complete enough for multimodal/native parity closure, certification harness integration, and broad Stage 34 exit reconciliation without silently upgrading Stage 34A into live provider, execution, or native behavior.
 
 Stage 33A status: PROVEN_COMPLETE
 
