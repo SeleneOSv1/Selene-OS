@@ -35803,6 +35803,1322 @@ pub fn stage32_trust_calibration_symbol_anchor() {
 }
 const _: fn() = stage32_trust_calibration_symbol_anchor;
 
+mod stage33_reason_codes {
+    pub const RELATIONSHIP_MEMORY_FRAMING_READY: &str =
+        "STAGE33_RELATIONSHIP_MEMORY_FRAMING_READY";
+    pub const USER_FACING_CONTINUITY_BOUNDARY_READY: &str =
+        "STAGE33_USER_FACING_CONTINUITY_BOUNDARY_READY";
+    pub const LONGER_HORIZON_INTERACTION_GOVERNANCE_READY: &str =
+        "STAGE33_LONGER_HORIZON_INTERACTION_GOVERNANCE_READY";
+    pub const REMEMBERED_PREFERENCE_CONTINUITY_POSTURE_REFERENCE_READY: &str =
+        "STAGE33_REMEMBERED_PREFERENCE_CONTINUITY_POSTURE_REFERENCE_READY";
+    pub const TRUST_RECOVERY_NOTIFICATION_WAKE_CONTINUITY_REFERENCE_READY: &str =
+        "STAGE33_TRUST_RECOVERY_NOTIFICATION_WAKE_CONTINUITY_REFERENCE_READY";
+    pub const WORK_LEASE_ROUTE_PROTECTED_GATE_PUBLICATION_PROOF_REFERENCE_READY: &str =
+        "STAGE33_WORK_LEASE_ROUTE_PROTECTED_GATE_PUBLICATION_PROOF_REFERENCE_READY";
+    pub const STAGE_INPUT_BLOCKED: &str = "STAGE33_STAGE_INPUT_BLOCKED";
+    pub const NO_INVENTION_BLOCKED: &str = "STAGE33_NO_INVENTION_BLOCKED";
+    pub const RELATIONSHIP_AUTHORITY_BLOCKED: &str = "STAGE33_RELATIONSHIP_AUTHORITY_BLOCKED";
+    pub const NATIVE_CONTINUITY_FRAMING_HANDOFF_BLOCKED: &str =
+        "STAGE33_NATIVE_CONTINUITY_FRAMING_HANDOFF_BLOCKED";
+    pub const PUBLIC_PROTECTED_BOUNDARY_BLOCKED: &str =
+        "STAGE33_PUBLIC_PROTECTED_BOUNDARY_BLOCKED";
+    pub const STALE_RELATIONSHIP_BLOCKED: &str = "STAGE33_STALE_RELATIONSHIP_BLOCKED";
+    pub const UNSAFE_INPUT_BLOCKED: &str = "STAGE33_UNSAFE_INPUT_BLOCKED";
+    pub const RUNTIME_MOCK_BLOCKED: &str = "STAGE33_RUNTIME_MOCK_BLOCKED";
+    pub const AUDIT_PROOF_MISSING: &str = "STAGE33_AUDIT_PROOF_MISSING";
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stage33RelationshipMemoryKind {
+    RelationshipMemoryFraming,
+    UserFacingContinuityBoundary,
+    LongerHorizonInteractionGovernance,
+    RememberedPreferenceContinuityPostureReference,
+    TrustRecoveryNotificationWakeContinuityReference,
+    WorkLeaseRouteProtectedGatePublicationProofReference,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stage33RelationshipMemoryDisposition {
+    RelationshipMemoryFramingReady,
+    UserFacingContinuityBoundaryReady,
+    LongerHorizonInteractionGovernanceReady,
+    RememberedPreferenceContinuityPostureReferenceReady,
+    TrustRecoveryNotificationWakeContinuityReferenceReady,
+    WorkLeaseRouteProtectedGatePublicationProofReferenceReady,
+    StageInputBlocked,
+    NoInventionBlocked,
+    RelationshipAuthorityBlocked,
+    NativeContinuityFramingHandoffBlocked,
+    PublicProtectedBoundaryBlocked,
+    StaleRelationshipBlocked,
+    UnsafeInputBlocked,
+    RuntimeMockBlocked,
+    AuditProofMissing,
+}
+
+impl Stage33RelationshipMemoryDisposition {
+    pub const fn default_reason_code(self) -> &'static str {
+        match self {
+            Self::RelationshipMemoryFramingReady => {
+                stage33_reason_codes::RELATIONSHIP_MEMORY_FRAMING_READY
+            }
+            Self::UserFacingContinuityBoundaryReady => {
+                stage33_reason_codes::USER_FACING_CONTINUITY_BOUNDARY_READY
+            }
+            Self::LongerHorizonInteractionGovernanceReady => {
+                stage33_reason_codes::LONGER_HORIZON_INTERACTION_GOVERNANCE_READY
+            }
+            Self::RememberedPreferenceContinuityPostureReferenceReady => {
+                stage33_reason_codes::REMEMBERED_PREFERENCE_CONTINUITY_POSTURE_REFERENCE_READY
+            }
+            Self::TrustRecoveryNotificationWakeContinuityReferenceReady => {
+                stage33_reason_codes::TRUST_RECOVERY_NOTIFICATION_WAKE_CONTINUITY_REFERENCE_READY
+            }
+            Self::WorkLeaseRouteProtectedGatePublicationProofReferenceReady => {
+                stage33_reason_codes::WORK_LEASE_ROUTE_PROTECTED_GATE_PUBLICATION_PROOF_REFERENCE_READY
+            }
+            Self::StageInputBlocked => stage33_reason_codes::STAGE_INPUT_BLOCKED,
+            Self::NoInventionBlocked => stage33_reason_codes::NO_INVENTION_BLOCKED,
+            Self::RelationshipAuthorityBlocked => {
+                stage33_reason_codes::RELATIONSHIP_AUTHORITY_BLOCKED
+            }
+            Self::NativeContinuityFramingHandoffBlocked => {
+                stage33_reason_codes::NATIVE_CONTINUITY_FRAMING_HANDOFF_BLOCKED
+            }
+            Self::PublicProtectedBoundaryBlocked => {
+                stage33_reason_codes::PUBLIC_PROTECTED_BOUNDARY_BLOCKED
+            }
+            Self::StaleRelationshipBlocked => stage33_reason_codes::STALE_RELATIONSHIP_BLOCKED,
+            Self::UnsafeInputBlocked => stage33_reason_codes::UNSAFE_INPUT_BLOCKED,
+            Self::RuntimeMockBlocked => stage33_reason_codes::RUNTIME_MOCK_BLOCKED,
+            Self::AuditProofMissing => stage33_reason_codes::AUDIT_PROOF_MISSING,
+        }
+    }
+
+    pub const fn is_ready(self) -> bool {
+        matches!(
+            self,
+            Self::RelationshipMemoryFramingReady
+                | Self::UserFacingContinuityBoundaryReady
+                | Self::LongerHorizonInteractionGovernanceReady
+                | Self::RememberedPreferenceContinuityPostureReferenceReady
+                | Self::TrustRecoveryNotificationWakeContinuityReferenceReady
+                | Self::WorkLeaseRouteProtectedGatePublicationProofReferenceReady
+        )
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Stage33RelationshipMemoryWorkAuthority {
+    pub can_emit_relationship_memory_framing_packet: bool,
+    pub can_emit_user_facing_continuity_boundary_packet: bool,
+    pub can_emit_longer_horizon_interaction_governance_packet: bool,
+    pub can_emit_remembered_preference_continuity_posture_reference: bool,
+    pub can_emit_trust_recovery_notification_wake_continuity_reference: bool,
+    pub can_emit_work_lease_route_protected_gate_publication_proof_reference: bool,
+    pub can_emit_honest_uncertainty: bool,
+    pub can_fail_closed: bool,
+    pub can_invent_facts: bool,
+    pub can_invent_memory_certainty: bool,
+    pub can_invent_relationship_depth: bool,
+    pub can_invent_emotional_knowledge_certainty: bool,
+    pub can_invent_bond_continuity: bool,
+    pub can_invent_completion_success: bool,
+    pub can_invent_relationship_authority: bool,
+    pub can_connector_write: bool,
+    pub can_approve: bool,
+    pub can_dispatch: bool,
+    pub can_execute: bool,
+    pub can_create_user_turn: bool,
+    pub can_treat_visible_familiarity_as_action_success: bool,
+}
+
+impl Stage33RelationshipMemoryWorkAuthority {
+    pub const fn fail_closed() -> Self {
+        Self {
+            can_emit_relationship_memory_framing_packet: false,
+            can_emit_user_facing_continuity_boundary_packet: false,
+            can_emit_longer_horizon_interaction_governance_packet: false,
+            can_emit_remembered_preference_continuity_posture_reference: false,
+            can_emit_trust_recovery_notification_wake_continuity_reference: false,
+            can_emit_work_lease_route_protected_gate_publication_proof_reference: false,
+            can_emit_honest_uncertainty: true,
+            can_fail_closed: true,
+            can_invent_facts: false,
+            can_invent_memory_certainty: false,
+            can_invent_relationship_depth: false,
+            can_invent_emotional_knowledge_certainty: false,
+            can_invent_bond_continuity: false,
+            can_invent_completion_success: false,
+            can_invent_relationship_authority: false,
+            can_connector_write: false,
+            can_approve: false,
+            can_dispatch: false,
+            can_execute: false,
+            can_create_user_turn: false,
+            can_treat_visible_familiarity_as_action_success: false,
+        }
+    }
+
+    pub const fn relationship_memory_framing_ready() -> Self {
+        let mut authority = Self::fail_closed();
+        authority.can_emit_relationship_memory_framing_packet = true;
+        authority
+    }
+
+    pub const fn user_facing_continuity_boundary_ready() -> Self {
+        let mut authority = Self::fail_closed();
+        authority.can_emit_user_facing_continuity_boundary_packet = true;
+        authority
+    }
+
+    pub const fn longer_horizon_interaction_governance_ready() -> Self {
+        let mut authority = Self::fail_closed();
+        authority.can_emit_longer_horizon_interaction_governance_packet = true;
+        authority
+    }
+
+    pub const fn remembered_preference_continuity_posture_reference_ready() -> Self {
+        let mut authority = Self::fail_closed();
+        authority.can_emit_remembered_preference_continuity_posture_reference = true;
+        authority
+    }
+
+    pub const fn trust_recovery_notification_wake_continuity_reference_ready() -> Self {
+        let mut authority = Self::fail_closed();
+        authority.can_emit_trust_recovery_notification_wake_continuity_reference = true;
+        authority
+    }
+
+    pub const fn work_lease_route_protected_gate_publication_proof_reference_ready() -> Self {
+        let mut authority = Self::fail_closed();
+        authority.can_emit_work_lease_route_protected_gate_publication_proof_reference = true;
+        authority
+    }
+
+    pub const fn can_mutate_or_execute(&self) -> bool {
+        self.can_invent_facts
+            || self.can_invent_memory_certainty
+            || self.can_invent_relationship_depth
+            || self.can_invent_emotional_knowledge_certainty
+            || self.can_invent_bond_continuity
+            || self.can_invent_completion_success
+            || self.can_invent_relationship_authority
+            || self.can_connector_write
+            || self.can_approve
+            || self.can_dispatch
+            || self.can_execute
+            || self.can_create_user_turn
+            || self.can_treat_visible_familiarity_as_action_success
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Stage33RelationshipMemoryInput {
+    pub relationship_kind: Stage33RelationshipMemoryKind,
+    pub output_interaction_id: Option<String>,
+    pub speech_output_id: Option<String>,
+    pub conversation_continuity_id: Option<String>,
+    pub interaction_boundary_id: Option<String>,
+    pub recovery_continuity_id: Option<String>,
+    pub follow_up_posture_id: Option<String>,
+    pub thread_presence_id: Option<String>,
+    pub notification_disclosure_id: Option<String>,
+    pub reminder_truth_id: Option<String>,
+    pub escalation_truth_id: Option<String>,
+    pub wake_reentry_id: Option<String>,
+    pub trust_calibration_id: Option<String>,
+    pub expectation_posture_id: Option<String>,
+    pub residual_assistance_id: Option<String>,
+    pub relationship_memory_id: Option<String>,
+    pub continuity_framing_id: Option<String>,
+    pub longer_horizon_governance_id: Option<String>,
+    pub audit_id: Option<String>,
+    pub ph1j_proof_ref: Option<String>,
+    pub stage11_route_ref_present: bool,
+    pub stage11_route_non_executing_context: bool,
+    pub stage12_gate_ref_present: bool,
+    pub stage12_gate_bounded_authority_context: bool,
+    pub stage8_output_interaction_ref_present: bool,
+    pub stage8_output_interaction_ref_non_authoritative: bool,
+    pub stage16_long_term_state_ref_present: bool,
+    pub stage16_long_term_state_ref_non_authoritative: bool,
+    pub stage17_speech_output_ref_present: bool,
+    pub stage17_speech_output_ref_non_authoritative: bool,
+    pub stage19_notification_ref_present: bool,
+    pub stage19_notification_ref_non_authoritative: bool,
+    pub stage30_recovery_ref_present: bool,
+    pub stage30_recovery_ref_non_authoritative: bool,
+    pub stage31_notification_ref_present: bool,
+    pub stage31_notification_ref_non_authoritative: bool,
+    pub stage32_trust_ref_present: bool,
+    pub stage32_trust_ref_non_authoritative: bool,
+    pub ph1m_ref_present: bool,
+    pub ph1m_ref_non_authoritative: bool,
+    pub ph1persona_ref_present: bool,
+    pub ph1persona_ref_non_authoritative: bool,
+    pub ph1learn_ref_present: bool,
+    pub ph1learn_ref_non_authoritative: bool,
+    pub ph1feedback_ref_present: bool,
+    pub ph1feedback_ref_non_authoritative: bool,
+    pub ph1know_ref_present: bool,
+    pub ph1know_ref_non_authoritative: bool,
+    pub ph1emo_core_ref_present: bool,
+    pub ph1emo_core_ref_non_authoritative: bool,
+    pub ph1emo_guide_ref_present: bool,
+    pub ph1emo_guide_ref_non_authoritative: bool,
+    pub ph1multi_ref_present: bool,
+    pub ph1multi_ref_non_authoritative: bool,
+    pub ph1voiceid_ref_present: bool,
+    pub ph1voiceid_ref_non_authoritative: bool,
+    pub ph1explain_ref_present: bool,
+    pub ph1explain_ref_non_authoritative: bool,
+    pub ph1write_ref_present: bool,
+    pub ph1write_ref_non_authoritative: bool,
+    pub ph1summary_ref_present: bool,
+    pub ph1summary_ref_non_authoritative: bool,
+    pub remembered_preference_ref_present: bool,
+    pub trust_recovery_notification_wake_ref_present: bool,
+    pub continuity_surface_ref_present: bool,
+    pub longer_horizon_surface_ref_present: bool,
+    pub authority_bounded: bool,
+    pub tenant_user_device_session_scoped: bool,
+    pub uncertainty_preserved: bool,
+    pub relationship_invented_fact: bool,
+    pub relationship_invented_memory_certainty: bool,
+    pub relationship_invented_relationship_depth: bool,
+    pub relationship_invented_emotional_knowledge_certainty: bool,
+    pub relationship_invented_bond_continuity: bool,
+    pub relationship_invented_completion_success: bool,
+    pub relationship_invented_approval: bool,
+    pub relationship_invented_remote_completion: bool,
+    pub relationship_invented_visibility_completion: bool,
+    pub relationship_invented_work_or_lease_authority: bool,
+    pub relationship_invented_route_authority: bool,
+    pub relationship_invented_attachment_citation_url_date_or_provenance: bool,
+    pub relationship_invented_provider_or_tool_result: bool,
+    pub relationship_claimed_unproven_completion: bool,
+    pub relationship_implied_approval_dispatch_execution_delivery_wake_or_completion_without_proof:
+        bool,
+    pub secret_safe: bool,
+    pub redacted: bool,
+    pub stale_aware: bool,
+    pub revocation_aware: bool,
+    pub unverifiable: bool,
+    pub stale: bool,
+    pub secret_unsafe: bool,
+    pub cross_tenant: bool,
+    pub cross_route: bool,
+    pub cross_connector: bool,
+    pub memory_mismatch: bool,
+    pub relationship_mismatch: bool,
+    pub continuity_mismatch: bool,
+    pub trust_mismatch: bool,
+    pub wake_mismatch: bool,
+    pub recovery_mismatch: bool,
+    pub publication_mismatch: bool,
+    pub settlement_mismatch: bool,
+    pub connector_mismatch: bool,
+    pub route_mismatch: bool,
+    pub action_graph_mismatch: bool,
+    pub lease_mismatch: bool,
+    pub protected_gate_mismatch: bool,
+    pub tenant_mismatch: bool,
+    pub missing_proof: bool,
+    pub ownership_drift: bool,
+    pub voice_identity_inform_only: bool,
+    pub voice_identity_confirmed_or_step_up_only: bool,
+    pub voice_identity_tenant_device_session_scoped: bool,
+    pub voice_identity_cross_speaker_risk: bool,
+    pub native_continuity_framing_declarative_only: bool,
+    pub native_continuity_framing_mutates_state: bool,
+    pub native_continuity_framing_connector_writes: bool,
+    pub native_continuity_framing_dispatches_or_executes: bool,
+    pub native_continuity_framing_calls_providers_or_tools: bool,
+    pub native_continuity_framing_emits_tts_or_playback: bool,
+    pub native_continuity_framing_creates_user_turn: bool,
+    pub native_continuity_framing_treats_visible_familiarity_as_action_success: bool,
+    pub protected_action_like_request: bool,
+    pub protected_slot_or_authority_ambiguous: bool,
+    pub unsafe_identity_posture: bool,
+    pub relationship_or_continuity_ambiguity: bool,
+    pub stale_or_cancelled_or_superseded_output: bool,
+    pub session_closed: bool,
+    pub record_artifact_only_turn: bool,
+    pub stale_relationship_state: bool,
+    pub stale_memory_state: bool,
+    pub stale_continuity_state: bool,
+    pub stale_wake_state: bool,
+    pub stale_recovery_state: bool,
+    pub stale_work_state: bool,
+    pub stale_lease_state: bool,
+    pub stale_route_state: bool,
+    pub stale_connector_state: bool,
+    pub stale_protected_gate_state: bool,
+    pub continuity_silently_implies_memory_permanence: bool,
+    pub continuity_silently_implies_emotional_knowledge: bool,
+    pub continuity_silently_promises_future_follow_up: bool,
+    pub relationship_identity_matches_current_output_session: bool,
+    pub replay_upgrades_blocked_authority: bool,
+    pub fake_relationship_detected: bool,
+    pub fake_memory_detected: bool,
+    pub fake_continuity_detected: bool,
+    pub fake_familiarity_detected: bool,
+    pub fake_completion_detected: bool,
+    pub fake_approval_detected: bool,
+    pub runtime_mock_detected: bool,
+    pub raw_provider_output_present: bool,
+    pub raw_search_dump_present: bool,
+    pub raw_media_present: bool,
+    pub raw_connector_credential_field_present: bool,
+    pub unverified_source_evidence_present: bool,
+    pub unsupported_claim_candidate_present: bool,
+    pub fake_relationship_source_carrier_present: bool,
+    pub prior_continuity_or_memory_used_as_truth_authority: bool,
+    pub protected_action_candidate_present: bool,
+    pub simulation_candidate_present: bool,
+    pub approved_execution_plan_present: bool,
+    pub secrets_exposed: bool,
+    pub raw_biometric_material_exposed: bool,
+    pub internal_trace_exposed: bool,
+    pub access_denied: bool,
+    pub policy_denied: bool,
+    pub attempted_live_provider_in_build: bool,
+    pub generated_live_media_in_build: bool,
+    pub ran_live_search_in_build: bool,
+    pub called_live_external_tool_in_build: bool,
+    pub connector_write_requested: bool,
+    pub ran_live_notification_delivery_in_build: bool,
+    pub ran_live_reminder_delivery_in_build: bool,
+    pub ran_live_escalation_dispatch_in_build: bool,
+    pub ran_live_wake_mutation_in_build: bool,
+    pub ran_live_remote_continuity_mutation_in_build: bool,
+    pub ran_direct_protected_execution_in_build: bool,
+    pub ran_live_tts_or_playback_in_build: bool,
+    pub captured_microphone_audio: bool,
+    pub transcribed_live_audio: bool,
+    pub voice_id_matching_attempted: bool,
+    pub native_ui_behavior_added: bool,
+    pub fixture_only_test_path: bool,
+}
+
+impl Stage33RelationshipMemoryInput {
+    #[cfg(test)]
+    fn fixture_base(
+        relationship_kind: Stage33RelationshipMemoryKind,
+        audit_id: impl Into<String>,
+    ) -> Self {
+        Self {
+            relationship_kind,
+            output_interaction_id: Some("output-interaction-stage33".to_string()),
+            speech_output_id: Some("speech-output-stage33".to_string()),
+            conversation_continuity_id: Some("conversation-continuity-stage33".to_string()),
+            interaction_boundary_id: Some("interaction-boundary-stage33".to_string()),
+            recovery_continuity_id: Some("recovery-continuity-stage33".to_string()),
+            follow_up_posture_id: Some("follow-up-posture-stage33".to_string()),
+            thread_presence_id: Some("thread-presence-stage33".to_string()),
+            notification_disclosure_id: Some("notification-disclosure-stage33".to_string()),
+            reminder_truth_id: Some("reminder-truth-stage33".to_string()),
+            escalation_truth_id: Some("escalation-truth-stage33".to_string()),
+            wake_reentry_id: Some("wake-reentry-stage33".to_string()),
+            trust_calibration_id: Some("trust-calibration-stage33".to_string()),
+            expectation_posture_id: Some("expectation-posture-stage33".to_string()),
+            residual_assistance_id: Some("residual-assistance-stage33".to_string()),
+            relationship_memory_id: Some("relationship-memory-stage33".to_string()),
+            continuity_framing_id: Some("continuity-framing-stage33".to_string()),
+            longer_horizon_governance_id: Some("longer-horizon-governance-stage33".to_string()),
+            audit_id: Some(audit_id.into()),
+            ph1j_proof_ref: Some("audit-proof-stage33".to_string()),
+            stage11_route_ref_present: true,
+            stage11_route_non_executing_context: true,
+            stage12_gate_ref_present: true,
+            stage12_gate_bounded_authority_context: true,
+            stage8_output_interaction_ref_present: true,
+            stage8_output_interaction_ref_non_authoritative: true,
+            stage16_long_term_state_ref_present: true,
+            stage16_long_term_state_ref_non_authoritative: true,
+            stage17_speech_output_ref_present: true,
+            stage17_speech_output_ref_non_authoritative: true,
+            stage19_notification_ref_present: true,
+            stage19_notification_ref_non_authoritative: true,
+            stage30_recovery_ref_present: true,
+            stage30_recovery_ref_non_authoritative: true,
+            stage31_notification_ref_present: true,
+            stage31_notification_ref_non_authoritative: true,
+            stage32_trust_ref_present: true,
+            stage32_trust_ref_non_authoritative: true,
+            ph1m_ref_present: true,
+            ph1m_ref_non_authoritative: true,
+            ph1persona_ref_present: true,
+            ph1persona_ref_non_authoritative: true,
+            ph1learn_ref_present: true,
+            ph1learn_ref_non_authoritative: true,
+            ph1feedback_ref_present: true,
+            ph1feedback_ref_non_authoritative: true,
+            ph1know_ref_present: true,
+            ph1know_ref_non_authoritative: true,
+            ph1emo_core_ref_present: true,
+            ph1emo_core_ref_non_authoritative: true,
+            ph1emo_guide_ref_present: true,
+            ph1emo_guide_ref_non_authoritative: true,
+            ph1multi_ref_present: true,
+            ph1multi_ref_non_authoritative: true,
+            ph1voiceid_ref_present: true,
+            ph1voiceid_ref_non_authoritative: true,
+            ph1explain_ref_present: true,
+            ph1explain_ref_non_authoritative: true,
+            ph1write_ref_present: true,
+            ph1write_ref_non_authoritative: true,
+            ph1summary_ref_present: true,
+            ph1summary_ref_non_authoritative: true,
+            remembered_preference_ref_present: true,
+            trust_recovery_notification_wake_ref_present: true,
+            continuity_surface_ref_present: true,
+            longer_horizon_surface_ref_present: true,
+            authority_bounded: true,
+            tenant_user_device_session_scoped: true,
+            uncertainty_preserved: true,
+            relationship_invented_fact: false,
+            relationship_invented_memory_certainty: false,
+            relationship_invented_relationship_depth: false,
+            relationship_invented_emotional_knowledge_certainty: false,
+            relationship_invented_bond_continuity: false,
+            relationship_invented_completion_success: false,
+            relationship_invented_approval: false,
+            relationship_invented_remote_completion: false,
+            relationship_invented_visibility_completion: false,
+            relationship_invented_work_or_lease_authority: false,
+            relationship_invented_route_authority: false,
+            relationship_invented_attachment_citation_url_date_or_provenance: false,
+            relationship_invented_provider_or_tool_result: false,
+            relationship_claimed_unproven_completion: false,
+            relationship_implied_approval_dispatch_execution_delivery_wake_or_completion_without_proof:
+                false,
+            secret_safe: true,
+            redacted: true,
+            stale_aware: true,
+            revocation_aware: true,
+            unverifiable: false,
+            stale: false,
+            secret_unsafe: false,
+            cross_tenant: false,
+            cross_route: false,
+            cross_connector: false,
+            memory_mismatch: false,
+            relationship_mismatch: false,
+            continuity_mismatch: false,
+            trust_mismatch: false,
+            wake_mismatch: false,
+            recovery_mismatch: false,
+            publication_mismatch: false,
+            settlement_mismatch: false,
+            connector_mismatch: false,
+            route_mismatch: false,
+            action_graph_mismatch: false,
+            lease_mismatch: false,
+            protected_gate_mismatch: false,
+            tenant_mismatch: false,
+            missing_proof: false,
+            ownership_drift: false,
+            voice_identity_inform_only: true,
+            voice_identity_confirmed_or_step_up_only: true,
+            voice_identity_tenant_device_session_scoped: true,
+            voice_identity_cross_speaker_risk: false,
+            native_continuity_framing_declarative_only: true,
+            native_continuity_framing_mutates_state: false,
+            native_continuity_framing_connector_writes: false,
+            native_continuity_framing_dispatches_or_executes: false,
+            native_continuity_framing_calls_providers_or_tools: false,
+            native_continuity_framing_emits_tts_or_playback: false,
+            native_continuity_framing_creates_user_turn: false,
+            native_continuity_framing_treats_visible_familiarity_as_action_success: false,
+            protected_action_like_request: false,
+            protected_slot_or_authority_ambiguous: false,
+            unsafe_identity_posture: false,
+            relationship_or_continuity_ambiguity: false,
+            stale_or_cancelled_or_superseded_output: false,
+            session_closed: false,
+            record_artifact_only_turn: false,
+            stale_relationship_state: false,
+            stale_memory_state: false,
+            stale_continuity_state: false,
+            stale_wake_state: false,
+            stale_recovery_state: false,
+            stale_work_state: false,
+            stale_lease_state: false,
+            stale_route_state: false,
+            stale_connector_state: false,
+            stale_protected_gate_state: false,
+            continuity_silently_implies_memory_permanence: false,
+            continuity_silently_implies_emotional_knowledge: false,
+            continuity_silently_promises_future_follow_up: false,
+            relationship_identity_matches_current_output_session: true,
+            replay_upgrades_blocked_authority: false,
+            fake_relationship_detected: false,
+            fake_memory_detected: false,
+            fake_continuity_detected: false,
+            fake_familiarity_detected: false,
+            fake_completion_detected: false,
+            fake_approval_detected: false,
+            runtime_mock_detected: false,
+            raw_provider_output_present: false,
+            raw_search_dump_present: false,
+            raw_media_present: false,
+            raw_connector_credential_field_present: false,
+            unverified_source_evidence_present: false,
+            unsupported_claim_candidate_present: false,
+            fake_relationship_source_carrier_present: false,
+            prior_continuity_or_memory_used_as_truth_authority: false,
+            protected_action_candidate_present: false,
+            simulation_candidate_present: false,
+            approved_execution_plan_present: false,
+            secrets_exposed: false,
+            raw_biometric_material_exposed: false,
+            internal_trace_exposed: false,
+            access_denied: false,
+            policy_denied: false,
+            attempted_live_provider_in_build: false,
+            generated_live_media_in_build: false,
+            ran_live_search_in_build: false,
+            called_live_external_tool_in_build: false,
+            connector_write_requested: false,
+            ran_live_notification_delivery_in_build: false,
+            ran_live_reminder_delivery_in_build: false,
+            ran_live_escalation_dispatch_in_build: false,
+            ran_live_wake_mutation_in_build: false,
+            ran_live_remote_continuity_mutation_in_build: false,
+            ran_direct_protected_execution_in_build: false,
+            ran_live_tts_or_playback_in_build: false,
+            captured_microphone_audio: false,
+            transcribed_live_audio: false,
+            voice_id_matching_attempted: false,
+            native_ui_behavior_added: false,
+            fixture_only_test_path: true,
+        }
+    }
+
+    #[cfg(test)]
+    fn fixture_relationship_memory_framing_ready(audit_id: impl Into<String>) -> Self {
+        Self::fixture_base(Stage33RelationshipMemoryKind::RelationshipMemoryFraming, audit_id)
+    }
+
+    #[cfg(test)]
+    fn fixture_user_facing_continuity_boundary_ready(audit_id: impl Into<String>) -> Self {
+        Self::fixture_base(
+            Stage33RelationshipMemoryKind::UserFacingContinuityBoundary,
+            audit_id,
+        )
+    }
+
+    #[cfg(test)]
+    fn fixture_longer_horizon_interaction_governance_ready(
+        audit_id: impl Into<String>,
+    ) -> Self {
+        Self::fixture_base(
+            Stage33RelationshipMemoryKind::LongerHorizonInteractionGovernance,
+            audit_id,
+        )
+    }
+
+    #[cfg(test)]
+    fn fixture_remembered_preference_continuity_posture_reference_ready(
+        relationship_memory_id: impl Into<String>,
+        audit_id: impl Into<String>,
+    ) -> Self {
+        let mut input = Self::fixture_base(
+            Stage33RelationshipMemoryKind::RememberedPreferenceContinuityPostureReference,
+            audit_id,
+        );
+        input.relationship_memory_id = Some(relationship_memory_id.into());
+        input
+    }
+
+    #[cfg(test)]
+    fn fixture_trust_recovery_notification_wake_continuity_reference_ready(
+        relationship_memory_id: impl Into<String>,
+        audit_id: impl Into<String>,
+    ) -> Self {
+        let mut input = Self::fixture_base(
+            Stage33RelationshipMemoryKind::TrustRecoveryNotificationWakeContinuityReference,
+            audit_id,
+        );
+        input.relationship_memory_id = Some(relationship_memory_id.into());
+        input
+    }
+
+    #[cfg(test)]
+    fn fixture_work_lease_route_protected_gate_publication_proof_reference_ready(
+        relationship_memory_id: impl Into<String>,
+        audit_id: impl Into<String>,
+    ) -> Self {
+        let mut input = Self::fixture_base(
+            Stage33RelationshipMemoryKind::WorkLeaseRouteProtectedGatePublicationProofReference,
+            audit_id,
+        );
+        input.relationship_memory_id = Some(relationship_memory_id.into());
+        input
+    }
+}
+
+impl Validate for Stage33RelationshipMemoryInput {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        for (field, value) in [
+            ("stage33_relationship_memory_input.output_interaction_id", self.output_interaction_id.as_deref()),
+            ("stage33_relationship_memory_input.speech_output_id", self.speech_output_id.as_deref()),
+            ("stage33_relationship_memory_input.conversation_continuity_id", self.conversation_continuity_id.as_deref()),
+            ("stage33_relationship_memory_input.interaction_boundary_id", self.interaction_boundary_id.as_deref()),
+            ("stage33_relationship_memory_input.recovery_continuity_id", self.recovery_continuity_id.as_deref()),
+            ("stage33_relationship_memory_input.follow_up_posture_id", self.follow_up_posture_id.as_deref()),
+            ("stage33_relationship_memory_input.thread_presence_id", self.thread_presence_id.as_deref()),
+            ("stage33_relationship_memory_input.notification_disclosure_id", self.notification_disclosure_id.as_deref()),
+            ("stage33_relationship_memory_input.reminder_truth_id", self.reminder_truth_id.as_deref()),
+            ("stage33_relationship_memory_input.escalation_truth_id", self.escalation_truth_id.as_deref()),
+            ("stage33_relationship_memory_input.wake_reentry_id", self.wake_reentry_id.as_deref()),
+            ("stage33_relationship_memory_input.trust_calibration_id", self.trust_calibration_id.as_deref()),
+            ("stage33_relationship_memory_input.expectation_posture_id", self.expectation_posture_id.as_deref()),
+            ("stage33_relationship_memory_input.residual_assistance_id", self.residual_assistance_id.as_deref()),
+            ("stage33_relationship_memory_input.relationship_memory_id", self.relationship_memory_id.as_deref()),
+            ("stage33_relationship_memory_input.continuity_framing_id", self.continuity_framing_id.as_deref()),
+            ("stage33_relationship_memory_input.longer_horizon_governance_id", self.longer_horizon_governance_id.as_deref()),
+            ("stage33_relationship_memory_input.audit_id", self.audit_id.as_deref()),
+            ("stage33_relationship_memory_input.ph1j_proof_ref", self.ph1j_proof_ref.as_deref()),
+        ] {
+            validate_stage4_optional_ref(field, value)?;
+        }
+
+        if self.attempted_live_provider_in_build
+            || self.generated_live_media_in_build
+            || self.ran_live_search_in_build
+            || self.called_live_external_tool_in_build
+            || self.connector_write_requested
+            || self.ran_live_notification_delivery_in_build
+            || self.ran_live_reminder_delivery_in_build
+            || self.ran_live_escalation_dispatch_in_build
+            || self.ran_live_wake_mutation_in_build
+            || self.ran_live_remote_continuity_mutation_in_build
+            || self.ran_direct_protected_execution_in_build
+            || self.ran_live_tts_or_playback_in_build
+            || self.captured_microphone_audio
+            || self.transcribed_live_audio
+            || self.voice_id_matching_attempted
+            || self.native_ui_behavior_added
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage33_relationship_memory_input.live_build_boundary",
+                reason: "Stage 33A cannot call live providers/search/tools, deliver live notifications/reminders/escalations, run wake mutation or remote continuity mutation, protected execution, TTS/playback, mic/STT, Voice ID, connector-write, or native UI behavior",
+            });
+        }
+
+        if (self.fake_relationship_detected
+            || self.fake_memory_detected
+            || self.fake_continuity_detected
+            || self.fake_familiarity_detected
+            || self.fake_completion_detected
+            || self.fake_approval_detected
+            || self.runtime_mock_detected)
+            && !self.fixture_only_test_path
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage33_relationship_memory_input.runtime_mock_boundary",
+                reason: "runtime mocks and fake relationship/memory/continuity/familiarity/completion/approval success are forbidden outside explicit fixture-only paths",
+            });
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Stage33RelationshipMemoryPacket {
+    pub session_id: SessionId,
+    pub turn_id: Option<TurnId>,
+    pub activation_id: Option<String>,
+    pub continuity_packet_id: Option<String>,
+    pub automation_candidate_id: Option<String>,
+    pub connector_action_stage_id: Option<String>,
+    pub memory_candidate_id: Option<String>,
+    pub capture_session_id: Option<String>,
+    pub orchestration_stage_id: Option<String>,
+    pub action_graph_id: Option<String>,
+    pub tool_invocation_stage_id: Option<String>,
+    pub execution_plan_ref: Option<String>,
+    pub connector_execution_id: Option<String>,
+    pub protected_gate_id: Option<String>,
+    pub settlement_id: Option<String>,
+    pub mutation_commit_id: Option<String>,
+    pub reconciliation_id: Option<String>,
+    pub publication_id: Option<String>,
+    pub state_sync_id: Option<String>,
+    pub completion_disclosure_id: Option<String>,
+    pub output_interaction_id: Option<String>,
+    pub speech_output_id: Option<String>,
+    pub conversation_continuity_id: Option<String>,
+    pub interaction_boundary_id: Option<String>,
+    pub recovery_continuity_id: Option<String>,
+    pub follow_up_posture_id: Option<String>,
+    pub thread_presence_id: Option<String>,
+    pub notification_disclosure_id: Option<String>,
+    pub reminder_truth_id: Option<String>,
+    pub escalation_truth_id: Option<String>,
+    pub wake_reentry_id: Option<String>,
+    pub trust_calibration_id: Option<String>,
+    pub expectation_posture_id: Option<String>,
+    pub residual_assistance_id: Option<String>,
+    pub relationship_memory_id: Option<String>,
+    pub continuity_framing_id: Option<String>,
+    pub longer_horizon_governance_id: Option<String>,
+    pub work_id: Option<String>,
+    pub lease_id: Option<String>,
+    pub device_id: Option<String>,
+    pub access_context_id: Option<String>,
+    pub policy_context_id: Option<String>,
+    pub tenant_id: Option<String>,
+    pub audit_id: Option<String>,
+    pub ph1j_proof_ref: Option<String>,
+    pub stage19_disposition: Option<Stage19NotificationAttentionDisposition>,
+    pub stage30_disposition: Option<Stage30RecoveryThreadPresenceDisposition>,
+    pub stage31_disposition: Option<Stage31NotificationWakeReentryDisposition>,
+    pub stage32_disposition: Option<Stage32TrustCalibrationDisposition>,
+    pub relationship_kind: Stage33RelationshipMemoryKind,
+    pub disposition: Stage33RelationshipMemoryDisposition,
+    pub reason_code: &'static str,
+    pub stage8_ref_non_authoritative: bool,
+    pub stage16_ref_non_authoritative: bool,
+    pub stage17_ref_non_authoritative: bool,
+    pub stage19_ref_non_authoritative: bool,
+    pub stage30_ref_non_authoritative: bool,
+    pub stage31_ref_non_authoritative: bool,
+    pub stage32_ref_non_authoritative: bool,
+    pub ph1voiceid_ref_non_authoritative: bool,
+    pub ph1explain_ref_non_authoritative: bool,
+    pub ph1write_ref_non_authoritative: bool,
+    pub ph1summary_ref_non_authoritative: bool,
+    pub stage12_ref_bounded_authority_context: bool,
+    pub work_authority: Stage33RelationshipMemoryWorkAuthority,
+}
+
+impl Stage33RelationshipMemoryPacket {
+    pub fn from_stage32_trust(
+        route: &Stage11ReasoningRouterPacket,
+        stage12_gate: Option<&Stage12ProtectedActionGatePacket>,
+        trust_output: Option<&Stage32TrustCalibrationPacket>,
+        input: Stage33RelationshipMemoryInput,
+    ) -> Result<Self, ContractViolation> {
+        route.validate()?;
+        if let Some(packet) = stage12_gate {
+            packet.validate()?;
+        }
+        if let Some(packet) = trust_output {
+            packet.validate()?;
+        }
+        input.validate()?;
+        if input.stage12_gate_ref_present && stage12_gate.is_none() {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage33_relationship_memory_packet.stage12_gate",
+                reason: "present Stage 12 continuity reference requires the canonical Stage 12 packet",
+            });
+        }
+        if input.stage32_trust_ref_present && trust_output.is_none() {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage33_relationship_memory_packet.stage32_trust",
+                reason: "present Stage 32 continuity reference requires the canonical Stage 32 packet",
+            });
+        }
+
+        let disposition = Self::decide_disposition(route, stage12_gate, trust_output, &input);
+        let work_authority = Self::work_authority_for(disposition);
+        let audit_id = input
+            .audit_id
+            .clone()
+            .or_else(|| trust_output.and_then(|packet| packet.audit_id.clone()))
+            .or_else(|| stage12_gate.and_then(|packet| packet.audit_id.clone()))
+            .or_else(|| route.audit_id.clone());
+        let ph1j_proof_ref = input
+            .ph1j_proof_ref
+            .clone()
+            .or_else(|| trust_output.and_then(|packet| packet.ph1j_proof_ref.clone()))
+            .or_else(|| audit_id.clone());
+
+        let packet = Self {
+            session_id: route.session_id,
+            turn_id: route.turn_id,
+            activation_id: trust_output.and_then(|packet| packet.activation_id.clone()),
+            continuity_packet_id: trust_output.and_then(|packet| packet.continuity_packet_id.clone()),
+            automation_candidate_id: trust_output.and_then(|packet| packet.automation_candidate_id.clone()),
+            connector_action_stage_id: trust_output.and_then(|packet| packet.connector_action_stage_id.clone()),
+            memory_candidate_id: trust_output.and_then(|packet| packet.memory_candidate_id.clone()),
+            capture_session_id: trust_output.and_then(|packet| packet.capture_session_id.clone()),
+            orchestration_stage_id: trust_output.and_then(|packet| packet.orchestration_stage_id.clone()),
+            action_graph_id: trust_output.and_then(|packet| packet.action_graph_id.clone()),
+            tool_invocation_stage_id: trust_output.and_then(|packet| packet.tool_invocation_stage_id.clone()),
+            execution_plan_ref: trust_output.and_then(|packet| packet.execution_plan_ref.clone()),
+            connector_execution_id: trust_output.and_then(|packet| packet.connector_execution_id.clone()),
+            protected_gate_id: trust_output.and_then(|packet| packet.protected_gate_id.clone()),
+            settlement_id: trust_output.and_then(|packet| packet.settlement_id.clone()),
+            mutation_commit_id: trust_output.and_then(|packet| packet.mutation_commit_id.clone()),
+            reconciliation_id: trust_output.and_then(|packet| packet.reconciliation_id.clone()),
+            publication_id: trust_output.and_then(|packet| packet.publication_id.clone()),
+            state_sync_id: trust_output.and_then(|packet| packet.state_sync_id.clone()),
+            completion_disclosure_id: trust_output.and_then(|packet| packet.completion_disclosure_id.clone()),
+            output_interaction_id: input.output_interaction_id.clone().or_else(|| trust_output.and_then(|packet| packet.output_interaction_id.clone())),
+            speech_output_id: input.speech_output_id.clone().or_else(|| trust_output.and_then(|packet| packet.speech_output_id.clone())),
+            conversation_continuity_id: input.conversation_continuity_id.clone().or_else(|| trust_output.and_then(|packet| packet.conversation_continuity_id.clone())),
+            interaction_boundary_id: input.interaction_boundary_id.clone().or_else(|| trust_output.and_then(|packet| packet.interaction_boundary_id.clone())),
+            recovery_continuity_id: input.recovery_continuity_id.clone().or_else(|| trust_output.and_then(|packet| packet.recovery_continuity_id.clone())),
+            follow_up_posture_id: input.follow_up_posture_id.clone().or_else(|| trust_output.and_then(|packet| packet.follow_up_posture_id.clone())),
+            thread_presence_id: input.thread_presence_id.clone().or_else(|| trust_output.and_then(|packet| packet.thread_presence_id.clone())),
+            notification_disclosure_id: input.notification_disclosure_id.clone().or_else(|| trust_output.and_then(|packet| packet.notification_disclosure_id.clone())),
+            reminder_truth_id: input.reminder_truth_id.clone().or_else(|| trust_output.and_then(|packet| packet.reminder_truth_id.clone())),
+            escalation_truth_id: input.escalation_truth_id.clone().or_else(|| trust_output.and_then(|packet| packet.escalation_truth_id.clone())),
+            wake_reentry_id: input.wake_reentry_id.clone().or_else(|| trust_output.and_then(|packet| packet.wake_reentry_id.clone())),
+            trust_calibration_id: input.trust_calibration_id.clone().or_else(|| trust_output.and_then(|packet| packet.trust_calibration_id.clone())),
+            expectation_posture_id: input.expectation_posture_id.clone().or_else(|| trust_output.and_then(|packet| packet.expectation_posture_id.clone())),
+            residual_assistance_id: input.residual_assistance_id.clone().or_else(|| trust_output.and_then(|packet| packet.residual_assistance_id.clone())),
+            relationship_memory_id: input.relationship_memory_id.clone(),
+            continuity_framing_id: input.continuity_framing_id.clone(),
+            longer_horizon_governance_id: input.longer_horizon_governance_id.clone(),
+            work_id: trust_output.and_then(|packet| packet.work_id.clone()),
+            lease_id: trust_output.and_then(|packet| packet.lease_id.clone()),
+            device_id: trust_output.and_then(|packet| packet.device_id.clone()),
+            access_context_id: trust_output
+                .and_then(|packet| packet.access_context_id.clone())
+                .or_else(|| route.access_context_id.clone()),
+            policy_context_id: trust_output
+                .and_then(|packet| packet.policy_context_id.clone())
+                .or_else(|| route.policy_context_id.clone()),
+            tenant_id: trust_output.and_then(|packet| packet.tenant_id.clone()),
+            audit_id,
+            ph1j_proof_ref,
+            stage19_disposition: trust_output.and_then(|packet| packet.stage19_disposition),
+            stage30_disposition: trust_output.and_then(|packet| packet.stage30_disposition),
+            stage31_disposition: trust_output.and_then(|packet| packet.stage31_disposition),
+            stage32_disposition: trust_output.map(|packet| packet.disposition),
+            relationship_kind: input.relationship_kind,
+            disposition,
+            reason_code: disposition.default_reason_code(),
+            stage8_ref_non_authoritative: input.stage8_output_interaction_ref_non_authoritative,
+            stage16_ref_non_authoritative: input.stage16_long_term_state_ref_non_authoritative,
+            stage17_ref_non_authoritative: input.stage17_speech_output_ref_non_authoritative,
+            stage19_ref_non_authoritative: input.stage19_notification_ref_non_authoritative,
+            stage30_ref_non_authoritative: input.stage30_recovery_ref_non_authoritative,
+            stage31_ref_non_authoritative: input.stage31_notification_ref_non_authoritative,
+            stage32_ref_non_authoritative: input.stage32_trust_ref_non_authoritative,
+            ph1voiceid_ref_non_authoritative: input.ph1voiceid_ref_non_authoritative,
+            ph1explain_ref_non_authoritative: input.ph1explain_ref_non_authoritative,
+            ph1write_ref_non_authoritative: input.ph1write_ref_non_authoritative,
+            ph1summary_ref_non_authoritative: input.ph1summary_ref_non_authoritative,
+            stage12_ref_bounded_authority_context: input.stage12_gate_bounded_authority_context,
+            work_authority,
+        };
+        packet.validate()?;
+        Ok(packet)
+    }
+
+    pub const fn can_mutate_or_execute(&self) -> bool {
+        self.work_authority.can_mutate_or_execute()
+    }
+
+    fn decide_disposition(
+        route: &Stage11ReasoningRouterPacket,
+        stage12_gate: Option<&Stage12ProtectedActionGatePacket>,
+        trust_output: Option<&Stage32TrustCalibrationPacket>,
+        input: &Stage33RelationshipMemoryInput,
+    ) -> Stage33RelationshipMemoryDisposition {
+        if input.runtime_mock_detected
+            || input.fake_relationship_detected
+            || input.fake_memory_detected
+            || input.fake_continuity_detected
+            || input.fake_familiarity_detected
+            || input.fake_completion_detected
+            || input.fake_approval_detected
+        {
+            return Stage33RelationshipMemoryDisposition::RuntimeMockBlocked;
+        }
+        if input.raw_provider_output_present
+            || input.raw_search_dump_present
+            || input.raw_media_present
+            || input.raw_connector_credential_field_present
+            || input.unverified_source_evidence_present
+            || input.unsupported_claim_candidate_present
+            || input.fake_relationship_source_carrier_present
+            || input.secrets_exposed
+            || input.raw_biometric_material_exposed
+            || input.internal_trace_exposed
+            || input.access_denied
+            || input.policy_denied
+        {
+            return Stage33RelationshipMemoryDisposition::UnsafeInputBlocked;
+        }
+        if !input.stage11_route_ref_present
+            || !input.stage11_route_non_executing_context
+            || !matches!(
+                route.disposition,
+                Stage11RouterDisposition::PublicReadOnlyCandidate
+                    | Stage11RouterDisposition::ProtectedActionBlockedUntilStage12
+                    | Stage11RouterDisposition::SimulationCandidateInertHandoff
+            )
+            || route.can_route_or_mutate()
+            || (input.stage12_gate_ref_present
+                && !matches!(
+                    stage12_gate.map(|packet| packet.disposition),
+                    Some(Stage12ProtectedActionDisposition::ApprovedExecutionPlanReady)
+                        | Some(Stage12ProtectedActionDisposition::SimulationGateApproved)
+                ))
+            || !input.stage8_output_interaction_ref_present
+            || !input.stage8_output_interaction_ref_non_authoritative
+            || !input.stage16_long_term_state_ref_present
+            || !input.stage16_long_term_state_ref_non_authoritative
+            || !input.stage17_speech_output_ref_present
+            || !input.stage17_speech_output_ref_non_authoritative
+            || !input.stage19_notification_ref_present
+            || !input.stage19_notification_ref_non_authoritative
+            || !input.stage30_recovery_ref_present
+            || !input.stage30_recovery_ref_non_authoritative
+            || !input.stage31_notification_ref_present
+            || !input.stage31_notification_ref_non_authoritative
+            || !input.stage32_trust_ref_present
+            || !input.stage32_trust_ref_non_authoritative
+            || !trust_output.is_some_and(|packet| packet.disposition.is_ready())
+        {
+            return Stage33RelationshipMemoryDisposition::StageInputBlocked;
+        }
+        if input.relationship_invented_fact
+            || input.relationship_invented_memory_certainty
+            || input.relationship_invented_relationship_depth
+            || input.relationship_invented_emotional_knowledge_certainty
+            || input.relationship_invented_bond_continuity
+            || input.relationship_invented_completion_success
+            || input.relationship_invented_approval
+            || input.relationship_invented_remote_completion
+            || input.relationship_invented_visibility_completion
+            || input.relationship_invented_work_or_lease_authority
+            || input.relationship_invented_route_authority
+            || input.relationship_invented_attachment_citation_url_date_or_provenance
+            || input.relationship_invented_provider_or_tool_result
+            || input.relationship_claimed_unproven_completion
+            || input
+                .relationship_implied_approval_dispatch_execution_delivery_wake_or_completion_without_proof
+            || input.prior_continuity_or_memory_used_as_truth_authority
+            || input.protected_action_candidate_present
+            || input.simulation_candidate_present
+            || input.approved_execution_plan_present
+        {
+            return Stage33RelationshipMemoryDisposition::NoInventionBlocked;
+        }
+        if !input.native_continuity_framing_declarative_only
+            || input.native_continuity_framing_mutates_state
+            || input.native_continuity_framing_connector_writes
+            || input.native_continuity_framing_dispatches_or_executes
+            || input.native_continuity_framing_calls_providers_or_tools
+            || input.native_continuity_framing_emits_tts_or_playback
+            || input.native_continuity_framing_creates_user_turn
+            || input.native_continuity_framing_treats_visible_familiarity_as_action_success
+        {
+            return Stage33RelationshipMemoryDisposition::NativeContinuityFramingHandoffBlocked;
+        }
+        if input.protected_action_like_request
+            || input.protected_slot_or_authority_ambiguous
+            || input.unsafe_identity_posture
+            || input.relationship_or_continuity_ambiguity
+        {
+            return Stage33RelationshipMemoryDisposition::PublicProtectedBoundaryBlocked;
+        }
+        if input.stale_or_cancelled_or_superseded_output
+            || input.session_closed
+            || input.record_artifact_only_turn
+            || input.stale_relationship_state
+            || input.stale_memory_state
+            || input.stale_continuity_state
+            || input.stale_wake_state
+            || input.stale_recovery_state
+            || input.stale_work_state
+            || input.stale_lease_state
+            || input.stale_route_state
+            || input.stale_connector_state
+            || input.stale_protected_gate_state
+            || input.continuity_silently_implies_memory_permanence
+            || input.continuity_silently_implies_emotional_knowledge
+            || input.continuity_silently_promises_future_follow_up
+            || !input.relationship_identity_matches_current_output_session
+            || input.replay_upgrades_blocked_authority
+        {
+            return Stage33RelationshipMemoryDisposition::StaleRelationshipBlocked;
+        }
+        if !input.authority_bounded
+            || !input.tenant_user_device_session_scoped
+            || !input.secret_safe
+            || !input.redacted
+            || !input.stale_aware
+            || !input.revocation_aware
+            || !input.uncertainty_preserved
+            || !input.ph1m_ref_present
+            || !input.ph1m_ref_non_authoritative
+            || !input.ph1persona_ref_present
+            || !input.ph1persona_ref_non_authoritative
+            || !input.ph1learn_ref_present
+            || !input.ph1learn_ref_non_authoritative
+            || !input.ph1feedback_ref_present
+            || !input.ph1feedback_ref_non_authoritative
+            || !input.ph1know_ref_present
+            || !input.ph1know_ref_non_authoritative
+            || !input.ph1emo_core_ref_present
+            || !input.ph1emo_core_ref_non_authoritative
+            || !input.ph1emo_guide_ref_present
+            || !input.ph1emo_guide_ref_non_authoritative
+            || !input.ph1multi_ref_present
+            || !input.ph1multi_ref_non_authoritative
+            || !input.ph1voiceid_ref_present
+            || !input.ph1voiceid_ref_non_authoritative
+            || !input.voice_identity_inform_only
+            || !input.voice_identity_confirmed_or_step_up_only
+            || !input.voice_identity_tenant_device_session_scoped
+            || input.voice_identity_cross_speaker_risk
+            || !input.ph1explain_ref_present
+            || !input.ph1explain_ref_non_authoritative
+            || !input.ph1write_ref_present
+            || !input.ph1write_ref_non_authoritative
+            || !input.ph1summary_ref_present
+            || !input.ph1summary_ref_non_authoritative
+            || !input.remembered_preference_ref_present
+            || !input.trust_recovery_notification_wake_ref_present
+            || !input.continuity_surface_ref_present
+            || !input.longer_horizon_surface_ref_present
+            || input.unverifiable
+            || input.stale
+            || input.secret_unsafe
+            || input.cross_tenant
+            || input.cross_route
+            || input.cross_connector
+            || input.memory_mismatch
+            || input.relationship_mismatch
+            || input.continuity_mismatch
+            || input.trust_mismatch
+            || input.wake_mismatch
+            || input.recovery_mismatch
+            || input.publication_mismatch
+            || input.settlement_mismatch
+            || input.connector_mismatch
+            || input.route_mismatch
+            || input.action_graph_mismatch
+            || input.lease_mismatch
+            || input.protected_gate_mismatch
+            || input.tenant_mismatch
+            || input.missing_proof
+            || input.ownership_drift
+        {
+            return Stage33RelationshipMemoryDisposition::RelationshipAuthorityBlocked;
+        }
+
+        match input.relationship_kind {
+            Stage33RelationshipMemoryKind::RelationshipMemoryFraming => {
+                if input.relationship_memory_id.is_some()
+                    && input.ph1m_ref_present
+                    && input.ph1persona_ref_present
+                    && input.ph1voiceid_ref_present
+                    && input.ph1explain_ref_present
+                {
+                    Stage33RelationshipMemoryDisposition::RelationshipMemoryFramingReady
+                } else {
+                    Stage33RelationshipMemoryDisposition::RelationshipAuthorityBlocked
+                }
+            }
+            Stage33RelationshipMemoryKind::UserFacingContinuityBoundary => {
+                if input.continuity_framing_id.is_some()
+                    && input.continuity_surface_ref_present
+                    && input.ph1write_ref_present
+                    && input.ph1summary_ref_present
+                {
+                    Stage33RelationshipMemoryDisposition::UserFacingContinuityBoundaryReady
+                } else {
+                    Stage33RelationshipMemoryDisposition::RelationshipAuthorityBlocked
+                }
+            }
+            Stage33RelationshipMemoryKind::LongerHorizonInteractionGovernance => {
+                if input.longer_horizon_governance_id.is_some()
+                    && input.longer_horizon_surface_ref_present
+                    && input.ph1multi_ref_present
+                    && input.ph1learn_ref_present
+                    && input.ph1feedback_ref_present
+                {
+                    Stage33RelationshipMemoryDisposition::LongerHorizonInteractionGovernanceReady
+                } else {
+                    Stage33RelationshipMemoryDisposition::RelationshipAuthorityBlocked
+                }
+            }
+            Stage33RelationshipMemoryKind::RememberedPreferenceContinuityPostureReference => {
+                if input.relationship_memory_id.is_some()
+                    && input.remembered_preference_ref_present
+                    && input.ph1persona_ref_present
+                    && input.ph1m_ref_present
+                {
+                    Stage33RelationshipMemoryDisposition::RememberedPreferenceContinuityPostureReferenceReady
+                } else {
+                    Stage33RelationshipMemoryDisposition::RelationshipAuthorityBlocked
+                }
+            }
+            Stage33RelationshipMemoryKind::TrustRecoveryNotificationWakeContinuityReference => {
+                if input.relationship_memory_id.is_some()
+                    && input.trust_recovery_notification_wake_ref_present
+                    && trust_output.is_some_and(|packet| {
+                        packet.trust_calibration_id.is_some()
+                            && packet.recovery_continuity_id.is_some()
+                            && packet.wake_reentry_id.is_some()
+                    })
+                {
+                    Stage33RelationshipMemoryDisposition::TrustRecoveryNotificationWakeContinuityReferenceReady
+                } else {
+                    Stage33RelationshipMemoryDisposition::RelationshipAuthorityBlocked
+                }
+            }
+            Stage33RelationshipMemoryKind::WorkLeaseRouteProtectedGatePublicationProofReference => {
+                if input.relationship_memory_id.is_some()
+                    && trust_output.is_some_and(|packet| {
+                        packet.work_id.is_some()
+                            && packet.lease_id.is_some()
+                            && packet.publication_id.is_some()
+                    })
+                    && stage12_gate.is_some()
+                {
+                    Stage33RelationshipMemoryDisposition::WorkLeaseRouteProtectedGatePublicationProofReferenceReady
+                } else {
+                    Stage33RelationshipMemoryDisposition::RelationshipAuthorityBlocked
+                }
+            }
+        }
+    }
+
+    const fn work_authority_for(
+        disposition: Stage33RelationshipMemoryDisposition,
+    ) -> Stage33RelationshipMemoryWorkAuthority {
+        match disposition {
+            Stage33RelationshipMemoryDisposition::RelationshipMemoryFramingReady => {
+                Stage33RelationshipMemoryWorkAuthority::relationship_memory_framing_ready()
+            }
+            Stage33RelationshipMemoryDisposition::UserFacingContinuityBoundaryReady => {
+                Stage33RelationshipMemoryWorkAuthority::user_facing_continuity_boundary_ready()
+            }
+            Stage33RelationshipMemoryDisposition::LongerHorizonInteractionGovernanceReady => {
+                Stage33RelationshipMemoryWorkAuthority::longer_horizon_interaction_governance_ready()
+            }
+            Stage33RelationshipMemoryDisposition::RememberedPreferenceContinuityPostureReferenceReady => {
+                Stage33RelationshipMemoryWorkAuthority::remembered_preference_continuity_posture_reference_ready()
+            }
+            Stage33RelationshipMemoryDisposition::TrustRecoveryNotificationWakeContinuityReferenceReady => {
+                Stage33RelationshipMemoryWorkAuthority::trust_recovery_notification_wake_continuity_reference_ready()
+            }
+            Stage33RelationshipMemoryDisposition::WorkLeaseRouteProtectedGatePublicationProofReferenceReady => {
+                Stage33RelationshipMemoryWorkAuthority::work_lease_route_protected_gate_publication_proof_reference_ready()
+            }
+            _ => Stage33RelationshipMemoryWorkAuthority::fail_closed(),
+        }
+    }
+}
+
+impl Validate for Stage33RelationshipMemoryPacket {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        for (field, value) in [
+            ("stage33_relationship_memory_packet.activation_id", self.activation_id.as_deref()),
+            ("stage33_relationship_memory_packet.continuity_packet_id", self.continuity_packet_id.as_deref()),
+            ("stage33_relationship_memory_packet.automation_candidate_id", self.automation_candidate_id.as_deref()),
+            ("stage33_relationship_memory_packet.connector_action_stage_id", self.connector_action_stage_id.as_deref()),
+            ("stage33_relationship_memory_packet.memory_candidate_id", self.memory_candidate_id.as_deref()),
+            ("stage33_relationship_memory_packet.capture_session_id", self.capture_session_id.as_deref()),
+            ("stage33_relationship_memory_packet.orchestration_stage_id", self.orchestration_stage_id.as_deref()),
+            ("stage33_relationship_memory_packet.action_graph_id", self.action_graph_id.as_deref()),
+            ("stage33_relationship_memory_packet.tool_invocation_stage_id", self.tool_invocation_stage_id.as_deref()),
+            ("stage33_relationship_memory_packet.execution_plan_ref", self.execution_plan_ref.as_deref()),
+            ("stage33_relationship_memory_packet.connector_execution_id", self.connector_execution_id.as_deref()),
+            ("stage33_relationship_memory_packet.protected_gate_id", self.protected_gate_id.as_deref()),
+            ("stage33_relationship_memory_packet.settlement_id", self.settlement_id.as_deref()),
+            ("stage33_relationship_memory_packet.mutation_commit_id", self.mutation_commit_id.as_deref()),
+            ("stage33_relationship_memory_packet.reconciliation_id", self.reconciliation_id.as_deref()),
+            ("stage33_relationship_memory_packet.publication_id", self.publication_id.as_deref()),
+            ("stage33_relationship_memory_packet.state_sync_id", self.state_sync_id.as_deref()),
+            ("stage33_relationship_memory_packet.completion_disclosure_id", self.completion_disclosure_id.as_deref()),
+            ("stage33_relationship_memory_packet.output_interaction_id", self.output_interaction_id.as_deref()),
+            ("stage33_relationship_memory_packet.speech_output_id", self.speech_output_id.as_deref()),
+            ("stage33_relationship_memory_packet.conversation_continuity_id", self.conversation_continuity_id.as_deref()),
+            ("stage33_relationship_memory_packet.interaction_boundary_id", self.interaction_boundary_id.as_deref()),
+            ("stage33_relationship_memory_packet.recovery_continuity_id", self.recovery_continuity_id.as_deref()),
+            ("stage33_relationship_memory_packet.follow_up_posture_id", self.follow_up_posture_id.as_deref()),
+            ("stage33_relationship_memory_packet.thread_presence_id", self.thread_presence_id.as_deref()),
+            ("stage33_relationship_memory_packet.notification_disclosure_id", self.notification_disclosure_id.as_deref()),
+            ("stage33_relationship_memory_packet.reminder_truth_id", self.reminder_truth_id.as_deref()),
+            ("stage33_relationship_memory_packet.escalation_truth_id", self.escalation_truth_id.as_deref()),
+            ("stage33_relationship_memory_packet.wake_reentry_id", self.wake_reentry_id.as_deref()),
+            ("stage33_relationship_memory_packet.trust_calibration_id", self.trust_calibration_id.as_deref()),
+            ("stage33_relationship_memory_packet.expectation_posture_id", self.expectation_posture_id.as_deref()),
+            ("stage33_relationship_memory_packet.residual_assistance_id", self.residual_assistance_id.as_deref()),
+            ("stage33_relationship_memory_packet.relationship_memory_id", self.relationship_memory_id.as_deref()),
+            ("stage33_relationship_memory_packet.continuity_framing_id", self.continuity_framing_id.as_deref()),
+            ("stage33_relationship_memory_packet.longer_horizon_governance_id", self.longer_horizon_governance_id.as_deref()),
+            ("stage33_relationship_memory_packet.work_id", self.work_id.as_deref()),
+            ("stage33_relationship_memory_packet.lease_id", self.lease_id.as_deref()),
+            ("stage33_relationship_memory_packet.device_id", self.device_id.as_deref()),
+            ("stage33_relationship_memory_packet.access_context_id", self.access_context_id.as_deref()),
+            ("stage33_relationship_memory_packet.policy_context_id", self.policy_context_id.as_deref()),
+            ("stage33_relationship_memory_packet.tenant_id", self.tenant_id.as_deref()),
+            ("stage33_relationship_memory_packet.audit_id", self.audit_id.as_deref()),
+            ("stage33_relationship_memory_packet.ph1j_proof_ref", self.ph1j_proof_ref.as_deref()),
+        ] {
+            validate_stage4_optional_ref(field, value)?;
+        }
+        if self.reason_code != self.disposition.default_reason_code() {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage33_relationship_memory_packet.reason_code",
+                reason: "must match Stage 33A relationship disposition",
+            });
+        }
+        if self.work_authority.can_mutate_or_execute() {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage33_relationship_memory_packet.work_authority",
+                reason: "Stage 33A cannot invent relationship authority, connector-write, approve, dispatch, execute, create turns, or treat visible familiarity as action success",
+            });
+        }
+        if self.disposition.is_ready()
+            && (self.audit_id.is_none() || self.ph1j_proof_ref.is_none())
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage33_relationship_memory_packet.audit_proof",
+                reason: "ready Stage 33A relationship output requires PH1.J audit/proof refs",
+            });
+        }
+        Ok(())
+    }
+}
+
+pub fn stage33_relationship_memory_symbol_anchor() {
+    let _ = Stage33RelationshipMemoryKind::RelationshipMemoryFraming;
+    let _ = Stage33RelationshipMemoryKind::UserFacingContinuityBoundary;
+    let _ = Stage33RelationshipMemoryKind::LongerHorizonInteractionGovernance;
+    let _ = Stage33RelationshipMemoryKind::RememberedPreferenceContinuityPostureReference;
+    let _ = Stage33RelationshipMemoryKind::TrustRecoveryNotificationWakeContinuityReference;
+    let _ = Stage33RelationshipMemoryKind::WorkLeaseRouteProtectedGatePublicationProofReference;
+    let disposition = Stage33RelationshipMemoryDisposition::StageInputBlocked;
+    let _ = disposition.default_reason_code();
+    let _ = disposition.is_ready();
+    let _ = Stage33RelationshipMemoryWorkAuthority::fail_closed().can_mutate_or_execute();
+    let _ = Stage33RelationshipMemoryWorkAuthority::relationship_memory_framing_ready();
+    let _ = Stage33RelationshipMemoryWorkAuthority::user_facing_continuity_boundary_ready();
+    let _ = Stage33RelationshipMemoryWorkAuthority::longer_horizon_interaction_governance_ready();
+    let _ = Stage33RelationshipMemoryWorkAuthority::remembered_preference_continuity_posture_reference_ready();
+    let _ = Stage33RelationshipMemoryWorkAuthority::trust_recovery_notification_wake_continuity_reference_ready();
+    let _ = Stage33RelationshipMemoryWorkAuthority::work_lease_route_protected_gate_publication_proof_reference_ready();
+    let _ = core::mem::size_of::<Stage33RelationshipMemoryInput>();
+    let _ = core::mem::size_of::<Stage33RelationshipMemoryPacket>();
+    let _ = Stage33RelationshipMemoryPacket::from_stage32_trust
+        as fn(
+            &Stage11ReasoningRouterPacket,
+            Option<&Stage12ProtectedActionGatePacket>,
+            Option<&Stage32TrustCalibrationPacket>,
+            Stage33RelationshipMemoryInput,
+        ) -> Result<Stage33RelationshipMemoryPacket, ContractViolation>;
+    let _ = Stage33RelationshipMemoryPacket::can_mutate_or_execute
+        as fn(&Stage33RelationshipMemoryPacket) -> bool;
+}
+const _: fn() = stage33_relationship_memory_symbol_anchor;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -48813,6 +50129,459 @@ mod tests {
                 &route,
                 Some(&gate),
                 Some(&notification),
+                runtime_mock,
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn stage_33a_relationship_memory_consumes_trust_memory_and_voice_identity_refs_non_authoritatively(
+    ) {
+        let route = stage12_protected_route();
+        let gate = Stage12ProtectedActionGatePacket::from_stage11_candidate(
+            &route,
+            stage12_gate_input(),
+        )
+        .expect("stage33 protected gate");
+        let attention = stage31_attention_identity();
+        let recovery = stage31_recovery_identity();
+        let notification = super::Stage31NotificationWakeReentryPacket::from_stage30_recovery(
+            &route,
+            Some(&gate),
+            Some(&attention),
+            Some(&recovery),
+            super::Stage31NotificationWakeReentryInput::fixture_notification_disclosure_boundary_ready(
+                "audit-stage33-stage31",
+            ),
+        )
+        .expect("stage33 stage31 notification");
+        let trust = super::Stage32TrustCalibrationPacket::from_stage31_notification(
+            &route,
+            Some(&gate),
+            Some(&notification),
+            super::Stage32TrustCalibrationInput::fixture_trust_calibration_ready(
+                "audit-stage33-stage32",
+            ),
+        )
+        .expect("stage33 stage32 trust");
+
+        let packet = super::Stage33RelationshipMemoryPacket::from_stage32_trust(
+            &route,
+            Some(&gate),
+            Some(&trust),
+            super::Stage33RelationshipMemoryInput::fixture_relationship_memory_framing_ready(
+                "audit-stage33-relationship",
+            ),
+        )
+        .expect("stage33 relationship ready");
+
+        assert_eq!(
+            packet.disposition,
+            super::Stage33RelationshipMemoryDisposition::RelationshipMemoryFramingReady
+        );
+        assert_eq!(
+            packet.stage32_disposition,
+            Some(super::Stage32TrustCalibrationDisposition::TrustCalibrationReady)
+        );
+        assert_eq!(
+            packet.stage31_disposition,
+            Some(
+                super::Stage31NotificationWakeReentryDisposition::NotificationDisclosureBoundaryReady
+            )
+        );
+        assert_eq!(
+            packet.stage30_disposition,
+            Some(super::Stage30RecoveryThreadPresenceDisposition::CrossTurnRecoverySemanticsReady)
+        );
+        assert!(packet.stage16_ref_non_authoritative);
+        assert!(packet.stage32_ref_non_authoritative);
+        assert!(packet.ph1voiceid_ref_non_authoritative);
+        assert!(
+            packet
+                .work_authority
+                .can_emit_relationship_memory_framing_packet
+        );
+        assert!(!packet.can_mutate_or_execute());
+    }
+
+    #[test]
+    fn stage_33a_packets_cannot_invent_memory_certainty_relationship_depth_or_familiarity() {
+        let route = stage12_protected_route();
+        let gate = Stage12ProtectedActionGatePacket::from_stage11_candidate(
+            &route,
+            stage12_gate_input(),
+        )
+        .expect("stage33 protected gate");
+        let attention = stage31_attention_identity();
+        let recovery = stage31_recovery_identity();
+        let notification = super::Stage31NotificationWakeReentryPacket::from_stage30_recovery(
+            &route,
+            Some(&gate),
+            Some(&attention),
+            Some(&recovery),
+            super::Stage31NotificationWakeReentryInput::fixture_governed_wake_reentry_continuity_ready(
+                "wake-stage33-stage31",
+                "audit-stage33-stage31",
+            ),
+        )
+        .expect("stage33 stage31 notification");
+        let trust = super::Stage32TrustCalibrationPacket::from_stage31_notification(
+            &route,
+            Some(&gate),
+            Some(&notification),
+            super::Stage32TrustCalibrationInput::fixture_expectation_setting_posture_ready(
+                "audit-stage33-stage32-no-invention",
+            ),
+        )
+        .expect("stage33 stage32 trust");
+
+        for input in [
+            {
+                let mut input =
+                    super::Stage33RelationshipMemoryInput::fixture_relationship_memory_framing_ready(
+                        "audit-stage33-invent-memory",
+                    );
+                input.relationship_invented_memory_certainty = true;
+                input
+            },
+            {
+                let mut input =
+                    super::Stage33RelationshipMemoryInput::fixture_user_facing_continuity_boundary_ready(
+                        "audit-stage33-invent-depth",
+                    );
+                input.relationship_invented_relationship_depth = true;
+                input
+            },
+            {
+                let mut input = super::Stage33RelationshipMemoryInput::fixture_longer_horizon_interaction_governance_ready(
+                    "audit-stage33-invent-familiarity",
+                );
+                input.relationship_invented_bond_continuity = true;
+                input
+            },
+            {
+                let mut input = super::Stage33RelationshipMemoryInput::fixture_trust_recovery_notification_wake_continuity_reference_ready(
+                    "relationship-stage33-invent-authority",
+                    "audit-stage33-invent-authority",
+                );
+                input.prior_continuity_or_memory_used_as_truth_authority = true;
+                input
+            },
+        ] {
+            let packet = super::Stage33RelationshipMemoryPacket::from_stage32_trust(
+                &route,
+                Some(&gate),
+                Some(&trust),
+                input,
+            )
+            .expect("stage33 no-invention blocked");
+            assert_eq!(
+                packet.disposition,
+                super::Stage33RelationshipMemoryDisposition::NoInventionBlocked
+            );
+            assert!(packet.work_authority.can_fail_closed);
+            assert!(!packet.can_mutate_or_execute());
+        }
+    }
+
+    #[test]
+    fn stage_33a_relationship_authority_requires_memory_scoping_and_voice_identity_posture() {
+        let route = stage12_protected_route();
+        let gate = Stage12ProtectedActionGatePacket::from_stage11_candidate(
+            &route,
+            stage12_gate_input(),
+        )
+        .expect("stage33 protected gate");
+        let attention = stage31_attention_identity();
+        let recovery = stage31_recovery_identity();
+        let notification = super::Stage31NotificationWakeReentryPacket::from_stage30_recovery(
+            &route,
+            Some(&gate),
+            Some(&attention),
+            Some(&recovery),
+            super::Stage31NotificationWakeReentryInput::fixture_governed_wake_reentry_continuity_ready(
+                "wake-stage33-stage31-authority",
+                "audit-stage33-stage31-authority",
+            ),
+        )
+        .expect("stage33 stage31 notification");
+        let trust = super::Stage32TrustCalibrationPacket::from_stage31_notification(
+            &route,
+            Some(&gate),
+            Some(&notification),
+            super::Stage32TrustCalibrationInput::fixture_residual_assistance_boundary_ready(
+                "audit-stage33-stage32-authority",
+            ),
+        )
+        .expect("stage33 stage32 trust");
+
+        let ready = super::Stage33RelationshipMemoryPacket::from_stage32_trust(
+            &route,
+            Some(&gate),
+            Some(&trust),
+            super::Stage33RelationshipMemoryInput::fixture_user_facing_continuity_boundary_ready(
+                "audit-stage33-continuity",
+            ),
+        )
+        .expect("stage33 continuity ready");
+        assert_eq!(
+            ready.disposition,
+            super::Stage33RelationshipMemoryDisposition::UserFacingContinuityBoundaryReady
+        );
+        assert!(
+            ready
+                .work_authority
+                .can_emit_user_facing_continuity_boundary_packet
+        );
+
+        for input in [
+            {
+                let mut input =
+                    super::Stage33RelationshipMemoryInput::fixture_relationship_memory_framing_ready(
+                        "audit-stage33-unbounded",
+                    );
+                input.authority_bounded = false;
+                input
+            },
+            {
+                let mut input =
+                    super::Stage33RelationshipMemoryInput::fixture_user_facing_continuity_boundary_ready(
+                        "audit-stage33-missing-memory",
+                    );
+                input.ph1m_ref_present = false;
+                input
+            },
+            {
+                let mut input = super::Stage33RelationshipMemoryInput::fixture_longer_horizon_interaction_governance_ready(
+                    "audit-stage33-cross-speaker",
+                );
+                input.voice_identity_cross_speaker_risk = true;
+                input
+            },
+            {
+                let mut input = super::Stage33RelationshipMemoryInput::fixture_remembered_preference_continuity_posture_reference_ready(
+                    "relationship-stage33-missing-voice-posture",
+                    "audit-stage33-missing-voice-posture",
+                );
+                input.ph1voiceid_ref_present = false;
+                input
+            },
+        ] {
+            let packet = super::Stage33RelationshipMemoryPacket::from_stage32_trust(
+                &route,
+                Some(&gate),
+                Some(&trust),
+                input,
+            )
+            .expect("stage33 relationship authority blocked");
+            assert_eq!(
+                packet.disposition,
+                super::Stage33RelationshipMemoryDisposition::RelationshipAuthorityBlocked
+            );
+            assert!(packet.work_authority.can_fail_closed);
+            assert!(!packet.can_mutate_or_execute());
+        }
+    }
+
+    #[test]
+    fn stage_33a_native_protected_and_stale_cases_fail_closed() {
+        let route = stage12_protected_route();
+        let gate = Stage12ProtectedActionGatePacket::from_stage11_candidate(
+            &route,
+            stage12_gate_input(),
+        )
+        .expect("stage33 protected gate");
+        let attention = stage31_attention_identity();
+        let recovery = stage31_recovery_identity();
+        let notification = super::Stage31NotificationWakeReentryPacket::from_stage30_recovery(
+            &route,
+            Some(&gate),
+            Some(&attention),
+            Some(&recovery),
+            super::Stage31NotificationWakeReentryInput::fixture_notification_disclosure_boundary_ready(
+                "audit-stage33-stage31-native",
+            ),
+        )
+        .expect("stage33 stage31 notification");
+        let trust = super::Stage32TrustCalibrationPacket::from_stage31_notification(
+            &route,
+            Some(&gate),
+            Some(&notification),
+            super::Stage32TrustCalibrationInput::fixture_trust_calibration_ready(
+                "audit-stage33-stage32-native",
+            ),
+        )
+        .expect("stage33 stage32 trust");
+
+        for input in [
+            {
+                let mut input =
+                    super::Stage33RelationshipMemoryInput::fixture_relationship_memory_framing_ready(
+                        "audit-stage33-native-mutate",
+                    );
+                input.native_continuity_framing_mutates_state = true;
+                input
+            },
+            {
+                let mut input =
+                    super::Stage33RelationshipMemoryInput::fixture_user_facing_continuity_boundary_ready(
+                        "audit-stage33-protected",
+                    );
+                input.protected_action_like_request = true;
+                input
+            },
+        ] {
+            let packet = super::Stage33RelationshipMemoryPacket::from_stage32_trust(
+                &route,
+                Some(&gate),
+                Some(&trust),
+                input,
+            )
+            .expect("stage33 native/protected blocked");
+            assert!(matches!(
+                packet.disposition,
+                super::Stage33RelationshipMemoryDisposition::NativeContinuityFramingHandoffBlocked
+                    | super::Stage33RelationshipMemoryDisposition::PublicProtectedBoundaryBlocked
+            ));
+            assert!(packet.work_authority.can_fail_closed);
+        }
+
+        for input in [
+            {
+                let mut input = super::Stage33RelationshipMemoryInput::fixture_longer_horizon_interaction_governance_ready(
+                    "audit-stage33-stale",
+                );
+                input.stale_or_cancelled_or_superseded_output = true;
+                input
+            },
+            {
+                let mut input = super::Stage33RelationshipMemoryInput::fixture_trust_recovery_notification_wake_continuity_reference_ready(
+                    "relationship-stage33-replay",
+                    "audit-stage33-replay",
+                );
+                input.replay_upgrades_blocked_authority = true;
+                input
+            },
+        ] {
+            let packet = super::Stage33RelationshipMemoryPacket::from_stage32_trust(
+                &route,
+                Some(&gate),
+                Some(&trust),
+                input,
+            )
+            .expect("stage33 stale blocked");
+            assert_eq!(
+                packet.disposition,
+                super::Stage33RelationshipMemoryDisposition::StaleRelationshipBlocked
+            );
+            assert!(packet.work_authority.can_fail_closed);
+            assert!(!packet.can_mutate_or_execute());
+        }
+    }
+
+    #[test]
+    fn stage_33a_blocks_live_paths_and_runtime_mocks() {
+        let route = stage12_protected_route();
+        let gate = Stage12ProtectedActionGatePacket::from_stage11_candidate(
+            &route,
+            stage12_gate_input(),
+        )
+        .expect("stage33 protected gate");
+        let attention = stage31_attention_identity();
+        let recovery = stage31_recovery_identity();
+        let notification = super::Stage31NotificationWakeReentryPacket::from_stage30_recovery(
+            &route,
+            Some(&gate),
+            Some(&attention),
+            Some(&recovery),
+            super::Stage31NotificationWakeReentryInput::fixture_notification_disclosure_boundary_ready(
+                "audit-stage33-stage31-no-exec",
+            ),
+        )
+        .expect("stage33 stage31 notification");
+        let trust = super::Stage32TrustCalibrationPacket::from_stage31_notification(
+            &route,
+            Some(&gate),
+            Some(&notification),
+            super::Stage32TrustCalibrationInput::fixture_trust_calibration_ready(
+                "audit-stage33-stage32-no-exec",
+            ),
+        )
+        .expect("stage33 stage32 trust");
+
+        let packet = super::Stage33RelationshipMemoryPacket::from_stage32_trust(
+            &route,
+            Some(&gate),
+            Some(&trust),
+            super::Stage33RelationshipMemoryInput::fixture_work_lease_route_protected_gate_publication_proof_reference_ready(
+                "relationship-stage33-no-exec",
+                "audit-stage33-no-exec",
+            ),
+        )
+        .expect("stage33 no-exec packet");
+        assert!(!packet.work_authority.can_invent_facts);
+        assert!(!packet.work_authority.can_invent_memory_certainty);
+        assert!(!packet.work_authority.can_invent_relationship_depth);
+        assert!(!packet.work_authority.can_invent_emotional_knowledge_certainty);
+        assert!(!packet.work_authority.can_invent_bond_continuity);
+        assert!(!packet.work_authority.can_invent_completion_success);
+        assert!(!packet.work_authority.can_invent_relationship_authority);
+        assert!(!packet.work_authority.can_connector_write);
+        assert!(!packet.work_authority.can_approve);
+        assert!(!packet.work_authority.can_dispatch);
+        assert!(!packet.work_authority.can_execute);
+        assert!(!packet.work_authority.can_create_user_turn);
+        assert!(!packet.work_authority.can_treat_visible_familiarity_as_action_success);
+        assert!(!packet.can_mutate_or_execute());
+
+        for input in [
+            {
+                let mut input =
+                    super::Stage33RelationshipMemoryInput::fixture_relationship_memory_framing_ready(
+                        "audit-stage33-live-provider",
+                    );
+                input.attempted_live_provider_in_build = true;
+                input
+            },
+            {
+                let mut input =
+                    super::Stage33RelationshipMemoryInput::fixture_user_facing_continuity_boundary_ready(
+                        "audit-stage33-live-delivery",
+                    );
+                input.ran_live_reminder_delivery_in_build = true;
+                input
+            },
+            {
+                let mut input = super::Stage33RelationshipMemoryInput::fixture_longer_horizon_interaction_governance_ready(
+                    "audit-stage33-live-voice-id",
+                );
+                input.voice_id_matching_attempted = true;
+                input
+            },
+        ] {
+            assert!(
+                super::Stage33RelationshipMemoryPacket::from_stage32_trust(
+                    &route,
+                    Some(&gate),
+                    Some(&trust),
+                    input,
+                )
+                .is_err()
+            );
+        }
+
+        let mut runtime_mock =
+            super::Stage33RelationshipMemoryInput::fixture_relationship_memory_framing_ready(
+                "audit-stage33-runtime-mock",
+            );
+        runtime_mock.fake_relationship_detected = true;
+        runtime_mock.fixture_only_test_path = false;
+        assert!(
+            super::Stage33RelationshipMemoryPacket::from_stage32_trust(
+                &route,
+                Some(&gate),
+                Some(&trust),
                 runtime_mock,
             )
             .is_err()
