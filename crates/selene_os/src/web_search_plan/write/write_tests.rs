@@ -192,12 +192,57 @@ fn test_t6_voice_output_matches_formatted_text_semantics() {
 
     assert!(rendered.voice_text.contains("Direct Answer:"));
     assert!(rendered.voice_text.contains("Evidence:"));
-    assert!(rendered.voice_text.contains("Citations:"));
     assert!(rendered.voice_text.contains("Claim from source A."));
     assert!(rendered.voice_text.contains("Claim from source B."));
     assert!(!rendered.voice_text.contains("**"));
     assert!(!rendered.voice_text.contains("`"));
+    assert!(!rendered.voice_text.contains("Citations:"));
+    assert!(!rendered.voice_text.contains("[C1]"));
+    assert!(!rendered.voice_text.contains("[C2]"));
+    assert!(!rendered.voice_text.contains("https://example.com/a"));
+    assert!(!rendered.voice_text.contains("https://example.com/b"));
+    assert!(!rendered.voice_text.contains("chunk:chunk-a"));
+    assert!(!rendered.voice_text.contains("chunk:chunk-b"));
     assert!(rendered.voice_text.contains("[PAUSE_SHORT]"));
+}
+
+#[test]
+fn test_stage_34d_write_display_tts_safe_split_blocks_display_only_citations() {
+    let synthesis = base_synthesis_packet();
+    let rendered = render_write_packet(
+        &synthesis,
+        1_700_000_600_500i64,
+        "trace-stage-34d-write-split",
+        WriteFormatMode::Standard,
+    )
+    .expect("write render should pass");
+
+    assert!(rendered.voice_text.contains("Grounded response for question: What happened."));
+    assert!(rendered.voice_text.contains("Claim from source A."));
+    assert!(rendered.voice_text.contains("Claim from source B."));
+    assert!(!rendered.voice_text.contains("Citations:"));
+    assert!(!rendered.voice_text.contains("https://example.com/a"));
+    assert!(!rendered.voice_text.contains("https://example.com/b"));
+    assert!(!rendered.voice_text.contains("[C1]"));
+    assert!(!rendered.voice_text.contains("[C2]"));
+}
+
+#[test]
+fn test_stage34d_write_display_tts_safe_split_blocks_debug_metadata() {
+    let formatted = "Direct Answer:\nGrounded response for question: What happened.\n\nEvidence:\n- Claim from source A. [C1] [url:https://example.com/a]\n- debug: provider packet snapshot\n- Claim from source B. [C2] [chunk:chunk-b]\n\nCitations:\n- [C1] https://example.com/a\n- [C2] https://example.com/b\ntrace_id: trace-run6\npacket_hash: abc";
+
+    let voice_text = crate::web_search_plan::write::voice_renderer::render_voice_output(formatted);
+
+    assert!(voice_text.contains("Direct Answer:"));
+    assert!(voice_text.contains("Evidence:"));
+    assert!(voice_text.contains("Claim from source A."));
+    assert!(voice_text.contains("Claim from source B."));
+    assert!(!voice_text.contains("Citations:"));
+    assert!(!voice_text.contains("trace_id:"));
+    assert!(!voice_text.contains("packet_hash:"));
+    assert!(!voice_text.contains("debug:"));
+    assert!(!voice_text.contains("https://example.com/a"));
+    assert!(!voice_text.contains("https://example.com/b"));
 }
 
 #[test]

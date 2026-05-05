@@ -4,7 +4,7 @@ Status: CANONICAL_BUILD_ROADMAP
 Created: 2026-05-02
 Last Updated: 2026-05-05
 Repo Root: `/Users/selene/Documents/Selene-OS`
-Current Next Build: Stage 34D - Remaining Full-System Certification Harness Benchmark-Target Row Reconciliation
+Current Next Build: None yet - Stage 34D is PROVEN_COMPLETE and any further narrowed Stage 34 work requires explicit canonical master-plan revision
 
 ## Purpose
 
@@ -79,10 +79,10 @@ After every build, update this section before final reporting.
 | Field | Current Value |
 |---|---|
 | Current active stage | Stage 34 |
-| Current active build | Stage 34D - Remaining Full-System Certification Harness Benchmark-Target Row Reconciliation |
+| Current active build | None yet - Stage 34D is PROVEN_COMPLETE and broad Stage 34 remains blocked pending explicit canonical master-plan revision |
 | Next build after current stage passes | None yet - Stage 34 is the final canonical stage and any post-Stage-34 work must be introduced by an explicit plan revision |
-| Last completed stage | Stage 34C - Full System Certification Harness Benchmark Matrix Closure And End-To-End Proof Reconciliation |
-| Stages blocked | Broad Stage 34 remains blocked on provider/model governance, wake/activation, STT/listening, Voice ID production quality, conversation/same-page quality, scrambled language/meaning repair, math/science/history, write/display/TTS-safe split, TTS naturalness, memory trust, human experience/emotion, multilingual, native/runtime parity, and full certification. |
+| Last completed stage | Stage 34D - Remaining Full-System Certification Harness Benchmark-Target Row Reconciliation |
+| Stages blocked | Broad Stage 34 remains blocked on provider/model governance, wake/activation, STT/listening, Voice ID production quality, conversation/same-page quality, scrambled language/meaning repair, math/science/history, TTS naturalness, memory trust, human experience/emotion, multilingual, native/runtime parity, and full certification. |
 | Plan drift allowed | No |
 
 ## Status Legend
@@ -2821,7 +2821,17 @@ Stage 28A proof update:
 
 Next if passed:
 
-- Stage 34D - Remaining Full-System Certification Harness Benchmark-Target Row Reconciliation.
+- No next build until explicit canonical master-plan revision.
+
+Stage 34D status: PROVEN_COMPLETE
+
+Stage 34D proof update:
+
+- Existing `BenchmarkTargetPacket`, `BenchmarkResultPacket`, `BenchmarkResultRepo`, `Stage34SourceOfTruthPacket`, `Stage34ParityCertificationPacket`, and `web_search_plan` eval/replay/trust/synthesis/release/write surfaces were inspected and reused rather than rebuilt as duplicate certification-harness, benchmark-envelope, replay, eval, trust, synthesis, release-evidence, write, or TTS engines.
+- Stage 34D did not add a new runtime-owned Stage 34 carrier. Existing PH1.J benchmark envelopes remain the authoritative full-system certification-harness carrier family, while the existing PH1.WRITE/PH1.TTS `web_search_plan/write` seam now closes the `Write/display/TTS-safe split` benchmark row without introducing post-Stage-34 numbering drift.
+- Current-HEAD deterministic proof closed the `Write/display/TTS-safe split` benchmark family by keeping spoken `voice_text` free of display-only citations, raw URLs, chunk refs, and debug metadata while preserving grounded answer and evidence semantics in spoken form. `formatted_text` remains the display-rich carrier for citations and source chips.
+- Exact targeted proof now includes current-HEAD runnable Stage 34D tests `web_search_plan::write::write_tests::test_stage_34d_write_display_tts_safe_split_blocks_display_only_citations`, `web_search_plan::write::write_tests::test_stage34d_write_display_tts_safe_split_blocks_debug_metadata`, and `web_search_plan::write::write_tests::test_t6_voice_output_matches_formatted_text_semantics`, plus current-HEAD `ph1write`, `ph1tts`, and broader `stage_34` regressions, all without live provider, live TTS/playback, live microphone/STT, native mutation, or runtime-mock behavior.
+- Broad Stage 34 remains partial because provider/model governance, wake/activation, STT/listening, Voice ID production quality, conversation/same-page quality, scrambled language/meaning repair, math/science/history, TTS naturalness, memory trust, human experience/emotion, multilingual, native/runtime parity, and full certification remain blocked with explicit owners and next actions. No narrower next build name exists in repo truth, so no next build is authorized until explicit canonical master-plan revision.
 
 Stage 34C status: PROVEN_COMPLETE
 
@@ -2830,7 +2840,7 @@ Stage 34C proof update:
 - Existing `BenchmarkTargetPacket`, `BenchmarkResultPacket`, `BenchmarkResultRepo`, `Stage34SourceOfTruthPacket`, `Stage34ParityCertificationPacket`, and `web_search_plan` eval/replay/trust/synthesis/release surfaces were inspected and reused rather than rebuilt as duplicate certification-harness, benchmark-envelope, replay, eval, trust, synthesis, or release-evidence engines.
 - Stage 34C did not add a new runtime-owned Stage 34 carrier. Existing PH1.J benchmark envelopes plus Stage 34A source-of-truth continuity and Stage 34B parity/certification continuity remain the authoritative repo carriers for full-system certification-harness row reconciliation.
 - Current-HEAD deterministic proof closed the `Research/source quality` and `Search Operating System` benchmark families by pairing the current-HEAD [EvalReport_20260505T082029Z_155463a91874.json](/Users/selene/Documents/Selene-OS/docs/web_search_plan/eval/reports/EvalReport_20260505T082029Z_155463a91874.json) with the current-HEAD [ReleaseEvidencePack_20260505T082153Z_155463a91874bc3f55bf6f0ac3782761e6aac390.json](/Users/selene/Documents/Selene-OS/docs/web_search_plan/release_evidence/ReleaseEvidencePack_20260505T082153Z_155463a91874bc3f55bf6f0ac3782761e6aac390.json), preserving provider-off zero-live-call posture, citation/source coverage, refusal correctness, freshness compliance, conflict/trust handling, determinism, public-web/URL/cache/news/synthesis/write/vision/enterprise/structured/replay/runtime coverage, and no-live-provider/no-runtime-mock proof.
-- Broad Stage 34 remains partial because provider/model governance, wake/activation, STT/listening, Voice ID production quality, conversation/same-page quality, scrambled language/meaning repair, math/science/history, write/display/TTS-safe split, TTS naturalness, memory trust, human experience/emotion, multilingual, native/runtime parity, and full certification remain blocked with explicit owners and next actions. Stage 34D is now the next exact build.
+- Broad Stage 34 remained partial after Stage 34C because provider/model governance, wake/activation, STT/listening, Voice ID production quality, conversation/same-page quality, scrambled language/meaning repair, math/science/history, write/display/TTS-safe split, TTS naturalness, memory trust, human experience/emotion, multilingual, native/runtime parity, and full certification were still blocked with explicit owners and next actions. Stage 34D then became the next exact build.
 
 Stage 34B status: PROVEN_COMPLETE
 
@@ -4697,9 +4707,7 @@ The historical Stage 1 seed that used to live here has been retired because it w
 
 Use the `Current Next Build` header, the `Build Tracking Rule` table, the Stage 34 status/proof entries in this file, [SELENE_CANONICAL_STAGE_BUILD_SLICE_MAP.md](/Users/selene/Documents/Selene-OS/docs/SELENE_CANONICAL_STAGE_BUILD_SLICE_MAP.md), [SELENE_CANONICAL_BENCHMARK_TARGET_STATUS_MATRIX.md](/Users/selene/Documents/Selene-OS/docs/SELENE_CANONICAL_BENCHMARK_TARGET_STATUS_MATRIX.md), [MASTER_BUILD_COMPLETION_PLAN.md](/Users/selene/Documents/Selene-OS/docs/MASTER_BUILD_COMPLETION_PLAN.md), and [MASTER_BUILD_COMPLETION_LEDGER.md](/Users/selene/Documents/Selene-OS/docs/MASTER_BUILD_COMPLETION_LEDGER.md) as the authoritative inputs for the next narrowed instruction.
 
-As of this update, the next exact build is:
-
-- Stage 34D - Remaining Full-System Certification Harness Benchmark-Target Row Reconciliation
+As of this update, there is no next exact build until an explicit canonical master-plan revision names one.
 
 ## Build Completion Update Rule
 
