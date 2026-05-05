@@ -12,12 +12,6 @@ use selene_engines::ph1providerctl::{
     ProviderNetworkPolicy, ProviderRouteRequest,
 };
 use serde_json::{json, Value};
-use std::collections::BTreeMap;
-use std::io::{BufRead, BufReader, Write};
-use std::net::{TcpListener, TcpStream};
-use std::sync::Arc;
-use std::thread;
-use std::time::{Duration, Instant};
 
 #[test]
 fn stage2_news_provider_global_off_blocks_external_before_network() {
@@ -35,104 +29,6 @@ fn stage2_news_provider_global_off_blocks_external_before_network() {
     assert!(err.message.contains("provider_network_dispatch_count=0"));
     assert!(err.message.contains("billable_class=BLOCKED_NOT_BILLABLE"));
     assert!(err.message.contains("billing_scope=NON_BILLABLE"));
-}
-
-#[derive(Clone)]
-struct MockResponse {
-    status: u16,
-    headers: BTreeMap<String, String>,
-    body: Vec<u8>,
-}
-
-impl MockResponse {
-    fn json(status: u16, body: Value) -> Self {
-        Self {
-            status,
-            headers: BTreeMap::from([("Content-Type".to_string(), "application/json".to_string())]),
-            body: serde_json::to_vec(&body).expect("json serialization should succeed"),
-        }
-    }
-}
-
-fn spawn_server<F>(handler: F, max_requests: usize) -> (String, thread::JoinHandle<()>)
-where
-    F: Fn(&str, &str) -> MockResponse + Send + Sync + 'static,
-{
-    let listener = TcpListener::bind("127.0.0.1:0").expect("bind should succeed");
-    listener
-        .set_nonblocking(true)
-        .expect("nonblocking should succeed");
-
-    let base = format!(
-        "http://{}",
-        listener.local_addr().expect("local addr should exist")
-    );
-    let handler = Arc::new(handler);
-
-    let join = thread::spawn(move || {
-        let deadline = Instant::now() + Duration::from_secs(5);
-        let mut served = 0usize;
-        while served < max_requests && Instant::now() < deadline {
-            match listener.accept() {
-                Ok((mut stream, _)) => {
-                    let (method, path) = read_request_head(&mut stream);
-                    let response = handler(&method, &path);
-                    write_http_response(&mut stream, &response);
-                    served = served.saturating_add(1);
-                }
-                Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
-                    thread::sleep(Duration::from_millis(10));
-                }
-                Err(_) => break,
-            }
-        }
-    });
-
-    (base, join)
-}
-
-fn read_request_head(stream: &mut TcpStream) -> (String, String) {
-    let mut reader = BufReader::new(stream);
-    let mut first_line = String::new();
-    let _ = reader.read_line(&mut first_line);
-
-    loop {
-        let mut line = String::new();
-        if reader.read_line(&mut line).is_err() {
-            break;
-        }
-        if line == "\r\n" || line.is_empty() {
-            break;
-        }
-    }
-
-    let mut parts = first_line.split_whitespace();
-    let method = parts.next().unwrap_or("GET").to_string();
-    let path = parts.next().unwrap_or("/").to_string();
-    (method, path)
-}
-
-fn write_http_response(stream: &mut TcpStream, response: &MockResponse) {
-    let status_text = match response.status {
-        200 => "OK",
-        500 => "Internal Server Error",
-        _ => "Status",
-    };
-
-    let mut head = format!(
-        "HTTP/1.1 {} {}\r\nContent-Length: {}\r\nConnection: close\r\n",
-        response.status,
-        status_text,
-        response.body.len()
-    );
-    for (key, value) in &response.headers {
-        head.push_str(&format!("{}: {}\r\n", key, value));
-    }
-    head.push_str("\r\n");
-
-    let _ = stream.write_all(head.as_bytes());
-    let _ = stream.write_all(&response.body);
-    let _ = stream.flush();
 }
 
 #[test]
@@ -199,6 +95,16 @@ fn runtime(brave_endpoint: &str, gdelt_endpoint: &str) -> NewsRuntimeConfig {
     }
 }
 
+fn fixture_runtime(brave_fixture_json: Value, gdelt_fixture_json: Value) -> NewsRuntimeConfig {
+    let mut config = runtime(
+        "http://127.0.0.1:9/res/v1/news/search",
+        "http://127.0.0.1:9/api/v2/doc/doc",
+    );
+    config.brave_news_fixture_json = Some(brave_fixture_json);
+    config.gdelt_fixture_json = Some(gdelt_fixture_json);
+    config
+}
+
 fn brave_news_payload(items: &[(&str, &str, &str, &str)]) -> Value {
     json!({
         "results": items
@@ -244,44 +150,28 @@ fn source_urls(packet: &Value) -> Vec<String> {
 
 #[test]
 fn test_parity_sources_ordering_and_recency_filtering() {
-    let (base, join) = spawn_server(
-        move |_, path| {
-            if path.starts_with("/res/v1/news/search") {
-                MockResponse::json(
-                    200,
-                    brave_news_payload(&[
-                        (
-                            "Fresh Alpha",
-                            "https://alpha.example.com/a",
-                            "Alpha fresh snippet",
-                            "2026-03-02T00:00:00Z",
-                        ),
-                        (
-                            "Stale Beta",
-                            "https://beta.example.com/b",
-                            "Beta stale snippet",
-                            "2025-01-02T00:00:00Z",
-                        ),
-                        (
-                            "Fresh Gamma",
-                            "https://gamma.example.com/c",
-                            "Gamma fresh snippet",
-                            "2026-03-01T09:00:00Z",
-                        ),
-                    ]),
-                )
-            } else if path.starts_with("/api/v2/doc/doc") {
-                MockResponse::json(200, gdelt_payload(&[]))
-            } else {
-                MockResponse::json(500, json!({"error": "unexpected path"}))
-            }
-        },
-        2,
-    );
-
-    let config = runtime(
-        &format!("{}/res/v1/news/search", base),
-        &format!("{}/api/v2/doc/doc", base),
+    let config = fixture_runtime(
+        brave_news_payload(&[
+            (
+                "Fresh Alpha",
+                "https://alpha.example.com/a",
+                "Alpha fresh snippet",
+                "2026-03-02T00:00:00Z",
+            ),
+            (
+                "Stale Beta",
+                "https://beta.example.com/b",
+                "Beta stale snippet",
+                "2025-01-02T00:00:00Z",
+            ),
+            (
+                "Fresh Gamma",
+                "https://gamma.example.com/c",
+                "Gamma fresh snippet",
+                "2026-03-01T09:00:00Z",
+            ),
+        ]),
+        gdelt_payload(&[]),
     );
     let request = tool_request_packet("market update", "high");
 
@@ -299,44 +189,24 @@ fn test_parity_sources_ordering_and_recency_filtering() {
     );
     assert_eq!(result.audit_metrics.filtered_by_recency_count, 1);
     assert_eq!(result.audit_metrics.recency_window_applied, 7);
-
-    let _ = join.join();
+    assert!(!result.audit_metrics.assist_used);
 }
 
 #[test]
 fn test_parity_diversity_rule_and_assist_usage() {
-    let (base, join) = spawn_server(
-        move |_, path| {
-            if path.starts_with("/res/v1/news/search") {
-                MockResponse::json(
-                    200,
-                    brave_news_payload(&[(
-                        "Single domain only",
-                        "https://same.example.com/a",
-                        "Lead source only",
-                        "2026-03-03T00:00:00Z",
-                    )]),
-                )
-            } else if path.starts_with("/api/v2/doc/doc") {
-                MockResponse::json(
-                    200,
-                    gdelt_payload(&[(
-                        "Assist source",
-                        "https://other.example.org/b",
-                        "Assist improves diversity",
-                        "20260303T010203Z",
-                    )]),
-                )
-            } else {
-                MockResponse::json(500, json!({"error": "unexpected path"}))
-            }
-        },
-        4,
-    );
-
-    let config = runtime(
-        &format!("{}/res/v1/news/search", base),
-        &format!("{}/api/v2/doc/doc", base),
+    let config = fixture_runtime(
+        brave_news_payload(&[(
+            "Single domain only",
+            "https://same.example.com/a",
+            "Lead source only",
+            "2026-03-03T00:00:00Z",
+        )]),
+        gdelt_payload(&[(
+            "Assist source",
+            "https://other.example.org/b",
+            "Assist improves diversity",
+            "20260303T010203Z",
+        )]),
     );
     let request = tool_request_packet("diversity check", "high");
 
@@ -348,44 +218,26 @@ fn test_parity_diversity_rule_and_assist_usage() {
     assert_eq!(result.audit_metrics.distinct_domain_count, 2);
     assert!(result.audit_metrics.diversity_threshold_met);
     assert!(result.audit_metrics.assist_used);
-
-    let _ = join.join();
 }
 
 #[test]
 fn test_parity_conflict_clustering() {
-    let (base, join) = spawn_server(
-        move |_, path| {
-            if path.starts_with("/res/v1/news/search") {
-                MockResponse::json(
-                    200,
-                    brave_news_payload(&[
-                        (
-                            "Acme merger talks advance",
-                            "https://source1.example.com/a",
-                            "Acme confirms merger talks are active",
-                            "2026-03-03T00:00:00Z",
-                        ),
-                        (
-                            "Acme merger talks advance",
-                            "https://source2.example.com/b",
-                            "Acme denies merger talks are active",
-                            "2026-03-03T01:00:00Z",
-                        ),
-                    ]),
-                )
-            } else if path.starts_with("/api/v2/doc/doc") {
-                MockResponse::json(200, gdelt_payload(&[]))
-            } else {
-                MockResponse::json(500, json!({"error": "unexpected path"}))
-            }
-        },
-        2,
-    );
-
-    let config = runtime(
-        &format!("{}/res/v1/news/search", base),
-        &format!("{}/api/v2/doc/doc", base),
+    let config = fixture_runtime(
+        brave_news_payload(&[
+            (
+                "Acme merger talks advance",
+                "https://source1.example.com/a",
+                "Acme confirms merger talks are active",
+                "2026-03-03T00:00:00Z",
+            ),
+            (
+                "Acme merger talks advance",
+                "https://source2.example.com/b",
+                "Acme denies merger talks are active",
+                "2026-03-03T01:00:00Z",
+            ),
+        ]),
+        gdelt_payload(&[]),
     );
     let request = tool_request_packet("acme merger talks", "medium");
 
@@ -405,6 +257,5 @@ fn test_parity_conflict_clustering() {
         clusters[0].get("topic_key").and_then(Value::as_str),
         Some("acme merger talks advance")
     );
-
-    let _ = join.join();
+    assert!(!result.audit_metrics.assist_used);
 }

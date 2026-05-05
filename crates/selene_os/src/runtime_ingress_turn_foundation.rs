@@ -38870,6 +38870,1316 @@ pub fn stage34_source_of_truth_symbol_anchor() {
 }
 const _: fn() = stage34_source_of_truth_symbol_anchor;
 
+mod stage34b_reason_codes {
+    pub const MULTIMODAL_NATIVE_PARITY_READY: &str = "STAGE34_MULTIMODAL_NATIVE_PARITY_READY";
+    pub const CERTIFICATION_HARNESS_INTEGRATION_READY: &str =
+        "STAGE34_CERTIFICATION_HARNESS_INTEGRATION_READY";
+    pub const BROAD_STAGE34_EXIT_READINESS_READY: &str =
+        "STAGE34_BROAD_STAGE34_EXIT_READINESS_READY";
+    pub const NATIVE_DISPLAY_OUTPUT_PARITY_POSTURE_REFERENCE_READY: &str =
+        "STAGE34_NATIVE_DISPLAY_OUTPUT_PARITY_POSTURE_REFERENCE_READY";
+    pub const SOURCE_SELF_CAPABILITY_PARITY_PROOF_REFERENCE_READY: &str =
+        "STAGE34_SOURCE_SELF_CAPABILITY_PARITY_PROOF_REFERENCE_READY";
+    pub const TRUST_RELATIONSHIP_WAKE_CONTINUITY_NATIVE_REFERENCE_READY: &str =
+        "STAGE34_TRUST_RELATIONSHIP_WAKE_CONTINUITY_NATIVE_REFERENCE_READY";
+    pub const STAGE_INPUT_BLOCKED: &str = "STAGE34_PARITY_STAGE_INPUT_BLOCKED";
+    pub const NO_INVENTION_BLOCKED: &str = "STAGE34_PARITY_NO_INVENTION_BLOCKED";
+    pub const PARITY_AUTHORITY_BLOCKED: &str = "STAGE34_PARITY_AUTHORITY_BLOCKED";
+    pub const NATIVE_PARITY_HANDOFF_BLOCKED: &str = "STAGE34_NATIVE_PARITY_HANDOFF_BLOCKED";
+    pub const PUBLIC_PROTECTED_PARITY_BLOCKED: &str = "STAGE34_PUBLIC_PROTECTED_PARITY_BLOCKED";
+    pub const STALE_PARITY_BLOCKED: &str = "STAGE34_STALE_PARITY_BLOCKED";
+    pub const NEWS_PARITY_HARNESS_BLOCKED: &str = "STAGE34_NEWS_PARITY_HARNESS_BLOCKED";
+    pub const UNSAFE_INPUT_BLOCKED: &str = "STAGE34_PARITY_UNSAFE_INPUT_BLOCKED";
+    pub const RUNTIME_MOCK_BLOCKED: &str = "STAGE34_PARITY_RUNTIME_MOCK_BLOCKED";
+    pub const AUDIT_PROOF_MISSING: &str = "STAGE34_PARITY_AUDIT_PROOF_MISSING";
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stage34ParityCertificationKind {
+    MultimodalNativeParity,
+    CertificationHarnessIntegration,
+    BroadStage34ExitReadiness,
+    NativeDisplayOutputParityPostureReference,
+    SourceSelfCapabilityParityProofReference,
+    TrustRelationshipWakeContinuityNativeReference,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stage34ParityCertificationDisposition {
+    MultimodalNativeParityReady,
+    CertificationHarnessIntegrationReady,
+    BroadStage34ExitReadinessReady,
+    NativeDisplayOutputParityPostureReferenceReady,
+    SourceSelfCapabilityParityProofReferenceReady,
+    TrustRelationshipWakeContinuityNativeReferenceReady,
+    StageInputBlocked,
+    NoInventionBlocked,
+    ParityAuthorityBlocked,
+    NativeParityHandoffBlocked,
+    PublicProtectedParityBlocked,
+    StaleParityBlocked,
+    NewsParityHarnessBlocked,
+    UnsafeInputBlocked,
+    RuntimeMockBlocked,
+    AuditProofMissing,
+}
+
+impl Stage34ParityCertificationDisposition {
+    pub const fn default_reason_code(self) -> &'static str {
+        match self {
+            Self::MultimodalNativeParityReady => {
+                stage34b_reason_codes::MULTIMODAL_NATIVE_PARITY_READY
+            }
+            Self::CertificationHarnessIntegrationReady => {
+                stage34b_reason_codes::CERTIFICATION_HARNESS_INTEGRATION_READY
+            }
+            Self::BroadStage34ExitReadinessReady => {
+                stage34b_reason_codes::BROAD_STAGE34_EXIT_READINESS_READY
+            }
+            Self::NativeDisplayOutputParityPostureReferenceReady => {
+                stage34b_reason_codes::NATIVE_DISPLAY_OUTPUT_PARITY_POSTURE_REFERENCE_READY
+            }
+            Self::SourceSelfCapabilityParityProofReferenceReady => {
+                stage34b_reason_codes::SOURCE_SELF_CAPABILITY_PARITY_PROOF_REFERENCE_READY
+            }
+            Self::TrustRelationshipWakeContinuityNativeReferenceReady => {
+                stage34b_reason_codes::TRUST_RELATIONSHIP_WAKE_CONTINUITY_NATIVE_REFERENCE_READY
+            }
+            Self::StageInputBlocked => stage34b_reason_codes::STAGE_INPUT_BLOCKED,
+            Self::NoInventionBlocked => stage34b_reason_codes::NO_INVENTION_BLOCKED,
+            Self::ParityAuthorityBlocked => stage34b_reason_codes::PARITY_AUTHORITY_BLOCKED,
+            Self::NativeParityHandoffBlocked => {
+                stage34b_reason_codes::NATIVE_PARITY_HANDOFF_BLOCKED
+            }
+            Self::PublicProtectedParityBlocked => {
+                stage34b_reason_codes::PUBLIC_PROTECTED_PARITY_BLOCKED
+            }
+            Self::StaleParityBlocked => stage34b_reason_codes::STALE_PARITY_BLOCKED,
+            Self::NewsParityHarnessBlocked => stage34b_reason_codes::NEWS_PARITY_HARNESS_BLOCKED,
+            Self::UnsafeInputBlocked => stage34b_reason_codes::UNSAFE_INPUT_BLOCKED,
+            Self::RuntimeMockBlocked => stage34b_reason_codes::RUNTIME_MOCK_BLOCKED,
+            Self::AuditProofMissing => stage34b_reason_codes::AUDIT_PROOF_MISSING,
+        }
+    }
+
+    pub const fn is_ready(self) -> bool {
+        matches!(
+            self,
+            Self::MultimodalNativeParityReady
+                | Self::CertificationHarnessIntegrationReady
+                | Self::BroadStage34ExitReadinessReady
+                | Self::NativeDisplayOutputParityPostureReferenceReady
+                | Self::SourceSelfCapabilityParityProofReferenceReady
+                | Self::TrustRelationshipWakeContinuityNativeReferenceReady
+        )
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Stage34ParityCertificationWorkAuthority {
+    pub can_emit_multimodal_native_parity_packet: bool,
+    pub can_emit_certification_harness_integration_packet: bool,
+    pub can_emit_broad_stage34_exit_readiness_packet: bool,
+    pub can_emit_native_display_output_parity_posture_reference: bool,
+    pub can_emit_source_self_capability_parity_proof_reference: bool,
+    pub can_emit_trust_relationship_wake_continuity_native_reference: bool,
+    pub can_emit_honest_uncertainty: bool,
+    pub can_fail_closed: bool,
+    pub can_invent_facts: bool,
+    pub can_invent_parity_certainty: bool,
+    pub can_invent_certification_pass: bool,
+    pub can_invent_provider_access: bool,
+    pub can_invent_search_access: bool,
+    pub can_invent_execution_authority: bool,
+    pub can_invent_completion_success: bool,
+    pub can_invent_approval: bool,
+    pub can_connector_write: bool,
+    pub can_dispatch: bool,
+    pub can_execute: bool,
+    pub can_emit_tts_or_playback: bool,
+    pub can_create_user_turn: bool,
+    pub can_treat_visible_parity_wording_as_action_success: bool,
+}
+
+impl Stage34ParityCertificationWorkAuthority {
+    pub const fn fail_closed() -> Self {
+        Self {
+            can_emit_multimodal_native_parity_packet: false,
+            can_emit_certification_harness_integration_packet: false,
+            can_emit_broad_stage34_exit_readiness_packet: false,
+            can_emit_native_display_output_parity_posture_reference: false,
+            can_emit_source_self_capability_parity_proof_reference: false,
+            can_emit_trust_relationship_wake_continuity_native_reference: false,
+            can_emit_honest_uncertainty: true,
+            can_fail_closed: true,
+            can_invent_facts: false,
+            can_invent_parity_certainty: false,
+            can_invent_certification_pass: false,
+            can_invent_provider_access: false,
+            can_invent_search_access: false,
+            can_invent_execution_authority: false,
+            can_invent_completion_success: false,
+            can_invent_approval: false,
+            can_connector_write: false,
+            can_dispatch: false,
+            can_execute: false,
+            can_emit_tts_or_playback: false,
+            can_create_user_turn: false,
+            can_treat_visible_parity_wording_as_action_success: false,
+        }
+    }
+
+    pub const fn multimodal_native_parity_ready() -> Self {
+        let mut authority = Self::fail_closed();
+        authority.can_emit_multimodal_native_parity_packet = true;
+        authority
+    }
+
+    pub const fn certification_harness_integration_ready() -> Self {
+        let mut authority = Self::fail_closed();
+        authority.can_emit_certification_harness_integration_packet = true;
+        authority
+    }
+
+    pub const fn broad_stage34_exit_readiness_ready() -> Self {
+        let mut authority = Self::fail_closed();
+        authority.can_emit_broad_stage34_exit_readiness_packet = true;
+        authority
+    }
+
+    pub const fn native_display_output_parity_posture_reference_ready() -> Self {
+        let mut authority = Self::fail_closed();
+        authority.can_emit_native_display_output_parity_posture_reference = true;
+        authority
+    }
+
+    pub const fn source_self_capability_parity_proof_reference_ready() -> Self {
+        let mut authority = Self::fail_closed();
+        authority.can_emit_source_self_capability_parity_proof_reference = true;
+        authority
+    }
+
+    pub const fn trust_relationship_wake_continuity_native_reference_ready() -> Self {
+        let mut authority = Self::fail_closed();
+        authority.can_emit_trust_relationship_wake_continuity_native_reference = true;
+        authority
+    }
+
+    pub const fn can_mutate_or_execute(&self) -> bool {
+        self.can_invent_facts
+            || self.can_invent_parity_certainty
+            || self.can_invent_certification_pass
+            || self.can_invent_provider_access
+            || self.can_invent_search_access
+            || self.can_invent_execution_authority
+            || self.can_invent_completion_success
+            || self.can_invent_approval
+            || self.can_connector_write
+            || self.can_dispatch
+            || self.can_execute
+            || self.can_emit_tts_or_playback
+            || self.can_create_user_turn
+            || self.can_treat_visible_parity_wording_as_action_success
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Stage34ParityCertificationInput {
+    pub parity_kind: Stage34ParityCertificationKind,
+    pub multimodal_native_parity_id: Option<String>,
+    pub certification_harness_id: Option<String>,
+    pub broad_stage34_exit_readiness_id: Option<String>,
+    pub native_display_output_parity_id: Option<String>,
+    pub source_self_capability_parity_proof_id: Option<String>,
+    pub trust_relationship_wake_continuity_native_id: Option<String>,
+    pub audit_id: Option<String>,
+    pub ph1j_proof_ref: Option<String>,
+    pub stage18_display_ref_present: bool,
+    pub stage18_display_ref_non_authoritative: bool,
+    pub stage34_source_ref_present: bool,
+    pub stage34_source_ref_non_authoritative: bool,
+    pub stage31_notification_ref_present: bool,
+    pub stage31_notification_ref_non_authoritative: bool,
+    pub stage32_trust_ref_present: bool,
+    pub stage32_trust_ref_non_authoritative: bool,
+    pub stage33_relationship_ref_present: bool,
+    pub stage33_relationship_ref_non_authoritative: bool,
+    pub ph1voiceid_ref_present: bool,
+    pub ph1voiceid_ref_non_authoritative: bool,
+    pub ph1d_ref_present: bool,
+    pub ph1d_ref_non_authoritative: bool,
+    pub ph1ecm_ref_present: bool,
+    pub ph1ecm_ref_non_authoritative: bool,
+    pub ph1simcat_ref_present: bool,
+    pub ph1simcat_ref_non_authoritative: bool,
+    pub ph1simfinder_ref_present: bool,
+    pub ph1simfinder_ref_non_authoritative: bool,
+    pub authoritative_engine_inventory_ref_present: bool,
+    pub coverage_matrix_ref_present: bool,
+    pub news_parity_ref_present: bool,
+    pub certification_eval_ref_present: bool,
+    pub parity_fixture_ref_present: bool,
+    pub authority_bounded: bool,
+    pub tenant_user_device_session_scoped: bool,
+    pub uncertainty_preserved: bool,
+    pub secret_safe: bool,
+    pub redacted: bool,
+    pub stale_aware: bool,
+    pub revocation_aware: bool,
+    pub voice_identity_inform_only: bool,
+    pub voice_identity_tenant_device_session_scoped: bool,
+    pub voice_identity_cross_speaker_risk: bool,
+    pub parity_invented_fact: bool,
+    pub parity_invented_parity_success: bool,
+    pub parity_invented_native_parity_success: bool,
+    pub parity_invented_certification_pass: bool,
+    pub parity_invented_capability_availability: bool,
+    pub parity_invented_capability_success: bool,
+    pub parity_invented_provider_access: bool,
+    pub parity_invented_search_access: bool,
+    pub parity_invented_execution_authority: bool,
+    pub parity_invented_completion_success: bool,
+    pub parity_invented_approval: bool,
+    pub parity_invented_remote_completion: bool,
+    pub parity_invented_work_or_lease_authority: bool,
+    pub parity_invented_route_authority: bool,
+    pub parity_invented_attachment_citation_url_date_or_provenance: bool,
+    pub parity_invented_provider_or_tool_result: bool,
+    pub parity_implied_approval_dispatch_execution_delivery_publication_wake_or_completion_without_proof:
+        bool,
+    pub unverifiable: bool,
+    pub stale: bool,
+    pub secret_unsafe: bool,
+    pub cross_tenant: bool,
+    pub cross_route: bool,
+    pub cross_connector: bool,
+    pub parity_mismatch: bool,
+    pub harness_mismatch: bool,
+    pub certification_mismatch: bool,
+    pub source_mismatch: bool,
+    pub narration_mismatch: bool,
+    pub capability_mismatch: bool,
+    pub memory_mismatch: bool,
+    pub relationship_mismatch: bool,
+    pub trust_mismatch: bool,
+    pub wake_mismatch: bool,
+    pub recovery_mismatch: bool,
+    pub continuity_mismatch: bool,
+    pub publication_mismatch: bool,
+    pub settlement_mismatch: bool,
+    pub connector_mismatch: bool,
+    pub route_mismatch: bool,
+    pub lease_mismatch: bool,
+    pub protected_gate_mismatch: bool,
+    pub tenant_mismatch: bool,
+    pub missing_proof: bool,
+    pub ownership_drift: bool,
+    pub native_parity_declarative_only: bool,
+    pub native_parity_mutates_state: bool,
+    pub native_parity_connector_writes: bool,
+    pub native_parity_dispatches_or_executes: bool,
+    pub native_parity_calls_providers_or_tools: bool,
+    pub native_parity_emits_tts_or_playback: bool,
+    pub native_parity_creates_user_turn: bool,
+    pub native_parity_treats_visible_wording_as_action_success: bool,
+    pub protected_action_like_request: bool,
+    pub protected_slot_or_authority_ambiguous: bool,
+    pub unsafe_identity_posture: bool,
+    pub stale_or_cancelled_or_superseded_output: bool,
+    pub session_closed: bool,
+    pub record_artifact_only_turn: bool,
+    pub stale_native_state: bool,
+    pub stale_source_state: bool,
+    pub stale_work_state: bool,
+    pub stale_lease_state: bool,
+    pub stale_route_state: bool,
+    pub stale_connector_state: bool,
+    pub stale_protected_gate_state: bool,
+    pub parity_silently_claims_execution_ability: bool,
+    pub parity_silently_implies_provider_access: bool,
+    pub parity_silently_implies_live_delivery: bool,
+    pub parity_silently_implies_protected_completion: bool,
+    pub parity_identity_matches_current_output_session: bool,
+    pub replay_upgrades_blocked_authority: bool,
+    pub fake_parity_detected: bool,
+    pub fake_certification_detected: bool,
+    pub fake_source_detected: bool,
+    pub fake_self_detected: bool,
+    pub fake_capability_detected: bool,
+    pub fake_completion_detected: bool,
+    pub fake_approval_detected: bool,
+    pub runtime_mock_detected: bool,
+    pub raw_provider_output_present: bool,
+    pub raw_search_dump_present: bool,
+    pub raw_media_present: bool,
+    pub raw_connector_credential_field_present: bool,
+    pub raw_native_field_present: bool,
+    pub unverified_source_evidence_present: bool,
+    pub unsupported_claim_candidate_present: bool,
+    pub fake_parity_source_carrier_present: bool,
+    pub prior_continuity_or_memory_used_as_truth_authority: bool,
+    pub protected_action_candidate_present: bool,
+    pub simulation_candidate_present: bool,
+    pub approved_execution_plan_present: bool,
+    pub secrets_exposed: bool,
+    pub raw_biometric_material_exposed: bool,
+    pub internal_trace_exposed: bool,
+    pub access_denied: bool,
+    pub policy_denied: bool,
+    pub attempted_live_provider_in_build: bool,
+    pub generated_live_media_in_build: bool,
+    pub ran_live_search_in_build: bool,
+    pub called_live_external_tool_in_build: bool,
+    pub connector_write_requested: bool,
+    pub ran_live_notification_delivery_in_build: bool,
+    pub ran_live_background_execution_in_build: bool,
+    pub ran_live_tts_or_playback_in_build: bool,
+    pub captured_microphone_audio: bool,
+    pub transcribed_live_audio: bool,
+    pub voice_id_matching_attempted: bool,
+    pub native_ui_behavior_added: bool,
+    pub news_parity_blocker_repaired: bool,
+    pub test_parity_conflict_clustering_passed: bool,
+    pub certification_harness_offline_deterministic: bool,
+    pub provider_off_proof_preserved: bool,
+    pub broad_stage34_exit_proven: bool,
+    pub fixture_only_test_path: bool,
+}
+
+impl Stage34ParityCertificationInput {
+    #[cfg(test)]
+    fn fixture_base(
+        parity_kind: Stage34ParityCertificationKind,
+        audit_id: impl Into<String>,
+    ) -> Self {
+        Self {
+            parity_kind,
+            multimodal_native_parity_id: Some("multimodal-native-parity-stage34".to_string()),
+            certification_harness_id: Some("certification-harness-stage34".to_string()),
+            broad_stage34_exit_readiness_id: Some("broad-stage34-exit-readiness-stage34".to_string()),
+            native_display_output_parity_id: Some("native-display-output-parity-stage34".to_string()),
+            source_self_capability_parity_proof_id: Some(
+                "source-self-capability-parity-stage34".to_string(),
+            ),
+            trust_relationship_wake_continuity_native_id: Some(
+                "trust-relationship-wake-native-stage34".to_string(),
+            ),
+            audit_id: Some(audit_id.into()),
+            ph1j_proof_ref: Some("audit-proof-stage34b".to_string()),
+            stage18_display_ref_present: true,
+            stage18_display_ref_non_authoritative: true,
+            stage34_source_ref_present: true,
+            stage34_source_ref_non_authoritative: true,
+            stage31_notification_ref_present: true,
+            stage31_notification_ref_non_authoritative: true,
+            stage32_trust_ref_present: true,
+            stage32_trust_ref_non_authoritative: true,
+            stage33_relationship_ref_present: true,
+            stage33_relationship_ref_non_authoritative: true,
+            ph1voiceid_ref_present: true,
+            ph1voiceid_ref_non_authoritative: true,
+            ph1d_ref_present: true,
+            ph1d_ref_non_authoritative: true,
+            ph1ecm_ref_present: true,
+            ph1ecm_ref_non_authoritative: true,
+            ph1simcat_ref_present: true,
+            ph1simcat_ref_non_authoritative: true,
+            ph1simfinder_ref_present: true,
+            ph1simfinder_ref_non_authoritative: true,
+            authoritative_engine_inventory_ref_present: true,
+            coverage_matrix_ref_present: true,
+            news_parity_ref_present: true,
+            certification_eval_ref_present: true,
+            parity_fixture_ref_present: true,
+            authority_bounded: true,
+            tenant_user_device_session_scoped: true,
+            uncertainty_preserved: true,
+            secret_safe: true,
+            redacted: true,
+            stale_aware: true,
+            revocation_aware: true,
+            voice_identity_inform_only: true,
+            voice_identity_tenant_device_session_scoped: true,
+            voice_identity_cross_speaker_risk: false,
+            parity_invented_fact: false,
+            parity_invented_parity_success: false,
+            parity_invented_native_parity_success: false,
+            parity_invented_certification_pass: false,
+            parity_invented_capability_availability: false,
+            parity_invented_capability_success: false,
+            parity_invented_provider_access: false,
+            parity_invented_search_access: false,
+            parity_invented_execution_authority: false,
+            parity_invented_completion_success: false,
+            parity_invented_approval: false,
+            parity_invented_remote_completion: false,
+            parity_invented_work_or_lease_authority: false,
+            parity_invented_route_authority: false,
+            parity_invented_attachment_citation_url_date_or_provenance: false,
+            parity_invented_provider_or_tool_result: false,
+            parity_implied_approval_dispatch_execution_delivery_publication_wake_or_completion_without_proof:
+                false,
+            unverifiable: false,
+            stale: false,
+            secret_unsafe: false,
+            cross_tenant: false,
+            cross_route: false,
+            cross_connector: false,
+            parity_mismatch: false,
+            harness_mismatch: false,
+            certification_mismatch: false,
+            source_mismatch: false,
+            narration_mismatch: false,
+            capability_mismatch: false,
+            memory_mismatch: false,
+            relationship_mismatch: false,
+            trust_mismatch: false,
+            wake_mismatch: false,
+            recovery_mismatch: false,
+            continuity_mismatch: false,
+            publication_mismatch: false,
+            settlement_mismatch: false,
+            connector_mismatch: false,
+            route_mismatch: false,
+            lease_mismatch: false,
+            protected_gate_mismatch: false,
+            tenant_mismatch: false,
+            missing_proof: false,
+            ownership_drift: false,
+            native_parity_declarative_only: true,
+            native_parity_mutates_state: false,
+            native_parity_connector_writes: false,
+            native_parity_dispatches_or_executes: false,
+            native_parity_calls_providers_or_tools: false,
+            native_parity_emits_tts_or_playback: false,
+            native_parity_creates_user_turn: false,
+            native_parity_treats_visible_wording_as_action_success: false,
+            protected_action_like_request: false,
+            protected_slot_or_authority_ambiguous: false,
+            unsafe_identity_posture: false,
+            stale_or_cancelled_or_superseded_output: false,
+            session_closed: false,
+            record_artifact_only_turn: false,
+            stale_native_state: false,
+            stale_source_state: false,
+            stale_work_state: false,
+            stale_lease_state: false,
+            stale_route_state: false,
+            stale_connector_state: false,
+            stale_protected_gate_state: false,
+            parity_silently_claims_execution_ability: false,
+            parity_silently_implies_provider_access: false,
+            parity_silently_implies_live_delivery: false,
+            parity_silently_implies_protected_completion: false,
+            parity_identity_matches_current_output_session: true,
+            replay_upgrades_blocked_authority: false,
+            fake_parity_detected: false,
+            fake_certification_detected: false,
+            fake_source_detected: false,
+            fake_self_detected: false,
+            fake_capability_detected: false,
+            fake_completion_detected: false,
+            fake_approval_detected: false,
+            runtime_mock_detected: false,
+            raw_provider_output_present: false,
+            raw_search_dump_present: false,
+            raw_media_present: false,
+            raw_connector_credential_field_present: false,
+            raw_native_field_present: false,
+            unverified_source_evidence_present: false,
+            unsupported_claim_candidate_present: false,
+            fake_parity_source_carrier_present: false,
+            prior_continuity_or_memory_used_as_truth_authority: false,
+            protected_action_candidate_present: false,
+            simulation_candidate_present: false,
+            approved_execution_plan_present: false,
+            secrets_exposed: false,
+            raw_biometric_material_exposed: false,
+            internal_trace_exposed: false,
+            access_denied: false,
+            policy_denied: false,
+            attempted_live_provider_in_build: false,
+            generated_live_media_in_build: false,
+            ran_live_search_in_build: false,
+            called_live_external_tool_in_build: false,
+            connector_write_requested: false,
+            ran_live_notification_delivery_in_build: false,
+            ran_live_background_execution_in_build: false,
+            ran_live_tts_or_playback_in_build: false,
+            captured_microphone_audio: false,
+            transcribed_live_audio: false,
+            voice_id_matching_attempted: false,
+            native_ui_behavior_added: false,
+            news_parity_blocker_repaired: true,
+            test_parity_conflict_clustering_passed: true,
+            certification_harness_offline_deterministic: true,
+            provider_off_proof_preserved: true,
+            broad_stage34_exit_proven: true,
+            fixture_only_test_path: true,
+        }
+    }
+
+    #[cfg(test)]
+    fn fixture_multimodal_native_parity_ready(audit_id: impl Into<String>) -> Self {
+        Self::fixture_base(
+            Stage34ParityCertificationKind::MultimodalNativeParity,
+            audit_id,
+        )
+    }
+
+    #[cfg(test)]
+    fn fixture_certification_harness_integration_ready(audit_id: impl Into<String>) -> Self {
+        Self::fixture_base(
+            Stage34ParityCertificationKind::CertificationHarnessIntegration,
+            audit_id,
+        )
+    }
+
+    #[cfg(test)]
+    fn fixture_broad_stage34_exit_readiness_ready(audit_id: impl Into<String>) -> Self {
+        Self::fixture_base(
+            Stage34ParityCertificationKind::BroadStage34ExitReadiness,
+            audit_id,
+        )
+    }
+
+    #[cfg(test)]
+    fn fixture_native_display_output_parity_posture_reference_ready(
+        parity_id: impl Into<String>,
+        audit_id: impl Into<String>,
+    ) -> Self {
+        let mut input = Self::fixture_base(
+            Stage34ParityCertificationKind::NativeDisplayOutputParityPostureReference,
+            audit_id,
+        );
+        input.native_display_output_parity_id = Some(parity_id.into());
+        input
+    }
+
+    #[cfg(test)]
+    fn fixture_source_self_capability_parity_proof_reference_ready(
+        parity_id: impl Into<String>,
+        audit_id: impl Into<String>,
+    ) -> Self {
+        let mut input = Self::fixture_base(
+            Stage34ParityCertificationKind::SourceSelfCapabilityParityProofReference,
+            audit_id,
+        );
+        input.source_self_capability_parity_proof_id = Some(parity_id.into());
+        input
+    }
+
+    #[cfg(test)]
+    fn fixture_trust_relationship_wake_continuity_native_reference_ready(
+        parity_id: impl Into<String>,
+        audit_id: impl Into<String>,
+    ) -> Self {
+        let mut input = Self::fixture_base(
+            Stage34ParityCertificationKind::TrustRelationshipWakeContinuityNativeReference,
+            audit_id,
+        );
+        input.trust_relationship_wake_continuity_native_id = Some(parity_id.into());
+        input
+    }
+}
+
+impl Validate for Stage34ParityCertificationInput {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        for (field, value) in [
+            (
+                "stage34_parity_certification_input.multimodal_native_parity_id",
+                self.multimodal_native_parity_id.as_deref(),
+            ),
+            (
+                "stage34_parity_certification_input.certification_harness_id",
+                self.certification_harness_id.as_deref(),
+            ),
+            (
+                "stage34_parity_certification_input.broad_stage34_exit_readiness_id",
+                self.broad_stage34_exit_readiness_id.as_deref(),
+            ),
+            (
+                "stage34_parity_certification_input.native_display_output_parity_id",
+                self.native_display_output_parity_id.as_deref(),
+            ),
+            (
+                "stage34_parity_certification_input.source_self_capability_parity_proof_id",
+                self.source_self_capability_parity_proof_id.as_deref(),
+            ),
+            (
+                "stage34_parity_certification_input.trust_relationship_wake_continuity_native_id",
+                self.trust_relationship_wake_continuity_native_id.as_deref(),
+            ),
+            (
+                "stage34_parity_certification_input.audit_id",
+                self.audit_id.as_deref(),
+            ),
+            (
+                "stage34_parity_certification_input.ph1j_proof_ref",
+                self.ph1j_proof_ref.as_deref(),
+            ),
+        ] {
+            validate_stage4_optional_ref(field, value)?;
+        }
+        if self.attempted_live_provider_in_build
+            || self.generated_live_media_in_build
+            || self.ran_live_search_in_build
+            || self.called_live_external_tool_in_build
+            || self.connector_write_requested
+            || self.ran_live_notification_delivery_in_build
+            || self.ran_live_background_execution_in_build
+            || self.ran_live_tts_or_playback_in_build
+            || self.captured_microphone_audio
+            || self.transcribed_live_audio
+            || self.voice_id_matching_attempted
+            || self.native_ui_behavior_added
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage34_parity_certification_input.live_build_boundary",
+                reason:
+                    "Stage 34B cannot call live providers/search/tools, generate live media, connector-write, deliver live notification/background execution, emit TTS/playback, capture mic/STT, perform Voice ID matching, or add native UI behavior",
+            });
+        }
+        if (self.fake_parity_detected
+            || self.fake_certification_detected
+            || self.fake_source_detected
+            || self.fake_self_detected
+            || self.fake_capability_detected
+            || self.fake_completion_detected
+            || self.fake_approval_detected
+            || self.runtime_mock_detected)
+            && !self.fixture_only_test_path
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage34_parity_certification_input.runtime_mock_boundary",
+                reason:
+                    "runtime mocks and fake parity/certification/source/self/capability/completion/approval success are forbidden outside explicit fixture-only paths",
+            });
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Stage34ParityCertificationPacket {
+    pub session_id: SessionId,
+    pub turn_id: Option<TurnId>,
+    pub activation_id: Option<String>,
+    pub response_output_id: String,
+    pub response_hash: String,
+    pub public_answer_id: String,
+    pub speech_output_id: Option<String>,
+    pub display_output_id: String,
+    pub output_interaction_id: Option<String>,
+    pub conversation_continuity_id: Option<String>,
+    pub notification_disclosure_id: Option<String>,
+    pub wake_reentry_id: Option<String>,
+    pub trust_calibration_id: Option<String>,
+    pub relationship_memory_id: Option<String>,
+    pub continuity_framing_id: Option<String>,
+    pub longer_horizon_governance_id: Option<String>,
+    pub source_of_truth_id: Option<String>,
+    pub self_description_id: Option<String>,
+    pub capability_narration_id: Option<String>,
+    pub work_id: Option<String>,
+    pub lease_id: Option<String>,
+    pub access_context_id: Option<String>,
+    pub policy_context_id: Option<String>,
+    pub tenant_id: Option<String>,
+    pub multimodal_native_parity_id: Option<String>,
+    pub certification_harness_id: Option<String>,
+    pub broad_stage34_exit_readiness_id: Option<String>,
+    pub native_display_output_parity_id: Option<String>,
+    pub source_self_capability_parity_proof_id: Option<String>,
+    pub trust_relationship_wake_continuity_native_id: Option<String>,
+    pub audit_id: Option<String>,
+    pub ph1j_proof_ref: Option<String>,
+    pub stage18_disposition: Stage18MultimodalDisplayDisposition,
+    pub stage34_disposition: Stage34SourceOfTruthDisposition,
+    pub stage31_disposition: Option<Stage31NotificationWakeReentryDisposition>,
+    pub stage32_disposition: Option<Stage32TrustCalibrationDisposition>,
+    pub stage33_disposition: Option<Stage33RelationshipMemoryDisposition>,
+    pub parity_kind: Stage34ParityCertificationKind,
+    pub disposition: Stage34ParityCertificationDisposition,
+    pub reason_code: &'static str,
+    pub stage18_ref_non_authoritative: bool,
+    pub stage34_ref_non_authoritative: bool,
+    pub stage31_ref_non_authoritative: bool,
+    pub stage32_ref_non_authoritative: bool,
+    pub stage33_ref_non_authoritative: bool,
+    pub ph1voiceid_ref_non_authoritative: bool,
+    pub ph1d_ref_non_authoritative: bool,
+    pub ph1ecm_ref_non_authoritative: bool,
+    pub ph1simcat_ref_non_authoritative: bool,
+    pub ph1simfinder_ref_non_authoritative: bool,
+    pub stage34_ref_bounded_authority_context: bool,
+    pub news_parity_blocker_repaired: bool,
+    pub test_parity_conflict_clustering_passed: bool,
+    pub certification_harness_offline_deterministic: bool,
+    pub provider_off_proof_preserved: bool,
+    pub broad_stage34_exit_proven: bool,
+    pub work_authority: Stage34ParityCertificationWorkAuthority,
+}
+
+impl Stage34ParityCertificationPacket {
+    pub fn from_stage34_source_of_truth(
+        display_output: &Stage18MultimodalDisplayPacket,
+        source_output: &Stage34SourceOfTruthPacket,
+        input: Stage34ParityCertificationInput,
+    ) -> Result<Self, ContractViolation> {
+        display_output.validate()?;
+        source_output.validate()?;
+        input.validate()?;
+        let disposition = Self::decide_disposition(display_output, source_output, &input);
+        let work_authority = Self::work_authority_for(disposition);
+        let audit_id = input
+            .audit_id
+            .clone()
+            .or_else(|| source_output.audit_id.clone())
+            .or_else(|| display_output.audit_id.clone());
+        let ph1j_proof_ref = input
+            .ph1j_proof_ref
+            .clone()
+            .or_else(|| source_output.ph1j_proof_ref.clone())
+            .or_else(|| display_output.ph1j_proof_ref.clone())
+            .or_else(|| audit_id.clone());
+        let packet = Self {
+            session_id: source_output.session_id,
+            turn_id: source_output.turn_id,
+            activation_id: source_output
+                .activation_id
+                .clone()
+                .or_else(|| display_output.activation_id.clone()),
+            response_output_id: display_output.response_output_id.clone(),
+            response_hash: display_output.response_hash.clone(),
+            public_answer_id: display_output.public_answer_id.clone(),
+            speech_output_id: display_output.speech_output_id.clone(),
+            display_output_id: display_output.display_output_id.clone(),
+            output_interaction_id: source_output.output_interaction_id.clone(),
+            conversation_continuity_id: source_output.conversation_continuity_id.clone(),
+            notification_disclosure_id: source_output.notification_disclosure_id.clone(),
+            wake_reentry_id: source_output.wake_reentry_id.clone(),
+            trust_calibration_id: source_output.trust_calibration_id.clone(),
+            relationship_memory_id: source_output.relationship_memory_id.clone(),
+            continuity_framing_id: source_output.continuity_framing_id.clone(),
+            longer_horizon_governance_id: source_output.longer_horizon_governance_id.clone(),
+            source_of_truth_id: source_output.source_of_truth_id.clone(),
+            self_description_id: source_output.self_description_id.clone(),
+            capability_narration_id: source_output.capability_narration_id.clone(),
+            work_id: source_output.work_id.clone(),
+            lease_id: source_output.lease_id.clone(),
+            access_context_id: source_output
+                .access_context_id
+                .clone()
+                .or_else(|| display_output.access_context_id.clone()),
+            policy_context_id: source_output
+                .policy_context_id
+                .clone()
+                .or_else(|| display_output.policy_context_id.clone()),
+            tenant_id: source_output
+                .tenant_id
+                .clone()
+                .or_else(|| display_output.tenant_id.clone()),
+            multimodal_native_parity_id: input.multimodal_native_parity_id,
+            certification_harness_id: input.certification_harness_id,
+            broad_stage34_exit_readiness_id: input.broad_stage34_exit_readiness_id,
+            native_display_output_parity_id: input.native_display_output_parity_id,
+            source_self_capability_parity_proof_id: input.source_self_capability_parity_proof_id,
+            trust_relationship_wake_continuity_native_id: input
+                .trust_relationship_wake_continuity_native_id,
+            audit_id,
+            ph1j_proof_ref,
+            stage18_disposition: display_output.disposition,
+            stage34_disposition: source_output.disposition,
+            stage31_disposition: source_output.stage31_disposition,
+            stage32_disposition: source_output.stage32_disposition,
+            stage33_disposition: source_output.stage33_disposition,
+            parity_kind: input.parity_kind,
+            disposition,
+            reason_code: disposition.default_reason_code(),
+            stage18_ref_non_authoritative: input.stage18_display_ref_non_authoritative,
+            stage34_ref_non_authoritative: input.stage34_source_ref_non_authoritative,
+            stage31_ref_non_authoritative: input.stage31_notification_ref_non_authoritative,
+            stage32_ref_non_authoritative: input.stage32_trust_ref_non_authoritative,
+            stage33_ref_non_authoritative: input.stage33_relationship_ref_non_authoritative,
+            ph1voiceid_ref_non_authoritative: input.ph1voiceid_ref_non_authoritative,
+            ph1d_ref_non_authoritative: input.ph1d_ref_non_authoritative,
+            ph1ecm_ref_non_authoritative: input.ph1ecm_ref_non_authoritative,
+            ph1simcat_ref_non_authoritative: input.ph1simcat_ref_non_authoritative,
+            ph1simfinder_ref_non_authoritative: input.ph1simfinder_ref_non_authoritative,
+            stage34_ref_bounded_authority_context: source_output
+                .stage12_ref_bounded_authority_context,
+            news_parity_blocker_repaired: input.news_parity_blocker_repaired,
+            test_parity_conflict_clustering_passed: input.test_parity_conflict_clustering_passed,
+            certification_harness_offline_deterministic: input
+                .certification_harness_offline_deterministic,
+            provider_off_proof_preserved: input.provider_off_proof_preserved,
+            broad_stage34_exit_proven: input.broad_stage34_exit_proven,
+            work_authority,
+        };
+        packet.validate()?;
+        Ok(packet)
+    }
+
+    pub const fn can_mutate_or_execute(&self) -> bool {
+        self.work_authority.can_mutate_or_execute()
+    }
+
+    fn decide_disposition(
+        display_output: &Stage18MultimodalDisplayPacket,
+        source_output: &Stage34SourceOfTruthPacket,
+        input: &Stage34ParityCertificationInput,
+    ) -> Stage34ParityCertificationDisposition {
+        if input.runtime_mock_detected
+            || input.fake_parity_detected
+            || input.fake_certification_detected
+            || input.fake_source_detected
+            || input.fake_self_detected
+            || input.fake_capability_detected
+            || input.fake_completion_detected
+            || input.fake_approval_detected
+        {
+            return Stage34ParityCertificationDisposition::RuntimeMockBlocked;
+        }
+        if input.raw_provider_output_present
+            || input.raw_search_dump_present
+            || input.raw_media_present
+            || input.raw_connector_credential_field_present
+            || input.raw_native_field_present
+            || input.unverified_source_evidence_present
+            || input.unsupported_claim_candidate_present
+            || input.fake_parity_source_carrier_present
+            || input.prior_continuity_or_memory_used_as_truth_authority
+            || input.protected_action_candidate_present
+            || input.simulation_candidate_present
+            || input.approved_execution_plan_present
+            || input.secrets_exposed
+            || input.raw_biometric_material_exposed
+            || input.internal_trace_exposed
+            || input.access_denied
+            || input.policy_denied
+        {
+            return Stage34ParityCertificationDisposition::UnsafeInputBlocked;
+        }
+        if !display_output.disposition.is_ready()
+            || display_output.can_mutate_or_execute()
+            || !source_output.disposition.is_ready()
+            || source_output.can_mutate_or_execute()
+            || display_output.session_id != source_output.session_id
+            || display_output.turn_id != source_output.turn_id
+            || display_output.access_context_id != source_output.access_context_id
+            || display_output.policy_context_id != source_output.policy_context_id
+            || display_output.tenant_id != source_output.tenant_id
+            || !input.stage18_display_ref_present
+            || !input.stage18_display_ref_non_authoritative
+            || !input.stage34_source_ref_present
+            || !input.stage34_source_ref_non_authoritative
+            || !input.stage31_notification_ref_present
+            || !input.stage31_notification_ref_non_authoritative
+            || !input.stage32_trust_ref_present
+            || !input.stage32_trust_ref_non_authoritative
+            || !input.stage33_relationship_ref_present
+            || !input.stage33_relationship_ref_non_authoritative
+        {
+            return Stage34ParityCertificationDisposition::StageInputBlocked;
+        }
+        if input.audit_id.is_none()
+            && input.ph1j_proof_ref.is_none()
+            && source_output.audit_id.is_none()
+            && source_output.ph1j_proof_ref.is_none()
+            && display_output.audit_id.is_none()
+            && display_output.ph1j_proof_ref.is_none()
+        {
+            return Stage34ParityCertificationDisposition::AuditProofMissing;
+        }
+        if input.parity_invented_fact
+            || input.parity_invented_parity_success
+            || input.parity_invented_native_parity_success
+            || input.parity_invented_certification_pass
+            || input.parity_invented_capability_availability
+            || input.parity_invented_capability_success
+            || input.parity_invented_provider_access
+            || input.parity_invented_search_access
+            || input.parity_invented_execution_authority
+            || input.parity_invented_completion_success
+            || input.parity_invented_approval
+            || input.parity_invented_remote_completion
+            || input.parity_invented_work_or_lease_authority
+            || input.parity_invented_route_authority
+            || input.parity_invented_attachment_citation_url_date_or_provenance
+            || input.parity_invented_provider_or_tool_result
+            || input.parity_implied_approval_dispatch_execution_delivery_publication_wake_or_completion_without_proof
+        {
+            return Stage34ParityCertificationDisposition::NoInventionBlocked;
+        }
+        if !input.native_parity_declarative_only
+            || input.native_parity_mutates_state
+            || input.native_parity_connector_writes
+            || input.native_parity_dispatches_or_executes
+            || input.native_parity_calls_providers_or_tools
+            || input.native_parity_emits_tts_or_playback
+            || input.native_parity_creates_user_turn
+            || input.native_parity_treats_visible_wording_as_action_success
+            || !display_output.native_bridge_declarative_only
+            || display_output.native_bridge_mutates_state
+            || display_output.native_bridge_connector_writes
+            || display_output.native_bridge_dispatches_or_executes
+            || display_output.native_bridge_calls_providers_or_tools
+            || display_output.native_bridge_emits_tts_or_playback
+            || display_output.native_bridge_creates_user_turn
+            || display_output.native_bridge_treats_render_as_action_success
+        {
+            return Stage34ParityCertificationDisposition::NativeParityHandoffBlocked;
+        }
+        if input.protected_action_like_request
+            || input.protected_slot_or_authority_ambiguous
+            || input.unsafe_identity_posture
+            || display_output.protected_action_like_request
+            || display_output.protected_slot_or_authority_ambiguous
+            || display_output.unsafe_identity_posture
+        {
+            return Stage34ParityCertificationDisposition::PublicProtectedParityBlocked;
+        }
+        if input.stale_or_cancelled_or_superseded_output
+            || input.session_closed
+            || input.record_artifact_only_turn
+            || input.stale_native_state
+            || input.stale_source_state
+            || input.stale_work_state
+            || input.stale_lease_state
+            || input.stale_route_state
+            || input.stale_connector_state
+            || input.stale_protected_gate_state
+            || input.parity_silently_claims_execution_ability
+            || input.parity_silently_implies_provider_access
+            || input.parity_silently_implies_live_delivery
+            || input.parity_silently_implies_protected_completion
+            || !input.parity_identity_matches_current_output_session
+            || input.replay_upgrades_blocked_authority
+            || display_output.stale_or_cancelled_or_superseded_output
+            || display_output.session_closed
+            || display_output.record_artifact_only_turn
+            || display_output.stale_source_card
+            || display_output.stale_attachment
+            || !display_output.renderer_identity_matches_current_response
+            || display_output.replay_upgrades_blocked_render
+        {
+            return Stage34ParityCertificationDisposition::StaleParityBlocked;
+        }
+        if !input.authority_bounded
+            || !input.tenant_user_device_session_scoped
+            || !input.uncertainty_preserved
+            || !input.secret_safe
+            || !input.redacted
+            || !input.stale_aware
+            || !input.revocation_aware
+            || !input.ph1voiceid_ref_present
+            || !input.ph1voiceid_ref_non_authoritative
+            || !input.voice_identity_inform_only
+            || !input.voice_identity_tenant_device_session_scoped
+            || input.voice_identity_cross_speaker_risk
+            || !input.ph1d_ref_present
+            || !input.ph1d_ref_non_authoritative
+            || !input.ph1ecm_ref_present
+            || !input.ph1ecm_ref_non_authoritative
+            || !input.ph1simcat_ref_present
+            || !input.ph1simcat_ref_non_authoritative
+            || !input.ph1simfinder_ref_present
+            || !input.ph1simfinder_ref_non_authoritative
+            || !input.authoritative_engine_inventory_ref_present
+            || !input.coverage_matrix_ref_present
+            || !input.news_parity_ref_present
+            || !input.certification_eval_ref_present
+            || !input.parity_fixture_ref_present
+            || input.unverifiable
+            || input.stale
+            || input.secret_unsafe
+            || input.cross_tenant
+            || input.cross_route
+            || input.cross_connector
+            || input.parity_mismatch
+            || input.harness_mismatch
+            || input.certification_mismatch
+            || input.source_mismatch
+            || input.narration_mismatch
+            || input.capability_mismatch
+            || input.memory_mismatch
+            || input.relationship_mismatch
+            || input.trust_mismatch
+            || input.wake_mismatch
+            || input.recovery_mismatch
+            || input.continuity_mismatch
+            || input.publication_mismatch
+            || input.settlement_mismatch
+            || input.connector_mismatch
+            || input.route_mismatch
+            || input.lease_mismatch
+            || input.protected_gate_mismatch
+            || input.tenant_mismatch
+            || input.missing_proof
+            || input.ownership_drift
+        {
+            return Stage34ParityCertificationDisposition::ParityAuthorityBlocked;
+        }
+        if !input.news_parity_blocker_repaired
+            || !input.test_parity_conflict_clustering_passed
+            || !input.certification_harness_offline_deterministic
+            || !input.provider_off_proof_preserved
+        {
+            return Stage34ParityCertificationDisposition::NewsParityHarnessBlocked;
+        }
+
+        match input.parity_kind {
+            Stage34ParityCertificationKind::MultimodalNativeParity => {
+                if input.multimodal_native_parity_id.is_some()
+                    && source_output.source_of_truth_id.is_some()
+                    && source_output.self_description_id.is_some()
+                    && source_output.capability_narration_id.is_some()
+                {
+                    Stage34ParityCertificationDisposition::MultimodalNativeParityReady
+                } else {
+                    Stage34ParityCertificationDisposition::ParityAuthorityBlocked
+                }
+            }
+            Stage34ParityCertificationKind::CertificationHarnessIntegration => {
+                if input.certification_harness_id.is_some() {
+                    Stage34ParityCertificationDisposition::CertificationHarnessIntegrationReady
+                } else {
+                    Stage34ParityCertificationDisposition::NewsParityHarnessBlocked
+                }
+            }
+            Stage34ParityCertificationKind::BroadStage34ExitReadiness => {
+                if input.broad_stage34_exit_readiness_id.is_some()
+                    && input.broad_stage34_exit_proven
+                {
+                    Stage34ParityCertificationDisposition::BroadStage34ExitReadinessReady
+                } else {
+                    Stage34ParityCertificationDisposition::NewsParityHarnessBlocked
+                }
+            }
+            Stage34ParityCertificationKind::NativeDisplayOutputParityPostureReference => {
+                if input.native_display_output_parity_id.is_some() {
+                    Stage34ParityCertificationDisposition::NativeDisplayOutputParityPostureReferenceReady
+                } else {
+                    Stage34ParityCertificationDisposition::ParityAuthorityBlocked
+                }
+            }
+            Stage34ParityCertificationKind::SourceSelfCapabilityParityProofReference => {
+                if input.source_self_capability_parity_proof_id.is_some()
+                    && source_output.source_of_truth_id.is_some()
+                    && source_output.self_description_id.is_some()
+                    && source_output.capability_narration_id.is_some()
+                {
+                    Stage34ParityCertificationDisposition::SourceSelfCapabilityParityProofReferenceReady
+                } else {
+                    Stage34ParityCertificationDisposition::ParityAuthorityBlocked
+                }
+            }
+            Stage34ParityCertificationKind::TrustRelationshipWakeContinuityNativeReference => {
+                if input.trust_relationship_wake_continuity_native_id.is_some()
+                    && source_output.trust_calibration_id.is_some()
+                    && source_output.relationship_memory_id.is_some()
+                    && source_output.wake_reentry_id.is_some()
+                {
+                    Stage34ParityCertificationDisposition::TrustRelationshipWakeContinuityNativeReferenceReady
+                } else {
+                    Stage34ParityCertificationDisposition::ParityAuthorityBlocked
+                }
+            }
+        }
+    }
+
+    const fn work_authority_for(
+        disposition: Stage34ParityCertificationDisposition,
+    ) -> Stage34ParityCertificationWorkAuthority {
+        match disposition {
+            Stage34ParityCertificationDisposition::MultimodalNativeParityReady => {
+                Stage34ParityCertificationWorkAuthority::multimodal_native_parity_ready()
+            }
+            Stage34ParityCertificationDisposition::CertificationHarnessIntegrationReady => {
+                Stage34ParityCertificationWorkAuthority::certification_harness_integration_ready()
+            }
+            Stage34ParityCertificationDisposition::BroadStage34ExitReadinessReady => {
+                Stage34ParityCertificationWorkAuthority::broad_stage34_exit_readiness_ready()
+            }
+            Stage34ParityCertificationDisposition::NativeDisplayOutputParityPostureReferenceReady => {
+                Stage34ParityCertificationWorkAuthority::native_display_output_parity_posture_reference_ready()
+            }
+            Stage34ParityCertificationDisposition::SourceSelfCapabilityParityProofReferenceReady => {
+                Stage34ParityCertificationWorkAuthority::source_self_capability_parity_proof_reference_ready()
+            }
+            Stage34ParityCertificationDisposition::TrustRelationshipWakeContinuityNativeReferenceReady => {
+                Stage34ParityCertificationWorkAuthority::trust_relationship_wake_continuity_native_reference_ready()
+            }
+            _ => Stage34ParityCertificationWorkAuthority::fail_closed(),
+        }
+    }
+}
+
+impl Validate for Stage34ParityCertificationPacket {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        for (field, value) in [
+            (
+                "stage34_parity_certification_packet.activation_id",
+                self.activation_id.as_deref(),
+            ),
+            (
+                "stage34_parity_certification_packet.speech_output_id",
+                self.speech_output_id.as_deref(),
+            ),
+            (
+                "stage34_parity_certification_packet.output_interaction_id",
+                self.output_interaction_id.as_deref(),
+            ),
+            (
+                "stage34_parity_certification_packet.conversation_continuity_id",
+                self.conversation_continuity_id.as_deref(),
+            ),
+            (
+                "stage34_parity_certification_packet.notification_disclosure_id",
+                self.notification_disclosure_id.as_deref(),
+            ),
+            (
+                "stage34_parity_certification_packet.wake_reentry_id",
+                self.wake_reentry_id.as_deref(),
+            ),
+            (
+                "stage34_parity_certification_packet.trust_calibration_id",
+                self.trust_calibration_id.as_deref(),
+            ),
+            (
+                "stage34_parity_certification_packet.relationship_memory_id",
+                self.relationship_memory_id.as_deref(),
+            ),
+            (
+                "stage34_parity_certification_packet.continuity_framing_id",
+                self.continuity_framing_id.as_deref(),
+            ),
+            (
+                "stage34_parity_certification_packet.longer_horizon_governance_id",
+                self.longer_horizon_governance_id.as_deref(),
+            ),
+            (
+                "stage34_parity_certification_packet.source_of_truth_id",
+                self.source_of_truth_id.as_deref(),
+            ),
+            (
+                "stage34_parity_certification_packet.self_description_id",
+                self.self_description_id.as_deref(),
+            ),
+            (
+                "stage34_parity_certification_packet.capability_narration_id",
+                self.capability_narration_id.as_deref(),
+            ),
+            (
+                "stage34_parity_certification_packet.work_id",
+                self.work_id.as_deref(),
+            ),
+            (
+                "stage34_parity_certification_packet.lease_id",
+                self.lease_id.as_deref(),
+            ),
+            (
+                "stage34_parity_certification_packet.access_context_id",
+                self.access_context_id.as_deref(),
+            ),
+            (
+                "stage34_parity_certification_packet.policy_context_id",
+                self.policy_context_id.as_deref(),
+            ),
+            (
+                "stage34_parity_certification_packet.tenant_id",
+                self.tenant_id.as_deref(),
+            ),
+            (
+                "stage34_parity_certification_packet.multimodal_native_parity_id",
+                self.multimodal_native_parity_id.as_deref(),
+            ),
+            (
+                "stage34_parity_certification_packet.certification_harness_id",
+                self.certification_harness_id.as_deref(),
+            ),
+            (
+                "stage34_parity_certification_packet.broad_stage34_exit_readiness_id",
+                self.broad_stage34_exit_readiness_id.as_deref(),
+            ),
+            (
+                "stage34_parity_certification_packet.native_display_output_parity_id",
+                self.native_display_output_parity_id.as_deref(),
+            ),
+            (
+                "stage34_parity_certification_packet.source_self_capability_parity_proof_id",
+                self.source_self_capability_parity_proof_id.as_deref(),
+            ),
+            (
+                "stage34_parity_certification_packet.trust_relationship_wake_continuity_native_id",
+                self.trust_relationship_wake_continuity_native_id.as_deref(),
+            ),
+            (
+                "stage34_parity_certification_packet.audit_id",
+                self.audit_id.as_deref(),
+            ),
+            (
+                "stage34_parity_certification_packet.ph1j_proof_ref",
+                self.ph1j_proof_ref.as_deref(),
+            ),
+        ] {
+            validate_stage4_optional_ref(field, value)?;
+        }
+        if self.reason_code != self.disposition.default_reason_code() {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage34_parity_certification_packet.reason_code",
+                reason: "must match Stage 34B parity/certification disposition",
+            });
+        }
+        if self.work_authority.can_mutate_or_execute() {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage34_parity_certification_packet.work_authority",
+                reason: "Stage 34B cannot invent parity/certification success, connector-write, dispatch, execute, emit TTS/playback, create turns, or treat visible parity wording as action success",
+            });
+        }
+        if self.disposition.is_ready() && (self.audit_id.is_none() || self.ph1j_proof_ref.is_none())
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "stage34_parity_certification_packet.audit_proof",
+                reason:
+                    "ready Stage 34B parity/certification output requires PH1.J audit/proof refs",
+            });
+        }
+        Ok(())
+    }
+}
+
+pub fn stage34_parity_certification_symbol_anchor() {
+    let _ = Stage34ParityCertificationKind::MultimodalNativeParity;
+    let _ = Stage34ParityCertificationKind::CertificationHarnessIntegration;
+    let _ = Stage34ParityCertificationKind::BroadStage34ExitReadiness;
+    let _ = Stage34ParityCertificationKind::NativeDisplayOutputParityPostureReference;
+    let _ = Stage34ParityCertificationKind::SourceSelfCapabilityParityProofReference;
+    let _ = Stage34ParityCertificationKind::TrustRelationshipWakeContinuityNativeReference;
+    let disposition = Stage34ParityCertificationDisposition::StageInputBlocked;
+    let _ = disposition.default_reason_code();
+    let _ = disposition.is_ready();
+    let _ = Stage34ParityCertificationWorkAuthority::fail_closed().can_mutate_or_execute();
+    let _ = Stage34ParityCertificationWorkAuthority::multimodal_native_parity_ready();
+    let _ = Stage34ParityCertificationWorkAuthority::certification_harness_integration_ready();
+    let _ = Stage34ParityCertificationWorkAuthority::broad_stage34_exit_readiness_ready();
+    let _ = Stage34ParityCertificationWorkAuthority::native_display_output_parity_posture_reference_ready();
+    let _ = Stage34ParityCertificationWorkAuthority::source_self_capability_parity_proof_reference_ready();
+    let _ = Stage34ParityCertificationWorkAuthority::trust_relationship_wake_continuity_native_reference_ready();
+    let _ = core::mem::size_of::<Stage34ParityCertificationInput>();
+    let _ = core::mem::size_of::<Stage34ParityCertificationPacket>();
+    let _ = Stage34ParityCertificationPacket::from_stage34_source_of_truth
+        as fn(
+            &Stage18MultimodalDisplayPacket,
+            &Stage34SourceOfTruthPacket,
+            Stage34ParityCertificationInput,
+        ) -> Result<Stage34ParityCertificationPacket, ContractViolation>;
+    let _ = Stage34ParityCertificationPacket::can_mutate_or_execute
+        as fn(&Stage34ParityCertificationPacket) -> bool;
+}
+const _: fn() = stage34_parity_certification_symbol_anchor;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -52845,6 +54155,329 @@ mod tests {
                 &route,
                 Some(&gate),
                 Some(&relationship),
+                runtime_mock,
+            )
+            .is_err()
+        );
+    }
+
+    fn stage34b_display_and_source_packets() -> (
+        Stage18MultimodalDisplayPacket,
+        super::Stage34SourceOfTruthPacket,
+    ) {
+        let output = stage18_response_output_packet();
+        let speech = stage18_speech_output_identity();
+        let mut display_input = stage18_renderer_input(
+            "display-output-stage34b-ready",
+            "renderer-payload-stage34b-ready",
+            "display-surface-stage34b-ready",
+            "audit-stage34b-stage18",
+        );
+        display_input.stage17_output_identity_ref_present = true;
+        display_input.stage17_output_identity_non_authoritative = true;
+        let mut display = Stage18MultimodalDisplayPacket::from_stage15_output(
+            &output,
+            Some(&speech),
+            display_input,
+        )
+        .expect("stage34b display ready");
+
+        let route = stage12_protected_route();
+        let gate =
+            Stage12ProtectedActionGatePacket::from_stage11_candidate(&route, stage12_gate_input())
+                .expect("stage34b protected gate");
+        let attention = stage31_attention_identity();
+        let recovery = stage31_recovery_identity();
+        let notification = super::Stage31NotificationWakeReentryPacket::from_stage30_recovery(
+            &route,
+            Some(&gate),
+            Some(&attention),
+            Some(&recovery),
+            super::Stage31NotificationWakeReentryInput::fixture_notification_disclosure_boundary_ready(
+                "audit-stage34b-stage31",
+            ),
+        )
+        .expect("stage34b stage31 notification");
+        let trust = super::Stage32TrustCalibrationPacket::from_stage31_notification(
+            &route,
+            Some(&gate),
+            Some(&notification),
+            super::Stage32TrustCalibrationInput::fixture_trust_calibration_ready(
+                "audit-stage34b-stage32",
+            ),
+        )
+        .expect("stage34b stage32 trust");
+        let relationship = super::Stage33RelationshipMemoryPacket::from_stage32_trust(
+            &route,
+            Some(&gate),
+            Some(&trust),
+            super::Stage33RelationshipMemoryInput::fixture_relationship_memory_framing_ready(
+                "audit-stage34b-stage33",
+            ),
+        )
+        .expect("stage34b stage33 relationship");
+        let source = super::Stage34SourceOfTruthPacket::from_stage33_relationship(
+            &route,
+            Some(&gate),
+            Some(&relationship),
+            super::Stage34SourceOfTruthInput::fixture_source_of_truth_presentation_ready(
+                "audit-stage34b-stage34",
+            ),
+        )
+        .expect("stage34b source ready");
+        display.session_id = source.session_id;
+        display.turn_id = source.turn_id;
+        display.access_context_id = source.access_context_id.clone();
+        display.policy_context_id = source.policy_context_id.clone();
+        display.tenant_id = source.tenant_id.clone();
+        (display, source)
+    }
+
+    #[test]
+    fn stage_34b_parity_consumes_stage18_and_stage34_refs_non_authoritatively() {
+        let (display, source) = stage34b_display_and_source_packets();
+        let packet = super::Stage34ParityCertificationPacket::from_stage34_source_of_truth(
+            &display,
+            &source,
+            super::Stage34ParityCertificationInput::fixture_multimodal_native_parity_ready(
+                "audit-stage34b-parity",
+            ),
+        )
+        .expect("stage34b parity ready");
+
+        assert_eq!(
+            packet.disposition,
+            super::Stage34ParityCertificationDisposition::MultimodalNativeParityReady
+        );
+        assert_eq!(
+            packet.stage18_disposition,
+            Stage18MultimodalDisplayDisposition::RendererPayloadReady
+        );
+        assert_eq!(
+            packet.stage34_disposition,
+            super::Stage34SourceOfTruthDisposition::SourceOfTruthPresentationReady
+        );
+        assert!(packet.stage18_ref_non_authoritative);
+        assert!(packet.stage34_ref_non_authoritative);
+        assert!(packet.stage31_ref_non_authoritative);
+        assert!(packet.stage32_ref_non_authoritative);
+        assert!(packet.stage33_ref_non_authoritative);
+        assert!(packet.ph1d_ref_non_authoritative);
+        assert!(packet.ph1ecm_ref_non_authoritative);
+        assert!(packet.ph1simcat_ref_non_authoritative);
+        assert!(packet.ph1simfinder_ref_non_authoritative);
+        assert!(packet.test_parity_conflict_clustering_passed);
+        assert!(
+            packet
+                .work_authority
+                .can_emit_multimodal_native_parity_packet
+        );
+        assert!(!packet.can_mutate_or_execute());
+
+        let certification = super::Stage34ParityCertificationPacket::from_stage34_source_of_truth(
+            &display,
+            &source,
+            super::Stage34ParityCertificationInput::fixture_certification_harness_integration_ready(
+                "audit-stage34b-cert",
+            ),
+        )
+        .expect("stage34b certification ready");
+        assert_eq!(
+            certification.disposition,
+            super::Stage34ParityCertificationDisposition::CertificationHarnessIntegrationReady
+        );
+        assert!(
+            certification
+                .work_authority
+                .can_emit_certification_harness_integration_packet
+        );
+        assert!(!certification.can_mutate_or_execute());
+
+        let broad_exit = super::Stage34ParityCertificationPacket::from_stage34_source_of_truth(
+            &display,
+            &source,
+            super::Stage34ParityCertificationInput::fixture_broad_stage34_exit_readiness_ready(
+                "audit-stage34b-exit",
+            ),
+        )
+        .expect("stage34b broad exit ready");
+        assert_eq!(
+            broad_exit.disposition,
+            super::Stage34ParityCertificationDisposition::BroadStage34ExitReadinessReady
+        );
+        assert!(
+            broad_exit
+                .work_authority
+                .can_emit_broad_stage34_exit_readiness_packet
+        );
+        assert!(!broad_exit.can_mutate_or_execute());
+    }
+
+    #[test]
+    fn stage_34b_packets_cannot_invent_parity_or_certification_authority() {
+        let (display, source) = stage34b_display_and_source_packets();
+        for input in [
+            {
+                let mut input =
+                    super::Stage34ParityCertificationInput::fixture_multimodal_native_parity_ready(
+                        "audit-stage34b-invent-parity",
+                    );
+                input.parity_invented_parity_success = true;
+                input
+            },
+            {
+                let mut input = super::Stage34ParityCertificationInput::fixture_certification_harness_integration_ready(
+                    "audit-stage34b-invent-cert",
+                );
+                input.parity_invented_certification_pass = true;
+                input
+            },
+            {
+                let mut input = super::Stage34ParityCertificationInput::fixture_source_self_capability_parity_proof_reference_ready(
+                    "parity-stage34b-invent-provider",
+                    "audit-stage34b-invent-provider",
+                );
+                input.parity_invented_provider_access = true;
+                input
+            },
+            {
+                let mut input = super::Stage34ParityCertificationInput::fixture_trust_relationship_wake_continuity_native_reference_ready(
+                    "parity-stage34b-invent-completion",
+                    "audit-stage34b-invent-completion",
+                );
+                input.parity_invented_completion_success = true;
+                input
+            },
+        ] {
+            let packet = super::Stage34ParityCertificationPacket::from_stage34_source_of_truth(
+                &display, &source, input,
+            )
+            .expect("stage34b no-invention blocked");
+            assert_eq!(
+                packet.disposition,
+                super::Stage34ParityCertificationDisposition::NoInventionBlocked
+            );
+            assert!(packet.work_authority.can_fail_closed);
+            assert!(!packet.can_mutate_or_execute());
+        }
+    }
+
+    #[test]
+    fn stage_34b_native_protected_stale_and_news_parity_cases_fail_closed() {
+        let (display, source) = stage34b_display_and_source_packets();
+
+        for input in [
+            {
+                let mut input =
+                    super::Stage34ParityCertificationInput::fixture_multimodal_native_parity_ready(
+                        "audit-stage34b-native",
+                    );
+                input.native_parity_mutates_state = true;
+                input
+            },
+            {
+                let mut input = super::Stage34ParityCertificationInput::fixture_native_display_output_parity_posture_reference_ready(
+                    "parity-stage34b-protected",
+                    "audit-stage34b-protected",
+                );
+                input.protected_action_like_request = true;
+                input
+            },
+            {
+                let mut input = super::Stage34ParityCertificationInput::fixture_trust_relationship_wake_continuity_native_reference_ready(
+                    "parity-stage34b-stale",
+                    "audit-stage34b-stale",
+                );
+                input.stale_or_cancelled_or_superseded_output = true;
+                input
+            },
+            {
+                let mut input = super::Stage34ParityCertificationInput::fixture_broad_stage34_exit_readiness_ready(
+                    "audit-stage34b-news-blocked",
+                );
+                input.news_parity_blocker_repaired = false;
+                input
+            },
+        ] {
+            let packet = super::Stage34ParityCertificationPacket::from_stage34_source_of_truth(
+                &display, &source, input,
+            )
+            .expect("stage34b blocked disposition");
+            assert!(matches!(
+                packet.disposition,
+                super::Stage34ParityCertificationDisposition::NativeParityHandoffBlocked
+                    | super::Stage34ParityCertificationDisposition::PublicProtectedParityBlocked
+                    | super::Stage34ParityCertificationDisposition::StaleParityBlocked
+                    | super::Stage34ParityCertificationDisposition::NewsParityHarnessBlocked
+            ));
+            assert!(packet.work_authority.can_fail_closed);
+            assert!(!packet.can_mutate_or_execute());
+        }
+
+        let mut blocked_exit =
+            super::Stage34ParityCertificationInput::fixture_broad_stage34_exit_readiness_ready(
+                "audit-stage34b-exit-not-proven",
+            );
+        blocked_exit.broad_stage34_exit_proven = false;
+        let packet = super::Stage34ParityCertificationPacket::from_stage34_source_of_truth(
+            &display,
+            &source,
+            blocked_exit,
+        )
+        .expect("stage34b exit blocked");
+        assert_eq!(
+            packet.disposition,
+            super::Stage34ParityCertificationDisposition::NewsParityHarnessBlocked
+        );
+        assert!(!packet.can_mutate_or_execute());
+    }
+
+    #[test]
+    fn stage_34b_blocks_live_paths_and_runtime_mocks() {
+        let (display, source) = stage34b_display_and_source_packets();
+        for input in [
+            {
+                let mut input =
+                    super::Stage34ParityCertificationInput::fixture_multimodal_native_parity_ready(
+                        "audit-stage34b-live-provider",
+                    );
+                input.attempted_live_provider_in_build = true;
+                input
+            },
+            {
+                let mut input = super::Stage34ParityCertificationInput::fixture_certification_harness_integration_ready(
+                    "audit-stage34b-live-search",
+                );
+                input.ran_live_search_in_build = true;
+                input
+            },
+            {
+                let mut input = super::Stage34ParityCertificationInput::fixture_native_display_output_parity_posture_reference_ready(
+                    "parity-stage34b-live-voice-id",
+                    "audit-stage34b-live-voice-id",
+                );
+                input.voice_id_matching_attempted = true;
+                input
+            },
+        ] {
+            assert!(
+                super::Stage34ParityCertificationPacket::from_stage34_source_of_truth(
+                    &display, &source, input,
+                )
+                .is_err()
+            );
+        }
+
+        let mut runtime_mock =
+            super::Stage34ParityCertificationInput::fixture_multimodal_native_parity_ready(
+                "audit-stage34b-runtime-mock",
+            );
+        runtime_mock.fake_parity_detected = true;
+        runtime_mock.fixture_only_test_path = false;
+        assert!(
+            super::Stage34ParityCertificationPacket::from_stage34_source_of_truth(
+                &display,
+                &source,
                 runtime_mock,
             )
             .is_err()
