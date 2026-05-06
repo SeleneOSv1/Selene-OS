@@ -29,7 +29,7 @@ pub fn parse_proxy_endpoint(url: &str) -> Result<RedactedProxyEndpoint, ProxyErr
         .split_once("://")
         .ok_or(ProxyErrorKind::ProxyMisconfigured)?;
     let scheme = scheme_raw.to_ascii_lowercase();
-    if scheme != "http" && scheme != "https" {
+    if !is_supported_proxy_scheme(&scheme) {
         return Err(ProxyErrorKind::ProxyMisconfigured);
     }
 
@@ -116,5 +116,16 @@ fn parse_port(raw: &str) -> Result<u16, ProxyErrorKind> {
 }
 
 fn default_port_for_scheme(scheme: &str) -> u16 {
-    if scheme == "https" { 443 } else { 80 }
+    match scheme {
+        "https" => 443,
+        "socks" | "socks4" | "socks4a" | "socks5" => 1080,
+        _ => 80,
+    }
+}
+
+fn is_supported_proxy_scheme(scheme: &str) -> bool {
+    matches!(
+        scheme,
+        "http" | "https" | "socks" | "socks4" | "socks4a" | "socks5"
+    )
 }

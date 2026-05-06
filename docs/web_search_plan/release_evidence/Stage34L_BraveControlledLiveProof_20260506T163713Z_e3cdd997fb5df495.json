@@ -1,0 +1,59 @@
+{
+  "artifact": "Stage34L_BraveControlledLiveProof",
+  "created_at_utc": "2026-05-06T16:37:13Z",
+  "head": "e3cdd997fb5df495d47e32fba9eb478a43da65e5",
+  "stage": "Stage 34L - Provider / Model Governance Controlled Live Eval Proof",
+  "provider_subset": [
+    "cache_only",
+    "brave_web_search"
+  ],
+  "disabled_provider_paths": [
+    "openai_web_search",
+    "gdelt_news_assist",
+    "url_fetch",
+    "provider_fanout",
+    "provider_fallback",
+    "background_provider_calls"
+  ],
+  "proxy_path": {
+    "mode": "explicit",
+    "kind": "Clash local HTTP CONNECT",
+    "url": "http://127.0.0.1:7897"
+  },
+  "caps": {
+    "max_external_provider_calls_total": 6,
+    "max_brave_calls": 6,
+    "spend_ceiling_usd": "1.00",
+    "retries": 0
+  },
+  "proof": {
+    "clash_listener_preflight": "PASS",
+    "curl_no_secret_brave_tls_preflight": "PASS_HTTP_405",
+    "rust_no_secret_transport_diagnostic": "PASS",
+    "safe_vault_presence_check": "YES_WITHOUT_SECRET_VALUE",
+    "provider_off_precheck": "PASS",
+    "brave_live_dispatch_count": 1,
+    "provider_call_attempt_count": 1,
+    "provider_network_dispatch_count": 1,
+    "provider_success_count": 1,
+    "provider_fallback_count": 0,
+    "provider_off_postcheck": "PASS"
+  },
+  "safety": {
+    "provider_secret_logged": false,
+    "proxy_credential_logged": false,
+    "openai_ran": false,
+    "gdelt_ran": false,
+    "url_fetch_ran": false,
+    "fallback_ran": false,
+    "fanout_ran": false,
+    "background_call_ran": false,
+    "model_promotion_ran": false,
+    "billing_behavior_added": false,
+    "rollback_automation_ran": false,
+    "protected_execution_ran": false,
+    "native_mic_stt_tts_voice_id_lab_ran": false
+  },
+  "result": "PROVEN_COMPLETE",
+  "next_lawful_action": "Stage 34 remaining-row closure-map refresh after Stage 34L"
+}

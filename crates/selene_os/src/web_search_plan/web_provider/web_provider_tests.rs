@@ -7,15 +7,17 @@ use crate::web_search_plan::registry_loader::load_packet_schema_registry;
 use crate::web_search_plan::web_provider::health_state::{HealthPolicy, ProviderHealthTracker};
 use crate::web_search_plan::web_provider::provider_merge::merge_results;
 use crate::web_search_plan::web_provider::{
-    append_web_provider_audit_fields, execute_web_provider_ladder_from_tool_request,
+    append_web_provider_audit_fields, brave_adapter, execute_web_provider_ladder_from_tool_request,
     NormalizedSearchResult, ProviderErrorKind, ProviderId, WebProviderRuntimeConfig,
     DEFAULT_BRAVE_WEB_ENDPOINT, DEFAULT_OPENAI_RESPONSES_ENDPOINT,
 };
 use selene_engines::ph1providerctl::{
-    apply_route_decision_to_counter, provider_registry, route_provider, ProviderCacheStatus,
-    ProviderCallCounter, ProviderControlProvider, ProviderLane, ProviderNetworkPolicy,
-    ProviderRouteRequest,
+    apply_route_decision_to_counter, evaluate_provider_gate, provider_registry, route_provider,
+    ProviderCacheStatus, ProviderCallCounter, ProviderControlMode, ProviderControlProvider,
+    ProviderControlRoute, ProviderLane, ProviderNetworkPolicy, ProviderRouteRequest,
+    ProviderUsageContext,
 };
+use selene_kernel_contracts::provider_secrets::ProviderSecretId;
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Write};
@@ -179,6 +181,204 @@ fn base_runtime(brave_endpoint: &str, openai_endpoint: &str) -> WebProviderRunti
         brave_fixture_json: None,
         openai_fixture_json: None,
     }
+}
+
+#[test]
+fn stage_34l_rust_http_client_reaches_brave_through_clash_without_secret() {
+    if !stage34l_transport_env_present_or_assert_complete() {
+        return;
+    }
+
+    let config = WebProviderRuntimeConfig::from_env();
+    assert!(config.brave_api_key_override.is_none());
+    assert!(config.openai_api_key_override.is_none());
+    assert!(config.brave_fixture_json.is_none());
+    assert!(config.openai_fixture_json.is_none());
+    assert_eq!(config.proxy_config.mode, ProxyMode::Explicit);
+    assert_stage34l_clash_proxy_url(config.proxy_config.http_proxy_url.as_deref());
+    assert_stage34l_clash_proxy_url(config.proxy_config.https_proxy_url.as_deref());
+
+    let status = brave_adapter::probe_brave_web_search_transport_without_secret(
+        &config.brave_endpoint,
+        "public web search safety documentation",
+        config.timeout_ms,
+        &config.user_agent,
+        &config.proxy_config,
+    )
+    .expect("Stage 34L no-secret Rust transport diagnostic should reach Brave through Clash");
+    assert!(
+        matches!(status, 401 | 403 | 404 | 405 | 422),
+        "unexpected no-secret Brave transport diagnostic status: {status}"
+    );
+}
+
+#[test]
+fn stage_34l_brave_only_clash_proxy_live_provider_proof_completes_under_caps() {
+    if !stage34l_live_env_present_or_assert_complete() {
+        return;
+    }
+
+    let policy = ProviderNetworkPolicy::from_env();
+    assert!(policy.global_search_providers_enabled);
+    assert!(policy.web_search_enabled);
+    assert!(policy.paid_search_providers_enabled);
+    assert!(policy.live_brave_proof_enabled);
+    assert_eq!(policy.max_calls_this_turn, 6);
+    assert_eq!(policy.max_calls_this_route, 6);
+    assert_eq!(policy.max_calls_this_actor_user, 6);
+    assert_eq!(policy.max_calls_this_tenant, 6);
+    assert_eq!(policy.brave_max_calls_per_test_run, 6);
+    assert_eq!(policy.brave_max_calls_per_day_test, 6);
+    assert_eq!(policy.max_retries, 0);
+    assert!(!policy.provider_fanout_enabled);
+    assert!(!policy.fallback_enabled);
+    assert!(!policy.url_fetch_enabled);
+    assert!(!policy
+        .provider_specific_enabled
+        .get("openai_web")
+        .copied()
+        .unwrap_or(false));
+    assert!(!policy
+        .provider_specific_enabled
+        .get("gdelt_news")
+        .copied()
+        .unwrap_or(false));
+    assert!(policy
+        .provider_specific_enabled
+        .get("brave")
+        .copied()
+        .unwrap_or(false));
+
+    let query = "public web search safety documentation";
+    let context = ProviderUsageContext::unknown(
+        ProviderControlRoute::WebSearch,
+        ProviderControlProvider::BraveWebSearch,
+        query,
+    );
+    let decision = evaluate_provider_gate(
+        &policy,
+        context,
+        ProviderControlMode::Live,
+        ProviderCallCounter::default(),
+    );
+    assert!(decision.allowed, "{decision:?}");
+    assert_eq!(decision.counter.provider_call_attempt_count, 1);
+    assert_eq!(decision.counter.provider_network_dispatch_count, 0);
+    assert_eq!(decision.usage_event.actual_total_cost_micros, Some(0));
+
+    let key =
+        selene_engines::device_vault::resolve_secret(ProviderSecretId::BraveSearchApiKey.as_str())
+            .expect("vault lookup should succeed")
+            .expect("Stage 34L requires Brave secret presence before live proof");
+    assert!(!key.trim().is_empty());
+
+    let mut counter = decision.counter.clone();
+    counter.record_network_dispatch();
+    assert_eq!(counter.provider_network_dispatch_count, 1);
+    assert!(counter.provider_network_dispatch_count <= 6);
+
+    let config = WebProviderRuntimeConfig::from_env();
+    assert!(config.brave_api_key_override.is_none());
+    assert!(config.openai_api_key_override.is_none());
+    assert!(config.brave_fixture_json.is_none());
+    assert!(config.openai_fixture_json.is_none());
+    assert_eq!(config.proxy_config.mode, ProxyMode::Explicit);
+    assert_stage34l_clash_proxy_url(config.proxy_config.http_proxy_url.as_deref());
+    assert_stage34l_clash_proxy_url(config.proxy_config.https_proxy_url.as_deref());
+
+    let result = brave_adapter::execute_brave_web_search(
+        &config.brave_endpoint,
+        &key,
+        query,
+        2,
+        config.timeout_ms,
+        &config.user_agent,
+        &config.proxy_config,
+    )
+    .expect("Stage 34L capped live Brave proof should return parseable results");
+    counter.record_success();
+
+    assert!(!result.results.is_empty());
+    assert!(result.results.len() <= 2);
+    assert!(result
+        .results
+        .iter()
+        .all(|item| item.provider_id == ProviderId::BraveWebSearch));
+    assert_eq!(counter.provider_call_attempt_count, 1);
+    assert_eq!(counter.provider_network_dispatch_count, 1);
+    assert_eq!(counter.provider_fallback_count, 0);
+    assert_eq!(counter.provider_success_count, 1);
+}
+
+fn stage34l_live_env_present_or_assert_complete() -> bool {
+    let expected = [
+        ("SELENE_SEARCH_PROVIDERS_ENABLED", "true"),
+        ("SELENE_WEB_SEARCH_ENABLED", "true"),
+        ("SELENE_BRAVE_SEARCH_ENABLED", "true"),
+        ("SELENE_PAID_SEARCH_PROVIDERS_ENABLED", "true"),
+        ("SELENE_OPENAI_WEB_SEARCH_ENABLED", "false"),
+        ("SELENE_GDELT_NEWS_SEARCH_ENABLED", "false"),
+        ("SELENE_URL_FETCH_ENABLED", "false"),
+        ("SELENE_PROVIDER_FANOUT_ENABLED", "false"),
+        ("SELENE_PROVIDER_FALLBACK_ENABLED", "false"),
+        ("SELENE_RUN_LIVE_BRAVE_PROOF", "true"),
+        ("SELENE_PROVIDER_CALL_MAX_PER_TURN", "6"),
+        ("SELENE_PROVIDER_CALL_MAX_PER_ROUTE", "6"),
+        ("SELENE_PROVIDER_CALL_MAX_PER_ACTOR_USER", "6"),
+        ("SELENE_PROVIDER_CALL_MAX_PER_TENANT", "6"),
+        ("SELENE_BRAVE_MAX_CALLS_PER_TEST_RUN", "6"),
+        ("SELENE_BRAVE_MAX_CALLS_PER_DAY_TEST", "6"),
+        ("SELENE_PROVIDER_RETRY_MAX", "0"),
+        ("SELENE_STAGE34L_SPEND_CEILING_USD", "1.00"),
+        ("SELENE_WEB_PROXY_MODE", "explicit"),
+    ];
+
+    let present = expected
+        .iter()
+        .filter(|(name, _)| std::env::var(name).is_ok())
+        .count();
+    if present == 0 {
+        return false;
+    }
+
+    for (name, value) in expected {
+        assert_eq!(std::env::var(name).as_deref(), Ok(value), "{name}");
+    }
+    assert_stage34l_clash_proxy_url(std::env::var("SELENE_HTTP_PROXY_URL").ok().as_deref());
+    assert_stage34l_clash_proxy_url(std::env::var("SELENE_HTTPS_PROXY_URL").ok().as_deref());
+    true
+}
+
+fn stage34l_transport_env_present_or_assert_complete() -> bool {
+    let expected = [
+        ("SELENE_RUN_BRAVE_TRANSPORT_DIAGNOSTIC", "true"),
+        ("SELENE_WEB_PROXY_MODE", "explicit"),
+    ];
+
+    let present = expected
+        .iter()
+        .filter(|(name, _)| std::env::var(name).is_ok())
+        .count();
+    if present == 0 {
+        return false;
+    }
+
+    for (name, value) in expected {
+        assert_eq!(std::env::var(name).as_deref(), Ok(value), "{name}");
+    }
+    assert_stage34l_clash_proxy_url(std::env::var("SELENE_HTTP_PROXY_URL").ok().as_deref());
+    assert_stage34l_clash_proxy_url(std::env::var("SELENE_HTTPS_PROXY_URL").ok().as_deref());
+    true
+}
+
+fn assert_stage34l_clash_proxy_url(value: Option<&str>) {
+    assert!(
+        matches!(
+            value,
+            Some("http://127.0.0.1:7897") | Some("socks5://127.0.0.1:7897")
+        ),
+        "Stage 34L requires the local Clash proxy path on 127.0.0.1:7897"
+    );
 }
 
 #[test]

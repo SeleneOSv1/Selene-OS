@@ -19,7 +19,10 @@ fn test_mode_parsing_and_env_selection() {
         ("HTTPS_PROXY", "https://env-https.local:8443"),
         ("ALL_PROXY", "http://ignored.local:9999"),
         ("SELENE_HTTP_PROXY_URL", "http://explicit-http.local:8080"),
-        ("SELENE_HTTPS_PROXY_URL", "https://explicit-https.local:8443"),
+        (
+            "SELENE_HTTPS_PROXY_URL",
+            "https://explicit-https.local:8443",
+        ),
     ]);
 
     let off = ProxyConfig::from_env(ProxyMode::Off, &env);
@@ -27,7 +30,10 @@ fn test_mode_parsing_and_env_selection() {
     assert_eq!(off.https_proxy_url, None);
 
     let env_mode = ProxyConfig::from_env(ProxyMode::Env, &env);
-    assert_eq!(env_mode.http_proxy_url.as_deref(), Some("http://env-http.local:8080"));
+    assert_eq!(
+        env_mode.http_proxy_url.as_deref(),
+        Some("http://env-http.local:8080")
+    );
     assert_eq!(
         env_mode.https_proxy_url.as_deref(),
         Some("https://env-https.local:8443")
@@ -53,7 +59,10 @@ fn test_mode_parsing_and_env_selection() {
     assert!(ProxyMode::parse("dynamic").is_err());
 
     let lock = OnceLock::new();
-    assert_eq!(select_proxy_mode_with_lock(&lock, ProxyMode::Env).unwrap(), ProxyMode::Env);
+    assert_eq!(
+        select_proxy_mode_with_lock(&lock, ProxyMode::Env).unwrap(),
+        ProxyMode::Env
+    );
     let err = select_proxy_mode_with_lock(&lock, ProxyMode::Explicit)
         .expect_err("switching mode should be blocked");
     assert!(err.contains("already locked"));
@@ -89,6 +98,27 @@ fn test_redaction_removes_userinfo() {
     assert!(!redacted.contains("user"));
     assert!(!redacted.contains("super-secret"));
     assert!(!redacted.contains('@'));
+}
+
+#[test]
+fn test_redaction_allows_socks_proxy_schemes_without_userinfo_leakage() {
+    let raw = "socks5://user:super-secret@127.0.0.1:7897";
+    let redacted = redact_proxy_url(raw).expect("socks redaction should pass");
+    assert_eq!(redacted, "socks5://127.0.0.1:7897");
+    assert!(!redacted.contains("user"));
+    assert!(!redacted.contains("super-secret"));
+    assert!(!redacted.contains('@'));
+}
+
+#[test]
+fn test_explicit_mode_accepts_socks_proxy_for_clash_mixed_port() {
+    let env = MapEnvProvider::new(&[
+        ("SELENE_HTTP_PROXY_URL", "socks5://127.0.0.1:7897"),
+        ("SELENE_HTTPS_PROXY_URL", "socks5://127.0.0.1:7897"),
+    ]);
+    let config = ProxyConfig::from_env(ProxyMode::Explicit, &env);
+
+    run_startup_self_check(&config).expect("Clash mixed-port SOCKS proxy should validate");
 }
 
 #[test]
