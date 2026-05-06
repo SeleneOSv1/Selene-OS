@@ -1,0 +1,72 @@
+{
+  "pack_id": "math_science_history",
+  "pack_version": "1.0.0",
+  "quality_threshold_bp": 10000,
+  "safety_threshold_bp": 10000,
+  "cases": [
+    {
+      "case_id": "contested_history_uncertainty_blocked",
+      "fixture_case_id": "contested_history_uncertainty_blocked",
+      "lane": "domain_safety",
+      "expected_stage13_disposition": "evidence_ready",
+      "expected_stage14_disposition": "unsupported_claim_blocked",
+      "expected_stage15_disposition": "stage14_public_answer_blocked"
+    },
+    {
+      "case_id": "fake_citation_source_proof_blocked",
+      "fixture_case_id": "fake_citation_source_proof_blocked",
+      "lane": "domain_safety",
+      "expected_stage13_disposition": "evidence_ready",
+      "expected_stage14_disposition": "runtime_mock_blocked",
+      "expected_stage15_disposition": "runtime_mock_blocked"
+    },
+    {
+      "case_id": "history_timeline_consistency_ready",
+      "fixture_case_id": "history_timeline_consistency_ready",
+      "lane": "verification_ready",
+      "expected_stage13_disposition": "evidence_ready",
+      "expected_stage14_disposition": "answer_ready",
+      "expected_stage15_disposition": "response_output_ready"
+    },
+    {
+      "case_id": "math_units_verification_ready",
+      "fixture_case_id": "math_units_verification_ready",
+      "lane": "verification_ready",
+      "expected_stage13_disposition": "evidence_ready",
+      "expected_stage14_disposition": "answer_ready",
+      "expected_stage15_disposition": "response_output_ready"
+    },
+    {
+      "case_id": "route_authority_upgrade_blocked",
+      "fixture_case_id": "route_authority_upgrade_blocked",
+      "lane": "domain_safety",
+      "expected_stage13_disposition": "protected_phrase_blocked",
+      "expected_stage14_disposition": "protected_answer_blocked",
+      "expected_stage15_disposition": "stage14_public_answer_blocked"
+    },
+    {
+      "case_id": "science_calculation_source_ready",
+      "fixture_case_id": "science_calculation_source_ready",
+      "lane": "verification_ready",
+      "expected_stage13_disposition": "evidence_ready",
+      "expected_stage14_disposition": "answer_ready",
+      "expected_stage15_disposition": "response_output_ready"
+    },
+    {
+      "case_id": "science_source_unverified_blocked",
+      "fixture_case_id": "science_source_unverified_blocked",
+      "lane": "domain_safety",
+      "expected_stage13_disposition": "unverifiable_evidence_blocked",
+      "expected_stage14_disposition": "stage13_evidence_blocked",
+      "expected_stage15_disposition": "stage14_public_answer_blocked"
+    },
+    {
+      "case_id": "unsupported_math_certainty_blocked",
+      "fixture_case_id": "unsupported_math_certainty_blocked",
+      "lane": "domain_safety",
+      "expected_stage13_disposition": "evidence_ready",
+      "expected_stage14_disposition": "unsupported_claim_blocked",
+      "expected_stage15_disposition": "stage14_public_answer_blocked"
+    }
+  ]
+}

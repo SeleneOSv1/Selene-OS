@@ -40880,6 +40880,174 @@ mod tests {
         tenant_mismatch: bool,
     }
 
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+    #[serde(rename_all = "snake_case")]
+    enum Stage34IVerificationLane {
+        VerificationReady,
+        DomainSafety,
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+    #[serde(rename_all = "snake_case")]
+    enum Stage34IStage13Expectation {
+        EvidenceReady,
+        UnverifiableEvidenceBlocked,
+        ProtectedPhraseBlocked,
+    }
+
+    impl Stage34IStage13Expectation {
+        const fn matches(self, actual: Stage13PublicReadOnlyDisposition) -> bool {
+            matches!(
+                (self, actual),
+                (
+                    Stage34IStage13Expectation::EvidenceReady,
+                    Stage13PublicReadOnlyDisposition::EvidenceReady
+                ) | (
+                    Stage34IStage13Expectation::UnverifiableEvidenceBlocked,
+                    Stage13PublicReadOnlyDisposition::UnverifiableEvidenceBlocked
+                ) | (
+                    Stage34IStage13Expectation::ProtectedPhraseBlocked,
+                    Stage13PublicReadOnlyDisposition::ProtectedPhraseBlocked
+                )
+            )
+        }
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+    #[serde(rename_all = "snake_case")]
+    enum Stage34IStage14Expectation {
+        AnswerReady,
+        Stage13EvidenceBlocked,
+        UnsupportedClaimBlocked,
+        ProtectedAnswerBlocked,
+        RuntimeMockBlocked,
+    }
+
+    impl Stage34IStage14Expectation {
+        const fn matches(self, actual: Stage14PublicAnswerDisposition) -> bool {
+            matches!(
+                (self, actual),
+                (
+                    Stage34IStage14Expectation::AnswerReady,
+                    Stage14PublicAnswerDisposition::AnswerReady
+                ) | (
+                    Stage34IStage14Expectation::Stage13EvidenceBlocked,
+                    Stage14PublicAnswerDisposition::Stage13EvidenceBlocked
+                ) | (
+                    Stage34IStage14Expectation::UnsupportedClaimBlocked,
+                    Stage14PublicAnswerDisposition::UnsupportedClaimBlocked
+                ) | (
+                    Stage34IStage14Expectation::ProtectedAnswerBlocked,
+                    Stage14PublicAnswerDisposition::ProtectedAnswerBlocked
+                ) | (
+                    Stage34IStage14Expectation::RuntimeMockBlocked,
+                    Stage14PublicAnswerDisposition::RuntimeMockBlocked
+                )
+            )
+        }
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+    #[serde(rename_all = "snake_case")]
+    enum Stage34IStage15Expectation {
+        ResponseOutputReady,
+        Stage14PublicAnswerBlocked,
+        RuntimeMockBlocked,
+    }
+
+    impl Stage34IStage15Expectation {
+        const fn matches(self, actual: Stage15ResponseOutputDisposition) -> bool {
+            matches!(
+                (self, actual),
+                (
+                    Stage34IStage15Expectation::ResponseOutputReady,
+                    Stage15ResponseOutputDisposition::ResponseOutputReady
+                ) | (
+                    Stage34IStage15Expectation::Stage14PublicAnswerBlocked,
+                    Stage15ResponseOutputDisposition::Stage14PublicAnswerBlocked
+                ) | (
+                    Stage34IStage15Expectation::RuntimeMockBlocked,
+                    Stage15ResponseOutputDisposition::RuntimeMockBlocked
+                )
+            )
+        }
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+    #[serde(rename_all = "snake_case")]
+    enum Stage34IVerificationKind {
+        MathUnits,
+        ScienceCalculation,
+        HistoryTimeline,
+        UnsupportedMath,
+        ScienceVerificationGap,
+        ContestedHistory,
+        FakeCitationSource,
+        ProtectedRouteAuthority,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct Stage34IMathScienceHistoryCorpusPack {
+        pack_id: String,
+        pack_version: String,
+        quality_threshold_bp: u16,
+        safety_threshold_bp: u16,
+        cases: Vec<Stage34IMathScienceHistoryCorpusCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct Stage34IMathScienceHistoryCorpusCase {
+        case_id: String,
+        fixture_case_id: String,
+        lane: Stage34IVerificationLane,
+        expected_stage13_disposition: Stage34IStage13Expectation,
+        expected_stage14_disposition: Stage34IStage14Expectation,
+        expected_stage15_disposition: Stage34IStage15Expectation,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct Stage34IMathScienceHistoryFixtureSet {
+        fixture_set_id: String,
+        fixture_set_version: String,
+        cases: Vec<Stage34IMathScienceHistoryFixtureCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct Stage34IMathScienceHistoryFixtureCase {
+        fixture_case_id: String,
+        verification_kind: Stage34IVerificationKind,
+        source_evidence_present: bool,
+        source_evidence_current: bool,
+        citation_coverage_passed: bool,
+        source_verification_passed: bool,
+        source_packet_bounded: bool,
+        source_packet_secret_safe: bool,
+        protected_action_like_request: bool,
+        unsupported_claim_present: bool,
+        citations_rendered: bool,
+        citation_refs_bounded: bool,
+        citation_refs_current: bool,
+        citation_refs_verified: bool,
+        source_chips_rendered: bool,
+        source_chip_refs_bounded: bool,
+        source_chip_refs_secret_safe: bool,
+        source_links_text_safe: bool,
+        runtime_mock_detected: bool,
+        fake_citation_detected: bool,
+        fake_source_detected: bool,
+        response_claims_supported_by_stage14: bool,
+        unsupported_fact_present: bool,
+        invented_citation_present: bool,
+        invented_source_present: bool,
+        response_detaches_claims_from_citations: bool,
+        approval_claim_present: bool,
+        completed_action_claim_present: bool,
+        mutation_claim_present: bool,
+        protected_execution_outcome_claim_present: bool,
+        bounded_stage12_execution_proof_present: bool,
+        harmless_public_output_for_protected_request: bool,
+    }
+
     #[derive(Debug, Default)]
     struct FixedClock {
         now_ms: Cell<i64>,
@@ -41848,24 +42016,35 @@ mod tests {
             .join(file_name)
     }
 
+    fn stage34i_eval_corpus_pack_path(file_name: &str) -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../docs/web_search_plan/eval/corpus_packs")
+            .join(file_name)
+    }
+
+    fn stage34i_replay_fixture_path(file_name: &str) -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../docs/web_search_plan/replay_fixtures")
+            .join(file_name)
+    }
+
     fn load_stage34e_corpus_pack() -> Stage34EMeaningRepairCorpusPack {
-        let text =
-            fs::read_to_string(stage34e_eval_corpus_pack_path("meaning_repair.json"))
-                .expect("stage34e corpus pack should load");
+        let text = fs::read_to_string(stage34e_eval_corpus_pack_path("meaning_repair.json"))
+            .expect("stage34e corpus pack should load");
         serde_json::from_str(&text).expect("stage34e corpus pack should parse")
     }
 
     fn load_stage34e_fixture_set() -> Stage34EMeaningRepairFixtureSet {
-        let text =
-            fs::read_to_string(stage34e_replay_fixture_path("stage34e_meaning_repair_cases.json"))
-                .expect("stage34e replay fixtures should load");
+        let text = fs::read_to_string(stage34e_replay_fixture_path(
+            "stage34e_meaning_repair_cases.json",
+        ))
+        .expect("stage34e replay fixtures should load");
         serde_json::from_str(&text).expect("stage34e replay fixtures should parse")
     }
 
     fn load_stage34f_corpus_pack() -> Stage34FConversationCorpusPack {
-        let text =
-            fs::read_to_string(stage34f_eval_corpus_pack_path("same_page_quality.json"))
-                .expect("stage34f corpus pack should load");
+        let text = fs::read_to_string(stage34f_eval_corpus_pack_path("same_page_quality.json"))
+            .expect("stage34f corpus pack should load");
         serde_json::from_str(&text).expect("stage34f corpus pack should parse")
     }
 
@@ -41905,6 +42084,20 @@ mod tests {
         ))
         .expect("stage34h replay fixtures should load");
         serde_json::from_str(&text).expect("stage34h replay fixtures should parse")
+    }
+
+    fn load_stage34i_corpus_pack() -> Stage34IMathScienceHistoryCorpusPack {
+        let text = fs::read_to_string(stage34i_eval_corpus_pack_path("math_science_history.json"))
+            .expect("stage34i corpus pack should load");
+        serde_json::from_str(&text).expect("stage34i corpus pack should parse")
+    }
+
+    fn load_stage34i_fixture_set() -> Stage34IMathScienceHistoryFixtureSet {
+        let text = fs::read_to_string(stage34i_replay_fixture_path(
+            "stage34i_math_science_history_cases.json",
+        ))
+        .expect("stage34i replay fixtures should load");
+        serde_json::from_str(&text).expect("stage34i replay fixtures should parse")
     }
 
     fn stage34e_fixture_case<'a>(
@@ -41951,6 +42144,17 @@ mod tests {
             .unwrap_or_else(|| panic!("missing stage34h replay fixture for {fixture_case_id}"))
     }
 
+    fn stage34i_fixture_case<'a>(
+        fixtures: &'a Stage34IMathScienceHistoryFixtureSet,
+        fixture_case_id: &str,
+    ) -> &'a Stage34IMathScienceHistoryFixtureCase {
+        fixtures
+            .cases
+            .iter()
+            .find(|case| case.fixture_case_id == fixture_case_id)
+            .unwrap_or_else(|| panic!("missing stage34i replay fixture for {fixture_case_id}"))
+    }
+
     fn stage34e_score_bp(passed: usize, total: usize) -> u16 {
         if total == 0 {
             return 0;
@@ -41979,6 +42183,13 @@ mod tests {
         ((passed * 10_000) / total) as u16
     }
 
+    fn stage34i_score_bp(passed: usize, total: usize) -> u16 {
+        if total == 0 {
+            return 0;
+        }
+        ((passed * 10_000) / total) as u16
+    }
+
     fn stage34g_corpus_case<'a>(
         pack: &'a Stage34GEmotionCorpusPack,
         case_id: &str,
@@ -41999,31 +42210,44 @@ mod tests {
             .unwrap_or_else(|| panic!("missing stage34h corpus case for {case_id}"))
     }
 
+    fn stage34i_corpus_case<'a>(
+        pack: &'a Stage34IMathScienceHistoryCorpusPack,
+        case_id: &str,
+    ) -> &'a Stage34IMathScienceHistoryCorpusCase {
+        pack.cases
+            .iter()
+            .find(|case| case.case_id == case_id)
+            .unwrap_or_else(|| panic!("missing stage34i corpus case for {case_id}"))
+    }
+
     fn stage34f_stage5_packet(
         fixture: &Stage34FConversationFixtureCase,
     ) -> Stage5ConversationControlPacket {
         let authority = stage8_current_authority();
-        let same_page_state = crate::runtime_session_foundation::Stage5SamePageState::advisory_snapshot(
-            fixture.conversation_goal_state_id.clone(),
-            fixture.topic_segment_id.clone(),
-            fixture.active_entity_ids.clone(),
-            fixture.open_loop_ids.clone(),
-            fixture.pending_question_ids.clone(),
-            fixture.corrected_assumption_refs.clone(),
-            fixture.recap_on_return,
-            fixture.state_snapshot_hash.clone(),
-        )
-        .expect("stage34f same-page state");
+        let same_page_state =
+            crate::runtime_session_foundation::Stage5SamePageState::advisory_snapshot(
+                fixture.conversation_goal_state_id.clone(),
+                fixture.topic_segment_id.clone(),
+                fixture.active_entity_ids.clone(),
+                fixture.open_loop_ids.clone(),
+                fixture.pending_question_ids.clone(),
+                fixture.corrected_assumption_refs.clone(),
+                fixture.recap_on_return,
+                fixture.state_snapshot_hash.clone(),
+            )
+            .expect("stage34f same-page state");
 
         match fixture.stage5_mode {
-            Stage34FStage5Mode::SamePageSnapshot => Stage5ConversationControlPacket::from_turn_authority(
-                &authority,
-                Stage5ConversationControlDisposition::SamePageSnapshot,
-                same_page_state,
-                None,
-                None,
-            )
-            .expect("stage34f same-page snapshot"),
+            Stage34FStage5Mode::SamePageSnapshot => {
+                Stage5ConversationControlPacket::from_turn_authority(
+                    &authority,
+                    Stage5ConversationControlDisposition::SamePageSnapshot,
+                    same_page_state,
+                    None,
+                    None,
+                )
+                .expect("stage34f same-page snapshot")
+            }
             Stage34FStage5Mode::ClarificationRequested => {
                 let clarification = Stage5ClarificationState::one_best_question(
                     fixture
@@ -42077,8 +42301,9 @@ mod tests {
         stage5_packet: &Stage5ConversationControlPacket,
     ) -> Stage29ConversationalContinuityPacket {
         let route = stage12_protected_route();
-        let gate = Stage12ProtectedActionGatePacket::from_stage11_candidate(&route, stage12_gate_input())
-            .expect("stage34f protected gate");
+        let gate =
+            Stage12ProtectedActionGatePacket::from_stage11_candidate(&route, stage12_gate_input())
+                .expect("stage34f protected gate");
         let output_interaction = stage29_output_interaction_identity();
         let speech = stage29_speech_output_identity();
         let publication = stage29_publication_identity();
@@ -42150,9 +42375,7 @@ mod tests {
         .expect("stage34f continuity packet")
     }
 
-    fn stage34g_stage16_packet(
-        fixture: &Stage34GEmotionFixtureCase,
-    ) -> Stage16LongTermStatePacket {
+    fn stage34g_stage16_packet(fixture: &Stage34GEmotionFixtureCase) -> Stage16LongTermStatePacket {
         let output = stage16_response_output_packet();
         let mut input = Stage16LongTermStateInput::fixture_emotion_affect_ready(
             format!("long-term-state-stage34g-{}", fixture.fixture_case_id),
@@ -42173,11 +42396,9 @@ mod tests {
         fixture: &Stage34GEmotionFixtureCase,
     ) -> Stage32TrustCalibrationPacket {
         let route = stage12_protected_route();
-        let gate = Stage12ProtectedActionGatePacket::from_stage11_candidate(
-            &route,
-            stage12_gate_input(),
-        )
-        .expect("stage34g protected gate");
+        let gate =
+            Stage12ProtectedActionGatePacket::from_stage11_candidate(&route, stage12_gate_input())
+                .expect("stage34g protected gate");
         let attention = stage31_attention_identity();
         let recovery = stage31_recovery_identity();
         let notification_input = match fixture.stage32_kind {
@@ -42203,26 +42424,25 @@ mod tests {
         )
         .expect("stage34g stage31 notification");
 
-        let mut input = match fixture.stage32_kind {
-            Stage34GStage32Kind::TrustCalibration => {
-                Stage32TrustCalibrationInput::fixture_trust_calibration_ready(format!(
-                    "audit-stage34g-stage32-{}",
-                    fixture.fixture_case_id
-                ))
-            }
-            Stage34GStage32Kind::ExpectationSettingPosture => {
-                Stage32TrustCalibrationInput::fixture_expectation_setting_posture_ready(format!(
-                    "audit-stage34g-stage32-{}",
-                    fixture.fixture_case_id
-                ))
-            }
-            Stage34GStage32Kind::ResidualAssistanceBoundary => {
-                Stage32TrustCalibrationInput::fixture_residual_assistance_boundary_ready(format!(
-                    "audit-stage34g-stage32-{}",
-                    fixture.fixture_case_id
-                ))
-            }
-        };
+        let mut input =
+            match fixture.stage32_kind {
+                Stage34GStage32Kind::TrustCalibration => {
+                    Stage32TrustCalibrationInput::fixture_trust_calibration_ready(format!(
+                        "audit-stage34g-stage32-{}",
+                        fixture.fixture_case_id
+                    ))
+                }
+                Stage34GStage32Kind::ExpectationSettingPosture => {
+                    Stage32TrustCalibrationInput::fixture_expectation_setting_posture_ready(
+                        format!("audit-stage34g-stage32-{}", fixture.fixture_case_id),
+                    )
+                }
+                Stage34GStage32Kind::ResidualAssistanceBoundary => {
+                    Stage32TrustCalibrationInput::fixture_residual_assistance_boundary_ready(
+                        format!("audit-stage34g-stage32-{}", fixture.fixture_case_id),
+                    )
+                }
+            };
         input.trust_invented_confidence = fixture.trust_invented_confidence;
         input.trust_invented_certainty = fixture.trust_invented_certainty;
         input.trust_invented_helpfulness_success = fixture.trust_invented_helpfulness_success;
@@ -42244,11 +42464,9 @@ mod tests {
         stage32_packet: &Stage32TrustCalibrationPacket,
     ) -> Stage33RelationshipMemoryPacket {
         let route = stage12_protected_route();
-        let gate = Stage12ProtectedActionGatePacket::from_stage11_candidate(
-            &route,
-            stage12_gate_input(),
-        )
-        .expect("stage34g protected gate");
+        let gate =
+            Stage12ProtectedActionGatePacket::from_stage11_candidate(&route, stage12_gate_input())
+                .expect("stage34g protected gate");
         let mut input = match fixture.stage33_kind {
             Stage34GStage33Kind::RelationshipMemoryFraming => {
                 Stage33RelationshipMemoryInput::fixture_relationship_memory_framing_ready(format!(
@@ -42271,8 +42489,7 @@ mod tests {
             fixture.relationship_invented_memory_certainty;
         input.relationship_invented_relationship_depth =
             fixture.relationship_invented_relationship_depth;
-        input.relationship_invented_bond_continuity =
-            fixture.relationship_invented_bond_continuity;
+        input.relationship_invented_bond_continuity = fixture.relationship_invented_bond_continuity;
         input.prior_continuity_or_memory_used_as_truth_authority =
             fixture.prior_continuity_or_memory_used_as_truth_authority;
         input.voice_identity_cross_speaker_risk = fixture.voice_identity_cross_speaker_risk;
@@ -42359,11 +42576,9 @@ mod tests {
         fixture: &Stage34HMemoryTrustFixtureCase,
     ) -> Stage32TrustCalibrationPacket {
         let route = stage12_protected_route();
-        let gate = Stage12ProtectedActionGatePacket::from_stage11_candidate(
-            &route,
-            stage12_gate_input(),
-        )
-        .expect("stage34h protected gate");
+        let gate =
+            Stage12ProtectedActionGatePacket::from_stage11_candidate(&route, stage12_gate_input())
+                .expect("stage34h protected gate");
         let attention = stage31_attention_identity();
         let recovery = stage31_recovery_identity();
         let notification_input =
@@ -42397,16 +42612,15 @@ mod tests {
         stage32_packet: &Stage32TrustCalibrationPacket,
     ) -> Stage33RelationshipMemoryPacket {
         let route = stage12_protected_route();
-        let gate = Stage12ProtectedActionGatePacket::from_stage11_candidate(
-            &route,
-            stage12_gate_input(),
-        )
-        .expect("stage34h protected gate");
+        let gate =
+            Stage12ProtectedActionGatePacket::from_stage11_candidate(&route, stage12_gate_input())
+                .expect("stage34h protected gate");
         let mut input = match fixture.stage33_kind {
             Stage34HStage33Kind::RelationshipMemoryFraming => {
-                Stage33RelationshipMemoryInput::fixture_relationship_memory_framing_ready(
-                    format!("audit-stage34h-stage33-{}", fixture.fixture_case_id),
-                )
+                Stage33RelationshipMemoryInput::fixture_relationship_memory_framing_ready(format!(
+                    "audit-stage34h-stage33-{}",
+                    fixture.fixture_case_id
+                ))
             }
             Stage34HStage33Kind::UserFacingContinuityBoundary => {
                 Stage33RelationshipMemoryInput::fixture_user_facing_continuity_boundary_ready(
@@ -42419,8 +42633,7 @@ mod tests {
         input.prior_continuity_or_memory_used_as_truth_authority =
             fixture.prior_continuity_or_memory_used_as_truth_authority;
         input.protected_action_like_request = fixture.protected_action_like_request;
-        input.protected_slot_or_authority_ambiguous =
-            fixture.protected_slot_or_authority_ambiguous;
+        input.protected_slot_or_authority_ambiguous = fixture.protected_slot_or_authority_ambiguous;
         input.stale_memory_state = fixture.stale_relationship_output;
         input.memory_mismatch = fixture.memory_mismatch;
         input.tenant_mismatch = fixture.tenant_mismatch;
@@ -42469,13 +42682,11 @@ mod tests {
                 candidate.punctuation_spacing_or_casing_only =
                     fixture.punctuation_spacing_or_casing_only;
                 candidate.introduces_protected_fact = fixture.introduces_protected_fact;
-                candidate.invents_authority_relevant_fact =
-                    fixture.invents_authority_relevant_fact;
+                candidate.invents_authority_relevant_fact = fixture.invents_authority_relevant_fact;
                 candidate.meaning_drift_detected = fixture.meaning_drift_detected;
                 input.meaning_reconstruction_candidate = Some(candidate);
             }
-            Stage34EStage10Mode::ProtectedClarify
-            | Stage34EStage10Mode::ProtectedFailClosed => {
+            Stage34EStage10Mode::ProtectedClarify | Stage34EStage10Mode::ProtectedFailClosed => {
                 let slot_kind = fixture
                     .protected_slot_kind
                     .expect("protected slot kind required for stage34e protected cases");
@@ -43982,7 +44193,11 @@ mod tests {
             assert!(!understanding_packet.work_authority.can_call_providers);
             assert!(!understanding_packet.work_authority.can_authorize);
             assert!(!understanding_packet.work_authority.can_connector_write);
-            assert!(!understanding_packet.work_authority.can_execute_protected_mutation);
+            assert!(
+                !understanding_packet
+                    .work_authority
+                    .can_execute_protected_mutation
+            );
 
             match case.lane {
                 Stage34EMeaningRepairLane::OrdinaryMeaning => {
@@ -44047,13 +44262,19 @@ mod tests {
 
             match understanding_packet.disposition {
                 Stage10UnderstandingDisposition::ProtectedSlotClarificationRequired => {
-                    assert!(understanding_packet.work_authority.can_emit_clarification_handoff);
-                    assert!(!understanding_packet.work_authority.can_emit_intent_slot_frame);
                     assert!(
                         understanding_packet
-                            .one_best_clarification_question_id
-                            .is_some()
+                            .work_authority
+                            .can_emit_clarification_handoff
                     );
+                    assert!(
+                        !understanding_packet
+                            .work_authority
+                            .can_emit_intent_slot_frame
+                    );
+                    assert!(understanding_packet
+                        .one_best_clarification_question_id
+                        .is_some());
                     assert_eq!(
                         repair_metric.repair_disposition,
                         Stage8ERepairDisposition::NotAttempted
@@ -44061,12 +44282,14 @@ mod tests {
                 }
                 Stage10UnderstandingDisposition::ProtectedSlotFailClosed => {
                     assert!(!understanding_packet.can_update_understanding());
-                    assert!(!understanding_packet.work_authority.can_emit_clarification_handoff);
                     assert!(
-                        understanding_packet
-                            .one_best_clarification_question_id
-                            .is_none()
+                        !understanding_packet
+                            .work_authority
+                            .can_emit_clarification_handoff
                     );
+                    assert!(understanding_packet
+                        .one_best_clarification_question_id
+                        .is_none());
                     assert_eq!(
                         repair_metric.repair_disposition,
                         Stage8ERepairDisposition::NotAttempted
@@ -44079,7 +44302,11 @@ mod tests {
                         .expect("rejected stage34e meaning case should keep candidate");
                     assert!(!candidate.is_safe_bounded_candidate());
                     assert!(!understanding_packet.can_update_understanding());
-                    assert!(!understanding_packet.work_authority.can_emit_intent_slot_frame);
+                    assert!(
+                        !understanding_packet
+                            .work_authority
+                            .can_emit_intent_slot_frame
+                    );
                     assert_eq!(
                         repair_metric.repair_disposition,
                         Stage8ERepairDisposition::RejectedProtectedTokenInvented
@@ -44129,13 +44356,20 @@ mod tests {
                 case.case_id
             );
 
-            assert_eq!(stage29_packet.stage5_disposition, Some(stage5_packet.disposition));
+            assert_eq!(
+                stage29_packet.stage5_disposition,
+                Some(stage5_packet.disposition)
+            );
             assert!(!stage5_packet.can_route_any_work());
             assert!(!stage5_packet.can_become_authoritative());
             assert!(!stage29_packet.can_mutate_or_execute());
             assert!(!stage29_packet.work_authority.can_invent_facts);
             assert!(!stage29_packet.work_authority.can_invent_completion_success);
-            assert!(!stage29_packet.work_authority.can_invent_continuity_authority);
+            assert!(
+                !stage29_packet
+                    .work_authority
+                    .can_invent_continuity_authority
+            );
             assert!(!stage29_packet.work_authority.can_connector_write);
             assert!(!stage29_packet.work_authority.can_dispatch);
             assert!(!stage29_packet.work_authority.can_execute);
@@ -44286,12 +44520,12 @@ mod tests {
 
             match case.expected_stage29_disposition {
                 Stage34FStage29Expectation::HumanInteractionBoundaryReady => {
-                    assert!(
-                        fixture
-                            .emotional_style_hint
-                            .as_deref()
-                            .is_some_and(|hint| !hint.contains("approved") && !hint.contains("completed"))
-                    );
+                    assert!(fixture
+                        .emotional_style_hint
+                        .as_deref()
+                        .is_some_and(
+                            |hint| !hint.contains("approved") && !hint.contains("completed")
+                        ));
                     assert!(
                         stage29_packet
                             .work_authority
@@ -44303,12 +44537,10 @@ mod tests {
                         stage29_packet.disposition,
                         Stage29ConversationalContinuityDisposition::PublicProtectedBoundaryBlocked
                     );
-                    assert!(
-                        stage5_packet
-                            .clarification
-                            .as_ref()
-                            .is_some_and(|clarification| clarification.repeated_prompt_count == 1)
-                    );
+                    assert!(stage5_packet
+                        .clarification
+                        .as_ref()
+                        .is_some_and(|clarification| clarification.repeated_prompt_count == 1));
                 }
                 Stage34FStage29Expectation::StaleContinuityBlocked => {
                     assert_eq!(
@@ -44401,7 +44633,11 @@ mod tests {
             );
             assert!(!stage33_packet.work_authority.can_invent_bond_continuity);
             assert!(!stage33_packet.work_authority.can_invent_completion_success);
-            assert!(!stage33_packet.work_authority.can_invent_relationship_authority);
+            assert!(
+                !stage33_packet
+                    .work_authority
+                    .can_invent_relationship_authority
+            );
             assert!(
                 !stage33_packet
                     .work_authority
@@ -44430,7 +44666,9 @@ mod tests {
                     match fixture.stage32_kind {
                         Stage34GStage32Kind::TrustCalibration => {
                             assert!(
-                                stage32_packet.work_authority.can_emit_trust_calibration_packet
+                                stage32_packet
+                                    .work_authority
+                                    .can_emit_trust_calibration_packet
                             );
                         }
                         Stage34GStage32Kind::ExpectationSettingPosture => {
@@ -44782,7 +45020,11 @@ mod tests {
                     .can_treat_visible_recall_or_restore_as_action_success
             );
             assert!(!stage33_packet.work_authority.can_invent_memory_certainty);
-            assert!(!stage33_packet.work_authority.can_invent_relationship_authority);
+            assert!(
+                !stage33_packet
+                    .work_authority
+                    .can_invent_relationship_authority
+            );
             assert!(
                 !stage33_packet
                     .work_authority
@@ -45014,8 +45256,7 @@ mod tests {
         let pack = load_stage34h_corpus_pack();
         let fixtures = load_stage34h_fixture_set();
 
-        let case =
-            stage34h_corpus_case(&pack, "memory_authority_protected_execution_blocked");
+        let case = stage34h_corpus_case(&pack, "memory_authority_protected_execution_blocked");
         let fixture = stage34h_fixture_case(&fixtures, &case.fixture_case_id);
         let stage16_packet = stage34h_stage16_packet(fixture);
         let stage23_packet = stage34h_stage23_packet(fixture);
@@ -45036,12 +45277,591 @@ mod tests {
         );
         assert!(stage33_packet.work_authority.can_fail_closed);
         assert!(!stage33_packet.can_mutate_or_execute());
-        assert!(!stage33_packet.work_authority.can_invent_relationship_authority);
+        assert!(
+            !stage33_packet
+                .work_authority
+                .can_invent_relationship_authority
+        );
     }
 
     #[test]
     fn stage_34h_memory_cannot_promote_recall_into_authority_or_protected_execution() {
         stage34h_memory_cannot_promote_recall_into_authority_or_protected_execution();
+    }
+
+    fn stage34i_stage13_packet(
+        fixture: &Stage34IMathScienceHistoryFixtureCase,
+    ) -> Stage13PublicReadOnlyEvidencePacket {
+        let route = stage13_public_read_only_route();
+        let no_mutation = stage13_no_mutation_proof(&route);
+        let mut input = stage13_evidence_input();
+        let audit_id = format!("audit-stage34i-stage13-{}", fixture.fixture_case_id);
+
+        input.public_read_only_evidence_id =
+            format!("public-evidence-stage34i-{}", fixture.fixture_case_id);
+        input.tool_route_id = format!("tool-route-stage34i-{}", fixture.fixture_case_id);
+        input.source_evidence_id = fixture
+            .source_evidence_present
+            .then(|| format!("source-evidence-stage34i-{}", fixture.fixture_case_id));
+        input.citation_id = fixture
+            .citation_coverage_passed
+            .then(|| format!("citation-stage34i-{}", fixture.fixture_case_id));
+        input.provenance_id = Some(format!("provenance-stage34i-{}", fixture.fixture_case_id));
+        input.verifier_id = Some(format!("verifier-stage34i-{}", fixture.fixture_case_id));
+        input.provider_budget_id = Some(format!(
+            "provider-budget-stage34i-{}",
+            fixture.fixture_case_id
+        ));
+        input.audit_id = Some(audit_id.clone());
+        input.ph1j_proof_ref = Some(audit_id);
+        input.source_evidence_present = fixture.source_evidence_present;
+        input.source_evidence_current = fixture.source_evidence_current;
+        input.citation_coverage_passed = fixture.citation_coverage_passed;
+        input.source_verification_passed = fixture.source_verification_passed;
+        input.source_packet_bounded = fixture.source_packet_bounded;
+        input.source_packet_secret_safe = fixture.source_packet_secret_safe;
+        input.protected_action_like_request = fixture.protected_action_like_request;
+
+        Stage13PublicReadOnlyEvidencePacket::from_public_read_only_route(
+            &route,
+            &no_mutation,
+            input,
+        )
+        .expect("stage34i stage13 packet")
+    }
+
+    fn stage34i_stage14_packet(
+        fixture: &Stage34IMathScienceHistoryFixtureCase,
+        stage13_packet: &Stage13PublicReadOnlyEvidencePacket,
+    ) -> Stage14PublicAnswerPacket {
+        let mut input = stage14_answer_input();
+        let audit_id = format!("audit-stage34i-stage14-{}", fixture.fixture_case_id);
+
+        input.public_answer_id = format!("public-answer-stage34i-{}", fixture.fixture_case_id);
+        input.answer_hash = format!("answer-hash-stage34i-{}", fixture.fixture_case_id);
+        input.citation_rendering_id = fixture
+            .citations_rendered
+            .then(|| format!("citation-render-stage34i-{}", fixture.fixture_case_id));
+        input.source_chip_rendering_id = fixture
+            .source_chips_rendered
+            .then(|| format!("source-chip-render-stage34i-{}", fixture.fixture_case_id));
+        input.source_link_rendering_id = fixture
+            .source_links_text_safe
+            .then(|| format!("source-link-render-stage34i-{}", fixture.fixture_case_id));
+        input.answer_claims_supported_by_stage13 = !fixture.unsupported_claim_present;
+        input.unsupported_claim_present = fixture.unsupported_claim_present;
+        input.citations_rendered = fixture.citations_rendered;
+        input.citation_refs_bounded = fixture.citation_refs_bounded;
+        input.citation_refs_current = fixture.citation_refs_current;
+        input.citation_refs_verified = fixture.citation_refs_verified;
+        input.source_chips_rendered = fixture.source_chips_rendered;
+        input.source_chip_refs_bounded = fixture.source_chip_refs_bounded;
+        input.source_chip_refs_secret_safe = fixture.source_chip_refs_secret_safe;
+        input.source_links_text_safe = fixture.source_links_text_safe;
+        input.protected_action_like_prompt = fixture.protected_action_like_request;
+        input.runtime_mock_detected = fixture.runtime_mock_detected;
+        input.fake_citation_detected = fixture.fake_citation_detected;
+        input.fake_source_detected = fixture.fake_source_detected;
+        input.audit_id = Some(audit_id.clone());
+        input.ph1j_proof_ref = Some(audit_id);
+
+        Stage14PublicAnswerPacket::from_stage13_evidence(stage13_packet, input)
+            .expect("stage34i stage14 packet")
+    }
+
+    fn stage34i_stage15_packet(
+        fixture: &Stage34IMathScienceHistoryFixtureCase,
+        stage14_packet: &Stage14PublicAnswerPacket,
+    ) -> Stage15ResponseOutputPacket {
+        let mut input = Stage15ResponseOutputInput::fixture_public_answer_ready(
+            format!("response-output-stage34i-{}", fixture.fixture_case_id),
+            format!("response-hash-stage34i-{}", fixture.fixture_case_id),
+            format!("audit-stage34i-stage15-{}", fixture.fixture_case_id),
+        );
+
+        input.response_claims_supported_by_stage14 = fixture.response_claims_supported_by_stage14;
+        input.unsupported_fact_present = fixture.unsupported_fact_present;
+        input.invented_citation_present = fixture.invented_citation_present;
+        input.invented_source_present = fixture.invented_source_present;
+        input.approval_claim_present = fixture.approval_claim_present;
+        input.completed_action_claim_present = fixture.completed_action_claim_present;
+        input.mutation_claim_present = fixture.mutation_claim_present;
+        input.protected_execution_outcome_claim_present =
+            fixture.protected_execution_outcome_claim_present;
+        input.bounded_stage12_execution_proof_present =
+            fixture.bounded_stage12_execution_proof_present;
+        input.protected_action_like_request = fixture.protected_action_like_request;
+        input.harmless_public_output_for_protected_request =
+            fixture.harmless_public_output_for_protected_request;
+        input.citation_refs_bound_to_stage14 = !fixture.invented_citation_present;
+        input.source_refs_bound_to_stage14 = !fixture.invented_source_present;
+        input.response_detaches_claims_from_citations =
+            fixture.response_detaches_claims_from_citations;
+        input.runtime_mock_detected = fixture.runtime_mock_detected;
+        input.fake_citation_detected = fixture.fake_citation_detected;
+        input.fake_source_detected = fixture.fake_source_detected;
+
+        Stage15ResponseOutputPacket::from_stage14_public_answer(stage14_packet, input)
+            .expect("stage34i stage15 packet")
+    }
+
+    fn stage34i_source_url(fixture_case_id: &str) -> String {
+        format!(
+            "https://{}.stage34i.invalid/evidence",
+            fixture_case_id.replace('_', "-")
+        )
+    }
+
+    fn stage34i_chunk_id(fixture_case_id: &str) -> String {
+        format!("chunk-stage34i-{}", fixture_case_id)
+    }
+
+    fn stage34i_synthetic_evidence_packet(
+        fixture: &Stage34IMathScienceHistoryFixtureCase,
+    ) -> serde_json::Value {
+        let source_url = stage34i_source_url(fixture.fixture_case_id.as_str());
+        let chunk_id = stage34i_chunk_id(fixture.fixture_case_id.as_str());
+        serde_json::json!({
+            "sources": [
+                {
+                    "url": source_url
+                }
+            ],
+            "content_chunks": [
+                {
+                    "chunk_id": chunk_id,
+                    "source_url": source_url
+                }
+            ]
+        })
+    }
+
+    fn stage34i_claim_lines(fixture: &Stage34IMathScienceHistoryFixtureCase) -> Vec<&'static str> {
+        match fixture.verification_kind {
+            Stage34IVerificationKind::MathUnits | Stage34IVerificationKind::UnsupportedMath => {
+                vec![
+                    "The synthetic gauge reads 12 millimeters.",
+                    "Twelve millimeters equals 1.2 centimeters.",
+                ]
+            }
+            Stage34IVerificationKind::ScienceCalculation
+            | Stage34IVerificationKind::ScienceVerificationGap
+            | Stage34IVerificationKind::FakeCitationSource => vec![
+                "The synthetic sample warms from 20 to 25 degrees over 5 minutes.",
+                "The average change is 1 degree per minute.",
+            ],
+            Stage34IVerificationKind::HistoryTimeline
+            | Stage34IVerificationKind::ContestedHistory
+            | Stage34IVerificationKind::ProtectedRouteAuthority => vec![
+                "The synthetic archive note is dated 2024-02-11.",
+                "The synthetic calibration memo is dated 2024-02-14.",
+                "The archive note comes before the calibration memo.",
+            ],
+        }
+    }
+
+    fn stage34i_synthetic_answer_text(
+        fixture: &Stage34IMathScienceHistoryFixtureCase,
+        invalid_refs: bool,
+    ) -> String {
+        let chunk_id = if invalid_refs {
+            "chunk-stage34i-missing".to_string()
+        } else {
+            stage34i_chunk_id(fixture.fixture_case_id.as_str())
+        };
+        let source_url = if invalid_refs {
+            "https://missing.stage34i.invalid/evidence".to_string()
+        } else {
+            stage34i_source_url(fixture.fixture_case_id.as_str())
+        };
+
+        stage34i_claim_lines(fixture)
+            .into_iter()
+            .map(|line| format!("- {} [chunk:{}] [url:{}]", line, chunk_id, source_url))
+            .collect::<Vec<String>>()
+            .join("\n")
+    }
+
+    fn stage34i_validate_citation_support(
+        fixture: &Stage34IMathScienceHistoryFixtureCase,
+        invalid_refs: bool,
+    ) -> Result<
+        crate::web_search_plan::synthesis::citation_validator::CitationValidationSummary,
+        crate::web_search_plan::synthesis::citation_validator::CitationValidationError,
+    > {
+        let evidence_packet = stage34i_synthetic_evidence_packet(fixture);
+        let answer_text = stage34i_synthetic_answer_text(fixture, invalid_refs);
+        let claims =
+            crate::web_search_plan::synthesis::claim_extractor::extract_atomic_claims(&answer_text);
+        let evidence_index =
+            crate::web_search_plan::synthesis::citation_validator::build_evidence_citation_index(
+                &evidence_packet,
+            )
+            .expect("stage34i synthetic evidence index");
+        crate::web_search_plan::synthesis::citation_validator::validate_claim_citation_coverage(
+            &claims,
+            &evidence_index,
+        )
+    }
+
+    #[test]
+    fn stage34i_math_science_history_corpus_closes_offline_benchmark_row() {
+        let pack = load_stage34i_corpus_pack();
+        let fixtures = load_stage34i_fixture_set();
+
+        assert_eq!(pack.pack_id, "math_science_history");
+        assert_eq!(pack.pack_version, "1.0.0");
+        assert_eq!(
+            fixtures.fixture_set_id,
+            "stage34i_math_science_history_cases"
+        );
+        assert_eq!(fixtures.fixture_set_version, "1.0.0");
+
+        let mut quality_total = 0usize;
+        let mut quality_pass = 0usize;
+        let mut safety_total = 0usize;
+        let mut safety_pass = 0usize;
+
+        for case in &pack.cases {
+            let fixture = stage34i_fixture_case(&fixtures, &case.fixture_case_id);
+            let stage13_packet = stage34i_stage13_packet(fixture);
+            let stage14_packet = stage34i_stage14_packet(fixture, &stage13_packet);
+            let stage15_packet = stage34i_stage15_packet(fixture, &stage14_packet);
+
+            assert!(
+                case.expected_stage13_disposition
+                    .matches(stage13_packet.disposition),
+                "stage34i Stage 13 disposition mismatch for {}",
+                case.case_id
+            );
+            assert!(
+                case.expected_stage14_disposition
+                    .matches(stage14_packet.disposition),
+                "stage34i Stage 14 disposition mismatch for {}",
+                case.case_id
+            );
+            assert!(
+                case.expected_stage15_disposition
+                    .matches(stage15_packet.disposition),
+                "stage34i Stage 15 disposition mismatch for {}",
+                case.case_id
+            );
+
+            assert!(!stage13_packet.can_mutate_or_execute());
+            assert!(!stage14_packet.can_mutate_or_execute());
+            assert!(!stage15_packet.can_mutate_or_execute());
+            assert!(stage13_packet.audit_id.is_some());
+            assert!(stage13_packet.ph1j_proof_ref.is_some());
+            assert!(stage14_packet.audit_id.is_some());
+            assert!(stage14_packet.ph1j_proof_ref.is_some());
+            assert!(stage15_packet.audit_id.is_some());
+            assert!(stage15_packet.ph1j_proof_ref.is_some());
+
+            match case.lane {
+                Stage34IVerificationLane::VerificationReady => {
+                    quality_total += 1;
+
+                    assert_eq!(
+                        stage13_packet.disposition,
+                        Stage13PublicReadOnlyDisposition::EvidenceReady
+                    );
+                    assert!(stage13_packet.source_evidence_present);
+                    assert!(stage13_packet.source_evidence_current);
+                    assert!(stage13_packet.citation_coverage_passed);
+                    assert!(stage13_packet.source_verification_passed);
+                    assert!(stage13_packet.source_packet_bounded);
+                    assert!(stage13_packet.source_packet_secret_safe);
+
+                    assert_eq!(
+                        stage14_packet.disposition,
+                        Stage14PublicAnswerDisposition::AnswerReady
+                    );
+                    assert!(stage14_packet.answer_text_present);
+                    assert!(stage14_packet.answer_text_bounded);
+                    assert!(stage14_packet.answer_text_secret_safe);
+                    assert!(stage14_packet.answer_claims_supported_by_stage13);
+                    assert!(stage14_packet.citations_rendered);
+                    assert!(stage14_packet.source_chips_rendered);
+
+                    assert_eq!(
+                        stage15_packet.disposition,
+                        Stage15ResponseOutputDisposition::ResponseOutputReady
+                    );
+                    assert!(stage15_packet.response_text_present);
+                    assert!(stage15_packet.response_text_bounded);
+                    assert!(stage15_packet.response_text_secret_safe);
+                    assert!(stage15_packet.citation_refs_bound_to_stage14);
+                    assert!(stage15_packet.source_refs_bound_to_stage14);
+
+                    quality_pass += 1;
+                }
+                Stage34IVerificationLane::DomainSafety => {
+                    safety_total += 1;
+
+                    assert!(
+                        stage13_packet.work_authority.can_fail_closed
+                            || stage14_packet.work_authority.can_fail_closed
+                            || stage15_packet.work_authority.can_fail_closed
+                    );
+                    assert!(
+                        !stage13_packet.disposition.is_ready()
+                            || !stage14_packet.disposition.is_ready()
+                            || !stage15_packet.disposition.is_ready()
+                    );
+
+                    safety_pass += 1;
+                }
+            }
+        }
+
+        let quality_bp = stage34i_score_bp(quality_pass, quality_total);
+        let safety_bp = stage34i_score_bp(safety_pass, safety_total);
+
+        assert!(
+            quality_bp >= pack.quality_threshold_bp,
+            "stage34i math/science/history quality threshold failed: actual={} required={}",
+            quality_bp,
+            pack.quality_threshold_bp
+        );
+        assert!(
+            safety_bp >= pack.safety_threshold_bp,
+            "stage34i math/science/history safety threshold failed: actual={} required={}",
+            safety_bp,
+            pack.safety_threshold_bp
+        );
+    }
+
+    #[test]
+    fn stage_34i_math_science_history_corpus_closes_offline_benchmark_row() {
+        stage34i_math_science_history_corpus_closes_offline_benchmark_row();
+    }
+
+    #[test]
+    fn stage34i_math_units_science_and_timeline_claims_require_verifiable_support() {
+        let pack = load_stage34i_corpus_pack();
+        let fixtures = load_stage34i_fixture_set();
+
+        for case_id in [
+            "math_units_verification_ready",
+            "science_calculation_source_ready",
+            "history_timeline_consistency_ready",
+        ] {
+            let case = stage34i_corpus_case(&pack, case_id);
+            let fixture = stage34i_fixture_case(&fixtures, &case.fixture_case_id);
+            let stage13_packet = stage34i_stage13_packet(fixture);
+            let stage14_packet = stage34i_stage14_packet(fixture, &stage13_packet);
+            let stage15_packet = stage34i_stage15_packet(fixture, &stage14_packet);
+            let citation_summary =
+                stage34i_validate_citation_support(fixture, false).expect("stage34i citations");
+
+            assert_eq!(
+                stage13_packet.disposition,
+                Stage13PublicReadOnlyDisposition::EvidenceReady
+            );
+            assert_eq!(
+                stage14_packet.disposition,
+                Stage14PublicAnswerDisposition::AnswerReady
+            );
+            assert_eq!(
+                stage15_packet.disposition,
+                Stage15ResponseOutputDisposition::ResponseOutputReady
+            );
+            assert_eq!(
+                citation_summary.number_of_claims,
+                stage34i_claim_lines(fixture).len()
+            );
+            assert_eq!(citation_summary.citation_coverage_ratio, 1.0);
+            assert_eq!(
+                citation_summary.number_of_citations,
+                stage34i_claim_lines(fixture).len() * 2
+            );
+        }
+
+        let case = stage34i_corpus_case(&pack, "science_source_unverified_blocked");
+        let fixture = stage34i_fixture_case(&fixtures, &case.fixture_case_id);
+        let stage13_packet = stage34i_stage13_packet(fixture);
+        let stage14_packet = stage34i_stage14_packet(fixture, &stage13_packet);
+        let stage15_packet = stage34i_stage15_packet(fixture, &stage14_packet);
+
+        assert_eq!(
+            stage13_packet.disposition,
+            Stage13PublicReadOnlyDisposition::UnverifiableEvidenceBlocked
+        );
+        assert_eq!(
+            stage14_packet.disposition,
+            Stage14PublicAnswerDisposition::Stage13EvidenceBlocked
+        );
+        assert_eq!(
+            stage15_packet.disposition,
+            Stage15ResponseOutputDisposition::Stage14PublicAnswerBlocked
+        );
+        assert!(stage13_packet.work_authority.can_fail_closed);
+        assert!(stage14_packet.work_authority.can_fail_closed);
+        assert!(stage15_packet.work_authority.can_fail_closed);
+    }
+
+    #[test]
+    fn stage_34i_math_units_science_and_timeline_claims_require_verifiable_support() {
+        stage34i_math_units_science_and_timeline_claims_require_verifiable_support();
+    }
+
+    #[test]
+    fn stage34i_contested_history_and_unsupported_domain_claims_stay_bounded() {
+        let pack = load_stage34i_corpus_pack();
+        let fixtures = load_stage34i_fixture_set();
+
+        for case_id in [
+            "unsupported_math_certainty_blocked",
+            "contested_history_uncertainty_blocked",
+        ] {
+            let case = stage34i_corpus_case(&pack, case_id);
+            let fixture = stage34i_fixture_case(&fixtures, &case.fixture_case_id);
+            let stage13_packet = stage34i_stage13_packet(fixture);
+            let stage14_packet = stage34i_stage14_packet(fixture, &stage13_packet);
+            let stage15_packet = stage34i_stage15_packet(fixture, &stage14_packet);
+
+            assert_eq!(
+                stage13_packet.disposition,
+                Stage13PublicReadOnlyDisposition::EvidenceReady
+            );
+            assert_eq!(
+                stage14_packet.disposition,
+                Stage14PublicAnswerDisposition::UnsupportedClaimBlocked
+            );
+            assert_eq!(
+                stage15_packet.disposition,
+                Stage15ResponseOutputDisposition::Stage14PublicAnswerBlocked
+            );
+            assert!(stage14_packet.work_authority.can_emit_honest_uncertainty);
+            assert!(stage15_packet.work_authority.can_emit_honest_uncertainty);
+            assert!(!stage14_packet.work_authority.can_emit_public_answer);
+            assert!(!stage15_packet.work_authority.can_emit_public_answer_text);
+            assert!(!stage14_packet.can_mutate_or_execute());
+            assert!(!stage15_packet.can_mutate_or_execute());
+        }
+    }
+
+    #[test]
+    fn stage_34i_contested_history_and_unsupported_domain_claims_stay_bounded() {
+        stage34i_contested_history_and_unsupported_domain_claims_stay_bounded();
+    }
+
+    #[test]
+    fn stage34i_fake_citations_sources_and_verification_upgrades_fail_closed() {
+        let pack = load_stage34i_corpus_pack();
+        let fixtures = load_stage34i_fixture_set();
+        let case = stage34i_corpus_case(&pack, "fake_citation_source_proof_blocked");
+        let fixture = stage34i_fixture_case(&fixtures, &case.fixture_case_id);
+        let stage13_packet = stage34i_stage13_packet(fixture);
+        let stage14_packet = stage34i_stage14_packet(fixture, &stage13_packet);
+        let stage15_packet = stage34i_stage15_packet(fixture, &stage14_packet);
+        let citation_error = stage34i_validate_citation_support(fixture, true)
+            .expect_err("stage34i fake citations should fail coverage");
+
+        assert_eq!(
+            stage13_packet.disposition,
+            Stage13PublicReadOnlyDisposition::EvidenceReady
+        );
+        assert_eq!(
+            stage14_packet.disposition,
+            Stage14PublicAnswerDisposition::RuntimeMockBlocked
+        );
+        assert_eq!(
+            stage15_packet.disposition,
+            Stage15ResponseOutputDisposition::RuntimeMockBlocked
+        );
+        assert!(stage14_packet.work_authority.can_fail_closed);
+        assert!(stage15_packet.work_authority.can_fail_closed);
+
+        match citation_error {
+            crate::web_search_plan::synthesis::citation_validator::CitationValidationError::CitationMismatch { .. } => {}
+            other => panic!("expected citation mismatch, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn stage_34i_fake_citations_sources_and_verification_upgrades_fail_closed() {
+        stage34i_fake_citations_sources_and_verification_upgrades_fail_closed();
+    }
+
+    #[test]
+    fn stage34i_route_verifier_and_public_answer_chain_stays_read_only_and_non_authoritative() {
+        let route = stage13_public_read_only_route();
+        assert_eq!(
+            route.disposition,
+            Stage11RouterDisposition::PublicReadOnlyCandidate
+        );
+        assert!(route.public_read_only);
+        assert!(!route.can_route_or_mutate());
+        assert!(!route.work_authority.can_search);
+        assert!(!route.work_authority.can_call_tools);
+        assert!(!route.work_authority.can_call_providers);
+        assert!(!route.work_authority.can_connector_write);
+        assert!(!route.work_authority.can_authorize);
+        assert!(!route.work_authority.can_dispatch);
+        assert!(!route.work_authority.can_execute_protected_mutation);
+
+        let pack = load_stage34i_corpus_pack();
+        let fixtures = load_stage34i_fixture_set();
+
+        let ready_case = stage34i_corpus_case(&pack, "math_units_verification_ready");
+        let ready_fixture = stage34i_fixture_case(&fixtures, &ready_case.fixture_case_id);
+        let ready_stage13 = stage34i_stage13_packet(ready_fixture);
+        let ready_stage14 = stage34i_stage14_packet(ready_fixture, &ready_stage13);
+        let ready_stage15 = stage34i_stage15_packet(ready_fixture, &ready_stage14);
+
+        assert_eq!(
+            ready_stage13.disposition,
+            Stage13PublicReadOnlyDisposition::EvidenceReady
+        );
+        assert_eq!(
+            ready_stage14.disposition,
+            Stage14PublicAnswerDisposition::AnswerReady
+        );
+        assert_eq!(
+            ready_stage15.disposition,
+            Stage15ResponseOutputDisposition::ResponseOutputReady
+        );
+        assert!(!ready_stage13.can_mutate_or_execute());
+        assert!(!ready_stage14.can_mutate_or_execute());
+        assert!(!ready_stage15.can_mutate_or_execute());
+        assert!(!ready_stage14.work_authority.can_call_live_provider);
+        assert!(!ready_stage14.work_authority.can_run_live_search);
+        assert!(!ready_stage14.work_authority.can_connector_write);
+        assert!(!ready_stage15.work_authority.can_call_live_provider);
+        assert!(!ready_stage15.work_authority.can_run_live_search);
+        assert!(!ready_stage15.work_authority.can_connector_write);
+        assert!(!ready_stage15.work_authority.can_execute_protected_action);
+
+        let blocked_case = stage34i_corpus_case(&pack, "route_authority_upgrade_blocked");
+        let blocked_fixture = stage34i_fixture_case(&fixtures, &blocked_case.fixture_case_id);
+        let blocked_stage13 = stage34i_stage13_packet(blocked_fixture);
+        let blocked_stage14 = stage34i_stage14_packet(blocked_fixture, &blocked_stage13);
+        let blocked_stage15 = stage34i_stage15_packet(blocked_fixture, &blocked_stage14);
+
+        assert_eq!(
+            blocked_stage13.disposition,
+            Stage13PublicReadOnlyDisposition::ProtectedPhraseBlocked
+        );
+        assert_eq!(
+            blocked_stage14.disposition,
+            Stage14PublicAnswerDisposition::ProtectedAnswerBlocked
+        );
+        assert_eq!(
+            blocked_stage15.disposition,
+            Stage15ResponseOutputDisposition::Stage14PublicAnswerBlocked
+        );
+        assert!(blocked_stage13.work_authority.can_fail_closed);
+        assert!(blocked_stage14.work_authority.can_fail_closed);
+        assert!(blocked_stage15.work_authority.can_fail_closed);
+        assert!(!blocked_stage13.can_mutate_or_execute());
+        assert!(!blocked_stage14.can_mutate_or_execute());
+        assert!(!blocked_stage15.can_mutate_or_execute());
+    }
+
+    #[test]
+    fn stage_34i_route_verifier_and_public_answer_chain_stays_read_only_and_non_authoritative() {
+        stage34i_route_verifier_and_public_answer_chain_stays_read_only_and_non_authoritative();
     }
 
     fn stage11_ready_understanding() -> Stage10UnderstandingPacket {
