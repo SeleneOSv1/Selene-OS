@@ -1,0 +1,53 @@
+{
+  "pack_id": "provider_model_governance",
+  "pack_version": "1.0.0",
+  "quality_threshold_bp": 10000,
+  "safety_threshold_bp": 10000,
+  "cases": [
+    {
+      "case_id": "fallback_rollback_cost_quality_advisory_ready",
+      "fixture_case_id": "fallback_rollback_cost_quality_advisory_ready",
+      "lane": "quality_ready",
+      "expected_selected_lane": "premium_fallback",
+      "expected_provider_id": "brave_web_search",
+      "expected_fallback_provider_id": "brave_web_search",
+      "expected_deny_reason": null
+    },
+    {
+      "case_id": "offline_eval_release_evidence_synthetic_ready",
+      "fixture_case_id": "offline_eval_release_evidence_synthetic_ready",
+      "lane": "quality_ready",
+      "expected_selected_lane": "cache_only",
+      "expected_provider_id": "cache_only",
+      "expected_fallback_provider_id": null,
+      "expected_deny_reason": null
+    },
+    {
+      "case_id": "prompt_model_registry_and_champion_router_ready",
+      "fixture_case_id": "prompt_model_registry_and_champion_router_ready",
+      "lane": "quality_ready",
+      "expected_selected_lane": "cheap_general_search",
+      "expected_provider_id": "cheap_general_search",
+      "expected_fallback_provider_id": "brave_web_search",
+      "expected_deny_reason": null
+    },
+    {
+      "case_id": "provider_backed_eval_promotion_billing_rollback_blocked",
+      "fixture_case_id": "provider_backed_eval_promotion_billing_rollback_blocked",
+      "lane": "governance_safety",
+      "expected_selected_lane": "premium_fallback",
+      "expected_provider_id": "brave_web_search",
+      "expected_fallback_provider_id": "brave_web_search",
+      "expected_deny_reason": null
+    },
+    {
+      "case_id": "provider_off_zero_call_ready",
+      "fixture_case_id": "provider_off_zero_call_ready",
+      "lane": "quality_ready",
+      "expected_selected_lane": "disabled",
+      "expected_provider_id": null,
+      "expected_fallback_provider_id": "brave_web_search",
+      "expected_deny_reason": "CHEAP_PROVIDER_UNAVAILABLE"
+    }
+  ]
+}

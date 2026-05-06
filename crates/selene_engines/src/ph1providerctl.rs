@@ -3528,4 +3528,64 @@ mod tests {
             assert!(!case_text.contains("https://"));
         }
     }
+
+    fn stage34k_provider_registry_and_offline_eval_boundary_impl() {
+        let policy = ProviderNetworkPolicy::fake_test_allowing(2);
+        let registry = provider_registry(&policy);
+        let cheap = registry
+            .iter()
+            .find(|entry| entry.provider_id == "cheap_general_search")
+            .expect("cheap registry entry must exist");
+        let brave = registry
+            .iter()
+            .find(|entry| entry.provider_id == "brave_web_search")
+            .expect("brave registry entry must exist");
+
+        let mut request =
+            ProviderRouteRequest::public_web("synthetic provider governance contract proof");
+        request.cheap_provider_available = true;
+        request.fallback_allowed = true;
+        request.official_source_targeting = true;
+
+        let decision = route_provider(&policy, &request);
+        let mut counter = ProviderCallCounter::default();
+        apply_route_decision_to_counter(&mut counter, &decision);
+        let report = run_stage9_offline_search_certification();
+
+        assert_eq!(cheap.provider_lane, ProviderLane::CheapGeneralSearch);
+        assert!(cheap.test_fake_provider);
+        assert_eq!(brave.provider_lane, ProviderLane::PremiumFallback);
+        assert!(brave.paid_provider);
+        assert_eq!(decision.selected_lane, ProviderLane::CheapGeneralSearch);
+        assert_eq!(
+            decision.selected_provider,
+            Some(ProviderControlProvider::CheapGeneralSearch)
+        );
+        assert_eq!(
+            decision.fallback_provider,
+            Some(ProviderControlProvider::BraveWebSearch)
+        );
+        assert!(!decision.fallback_allowed);
+        assert!(decision.budget_required);
+        assert_eq!(counter.provider_call_attempt_count, 0);
+        assert_eq!(counter.provider_network_dispatch_count, 0);
+        assert_eq!(report.live_provider_call_attempt_count, 0);
+        assert_eq!(report.live_provider_network_dispatch_count, 0);
+        assert!(report.deep_research_plan.providers_allowed.is_empty());
+        assert!(report
+            .deep_research_report
+            .supporting_sources
+            .iter()
+            .all(|source| source.contains("fixture") || source.ends_with(".test")));
+    }
+
+    #[test]
+    fn stage34k_provider_registry_and_offline_eval_boundary() {
+        stage34k_provider_registry_and_offline_eval_boundary_impl();
+    }
+
+    #[test]
+    fn stage_34k_provider_registry_and_offline_eval_boundary() {
+        stage34k_provider_registry_and_offline_eval_boundary_impl();
+    }
 }

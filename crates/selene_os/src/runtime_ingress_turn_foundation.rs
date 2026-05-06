@@ -41230,6 +41230,242 @@ mod tests {
         silent_translation_or_summary_attempted: bool,
     }
 
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+    #[serde(rename_all = "snake_case")]
+    enum Stage34KLane {
+        QualityReady,
+        GovernanceSafety,
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+    #[serde(rename_all = "snake_case")]
+    enum Stage34KExpectedLane {
+        NoSearch,
+        CacheOnly,
+        CheapGeneralSearch,
+        PremiumFallback,
+        Disabled,
+    }
+
+    impl Stage34KExpectedLane {
+        const fn matches(self, actual: selene_engines::ph1providerctl::ProviderLane) -> bool {
+            matches!(
+                (self, actual),
+                (
+                    Stage34KExpectedLane::NoSearch,
+                    selene_engines::ph1providerctl::ProviderLane::NoSearch
+                ) | (
+                    Stage34KExpectedLane::CacheOnly,
+                    selene_engines::ph1providerctl::ProviderLane::CacheOnly
+                ) | (
+                    Stage34KExpectedLane::CheapGeneralSearch,
+                    selene_engines::ph1providerctl::ProviderLane::CheapGeneralSearch
+                ) | (
+                    Stage34KExpectedLane::PremiumFallback,
+                    selene_engines::ph1providerctl::ProviderLane::PremiumFallback
+                ) | (
+                    Stage34KExpectedLane::Disabled,
+                    selene_engines::ph1providerctl::ProviderLane::Disabled
+                )
+            )
+        }
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+    #[serde(rename_all = "snake_case")]
+    enum Stage34KCaseKind {
+        ProviderOffZeroCall,
+        PromptModelRegistryChampionRouter,
+        FallbackRollbackCostQuality,
+        OfflineEvalReleaseEvidence,
+        ProviderBackedEvalPromotionBillingRollbackBlocked,
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+    #[serde(rename_all = "snake_case")]
+    enum Stage34KPolicyProfile {
+        ProviderOff,
+        CheapReady,
+        PremiumFallbackReady,
+        PaidLiveBlocked,
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+    #[serde(rename_all = "snake_case")]
+    enum Stage34KFixtureRoute {
+        WebSearch,
+        NewsSearch,
+        DeepResearch,
+        UrlFetch,
+        ImageSearch,
+    }
+
+    impl Stage34KFixtureRoute {
+        const fn to_contract(self) -> selene_engines::ph1providerctl::ProviderControlRoute {
+            match self {
+                Stage34KFixtureRoute::WebSearch => {
+                    selene_engines::ph1providerctl::ProviderControlRoute::WebSearch
+                }
+                Stage34KFixtureRoute::NewsSearch => {
+                    selene_engines::ph1providerctl::ProviderControlRoute::NewsSearch
+                }
+                Stage34KFixtureRoute::DeepResearch => {
+                    selene_engines::ph1providerctl::ProviderControlRoute::DeepResearch
+                }
+                Stage34KFixtureRoute::UrlFetch => {
+                    selene_engines::ph1providerctl::ProviderControlRoute::UrlFetch
+                }
+                Stage34KFixtureRoute::ImageSearch => {
+                    selene_engines::ph1providerctl::ProviderControlRoute::ImageSearch
+                }
+            }
+        }
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+    #[serde(rename_all = "snake_case")]
+    enum Stage34KFixtureCacheStatus {
+        Disabled,
+        Hit,
+        Miss,
+        Stale,
+    }
+
+    impl Stage34KFixtureCacheStatus {
+        const fn to_contract(self) -> selene_engines::ph1providerctl::ProviderCacheStatus {
+            match self {
+                Stage34KFixtureCacheStatus::Disabled => {
+                    selene_engines::ph1providerctl::ProviderCacheStatus::Disabled
+                }
+                Stage34KFixtureCacheStatus::Hit => {
+                    selene_engines::ph1providerctl::ProviderCacheStatus::Hit
+                }
+                Stage34KFixtureCacheStatus::Miss => {
+                    selene_engines::ph1providerctl::ProviderCacheStatus::Miss
+                }
+                Stage34KFixtureCacheStatus::Stale => {
+                    selene_engines::ph1providerctl::ProviderCacheStatus::Stale
+                }
+            }
+        }
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+    #[serde(rename_all = "snake_case")]
+    enum Stage34KImportanceTier {
+        Low,
+        Medium,
+        High,
+    }
+
+    impl Stage34KImportanceTier {
+        const fn to_contract(self) -> crate::web_search_plan::perf_cost::tiers::ImportanceTier {
+            match self {
+                Stage34KImportanceTier::Low => {
+                    crate::web_search_plan::perf_cost::tiers::ImportanceTier::Low
+                }
+                Stage34KImportanceTier::Medium => {
+                    crate::web_search_plan::perf_cost::tiers::ImportanceTier::Medium
+                }
+                Stage34KImportanceTier::High => {
+                    crate::web_search_plan::perf_cost::tiers::ImportanceTier::High
+                }
+            }
+        }
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+    #[serde(rename_all = "snake_case")]
+    enum Stage34KPaeMode {
+        Shadow,
+        Assist,
+        Lead,
+    }
+
+    impl Stage34KPaeMode {
+        const fn to_contract(self) -> selene_kernel_contracts::ph1pae::PaeMode {
+            match self {
+                Stage34KPaeMode::Shadow => selene_kernel_contracts::ph1pae::PaeMode::Shadow,
+                Stage34KPaeMode::Assist => selene_kernel_contracts::ph1pae::PaeMode::Assist,
+                Stage34KPaeMode::Lead => selene_kernel_contracts::ph1pae::PaeMode::Lead,
+            }
+        }
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct Stage34KProviderGovernanceCorpusPack {
+        pack_id: String,
+        pack_version: String,
+        quality_threshold_bp: u16,
+        safety_threshold_bp: u16,
+        cases: Vec<Stage34KProviderGovernanceCorpusCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct Stage34KProviderGovernanceCorpusCase {
+        case_id: String,
+        fixture_case_id: String,
+        lane: Stage34KLane,
+        expected_selected_lane: Stage34KExpectedLane,
+        expected_provider_id: Option<String>,
+        expected_fallback_provider_id: Option<String>,
+        expected_deny_reason: Option<String>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct Stage34KProviderGovernanceFixtureSet {
+        fixture_set_id: String,
+        fixture_set_version: String,
+        cases: Vec<Stage34KProviderGovernanceFixtureCase>,
+    }
+
+    #[derive(Debug, Clone, Deserialize)]
+    struct Stage34KStageTimingsFixture {
+        x: u64,
+        search: u64,
+        e: u64,
+        d: u64,
+        write: u64,
+        tts: u64,
+    }
+
+    #[derive(Debug, Clone, Deserialize)]
+    struct Stage34KProviderGovernanceFixtureCase {
+        fixture_case_id: String,
+        case_kind: Stage34KCaseKind,
+        policy_profile: Stage34KPolicyProfile,
+        route: Stage34KFixtureRoute,
+        query: String,
+        search_needed: bool,
+        cache_allowed: bool,
+        cache_status: Stage34KFixtureCacheStatus,
+        cheap_provider_available: bool,
+        news_provider_available: bool,
+        fallback_requested: bool,
+        official_source_targeting: bool,
+        prompt_profile_id: String,
+        model_profile_id: String,
+        registry_provider_id: String,
+        importance_tier: Stage34KImportanceTier,
+        stage_timings_ms: Stage34KStageTimingsFixture,
+        provider_off_zero_call_required: bool,
+        release_head_commit: String,
+        release_branch: String,
+        release_timestamp_utc: String,
+        release_date_tag: String,
+        release_expected_path_fragment: String,
+        expected_live_block_reason: Option<String>,
+        pae_current_mode: Stage34KPaeMode,
+        pae_proposed_mode: Stage34KPaeMode,
+        pae_candidate_quality_bp: i16,
+        pae_candidate_regression_bp: u16,
+        pae_candidate_sample_size: u16,
+        pae_minimum_sample_size: u16,
+        pae_promotion_threshold_bp: i16,
+        pae_consecutive_failures: u8,
+        pae_rollback_ready: bool,
+    }
+
     #[derive(Debug, Default)]
     struct FixedClock {
         now_ms: Cell<i64>,
@@ -42222,6 +42458,18 @@ mod tests {
             .join(file_name)
     }
 
+    fn stage34k_eval_corpus_pack_path(file_name: &str) -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../docs/web_search_plan/eval/corpus_packs")
+            .join(file_name)
+    }
+
+    fn stage34k_replay_fixture_path(file_name: &str) -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../docs/web_search_plan/replay_fixtures")
+            .join(file_name)
+    }
+
     fn load_stage34e_corpus_pack() -> Stage34EMeaningRepairCorpusPack {
         let text = fs::read_to_string(stage34e_eval_corpus_pack_path("meaning_repair.json"))
             .expect("stage34e corpus pack should load");
@@ -42308,6 +42556,21 @@ mod tests {
         serde_json::from_str(&text).expect("stage34j replay fixtures should parse")
     }
 
+    fn load_stage34k_corpus_pack() -> Stage34KProviderGovernanceCorpusPack {
+        let text =
+            fs::read_to_string(stage34k_eval_corpus_pack_path("provider_model_governance.json"))
+                .expect("stage34k corpus pack should load");
+        serde_json::from_str(&text).expect("stage34k corpus pack should parse")
+    }
+
+    fn load_stage34k_fixture_set() -> Stage34KProviderGovernanceFixtureSet {
+        let text = fs::read_to_string(stage34k_replay_fixture_path(
+            "stage34k_provider_model_governance_cases.json",
+        ))
+        .expect("stage34k replay fixtures should load");
+        serde_json::from_str(&text).expect("stage34k replay fixtures should parse")
+    }
+
     fn stage34e_fixture_case<'a>(
         fixtures: &'a Stage34EMeaningRepairFixtureSet,
         fixture_case_id: &str,
@@ -42374,6 +42637,17 @@ mod tests {
             .unwrap_or_else(|| panic!("missing stage34j replay fixture for {fixture_case_id}"))
     }
 
+    fn stage34k_fixture_case<'a>(
+        fixtures: &'a Stage34KProviderGovernanceFixtureSet,
+        fixture_case_id: &str,
+    ) -> &'a Stage34KProviderGovernanceFixtureCase {
+        fixtures
+            .cases
+            .iter()
+            .find(|case| case.fixture_case_id == fixture_case_id)
+            .unwrap_or_else(|| panic!("missing stage34k replay fixture for {fixture_case_id}"))
+    }
+
     fn stage34e_score_bp(passed: usize, total: usize) -> u16 {
         if total == 0 {
             return 0;
@@ -42410,6 +42684,13 @@ mod tests {
     }
 
     fn stage34j_score_bp(passed: usize, total: usize) -> u16 {
+        if total == 0 {
+            return 0;
+        }
+        ((passed * 10_000) / total) as u16
+    }
+
+    fn stage34k_score_bp(passed: usize, total: usize) -> u16 {
         if total == 0 {
             return 0;
         }
@@ -42454,6 +42735,16 @@ mod tests {
             .iter()
             .find(|case| case.case_id == case_id)
             .unwrap_or_else(|| panic!("missing stage34j corpus case for {case_id}"))
+    }
+
+    fn stage34k_corpus_case<'a>(
+        pack: &'a Stage34KProviderGovernanceCorpusPack,
+        case_id: &str,
+    ) -> &'a Stage34KProviderGovernanceCorpusCase {
+        pack.cases
+            .iter()
+            .find(|case| case.case_id == case_id)
+            .unwrap_or_else(|| panic!("missing stage34k corpus case for {case_id}"))
     }
 
     fn stage34f_stage5_packet(
@@ -47042,6 +47333,663 @@ mod tests {
     fn stage_34j_response_language_and_pronunciation_hints_remain_advisory_and_non_authoritative(
     ) {
         stage34j_response_language_and_pronunciation_hints_remain_advisory_and_non_authoritative_impl();
+    }
+
+    fn stage34k_registry_entry<'a>(
+        registry: &'a [selene_engines::ph1providerctl::ProviderRegistryEntry],
+        provider_id: &str,
+    ) -> &'a selene_engines::ph1providerctl::ProviderRegistryEntry {
+        registry
+            .iter()
+            .find(|entry| entry.provider_id == provider_id)
+            .unwrap_or_else(|| panic!("missing stage34k registry provider for {provider_id}"))
+    }
+
+    fn stage34k_policy(
+        profile: Stage34KPolicyProfile,
+    ) -> selene_engines::ph1providerctl::ProviderNetworkPolicy {
+        match profile {
+            Stage34KPolicyProfile::ProviderOff => {
+                selene_engines::ph1providerctl::ProviderNetworkPolicy::default()
+            }
+            Stage34KPolicyProfile::CheapReady => {
+                selene_engines::ph1providerctl::ProviderNetworkPolicy::fake_test_allowing(2)
+            }
+            Stage34KPolicyProfile::PremiumFallbackReady => {
+                let mut policy =
+                    selene_engines::ph1providerctl::ProviderNetworkPolicy::fake_test_allowing(2);
+                policy.fallback_enabled = true;
+                policy.max_fallback_calls_this_turn = 1;
+                policy
+            }
+            Stage34KPolicyProfile::PaidLiveBlocked => {
+                let mut policy =
+                    selene_engines::ph1providerctl::ProviderNetworkPolicy::fake_test_allowing(2);
+                policy.fallback_enabled = true;
+                policy.max_fallback_calls_this_turn = 1;
+                policy.paid_search_providers_enabled = false;
+                policy
+            }
+        }
+    }
+
+    fn stage34k_route_request(
+        fixture: &Stage34KProviderGovernanceFixtureCase,
+    ) -> selene_engines::ph1providerctl::ProviderRouteRequest {
+        let mut request =
+            selene_engines::ph1providerctl::ProviderRouteRequest::public_web(&fixture.query);
+        request.search_needed = fixture.search_needed;
+        request.route = fixture.route.to_contract();
+        request.cache_allowed = fixture.cache_allowed;
+        request.cache_status = fixture.cache_status.to_contract();
+        request.cheap_provider_available = fixture.cheap_provider_available;
+        request.news_provider_available = fixture.news_provider_available;
+        request.fallback_allowed = fixture.fallback_requested;
+        request.official_source_targeting = fixture.official_source_targeting;
+        request
+    }
+
+    fn stage34k_perf_cost_audit(
+        fixture: &Stage34KProviderGovernanceFixtureCase,
+    ) -> (
+        serde_json::Value,
+        crate::web_search_plan::perf_cost::budgets::BudgetPlan,
+        crate::web_search_plan::perf_cost::budgets::ProviderCallBudget,
+    ) {
+        let tier = fixture.importance_tier.to_contract();
+        let plan = crate::web_search_plan::perf_cost::budgets::budget_plan_for_tier(tier);
+        let mut tracker =
+            crate::web_search_plan::perf_cost::budgets::StageBudgetTracker::new(plan);
+        tracker
+            .record_stage_timing(
+                crate::web_search_plan::perf_cost::budgets::Stage::X,
+                fixture.stage_timings_ms.x,
+            )
+            .expect("stage34k X timing");
+        tracker
+            .record_stage_timing(
+                crate::web_search_plan::perf_cost::budgets::Stage::Search,
+                fixture.stage_timings_ms.search,
+            )
+            .expect("stage34k SEARCH timing");
+        tracker
+            .record_stage_timing(
+                crate::web_search_plan::perf_cost::budgets::Stage::E,
+                fixture.stage_timings_ms.e,
+            )
+            .expect("stage34k E timing");
+        tracker
+            .record_stage_timing(
+                crate::web_search_plan::perf_cost::budgets::Stage::D,
+                fixture.stage_timings_ms.d,
+            )
+            .expect("stage34k D timing");
+        tracker
+            .record_stage_timing(
+                crate::web_search_plan::perf_cost::budgets::Stage::Write,
+                fixture.stage_timings_ms.write,
+            )
+            .expect("stage34k WRITE timing");
+        tracker
+            .record_stage_timing(
+                crate::web_search_plan::perf_cost::budgets::Stage::Tts,
+                fixture.stage_timings_ms.tts,
+            )
+            .expect("stage34k TTS timing");
+
+        let provider_budget =
+            crate::web_search_plan::perf_cost::budgets::ProviderCallBudget::for_tier(tier);
+        assert_eq!(provider_budget.total_provider_calls(), 0);
+        assert_eq!(provider_budget.fallback_invocations(), 0);
+        provider_budget
+            .validate_retry_count(0)
+            .expect("stage34k zero retries should validate");
+
+        let mut stage_timings_json = std::collections::BTreeMap::new();
+        stage_timings_json.insert("D".to_string(), fixture.stage_timings_ms.d);
+        stage_timings_json.insert("E".to_string(), fixture.stage_timings_ms.e);
+        stage_timings_json.insert("SEARCH".to_string(), fixture.stage_timings_ms.search);
+        stage_timings_json.insert("TTS".to_string(), fixture.stage_timings_ms.tts);
+        stage_timings_json.insert("WRITE".to_string(), fixture.stage_timings_ms.write);
+        stage_timings_json.insert("X".to_string(), fixture.stage_timings_ms.x);
+
+        let metrics = crate::web_search_plan::perf_cost::audit_fields::PerfCostAuditMetrics {
+            importance_tier: match fixture.importance_tier {
+                Stage34KImportanceTier::Low => "low".to_string(),
+                Stage34KImportanceTier::Medium => "medium".to_string(),
+                Stage34KImportanceTier::High => "high".to_string(),
+            },
+            budgets_applied: serde_json::json!({
+                "absolute_deadline_ms": plan.absolute_deadline_ms,
+                "stage_deadlines_ms": {
+                    "x": plan.stage_deadlines_ms.x,
+                    "search": plan.stage_deadlines_ms.search,
+                    "e": plan.stage_deadlines_ms.e,
+                    "d": plan.stage_deadlines_ms.d,
+                    "write": plan.stage_deadlines_ms.write,
+                    "tts": plan.stage_deadlines_ms.tts
+                },
+                "max_total_provider_calls_per_turn": provider_budget.max_total_provider_calls_per_turn,
+                "max_fallback_invocations_per_turn": provider_budget.max_fallback_invocations_per_turn,
+                "max_retries_per_provider": provider_budget.max_retries_per_provider
+            }),
+            stage_timings_ms: stage_timings_json,
+            degraded: false,
+            degrade_step: None,
+            concurrency_peak: 1,
+            total_provider_calls: 0,
+            urls_opened_count: 0,
+            stop_reason: "provider_off_governance_fixture".to_string(),
+        };
+        let mut audit_packet =
+            serde_json::json!({"turn_state_transition": "stage34k_provider_governance"});
+        crate::web_search_plan::perf_cost::audit_fields::append_perf_cost_audit_fields(
+            &mut audit_packet,
+            &metrics,
+        )
+        .expect("stage34k perf-cost audit append");
+
+        (audit_packet, plan, provider_budget)
+    }
+
+    fn stage34k_temp_dir(name: &str) -> PathBuf {
+        let mut dir = std::env::temp_dir();
+        dir.push(format!("selene_stage34k_{}_{}", name, std::process::id()));
+        dir
+    }
+
+    fn stage34k_write_release_lock_results(path: &PathBuf, head: &str) {
+        let manifest_hash = {
+            let text = crate::web_search_plan::registry_loader::read_text(
+                "CONTRACT_HASH_MANIFEST.json",
+            )
+            .expect("stage34k contract hash manifest text should load");
+            crate::web_search_plan::contract_hash::sha256_hex(text.as_bytes())
+        };
+        let text = format!(
+            "HEAD_COMMIT\t{head}\nCONTRACT_HASH_MANIFEST_HASH\t{manifest_hash}\nGATE\tscripts/web_search_plan/check_contracts.sh\tPASS\nGATE\tscripts/web_search_plan/check_replay_harness.sh\tPASS\nGATE\tcargo test -p selene_os stage_34k --quiet\tPASS\nOVERALL\tPASS\n"
+        );
+        fs::write(path, text).expect("stage34k release lock fixture write should succeed");
+    }
+
+    fn stage34k_write_slo_lock_results(path: &PathBuf) {
+        let text = "SLO\tcitation_coverage\tPASS\trequired=1.0_answer_cases\nSLO\trefusal_correctness\tPASS\trequired=all_refusal_cases_pass\nSLO\tfreshness_compliance\tPASS\trequired=stale_refusal_enforced\nSLO\tdeterminism_replay\tPASS\trequired=replay_snapshot_match\nOVERALL\tPASS\n";
+        fs::write(path, text).expect("stage34k slo lock fixture write should succeed");
+    }
+
+    fn stage34k_pae_request(
+        fixture: &Stage34KProviderGovernanceFixtureCase,
+    ) -> selene_kernel_contracts::ph1pae::Ph1PaeRequest {
+        let envelope = selene_kernel_contracts::ph1pae::PaeRequestEnvelope::v1(
+            CorrelationId(34_011),
+            TurnId(34_011),
+            8,
+            4,
+            4,
+            4,
+            8,
+        )
+        .expect("stage34k pae envelope");
+        let signal = selene_kernel_contracts::ph1pae::PaeSignalVector::v1(
+            format!("sig:stage34k:{}", fixture.fixture_case_id),
+            selene_kernel_contracts::ph1pae::PaeSignalSource::Feedback,
+            selene_kernel_contracts::ph1pae::PaeRouteDomain::Stt,
+            "quality_trend".to_string(),
+            240,
+            9_000,
+            true,
+            "evidence:stage34k".to_string(),
+        )
+        .expect("stage34k pae signal");
+        let candidate = selene_kernel_contracts::ph1pae::PaePolicyCandidate::v1(
+            format!("candidate:{}", fixture.fixture_case_id),
+            selene_kernel_contracts::ph1pae::PaeRouteDomain::Stt,
+            selene_kernel_contracts::ph1pae::PaeProviderSlot::Primary,
+            fixture.pae_proposed_mode.to_contract(),
+            fixture.pae_candidate_quality_bp,
+            180,
+            260,
+            fixture.pae_candidate_regression_bp,
+            fixture.pae_candidate_sample_size,
+            if fixture.pae_proposed_mode == Stage34KPaeMode::Shadow {
+                None
+            } else {
+                Some(format!("artifact:{}", fixture.fixture_case_id))
+            },
+            fixture
+                .pae_rollback_ready
+                .then(|| format!("artifact:{}:rollback", fixture.fixture_case_id)),
+        )
+        .expect("stage34k pae candidate");
+
+        selene_kernel_contracts::ph1pae::Ph1PaeRequest::PaePolicyScoreBuild(
+            selene_kernel_contracts::ph1pae::PaePolicyScoreBuildRequest::v1(
+                envelope,
+                "tenant_stage34k".to_string(),
+                fixture.model_profile_id.clone(),
+                fixture.pae_current_mode.to_contract(),
+                vec![signal],
+                vec![candidate],
+                true,
+                fixture.pae_minimum_sample_size,
+                fixture.pae_promotion_threshold_bp,
+                3,
+                fixture.pae_consecutive_failures,
+            )
+            .expect("stage34k pae request"),
+        )
+    }
+
+    fn stage34k_provider_model_governance_offline_slice_impl() {
+        let pack = load_stage34k_corpus_pack();
+        let fixtures = load_stage34k_fixture_set();
+
+        assert_eq!(pack.pack_id, "provider_model_governance");
+        assert_eq!(pack.pack_version, "1.0.0");
+        assert_eq!(
+            fixtures.fixture_set_id,
+            "stage34k_provider_model_governance_cases"
+        );
+        assert_eq!(fixtures.fixture_set_version, "1.0.0");
+
+        let mut quality_total = 0usize;
+        let mut quality_pass = 0usize;
+        let mut safety_total = 0usize;
+        let mut safety_pass = 0usize;
+
+        for case in &pack.cases {
+            let fixture = stage34k_fixture_case(&fixtures, &case.fixture_case_id);
+            let policy = stage34k_policy(fixture.policy_profile);
+            let request = stage34k_route_request(fixture);
+            let registry = selene_engines::ph1providerctl::provider_registry(&policy);
+            let decision = selene_engines::ph1providerctl::route_provider(&policy, &request);
+            let mut counter = selene_engines::ph1providerctl::ProviderCallCounter::default();
+            selene_engines::ph1providerctl::apply_route_decision_to_counter(
+                &mut counter,
+                &decision,
+            );
+            let (audit_packet, plan, provider_budget) = stage34k_perf_cost_audit(fixture);
+            let registry_entry = stage34k_registry_entry(&registry, &fixture.registry_provider_id);
+            let route_json =
+                serde_json::to_value(&decision).expect("stage34k route decision serializes");
+
+            assert!(
+                case.expected_selected_lane.matches(decision.selected_lane),
+                "stage34k route lane mismatch for {}",
+                case.case_id
+            );
+            assert_eq!(
+                case.expected_provider_id.as_deref(),
+                decision.selected_provider.map(|provider| provider.as_str()),
+                "stage34k selected provider mismatch for {}",
+                case.case_id
+            );
+            assert_eq!(
+                case.expected_fallback_provider_id.as_deref(),
+                decision.fallback_provider.map(|provider| provider.as_str()),
+                "stage34k fallback provider mismatch for {}",
+                case.case_id
+            );
+            assert_eq!(
+                case.expected_deny_reason.as_deref(),
+                decision.deny_reason.as_deref(),
+                "stage34k deny reason mismatch for {}",
+                case.case_id
+            );
+            assert_eq!(counter.provider_call_attempt_count, 0);
+            assert_eq!(counter.provider_network_dispatch_count, 0);
+            assert_eq!(provider_budget.total_provider_calls(), 0);
+            assert_eq!(provider_budget.fallback_invocations(), 0);
+            assert!(!fixture.prompt_profile_id.is_empty());
+            assert!(!fixture.model_profile_id.is_empty());
+            assert!(!registry_entry.provider_name.is_empty());
+            assert_eq!(registry_entry.provider_id, fixture.registry_provider_id);
+            assert_eq!(
+                route_json.get("route_reason").and_then(|value| value.as_str()),
+                Some(decision.route_reason.as_str())
+            );
+            assert_eq!(
+                route_json
+                    .get("trace_id")
+                    .and_then(|value| value.as_str())
+                    .map(|value| value.is_empty()),
+                Some(false)
+            );
+            assert!(
+                audit_packet
+                    .get("turn_state_transition")
+                    .and_then(|value| value.get("perf_cost_audit"))
+                    .is_some()
+            );
+            assert!(plan.absolute_deadline_ms > 0);
+            if matches!(
+                fixture.case_kind,
+                Stage34KCaseKind::ProviderBackedEvalPromotionBillingRollbackBlocked
+            ) {
+                assert!(matches!(case.lane, Stage34KLane::GovernanceSafety));
+            } else {
+                assert!(matches!(case.lane, Stage34KLane::QualityReady));
+            }
+
+            match case.lane {
+                Stage34KLane::QualityReady => {
+                    quality_total += 1;
+                    assert!(fixture.provider_off_zero_call_required);
+                    assert!(!decision.user_approval_required);
+                    assert_eq!(counter.provider_network_dispatch_count, 0);
+                    quality_pass += 1;
+                }
+                Stage34KLane::GovernanceSafety => {
+                    safety_total += 1;
+
+                    let gate = selene_engines::ph1providerctl::evaluate_provider_gate(
+                        &policy,
+                        selene_engines::ph1providerctl::ProviderUsageContext::unknown(
+                            fixture.route.to_contract(),
+                            selene_engines::ph1providerctl::ProviderControlProvider::BraveWebSearch,
+                            &fixture.query,
+                        ),
+                        selene_engines::ph1providerctl::ProviderControlMode::Live,
+                        selene_engines::ph1providerctl::ProviderCallCounter::default(),
+                    );
+                    assert!(!gate.allowed);
+                    assert_eq!(gate.counter.provider_call_attempt_count, 0);
+                    assert_eq!(gate.counter.provider_network_dispatch_count, 0);
+                    assert_eq!(
+                        fixture.expected_live_block_reason.as_deref(),
+                        gate.deny_reason.as_deref()
+                    );
+
+                    let pae_runtime = selene_engines::ph1pae::Ph1PaeRuntime::new(
+                        selene_engines::ph1pae::Ph1PaeConfig::mvp_v1(),
+                    );
+                    let pae_response = pae_runtime.run(&stage34k_pae_request(fixture));
+                    let selene_kernel_contracts::ph1pae::Ph1PaeResponse::PaePolicyScoreBuildOk(ok) =
+                        pae_response
+                    else {
+                        panic!("stage34k expected PAE score build ok");
+                    };
+                    assert!(!ok.promotion_eligible);
+                    assert!(ok.rollback_ready);
+                    assert_eq!(ok.selected_mode, selene_kernel_contracts::ph1pae::PaeMode::Assist);
+
+                    safety_pass += 1;
+                }
+            }
+        }
+
+        let quality_bp = stage34k_score_bp(quality_pass, quality_total);
+        let safety_bp = stage34k_score_bp(safety_pass, safety_total);
+
+        assert!(
+            quality_bp >= pack.quality_threshold_bp,
+            "stage34k provider governance quality threshold failed: actual={} required={}",
+            quality_bp,
+            pack.quality_threshold_bp
+        );
+        assert!(
+            safety_bp >= pack.safety_threshold_bp,
+            "stage34k provider governance safety threshold failed: actual={} required={}",
+            safety_bp,
+            pack.safety_threshold_bp
+        );
+    }
+
+    #[test]
+    fn stage34k_provider_model_governance_offline_slice_stays_provider_off_and_zero_call() {
+        let pack = load_stage34k_corpus_pack();
+        let fixtures = load_stage34k_fixture_set();
+
+        for case_id in [
+            "provider_off_zero_call_ready",
+            "prompt_model_registry_and_champion_router_ready",
+            "fallback_rollback_cost_quality_advisory_ready",
+        ] {
+            let case = stage34k_corpus_case(&pack, case_id);
+            let fixture = stage34k_fixture_case(&fixtures, &case.fixture_case_id);
+            let policy = stage34k_policy(fixture.policy_profile);
+            let request = stage34k_route_request(fixture);
+            let decision = selene_engines::ph1providerctl::route_provider(&policy, &request);
+            let mut counter = selene_engines::ph1providerctl::ProviderCallCounter::default();
+            selene_engines::ph1providerctl::apply_route_decision_to_counter(
+                &mut counter,
+                &decision,
+            );
+
+            assert!(fixture.provider_off_zero_call_required);
+            assert_eq!(counter.provider_call_attempt_count, 0);
+            assert_eq!(counter.provider_network_dispatch_count, 0);
+            assert!(case.expected_selected_lane.matches(decision.selected_lane));
+        }
+    }
+
+    #[test]
+    fn stage_34k_provider_model_governance_offline_slice_stays_provider_off_and_zero_call() {
+        stage34k_provider_model_governance_offline_slice_stays_provider_off_and_zero_call();
+    }
+
+    #[test]
+    fn stage34k_prompt_model_registry_and_champion_router_packets_are_schema_valid() {
+        let pack = load_stage34k_corpus_pack();
+        let fixtures = load_stage34k_fixture_set();
+        let case = stage34k_corpus_case(&pack, "prompt_model_registry_and_champion_router_ready");
+        let fixture = stage34k_fixture_case(&fixtures, &case.fixture_case_id);
+        let policy = stage34k_policy(fixture.policy_profile);
+        let registry = selene_engines::ph1providerctl::provider_registry(&policy);
+        let registry_entry = stage34k_registry_entry(&registry, &fixture.registry_provider_id);
+        let request = stage34k_route_request(fixture);
+        let decision = selene_engines::ph1providerctl::route_provider(&policy, &request);
+        let registry_json =
+            serde_json::to_value(registry_entry).expect("stage34k registry entry serializes");
+        let route_json =
+            serde_json::to_value(&decision).expect("stage34k route decision serializes");
+
+        assert!(case.expected_selected_lane.matches(decision.selected_lane));
+        assert_eq!(
+            decision.selected_provider.map(|provider| provider.as_str()),
+            case.expected_provider_id.as_deref()
+        );
+        assert_eq!(
+            decision.fallback_provider.map(|provider| provider.as_str()),
+            case.expected_fallback_provider_id.as_deref()
+        );
+        assert_eq!(
+            registry_json.get("provider_id").and_then(|value| value.as_str()),
+            Some(fixture.registry_provider_id.as_str())
+        );
+        assert_eq!(
+            registry_json
+                .get("provider_lane")
+                .and_then(|value| value.as_str()),
+            Some("CheapGeneralSearch")
+        );
+        assert_eq!(
+            route_json
+                .get("selected_provider")
+                .and_then(|value| value.as_str()),
+            Some("CheapGeneralSearch")
+        );
+        assert!(!fixture.prompt_profile_id.is_empty());
+        assert!(!fixture.model_profile_id.is_empty());
+        assert!(registry_entry.test_fake_provider);
+    }
+
+    #[test]
+    fn stage_34k_prompt_model_registry_and_champion_router_packets_are_schema_valid() {
+        stage34k_prompt_model_registry_and_champion_router_packets_are_schema_valid();
+    }
+
+    #[test]
+    fn stage34k_fallback_rollback_and_cost_quality_packets_remain_non_authoritative() {
+        let pack = load_stage34k_corpus_pack();
+        let fixtures = load_stage34k_fixture_set();
+        let case = stage34k_corpus_case(
+            &pack,
+            "fallback_rollback_cost_quality_advisory_ready",
+        );
+        let fixture = stage34k_fixture_case(&fixtures, &case.fixture_case_id);
+        let policy = stage34k_policy(fixture.policy_profile);
+        let request = stage34k_route_request(fixture);
+        let decision = selene_engines::ph1providerctl::route_provider(&policy, &request);
+        let (audit_packet, plan, provider_budget) = stage34k_perf_cost_audit(fixture);
+
+        assert!(case.expected_selected_lane.matches(decision.selected_lane));
+        assert_eq!(
+            decision.selected_provider.map(|provider| provider.as_str()),
+            Some("brave_web_search")
+        );
+        assert_eq!(
+            decision.fallback_provider.map(|provider| provider.as_str()),
+            Some("brave_web_search")
+        );
+        assert!(decision.fallback_allowed);
+        assert!(decision.budget_required);
+        assert!(!decision.user_approval_required);
+        assert_eq!(provider_budget.total_provider_calls(), 0);
+        assert_eq!(provider_budget.fallback_invocations(), 0);
+        assert!(plan.absolute_deadline_ms > 0);
+        assert_eq!(
+            audit_packet
+                .get("turn_state_transition")
+                .and_then(|value| value.get("perf_cost_audit"))
+                .and_then(|value| value.get("total_provider_calls"))
+                .and_then(|value| value.as_u64()),
+            Some(0)
+        );
+        assert_eq!(
+            audit_packet
+                .get("turn_state_transition")
+                .and_then(|value| value.get("perf_cost_audit"))
+                .and_then(|value| value.get("stop_reason"))
+                .and_then(|value| value.as_str()),
+            Some("provider_off_governance_fixture")
+        );
+    }
+
+    #[test]
+    fn stage_34k_fallback_rollback_and_cost_quality_packets_remain_non_authoritative() {
+        stage34k_fallback_rollback_and_cost_quality_packets_remain_non_authoritative();
+    }
+
+    #[test]
+    fn stage34k_offline_eval_and_release_evidence_use_synthetic_provider_model_inputs() {
+        let pack = load_stage34k_corpus_pack();
+        let fixtures = load_stage34k_fixture_set();
+        let case = stage34k_corpus_case(&pack, "offline_eval_release_evidence_synthetic_ready");
+        let fixture = stage34k_fixture_case(&fixtures, &case.fixture_case_id);
+        let report = selene_engines::ph1providerctl::run_stage9_offline_search_certification();
+
+        assert_eq!(report.live_provider_call_attempt_count, 0);
+        assert_eq!(report.live_provider_network_dispatch_count, 0);
+        assert_eq!(report.performance_packet.provider_call_count, 0);
+        assert!(report
+            .deep_research_report
+            .supporting_sources
+            .iter()
+            .all(|source| source.contains("fixture") || source.ends_with(".test")));
+        assert!(report.deep_research_plan.providers_allowed.is_empty());
+        assert!(report
+            .case_results
+            .iter()
+            .all(|result| !result.response_text.contains("customer")));
+
+        let root = stage34k_temp_dir("release");
+        let output_dir = root.join("release_evidence");
+        fs::create_dir_all(&output_dir).expect("stage34k temp output dir creation should succeed");
+        let release_lock_path = root.join("release_lock.tsv");
+        let slo_lock_path = root.join("slo_lock.tsv");
+        stage34k_write_release_lock_results(&release_lock_path, &fixture.release_head_commit);
+        stage34k_write_slo_lock_results(&slo_lock_path);
+
+        let config = crate::web_search_plan::release::GenerateReleaseEvidenceConfig {
+            head_commit: fixture.release_head_commit.clone(),
+            branch: fixture.release_branch.clone(),
+            run30_timestamp_utc: fixture.release_timestamp_utc.clone(),
+            date_tag: fixture.release_date_tag.clone(),
+            release_lock_results_path: release_lock_path,
+            slo_lock_results_path: slo_lock_path,
+            output_dir: output_dir.clone(),
+        };
+        let path = crate::web_search_plan::release::generate_release_evidence_pack(&config)
+            .expect("stage34k release evidence generation should pass");
+        let content = fs::read_to_string(&path).expect("stage34k release evidence file should read");
+
+        assert!(path.display().to_string().contains("ReleaseEvidencePack_"));
+        assert!(content.contains(fixture.release_head_commit.as_str()));
+        assert!(content.contains(fixture.release_branch.as_str()));
+        assert!(content.contains(fixture.release_expected_path_fragment.as_str()));
+        assert!(!content.contains("tenant_real"));
+        assert!(!content.contains("customer_real"));
+        assert!(!content.contains("billing_real"));
+    }
+
+    #[test]
+    fn stage_34k_offline_eval_and_release_evidence_use_synthetic_provider_model_inputs() {
+        stage34k_offline_eval_and_release_evidence_use_synthetic_provider_model_inputs();
+    }
+
+    #[test]
+    fn stage34k_provider_backed_eval_promotion_billing_and_rollback_automation_stay_blocked() {
+        let pack = load_stage34k_corpus_pack();
+        let fixtures = load_stage34k_fixture_set();
+        let case = stage34k_corpus_case(
+            &pack,
+            "provider_backed_eval_promotion_billing_rollback_blocked",
+        );
+        let fixture = stage34k_fixture_case(&fixtures, &case.fixture_case_id);
+        let policy = stage34k_policy(fixture.policy_profile);
+        let request = stage34k_route_request(fixture);
+        let decision = selene_engines::ph1providerctl::route_provider(&policy, &request);
+        let gate = selene_engines::ph1providerctl::evaluate_provider_gate(
+            &policy,
+            selene_engines::ph1providerctl::ProviderUsageContext::unknown(
+                fixture.route.to_contract(),
+                selene_engines::ph1providerctl::ProviderControlProvider::BraveWebSearch,
+                &fixture.query,
+            ),
+            selene_engines::ph1providerctl::ProviderControlMode::Live,
+            selene_engines::ph1providerctl::ProviderCallCounter::default(),
+        );
+        let pae_runtime = selene_engines::ph1pae::Ph1PaeRuntime::new(
+            selene_engines::ph1pae::Ph1PaeConfig::mvp_v1(),
+        );
+        let pae_response = pae_runtime.run(&stage34k_pae_request(fixture));
+        let selene_kernel_contracts::ph1pae::Ph1PaeResponse::PaePolicyScoreBuildOk(ok) =
+            pae_response
+        else {
+            panic!("stage34k expected PAE score build ok");
+        };
+
+        assert!(case.expected_selected_lane.matches(decision.selected_lane));
+        assert_eq!(
+            decision.selected_provider.map(|provider| provider.as_str()),
+            Some("brave_web_search")
+        );
+        assert!(!gate.allowed);
+        assert_eq!(
+            gate.deny_reason.as_deref(),
+            fixture.expected_live_block_reason.as_deref()
+        );
+        assert_eq!(gate.counter.provider_call_attempt_count, 0);
+        assert_eq!(gate.counter.provider_network_dispatch_count, 0);
+        assert!(!ok.promotion_eligible);
+        assert!(ok.rollback_ready);
+        assert_eq!(ok.selected_mode, selene_kernel_contracts::ph1pae::PaeMode::Assist);
+    }
+
+    #[test]
+    fn stage_34k_provider_backed_eval_promotion_billing_and_rollback_automation_stay_blocked() {
+        stage34k_provider_backed_eval_promotion_billing_and_rollback_automation_stay_blocked();
+    }
+
+    #[test]
+    fn stage34k_provider_model_governance_offline_slice_stays_provider_off_and_zero_call_impl() {
+        stage34k_provider_model_governance_offline_slice_impl();
+    }
+
+    #[test]
+    fn stage_34k_provider_model_governance_offline_slice_stays_provider_off_and_zero_call_impl() {
+        stage34k_provider_model_governance_offline_slice_impl();
     }
 
     fn stage11_ready_understanding() -> Stage10UnderstandingPacket {
