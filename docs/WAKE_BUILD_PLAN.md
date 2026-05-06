@@ -8,6 +8,12 @@ Wake exists to open or resume a Selene session so the user can start speaking.
 
 Wake does not process commands, reasoning, or responses.
 
+Stage 34 controlled phase gate:
+- Wake/activation remains blocked until its later controlled slice is explicitly authorized.
+- The controlled phase order keeps provider/model governance proof first, then wake/activation second.
+- Wake proof must record device availability, foreground operator start, mic permission where applicable, native-lab availability, voice-first smoke proof, and stop conditions before any wake measurement begins.
+- No background listening, STT proof, TTS playback proof, Voice ID proof, native-lab measurement, billing behavior, production promotion, production rollback, or protected execution is authorized by the controlled phase rules alone.
+
 Flow:
 Trigger -> Open/Resume Session -> Wake job finished -> Voice pipeline continues.
 
