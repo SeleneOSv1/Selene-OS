@@ -40692,6 +40692,194 @@ mod tests {
         stale_relationship_output: bool,
     }
 
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+    #[serde(rename_all = "snake_case")]
+    enum Stage34HMemoryLane {
+        TrustReady,
+        MemorySafety,
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+    #[serde(rename_all = "snake_case")]
+    enum Stage34HStage16Expectation {
+        MemoryReadReady,
+        FalseMemoryBlocked,
+        StaleOrRevokedMemoryBlocked,
+        ScopeLeakBlocked,
+    }
+
+    impl Stage34HStage16Expectation {
+        const fn matches(self, actual: Stage16LongTermStateDisposition) -> bool {
+            matches!(
+                (self, actual),
+                (
+                    Stage34HStage16Expectation::MemoryReadReady,
+                    Stage16LongTermStateDisposition::MemoryReadReady
+                ) | (
+                    Stage34HStage16Expectation::FalseMemoryBlocked,
+                    Stage16LongTermStateDisposition::FalseMemoryBlocked
+                ) | (
+                    Stage34HStage16Expectation::StaleOrRevokedMemoryBlocked,
+                    Stage16LongTermStateDisposition::StaleOrRevokedMemoryBlocked
+                ) | (
+                    Stage34HStage16Expectation::ScopeLeakBlocked,
+                    Stage16LongTermStateDisposition::ScopeLeakBlocked
+                )
+            )
+        }
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+    #[serde(rename_all = "snake_case")]
+    enum Stage34HStage23Expectation {
+        IdentitySafeRetentionReady,
+        LongHorizonRecallReady,
+        RecallSelectionReferenceReady,
+        NoInventionBlocked,
+        IdentitySafeRetentionBlocked,
+        ProtectedRetentionBlocked,
+        StaleRetentionBlocked,
+    }
+
+    impl Stage34HStage23Expectation {
+        const fn matches(self, actual: Stage23MemoryRetentionDisposition) -> bool {
+            matches!(
+                (self, actual),
+                (
+                    Stage34HStage23Expectation::IdentitySafeRetentionReady,
+                    Stage23MemoryRetentionDisposition::IdentitySafeRetentionReady
+                ) | (
+                    Stage34HStage23Expectation::LongHorizonRecallReady,
+                    Stage23MemoryRetentionDisposition::LongHorizonRecallReady
+                ) | (
+                    Stage34HStage23Expectation::RecallSelectionReferenceReady,
+                    Stage23MemoryRetentionDisposition::RecallSelectionReferenceReady
+                ) | (
+                    Stage34HStage23Expectation::NoInventionBlocked,
+                    Stage23MemoryRetentionDisposition::NoInventionBlocked
+                ) | (
+                    Stage34HStage23Expectation::IdentitySafeRetentionBlocked,
+                    Stage23MemoryRetentionDisposition::IdentitySafeRetentionBlocked
+                ) | (
+                    Stage34HStage23Expectation::ProtectedRetentionBlocked,
+                    Stage23MemoryRetentionDisposition::ProtectedRetentionBlocked
+                ) | (
+                    Stage34HStage23Expectation::StaleRetentionBlocked,
+                    Stage23MemoryRetentionDisposition::StaleRetentionBlocked
+                )
+            )
+        }
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+    #[serde(rename_all = "snake_case")]
+    enum Stage34HStage33Expectation {
+        RelationshipMemoryFramingReady,
+        UserFacingContinuityBoundaryReady,
+        NoInventionBlocked,
+        PublicProtectedBoundaryBlocked,
+        RelationshipAuthorityBlocked,
+        StaleRelationshipBlocked,
+    }
+
+    impl Stage34HStage33Expectation {
+        const fn matches(self, actual: Stage33RelationshipMemoryDisposition) -> bool {
+            matches!(
+                (self, actual),
+                (
+                    Stage34HStage33Expectation::RelationshipMemoryFramingReady,
+                    Stage33RelationshipMemoryDisposition::RelationshipMemoryFramingReady
+                ) | (
+                    Stage34HStage33Expectation::UserFacingContinuityBoundaryReady,
+                    Stage33RelationshipMemoryDisposition::UserFacingContinuityBoundaryReady
+                ) | (
+                    Stage34HStage33Expectation::NoInventionBlocked,
+                    Stage33RelationshipMemoryDisposition::NoInventionBlocked
+                ) | (
+                    Stage34HStage33Expectation::PublicProtectedBoundaryBlocked,
+                    Stage33RelationshipMemoryDisposition::PublicProtectedBoundaryBlocked
+                ) | (
+                    Stage34HStage33Expectation::RelationshipAuthorityBlocked,
+                    Stage33RelationshipMemoryDisposition::RelationshipAuthorityBlocked
+                ) | (
+                    Stage34HStage33Expectation::StaleRelationshipBlocked,
+                    Stage33RelationshipMemoryDisposition::StaleRelationshipBlocked
+                )
+            )
+        }
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+    #[serde(rename_all = "snake_case")]
+    enum Stage34HStage23Kind {
+        IdentitySafeRetention,
+        LongHorizonRecall,
+        RecallSelectionReference,
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+    #[serde(rename_all = "snake_case")]
+    enum Stage34HStage33Kind {
+        RelationshipMemoryFraming,
+        UserFacingContinuityBoundary,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct Stage34HMemoryTrustCorpusPack {
+        pack_id: String,
+        pack_version: String,
+        quality_threshold_bp: u16,
+        safety_threshold_bp: u16,
+        cases: Vec<Stage34HMemoryTrustCorpusCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct Stage34HMemoryTrustCorpusCase {
+        case_id: String,
+        fixture_case_id: String,
+        lane: Stage34HMemoryLane,
+        expected_stage16_disposition: Stage34HStage16Expectation,
+        expected_stage23_disposition: Stage34HStage23Expectation,
+        expected_stage33_disposition: Stage34HStage33Expectation,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct Stage34HMemoryTrustFixtureSet {
+        fixture_set_id: String,
+        fixture_set_version: String,
+        cases: Vec<Stage34HMemoryTrustFixtureCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct Stage34HMemoryTrustFixtureCase {
+        fixture_case_id: String,
+        stage23_kind: Stage34HStage23Kind,
+        stage33_kind: Stage34HStage33Kind,
+        unsupported_memory_claim_present: bool,
+        conflicting_memory_present: bool,
+        stale_memory_used_as_truth: bool,
+        revoked_memory_used: bool,
+        cross_project_memory_present: bool,
+        cross_tenant_memory_present: bool,
+        wrong_user_memory_present: bool,
+        memory_invented_fact: bool,
+        memory_claimed_unproven_completion: bool,
+        cross_user: bool,
+        cross_project: bool,
+        secret_unsafe: bool,
+        missing_user_scope_ref: bool,
+        memory_implies_stage12_mutation_without_proof: bool,
+        stale_retention_output: bool,
+        replay_upgrades_blocked_retention: bool,
+        relationship_invented_memory_certainty: bool,
+        prior_continuity_or_memory_used_as_truth_authority: bool,
+        protected_action_like_request: bool,
+        protected_slot_or_authority_ambiguous: bool,
+        stale_relationship_output: bool,
+        memory_mismatch: bool,
+        tenant_mismatch: bool,
+    }
+
     #[derive(Debug, Default)]
     struct FixedClock {
         now_ms: Cell<i64>,
@@ -41648,6 +41836,18 @@ mod tests {
             .join(file_name)
     }
 
+    fn stage34h_eval_corpus_pack_path(file_name: &str) -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../docs/web_search_plan/eval/corpus_packs")
+            .join(file_name)
+    }
+
+    fn stage34h_replay_fixture_path(file_name: &str) -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../docs/web_search_plan/replay_fixtures")
+            .join(file_name)
+    }
+
     fn load_stage34e_corpus_pack() -> Stage34EMeaningRepairCorpusPack {
         let text =
             fs::read_to_string(stage34e_eval_corpus_pack_path("meaning_repair.json"))
@@ -41693,6 +41893,20 @@ mod tests {
         serde_json::from_str(&text).expect("stage34g replay fixtures should parse")
     }
 
+    fn load_stage34h_corpus_pack() -> Stage34HMemoryTrustCorpusPack {
+        let text = fs::read_to_string(stage34h_eval_corpus_pack_path("memory_trust.json"))
+            .expect("stage34h corpus pack should load");
+        serde_json::from_str(&text).expect("stage34h corpus pack should parse")
+    }
+
+    fn load_stage34h_fixture_set() -> Stage34HMemoryTrustFixtureSet {
+        let text = fs::read_to_string(stage34h_replay_fixture_path(
+            "stage34h_memory_trust_cases.json",
+        ))
+        .expect("stage34h replay fixtures should load");
+        serde_json::from_str(&text).expect("stage34h replay fixtures should parse")
+    }
+
     fn stage34e_fixture_case<'a>(
         fixtures: &'a Stage34EMeaningRepairFixtureSet,
         fixture_case_id: &str,
@@ -41726,6 +41940,17 @@ mod tests {
             .unwrap_or_else(|| panic!("missing stage34g replay fixture for {fixture_case_id}"))
     }
 
+    fn stage34h_fixture_case<'a>(
+        fixtures: &'a Stage34HMemoryTrustFixtureSet,
+        fixture_case_id: &str,
+    ) -> &'a Stage34HMemoryTrustFixtureCase {
+        fixtures
+            .cases
+            .iter()
+            .find(|case| case.fixture_case_id == fixture_case_id)
+            .unwrap_or_else(|| panic!("missing stage34h replay fixture for {fixture_case_id}"))
+    }
+
     fn stage34e_score_bp(passed: usize, total: usize) -> u16 {
         if total == 0 {
             return 0;
@@ -41747,6 +41972,13 @@ mod tests {
         ((passed * 10_000) / total) as u16
     }
 
+    fn stage34h_score_bp(passed: usize, total: usize) -> u16 {
+        if total == 0 {
+            return 0;
+        }
+        ((passed * 10_000) / total) as u16
+    }
+
     fn stage34g_corpus_case<'a>(
         pack: &'a Stage34GEmotionCorpusPack,
         case_id: &str,
@@ -41755,6 +41987,16 @@ mod tests {
             .iter()
             .find(|case| case.case_id == case_id)
             .unwrap_or_else(|| panic!("missing stage34g corpus case for {case_id}"))
+    }
+
+    fn stage34h_corpus_case<'a>(
+        pack: &'a Stage34HMemoryTrustCorpusPack,
+        case_id: &str,
+    ) -> &'a Stage34HMemoryTrustCorpusCase {
+        pack.cases
+            .iter()
+            .find(|case| case.case_id == case_id)
+            .unwrap_or_else(|| panic!("missing stage34h corpus case for {case_id}"))
     }
 
     fn stage34f_stage5_packet(
@@ -42043,6 +42285,153 @@ mod tests {
             input,
         )
         .expect("stage34g relationship packet")
+    }
+
+    fn stage34h_stage16_packet(
+        fixture: &Stage34HMemoryTrustFixtureCase,
+    ) -> Stage16LongTermStatePacket {
+        let output = stage16_response_output_packet();
+        let mut input = Stage16LongTermStateInput::fixture_memory_read_ready(
+            format!("long-term-state-stage34h-{}", fixture.fixture_case_id),
+            format!("memory-context-stage34h-{}", fixture.fixture_case_id),
+            format!("audit-stage34h-stage16-{}", fixture.fixture_case_id),
+        );
+        input.unsupported_memory_claim_present = fixture.unsupported_memory_claim_present;
+        input.conflicting_memory_present = fixture.conflicting_memory_present;
+        input.stale_memory_used_as_truth = fixture.stale_memory_used_as_truth;
+        input.revoked_memory_used = fixture.revoked_memory_used;
+        input.cross_project_memory_present = fixture.cross_project_memory_present;
+        input.cross_tenant_memory_present = fixture.cross_tenant_memory_present;
+        input.wrong_user_memory_present = fixture.wrong_user_memory_present;
+
+        Stage16LongTermStatePacket::from_stage15_output(&output, input)
+            .expect("stage34h memory read packet")
+    }
+
+    fn stage34h_stage23_packet(
+        fixture: &Stage34HMemoryTrustFixtureCase,
+    ) -> Stage23MemoryRetentionPacket {
+        let output = stage21_response_output_packet();
+        let mut input = match fixture.stage23_kind {
+            Stage34HStage23Kind::IdentitySafeRetention => {
+                Stage23MemoryRetentionInput::fixture_identity_safe_retention_ready(
+                    format!("retention-packet-stage34h-{}", fixture.fixture_case_id),
+                    format!("memory-candidate-stage34h-{}", fixture.fixture_case_id),
+                    format!("identity-scope-stage34h-{}", fixture.fixture_case_id),
+                    format!("user-scope-stage34h-{}", fixture.fixture_case_id),
+                    format!("audit-stage34h-stage23-{}", fixture.fixture_case_id),
+                )
+            }
+            Stage34HStage23Kind::LongHorizonRecall => {
+                Stage23MemoryRetentionInput::fixture_long_horizon_recall_ready(
+                    format!("memory-candidate-stage34h-{}", fixture.fixture_case_id),
+                    format!("recall-reference-stage34h-{}", fixture.fixture_case_id),
+                    format!("identity-scope-stage34h-{}", fixture.fixture_case_id),
+                    format!("user-scope-stage34h-{}", fixture.fixture_case_id),
+                    format!("audit-stage34h-stage23-{}", fixture.fixture_case_id),
+                )
+            }
+            Stage34HStage23Kind::RecallSelectionReference => {
+                Stage23MemoryRetentionInput::fixture_recall_selection_reference_ready(
+                    format!("recall-reference-stage34h-{}", fixture.fixture_case_id),
+                    format!("identity-scope-stage34h-{}", fixture.fixture_case_id),
+                    format!("user-scope-stage34h-{}", fixture.fixture_case_id),
+                    format!("audit-stage34h-stage23-{}", fixture.fixture_case_id),
+                )
+            }
+        };
+        input.memory_invented_fact = fixture.memory_invented_fact;
+        input.memory_claimed_unproven_completion = fixture.memory_claimed_unproven_completion;
+        input.cross_user = fixture.cross_user;
+        input.cross_project = fixture.cross_project;
+        input.secret_unsafe = fixture.secret_unsafe;
+        input.user_scope_ref_present = !fixture.missing_user_scope_ref;
+        input.memory_implies_stage12_mutation_without_proof =
+            fixture.memory_implies_stage12_mutation_without_proof;
+        input.stale_or_revoked_or_deleted_or_superseded_output = fixture.stale_retention_output;
+        input.replay_upgrades_blocked_retention = fixture.replay_upgrades_blocked_retention;
+
+        Stage23MemoryRetentionPacket::from_stage15_output(&output, None, None, None, None, input)
+            .expect("stage34h retention packet")
+    }
+
+    fn stage34h_stage32_packet(
+        fixture: &Stage34HMemoryTrustFixtureCase,
+    ) -> Stage32TrustCalibrationPacket {
+        let route = stage12_protected_route();
+        let gate = Stage12ProtectedActionGatePacket::from_stage11_candidate(
+            &route,
+            stage12_gate_input(),
+        )
+        .expect("stage34h protected gate");
+        let attention = stage31_attention_identity();
+        let recovery = stage31_recovery_identity();
+        let notification_input =
+            Stage31NotificationWakeReentryInput::fixture_notification_disclosure_boundary_ready(
+                format!("audit-stage34h-stage31-{}", fixture.fixture_case_id),
+            );
+        let notification = Stage31NotificationWakeReentryPacket::from_stage30_recovery(
+            &route,
+            Some(&gate),
+            Some(&attention),
+            Some(&recovery),
+            notification_input,
+        )
+        .expect("stage34h stage31 notification");
+        let input = Stage32TrustCalibrationInput::fixture_trust_calibration_ready(format!(
+            "audit-stage34h-stage32-{}",
+            fixture.fixture_case_id
+        ));
+
+        Stage32TrustCalibrationPacket::from_stage31_notification(
+            &route,
+            Some(&gate),
+            Some(&notification),
+            input,
+        )
+        .expect("stage34h trust packet")
+    }
+
+    fn stage34h_stage33_packet(
+        fixture: &Stage34HMemoryTrustFixtureCase,
+        stage32_packet: &Stage32TrustCalibrationPacket,
+    ) -> Stage33RelationshipMemoryPacket {
+        let route = stage12_protected_route();
+        let gate = Stage12ProtectedActionGatePacket::from_stage11_candidate(
+            &route,
+            stage12_gate_input(),
+        )
+        .expect("stage34h protected gate");
+        let mut input = match fixture.stage33_kind {
+            Stage34HStage33Kind::RelationshipMemoryFraming => {
+                Stage33RelationshipMemoryInput::fixture_relationship_memory_framing_ready(
+                    format!("audit-stage34h-stage33-{}", fixture.fixture_case_id),
+                )
+            }
+            Stage34HStage33Kind::UserFacingContinuityBoundary => {
+                Stage33RelationshipMemoryInput::fixture_user_facing_continuity_boundary_ready(
+                    format!("audit-stage34h-stage33-{}", fixture.fixture_case_id),
+                )
+            }
+        };
+        input.relationship_invented_memory_certainty =
+            fixture.relationship_invented_memory_certainty;
+        input.prior_continuity_or_memory_used_as_truth_authority =
+            fixture.prior_continuity_or_memory_used_as_truth_authority;
+        input.protected_action_like_request = fixture.protected_action_like_request;
+        input.protected_slot_or_authority_ambiguous =
+            fixture.protected_slot_or_authority_ambiguous;
+        input.stale_memory_state = fixture.stale_relationship_output;
+        input.memory_mismatch = fixture.memory_mismatch;
+        input.tenant_mismatch = fixture.tenant_mismatch;
+
+        Stage33RelationshipMemoryPacket::from_stage32_trust(
+            &route,
+            Some(&gate),
+            Some(stage32_packet),
+            input,
+        )
+        .expect("stage34h relationship packet")
     }
 
     fn stage34e_stage10_packet(
@@ -44330,6 +44719,329 @@ mod tests {
     #[test]
     fn stage_34g_unsafe_or_stale_emotion_posture_fails_closed() {
         stage34g_unsafe_or_stale_emotion_posture_fails_closed();
+    }
+
+    #[test]
+    fn stage_34h_memory_trust_benchmark_pack_closes_offline_benchmark_row() {
+        let pack = load_stage34h_corpus_pack();
+        let fixtures = load_stage34h_fixture_set();
+
+        assert_eq!(pack.pack_id, "memory_trust");
+        assert_eq!(pack.pack_version, "1.0.0");
+        assert_eq!(fixtures.fixture_set_id, "stage34h_memory_trust_cases");
+        assert_eq!(fixtures.fixture_set_version, "1.0.0");
+
+        let mut quality_total = 0usize;
+        let mut quality_pass = 0usize;
+        let mut safety_total = 0usize;
+        let mut safety_pass = 0usize;
+
+        for case in &pack.cases {
+            let fixture = stage34h_fixture_case(&fixtures, &case.fixture_case_id);
+            let stage16_packet = stage34h_stage16_packet(fixture);
+            let stage23_packet = stage34h_stage23_packet(fixture);
+            let stage32_packet = stage34h_stage32_packet(fixture);
+            let stage33_packet = stage34h_stage33_packet(fixture, &stage32_packet);
+
+            assert!(
+                case.expected_stage16_disposition
+                    .matches(stage16_packet.disposition),
+                "stage34h Stage 16 disposition mismatch for {}",
+                case.case_id
+            );
+            assert!(
+                case.expected_stage23_disposition
+                    .matches(stage23_packet.disposition),
+                "stage34h Stage 23 disposition mismatch for {}",
+                case.case_id
+            );
+            assert!(
+                case.expected_stage33_disposition
+                    .matches(stage33_packet.disposition),
+                "stage34h Stage 33 disposition mismatch for {}",
+                case.case_id
+            );
+
+            assert!(!stage16_packet.can_mutate_or_execute());
+            assert!(!stage23_packet.can_mutate_or_execute());
+            assert!(!stage32_packet.can_mutate_or_execute());
+            assert!(!stage33_packet.can_mutate_or_execute());
+            assert!(stage16_packet.audit_id.is_some());
+            assert!(stage16_packet.ph1j_proof_ref.is_some());
+            assert!(stage23_packet.audit_id.is_some());
+            assert!(stage23_packet.ph1j_proof_ref.is_some());
+            assert!(stage33_packet.audit_id.is_some());
+            assert!(stage33_packet.ph1j_proof_ref.is_some());
+            assert!(!stage23_packet.work_authority.can_invent_facts);
+            assert!(!stage23_packet.work_authority.can_invent_persisted_memory);
+            assert!(!stage23_packet.work_authority.can_invent_recall_success);
+            assert!(!stage23_packet.work_authority.can_invent_retention_authority);
+            assert!(
+                !stage23_packet
+                    .work_authority
+                    .can_treat_visible_recall_or_restore_as_action_success
+            );
+            assert!(!stage33_packet.work_authority.can_invent_memory_certainty);
+            assert!(!stage33_packet.work_authority.can_invent_relationship_authority);
+            assert!(
+                !stage33_packet
+                    .work_authority
+                    .can_treat_visible_familiarity_as_action_success
+            );
+
+            match case.lane {
+                Stage34HMemoryLane::TrustReady => {
+                    quality_total += 1;
+
+                    assert_eq!(
+                        stage16_packet.disposition,
+                        Stage16LongTermStateDisposition::MemoryReadReady
+                    );
+                    assert!(stage16_packet.memory_read_scoped);
+                    assert!(stage16_packet.memory_read_redacted);
+                    assert!(stage16_packet.memory_read_revocation_aware);
+                    assert!(stage16_packet.memory_read_stale_aware);
+                    assert!(stage16_packet.memory_read_non_authoritative);
+
+                    assert!(stage23_packet.disposition.is_ready());
+                    assert!(stage23_packet.identity_retention_bounded);
+                    assert!(stage23_packet.identity_user_tenant_project_scoped);
+                    assert!(stage23_packet.uncertainty_preserved);
+                    assert!(stage23_packet.secret_safe);
+                    assert!(stage23_packet.redacted);
+                    assert!(stage23_packet.stale_aware);
+                    assert!(stage23_packet.revocation_aware);
+                    assert!(stage23_packet.deletion_aware);
+                    assert!(stage23_packet.identity_scope_id.is_some());
+                    assert!(stage23_packet.user_scope_id.is_some());
+
+                    assert!(stage32_packet.disposition.is_ready());
+                    assert!(stage33_packet.disposition.is_ready());
+                    assert!(stage33_packet.stage16_ref_non_authoritative);
+                    assert!(stage33_packet.stage32_ref_non_authoritative);
+                    assert!(stage33_packet.ph1voiceid_ref_non_authoritative);
+
+                    quality_pass += 1;
+                }
+                Stage34HMemoryLane::MemorySafety => {
+                    safety_total += 1;
+
+                    assert!(
+                        !stage16_packet.disposition.is_ready()
+                            || !stage23_packet.disposition.is_ready()
+                            || !stage33_packet.disposition.is_ready()
+                    );
+                    assert!(
+                        stage16_packet.work_authority.can_fail_closed
+                            || stage23_packet.work_authority.can_fail_closed
+                            || stage33_packet.work_authority.can_fail_closed
+                    );
+
+                    safety_pass += 1;
+                }
+            }
+        }
+
+        let quality_bp = stage34h_score_bp(quality_pass, quality_total);
+        let safety_bp = stage34h_score_bp(safety_pass, safety_total);
+
+        assert!(
+            quality_bp >= pack.quality_threshold_bp,
+            "stage34h memory trust quality threshold failed: actual={} required={}",
+            quality_bp,
+            pack.quality_threshold_bp
+        );
+        assert!(
+            safety_bp >= pack.safety_threshold_bp,
+            "stage34h memory trust safety threshold failed: actual={} required={}",
+            safety_bp,
+            pack.safety_threshold_bp
+        );
+    }
+
+    #[test]
+    fn stage34h_false_memory_stale_and_cross_scope_memory_fail_closed() {
+        let pack = load_stage34h_corpus_pack();
+        let fixtures = load_stage34h_fixture_set();
+
+        for (case_id, expected_stage16, expected_stage23, expected_stage33) in [
+            (
+                "false_memory_claim_blocked",
+                Stage16LongTermStateDisposition::FalseMemoryBlocked,
+                Stage23MemoryRetentionDisposition::NoInventionBlocked,
+                Stage33RelationshipMemoryDisposition::NoInventionBlocked,
+            ),
+            (
+                "stale_memory_truth_blocked",
+                Stage16LongTermStateDisposition::StaleOrRevokedMemoryBlocked,
+                Stage23MemoryRetentionDisposition::StaleRetentionBlocked,
+                Stage33RelationshipMemoryDisposition::StaleRelationshipBlocked,
+            ),
+            (
+                "cross_scope_memory_leak_blocked",
+                Stage16LongTermStateDisposition::ScopeLeakBlocked,
+                Stage23MemoryRetentionDisposition::IdentitySafeRetentionBlocked,
+                Stage33RelationshipMemoryDisposition::RelationshipAuthorityBlocked,
+            ),
+        ] {
+            let case = stage34h_corpus_case(&pack, case_id);
+            let fixture = stage34h_fixture_case(&fixtures, &case.fixture_case_id);
+            let stage16_packet = stage34h_stage16_packet(fixture);
+            let stage23_packet = stage34h_stage23_packet(fixture);
+            let stage32_packet = stage34h_stage32_packet(fixture);
+            let stage33_packet = stage34h_stage33_packet(fixture, &stage32_packet);
+
+            assert_eq!(stage16_packet.disposition, expected_stage16);
+            assert_eq!(stage23_packet.disposition, expected_stage23);
+            assert_eq!(stage33_packet.disposition, expected_stage33);
+            assert!(stage16_packet.work_authority.can_fail_closed);
+            assert!(stage23_packet.work_authority.can_fail_closed);
+            assert!(stage33_packet.work_authority.can_fail_closed);
+            assert!(!stage16_packet.can_mutate_or_execute());
+            assert!(!stage23_packet.can_mutate_or_execute());
+            assert!(!stage33_packet.can_mutate_or_execute());
+        }
+    }
+
+    #[test]
+    fn stage_34h_false_memory_stale_and_cross_scope_memory_fail_closed() {
+        stage34h_false_memory_stale_and_cross_scope_memory_fail_closed();
+    }
+
+    #[test]
+    fn stage34h_forget_correction_and_provenance_are_auditable_and_non_authoritative() {
+        let pack = load_stage34h_corpus_pack();
+        let fixtures = load_stage34h_fixture_set();
+
+        for case_id in [
+            "forget_and_provenance_reference_ready",
+            "correction_and_bounded_confidence_ready",
+        ] {
+            let case = stage34h_corpus_case(&pack, case_id);
+            let fixture = stage34h_fixture_case(&fixtures, &case.fixture_case_id);
+            let stage16_packet = stage34h_stage16_packet(fixture);
+            let stage23_packet = stage34h_stage23_packet(fixture);
+            let stage32_packet = stage34h_stage32_packet(fixture);
+            let stage33_packet = stage34h_stage33_packet(fixture, &stage32_packet);
+
+            assert_eq!(
+                stage16_packet.disposition,
+                Stage16LongTermStateDisposition::MemoryReadReady
+            );
+            assert!(stage16_packet.audit_id.is_some());
+            assert!(stage16_packet.ph1j_proof_ref.is_some());
+            assert!(stage16_packet.memory_read_non_authoritative);
+
+            assert!(stage23_packet.disposition.is_ready());
+            assert!(stage23_packet.audit_id.is_some());
+            assert!(stage23_packet.ph1j_proof_ref.is_some());
+            assert!(stage23_packet.identity_scope_id.is_some());
+            assert!(stage23_packet.user_scope_id.is_some());
+            assert!(stage23_packet.uncertainty_preserved);
+            if matches!(
+                fixture.stage23_kind,
+                Stage34HStage23Kind::LongHorizonRecall
+                    | Stage34HStage23Kind::RecallSelectionReference
+            ) {
+                assert!(stage23_packet.recall_reference_id.is_some());
+            }
+
+            assert!(stage33_packet.disposition.is_ready());
+            assert!(stage33_packet.audit_id.is_some());
+            assert!(stage33_packet.ph1j_proof_ref.is_some());
+            assert!(stage33_packet.stage16_ref_non_authoritative);
+            assert!(stage33_packet.stage32_ref_non_authoritative);
+
+            assert!(!stage16_packet.can_mutate_or_execute());
+            assert!(!stage23_packet.can_mutate_or_execute());
+            assert!(!stage33_packet.can_mutate_or_execute());
+        }
+    }
+
+    #[test]
+    fn stage_34h_forget_correction_and_provenance_are_auditable_and_non_authoritative() {
+        stage34h_forget_correction_and_provenance_are_auditable_and_non_authoritative();
+    }
+
+    #[test]
+    fn stage34h_memory_confidence_stays_bounded_and_never_claims_fake_recall() {
+        let pack = load_stage34h_corpus_pack();
+        let fixtures = load_stage34h_fixture_set();
+
+        let ready_case = stage34h_corpus_case(&pack, "correction_and_bounded_confidence_ready");
+        let ready_fixture = stage34h_fixture_case(&fixtures, &ready_case.fixture_case_id);
+        let ready_stage16 = stage34h_stage16_packet(ready_fixture);
+        let ready_stage23 = stage34h_stage23_packet(ready_fixture);
+        let ready_stage32 = stage34h_stage32_packet(ready_fixture);
+        let ready_stage33 = stage34h_stage33_packet(ready_fixture, &ready_stage32);
+
+        assert!(ready_stage16.disposition.is_ready());
+        assert!(ready_stage23.disposition.is_ready());
+        assert!(ready_stage23.uncertainty_preserved);
+        assert!(ready_stage33.disposition.is_ready());
+        assert!(!ready_stage33.work_authority.can_invent_memory_certainty);
+
+        let blocked_case = stage34h_corpus_case(&pack, "memory_confidence_fake_recall_blocked");
+        let blocked_fixture = stage34h_fixture_case(&fixtures, &blocked_case.fixture_case_id);
+        let blocked_stage16 = stage34h_stage16_packet(blocked_fixture);
+        let blocked_stage23 = stage34h_stage23_packet(blocked_fixture);
+        let blocked_stage32 = stage34h_stage32_packet(blocked_fixture);
+        let blocked_stage33 = stage34h_stage33_packet(blocked_fixture, &blocked_stage32);
+
+        assert!(blocked_stage16.disposition.is_ready());
+        assert_eq!(
+            blocked_stage23.disposition,
+            Stage23MemoryRetentionDisposition::LongHorizonRecallReady
+        );
+        assert!(blocked_stage23.uncertainty_preserved);
+        assert!(!blocked_stage23.work_authority.can_invent_recall_success);
+        assert_eq!(
+            blocked_stage33.disposition,
+            Stage33RelationshipMemoryDisposition::NoInventionBlocked
+        );
+        assert!(blocked_stage33.work_authority.can_fail_closed);
+        assert!(!blocked_stage33.work_authority.can_invent_memory_certainty);
+        assert!(!blocked_stage33.can_mutate_or_execute());
+    }
+
+    #[test]
+    fn stage_34h_memory_confidence_stays_bounded_and_never_claims_fake_recall() {
+        stage34h_memory_confidence_stays_bounded_and_never_claims_fake_recall();
+    }
+
+    #[test]
+    fn stage34h_memory_cannot_promote_recall_into_authority_or_protected_execution() {
+        let pack = load_stage34h_corpus_pack();
+        let fixtures = load_stage34h_fixture_set();
+
+        let case =
+            stage34h_corpus_case(&pack, "memory_authority_protected_execution_blocked");
+        let fixture = stage34h_fixture_case(&fixtures, &case.fixture_case_id);
+        let stage16_packet = stage34h_stage16_packet(fixture);
+        let stage23_packet = stage34h_stage23_packet(fixture);
+        let stage32_packet = stage34h_stage32_packet(fixture);
+        let stage33_packet = stage34h_stage33_packet(fixture, &stage32_packet);
+
+        assert!(stage16_packet.disposition.is_ready());
+        assert_eq!(
+            stage23_packet.disposition,
+            Stage23MemoryRetentionDisposition::ProtectedRetentionBlocked
+        );
+        assert!(stage23_packet.work_authority.can_fail_closed);
+        assert!(!stage23_packet.can_mutate_or_execute());
+
+        assert_eq!(
+            stage33_packet.disposition,
+            Stage33RelationshipMemoryDisposition::PublicProtectedBoundaryBlocked
+        );
+        assert!(stage33_packet.work_authority.can_fail_closed);
+        assert!(!stage33_packet.can_mutate_or_execute());
+        assert!(!stage33_packet.work_authority.can_invent_relationship_authority);
+    }
+
+    #[test]
+    fn stage_34h_memory_cannot_promote_recall_into_authority_or_protected_execution() {
+        stage34h_memory_cannot_promote_recall_into_authority_or_protected_execution();
     }
 
     fn stage11_ready_understanding() -> Stage10UnderstandingPacket {
