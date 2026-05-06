@@ -2,9 +2,9 @@
 
 Status: CANONICAL_BUILD_ROADMAP
 Created: 2026-05-02
-Last Updated: 2026-05-05
+Last Updated: 2026-05-06
 Repo Root: `/Users/selene/Documents/Selene-OS`
-Current Next Build: None yet - Stage 34D is PROVEN_COMPLETE and any further narrowed Stage 34 work requires explicit canonical master-plan revision
+Current Next Build: Stage 34E - Scrambled Language And Meaning Repair Benchmark Corpus Closure
 
 ## Purpose
 
@@ -79,8 +79,8 @@ After every build, update this section before final reporting.
 | Field | Current Value |
 |---|---|
 | Current active stage | Stage 34 |
-| Current active build | None yet - Stage 34D is PROVEN_COMPLETE and broad Stage 34 remains blocked pending explicit canonical master-plan revision |
-| Next build after current stage passes | None yet - Stage 34 is the final canonical stage and any post-Stage-34 work must be introduced by an explicit plan revision |
+| Current active build | Stage 34E - Scrambled Language And Meaning Repair Benchmark Corpus Closure |
+| Next build after current stage passes | None yet - rerun the Stage 34 remaining-row closure map after Stage 34E proof before naming another narrowed Stage 34 slice |
 | Last completed stage | Stage 34D - Remaining Full-System Certification Harness Benchmark-Target Row Reconciliation |
 | Stages blocked | Broad Stage 34 remains blocked on provider/model governance, wake/activation, STT/listening, Voice ID production quality, conversation/same-page quality, scrambled language/meaning repair, math/science/history, TTS naturalness, memory trust, human experience/emotion, multilingual, native/runtime parity, and full certification. |
 | Plan drift allowed | No |
@@ -2831,7 +2831,45 @@ Stage 34D proof update:
 - Stage 34D did not add a new runtime-owned Stage 34 carrier. Existing PH1.J benchmark envelopes remain the authoritative full-system certification-harness carrier family, while the existing PH1.WRITE/PH1.TTS `web_search_plan/write` seam now closes the `Write/display/TTS-safe split` benchmark row without introducing post-Stage-34 numbering drift.
 - Current-HEAD deterministic proof closed the `Write/display/TTS-safe split` benchmark family by keeping spoken `voice_text` free of display-only citations, raw URLs, chunk refs, and debug metadata while preserving grounded answer and evidence semantics in spoken form. `formatted_text` remains the display-rich carrier for citations and source chips.
 - Exact targeted proof now includes current-HEAD runnable Stage 34D tests `web_search_plan::write::write_tests::test_stage_34d_write_display_tts_safe_split_blocks_display_only_citations`, `web_search_plan::write::write_tests::test_stage34d_write_display_tts_safe_split_blocks_debug_metadata`, and `web_search_plan::write::write_tests::test_t6_voice_output_matches_formatted_text_semantics`, plus current-HEAD `ph1write`, `ph1tts`, and broader `stage_34` regressions, all without live provider, live TTS/playback, live microphone/STT, native mutation, or runtime-mock behavior.
-- Broad Stage 34 remains partial because provider/model governance, wake/activation, STT/listening, Voice ID production quality, conversation/same-page quality, scrambled language/meaning repair, math/science/history, TTS naturalness, memory trust, human experience/emotion, multilingual, native/runtime parity, and full certification remain blocked with explicit owners and next actions. No narrower next build name exists in repo truth, so no next build is authorized until explicit canonical master-plan revision.
+- Broad Stage 34 remains partial because provider/model governance, wake/activation, STT/listening, Voice ID production quality, conversation/same-page quality, scrambled language/meaning repair, math/science/history, TTS naturalness, memory trust, human experience/emotion, multilingual, native/runtime parity, and full certification remain blocked with explicit owners and next actions. The explicit Stage 34 remaining certification closure map below now reauthorizes narrowed Stage 34 work and selects Stage 34E - Scrambled Language And Meaning Repair Benchmark Corpus Closure as the next exact build.
+
+Stage 34 Remaining Certification Closure Plan
+
+This section is the explicit canonical master-plan revision required after Stage 34D. It does not create Stage 35 or Stage 36, and it does not pretend broad Stage 34 is complete. It reauthorizes narrowed Stage 34 work by classifying each remaining blocked benchmark row and by naming the next lawful implementation slice from repo truth.
+
+Closure bucket legend:
+
+- `OFFLINE_IMPLEMENTATION_NOW`: a safe implementation seam already exists and can be used immediately inside a narrowed Stage 34 build.
+- `CORPUS_OR_REPLAY_PACK_FIRST`: the next lawful step is to add benchmark corpora, replay fixtures, thresholds, or deterministic proof packs before broader closure claims.
+- `LIVE_OR_NATIVE_LAB_PROOF_REQUIRED`: the row cannot be closed truthfully without live-provider, real-device, microphone, playback, native-client, or native-lab measurement.
+- `JD_SCOPE_DECISION_REQUIRED`: the row mixes offline seams with provider or live-eval scope that needs an explicit JD decision before final row closure is claimed.
+- `DEPENDENT_FINAL_GATE`: the row is the final aggregator and remains blocked until prerequisite rows close or are lawfully reclassified.
+
+Current selected next exact build:
+
+- `Stage 34E - Scrambled Language And Meaning Repair Benchmark Corpus Closure`
+
+Selection reason:
+
+- `Scrambled language/meaning repair` is the cleanest remaining row whose next action is corpus-first, replayable, and offline-safe by current repo truth.
+- The row already points at existing PH1.LANG/PH1.PRON/PH1.LISTEN understanding surfaces and existing `web_search_plan` eval/replay proof infrastructure, so the next slice can stay implementation-first without inventing live/native-lab proof.
+- This slice can move broad Stage 34 forward without weakening the still-blocked live/native-lab/product-quality rows.
+
+| Blocked row | Owner | Current blocker | Closure bucket | Offline/replay-only closure possible now? | Live/native-lab proof required for final row closure? | Planned closure slice | Primary repo seams | Proof required | Batchable with |
+|---|---|---|---|---|---|---|---|---|---|
+| Provider/model governance | Stage 30 | Add prompt/model registries, champion router/model profile contracts, live-eval, fallback/rollback, and cost-quality target status. | `JD_SCOPE_DECISION_REQUIRED` | partial only | yes | `Provider/Model Governance Contract Split And Live-Eval Closure` | `crates/selene_engines/src/ph1providerctl.rs`; `docs/web_search_plan/eval/**`; `crates/selene_os/src/web_search_plan/eval/**`; `crates/selene_os/src/bin/web_search_eval_report.rs`; `crates/selene_os/src/bin/web_search_release_evidence.rs` | prompt/model registry proof, fallback/rollback proof, and explicit live-eval allowance | only with other provider-eval work after JD scope approval |
+| Wake/activation | Stage 7 | Convert wake latency/false accept targets after baseline. | `LIVE_OR_NATIVE_LAB_PROOF_REQUIRED` | no | yes | `Wake Activation Production Benchmark Closure` | `crates/selene_os/src/ph1w.rs`; `crates/selene_os/src/ph1wake_training.rs`; `crates/selene_adapter/src/bin/desktop_wake_life.rs`; `docs/WAKE_BUILD_PLAN.md` | real wake latency and false-accept measurements | no |
+| STT/listening | Stage 17, Stage 34 | Measure live STT WER/far-field/noisy-room/provider-latency/native-lab production targets and live playback/interruption latency. | `LIVE_OR_NATIVE_LAB_PROOF_REQUIRED` | no | yes | `STT Listening Production Benchmark Closure` | `crates/selene_os/src/ph1listen.rs`; `crates/selene_os/src/ph1lang.rs`; `crates/selene_os/src/ph1pron.rs`; Stage 8D/8E/8F benchmark surfaces; `docs/web_search_plan/eval/**`; `docs/web_search_plan/replay_fixtures/**` | live WER, latency, playback, and native-lab proof | only with TTS naturalness if the same live-lab session is explicitly approved |
+| Voice ID production quality | Stage 34, native lab | Measure FAR/FRR, ROC/EER, spoof resistance, room/noise robustness, cross-device matching, native enrollment UX, and production speaker-verification quality. | `LIVE_OR_NATIVE_LAB_PROOF_REQUIRED` | no | yes | `Voice ID Production Benchmark Closure` | `crates/selene_os/src/ph1_voice_id.rs`; `crates/selene_storage/tests/ph1_voice_id/db_wiring.rs`; PH1.VOICE.ID contract/runtime surfaces | FAR/FRR, ROC/EER, spoof/noise/cross-device/enrollment proof | no |
+| Conversation/same-page quality | Stage 10, Stage 29, Stage 34 | Add continuity/open-loop/correction/emotional appropriateness replay cases and numeric quality thresholds. | `CORPUS_OR_REPLAY_PACK_FIRST` | yes | no | `Conversation Same-Page Replay And Threshold Closure` | Stage 5 conversation-control carriers; `crates/selene_os/src/runtime_session_foundation.rs`; `crates/selene_os/src/ph1emocore.rs`; `crates/selene_os/src/ph1emoguide.rs`; replay/eval fixture surfaces | deterministic replay corpus and thresholds for continuity, open loops, correction, and emotional appropriateness | with `Human Experience Boundary Replay Closure` if the slice stays narrowly benchmark-focused |
+| Scrambled language/meaning repair | Stage 10 | Create meaning repair benchmark corpus. | `CORPUS_OR_REPLAY_PACK_FIRST` | yes | no | `Stage 34E - Scrambled Language And Meaning Repair Benchmark Corpus Closure` | `crates/selene_os/src/ph1lang.rs`; `crates/selene_os/src/ph1pron.rs`; `crates/selene_os/src/ph1listen.rs`; `docs/web_search_plan/eval/corpus_packs/**`; `docs/web_search_plan/replay_fixtures/**`; `crates/selene_os/src/web_search_plan/eval/**`; `crates/selene_os/src/web_search_plan/replay/**` | deterministic meaning-repair corpus, replay fixtures, thresholds, and exact nonzero proof | with `Multilingual Certification Pack Closure` only if the slice stays corpus-only and benchmark-focused |
+| Math/science/history | Stage 11, Stage 13, Stage 14 | Add route/verifier benchmarks and replayable corpora. | `CORPUS_OR_REPLAY_PACK_FIRST` | yes | no | `Domain Verification Route And Replay Corpus Closure` | Stage 11 router carriers; Stage 13 evidence carriers; Stage 14 public-answer carriers; `docs/web_search_plan/eval/corpus_packs/**`; `docs/web_search_plan/replay_fixtures/**`; `crates/selene_os/src/web_search_plan/eval/**`; `crates/selene_os/src/web_search_plan/replay/**` | deterministic route/verifier corpora and replayable answer proof | with `Scrambled Language And Meaning Repair Benchmark Corpus Closure` only if domain verification stays separate from live provider scope |
+| TTS naturalness | Stage 17 | Add MOS/pronunciation/prosody target status and replay evidence. | `LIVE_OR_NATIVE_LAB_PROOF_REQUIRED` | no | yes | `TTS Naturalness Benchmark Closure` | `crates/selene_os/src/ph1tts.rs`; `crates/selene_os/src/ph1pron.rs`; `crates/selene_os/src/ph1write.rs` | MOS, pronunciation, and prosody proof | only with `STT Listening Production Benchmark Closure` if the same live-lab session is explicitly approved |
+| Memory trust | Stage 21 | Add false-memory/stale/project-leak/forget proof benchmarks. | `CORPUS_OR_REPLAY_PACK_FIRST` | yes | no | `Memory Trust Benchmark Pack Closure` | `crates/selene_os/src/ph1m.rs`; `crates/selene_storage/migrations/0021_ph1m_vnext_memory_tables.sql`; memory retention/trust carriers; replay/eval fixture surfaces | deterministic false-memory, stale-memory, project-leak, and forget proof pack | no |
+| Human experience/emotion | Stage 29 | Add emotion boundary/user trust/frustration benchmark replay. | `CORPUS_OR_REPLAY_PACK_FIRST` | yes | no | `Human Experience Boundary Replay Closure` | `crates/selene_os/src/ph1emocore.rs`; `crates/selene_os/src/ph1emoguide.rs`; replay/eval fixture surfaces | deterministic emotion-boundary, trust, and frustration replay proof | with `Conversation Same-Page Replay And Threshold Closure` |
+| Multilingual | Stage 32 | Add per-language, dialect, code-switch, protected non-English certification packs. | `CORPUS_OR_REPLAY_PACK_FIRST` | yes | no | `Multilingual Certification Pack Closure` | `crates/selene_os/src/ph1multi.rs`; `crates/selene_os/src/ph1lang.rs`; `crates/selene_os/src/ph1pron.rs`; eval/replay fixture surfaces | deterministic per-language, dialect, code-switch, and protected non-English packs | with `Stage 34E - Scrambled Language And Meaning Repair Benchmark Corpus Closure` only if the slice stays corpus-only |
+| Native/runtime parity | Stage 33 | Build parity harness for existing surfaces and planned/missing reports. | `LIVE_OR_NATIVE_LAB_PROOF_REQUIRED` | no | yes | `Native Runtime Parity Harness Closure` | `crates/selene_os/src/web_search_plan/parity/**`; `docs/web_search_plan/parity_fixtures/**`; `apple/mac_desktop/**`; `apple/iphone/**` | real app/native parity harness proof and planned/missing report closure | no |
+| Full certification | Stage 34 | Final aggregator row remains blocked until the other blocked rows close or are lawfully reclassified by repo truth. | `DEPENDENT_FINAL_GATE` | no | depends on remaining rows | `Full Certification Final Closure` | current-HEAD Stage 34A/34B/34C/34D proof ledgers; benchmark matrix; current eval/release evidence | rerun the full benchmark matrix after remaining-row disposition is settled | only after all prerequisite rows settle |
 
 Stage 34C status: PROVEN_COMPLETE
 
@@ -4707,7 +4745,7 @@ The historical Stage 1 seed that used to live here has been retired because it w
 
 Use the `Current Next Build` header, the `Build Tracking Rule` table, the Stage 34 status/proof entries in this file, [SELENE_CANONICAL_STAGE_BUILD_SLICE_MAP.md](/Users/selene/Documents/Selene-OS/docs/SELENE_CANONICAL_STAGE_BUILD_SLICE_MAP.md), [SELENE_CANONICAL_BENCHMARK_TARGET_STATUS_MATRIX.md](/Users/selene/Documents/Selene-OS/docs/SELENE_CANONICAL_BENCHMARK_TARGET_STATUS_MATRIX.md), [MASTER_BUILD_COMPLETION_PLAN.md](/Users/selene/Documents/Selene-OS/docs/MASTER_BUILD_COMPLETION_PLAN.md), and [MASTER_BUILD_COMPLETION_LEDGER.md](/Users/selene/Documents/Selene-OS/docs/MASTER_BUILD_COMPLETION_LEDGER.md) as the authoritative inputs for the next narrowed instruction.
 
-As of this update, there is no next exact build until an explicit canonical master-plan revision names one.
+As of this update, the next exact build is `Stage 34E - Scrambled Language And Meaning Repair Benchmark Corpus Closure`, and later narrowed Stage 34 work must continue to come from the Stage 34 remaining certification closure map instead of being improvised outside repo truth.
 
 ## Build Completion Update Rule
 
