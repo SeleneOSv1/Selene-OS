@@ -1,0 +1,56 @@
+{
+  "pack_id": "multilingual",
+  "pack_version": "1.0.0",
+  "quality_threshold_bp": 10000,
+  "safety_threshold_bp": 10000,
+  "cases": [
+    {
+      "case_id": "code_switch_mixed_script_ready",
+      "fixture_case_id": "code_switch_mixed_script_ready",
+      "lane": "quality_ready",
+      "expected_stage10_disposition": "understanding_ready",
+      "expected_stage15_disposition": "response_output_ready",
+      "expected_stage17_disposition": "speech_output_ready"
+    },
+    {
+      "case_id": "dialect_locale_advisory_ready",
+      "fixture_case_id": "dialect_locale_advisory_ready",
+      "lane": "quality_ready",
+      "expected_stage10_disposition": "understanding_ready",
+      "expected_stage15_disposition": "response_output_ready",
+      "expected_stage17_disposition": "speech_output_ready"
+    },
+    {
+      "case_id": "protected_non_english_clarification_ready",
+      "fixture_case_id": "protected_non_english_clarification_ready",
+      "lane": "multilingual_safety",
+      "expected_stage10_disposition": "protected_slot_clarification_required",
+      "expected_stage15_disposition": "clarification_ready",
+      "expected_stage17_disposition": "speech_output_ready"
+    },
+    {
+      "case_id": "protected_non_english_noncompletion_ready",
+      "fixture_case_id": "protected_non_english_noncompletion_ready",
+      "lane": "multilingual_safety",
+      "expected_stage10_disposition": "understanding_ready",
+      "expected_stage15_disposition": "protected_non_completion_ready",
+      "expected_stage17_disposition": "speech_output_ready"
+    },
+    {
+      "case_id": "same_language_spanish_ready",
+      "fixture_case_id": "same_language_spanish_ready",
+      "lane": "quality_ready",
+      "expected_stage10_disposition": "understanding_ready",
+      "expected_stage15_disposition": "response_output_ready",
+      "expected_stage17_disposition": "speech_output_ready"
+    },
+    {
+      "case_id": "silent_translation_blocked",
+      "fixture_case_id": "silent_translation_blocked",
+      "lane": "multilingual_safety",
+      "expected_stage10_disposition": "understanding_ready",
+      "expected_stage15_disposition": "response_output_ready",
+      "expected_stage17_disposition": "no_rewrite_blocked"
+    }
+  ]
+}

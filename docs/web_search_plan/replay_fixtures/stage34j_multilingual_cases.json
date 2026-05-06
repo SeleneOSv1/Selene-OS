@@ -1,0 +1,148 @@
+{
+  "fixture_set_id": "stage34j_multilingual_cases",
+  "fixture_set_version": "1.0.0",
+  "cases": [
+    {
+      "fixture_case_id": "code_switch_mixed_script_ready",
+      "case_kind": "code_switch_mixed_script",
+      "transcript_text": "蓝模 ready ahora",
+      "locale_hint": "zh-Hans",
+      "dominant_language": "zh-Hans",
+      "detected_languages": ["zh-Hans", "en", "es"],
+      "user_language_preferences": ["zh-Hans", "en", "es"],
+      "response_mode": "text",
+      "segments": [
+        {
+          "segment_id": "seg_code_01",
+          "language_tag": "zh-Hans",
+          "segment_text": "蓝模"
+        },
+        {
+          "segment_id": "seg_code_02",
+          "language_tag": "en",
+          "segment_text": "ready"
+        },
+        {
+          "segment_id": "seg_code_03",
+          "language_tag": "es",
+          "segment_text": "ahora"
+        }
+      ],
+      "pronunciation_locale_tag": "zh-Hans",
+      "same_language_response_required": true,
+      "code_switch_preserved": true,
+      "mixed_script_present": true,
+      "silent_translation_or_summary_attempted": false
+    },
+    {
+      "fixture_case_id": "dialect_locale_advisory_ready",
+      "case_kind": "dialect_locale_advisory",
+      "transcript_text": "trame nord claire",
+      "locale_hint": "fr-CA",
+      "dominant_language": "fr-CA",
+      "detected_languages": ["fr-CA"],
+      "user_language_preferences": ["fr-CA"],
+      "response_mode": "voice",
+      "segments": [
+        {
+          "segment_id": "seg_dialect_01",
+          "language_tag": "fr-CA",
+          "segment_text": "trame nord claire"
+        }
+      ],
+      "pronunciation_locale_tag": "fr-CA",
+      "same_language_response_required": true,
+      "code_switch_preserved": false,
+      "mixed_script_present": false,
+      "silent_translation_or_summary_attempted": false
+    },
+    {
+      "fixture_case_id": "protected_non_english_clarification_ready",
+      "case_kind": "protected_non_english_clarification",
+      "transcript_text": "خانة آمنة غدا",
+      "locale_hint": "ar",
+      "dominant_language": "ar",
+      "detected_languages": ["ar"],
+      "user_language_preferences": ["ar"],
+      "response_mode": "voice",
+      "segments": [
+        {
+          "segment_id": "seg_protected_01",
+          "language_tag": "ar",
+          "segment_text": "خانة آمنة غدا"
+        }
+      ],
+      "pronunciation_locale_tag": "ar",
+      "same_language_response_required": true,
+      "code_switch_preserved": false,
+      "mixed_script_present": true,
+      "silent_translation_or_summary_attempted": false
+    },
+    {
+      "fixture_case_id": "protected_non_english_noncompletion_ready",
+      "case_kind": "protected_non_english_non_completion",
+      "transcript_text": "أمان واضح الآن",
+      "locale_hint": "ar",
+      "dominant_language": "ar",
+      "detected_languages": ["ar"],
+      "user_language_preferences": ["ar"],
+      "response_mode": "voice",
+      "segments": [
+        {
+          "segment_id": "seg_protected_02",
+          "language_tag": "ar",
+          "segment_text": "أمان واضح الآن"
+        }
+      ],
+      "pronunciation_locale_tag": "ar",
+      "same_language_response_required": true,
+      "code_switch_preserved": false,
+      "mixed_script_present": true,
+      "silent_translation_or_summary_attempted": false
+    },
+    {
+      "fixture_case_id": "same_language_spanish_ready",
+      "case_kind": "same_language_spanish",
+      "transcript_text": "trama azul lista",
+      "locale_hint": "es",
+      "dominant_language": "es",
+      "detected_languages": ["es"],
+      "user_language_preferences": ["es"],
+      "response_mode": "voice",
+      "segments": [
+        {
+          "segment_id": "seg_spanish_01",
+          "language_tag": "es",
+          "segment_text": "trama azul lista"
+        }
+      ],
+      "pronunciation_locale_tag": "es",
+      "same_language_response_required": true,
+      "code_switch_preserved": false,
+      "mixed_script_present": false,
+      "silent_translation_or_summary_attempted": false
+    },
+    {
+      "fixture_case_id": "silent_translation_blocked",
+      "case_kind": "silent_translation_blocked",
+      "transcript_text": "trama violeta segura",
+      "locale_hint": "es",
+      "dominant_language": "es",
+      "detected_languages": ["es"],
+      "user_language_preferences": ["es"],
+      "response_mode": "voice",
+      "segments": [
+        {
+          "segment_id": "seg_silent_01",
+          "language_tag": "es",
+          "segment_text": "trama violeta segura"
+        }
+      ],
+      "pronunciation_locale_tag": "es",
+      "same_language_response_required": true,
+      "code_switch_preserved": false,
+      "mixed_script_present": false,
+      "silent_translation_or_summary_attempted": true
+    }
+  ]
+}

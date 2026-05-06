@@ -40186,13 +40186,40 @@ mod tests {
     use serde::Deserialize;
     use std::{cell::Cell, fs, path::PathBuf};
 
+    use selene_kernel_contracts::ph1j::{CorrelationId, TurnId};
+    use selene_kernel_contracts::ph1lang::{
+        LangMultipleDetectOk, LangPlanScope, LangResponseMode, LangResponsePlanItem, LangSegment,
+        LangSegmentResponseMapOk, LangSourceModality, LangValidationStatus, Ph1LangRequest,
+        Ph1LangResponse,
+    };
+    use selene_kernel_contracts::ph1multi::{
+        MultiBundleComposeOk, MultiBundleItem, MultiModality, MultiSignalAlignOk,
+        MultiSourceSignal, MultiValidationStatus, Ph1MultiRequest, Ph1MultiResponse,
+    };
+    use selene_kernel_contracts::ph1pron::{
+        Ph1PronRequest, Ph1PronResponse, PronApplyValidateOk, PronLexiconEntry,
+        PronLexiconPackBuildOk, PronScope, PronTargetEngine, PronValidationStatus,
+    };
     use selene_kernel_contracts::ph1_voice_id::{
         DiarizationSegment, IdentityConfidence, Ph1VoiceIdResponse, SpeakerAssertionOk,
         SpeakerAssertionUnknown, SpeakerId, SpeakerLabel,
     };
     use selene_kernel_contracts::ph1link::TokenId;
     use selene_kernel_contracts::provider_secrets::ProviderSecretId;
+    use selene_kernel_contracts::ReasonCodeId;
 
+    use crate::ph1lang::{
+        LangForwardBundle, LangTurnInput, LangWiringOutcome, Ph1LangEngine, Ph1LangWiring,
+        Ph1LangWiringConfig,
+    };
+    use crate::ph1multi::{
+        MultiForwardBundle, MultiTurnInput, MultiWiringOutcome, Ph1MultiEngine, Ph1MultiWiring,
+        Ph1MultiWiringConfig,
+    };
+    use crate::ph1pron::{
+        Ph1PronEngine, Ph1PronWiring, Ph1PronWiringConfig, PronForwardBundle, PronTurnInput,
+        PronWiringOutcome,
+    };
     use crate::runtime_bootstrap::{
         RuntimeBootstrapConfig, RuntimeBuildMetadata, RuntimeSecretValue, RuntimeSecretsProvider,
     };
@@ -41046,6 +41073,161 @@ mod tests {
         protected_execution_outcome_claim_present: bool,
         bounded_stage12_execution_proof_present: bool,
         harmless_public_output_for_protected_request: bool,
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+    #[serde(rename_all = "snake_case")]
+    enum Stage34JLane {
+        QualityReady,
+        MultilingualSafety,
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+    #[serde(rename_all = "snake_case")]
+    enum Stage34JStage10Expectation {
+        UnderstandingReady,
+        ProtectedSlotClarificationRequired,
+    }
+
+    impl Stage34JStage10Expectation {
+        const fn matches(self, actual: Stage10UnderstandingDisposition) -> bool {
+            matches!(
+                (self, actual),
+                (
+                    Stage34JStage10Expectation::UnderstandingReady,
+                    Stage10UnderstandingDisposition::UnderstandingReady
+                ) | (
+                    Stage34JStage10Expectation::ProtectedSlotClarificationRequired,
+                    Stage10UnderstandingDisposition::ProtectedSlotClarificationRequired
+                )
+            )
+        }
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+    #[serde(rename_all = "snake_case")]
+    enum Stage34JStage15Expectation {
+        ResponseOutputReady,
+        ClarificationReady,
+        ProtectedNonCompletionReady,
+    }
+
+    impl Stage34JStage15Expectation {
+        const fn matches(self, actual: Stage15ResponseOutputDisposition) -> bool {
+            matches!(
+                (self, actual),
+                (
+                    Stage34JStage15Expectation::ResponseOutputReady,
+                    Stage15ResponseOutputDisposition::ResponseOutputReady
+                ) | (
+                    Stage34JStage15Expectation::ClarificationReady,
+                    Stage15ResponseOutputDisposition::ClarificationReady
+                ) | (
+                    Stage34JStage15Expectation::ProtectedNonCompletionReady,
+                    Stage15ResponseOutputDisposition::ProtectedNonCompletionReady
+                )
+            )
+        }
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+    #[serde(rename_all = "snake_case")]
+    enum Stage34JStage17Expectation {
+        SpeechOutputReady,
+        NoRewriteBlocked,
+    }
+
+    impl Stage34JStage17Expectation {
+        const fn matches(self, actual: Stage17SpeechOutputDisposition) -> bool {
+            matches!(
+                (self, actual),
+                (
+                    Stage34JStage17Expectation::SpeechOutputReady,
+                    Stage17SpeechOutputDisposition::SpeechOutputReady
+                ) | (
+                    Stage34JStage17Expectation::NoRewriteBlocked,
+                    Stage17SpeechOutputDisposition::NoRewriteBlocked
+                )
+            )
+        }
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+    #[serde(rename_all = "snake_case")]
+    enum Stage34JCaseKind {
+        SameLanguageSpanish,
+        CodeSwitchMixedScript,
+        DialectLocaleAdvisory,
+        ProtectedNonEnglishClarification,
+        ProtectedNonEnglishNonCompletion,
+        SilentTranslationBlocked,
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+    #[serde(rename_all = "snake_case")]
+    enum Stage34JFixtureResponseMode {
+        Text,
+        Voice,
+    }
+
+    impl Stage34JFixtureResponseMode {
+        const fn to_contract(self) -> LangResponseMode {
+            match self {
+                Stage34JFixtureResponseMode::Text => LangResponseMode::Text,
+                Stage34JFixtureResponseMode::Voice => LangResponseMode::Voice,
+            }
+        }
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct Stage34JMultilingualCorpusPack {
+        pack_id: String,
+        pack_version: String,
+        quality_threshold_bp: u16,
+        safety_threshold_bp: u16,
+        cases: Vec<Stage34JMultilingualCorpusCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct Stage34JMultilingualCorpusCase {
+        case_id: String,
+        fixture_case_id: String,
+        lane: Stage34JLane,
+        expected_stage10_disposition: Stage34JStage10Expectation,
+        expected_stage15_disposition: Stage34JStage15Expectation,
+        expected_stage17_disposition: Stage34JStage17Expectation,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct Stage34JMultilingualFixtureSet {
+        fixture_set_id: String,
+        fixture_set_version: String,
+        cases: Vec<Stage34JMultilingualFixtureCase>,
+    }
+
+    #[derive(Debug, Clone, Deserialize)]
+    struct Stage34JSegmentFixture {
+        segment_id: String,
+        language_tag: String,
+        segment_text: String,
+    }
+
+    #[derive(Debug, Clone, Deserialize)]
+    struct Stage34JMultilingualFixtureCase {
+        fixture_case_id: String,
+        case_kind: Stage34JCaseKind,
+        transcript_text: String,
+        locale_hint: Option<String>,
+        dominant_language: String,
+        detected_languages: Vec<String>,
+        user_language_preferences: Vec<String>,
+        response_mode: Stage34JFixtureResponseMode,
+        segments: Vec<Stage34JSegmentFixture>,
+        pronunciation_locale_tag: String,
+        same_language_response_required: bool,
+        code_switch_preserved: bool,
+        mixed_script_present: bool,
+        silent_translation_or_summary_attempted: bool,
     }
 
     #[derive(Debug, Default)]
@@ -42028,6 +42210,18 @@ mod tests {
             .join(file_name)
     }
 
+    fn stage34j_eval_corpus_pack_path(file_name: &str) -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../docs/web_search_plan/eval/corpus_packs")
+            .join(file_name)
+    }
+
+    fn stage34j_replay_fixture_path(file_name: &str) -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../docs/web_search_plan/replay_fixtures")
+            .join(file_name)
+    }
+
     fn load_stage34e_corpus_pack() -> Stage34EMeaningRepairCorpusPack {
         let text = fs::read_to_string(stage34e_eval_corpus_pack_path("meaning_repair.json"))
             .expect("stage34e corpus pack should load");
@@ -42100,6 +42294,20 @@ mod tests {
         serde_json::from_str(&text).expect("stage34i replay fixtures should parse")
     }
 
+    fn load_stage34j_corpus_pack() -> Stage34JMultilingualCorpusPack {
+        let text = fs::read_to_string(stage34j_eval_corpus_pack_path("multilingual.json"))
+            .expect("stage34j corpus pack should load");
+        serde_json::from_str(&text).expect("stage34j corpus pack should parse")
+    }
+
+    fn load_stage34j_fixture_set() -> Stage34JMultilingualFixtureSet {
+        let text = fs::read_to_string(stage34j_replay_fixture_path(
+            "stage34j_multilingual_cases.json",
+        ))
+        .expect("stage34j replay fixtures should load");
+        serde_json::from_str(&text).expect("stage34j replay fixtures should parse")
+    }
+
     fn stage34e_fixture_case<'a>(
         fixtures: &'a Stage34EMeaningRepairFixtureSet,
         fixture_case_id: &str,
@@ -42155,6 +42363,17 @@ mod tests {
             .unwrap_or_else(|| panic!("missing stage34i replay fixture for {fixture_case_id}"))
     }
 
+    fn stage34j_fixture_case<'a>(
+        fixtures: &'a Stage34JMultilingualFixtureSet,
+        fixture_case_id: &str,
+    ) -> &'a Stage34JMultilingualFixtureCase {
+        fixtures
+            .cases
+            .iter()
+            .find(|case| case.fixture_case_id == fixture_case_id)
+            .unwrap_or_else(|| panic!("missing stage34j replay fixture for {fixture_case_id}"))
+    }
+
     fn stage34e_score_bp(passed: usize, total: usize) -> u16 {
         if total == 0 {
             return 0;
@@ -42190,6 +42409,13 @@ mod tests {
         ((passed * 10_000) / total) as u16
     }
 
+    fn stage34j_score_bp(passed: usize, total: usize) -> u16 {
+        if total == 0 {
+            return 0;
+        }
+        ((passed * 10_000) / total) as u16
+    }
+
     fn stage34g_corpus_case<'a>(
         pack: &'a Stage34GEmotionCorpusPack,
         case_id: &str,
@@ -42218,6 +42444,16 @@ mod tests {
             .iter()
             .find(|case| case.case_id == case_id)
             .unwrap_or_else(|| panic!("missing stage34i corpus case for {case_id}"))
+    }
+
+    fn stage34j_corpus_case<'a>(
+        pack: &'a Stage34JMultilingualCorpusPack,
+        case_id: &str,
+    ) -> &'a Stage34JMultilingualCorpusCase {
+        pack.cases
+            .iter()
+            .find(|case| case.case_id == case_id)
+            .unwrap_or_else(|| panic!("missing stage34j corpus case for {case_id}"))
     }
 
     fn stage34f_stage5_packet(
@@ -45862,6 +46098,950 @@ mod tests {
     #[test]
     fn stage_34i_route_verifier_and_public_answer_chain_stays_read_only_and_non_authoritative() {
         stage34i_route_verifier_and_public_answer_chain_stays_read_only_and_non_authoritative();
+    }
+
+    struct Stage34JDeterministicMultiEngine;
+
+    impl Ph1MultiEngine for Stage34JDeterministicMultiEngine {
+        fn run(&self, req: &Ph1MultiRequest) -> Ph1MultiResponse {
+            match req {
+                Ph1MultiRequest::MultiBundleCompose(r) => {
+                    let mut items = r
+                        .signals
+                        .iter()
+                        .enumerate()
+                        .map(|(idx, signal)| {
+                            MultiBundleItem::v1(
+                                signal.signal_id.clone(),
+                                signal.source_engine.clone(),
+                                signal.modality,
+                                (idx + 1) as u8,
+                                signal.confidence_pct,
+                                signal.evidence_ref.clone(),
+                            )
+                            .expect("stage34j multi bundle item")
+                        })
+                        .collect::<Vec<_>>();
+                    items.sort_by(|left, right| {
+                        right
+                            .confidence_pct
+                            .cmp(&left.confidence_pct)
+                            .then(left.signal_id.cmp(&right.signal_id))
+                    });
+                    for (idx, item) in items.iter_mut().enumerate() {
+                        item.fused_rank = (idx + 1) as u8;
+                    }
+                    Ph1MultiResponse::MultiBundleComposeOk(
+                        MultiBundleComposeOk::v1(
+                            ReasonCodeId(341),
+                            items[0].signal_id.clone(),
+                            items,
+                            true,
+                            true,
+                            true,
+                        )
+                        .expect("stage34j multi compose ok"),
+                    )
+                }
+                Ph1MultiRequest::MultiSignalAlign(_) => Ph1MultiResponse::MultiSignalAlignOk(
+                    MultiSignalAlignOk::v1(
+                        ReasonCodeId(342),
+                        MultiValidationStatus::Ok,
+                        vec![],
+                        true,
+                        true,
+                        true,
+                    )
+                    .expect("stage34j multi align ok"),
+                ),
+            }
+        }
+    }
+
+    #[derive(Clone)]
+    struct Stage34JDeterministicLangEngine {
+        fixture: Stage34JMultilingualFixtureCase,
+    }
+
+    impl Stage34JDeterministicLangEngine {
+        fn segments(&self) -> Vec<LangSegment> {
+            let mut start = 0u32;
+            self.fixture
+                .segments
+                .iter()
+                .map(|segment| {
+                    let len = segment.segment_text.len() as u32;
+                    let built = LangSegment::v1(
+                        segment.segment_id.clone(),
+                        start,
+                        start + len,
+                        segment.language_tag.clone(),
+                        segment.segment_text.clone(),
+                    )
+                    .expect("stage34j lang segment");
+                    start += len + 1;
+                    built
+                })
+                .collect()
+        }
+    }
+
+    impl Ph1LangEngine for Stage34JDeterministicLangEngine {
+        fn run(&self, req: &Ph1LangRequest) -> Ph1LangResponse {
+            match req {
+                Ph1LangRequest::LangMultipleDetect(_) => {
+                    Ph1LangResponse::LangMultipleDetectOk(
+                        LangMultipleDetectOk::v1(
+                            ReasonCodeId(351),
+                            self.fixture.detected_languages.clone(),
+                            self.segments(),
+                            self.fixture.dominant_language.clone(),
+                            true,
+                        )
+                        .expect("stage34j lang detect ok"),
+                    )
+                }
+                Ph1LangRequest::LangSegmentResponseMap(r) => {
+                    let plan = match self.fixture.response_mode {
+                        Stage34JFixtureResponseMode::Text => r
+                            .segment_spans
+                            .iter()
+                            .map(|segment| {
+                                LangResponsePlanItem::v1(
+                                    LangPlanScope::Segment,
+                                    Some(segment.segment_id.clone()),
+                                    segment.language_tag.clone(),
+                                )
+                                .expect("stage34j text response plan item")
+                            })
+                            .collect::<Vec<_>>(),
+                        Stage34JFixtureResponseMode::Voice => vec![LangResponsePlanItem::v1(
+                            LangPlanScope::Turn,
+                            None,
+                            self.fixture.dominant_language.clone(),
+                        )
+                        .expect("stage34j voice response plan item")],
+                    };
+                    Ph1LangResponse::LangSegmentResponseMapOk(
+                        LangSegmentResponseMapOk::v1(
+                            ReasonCodeId(352),
+                            LangValidationStatus::Ok,
+                            plan,
+                            self.fixture.dominant_language.clone(),
+                            vec![],
+                            true,
+                        )
+                        .expect("stage34j lang map ok"),
+                    )
+                }
+            }
+        }
+    }
+
+    struct Stage34JDeterministicPronEngine;
+
+    impl Ph1PronEngine for Stage34JDeterministicPronEngine {
+        fn run(&self, req: &Ph1PronRequest) -> Ph1PronResponse {
+            match req {
+                Ph1PronRequest::PronLexiconPackBuild(r) => Ph1PronResponse::PronLexiconPackBuildOk(
+                    PronLexiconPackBuildOk::v1(
+                        ReasonCodeId(361),
+                        "pron.pack.stage34j.tenant.none.01020304".to_string(),
+                        r.scope,
+                        vec![
+                            PronTargetEngine::Tts,
+                            PronTargetEngine::VoiceId,
+                            PronTargetEngine::Wake,
+                        ],
+                        r.entries.clone(),
+                        true,
+                        r.scope == PronScope::User,
+                        true,
+                    )
+                    .expect("stage34j pron pack build ok"),
+                ),
+                Ph1PronRequest::PronApplyValidate(r) => Ph1PronResponse::PronApplyValidateOk(
+                    PronApplyValidateOk::v1(
+                        ReasonCodeId(362),
+                        PronValidationStatus::Ok,
+                        r.pack_id.clone(),
+                        r.target_engine,
+                        r.locale_tag.clone(),
+                        vec![],
+                        true,
+                    )
+                    .expect("stage34j pron apply ok"),
+                ),
+            }
+        }
+    }
+
+    fn stage34j_multi_signal(
+        signal_id: &str,
+        source_engine: &str,
+        modality: MultiModality,
+        confidence_pct: u8,
+        evidence_ref: Option<&str>,
+    ) -> MultiSourceSignal {
+        MultiSourceSignal::v1(
+            signal_id.to_string(),
+            source_engine.to_string(),
+            modality,
+            "multilingual_context".to_string(),
+            "synthetic".to_string(),
+            evidence_ref.map(|value| value.to_string()),
+            confidence_pct,
+            true,
+        )
+        .expect("stage34j multi signal")
+    }
+
+    fn stage34j_multi_bundle(fixture: &Stage34JMultilingualFixtureCase) -> MultiForwardBundle {
+        let signals = vec![
+            stage34j_multi_signal(
+                &format!("text-{}", fixture.fixture_case_id),
+                "PH1.LANG",
+                MultiModality::Text,
+                88,
+                Some("text:evidence:stage34j"),
+            ),
+            stage34j_multi_signal(
+                &format!("voice-{}", fixture.fixture_case_id),
+                "PH1.LISTEN",
+                MultiModality::Voice,
+                82,
+                None,
+            ),
+        ];
+        let wiring = Ph1MultiWiring::new(
+            Ph1MultiWiringConfig::mvp_v1(true),
+            Stage34JDeterministicMultiEngine,
+        )
+        .expect("stage34j multi wiring");
+        let input = MultiTurnInput::v1(CorrelationId(3411), TurnId(341), signals, false)
+            .expect("stage34j multi input");
+        match wiring.run_turn(&input).expect("stage34j multi outcome") {
+            MultiWiringOutcome::Forwarded(bundle) => bundle,
+            other => panic!("expected stage34j multi forwarded bundle, got {other:?}"),
+        }
+    }
+
+    fn stage34j_lang_bundle(fixture: &Stage34JMultilingualFixtureCase) -> LangForwardBundle {
+        let wiring = Ph1LangWiring::new(
+            Ph1LangWiringConfig::mvp_v1(true),
+            Stage34JDeterministicLangEngine {
+                fixture: fixture.clone(),
+            },
+        )
+        .expect("stage34j lang wiring");
+        let input = LangTurnInput::v1(
+            CorrelationId(3412),
+            TurnId(342),
+            fixture.transcript_text.clone(),
+            fixture.locale_hint.clone(),
+            LangSourceModality::Text,
+            fixture.user_language_preferences.clone(),
+            fixture.response_mode.to_contract(),
+        )
+        .expect("stage34j lang input");
+        match wiring.run_turn(&input).expect("stage34j lang outcome") {
+            LangWiringOutcome::Forwarded(bundle) => bundle,
+            other => panic!("expected stage34j lang forwarded bundle, got {other:?}"),
+        }
+    }
+
+    fn stage34j_pron_entries(fixture: &Stage34JMultilingualFixtureCase) -> Vec<PronLexiconEntry> {
+        let locale = fixture.pronunciation_locale_tag.clone();
+        vec![PronLexiconEntry::v1(
+            format!("pron-entry-{}", fixture.fixture_case_id),
+            "module".to_string(),
+            "moh-jool".to_string(),
+            locale,
+        )
+        .expect("stage34j pron entry")]
+    }
+
+    fn stage34j_pron_bundle(fixture: &Stage34JMultilingualFixtureCase) -> PronForwardBundle {
+        let wiring = Ph1PronWiring::new(
+            Ph1PronWiringConfig::mvp_v1(true),
+            Stage34JDeterministicPronEngine,
+        )
+        .expect("stage34j pron wiring");
+        let input = PronTurnInput::v1(
+            CorrelationId(3413),
+            TurnId(343),
+            "tenant_stage34j".to_string(),
+            None,
+            PronScope::Tenant,
+            false,
+            fixture.pronunciation_locale_tag.clone(),
+            PronTargetEngine::Tts,
+            stage34j_pron_entries(fixture),
+        )
+        .expect("stage34j pron input");
+        match wiring.run_turn(&input).expect("stage34j pron outcome") {
+            PronWiringOutcome::Forwarded(bundle) => bundle,
+            other => panic!("expected stage34j pron forwarded bundle, got {other:?}"),
+        }
+    }
+
+    fn stage34j_transcript_gate(
+        fixture: &Stage34JMultilingualFixtureCase,
+    ) -> Stage8TranscriptGatePacket {
+        Stage8TranscriptGatePacket::final_transcript_commit(
+            stage8_explicit_mic_activation(Some(SessionId(88))),
+            stage8_current_authority(),
+            &format!("audio-scene-stage34j-{}", fixture.fixture_case_id),
+            &format!("endpoint-stage34j-{}", fixture.fixture_case_id),
+            &format!("confidence-stage34j-{}", fixture.fixture_case_id),
+            &format!("transcript-stage34j-{}", fixture.fixture_case_id),
+            fixture.transcript_text.as_str(),
+            fixture
+                .locale_hint
+                .as_deref()
+                .unwrap_or(fixture.dominant_language.as_str()),
+            9_500,
+            9_700,
+        )
+        .expect("stage34j transcript gate")
+    }
+
+    fn stage34j_stage10_packet(
+        fixture: &Stage34JMultilingualFixtureCase,
+        lang_bundle: &LangForwardBundle,
+        pron_bundle: &PronForwardBundle,
+    ) -> Stage10UnderstandingPacket {
+        let authority = stage8_current_authority();
+        let access = stage9_access_context(&authority);
+        let transcript_gate = stage34j_transcript_gate(fixture);
+        let voice_posture = stage10_verified_voice_posture(&authority, &access, &transcript_gate);
+
+        let mut input = Stage10UnderstandingInput::evidence_backed(
+            format!("understanding-stage34j-{}", fixture.fixture_case_id),
+            stage8_exact_transcript_hash(fixture.transcript_text.as_str()),
+            format!("intent-stage34j-{}", fixture.fixture_case_id),
+            format!("slot-stage34j-{}", fixture.fixture_case_id),
+            format!("semantic-frame-stage34j-{}", fixture.fixture_case_id),
+            Some(format!(
+                "lang-context-stage34j-{}-{}",
+                fixture.fixture_case_id, lang_bundle.detect.dominant_language_tag
+            )),
+            Some(format!(
+                "pron-context-stage34j-{}-{}",
+                fixture.fixture_case_id, pron_bundle.pack_build.pack_id
+            )),
+            Some(format!("audit-stage34j-stage10-{}", fixture.fixture_case_id)),
+        )
+        .expect("stage34j stage10 input");
+
+        if fixture.case_kind == Stage34JCaseKind::ProtectedNonEnglishClarification {
+            input.intent_id = None;
+            input.slot_id = None;
+            input.semantic_frame_id = None;
+            input.ambiguity_id = Some(format!(
+                "ambiguity-stage34j-{}",
+                fixture.fixture_case_id
+            ));
+            input.one_best_clarification_question_id = Some(format!(
+                "clarify-question-stage34j-{}",
+                fixture.fixture_case_id
+            ));
+            input.protected_slot_disposition = Stage10ProtectedSlotDisposition::ClarificationRequired;
+            input.protected_slot_uncertainties = vec![Stage10ProtectedSlotUncertainty::v1(
+                Stage8ProtectedSlotKind::Recipient,
+                "recipient-stage34j-protected",
+                Some("evidence-stage34j-protected-slot".to_string()),
+                6_500,
+            )
+            .expect("stage34j protected-slot uncertainty")];
+        }
+
+        Stage10UnderstandingPacket::from_stage_references(
+            &authority,
+            &access,
+            Some(&transcript_gate),
+            Some(&voice_posture),
+            input,
+        )
+        .expect("stage34j stage10 packet")
+    }
+
+    fn stage34j_stage13_packet(
+        fixture: &Stage34JMultilingualFixtureCase,
+    ) -> Stage13PublicReadOnlyEvidencePacket {
+        let route = stage13_public_read_only_route();
+        let no_mutation = stage13_no_mutation_proof(&route);
+        let mut input = stage13_evidence_input();
+        let audit_id = format!("audit-stage34j-stage13-{}", fixture.fixture_case_id);
+
+        input.public_read_only_evidence_id =
+            format!("public-evidence-stage34j-{}", fixture.fixture_case_id);
+        input.tool_route_id = format!("tool-route-stage34j-{}", fixture.fixture_case_id);
+        input.source_evidence_id = Some(format!("source-evidence-stage34j-{}", fixture.fixture_case_id));
+        input.citation_id = Some(format!("citation-stage34j-{}", fixture.fixture_case_id));
+        input.provenance_id = Some(format!("provenance-stage34j-{}", fixture.fixture_case_id));
+        input.verifier_id = Some(format!("verifier-stage34j-{}", fixture.fixture_case_id));
+        input.provider_budget_id =
+            Some(format!("provider-budget-stage34j-{}", fixture.fixture_case_id));
+        input.audit_id = Some(audit_id.clone());
+        input.ph1j_proof_ref = Some(audit_id);
+        input.source_evidence_present = true;
+        input.source_evidence_current = true;
+        input.citation_coverage_passed = true;
+        input.source_verification_passed = true;
+        input.source_packet_bounded = true;
+        input.source_packet_secret_safe = true;
+        input.protected_action_like_request = false;
+
+        Stage13PublicReadOnlyEvidencePacket::from_public_read_only_route(
+            &route,
+            &no_mutation,
+            input,
+        )
+        .expect("stage34j stage13 packet")
+    }
+
+    fn stage34j_stage14_packet(
+        fixture: &Stage34JMultilingualFixtureCase,
+        stage13_packet: &Stage13PublicReadOnlyEvidencePacket,
+    ) -> Stage14PublicAnswerPacket {
+        let mut input = stage14_answer_input();
+        let audit_id = format!("audit-stage34j-stage14-{}", fixture.fixture_case_id);
+
+        input.public_answer_id = format!("public-answer-stage34j-{}", fixture.fixture_case_id);
+        input.answer_hash = format!("answer-hash-stage34j-{}", fixture.fixture_case_id);
+        input.citation_rendering_id =
+            Some(format!("citation-render-stage34j-{}", fixture.fixture_case_id));
+        input.source_chip_rendering_id =
+            Some(format!("source-chip-render-stage34j-{}", fixture.fixture_case_id));
+        input.source_link_rendering_id =
+            Some(format!("source-link-stage34j-{}", fixture.fixture_case_id));
+        input.answer_claims_supported_by_stage13 = true;
+        input.unsupported_claim_present = false;
+        input.citations_rendered = true;
+        input.citation_refs_bounded = true;
+        input.citation_refs_current = true;
+        input.citation_refs_verified = true;
+        input.source_chips_rendered = true;
+        input.source_chip_refs_bounded = true;
+        input.source_chip_refs_secret_safe = true;
+        input.source_links_text_safe = true;
+        input.protected_action_like_prompt = false;
+        input.runtime_mock_detected = false;
+        input.fake_citation_detected = false;
+        input.fake_source_detected = false;
+        input.audit_id = Some(audit_id.clone());
+        input.ph1j_proof_ref = Some(audit_id);
+
+        Stage14PublicAnswerPacket::from_stage13_evidence(stage13_packet, input)
+            .expect("stage34j stage14 packet")
+    }
+
+    fn stage34j_stage15_packet(
+        fixture: &Stage34JMultilingualFixtureCase,
+        stage14_packet: &Stage14PublicAnswerPacket,
+    ) -> Stage15ResponseOutputPacket {
+        let mut input = match fixture.case_kind {
+            Stage34JCaseKind::ProtectedNonEnglishClarification => {
+                Stage15ResponseOutputInput::fixture_clarification(
+                    format!("response-output-stage34j-{}", fixture.fixture_case_id),
+                    format!("response-hash-stage34j-{}", fixture.fixture_case_id),
+                    format!("audit-stage34j-stage15-{}", fixture.fixture_case_id),
+                )
+            }
+            Stage34JCaseKind::ProtectedNonEnglishNonCompletion => {
+                Stage15ResponseOutputInput::fixture_protected_non_completion(
+                    format!("response-output-stage34j-{}", fixture.fixture_case_id),
+                    format!("response-hash-stage34j-{}", fixture.fixture_case_id),
+                    format!("audit-stage34j-stage15-{}", fixture.fixture_case_id),
+                )
+            }
+            _ => Stage15ResponseOutputInput::fixture_public_answer_ready(
+                format!("response-output-stage34j-{}", fixture.fixture_case_id),
+                format!("response-hash-stage34j-{}", fixture.fixture_case_id),
+                format!("audit-stage34j-stage15-{}", fixture.fixture_case_id),
+            ),
+        };
+
+        input.protected_action_like_request = matches!(
+            fixture.case_kind,
+            Stage34JCaseKind::ProtectedNonEnglishClarification
+                | Stage34JCaseKind::ProtectedNonEnglishNonCompletion
+        );
+
+        Stage15ResponseOutputPacket::from_stage14_public_answer(stage14_packet, input)
+            .expect("stage34j stage15 packet")
+    }
+
+    fn stage34j_stage17_packet(
+        fixture: &Stage34JMultilingualFixtureCase,
+        stage15_packet: &Stage15ResponseOutputPacket,
+    ) -> Stage17SpeechOutputPacket {
+        let mut input = Stage17SpeechOutputInput::fixture_speakable_ready(
+            format!("speech-output-stage34j-{}", fixture.fixture_case_id),
+            format!("tts-request-stage34j-{}", fixture.fixture_case_id),
+            format!("tts-hash-stage34j-{}", fixture.fixture_case_id),
+            format!("audio-output-stage34j-{}", fixture.fixture_case_id),
+            format!("voice-style-stage34j-{}", fixture.fixture_case_id),
+            format!("audit-stage34j-stage17-{}", fixture.fixture_case_id),
+        );
+
+        input.no_silent_translation_or_summary = !fixture.silent_translation_or_summary_attempted;
+        if !matches!(stage15_packet.output_kind, Stage15ResponseOutputKind::PublicAnswer) {
+            input.citation_context_required = false;
+            input.citation_context_bound_to_stage14_15 = false;
+        }
+
+        Stage17SpeechOutputPacket::from_stage15_output(stage15_packet, None, None, input)
+            .expect("stage34j stage17 packet")
+    }
+
+    fn stage34j_assert_response_plan(
+        fixture: &Stage34JMultilingualFixtureCase,
+        bundle: &LangForwardBundle,
+    ) {
+        match fixture.response_mode {
+            Stage34JFixtureResponseMode::Text => {
+                assert_eq!(
+                    bundle.map.response_language_plan.len(),
+                    fixture.segments.len(),
+                    "stage34j text-mode plan length mismatch for {}",
+                    fixture.fixture_case_id
+                );
+                for (plan_item, segment) in bundle
+                    .map
+                    .response_language_plan
+                    .iter()
+                    .zip(fixture.segments.iter())
+                {
+                    assert_eq!(plan_item.scope, LangPlanScope::Segment);
+                    assert_eq!(plan_item.segment_id.as_deref(), Some(segment.segment_id.as_str()));
+                    assert_eq!(plan_item.language_tag, segment.language_tag);
+                }
+            }
+            Stage34JFixtureResponseMode::Voice => {
+                assert_eq!(bundle.map.response_language_plan.len(), 1);
+                let plan = &bundle.map.response_language_plan[0];
+                assert_eq!(plan.scope, LangPlanScope::Turn);
+                assert!(plan.segment_id.is_none());
+                assert_eq!(plan.language_tag, fixture.dominant_language);
+            }
+        }
+    }
+
+    fn stage34j_multilingual_corpus_closes_offline_benchmark_row_impl() {
+        let pack = load_stage34j_corpus_pack();
+        let fixtures = load_stage34j_fixture_set();
+
+        assert_eq!(pack.pack_id, "multilingual");
+        assert_eq!(pack.pack_version, "1.0.0");
+        assert_eq!(fixtures.fixture_set_id, "stage34j_multilingual_cases");
+        assert_eq!(fixtures.fixture_set_version, "1.0.0");
+
+        let mut quality_total = 0usize;
+        let mut quality_pass = 0usize;
+        let mut safety_total = 0usize;
+        let mut safety_pass = 0usize;
+
+        for case in &pack.cases {
+            let fixture = stage34j_fixture_case(&fixtures, &case.fixture_case_id);
+            let multi_bundle = stage34j_multi_bundle(fixture);
+            let lang_bundle = stage34j_lang_bundle(fixture);
+            let pron_bundle = stage34j_pron_bundle(fixture);
+            let stage10_packet = stage34j_stage10_packet(fixture, &lang_bundle, &pron_bundle);
+            let stage13_packet = stage34j_stage13_packet(fixture);
+            let stage14_packet = stage34j_stage14_packet(fixture, &stage13_packet);
+            let stage15_packet = stage34j_stage15_packet(fixture, &stage14_packet);
+            let stage17_packet = stage34j_stage17_packet(fixture, &stage15_packet);
+
+            assert!(multi_bundle.validate().is_ok());
+            assert!(lang_bundle.validate().is_ok());
+            assert!(pron_bundle.validate().is_ok());
+            assert!(lang_bundle.detect.no_translation_performed);
+            assert!(lang_bundle.map.no_translation_performed);
+            assert_eq!(lang_bundle.detect.dominant_language_tag, fixture.dominant_language);
+            assert_eq!(
+                lang_bundle.map.default_response_language,
+                fixture.dominant_language
+            );
+            assert_eq!(
+                fixture.transcript_text.chars().any(|ch| !ch.is_ascii()),
+                fixture.mixed_script_present
+            );
+            stage34j_assert_response_plan(fixture, &lang_bundle);
+
+            assert!(
+                case.expected_stage10_disposition
+                    .matches(stage10_packet.disposition),
+                "stage34j Stage 10 disposition mismatch for {}",
+                case.case_id
+            );
+            assert!(
+                case.expected_stage15_disposition
+                    .matches(stage15_packet.disposition),
+                "stage34j Stage 15 disposition mismatch for {}",
+                case.case_id
+            );
+            assert!(
+                case.expected_stage17_disposition
+                    .matches(stage17_packet.disposition),
+                "stage34j Stage 17 disposition mismatch for {}",
+                case.case_id
+            );
+
+            assert!(!stage10_packet.work_authority.can_answer);
+            assert!(!stage10_packet.work_authority.can_search);
+            assert!(!stage10_packet.work_authority.can_call_providers);
+            assert!(!stage10_packet.work_authority.can_authorize);
+            assert!(!stage10_packet.work_authority.can_route_tools);
+            assert!(!stage10_packet.work_authority.can_connector_write);
+            assert!(!stage10_packet.work_authority.can_execute_protected_mutation);
+            assert!(!stage10_packet.work_authority.can_update_memory_persona_emotion);
+            assert!(!stage13_packet.can_mutate_or_execute());
+            assert!(!stage14_packet.can_mutate_or_execute());
+            assert!(!stage15_packet.can_mutate_or_execute());
+            assert!(!stage17_packet.can_mutate_or_execute());
+            assert!(stage10_packet.audit_id.is_some());
+            assert!(stage15_packet.audit_id.is_some());
+            assert!(stage15_packet.ph1j_proof_ref.is_some());
+            assert!(stage17_packet.audit_id.is_some());
+            assert!(stage17_packet.ph1j_proof_ref.is_some());
+
+            match case.lane {
+                Stage34JLane::QualityReady => {
+                    quality_total += 1;
+
+                    assert_eq!(
+                        stage10_packet.disposition,
+                        Stage10UnderstandingDisposition::UnderstandingReady
+                    );
+                    assert_eq!(
+                        stage15_packet.disposition,
+                        Stage15ResponseOutputDisposition::ResponseOutputReady
+                    );
+                    assert_eq!(
+                        stage17_packet.disposition,
+                        Stage17SpeechOutputDisposition::SpeechOutputReady
+                    );
+                    assert!(fixture.same_language_response_required);
+                    assert!(!fixture.silent_translation_or_summary_attempted);
+                    assert!(stage10_packet.language_context_advisory_only);
+                    assert!(stage10_packet.pronunciation_context_advisory_only);
+
+                    quality_pass += 1;
+                }
+                Stage34JLane::MultilingualSafety => {
+                    safety_total += 1;
+
+                    let safe_boundary = matches!(
+                        stage10_packet.disposition,
+                        Stage10UnderstandingDisposition::ProtectedSlotClarificationRequired
+                    ) || matches!(
+                        stage15_packet.disposition,
+                        Stage15ResponseOutputDisposition::ClarificationReady
+                            | Stage15ResponseOutputDisposition::ProtectedNonCompletionReady
+                    ) || matches!(
+                        stage17_packet.disposition,
+                        Stage17SpeechOutputDisposition::NoRewriteBlocked
+                    );
+                    assert!(
+                        safe_boundary,
+                        "stage34j safety case must clarify, refuse, or block rewrite for {}",
+                        case.case_id
+                    );
+                    assert!(!stage10_packet.work_authority.can_authorize);
+                    assert!(!stage15_packet.work_authority.can_approve);
+                    assert!(!stage15_packet.work_authority.can_execute_protected_action);
+                    assert!(!stage17_packet.work_authority.can_execute_protected_action);
+
+                    safety_pass += 1;
+                }
+            }
+        }
+
+        let quality_bp = stage34j_score_bp(quality_pass, quality_total);
+        let safety_bp = stage34j_score_bp(safety_pass, safety_total);
+
+        assert!(
+            quality_bp >= pack.quality_threshold_bp,
+            "stage34j multilingual quality threshold failed: actual={} required={}",
+            quality_bp,
+            pack.quality_threshold_bp
+        );
+        assert!(
+            safety_bp >= pack.safety_threshold_bp,
+            "stage34j multilingual safety threshold failed: actual={} required={}",
+            safety_bp,
+            pack.safety_threshold_bp
+        );
+    }
+
+    #[test]
+    fn stage34j_multilingual_corpus_closes_offline_benchmark_row() {
+        stage34j_multilingual_corpus_closes_offline_benchmark_row_impl();
+    }
+
+    #[test]
+    fn stage_34j_multilingual_corpus_closes_offline_benchmark_row() {
+        stage34j_multilingual_corpus_closes_offline_benchmark_row_impl();
+    }
+
+    fn stage34j_language_dialect_and_code_switch_cases_require_same_language_bounded_output_impl()
+    {
+        let pack = load_stage34j_corpus_pack();
+        let fixtures = load_stage34j_fixture_set();
+
+        for case_id in [
+            "same_language_spanish_ready",
+            "dialect_locale_advisory_ready",
+            "code_switch_mixed_script_ready",
+        ] {
+            let case = stage34j_corpus_case(&pack, case_id);
+            let fixture = stage34j_fixture_case(&fixtures, &case.fixture_case_id);
+            let lang_bundle = stage34j_lang_bundle(fixture);
+            let pron_bundle = stage34j_pron_bundle(fixture);
+            let stage10_packet = stage34j_stage10_packet(fixture, &lang_bundle, &pron_bundle);
+            let stage13_packet = stage34j_stage13_packet(fixture);
+            let stage14_packet = stage34j_stage14_packet(fixture, &stage13_packet);
+            let stage15_packet = stage34j_stage15_packet(fixture, &stage14_packet);
+            let stage17_packet = stage34j_stage17_packet(fixture, &stage15_packet);
+
+            assert_eq!(
+                stage10_packet.disposition,
+                Stage10UnderstandingDisposition::UnderstandingReady
+            );
+            assert_eq!(
+                stage15_packet.disposition,
+                Stage15ResponseOutputDisposition::ResponseOutputReady
+            );
+            assert_eq!(
+                stage17_packet.disposition,
+                Stage17SpeechOutputDisposition::SpeechOutputReady
+            );
+            assert!(lang_bundle.detect.no_translation_performed);
+            assert!(lang_bundle.map.no_translation_performed);
+            assert!(fixture.same_language_response_required);
+            assert!(!fixture.silent_translation_or_summary_attempted);
+            stage34j_assert_response_plan(fixture, &lang_bundle);
+
+            if fixture.code_switch_preserved {
+                assert_eq!(
+                    lang_bundle.map.response_language_plan.len(),
+                    fixture.segments.len()
+                );
+                assert!(fixture.mixed_script_present);
+            }
+        }
+    }
+
+    #[test]
+    fn stage34j_language_dialect_and_code_switch_cases_require_same_language_bounded_output() {
+        stage34j_language_dialect_and_code_switch_cases_require_same_language_bounded_output_impl();
+    }
+
+    #[test]
+    fn stage_34j_language_dialect_and_code_switch_cases_require_same_language_bounded_output() {
+        stage34j_language_dialect_and_code_switch_cases_require_same_language_bounded_output_impl();
+    }
+
+    fn stage34j_protected_non_english_cases_clarify_or_fail_closed_without_silent_translation_impl(
+    ) {
+        let pack = load_stage34j_corpus_pack();
+        let fixtures = load_stage34j_fixture_set();
+
+        for case_id in [
+            "protected_non_english_clarification_ready",
+            "protected_non_english_noncompletion_ready",
+        ] {
+            let case = stage34j_corpus_case(&pack, case_id);
+            let fixture = stage34j_fixture_case(&fixtures, &case.fixture_case_id);
+            let lang_bundle = stage34j_lang_bundle(fixture);
+            let pron_bundle = stage34j_pron_bundle(fixture);
+            let stage10_packet = stage34j_stage10_packet(fixture, &lang_bundle, &pron_bundle);
+            let stage13_packet = stage34j_stage13_packet(fixture);
+            let stage14_packet = stage34j_stage14_packet(fixture, &stage13_packet);
+            let stage15_packet = stage34j_stage15_packet(fixture, &stage14_packet);
+            let stage17_packet = stage34j_stage17_packet(fixture, &stage15_packet);
+
+            if fixture.case_kind == Stage34JCaseKind::ProtectedNonEnglishClarification {
+                assert_eq!(
+                    stage10_packet.disposition,
+                    Stage10UnderstandingDisposition::ProtectedSlotClarificationRequired
+                );
+                assert_eq!(
+                    stage15_packet.disposition,
+                    Stage15ResponseOutputDisposition::ClarificationReady
+                );
+            } else {
+                assert_eq!(
+                    stage15_packet.disposition,
+                    Stage15ResponseOutputDisposition::ProtectedNonCompletionReady
+                );
+            }
+
+            assert_eq!(
+                stage17_packet.disposition,
+                Stage17SpeechOutputDisposition::SpeechOutputReady
+            );
+            assert!(stage17_packet.no_silent_translation_or_summary);
+            assert!(!stage17_packet.can_mutate_or_execute());
+        }
+
+        let blocked_case = stage34j_corpus_case(&pack, "silent_translation_blocked");
+        let blocked_fixture = stage34j_fixture_case(&fixtures, &blocked_case.fixture_case_id);
+        let blocked_lang = stage34j_lang_bundle(blocked_fixture);
+        let blocked_pron = stage34j_pron_bundle(blocked_fixture);
+        let blocked_stage10 = stage34j_stage10_packet(blocked_fixture, &blocked_lang, &blocked_pron);
+        let blocked_stage13 = stage34j_stage13_packet(blocked_fixture);
+        let blocked_stage14 = stage34j_stage14_packet(blocked_fixture, &blocked_stage13);
+        let blocked_stage15 = stage34j_stage15_packet(blocked_fixture, &blocked_stage14);
+        let blocked_stage17 = stage34j_stage17_packet(blocked_fixture, &blocked_stage15);
+
+        assert_eq!(
+            blocked_stage10.disposition,
+            Stage10UnderstandingDisposition::UnderstandingReady
+        );
+        assert_eq!(
+            blocked_stage15.disposition,
+            Stage15ResponseOutputDisposition::ResponseOutputReady
+        );
+        assert_eq!(
+            blocked_stage17.disposition,
+            Stage17SpeechOutputDisposition::NoRewriteBlocked
+        );
+        assert!(!blocked_stage17.no_silent_translation_or_summary);
+        assert!(blocked_stage17.work_authority.can_fail_closed);
+    }
+
+    #[test]
+    fn stage34j_protected_non_english_cases_clarify_or_fail_closed_without_silent_translation() {
+        stage34j_protected_non_english_cases_clarify_or_fail_closed_without_silent_translation_impl();
+    }
+
+    #[test]
+    fn stage_34j_protected_non_english_cases_clarify_or_fail_closed_without_silent_translation() {
+        stage34j_protected_non_english_cases_clarify_or_fail_closed_without_silent_translation_impl();
+    }
+
+    fn stage34j_multilingual_packets_cannot_invent_fluency_translation_or_pronunciation_authority_impl(
+    ) {
+        let fixtures = load_stage34j_fixture_set();
+        let fixture = stage34j_fixture_case(&fixtures, "dialect_locale_advisory_ready");
+        let multi_bundle = stage34j_multi_bundle(fixture);
+        let lang_bundle = stage34j_lang_bundle(fixture);
+        let pron_bundle = stage34j_pron_bundle(fixture);
+        let stage10_packet = stage34j_stage10_packet(fixture, &lang_bundle, &pron_bundle);
+        let stage13_packet = stage34j_stage13_packet(fixture);
+        let stage14_packet = stage34j_stage14_packet(fixture, &stage13_packet);
+        let stage15_packet = stage34j_stage15_packet(fixture, &stage14_packet);
+        let stage17_packet = stage34j_stage17_packet(fixture, &stage15_packet);
+
+        assert_eq!(multi_bundle.signal_align.validation_status, MultiValidationStatus::Ok);
+        assert!(lang_bundle.detect.no_translation_performed);
+        assert!(lang_bundle.map.no_translation_performed);
+        assert_eq!(
+            pron_bundle.apply_validate.validation_status,
+            PronValidationStatus::Ok
+        );
+        assert!(stage10_packet.work_authority.can_use_language_context);
+        assert!(stage10_packet.work_authority.can_use_pronunciation_context);
+        assert!(!stage10_packet.work_authority.can_answer);
+        assert!(!stage10_packet.work_authority.can_search);
+        assert!(!stage10_packet.work_authority.can_call_providers);
+        assert!(!stage10_packet.work_authority.can_route_tools);
+        assert!(!stage10_packet.work_authority.can_authorize);
+        assert!(!stage15_packet.work_authority.can_approve);
+        assert!(!stage15_packet.work_authority.can_dispatch);
+        assert!(!stage15_packet.work_authority.can_execute_protected_action);
+        assert!(!stage17_packet.work_authority.can_approve);
+        assert!(!stage17_packet.work_authority.can_dispatch);
+        assert!(!stage17_packet.work_authority.can_execute_protected_action);
+        assert!(!stage10_packet.work_authority.can_answer);
+        assert!(!stage10_packet.work_authority.can_search);
+        assert!(!stage10_packet.work_authority.can_call_providers);
+        assert!(!stage10_packet.work_authority.can_authorize);
+        assert!(!stage10_packet.work_authority.can_route_tools);
+        assert!(!stage10_packet.work_authority.can_connector_write);
+        assert!(!stage10_packet.work_authority.can_execute_protected_mutation);
+        assert!(!stage10_packet.work_authority.can_update_memory_persona_emotion);
+        assert!(!stage15_packet.can_mutate_or_execute());
+        assert!(!stage17_packet.can_mutate_or_execute());
+    }
+
+    #[test]
+    fn stage34j_multilingual_packets_cannot_invent_fluency_translation_or_pronunciation_authority()
+    {
+        stage34j_multilingual_packets_cannot_invent_fluency_translation_or_pronunciation_authority_impl();
+    }
+
+    #[test]
+    fn stage_34j_multilingual_packets_cannot_invent_fluency_translation_or_pronunciation_authority(
+    ) {
+        stage34j_multilingual_packets_cannot_invent_fluency_translation_or_pronunciation_authority_impl();
+    }
+
+    fn stage34j_response_language_and_pronunciation_hints_remain_advisory_and_non_authoritative_impl(
+    ) {
+        let fixtures = load_stage34j_fixture_set();
+        let fixture = stage34j_fixture_case(&fixtures, "same_language_spanish_ready");
+        let lang_bundle = stage34j_lang_bundle(fixture);
+        let pron_bundle = stage34j_pron_bundle(fixture);
+        let packet = stage34j_stage10_packet(fixture, &lang_bundle, &pron_bundle);
+
+        assert!(packet.language_context_advisory_only);
+        assert!(packet.pronunciation_context_advisory_only);
+        assert!(packet.work_authority.can_use_language_context);
+        assert!(packet.work_authority.can_use_pronunciation_context);
+        assert!(!packet.work_authority.can_authorize);
+        assert!(!packet.work_authority.can_route_tools);
+        assert!(!packet.work_authority.can_answer);
+        assert!(!packet.work_authority.can_search);
+        assert!(!packet.work_authority.can_call_providers);
+        assert!(!packet.work_authority.can_authorize);
+        assert!(!packet.work_authority.can_route_tools);
+        assert!(!packet.work_authority.can_connector_write);
+        assert!(!packet.work_authority.can_execute_protected_mutation);
+        assert!(!packet.work_authority.can_update_memory_persona_emotion);
+
+        let mut invalid_language = Stage10UnderstandingInput::evidence_backed(
+            "understanding-stage34j-invalid-language",
+            stage8_exact_transcript_hash("trama azul lista"),
+            "intent-stage34j-invalid-language",
+            "slot-stage34j-invalid-language",
+            "semantic-frame-stage34j-invalid-language",
+            Some("lang-context-stage34j-invalid-language".to_string()),
+            Some("pron-context-stage34j-invalid-language".to_string()),
+            Some("audit-stage34j-invalid-language".to_string()),
+        )
+        .expect("stage34j invalid language input");
+        invalid_language.language_context_advisory_only = false;
+        assert!(invalid_language.validate().is_err());
+
+        let mut invalid_pron = Stage10UnderstandingInput::evidence_backed(
+            "understanding-stage34j-invalid-pron",
+            stage8_exact_transcript_hash("trama azul lista"),
+            "intent-stage34j-invalid-pron",
+            "slot-stage34j-invalid-pron",
+            "semantic-frame-stage34j-invalid-pron",
+            Some("lang-context-stage34j-invalid-pron".to_string()),
+            Some("pron-context-stage34j-invalid-pron".to_string()),
+            Some("audit-stage34j-invalid-pron".to_string()),
+        )
+        .expect("stage34j invalid pron input");
+        invalid_pron.pronunciation_context_advisory_only = false;
+        assert!(invalid_pron.validate().is_err());
+    }
+
+    #[test]
+    fn stage34j_response_language_and_pronunciation_hints_remain_advisory_and_non_authoritative()
+    {
+        stage34j_response_language_and_pronunciation_hints_remain_advisory_and_non_authoritative_impl();
+    }
+
+    #[test]
+    fn stage_34j_response_language_and_pronunciation_hints_remain_advisory_and_non_authoritative(
+    ) {
+        stage34j_response_language_and_pronunciation_hints_remain_advisory_and_non_authoritative_impl();
     }
 
     fn stage11_ready_understanding() -> Stage10UnderstandingPacket {

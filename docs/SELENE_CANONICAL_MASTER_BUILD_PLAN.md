@@ -4,7 +4,7 @@ Status: CANONICAL_BUILD_ROADMAP
 Created: 2026-05-02
 Last Updated: 2026-05-06
 Repo Root: `/Users/selene/Documents/Selene-OS`
-Current Next Build: Stage 34J - Multilingual Certification Pack Closure
+Current Next Build: None yet - Stage 34J is PROVEN_COMPLETE and the Stage 34 remaining-row closure map must be refreshed before naming another narrowed Stage 34 slice
 
 ## Purpose
 
@@ -79,10 +79,10 @@ After every build, update this section before final reporting.
 | Field | Current Value |
 |---|---|
 | Current active stage | Stage 34 |
-| Current active build | Stage 34J - Multilingual Certification Pack Closure |
+| Current active build | None - Stage 34J is PROVEN_COMPLETE and the Stage 34 remaining-row closure map must be refreshed before naming another narrowed Stage 34 slice |
 | Next build after current stage passes | None yet - refresh the Stage 34 remaining-row closure map again after Stage 34J before naming another narrowed Stage 34 slice |
-| Last completed stage | Stage 34I - Math / Science / History Verification Benchmark Closure |
-| Stages blocked | Broad Stage 34 remains blocked on provider/model governance, wake/activation, STT/listening, Voice ID production quality, TTS naturalness, multilingual, native/runtime parity, and full certification. |
+| Last completed stage | Stage 34J - Multilingual Certification Pack Closure |
+| Stages blocked | Broad Stage 34 remains blocked on provider/model governance, wake/activation, STT/listening, Voice ID production quality, TTS naturalness, native/runtime parity, and full certification. |
 | Plan drift allowed | No |
 
 ## Status Legend
@@ -2847,18 +2847,17 @@ Closure bucket legend:
 
 Current selected next exact build:
 
-- Stage 34J - Multilingual Certification Pack Closure
+- None yet - Stage 34J is PROVEN_COMPLETE and the Stage 34 remaining-row closure map must be refreshed before naming another narrowed Stage 34 slice
 
 Selection reason:
 
-- Most recently completed narrowed slice: `Stage 34I - Math / Science / History Verification Benchmark Closure`.
-- `Math/science/history` is now closed and no longer belongs in remaining blocked-row planning.
-- The remaining blocked rows still split across lawful closure buckets: replay/corpus-first (`Multilingual`), JD-scope-plus-live-eval (`Provider/model governance`), live/native-lab proof (`Wake/activation`, `STT/listening`, `TTS naturalness`, `Voice ID production quality`, `Native/runtime parity`), and the dependent final gate (`Full certification`).
-- The refreshed remaining-row closure map now authorizes `Stage 34J - Multilingual Certification Pack Closure` as the next exact build because `Multilingual` remains the highest-value replay/corpus-first row and current repo truth already exposes `PH1.MULTI`, `PH1.LANG`, `PH1.PRON`, Stage 8D/8E mixed-language and code-switch benchmark seams, Stage 10 advisory language/pronunciation context boundaries, and Stage 15 no-silent-translation response boundaries without requiring provider execution, microphone, playback, or native-lab proof.
+- Most recently completed narrowed slice: `Stage 34J - Multilingual Certification Pack Closure`.
+- `Multilingual` is now closed and no longer belongs in remaining blocked-row planning.
+- The remaining blocked rows still split across lawful closure buckets: JD-scope-plus-live-eval (`Provider/model governance`), live/native-lab proof (`Wake/activation`, `STT/listening`, `TTS naturalness`, `Voice ID production quality`, `Native/runtime parity`), and the dependent final gate (`Full certification`).
+- No next exact narrowed Stage 34 build is authorized yet; the next lawful step is a fresh remaining-row closure-map refresh after Stage 34J.
 
 | Blocked row | Owner | Current blocker | Closure bucket | Offline/replay-only closure possible now? | Live/native-lab proof required for final row closure? | Planned closure slice | Primary repo seams | Proof required | Batchable with |
 |---|---|---|---|---|---|---|---|---|---|
-| Multilingual | Stage 32 | Add per-language, dialect, code-switch, protected non-English certification packs. | `CORPUS_OR_REPLAY_PACK_FIRST` | yes | no | `Stage 34J - Multilingual Certification Pack Closure` | `crates/selene_os/src/ph1multi.rs`; `crates/selene_os/src/ph1lang.rs`; `crates/selene_os/src/ph1pron.rs`; eval/replay fixture surfaces | deterministic per-language, dialect, code-switch, and protected non-English packs | no |
 | Provider/model governance | Stage 30 | Add prompt/model registries, champion router/model profile contracts, live-eval, fallback/rollback, and cost-quality target status. | `JD_SCOPE_DECISION_REQUIRED` | partial only | yes | `Provider/Model Governance Contract Split And Live-Eval Closure` | `crates/selene_engines/src/ph1providerctl.rs`; `docs/web_search_plan/eval/**`; `crates/selene_os/src/web_search_plan/eval/**`; `crates/selene_os/src/bin/web_search_eval_report.rs`; `crates/selene_os/src/bin/web_search_release_evidence.rs` | prompt/model registry proof, fallback/rollback proof, and explicit live-eval allowance | only with other provider-eval work after JD scope approval |
 | Wake/activation | Stage 7 | Convert wake latency/false accept targets after baseline. | `LIVE_OR_NATIVE_LAB_PROOF_REQUIRED` | no | yes | `Wake Activation Production Benchmark Closure` | `crates/selene_os/src/ph1w.rs`; `crates/selene_os/src/ph1wake_training.rs`; `crates/selene_adapter/src/bin/desktop_wake_life.rs`; `docs/WAKE_BUILD_PLAN.md` | real wake latency and false-accept measurements | no |
 | STT/listening | Stage 17, Stage 34 | Measure live STT WER/far-field/noisy-room/provider-latency/native-lab production targets and live playback/interruption latency. | `LIVE_OR_NATIVE_LAB_PROOF_REQUIRED` | no | yes | `STT Listening Production Benchmark Closure` | `crates/selene_os/src/ph1listen.rs`; `crates/selene_os/src/ph1lang.rs`; `crates/selene_os/src/ph1pron.rs`; Stage 8D/8E/8F benchmark surfaces; `docs/web_search_plan/eval/**`; `docs/web_search_plan/replay_fixtures/**` | live WER, latency, playback, and native-lab proof | only with `TTS Naturalness Benchmark Closure` if the same live-lab session is explicitly approved |
@@ -2866,6 +2865,16 @@ Selection reason:
 | Voice ID production quality | Stage 34, native lab | Measure FAR/FRR, ROC/EER, spoof resistance, room/noise robustness, cross-device matching, native enrollment UX, and production speaker-verification quality. | `LIVE_OR_NATIVE_LAB_PROOF_REQUIRED` | no | yes | `Voice ID Production Benchmark Closure` | `crates/selene_os/src/ph1_voice_id.rs`; `crates/selene_storage/tests/ph1_voice_id/db_wiring.rs`; PH1.VOICE.ID contract/runtime surfaces | FAR/FRR, ROC/EER, spoof/noise/cross-device/enrollment proof | no |
 | Native/runtime parity | Stage 33 | Build parity harness for existing surfaces and planned/missing reports. | `LIVE_OR_NATIVE_LAB_PROOF_REQUIRED` | no | yes | `Native Runtime Parity Harness Closure` | `crates/selene_os/src/web_search_plan/parity/**`; `docs/web_search_plan/parity_fixtures/**`; `apple/mac_desktop/**`; `apple/iphone/**` | real app/native parity harness proof and planned/missing report closure | no |
 | Full certification | Stage 34 | Final aggregator row remains blocked until the other blocked rows close or are lawfully reclassified by repo truth. | `DEPENDENT_FINAL_GATE` | no | depends on remaining rows | `Full Certification Final Closure` | current-HEAD Stage 34A/34B/34C/34D proof ledgers; benchmark matrix; current eval/release evidence | rerun the full benchmark matrix after remaining-row disposition is settled | only after all prerequisite rows settle |
+
+Stage 34J status: PROVEN_COMPLETE
+
+Stage 34J proof update:
+
+- Existing `PH1.MULTI`, `PH1.LANG`, `PH1.PRON`, `BenchmarkTargetPacket`, `BenchmarkResultPacket`, `BenchmarkResultRepo`, Stage 8D/8E mixed-language and code-switch benchmark seams, Stage 10 advisory language/pronunciation context boundaries, Stage 15 no-silent-translation response boundaries, and `runtime_ingress_turn_foundation.rs` were inspected and reused rather than rebuilt as duplicate multilingual, translation, language-routing, or pronunciation engines.
+- Stage 34J did not add a new runtime-owned Stage 34 carrier. Existing multilingual/language/pronunciation seams remain the authoritative runtime path, while the synthetic-only [multilingual.json](/Users/selene/Documents/Selene-OS/docs/web_search_plan/eval/corpus_packs/multilingual.json) and [stage34j_multilingual_cases.json](/Users/selene/Documents/Selene-OS/docs/web_search_plan/replay_fixtures/stage34j_multilingual_cases.json) fixture packs provide deterministic current-HEAD proof inputs.
+- Current-HEAD deterministic proof closed the `Multilingual` benchmark family by proving same-language response preservation, dialect/locale advisory handling, code-switch preservation, mixed-script handling, protected non-English clarify-or-fail-closed behavior, and no-silent-translation safety all stay bounded and non-authoritative while fake fluency, fake pronunciation certainty, unsupported translation certainty, identity-like inference, and multilingual-to-authority upgrades fail closed.
+- Exact targeted proof includes current-HEAD runnable Stage 34J tests `runtime_ingress_turn_foundation::tests::stage_34j_multilingual_corpus_closes_offline_benchmark_row`, `runtime_ingress_turn_foundation::tests::stage_34j_language_dialect_and_code_switch_cases_require_same_language_bounded_output`, `runtime_ingress_turn_foundation::tests::stage_34j_protected_non_english_cases_clarify_or_fail_closed_without_silent_translation`, `runtime_ingress_turn_foundation::tests::stage_34j_multilingual_packets_cannot_invent_fluency_translation_or_pronunciation_authority`, and `runtime_ingress_turn_foundation::tests::stage_34j_response_language_and_pronunciation_hints_remain_advisory_and_non_authoritative`, plus preserved Stage 32A/10A/15A/8D/8E guard tests, `eval`, and `replay`, all without provider calls, search calls, microphone/STT, TTS/playback, native mutation, or runtime-mock behavior.
+- Broad Stage 34 remains partial because provider/model governance, wake/activation, STT/listening, Voice ID production quality, TTS naturalness, native/runtime parity, and full certification remain blocked with explicit owners and next actions. No next exact build exists until the Stage 34 remaining-row closure map is refreshed against current repo truth after Stage 34J.
 
 Stage 34I status: PROVEN_COMPLETE
 
