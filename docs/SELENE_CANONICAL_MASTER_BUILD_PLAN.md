@@ -4,7 +4,7 @@ Status: CANONICAL_BUILD_ROADMAP
 Created: 2026-05-02
 Last Updated: 2026-05-06
 Repo Root: `/Users/selene/Documents/Selene-OS`
-Current Next Build: None yet - Stage 34J is PROVEN_COMPLETE and the Stage 34 remaining-row closure map must be refreshed before naming another narrowed Stage 34 slice
+Current Next Build: None yet - provider/model governance remains JD_SCOPE_DECISION_REQUIRED after the Stage 34 remaining-row closure-map refresh after Stage 34J
 
 ## Purpose
 
@@ -79,8 +79,8 @@ After every build, update this section before final reporting.
 | Field | Current Value |
 |---|---|
 | Current active stage | Stage 34 |
-| Current active build | None - Stage 34J is PROVEN_COMPLETE and the Stage 34 remaining-row closure map must be refreshed before naming another narrowed Stage 34 slice |
-| Next build after current stage passes | None yet - refresh the Stage 34 remaining-row closure map again after Stage 34J before naming another narrowed Stage 34 slice |
+| Current active build | None - Stage 34 remaining-row closure map refreshed after Stage 34J; no next exact build is authorized yet |
+| Next build after current stage passes | None yet - await JD scope decision on provider/model governance or a further canonical Stage 34 closure-map refresh if repo truth changes |
 | Last completed stage | Stage 34J - Multilingual Certification Pack Closure |
 | Stages blocked | Broad Stage 34 remains blocked on provider/model governance, wake/activation, STT/listening, Voice ID production quality, TTS naturalness, native/runtime parity, and full certification. |
 | Plan drift allowed | No |
@@ -2835,7 +2835,7 @@ Stage 34D proof update:
 
 Stage 34 Remaining Certification Closure Plan
 
-This section is the explicit canonical master-plan revision required after Stage 34D and refreshed after Stage 34E. It does not create any post-Stage-34 canonical stage, and it does not pretend broad Stage 34 is complete. It reauthorizes narrowed Stage 34 work by classifying each remaining blocked benchmark row, recording the most recently completed narrowed slice, and requiring an explicit closure-map refresh before naming another lawful implementation slice.
+This section is the explicit canonical master-plan revision required after Stage 34D and refreshed through Stage 34J. It does not create any post-Stage-34 canonical stage, and it does not pretend broad Stage 34 is complete. It reauthorizes narrowed Stage 34 work by classifying each remaining blocked benchmark row, recording the most recently completed narrowed slice, and requiring an explicit closure-map refresh before naming another lawful implementation slice.
 
 Closure bucket legend:
 
@@ -2847,18 +2847,19 @@ Closure bucket legend:
 
 Current selected next exact build:
 
-- None yet - Stage 34J is PROVEN_COMPLETE and the Stage 34 remaining-row closure map must be refreshed before naming another narrowed Stage 34 slice
+- None yet - provider/model governance remains JD_SCOPE_DECISION_REQUIRED after the Stage 34 remaining-row closure-map refresh after Stage 34J
 
 Selection reason:
 
 - Most recently completed narrowed slice: `Stage 34J - Multilingual Certification Pack Closure`.
 - `Multilingual` is now closed and no longer belongs in remaining blocked-row planning.
-- The remaining blocked rows still split across lawful closure buckets: JD-scope-plus-live-eval (`Provider/model governance`), live/native-lab proof (`Wake/activation`, `STT/listening`, `TTS naturalness`, `Voice ID production quality`, `Native/runtime parity`), and the dependent final gate (`Full certification`).
-- No next exact narrowed Stage 34 build is authorized yet; the next lawful step is a fresh remaining-row closure-map refresh after Stage 34J.
+- `Provider/model governance` is now the highest-value remaining row, but its closure bucket remains `JD_SCOPE_DECISION_REQUIRED` because repo truth still mixes offline contract work with provider-backed eval, promotion/rollback, and cost-quality governance that need explicit JD scope approval before a narrowed Stage 34 slice can be named honestly.
+- The remaining blocked rows still split across lawful closure buckets: JD-scope-plus-provider-eval (`Provider/model governance`), live/native-lab proof (`Wake/activation`, `STT/listening`, `TTS naturalness`, `Voice ID production quality`, `Native/runtime parity`), and the dependent final gate (`Full certification`).
+- No next exact narrowed Stage 34 build is authorized yet; the next lawful step is JD scope decision or a later remaining-row closure-map refresh if repo truth changes.
 
 | Blocked row | Owner | Current blocker | Closure bucket | Offline/replay-only closure possible now? | Live/native-lab proof required for final row closure? | Planned closure slice | Primary repo seams | Proof required | Batchable with |
 |---|---|---|---|---|---|---|---|---|---|
-| Provider/model governance | Stage 30 | Add prompt/model registries, champion router/model profile contracts, live-eval, fallback/rollback, and cost-quality target status. | `JD_SCOPE_DECISION_REQUIRED` | partial only | yes | `Provider/Model Governance Contract Split And Live-Eval Closure` | `crates/selene_engines/src/ph1providerctl.rs`; `docs/web_search_plan/eval/**`; `crates/selene_os/src/web_search_plan/eval/**`; `crates/selene_os/src/bin/web_search_eval_report.rs`; `crates/selene_os/src/bin/web_search_release_evidence.rs` | prompt/model registry proof, fallback/rollback proof, and explicit live-eval allowance | only with other provider-eval work after JD scope approval |
+| Provider/model governance | Stage 30 | Add prompt/model registries, champion router/model profile contracts, provider-backed eval, fallback/rollback, and cost-quality target status. | `JD_SCOPE_DECISION_REQUIRED` | partial only | yes | None yet - JD scope decision required before a narrowed Stage 34 slice can be named honestly | `crates/selene_engines/src/ph1providerctl.rs`; `docs/web_search_plan/eval/**`; `crates/selene_os/src/web_search_plan/eval/**`; `crates/selene_os/src/bin/web_search_eval_report.rs`; `crates/selene_os/src/bin/web_search_release_evidence.rs` | prompt/model registry proof, fallback/rollback proof, and explicit provider-eval allowance | only with other provider-eval work after JD scope approval |
 | Wake/activation | Stage 7 | Convert wake latency/false accept targets after baseline. | `LIVE_OR_NATIVE_LAB_PROOF_REQUIRED` | no | yes | `Wake Activation Production Benchmark Closure` | `crates/selene_os/src/ph1w.rs`; `crates/selene_os/src/ph1wake_training.rs`; `crates/selene_adapter/src/bin/desktop_wake_life.rs`; `docs/WAKE_BUILD_PLAN.md` | real wake latency and false-accept measurements | no |
 | STT/listening | Stage 17, Stage 34 | Measure live STT WER/far-field/noisy-room/provider-latency/native-lab production targets and live playback/interruption latency. | `LIVE_OR_NATIVE_LAB_PROOF_REQUIRED` | no | yes | `STT Listening Production Benchmark Closure` | `crates/selene_os/src/ph1listen.rs`; `crates/selene_os/src/ph1lang.rs`; `crates/selene_os/src/ph1pron.rs`; Stage 8D/8E/8F benchmark surfaces; `docs/web_search_plan/eval/**`; `docs/web_search_plan/replay_fixtures/**` | live WER, latency, playback, and native-lab proof | only with `TTS Naturalness Benchmark Closure` if the same live-lab session is explicitly approved |
 | TTS naturalness | Stage 17 | Add MOS/pronunciation/prosody target status and replay evidence. | `LIVE_OR_NATIVE_LAB_PROOF_REQUIRED` | no | yes | `TTS Naturalness Benchmark Closure` | `crates/selene_os/src/ph1tts.rs`; `crates/selene_os/src/ph1pron.rs`; `crates/selene_os/src/ph1write.rs` | MOS, pronunciation, and prosody proof | only with `STT Listening Production Benchmark Closure` if the same live-lab session is explicitly approved |
@@ -2874,7 +2875,7 @@ Stage 34J proof update:
 - Stage 34J did not add a new runtime-owned Stage 34 carrier. Existing multilingual/language/pronunciation seams remain the authoritative runtime path, while the synthetic-only [multilingual.json](/Users/selene/Documents/Selene-OS/docs/web_search_plan/eval/corpus_packs/multilingual.json) and [stage34j_multilingual_cases.json](/Users/selene/Documents/Selene-OS/docs/web_search_plan/replay_fixtures/stage34j_multilingual_cases.json) fixture packs provide deterministic current-HEAD proof inputs.
 - Current-HEAD deterministic proof closed the `Multilingual` benchmark family by proving same-language response preservation, dialect/locale advisory handling, code-switch preservation, mixed-script handling, protected non-English clarify-or-fail-closed behavior, and no-silent-translation safety all stay bounded and non-authoritative while fake fluency, fake pronunciation certainty, unsupported translation certainty, identity-like inference, and multilingual-to-authority upgrades fail closed.
 - Exact targeted proof includes current-HEAD runnable Stage 34J tests `runtime_ingress_turn_foundation::tests::stage_34j_multilingual_corpus_closes_offline_benchmark_row`, `runtime_ingress_turn_foundation::tests::stage_34j_language_dialect_and_code_switch_cases_require_same_language_bounded_output`, `runtime_ingress_turn_foundation::tests::stage_34j_protected_non_english_cases_clarify_or_fail_closed_without_silent_translation`, `runtime_ingress_turn_foundation::tests::stage_34j_multilingual_packets_cannot_invent_fluency_translation_or_pronunciation_authority`, and `runtime_ingress_turn_foundation::tests::stage_34j_response_language_and_pronunciation_hints_remain_advisory_and_non_authoritative`, plus preserved Stage 32A/10A/15A/8D/8E guard tests, `eval`, and `replay`, all without provider calls, search calls, microphone/STT, TTS/playback, native mutation, or runtime-mock behavior.
-- Broad Stage 34 remains partial because provider/model governance, wake/activation, STT/listening, Voice ID production quality, TTS naturalness, native/runtime parity, and full certification remain blocked with explicit owners and next actions. No next exact build exists until the Stage 34 remaining-row closure map is refreshed against current repo truth after Stage 34J.
+- Broad Stage 34 remains partial because provider/model governance, wake/activation, STT/listening, Voice ID production quality, TTS naturalness, native/runtime parity, and full certification remain blocked with explicit owners and next actions. The refreshed remaining-row closure map after Stage 34J keeps `Provider/model governance` as the highest-value remaining row but leaves it `JD_SCOPE_DECISION_REQUIRED`, so no next exact narrowed Stage 34 build is authorized yet.
 
 Stage 34I status: PROVEN_COMPLETE
 
