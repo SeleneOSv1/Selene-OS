@@ -4,7 +4,7 @@ Status: CANONICAL_BUILD_ROADMAP
 Created: 2026-05-02
 Last Updated: 2026-05-06
 Repo Root: `/Users/selene/Documents/Selene-OS`
-Current Next Build: None yet - Stage 34K is PROVEN_COMPLETE and the Stage 34 remaining-row closure map must be refreshed before naming another narrowed Stage 34 slice
+Current Next Build: None yet - no exact narrowed Stage 34 build is authorized after Stage 34K, and the next required authorization gate is CONTROLLED_LIVE_AND_NATIVE_CERTIFICATION_PHASE
 
 ## Purpose
 
@@ -79,8 +79,9 @@ After every build, update this section before final reporting.
 | Field | Current Value |
 |---|---|
 | Current active stage | Stage 34 |
-| Current active build | None - Stage 34K is PROVEN_COMPLETE and the Stage 34 remaining-row closure map must be refreshed before naming another narrowed Stage 34 slice |
-| Next build after current stage passes | None yet - Stage 34K is PROVEN_COMPLETE and the Stage 34 remaining-row closure map must be refreshed before naming another narrowed Stage 34 slice |
+| Current active build | None - Stage 34K is PROVEN_COMPLETE, no exact narrowed Stage 34 build is authorized yet, and the next required authorization gate is CONTROLLED_LIVE_AND_NATIVE_CERTIFICATION_PHASE |
+| Next build after current stage passes | None yet - no exact narrowed Stage 34 build is authorized after Stage 34K, and the next required authorization gate is CONTROLLED_LIVE_AND_NATIVE_CERTIFICATION_PHASE |
+| Next required authorization gate | `CONTROLLED_LIVE_AND_NATIVE_CERTIFICATION_PHASE` (authorization gate / JD scope-decision target only; not a build name) |
 | Last completed stage | Stage 34K - Provider / Model Governance Contract And Offline Eval Boundary Closure |
 | Stages blocked | Broad Stage 34 remains blocked on provider/model governance, wake/activation, STT/listening, Voice ID production quality, TTS naturalness, native/runtime parity, and full certification. |
 | Plan drift allowed | No |
@@ -2847,19 +2848,24 @@ Closure bucket legend:
 
 Current selected next exact build:
 
-- None yet - Stage 34K is PROVEN_COMPLETE and the Stage 34 remaining-row closure map must be refreshed before naming another narrowed Stage 34 slice
+- None yet - no exact narrowed Stage 34 build is authorized after Stage 34K
+
+Next required authorization gate:
+
+- `CONTROLLED_LIVE_AND_NATIVE_CERTIFICATION_PHASE` (authorization gate / JD scope-decision target only; not a build name)
 
 Selection reason:
 
 - Most recently completed narrowed slice: `Stage 34K - Provider / Model Governance Contract And Offline Eval Boundary Closure`.
 - Stage 34K is now PROVEN_COMPLETE for the offline-only provider/model-governance slice: prompt/model registry shape, champion-router decision packets, fallback/rollback packets, cost-quality scoring packets, offline synthetic eval proof, and provider-off zero-call proof all have deterministic current-HEAD evidence.
 - The overall `Provider/model governance` benchmark row remains blocked because later provider-backed eval / real-provider governance proof is still unsettled and remains out of scope for Stage 34K.
-- The remaining blocked rows now split across lawful closure buckets: later provider-backed or live/native proof (`Provider/model governance`, `Wake/activation`, `STT/listening`, `TTS naturalness`, `Voice ID production quality`, `Native/runtime parity`) and the dependent final gate (`Full certification`).
-- No next exact narrowed Stage 34 build is authorized automatically after Stage 34K. A fresh remaining-row closure-map refresh is required before another narrowed Stage 34 slice can be named honestly.
+- The remaining blocked rows now split across lawful closure buckets: controlled authorization-gate work before later provider-backed governance proof (`Provider/model governance`), later native/device proof (`Wake/activation`, `STT/listening`, `TTS naturalness`, `Voice ID production quality`, `Native/runtime parity`), and the dependent final gate (`Full certification`).
+- No next exact narrowed Stage 34 build can be named honestly from current repo truth because the remaining work now clusters behind provider-backed, native-lab, and device certification proof that needs explicit controlled-phase rules before any later narrowed slice can be named.
+- Next required authorization gate: `CONTROLLED_LIVE_AND_NATIVE_CERTIFICATION_PHASE` (gate / JD scope-decision target only; not a build name).
 
 | Blocked row | Owner | Current blocker | Closure bucket | Offline/replay-only closure possible now? | Live/native-lab proof required for final row closure? | Planned closure slice | Primary repo seams | Proof required | Batchable with |
 |---|---|---|---|---|---|---|---|---|---|
-| Provider/model governance | Stage 30 | Stage 34K is now PROVEN_COMPLETE for prompt/model registries, champion-router/fallback/cost-quality packets, offline synthetic eval proof, and provider-off zero-call proof; the benchmark row remains blocked overall pending later provider-backed eval / real-provider governance proof. | `LIVE_OR_NATIVE_LAB_PROOF_REQUIRED` | partial | yes | None yet - refresh required before naming a later provider-backed governance slice | `crates/selene_engines/src/ph1providerctl.rs`; `docs/web_search_plan/eval/**`; `crates/selene_os/src/web_search_plan/eval/**`; `crates/selene_os/src/bin/web_search_eval_report.rs`; `crates/selene_os/src/bin/web_search_release_evidence.rs` | later provider-backed eval proof, real-provider governance proof, and lawful promotion/rollback evidence | no |
+| Provider/model governance | Stage 30 | Stage 34K is now PROVEN_COMPLETE for prompt/model registries, champion-router/fallback/cost-quality packets, offline synthetic eval proof, and provider-off zero-call proof; the benchmark row remains blocked overall pending later provider-backed eval / real-provider governance proof. | `JD_SCOPE_DECISION_REQUIRED` | partial | yes | None yet - `CONTROLLED_LIVE_AND_NATIVE_CERTIFICATION_PHASE` must be authorized before a later provider-backed governance slice can be named honestly | `crates/selene_engines/src/ph1providerctl.rs`; `docs/web_search_plan/eval/**`; `crates/selene_os/src/web_search_plan/eval/**`; `crates/selene_os/src/bin/web_search_eval_report.rs`; `crates/selene_os/src/bin/web_search_release_evidence.rs` | explicit controlled-phase scope approval plus later provider-backed eval proof, real-provider governance proof, and lawful promotion/rollback evidence | no |
 | Wake/activation | Stage 7 | Convert wake latency/false accept targets after baseline. | `LIVE_OR_NATIVE_LAB_PROOF_REQUIRED` | no | yes | `Wake Activation Production Benchmark Closure` | `crates/selene_os/src/ph1w.rs`; `crates/selene_os/src/ph1wake_training.rs`; `crates/selene_adapter/src/bin/desktop_wake_life.rs`; `docs/WAKE_BUILD_PLAN.md` | real wake latency and false-accept measurements | no |
 | STT/listening | Stage 17, Stage 34 | Measure live STT WER/far-field/noisy-room/provider-latency/native-lab production targets and live playback/interruption latency. | `LIVE_OR_NATIVE_LAB_PROOF_REQUIRED` | no | yes | `STT Listening Production Benchmark Closure` | `crates/selene_os/src/ph1listen.rs`; `crates/selene_os/src/ph1lang.rs`; `crates/selene_os/src/ph1pron.rs`; Stage 8D/8E/8F benchmark surfaces; `docs/web_search_plan/eval/**`; `docs/web_search_plan/replay_fixtures/**` | live WER, latency, playback, and native-lab proof | only with `TTS Naturalness Benchmark Closure` if the same live-lab session is explicitly approved |
 | TTS naturalness | Stage 17 | Add MOS/pronunciation/prosody target status and replay evidence. | `LIVE_OR_NATIVE_LAB_PROOF_REQUIRED` | no | yes | `TTS Naturalness Benchmark Closure` | `crates/selene_os/src/ph1tts.rs`; `crates/selene_os/src/ph1pron.rs`; `crates/selene_os/src/ph1write.rs` | MOS, pronunciation, and prosody proof | only with `STT Listening Production Benchmark Closure` if the same live-lab session is explicitly approved |
@@ -2875,7 +2881,7 @@ Stage 34K proof update:
 - Stage 34K did not add a new runtime-owned Stage 34 carrier. Existing provider-control, eval, replay, perf-cost, and release-evidence seams remain the authoritative runtime path, while the synthetic-only [provider_model_governance.json](/Users/selene/Documents/Selene-OS/docs/web_search_plan/eval/corpus_packs/provider_model_governance.json) and [stage34k_provider_model_governance_cases.json](/Users/selene/Documents/Selene-OS/docs/web_search_plan/replay_fixtures/stage34k_provider_model_governance_cases.json) fixture packs provide deterministic current-HEAD proof inputs.
 - Current-HEAD deterministic proof completes the offline-only provider/model-governance slice by proving prompt/model registry shape, champion-router decision packet shape, fallback/rollback packet shape, cost-quality scoring packet shape, offline synthetic eval/release-evidence proof, and provider-off zero-call proof all stay bounded and non-authoritative while provider-backed eval, real model promotion, paid-provider behavior, billing behavior, production rollback automation, fabricated provider-success claims, unsupported completion claims, authority, approval, and protected execution all fail closed.
 - Exact targeted proof includes current-HEAD runnable Stage 34K tests `runtime_ingress_turn_foundation::tests::stage_34k_provider_model_governance_offline_slice_stays_provider_off_and_zero_call`, `runtime_ingress_turn_foundation::tests::stage_34k_prompt_model_registry_and_champion_router_packets_are_schema_valid`, `runtime_ingress_turn_foundation::tests::stage_34k_fallback_rollback_and_cost_quality_packets_remain_non_authoritative`, `runtime_ingress_turn_foundation::tests::stage_34k_offline_eval_and_release_evidence_use_synthetic_provider_model_inputs`, `runtime_ingress_turn_foundation::tests::stage_34k_provider_backed_eval_promotion_billing_and_rollback_automation_stay_blocked`, and engine-side `ph1providerctl::tests::stage_34k_provider_registry_and_offline_eval_boundary`, plus preserved provider-off/router/perf-cost/release-evidence/Stage 34J/`eval`/`replay` guard tests, all without provider calls, provider-backed live eval, real model promotion, paid-provider behavior, billing behavior, production rollback automation, microphone, TTS/playback, native mutation, or runtime-mock behavior.
-- Broad Stage 34 remains partial because `Provider/model governance` still needs later provider-backed eval / real-provider governance proof, and wake/activation, STT/listening, Voice ID production quality, TTS naturalness, native/runtime parity, and full certification remain blocked with explicit owners and next actions. No next exact narrowed Stage 34 build exists until the remaining-row closure map is refreshed again after Stage 34K.
+- Broad Stage 34 remains partial because `Provider/model governance` still needs later provider-backed eval / real-provider governance proof, and wake/activation, STT/listening, Voice ID production quality, TTS naturalness, native/runtime parity, and full certification remain blocked with explicit owners and next actions. No next exact narrowed Stage 34 build is authorized after Stage 34K, and `CONTROLLED_LIVE_AND_NATIVE_CERTIFICATION_PHASE` is now the next required authorization gate rather than a build name.
 
 Stage 34J status: PROVEN_COMPLETE
 
