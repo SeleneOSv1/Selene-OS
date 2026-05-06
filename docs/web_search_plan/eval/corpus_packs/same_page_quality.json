@@ -1,0 +1,71 @@
+{
+  "pack_id": "conversation_same_page_quality",
+  "pack_version": "1.0.0",
+  "quality_threshold_bp": 10000,
+  "safety_threshold_bp": 10000,
+  "cases": [
+    {
+      "case_id": "active_entity_open_loop_continuity",
+      "fixture_case_id": "same_page_entity_open_loop",
+      "lane": "quality_ready",
+      "expected_stage5_disposition": "same_page_snapshot",
+      "expected_stage29_disposition": "same_page_conversational_quality_ready"
+    },
+    {
+      "case_id": "clarification_preserves_same_page",
+      "fixture_case_id": "same_page_clarification",
+      "lane": "quality_ready",
+      "expected_stage5_disposition": "clarification_requested",
+      "expected_stage29_disposition": "same_page_conversational_quality_ready"
+    },
+    {
+      "case_id": "correction_preserves_same_page",
+      "fixture_case_id": "same_page_correction",
+      "lane": "quality_ready",
+      "expected_stage5_disposition": "correction_applied",
+      "expected_stage29_disposition": "same_page_conversational_quality_ready"
+    },
+    {
+      "case_id": "interruption_resume_continuity",
+      "fixture_case_id": "interruption_resume",
+      "lane": "quality_ready",
+      "expected_stage5_disposition": "same_page_snapshot",
+      "expected_stage29_disposition": "interruption_aware_continuity_ready"
+    },
+    {
+      "case_id": "tone_boundary_advisory_only",
+      "fixture_case_id": "human_boundary_tone_advisory",
+      "lane": "quality_ready",
+      "expected_stage5_disposition": "same_page_snapshot",
+      "expected_stage29_disposition": "human_interaction_boundary_ready"
+    },
+    {
+      "case_id": "protected_like_ambiguity_blocked",
+      "fixture_case_id": "protected_like_ambiguity",
+      "lane": "continuity_safety",
+      "expected_stage5_disposition": "clarification_requested",
+      "expected_stage29_disposition": "public_protected_boundary_blocked"
+    },
+    {
+      "case_id": "stale_continuity_blocked",
+      "fixture_case_id": "stale_continuity",
+      "lane": "continuity_safety",
+      "expected_stage5_disposition": "same_page_snapshot",
+      "expected_stage29_disposition": "stale_continuity_blocked"
+    },
+    {
+      "case_id": "continuity_mismatch_blocked",
+      "fixture_case_id": "continuity_mismatch",
+      "lane": "continuity_safety",
+      "expected_stage5_disposition": "same_page_snapshot",
+      "expected_stage29_disposition": "continuity_authority_blocked"
+    },
+    {
+      "case_id": "unproven_completion_blocked",
+      "fixture_case_id": "unproven_completion",
+      "lane": "continuity_safety",
+      "expected_stage5_disposition": "same_page_snapshot",
+      "expected_stage29_disposition": "no_invention_blocked"
+    }
+  ]
+}

@@ -40199,7 +40199,9 @@ mod tests {
     use crate::runtime_request_foundation::{
         RuntimeRequestFoundationErrorKind, RuntimeRequestOrigin,
     };
-    use crate::runtime_session_foundation::Stage6AccessContextInput;
+    use crate::runtime_session_foundation::{
+        Stage5ClarificationState, Stage5CorrectionState, Stage6AccessContextInput,
+    };
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
     #[serde(rename_all = "snake_case")]
@@ -40370,6 +40372,151 @@ mod tests {
         introduces_protected_fact: bool,
         invents_authority_relevant_fact: bool,
         meaning_drift_detected: bool,
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+    #[serde(rename_all = "snake_case")]
+    enum Stage34FConversationLane {
+        QualityReady,
+        ContinuitySafety,
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+    #[serde(rename_all = "snake_case")]
+    enum Stage34FStage5Expectation {
+        SamePageSnapshot,
+        ClarificationRequested,
+        CorrectionApplied,
+    }
+
+    impl Stage34FStage5Expectation {
+        const fn matches(self, actual: Stage5ConversationControlDisposition) -> bool {
+            matches!(
+                (self, actual),
+                (
+                    Stage34FStage5Expectation::SamePageSnapshot,
+                    Stage5ConversationControlDisposition::SamePageSnapshot
+                ) | (
+                    Stage34FStage5Expectation::ClarificationRequested,
+                    Stage5ConversationControlDisposition::ClarificationRequested
+                ) | (
+                    Stage34FStage5Expectation::CorrectionApplied,
+                    Stage5ConversationControlDisposition::CorrectionApplied
+                )
+            )
+        }
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+    #[serde(rename_all = "snake_case")]
+    enum Stage34FStage29Expectation {
+        SamePageConversationalQualityReady,
+        InterruptionAwareContinuityReady,
+        HumanInteractionBoundaryReady,
+        NoInventionBlocked,
+        ContinuityAuthorityBlocked,
+        PublicProtectedBoundaryBlocked,
+        StaleContinuityBlocked,
+    }
+
+    impl Stage34FStage29Expectation {
+        const fn matches(self, actual: Stage29ConversationalContinuityDisposition) -> bool {
+            matches!(
+                (self, actual),
+                (
+                    Stage34FStage29Expectation::SamePageConversationalQualityReady,
+                    Stage29ConversationalContinuityDisposition::SamePageConversationalQualityReady
+                ) | (
+                    Stage34FStage29Expectation::InterruptionAwareContinuityReady,
+                    Stage29ConversationalContinuityDisposition::InterruptionAwareContinuityReady
+                ) | (
+                    Stage34FStage29Expectation::HumanInteractionBoundaryReady,
+                    Stage29ConversationalContinuityDisposition::HumanInteractionBoundaryReady
+                ) | (
+                    Stage34FStage29Expectation::NoInventionBlocked,
+                    Stage29ConversationalContinuityDisposition::NoInventionBlocked
+                ) | (
+                    Stage34FStage29Expectation::ContinuityAuthorityBlocked,
+                    Stage29ConversationalContinuityDisposition::ContinuityAuthorityBlocked
+                ) | (
+                    Stage34FStage29Expectation::PublicProtectedBoundaryBlocked,
+                    Stage29ConversationalContinuityDisposition::PublicProtectedBoundaryBlocked
+                ) | (
+                    Stage34FStage29Expectation::StaleContinuityBlocked,
+                    Stage29ConversationalContinuityDisposition::StaleContinuityBlocked
+                )
+            )
+        }
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+    #[serde(rename_all = "snake_case")]
+    enum Stage34FStage5Mode {
+        SamePageSnapshot,
+        ClarificationRequested,
+        CorrectionApplied,
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+    #[serde(rename_all = "snake_case")]
+    enum Stage34FStage29Kind {
+        SamePageConversationalQuality,
+        InterruptionAwareContinuity,
+        HumanInteractionBoundary,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct Stage34FConversationCorpusPack {
+        pack_id: String,
+        pack_version: String,
+        quality_threshold_bp: u16,
+        safety_threshold_bp: u16,
+        cases: Vec<Stage34FConversationCorpusCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct Stage34FConversationCorpusCase {
+        case_id: String,
+        fixture_case_id: String,
+        lane: Stage34FConversationLane,
+        expected_stage5_disposition: Stage34FStage5Expectation,
+        expected_stage29_disposition: Stage34FStage29Expectation,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct Stage34FConversationFixtureSet {
+        fixture_set_id: String,
+        fixture_set_version: String,
+        cases: Vec<Stage34FConversationFixtureCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct Stage34FConversationFixtureCase {
+        fixture_case_id: String,
+        stage5_mode: Stage34FStage5Mode,
+        stage29_kind: Stage34FStage29Kind,
+        conversation_goal_state_id: String,
+        topic_segment_id: String,
+        active_entity_ids: Vec<String>,
+        open_loop_ids: Vec<String>,
+        pending_question_ids: Vec<String>,
+        corrected_assumption_refs: Vec<String>,
+        recap_on_return: bool,
+        state_snapshot_hash: String,
+        clarification_question: Option<String>,
+        clarification_missing_field: Option<String>,
+        clarification_formats: Vec<String>,
+        correction_ref: Option<String>,
+        correction_scope: Option<String>,
+        conversation_continuity_id: Option<String>,
+        output_interaction_id: Option<String>,
+        interaction_boundary_id: Option<String>,
+        completion_disclosure_id: Option<String>,
+        emotional_style_hint: Option<String>,
+        protected_like_ambiguity: bool,
+        stale_or_cancelled_or_superseded_output: bool,
+        continuity_mismatch: bool,
+        conversation_claimed_unproven_completion: bool,
     }
 
     #[derive(Debug, Default)]
@@ -41304,6 +41451,18 @@ mod tests {
             .join(file_name)
     }
 
+    fn stage34f_eval_corpus_pack_path(file_name: &str) -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../docs/web_search_plan/eval/corpus_packs")
+            .join(file_name)
+    }
+
+    fn stage34f_replay_fixture_path(file_name: &str) -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../docs/web_search_plan/replay_fixtures")
+            .join(file_name)
+    }
+
     fn load_stage34e_corpus_pack() -> Stage34EMeaningRepairCorpusPack {
         let text =
             fs::read_to_string(stage34e_eval_corpus_pack_path("meaning_repair.json"))
@@ -41318,6 +41477,21 @@ mod tests {
         serde_json::from_str(&text).expect("stage34e replay fixtures should parse")
     }
 
+    fn load_stage34f_corpus_pack() -> Stage34FConversationCorpusPack {
+        let text =
+            fs::read_to_string(stage34f_eval_corpus_pack_path("same_page_quality.json"))
+                .expect("stage34f corpus pack should load");
+        serde_json::from_str(&text).expect("stage34f corpus pack should parse")
+    }
+
+    fn load_stage34f_fixture_set() -> Stage34FConversationFixtureSet {
+        let text = fs::read_to_string(stage34f_replay_fixture_path(
+            "stage34f_same_page_quality_cases.json",
+        ))
+        .expect("stage34f replay fixtures should load");
+        serde_json::from_str(&text).expect("stage34f replay fixtures should parse")
+    }
+
     fn stage34e_fixture_case<'a>(
         fixtures: &'a Stage34EMeaningRepairFixtureSet,
         fixture_case_id: &str,
@@ -41329,11 +41503,180 @@ mod tests {
             .unwrap_or_else(|| panic!("missing stage34e replay fixture for {fixture_case_id}"))
     }
 
+    fn stage34f_fixture_case<'a>(
+        fixtures: &'a Stage34FConversationFixtureSet,
+        fixture_case_id: &str,
+    ) -> &'a Stage34FConversationFixtureCase {
+        fixtures
+            .cases
+            .iter()
+            .find(|case| case.fixture_case_id == fixture_case_id)
+            .unwrap_or_else(|| panic!("missing stage34f replay fixture for {fixture_case_id}"))
+    }
+
     fn stage34e_score_bp(passed: usize, total: usize) -> u16 {
         if total == 0 {
             return 0;
         }
         ((passed * 10_000) / total) as u16
+    }
+
+    fn stage34f_score_bp(passed: usize, total: usize) -> u16 {
+        if total == 0 {
+            return 0;
+        }
+        ((passed * 10_000) / total) as u16
+    }
+
+    fn stage34f_stage5_packet(
+        fixture: &Stage34FConversationFixtureCase,
+    ) -> Stage5ConversationControlPacket {
+        let authority = stage8_current_authority();
+        let same_page_state = crate::runtime_session_foundation::Stage5SamePageState::advisory_snapshot(
+            fixture.conversation_goal_state_id.clone(),
+            fixture.topic_segment_id.clone(),
+            fixture.active_entity_ids.clone(),
+            fixture.open_loop_ids.clone(),
+            fixture.pending_question_ids.clone(),
+            fixture.corrected_assumption_refs.clone(),
+            fixture.recap_on_return,
+            fixture.state_snapshot_hash.clone(),
+        )
+        .expect("stage34f same-page state");
+
+        match fixture.stage5_mode {
+            Stage34FStage5Mode::SamePageSnapshot => Stage5ConversationControlPacket::from_turn_authority(
+                &authority,
+                Stage5ConversationControlDisposition::SamePageSnapshot,
+                same_page_state,
+                None,
+                None,
+            )
+            .expect("stage34f same-page snapshot"),
+            Stage34FStage5Mode::ClarificationRequested => {
+                let clarification = Stage5ClarificationState::one_best_question(
+                    fixture
+                        .clarification_question
+                        .as_deref()
+                        .expect("stage34f clarification question required"),
+                    fixture
+                        .clarification_missing_field
+                        .as_deref()
+                        .expect("stage34f clarification missing field required"),
+                    fixture.clarification_formats.clone(),
+                    false,
+                    1,
+                )
+                .expect("stage34f clarification");
+                Stage5ConversationControlPacket::from_turn_authority(
+                    &authority,
+                    Stage5ConversationControlDisposition::ClarificationRequested,
+                    same_page_state,
+                    Some(clarification),
+                    None,
+                )
+                .expect("stage34f clarification packet")
+            }
+            Stage34FStage5Mode::CorrectionApplied => {
+                let correction = Stage5CorrectionState::session_scoped(
+                    fixture
+                        .correction_ref
+                        .as_deref()
+                        .expect("stage34f correction ref required"),
+                    fixture
+                        .correction_scope
+                        .as_deref()
+                        .expect("stage34f correction scope required"),
+                )
+                .expect("stage34f correction");
+                Stage5ConversationControlPacket::from_turn_authority(
+                    &authority,
+                    Stage5ConversationControlDisposition::CorrectionApplied,
+                    same_page_state,
+                    None,
+                    Some(correction),
+                )
+                .expect("stage34f correction packet")
+            }
+        }
+    }
+
+    fn stage34f_stage29_packet(
+        fixture: &Stage34FConversationFixtureCase,
+        stage5_packet: &Stage5ConversationControlPacket,
+    ) -> Stage29ConversationalContinuityPacket {
+        let route = stage12_protected_route();
+        let gate = Stage12ProtectedActionGatePacket::from_stage11_candidate(&route, stage12_gate_input())
+            .expect("stage34f protected gate");
+        let output_interaction = stage29_output_interaction_identity();
+        let speech = stage29_speech_output_identity();
+        let publication = stage29_publication_identity();
+
+        let mut input = match fixture.stage29_kind {
+            Stage34FStage29Kind::SamePageConversationalQuality => {
+                Stage29ConversationalContinuityInput::fixture_same_page_conversational_quality_ready(
+                    format!("audit-{}", fixture.fixture_case_id),
+                )
+            }
+            Stage34FStage29Kind::InterruptionAwareContinuity => {
+                Stage29ConversationalContinuityInput::fixture_interruption_aware_continuity_ready(
+                    fixture
+                        .output_interaction_id
+                        .clone()
+                        .unwrap_or_else(|| "output-stage34f-interruption".to_string()),
+                    format!("audit-{}", fixture.fixture_case_id),
+                )
+            }
+            Stage34FStage29Kind::HumanInteractionBoundary => {
+                Stage29ConversationalContinuityInput::fixture_human_interaction_boundary_ready(
+                    fixture
+                        .interaction_boundary_id
+                        .clone()
+                        .expect("stage34f interaction boundary id required"),
+                    fixture
+                        .completion_disclosure_id
+                        .clone()
+                        .expect("stage34f completion disclosure id required"),
+                    format!("audit-{}", fixture.fixture_case_id),
+                )
+            }
+        };
+
+        input.conversation_continuity_id = fixture.conversation_continuity_id.clone();
+        if let Some(output_interaction_id) = &fixture.output_interaction_id {
+            input.output_interaction_id = Some(output_interaction_id.clone());
+        }
+        if let Some(interaction_boundary_id) = &fixture.interaction_boundary_id {
+            input.interaction_boundary_id = Some(interaction_boundary_id.clone());
+        }
+        if let Some(completion_disclosure_id) = &fixture.completion_disclosure_id {
+            input.completion_disclosure_id = Some(completion_disclosure_id.clone());
+        }
+        input.protected_slot_or_authority_ambiguous = fixture.protected_like_ambiguity;
+        input.stale_or_cancelled_or_superseded_output =
+            fixture.stale_or_cancelled_or_superseded_output;
+        input.continuity_mismatch = fixture.continuity_mismatch;
+        input.conversation_claimed_unproven_completion =
+            fixture.conversation_claimed_unproven_completion;
+
+        Stage29ConversationalContinuityPacket::from_stage28_publication(
+            &route,
+            Some(&gate),
+            Some(stage5_packet),
+            Some(&output_interaction),
+            Some(&speech),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(&publication),
+            input,
+        )
+        .expect("stage34f continuity packet")
     }
 
     fn stage34e_stage10_packet(
@@ -42995,6 +43338,246 @@ mod tests {
 
             assert!(!benchmark_packet.can_route_or_mutate());
             assert!(!understanding_packet.can_route_or_mutate());
+        }
+    }
+
+    #[test]
+    fn stage_34f_conversation_same_page_quality_corpus_closes_offline_benchmark_row() {
+        let pack = load_stage34f_corpus_pack();
+        let fixtures = load_stage34f_fixture_set();
+
+        assert_eq!(pack.pack_id, "conversation_same_page_quality");
+        assert_eq!(pack.pack_version, "1.0.0");
+        assert_eq!(fixtures.fixture_set_id, "stage34f_same_page_quality_cases");
+        assert_eq!(fixtures.fixture_set_version, "1.0.0");
+
+        let mut quality_total = 0usize;
+        let mut quality_pass = 0usize;
+        let mut safety_total = 0usize;
+        let mut safety_pass = 0usize;
+
+        for case in &pack.cases {
+            let fixture = stage34f_fixture_case(&fixtures, &case.fixture_case_id);
+            let stage5_packet = stage34f_stage5_packet(fixture);
+            let stage29_packet = stage34f_stage29_packet(fixture, &stage5_packet);
+
+            assert!(
+                case.expected_stage5_disposition
+                    .matches(stage5_packet.disposition),
+                "stage34f Stage 5 disposition mismatch for {}",
+                case.case_id
+            );
+            assert!(
+                case.expected_stage29_disposition
+                    .matches(stage29_packet.disposition),
+                "stage34f Stage 29 disposition mismatch for {}",
+                case.case_id
+            );
+
+            assert_eq!(stage29_packet.stage5_disposition, Some(stage5_packet.disposition));
+            assert!(!stage5_packet.can_route_any_work());
+            assert!(!stage5_packet.can_become_authoritative());
+            assert!(!stage29_packet.can_mutate_or_execute());
+            assert!(!stage29_packet.work_authority.can_invent_facts);
+            assert!(!stage29_packet.work_authority.can_invent_completion_success);
+            assert!(!stage29_packet.work_authority.can_invent_continuity_authority);
+            assert!(!stage29_packet.work_authority.can_connector_write);
+            assert!(!stage29_packet.work_authority.can_dispatch);
+            assert!(!stage29_packet.work_authority.can_execute);
+            assert!(!stage29_packet.work_authority.can_create_user_turn);
+
+            match fixture.stage5_mode {
+                Stage34FStage5Mode::SamePageSnapshot => {
+                    let same_page = stage5_packet
+                        .same_page_state
+                        .as_ref()
+                        .expect("stage34f same-page snapshot should exist");
+                    assert!(same_page.advisory_only);
+                    assert_eq!(same_page.topic_segment_id, fixture.topic_segment_id);
+                    assert_eq!(same_page.active_entity_ids, fixture.active_entity_ids);
+                    assert_eq!(same_page.open_loop_ids, fixture.open_loop_ids);
+                    assert_eq!(same_page.pending_question_ids, fixture.pending_question_ids);
+                    assert_eq!(
+                        same_page.corrected_assumption_refs,
+                        fixture.corrected_assumption_refs
+                    );
+                }
+                Stage34FStage5Mode::ClarificationRequested => {
+                    let clarification = stage5_packet
+                        .clarification
+                        .as_ref()
+                        .expect("stage34f clarification should exist");
+                    assert!(stage5_packet.work_authority.can_emit_clarification);
+                    assert_eq!(clarification.repeated_prompt_count, 1);
+                    assert_eq!(
+                        clarification.accepted_answer_formats,
+                        fixture.clarification_formats
+                    );
+                    assert_eq!(
+                        clarification.question,
+                        fixture
+                            .clarification_question
+                            .clone()
+                            .expect("stage34f clarification question")
+                    );
+                    assert!(!stage5_packet.can_become_authoritative());
+                }
+                Stage34FStage5Mode::CorrectionApplied => {
+                    let correction = stage5_packet
+                        .correction
+                        .as_ref()
+                        .expect("stage34f correction should exist");
+                    assert!(correction.session_scoped);
+                    assert!(!correction.memory_write_allowed);
+                    assert!(!correction.fact_rewrite_allowed);
+                    assert!(!correction.protected_slot_rewrite_allowed);
+                    assert!(!correction.authority_write_allowed);
+                }
+            }
+
+            match case.lane {
+                Stage34FConversationLane::QualityReady => {
+                    quality_total += 1;
+                    if stage29_packet.disposition.is_ready() {
+                        quality_pass += 1;
+                    }
+
+                    match stage29_packet.disposition {
+                        Stage29ConversationalContinuityDisposition::SamePageConversationalQualityReady => {
+                            assert!(
+                                stage29_packet
+                                    .work_authority
+                                    .can_emit_same_page_conversational_quality_packet
+                            );
+                        }
+                        Stage29ConversationalContinuityDisposition::InterruptionAwareContinuityReady => {
+                            assert!(
+                                stage29_packet
+                                    .work_authority
+                                    .can_emit_interruption_aware_continuity_packet
+                            );
+                        }
+                        Stage29ConversationalContinuityDisposition::HumanInteractionBoundaryReady => {
+                            assert!(
+                                stage29_packet
+                                    .work_authority
+                                    .can_emit_human_interaction_boundary_packet
+                            );
+                            assert!(
+                                fixture
+                                    .emotional_style_hint
+                                    .as_deref()
+                                    .is_some_and(|hint| !hint.trim().is_empty())
+                            );
+                        }
+                        other => panic!(
+                            "unexpected ready disposition for stage34f quality case {}: {:?}",
+                            case.case_id, other
+                        ),
+                    }
+                }
+                Stage34FConversationLane::ContinuitySafety => {
+                    safety_total += 1;
+                    assert!(stage29_packet.work_authority.can_fail_closed);
+                    if matches!(
+                        stage29_packet.disposition,
+                        Stage29ConversationalContinuityDisposition::NoInventionBlocked
+                            | Stage29ConversationalContinuityDisposition::ContinuityAuthorityBlocked
+                            | Stage29ConversationalContinuityDisposition::PublicProtectedBoundaryBlocked
+                            | Stage29ConversationalContinuityDisposition::StaleContinuityBlocked
+                    ) {
+                        safety_pass += 1;
+                    }
+                }
+            }
+        }
+
+        let quality_bp = stage34f_score_bp(quality_pass, quality_total);
+        let safety_bp = stage34f_score_bp(safety_pass, safety_total);
+
+        assert!(
+            quality_bp >= pack.quality_threshold_bp,
+            "stage34f same-page quality threshold failed: actual={} required={}",
+            quality_bp,
+            pack.quality_threshold_bp
+        );
+        assert!(
+            safety_bp >= pack.safety_threshold_bp,
+            "stage34f continuity safety threshold failed: actual={} required={}",
+            safety_bp,
+            pack.safety_threshold_bp
+        );
+    }
+
+    #[test]
+    fn stage34f_continuity_quality_safety_cases_stay_non_authoritative() {
+        let pack = load_stage34f_corpus_pack();
+        let fixtures = load_stage34f_fixture_set();
+
+        for case in &pack.cases {
+            let fixture = stage34f_fixture_case(&fixtures, &case.fixture_case_id);
+            let stage5_packet = stage34f_stage5_packet(fixture);
+            let stage29_packet = stage34f_stage29_packet(fixture, &stage5_packet);
+
+            assert!(!stage5_packet.can_route_any_work());
+            assert!(!stage5_packet.can_become_authoritative());
+            assert!(!stage29_packet.can_mutate_or_execute());
+            assert!(!stage29_packet.work_authority.can_invent_facts);
+            assert!(
+                !stage29_packet
+                    .work_authority
+                    .can_treat_visible_readiness_as_action_success
+            );
+
+            match case.expected_stage29_disposition {
+                Stage34FStage29Expectation::HumanInteractionBoundaryReady => {
+                    assert!(
+                        fixture
+                            .emotional_style_hint
+                            .as_deref()
+                            .is_some_and(|hint| !hint.contains("approved") && !hint.contains("completed"))
+                    );
+                    assert!(
+                        stage29_packet
+                            .work_authority
+                            .can_emit_human_interaction_boundary_packet
+                    );
+                }
+                Stage34FStage29Expectation::PublicProtectedBoundaryBlocked => {
+                    assert_eq!(
+                        stage29_packet.disposition,
+                        Stage29ConversationalContinuityDisposition::PublicProtectedBoundaryBlocked
+                    );
+                    assert!(
+                        stage5_packet
+                            .clarification
+                            .as_ref()
+                            .is_some_and(|clarification| clarification.repeated_prompt_count == 1)
+                    );
+                }
+                Stage34FStage29Expectation::StaleContinuityBlocked => {
+                    assert_eq!(
+                        stage29_packet.disposition,
+                        Stage29ConversationalContinuityDisposition::StaleContinuityBlocked
+                    );
+                }
+                Stage34FStage29Expectation::ContinuityAuthorityBlocked => {
+                    assert_eq!(
+                        stage29_packet.disposition,
+                        Stage29ConversationalContinuityDisposition::ContinuityAuthorityBlocked
+                    );
+                }
+                Stage34FStage29Expectation::NoInventionBlocked => {
+                    assert_eq!(
+                        stage29_packet.disposition,
+                        Stage29ConversationalContinuityDisposition::NoInventionBlocked
+                    );
+                }
+                Stage34FStage29Expectation::SamePageConversationalQualityReady
+                | Stage34FStage29Expectation::InterruptionAwareContinuityReady => {
+                    assert!(stage29_packet.disposition.is_ready());
+                }
+            }
         }
     }
 
