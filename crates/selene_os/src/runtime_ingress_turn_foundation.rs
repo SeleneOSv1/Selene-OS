@@ -40519,6 +40519,179 @@ mod tests {
         conversation_claimed_unproven_completion: bool,
     }
 
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+    #[serde(rename_all = "snake_case")]
+    enum Stage34GEmotionLane {
+        QualityReady,
+        EmotionSafety,
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+    #[serde(rename_all = "snake_case")]
+    enum Stage34GStage16Expectation {
+        EmotionAffectHintReady,
+        EmotionAuthorityBlocked,
+    }
+
+    impl Stage34GStage16Expectation {
+        const fn matches(self, actual: Stage16LongTermStateDisposition) -> bool {
+            matches!(
+                (self, actual),
+                (
+                    Stage34GStage16Expectation::EmotionAffectHintReady,
+                    Stage16LongTermStateDisposition::EmotionAffectHintReady
+                ) | (
+                    Stage34GStage16Expectation::EmotionAuthorityBlocked,
+                    Stage16LongTermStateDisposition::EmotionAuthorityBlocked
+                )
+            )
+        }
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+    #[serde(rename_all = "snake_case")]
+    enum Stage34GStage32Expectation {
+        TrustCalibrationReady,
+        ExpectationSettingPostureReady,
+        ResidualAssistanceBoundaryReady,
+        NoInventionBlocked,
+        TrustAuthorityBlocked,
+        StaleTrustBlocked,
+    }
+
+    impl Stage34GStage32Expectation {
+        const fn matches(self, actual: Stage32TrustCalibrationDisposition) -> bool {
+            matches!(
+                (self, actual),
+                (
+                    Stage34GStage32Expectation::TrustCalibrationReady,
+                    Stage32TrustCalibrationDisposition::TrustCalibrationReady
+                ) | (
+                    Stage34GStage32Expectation::ExpectationSettingPostureReady,
+                    Stage32TrustCalibrationDisposition::ExpectationSettingPostureReady
+                ) | (
+                    Stage34GStage32Expectation::ResidualAssistanceBoundaryReady,
+                    Stage32TrustCalibrationDisposition::ResidualAssistanceBoundaryReady
+                ) | (
+                    Stage34GStage32Expectation::NoInventionBlocked,
+                    Stage32TrustCalibrationDisposition::NoInventionBlocked
+                ) | (
+                    Stage34GStage32Expectation::TrustAuthorityBlocked,
+                    Stage32TrustCalibrationDisposition::TrustAuthorityBlocked
+                ) | (
+                    Stage34GStage32Expectation::StaleTrustBlocked,
+                    Stage32TrustCalibrationDisposition::StaleTrustBlocked
+                )
+            )
+        }
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+    #[serde(rename_all = "snake_case")]
+    enum Stage34GStage33Expectation {
+        RelationshipMemoryFramingReady,
+        UserFacingContinuityBoundaryReady,
+        LongerHorizonInteractionGovernanceReady,
+        StageInputBlocked,
+        NoInventionBlocked,
+        RelationshipAuthorityBlocked,
+        StaleRelationshipBlocked,
+    }
+
+    impl Stage34GStage33Expectation {
+        const fn matches(self, actual: Stage33RelationshipMemoryDisposition) -> bool {
+            matches!(
+                (self, actual),
+                (
+                    Stage34GStage33Expectation::RelationshipMemoryFramingReady,
+                    Stage33RelationshipMemoryDisposition::RelationshipMemoryFramingReady
+                ) | (
+                    Stage34GStage33Expectation::UserFacingContinuityBoundaryReady,
+                    Stage33RelationshipMemoryDisposition::UserFacingContinuityBoundaryReady
+                ) | (
+                    Stage34GStage33Expectation::LongerHorizonInteractionGovernanceReady,
+                    Stage33RelationshipMemoryDisposition::LongerHorizonInteractionGovernanceReady
+                ) | (
+                    Stage34GStage33Expectation::StageInputBlocked,
+                    Stage33RelationshipMemoryDisposition::StageInputBlocked
+                ) | (
+                    Stage34GStage33Expectation::NoInventionBlocked,
+                    Stage33RelationshipMemoryDisposition::NoInventionBlocked
+                ) | (
+                    Stage34GStage33Expectation::RelationshipAuthorityBlocked,
+                    Stage33RelationshipMemoryDisposition::RelationshipAuthorityBlocked
+                ) | (
+                    Stage34GStage33Expectation::StaleRelationshipBlocked,
+                    Stage33RelationshipMemoryDisposition::StaleRelationshipBlocked
+                )
+            )
+        }
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+    #[serde(rename_all = "snake_case")]
+    enum Stage34GStage32Kind {
+        TrustCalibration,
+        ExpectationSettingPosture,
+        ResidualAssistanceBoundary,
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+    #[serde(rename_all = "snake_case")]
+    enum Stage34GStage33Kind {
+        RelationshipMemoryFraming,
+        UserFacingContinuityBoundary,
+        LongerHorizonInteractionGovernance,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct Stage34GEmotionCorpusPack {
+        pack_id: String,
+        pack_version: String,
+        quality_threshold_bp: u16,
+        safety_threshold_bp: u16,
+        cases: Vec<Stage34GEmotionCorpusCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct Stage34GEmotionCorpusCase {
+        case_id: String,
+        fixture_case_id: String,
+        lane: Stage34GEmotionLane,
+        expected_stage16_disposition: Stage34GStage16Expectation,
+        expected_stage32_disposition: Stage34GStage32Expectation,
+        expected_stage33_disposition: Stage34GStage33Expectation,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct Stage34GEmotionFixtureSet {
+        fixture_set_id: String,
+        fixture_set_version: String,
+        cases: Vec<Stage34GEmotionFixtureCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct Stage34GEmotionFixtureCase {
+        fixture_case_id: String,
+        stage32_kind: Stage34GStage32Kind,
+        stage33_kind: Stage34GStage33Kind,
+        tone_hint: String,
+        emotion_infers_protected_identity: bool,
+        emotion_overrides_policy_or_refusal: bool,
+        emotion_authorizes_or_diagnoses: bool,
+        emotion_mutates_without_memory_eligibility: bool,
+        trust_invented_confidence: bool,
+        trust_invented_certainty: bool,
+        trust_invented_helpfulness_success: bool,
+        stale_trust_output: bool,
+        relationship_invented_memory_certainty: bool,
+        relationship_invented_relationship_depth: bool,
+        relationship_invented_bond_continuity: bool,
+        prior_continuity_or_memory_used_as_truth_authority: bool,
+        voice_identity_cross_speaker_risk: bool,
+        stale_relationship_output: bool,
+    }
+
     #[derive(Debug, Default)]
     struct FixedClock {
         now_ms: Cell<i64>,
@@ -41463,6 +41636,18 @@ mod tests {
             .join(file_name)
     }
 
+    fn stage34g_eval_corpus_pack_path(file_name: &str) -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../docs/web_search_plan/eval/corpus_packs")
+            .join(file_name)
+    }
+
+    fn stage34g_replay_fixture_path(file_name: &str) -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../docs/web_search_plan/replay_fixtures")
+            .join(file_name)
+    }
+
     fn load_stage34e_corpus_pack() -> Stage34EMeaningRepairCorpusPack {
         let text =
             fs::read_to_string(stage34e_eval_corpus_pack_path("meaning_repair.json"))
@@ -41492,6 +41677,22 @@ mod tests {
         serde_json::from_str(&text).expect("stage34f replay fixtures should parse")
     }
 
+    fn load_stage34g_corpus_pack() -> Stage34GEmotionCorpusPack {
+        let text = fs::read_to_string(stage34g_eval_corpus_pack_path(
+            "human_experience_emotion.json",
+        ))
+        .expect("stage34g corpus pack should load");
+        serde_json::from_str(&text).expect("stage34g corpus pack should parse")
+    }
+
+    fn load_stage34g_fixture_set() -> Stage34GEmotionFixtureSet {
+        let text = fs::read_to_string(stage34g_replay_fixture_path(
+            "stage34g_human_experience_emotion_cases.json",
+        ))
+        .expect("stage34g replay fixtures should load");
+        serde_json::from_str(&text).expect("stage34g replay fixtures should parse")
+    }
+
     fn stage34e_fixture_case<'a>(
         fixtures: &'a Stage34EMeaningRepairFixtureSet,
         fixture_case_id: &str,
@@ -41514,6 +41715,17 @@ mod tests {
             .unwrap_or_else(|| panic!("missing stage34f replay fixture for {fixture_case_id}"))
     }
 
+    fn stage34g_fixture_case<'a>(
+        fixtures: &'a Stage34GEmotionFixtureSet,
+        fixture_case_id: &str,
+    ) -> &'a Stage34GEmotionFixtureCase {
+        fixtures
+            .cases
+            .iter()
+            .find(|case| case.fixture_case_id == fixture_case_id)
+            .unwrap_or_else(|| panic!("missing stage34g replay fixture for {fixture_case_id}"))
+    }
+
     fn stage34e_score_bp(passed: usize, total: usize) -> u16 {
         if total == 0 {
             return 0;
@@ -41526,6 +41738,23 @@ mod tests {
             return 0;
         }
         ((passed * 10_000) / total) as u16
+    }
+
+    fn stage34g_score_bp(passed: usize, total: usize) -> u16 {
+        if total == 0 {
+            return 0;
+        }
+        ((passed * 10_000) / total) as u16
+    }
+
+    fn stage34g_corpus_case<'a>(
+        pack: &'a Stage34GEmotionCorpusPack,
+        case_id: &str,
+    ) -> &'a Stage34GEmotionCorpusCase {
+        pack.cases
+            .iter()
+            .find(|case| case.case_id == case_id)
+            .unwrap_or_else(|| panic!("missing stage34g corpus case for {case_id}"))
     }
 
     fn stage34f_stage5_packet(
@@ -41677,6 +41906,143 @@ mod tests {
             input,
         )
         .expect("stage34f continuity packet")
+    }
+
+    fn stage34g_stage16_packet(
+        fixture: &Stage34GEmotionFixtureCase,
+    ) -> Stage16LongTermStatePacket {
+        let output = stage16_response_output_packet();
+        let mut input = Stage16LongTermStateInput::fixture_emotion_affect_ready(
+            format!("long-term-state-stage34g-{}", fixture.fixture_case_id),
+            format!("emotion-hint-stage34g-{}", fixture.fixture_case_id),
+            format!("audit-stage34g-stage16-{}", fixture.fixture_case_id),
+        );
+        input.emotion_infers_protected_identity = fixture.emotion_infers_protected_identity;
+        input.emotion_overrides_policy_or_refusal = fixture.emotion_overrides_policy_or_refusal;
+        input.emotion_authorizes_or_diagnoses = fixture.emotion_authorizes_or_diagnoses;
+        input.emotion_mutates_without_memory_eligibility =
+            fixture.emotion_mutates_without_memory_eligibility;
+
+        Stage16LongTermStatePacket::from_stage15_output(&output, input)
+            .expect("stage34g emotion packet")
+    }
+
+    fn stage34g_stage32_packet(
+        fixture: &Stage34GEmotionFixtureCase,
+    ) -> Stage32TrustCalibrationPacket {
+        let route = stage12_protected_route();
+        let gate = Stage12ProtectedActionGatePacket::from_stage11_candidate(
+            &route,
+            stage12_gate_input(),
+        )
+        .expect("stage34g protected gate");
+        let attention = stage31_attention_identity();
+        let recovery = stage31_recovery_identity();
+        let notification_input = match fixture.stage32_kind {
+            Stage34GStage32Kind::TrustCalibration => {
+                Stage31NotificationWakeReentryInput::fixture_notification_disclosure_boundary_ready(
+                    format!("audit-stage34g-stage31-{}", fixture.fixture_case_id),
+                )
+            }
+            Stage34GStage32Kind::ExpectationSettingPosture
+            | Stage34GStage32Kind::ResidualAssistanceBoundary => {
+                Stage31NotificationWakeReentryInput::fixture_governed_wake_reentry_continuity_ready(
+                    format!("wake-stage34g-{}", fixture.fixture_case_id),
+                    format!("audit-stage34g-stage31-{}", fixture.fixture_case_id),
+                )
+            }
+        };
+        let notification = Stage31NotificationWakeReentryPacket::from_stage30_recovery(
+            &route,
+            Some(&gate),
+            Some(&attention),
+            Some(&recovery),
+            notification_input,
+        )
+        .expect("stage34g stage31 notification");
+
+        let mut input = match fixture.stage32_kind {
+            Stage34GStage32Kind::TrustCalibration => {
+                Stage32TrustCalibrationInput::fixture_trust_calibration_ready(format!(
+                    "audit-stage34g-stage32-{}",
+                    fixture.fixture_case_id
+                ))
+            }
+            Stage34GStage32Kind::ExpectationSettingPosture => {
+                Stage32TrustCalibrationInput::fixture_expectation_setting_posture_ready(format!(
+                    "audit-stage34g-stage32-{}",
+                    fixture.fixture_case_id
+                ))
+            }
+            Stage34GStage32Kind::ResidualAssistanceBoundary => {
+                Stage32TrustCalibrationInput::fixture_residual_assistance_boundary_ready(format!(
+                    "audit-stage34g-stage32-{}",
+                    fixture.fixture_case_id
+                ))
+            }
+        };
+        input.trust_invented_confidence = fixture.trust_invented_confidence;
+        input.trust_invented_certainty = fixture.trust_invented_certainty;
+        input.trust_invented_helpfulness_success = fixture.trust_invented_helpfulness_success;
+        input.prior_continuity_state_used_as_truth_authority =
+            fixture.prior_continuity_or_memory_used_as_truth_authority;
+        input.stale_or_cancelled_or_superseded_output = fixture.stale_trust_output;
+
+        Stage32TrustCalibrationPacket::from_stage31_notification(
+            &route,
+            Some(&gate),
+            Some(&notification),
+            input,
+        )
+        .expect("stage34g trust packet")
+    }
+
+    fn stage34g_stage33_packet(
+        fixture: &Stage34GEmotionFixtureCase,
+        stage32_packet: &Stage32TrustCalibrationPacket,
+    ) -> Stage33RelationshipMemoryPacket {
+        let route = stage12_protected_route();
+        let gate = Stage12ProtectedActionGatePacket::from_stage11_candidate(
+            &route,
+            stage12_gate_input(),
+        )
+        .expect("stage34g protected gate");
+        let mut input = match fixture.stage33_kind {
+            Stage34GStage33Kind::RelationshipMemoryFraming => {
+                Stage33RelationshipMemoryInput::fixture_relationship_memory_framing_ready(format!(
+                    "audit-stage34g-stage33-{}",
+                    fixture.fixture_case_id
+                ))
+            }
+            Stage34GStage33Kind::UserFacingContinuityBoundary => {
+                Stage33RelationshipMemoryInput::fixture_user_facing_continuity_boundary_ready(
+                    format!("audit-stage34g-stage33-{}", fixture.fixture_case_id),
+                )
+            }
+            Stage34GStage33Kind::LongerHorizonInteractionGovernance => {
+                Stage33RelationshipMemoryInput::fixture_longer_horizon_interaction_governance_ready(
+                    format!("audit-stage34g-stage33-{}", fixture.fixture_case_id),
+                )
+            }
+        };
+        input.relationship_invented_memory_certainty =
+            fixture.relationship_invented_memory_certainty;
+        input.relationship_invented_relationship_depth =
+            fixture.relationship_invented_relationship_depth;
+        input.relationship_invented_bond_continuity =
+            fixture.relationship_invented_bond_continuity;
+        input.prior_continuity_or_memory_used_as_truth_authority =
+            fixture.prior_continuity_or_memory_used_as_truth_authority;
+        input.voice_identity_cross_speaker_risk = fixture.voice_identity_cross_speaker_risk;
+        input.stale_or_cancelled_or_superseded_output = fixture.stale_relationship_output;
+
+        Stage33RelationshipMemoryPacket::from_stage32_trust(
+            &route,
+            Some(&gate),
+            Some(stage32_packet),
+            input,
+        )
+        .expect("stage34g relationship packet")
     }
 
     fn stage34e_stage10_packet(
@@ -43579,6 +43945,391 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn stage_34g_human_experience_emotion_corpus_closes_offline_benchmark_row() {
+        let pack = load_stage34g_corpus_pack();
+        let fixtures = load_stage34g_fixture_set();
+
+        assert_eq!(pack.pack_id, "human_experience_emotion");
+        assert_eq!(pack.pack_version, "1.0.0");
+        assert_eq!(
+            fixtures.fixture_set_id,
+            "stage34g_human_experience_emotion_cases"
+        );
+        assert_eq!(fixtures.fixture_set_version, "1.0.0");
+
+        let mut quality_total = 0usize;
+        let mut quality_pass = 0usize;
+        let mut safety_total = 0usize;
+        let mut safety_pass = 0usize;
+
+        for case in &pack.cases {
+            let fixture = stage34g_fixture_case(&fixtures, &case.fixture_case_id);
+            let stage16_packet = stage34g_stage16_packet(fixture);
+            let stage32_packet = stage34g_stage32_packet(fixture);
+            let stage33_packet = stage34g_stage33_packet(fixture, &stage32_packet);
+
+            assert!(
+                case.expected_stage16_disposition
+                    .matches(stage16_packet.disposition),
+                "stage34g Stage 16 disposition mismatch for {}",
+                case.case_id
+            );
+            assert!(
+                case.expected_stage32_disposition
+                    .matches(stage32_packet.disposition),
+                "stage34g Stage 32 disposition mismatch for {}",
+                case.case_id
+            );
+            assert!(
+                case.expected_stage33_disposition
+                    .matches(stage33_packet.disposition),
+                "stage34g Stage 33 disposition mismatch for {}",
+                case.case_id
+            );
+
+            assert!(!stage16_packet.can_mutate_or_execute());
+            assert!(!stage32_packet.can_mutate_or_execute());
+            assert!(!stage33_packet.can_mutate_or_execute());
+            assert!(stage33_packet.stage16_ref_non_authoritative);
+            assert!(stage33_packet.stage32_ref_non_authoritative);
+            assert!(stage33_packet.ph1voiceid_ref_non_authoritative);
+            assert!(!stage32_packet.work_authority.can_invent_facts);
+            assert!(!stage32_packet.work_authority.can_invent_confidence);
+            assert!(!stage32_packet.work_authority.can_invent_certainty);
+            assert!(!stage32_packet.work_authority.can_invent_helpfulness_success);
+            assert!(!stage32_packet.work_authority.can_invent_completion_success);
+            assert!(!stage32_packet.work_authority.can_invent_trust_authority);
+            assert!(!stage33_packet.work_authority.can_invent_facts);
+            assert!(!stage33_packet.work_authority.can_invent_memory_certainty);
+            assert!(!stage33_packet.work_authority.can_invent_relationship_depth);
+            assert!(
+                !stage33_packet
+                    .work_authority
+                    .can_invent_emotional_knowledge_certainty
+            );
+            assert!(!stage33_packet.work_authority.can_invent_bond_continuity);
+            assert!(!stage33_packet.work_authority.can_invent_completion_success);
+            assert!(!stage33_packet.work_authority.can_invent_relationship_authority);
+            assert!(
+                !stage33_packet
+                    .work_authority
+                    .can_treat_visible_familiarity_as_action_success
+            );
+
+            match case.lane {
+                Stage34GEmotionLane::QualityReady => {
+                    quality_total += 1;
+                    assert!(!fixture.tone_hint.trim().is_empty());
+                    assert!(!fixture.tone_hint.contains("forever"));
+                    assert!(!fixture.tone_hint.contains("always"));
+                    assert!(!fixture.tone_hint.contains("only one"));
+
+                    assert!(stage16_packet.disposition.is_ready());
+                    assert!(stage32_packet.disposition.is_ready());
+                    assert!(stage33_packet.disposition.is_ready());
+                    quality_pass += 1;
+
+                    assert!(stage16_packet.emotion_advisory_bounded);
+                    assert!(!stage16_packet.emotion_infers_protected_identity);
+                    assert!(!stage16_packet.emotion_overrides_policy_or_refusal);
+                    assert!(!stage16_packet.emotion_authorizes_or_diagnoses);
+                    assert!(!stage16_packet.emotion_mutates_without_memory_eligibility);
+
+                    match fixture.stage32_kind {
+                        Stage34GStage32Kind::TrustCalibration => {
+                            assert!(
+                                stage32_packet.work_authority.can_emit_trust_calibration_packet
+                            );
+                        }
+                        Stage34GStage32Kind::ExpectationSettingPosture => {
+                            assert!(
+                                stage32_packet
+                                    .work_authority
+                                    .can_emit_expectation_setting_posture_packet
+                            );
+                        }
+                        Stage34GStage32Kind::ResidualAssistanceBoundary => {
+                            assert!(
+                                stage32_packet
+                                    .work_authority
+                                    .can_emit_residual_assistance_boundary_packet
+                            );
+                        }
+                    }
+
+                    match fixture.stage33_kind {
+                        Stage34GStage33Kind::RelationshipMemoryFraming => {
+                            assert!(
+                                stage33_packet
+                                    .work_authority
+                                    .can_emit_relationship_memory_framing_packet
+                            );
+                        }
+                        Stage34GStage33Kind::UserFacingContinuityBoundary => {
+                            assert!(
+                                stage33_packet
+                                    .work_authority
+                                    .can_emit_user_facing_continuity_boundary_packet
+                            );
+                        }
+                        Stage34GStage33Kind::LongerHorizonInteractionGovernance => {
+                            assert!(
+                                stage33_packet
+                                    .work_authority
+                                    .can_emit_longer_horizon_interaction_governance_packet
+                            );
+                        }
+                    }
+                }
+                Stage34GEmotionLane::EmotionSafety => {
+                    safety_total += 1;
+                    assert!(
+                        !stage16_packet.disposition.is_ready()
+                            || !stage32_packet.disposition.is_ready()
+                            || !stage33_packet.disposition.is_ready()
+                    );
+                    assert!(
+                        stage16_packet.work_authority.can_fail_closed
+                            || stage32_packet.work_authority.can_fail_closed
+                            || stage33_packet.work_authority.can_fail_closed
+                    );
+                    safety_pass += 1;
+                }
+            }
+        }
+
+        let quality_bp = stage34g_score_bp(quality_pass, quality_total);
+        let safety_bp = stage34g_score_bp(safety_pass, safety_total);
+
+        assert!(
+            quality_bp >= pack.quality_threshold_bp,
+            "stage34g human experience quality threshold failed: actual={} required={}",
+            quality_bp,
+            pack.quality_threshold_bp
+        );
+        assert!(
+            safety_bp >= pack.safety_threshold_bp,
+            "stage34g emotion safety threshold failed: actual={} required={}",
+            safety_bp,
+            pack.safety_threshold_bp
+        );
+    }
+
+    #[test]
+    fn stage34g_emotion_boundary_trust_and_frustration_repair_stay_advisory() {
+        let pack = load_stage34g_corpus_pack();
+        let fixtures = load_stage34g_fixture_set();
+
+        for case_id in [
+            "bounded_emotional_acknowledgment",
+            "frustration_repair_expectation_setting",
+            "residual_assistance_warmth_without_familiarity",
+            "trust_preserving_return_to_task",
+        ] {
+            let case = stage34g_corpus_case(&pack, case_id);
+            let fixture = stage34g_fixture_case(&fixtures, &case.fixture_case_id);
+            let stage16_packet = stage34g_stage16_packet(fixture);
+            let stage32_packet = stage34g_stage32_packet(fixture);
+            let stage33_packet = stage34g_stage33_packet(fixture, &stage32_packet);
+
+            assert_eq!(
+                stage16_packet.disposition,
+                Stage16LongTermStateDisposition::EmotionAffectHintReady
+            );
+            assert!(stage16_packet.emotion_advisory_bounded);
+            assert!(!stage16_packet.emotion_infers_protected_identity);
+            assert!(!stage16_packet.emotion_overrides_policy_or_refusal);
+            assert!(!stage16_packet.emotion_authorizes_or_diagnoses);
+            assert!(!stage16_packet.emotion_mutates_without_memory_eligibility);
+            assert!(!stage16_packet.can_mutate_or_execute());
+
+            assert!(stage32_packet.disposition.is_ready());
+            assert!(!stage32_packet.work_authority.can_invent_confidence);
+            assert!(!stage32_packet.work_authority.can_invent_certainty);
+            assert!(!stage32_packet.work_authority.can_invent_helpfulness_success);
+            assert!(!stage32_packet.work_authority.can_invent_completion_success);
+            assert!(!stage32_packet.work_authority.can_invent_trust_authority);
+            assert!(!stage32_packet.can_mutate_or_execute());
+
+            assert!(stage33_packet.disposition.is_ready());
+            assert!(stage33_packet.stage16_ref_non_authoritative);
+            assert!(stage33_packet.stage32_ref_non_authoritative);
+            assert!(stage33_packet.ph1voiceid_ref_non_authoritative);
+            assert!(!stage33_packet.work_authority.can_invent_memory_certainty);
+            assert!(!stage33_packet.work_authority.can_invent_relationship_depth);
+            assert!(
+                !stage33_packet
+                    .work_authority
+                    .can_invent_emotional_knowledge_certainty
+            );
+            assert!(!stage33_packet.work_authority.can_invent_bond_continuity);
+            assert!(!stage33_packet.can_mutate_or_execute());
+
+            assert!(!fixture.tone_hint.trim().is_empty());
+            assert!(!fixture.tone_hint.contains("forever"));
+            assert!(!fixture.tone_hint.contains("always"));
+            assert!(!fixture.tone_hint.contains("only one"));
+        }
+    }
+
+    #[test]
+    fn stage_34g_emotion_boundary_trust_and_frustration_repair_stay_advisory() {
+        stage34g_emotion_boundary_trust_and_frustration_repair_stay_advisory();
+    }
+
+    #[test]
+    fn stage34g_no_fake_intimacy_or_relationship_depth_claims() {
+        let pack = load_stage34g_corpus_pack();
+        let fixtures = load_stage34g_fixture_set();
+
+        let ready_case =
+            stage34g_corpus_case(&pack, "residual_assistance_warmth_without_familiarity");
+        let ready_fixture = stage34g_fixture_case(&fixtures, &ready_case.fixture_case_id);
+        let ready_stage32 = stage34g_stage32_packet(ready_fixture);
+        let ready_stage33 = stage34g_stage33_packet(ready_fixture, &ready_stage32);
+        assert_eq!(
+            ready_stage33.disposition,
+            Stage33RelationshipMemoryDisposition::LongerHorizonInteractionGovernanceReady
+        );
+        assert!(!ready_stage33.work_authority.can_invent_relationship_depth);
+        assert!(
+            !ready_stage33
+                .work_authority
+                .can_treat_visible_familiarity_as_action_success
+        );
+
+        for case_id in [
+            "fake_intimacy_relationship_depth_blocked",
+            "cross_speaker_familiarity_blocked",
+        ] {
+            let case = stage34g_corpus_case(&pack, case_id);
+            let fixture = stage34g_fixture_case(&fixtures, &case.fixture_case_id);
+            let stage32_packet = stage34g_stage32_packet(fixture);
+            let stage33_packet = stage34g_stage33_packet(fixture, &stage32_packet);
+
+            assert!(!stage33_packet.can_mutate_or_execute());
+            assert!(!stage33_packet.work_authority.can_invent_relationship_depth);
+            assert!(!stage33_packet.work_authority.can_invent_bond_continuity);
+            assert!(
+                !stage33_packet
+                    .work_authority
+                    .can_treat_visible_familiarity_as_action_success
+            );
+
+            if case_id == "fake_intimacy_relationship_depth_blocked" {
+                assert_eq!(
+                    stage33_packet.disposition,
+                    Stage33RelationshipMemoryDisposition::NoInventionBlocked
+                );
+                assert!(stage33_packet.work_authority.can_fail_closed);
+            } else {
+                assert_eq!(
+                    stage33_packet.disposition,
+                    Stage33RelationshipMemoryDisposition::RelationshipAuthorityBlocked
+                );
+                assert!(stage33_packet.work_authority.can_fail_closed);
+            }
+        }
+    }
+
+    #[test]
+    fn stage_34g_no_fake_intimacy_or_relationship_depth_claims() {
+        stage34g_no_fake_intimacy_or_relationship_depth_claims();
+    }
+
+    #[test]
+    fn stage34g_emotion_guidance_cannot_invent_identity_diagnosis_or_memory_certainty() {
+        let pack = load_stage34g_corpus_pack();
+        let fixtures = load_stage34g_fixture_set();
+
+        for case_id in [
+            "diagnosis_like_emotion_blocked",
+            "protected_identity_inference_blocked",
+        ] {
+            let case = stage34g_corpus_case(&pack, case_id);
+            let fixture = stage34g_fixture_case(&fixtures, &case.fixture_case_id);
+            let stage16_packet = stage34g_stage16_packet(fixture);
+
+            assert_eq!(
+                stage16_packet.disposition,
+                Stage16LongTermStateDisposition::EmotionAuthorityBlocked
+            );
+            assert!(stage16_packet.work_authority.can_fail_closed);
+            assert!(!stage16_packet.work_authority.can_emit_emotion_affect_hint);
+            assert!(!stage16_packet.can_mutate_or_execute());
+        }
+
+        let case = stage34g_corpus_case(&pack, "memory_certainty_blocked");
+        let fixture = stage34g_fixture_case(&fixtures, &case.fixture_case_id);
+        let stage16_packet = stage34g_stage16_packet(fixture);
+        let stage32_packet = stage34g_stage32_packet(fixture);
+        let stage33_packet = stage34g_stage33_packet(fixture, &stage32_packet);
+
+        assert!(stage16_packet.disposition.is_ready());
+        assert!(stage32_packet.disposition.is_ready());
+        assert_eq!(
+            stage33_packet.disposition,
+            Stage33RelationshipMemoryDisposition::NoInventionBlocked
+        );
+        assert!(stage33_packet.work_authority.can_fail_closed);
+        assert!(!stage33_packet.work_authority.can_invent_memory_certainty);
+        assert!(!stage33_packet.can_mutate_or_execute());
+    }
+
+    #[test]
+    fn stage_34g_emotion_guidance_cannot_invent_identity_diagnosis_or_memory_certainty() {
+        stage34g_emotion_guidance_cannot_invent_identity_diagnosis_or_memory_certainty();
+    }
+
+    #[test]
+    fn stage34g_unsafe_or_stale_emotion_posture_fails_closed() {
+        let pack = load_stage34g_corpus_pack();
+        let fixtures = load_stage34g_fixture_set();
+
+        for case_id in [
+            "prior_continuity_truth_authority_blocked",
+            "trust_certainty_invention_blocked",
+        ] {
+            let case = stage34g_corpus_case(&pack, case_id);
+            let fixture = stage34g_fixture_case(&fixtures, &case.fixture_case_id);
+            let stage32_packet = stage34g_stage32_packet(fixture);
+            let stage33_packet = stage34g_stage33_packet(fixture, &stage32_packet);
+
+            assert_eq!(
+                stage32_packet.disposition,
+                Stage32TrustCalibrationDisposition::NoInventionBlocked
+            );
+            assert!(stage32_packet.work_authority.can_fail_closed);
+            assert!(!stage32_packet.can_mutate_or_execute());
+
+            assert_eq!(
+                stage33_packet.disposition,
+                Stage33RelationshipMemoryDisposition::StageInputBlocked
+            );
+            assert!(stage33_packet.work_authority.can_fail_closed);
+            assert!(!stage33_packet.can_mutate_or_execute());
+        }
+
+        let case = stage34g_corpus_case(&pack, "stale_emotion_posture_blocked");
+        let fixture = stage34g_fixture_case(&fixtures, &case.fixture_case_id);
+        let stage32_packet = stage34g_stage32_packet(fixture);
+        let stage33_packet = stage34g_stage33_packet(fixture, &stage32_packet);
+
+        assert!(stage32_packet.disposition.is_ready());
+        assert_eq!(
+            stage33_packet.disposition,
+            Stage33RelationshipMemoryDisposition::StaleRelationshipBlocked
+        );
+        assert!(stage33_packet.work_authority.can_fail_closed);
+        assert!(!stage33_packet.can_mutate_or_execute());
+    }
+
+    #[test]
+    fn stage_34g_unsafe_or_stale_emotion_posture_fails_closed() {
+        stage34g_unsafe_or_stale_emotion_posture_fails_closed();
     }
 
     fn stage11_ready_understanding() -> Stage10UnderstandingPacket {
