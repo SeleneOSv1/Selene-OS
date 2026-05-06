@@ -4,7 +4,7 @@ Status: CANONICAL_BUILD_ROADMAP
 Created: 2026-05-02
 Last Updated: 2026-05-06
 Repo Root: `/Users/selene/Documents/Selene-OS`
-Current Next Build: None yet - Stage 34G is PROVEN_COMPLETE and the Stage 34 remaining-row closure map must be refreshed before naming another narrowed Stage 34 slice
+Current Next Build: Stage 34H - Memory Trust Benchmark Pack Closure
 
 ## Purpose
 
@@ -79,8 +79,8 @@ After every build, update this section before final reporting.
 | Field | Current Value |
 |---|---|
 | Current active stage | Stage 34 |
-| Current active build | None - Stage 34G is PROVEN_COMPLETE and the Stage 34 remaining-row closure map must be refreshed before naming another narrowed Stage 34 slice |
-| Next build after current stage passes | None yet - refresh the Stage 34 remaining-row closure map again after Stage 34G before naming another narrowed Stage 34 slice |
+| Current active build | Stage 34H - Memory Trust Benchmark Pack Closure |
+| Next build after current stage passes | None yet - refresh the Stage 34 remaining-row closure map again after Stage 34H before naming another narrowed Stage 34 slice |
 | Last completed stage | Stage 34G - Human Experience And Emotion Boundary Replay Benchmark Closure |
 | Stages blocked | Broad Stage 34 remains blocked on provider/model governance, wake/activation, STT/listening, Voice ID production quality, math/science/history, TTS naturalness, memory trust, multilingual, native/runtime parity, and full certification. |
 | Plan drift allowed | No |
@@ -2847,19 +2847,20 @@ Closure bucket legend:
 
 Current selected next exact build:
 
-- None yet - Stage 34G is PROVEN_COMPLETE and the Stage 34 remaining-row closure map must be refreshed before naming another narrowed Stage 34 slice
+- Stage 34H - Memory Trust Benchmark Pack Closure
 
 Selection reason:
 
 - Most recently completed narrowed slice: `Stage 34G - Human Experience And Emotion Boundary Replay Benchmark Closure`.
 - `Human experience/emotion` is now closed and no longer belongs in remaining blocked-row planning.
 - The remaining rows still split across lawful closure buckets: replay/corpus-first (`Memory trust`, `Math/science/history`, `Multilingual`), JD-scope-plus-live-eval (`Provider/model governance`), live/native-lab proof (`Wake/activation`, `STT/listening`, `TTS naturalness`, `Voice ID production quality`, `Native/runtime parity`), and the dependent final gate (`Full certification`).
-- Repo truth now requires a fresh remaining-row closure-map refresh to re-rank the remaining blocked rows before naming another exact narrowed Stage 34 slice.
-- No next exact build is currently authorized until that refresh completes against current repo truth.
+- Repo truth now ranks the remaining blocked rows as `Memory trust`, `Math/science/history`, `Multilingual`, `Provider/model governance`, `Wake/activation`, `STT/listening`, `TTS naturalness`, `Voice ID production quality`, `Native/runtime parity`, and `Full certification`.
+- `Memory trust` is the highest-value replay/corpus-first row because its Stage 21 memory retention/trust seams, storage migration, and replay/eval fixture surfaces already exist in repo truth and do not require live/native-lab proof for row closure.
+- The refreshed remaining-row closure map now authorizes `Stage 34H - Memory Trust Benchmark Pack Closure` as the next exact narrowed Stage 34 slice.
 
 | Blocked row | Owner | Current blocker | Closure bucket | Offline/replay-only closure possible now? | Live/native-lab proof required for final row closure? | Planned closure slice | Primary repo seams | Proof required | Batchable with |
 |---|---|---|---|---|---|---|---|---|---|
-| Memory trust | Stage 21 | Add false-memory/stale/project-leak/forget proof benchmarks. | `CORPUS_OR_REPLAY_PACK_FIRST` | yes | no | `Memory Trust Benchmark Pack Closure` | `crates/selene_os/src/ph1m.rs`; `crates/selene_storage/migrations/0021_ph1m_vnext_memory_tables.sql`; memory retention/trust carriers; replay/eval fixture surfaces | deterministic false-memory, stale-memory, project-leak, and forget proof pack | no |
+| Memory trust | Stage 21 | Add false-memory/stale/project-leak/forget proof benchmarks. | `CORPUS_OR_REPLAY_PACK_FIRST` | yes | no | `Stage 34H - Memory Trust Benchmark Pack Closure` | `crates/selene_os/src/ph1m.rs`; `crates/selene_storage/migrations/0021_ph1m_vnext_memory_tables.sql`; memory retention/trust carriers; replay/eval fixture surfaces | deterministic false-memory, stale-memory, project-leak, and forget proof pack | no |
 | Math/science/history | Stage 11, Stage 13, Stage 14 | Add route/verifier benchmarks and replayable corpora. | `CORPUS_OR_REPLAY_PACK_FIRST` | yes | no | `Domain Verification Route And Replay Corpus Closure` | Stage 11 router carriers; Stage 13 evidence carriers; Stage 14 public-answer carriers; `docs/web_search_plan/eval/corpus_packs/**`; `docs/web_search_plan/replay_fixtures/**`; `crates/selene_os/src/web_search_plan/eval/**`; `crates/selene_os/src/web_search_plan/replay/**` | deterministic route/verifier corpora and replayable answer proof | no |
 | Multilingual | Stage 32 | Add per-language, dialect, code-switch, protected non-English certification packs. | `CORPUS_OR_REPLAY_PACK_FIRST` | yes | no | `Multilingual Certification Pack Closure` | `crates/selene_os/src/ph1multi.rs`; `crates/selene_os/src/ph1lang.rs`; `crates/selene_os/src/ph1pron.rs`; eval/replay fixture surfaces | deterministic per-language, dialect, code-switch, and protected non-English packs | no |
 | Provider/model governance | Stage 30 | Add prompt/model registries, champion router/model profile contracts, live-eval, fallback/rollback, and cost-quality target status. | `JD_SCOPE_DECISION_REQUIRED` | partial only | yes | `Provider/Model Governance Contract Split And Live-Eval Closure` | `crates/selene_engines/src/ph1providerctl.rs`; `docs/web_search_plan/eval/**`; `crates/selene_os/src/web_search_plan/eval/**`; `crates/selene_os/src/bin/web_search_eval_report.rs`; `crates/selene_os/src/bin/web_search_release_evidence.rs` | prompt/model registry proof, fallback/rollback proof, and explicit live-eval allowance | only with other provider-eval work after JD scope approval |
@@ -2878,7 +2879,7 @@ Stage 34G proof update:
 - Stage 34G did not add a new runtime-owned Stage 34 carrier. Existing Stage 16A emotion-affect advisory boundaries, Stage 32A trust-calibration boundaries, and Stage 33A relationship/continuity boundaries remain the authoritative runtime seams, while the synthetic-only [human_experience_emotion.json](/Users/selene/Documents/Selene-OS/docs/web_search_plan/eval/corpus_packs/human_experience_emotion.json) and [stage34g_human_experience_emotion_cases.json](/Users/selene/Documents/Selene-OS/docs/web_search_plan/replay_fixtures/stage34g_human_experience_emotion_cases.json) fixture packs provide deterministic current-HEAD proof inputs.
 - Current-HEAD deterministic proof closed the `Human experience/emotion` benchmark family by proving bounded emotional acknowledgment, frustration repair, trust-preserving repair after awkward interaction, warmth without false familiarity, and tone continuity all stay advisory and non-authoritative while diagnosis-like, identity-like, relationship-depth, emotional-certainty, memory-certainty, and manipulative-intimacy cases fail closed.
 - Exact targeted proof includes current-HEAD runnable Stage 34G tests `runtime_ingress_turn_foundation::tests::stage_34g_human_experience_emotion_corpus_closes_offline_benchmark_row`, `runtime_ingress_turn_foundation::tests::stage_34g_emotion_boundary_trust_and_frustration_repair_stay_advisory`, `runtime_ingress_turn_foundation::tests::stage_34g_no_fake_intimacy_or_relationship_depth_claims`, `runtime_ingress_turn_foundation::tests::stage_34g_emotion_guidance_cannot_invent_identity_diagnosis_or_memory_certainty`, and `runtime_ingress_turn_foundation::tests::stage_34g_unsafe_or_stale_emotion_posture_fails_closed`, plus preserved Stage 29A/Stage 32A/Stage 33A/Stage 16A guard tests, `at_emo_core_wiring`, `at_emo_guide_`, `eval`, and `replay`, all without provider calls, search calls, microphone/STT, TTS/playback, native mutation, or runtime-mock behavior.
-- Broad Stage 34 remains partial because provider/model governance, wake/activation, STT/listening, Voice ID production quality, math/science/history, TTS naturalness, memory trust, multilingual, native/runtime parity, and full certification remain blocked with explicit owners and next actions. No next exact build is currently authorized until the Stage 34 remaining-row closure map is refreshed again against current repo truth.
+- Broad Stage 34 remains partial because provider/model governance, wake/activation, STT/listening, Voice ID production quality, math/science/history, TTS naturalness, memory trust, multilingual, native/runtime parity, and full certification remain blocked with explicit owners and next actions. The refreshed remaining-row closure map now authorizes `Stage 34H - Memory Trust Benchmark Pack Closure` as the next exact build.
 
 Stage 34F status: PROVEN_COMPLETE
 
