@@ -40183,7 +40183,8 @@ const _: fn() = stage34_parity_certification_symbol_anchor;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::cell::Cell;
+    use serde::Deserialize;
+    use std::{cell::Cell, fs, path::PathBuf};
 
     use selene_kernel_contracts::ph1_voice_id::{
         DiarizationSegment, IdentityConfidence, Ph1VoiceIdResponse, SpeakerAssertionOk,
@@ -40199,6 +40200,177 @@ mod tests {
         RuntimeRequestFoundationErrorKind, RuntimeRequestOrigin,
     };
     use crate::runtime_session_foundation::Stage6AccessContextInput;
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+    #[serde(rename_all = "snake_case")]
+    enum Stage34EMeaningRepairLane {
+        OrdinaryMeaning,
+        ProtectedSafety,
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+    #[serde(rename_all = "snake_case")]
+    enum Stage34EStage8EExpectation {
+        NotAttempted,
+        AcceptedFixtureNormalization,
+        RejectedEmptyRepair,
+        RejectedProtectedTokenInvented,
+        RejectedProtectedTokenMismatch,
+        RejectedDomainTokenMismatch,
+        RejectedMeaningDrift,
+        RejectedOverRepair,
+    }
+
+    impl Stage34EStage8EExpectation {
+        const fn matches(self, actual: Stage8ERepairDisposition) -> bool {
+            matches!(
+                (self, actual),
+                (
+                    Stage34EStage8EExpectation::NotAttempted,
+                    Stage8ERepairDisposition::NotAttempted
+                ) | (
+                    Stage34EStage8EExpectation::AcceptedFixtureNormalization,
+                    Stage8ERepairDisposition::AcceptedFixtureNormalization
+                ) | (
+                    Stage34EStage8EExpectation::RejectedEmptyRepair,
+                    Stage8ERepairDisposition::RejectedEmptyRepair
+                ) | (
+                    Stage34EStage8EExpectation::RejectedProtectedTokenInvented,
+                    Stage8ERepairDisposition::RejectedProtectedTokenInvented
+                ) | (
+                    Stage34EStage8EExpectation::RejectedProtectedTokenMismatch,
+                    Stage8ERepairDisposition::RejectedProtectedTokenMismatch
+                ) | (
+                    Stage34EStage8EExpectation::RejectedDomainTokenMismatch,
+                    Stage8ERepairDisposition::RejectedDomainTokenMismatch
+                ) | (
+                    Stage34EStage8EExpectation::RejectedMeaningDrift,
+                    Stage8ERepairDisposition::RejectedMeaningDrift
+                ) | (
+                    Stage34EStage8EExpectation::RejectedOverRepair,
+                    Stage8ERepairDisposition::RejectedOverRepair
+                )
+            )
+        }
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+    #[serde(rename_all = "snake_case")]
+    enum Stage34EStage10Expectation {
+        MeaningCandidateBounded,
+        ProtectedSlotClarificationRequired,
+        ProtectedSlotFailClosed,
+        MeaningReconstructionRejected,
+    }
+
+    impl Stage34EStage10Expectation {
+        const fn matches(self, actual: Stage10UnderstandingDisposition) -> bool {
+            matches!(
+                (self, actual),
+                (
+                    Stage34EStage10Expectation::MeaningCandidateBounded,
+                    Stage10UnderstandingDisposition::MeaningCandidateBounded
+                ) | (
+                    Stage34EStage10Expectation::ProtectedSlotClarificationRequired,
+                    Stage10UnderstandingDisposition::ProtectedSlotClarificationRequired
+                ) | (
+                    Stage34EStage10Expectation::ProtectedSlotFailClosed,
+                    Stage10UnderstandingDisposition::ProtectedSlotFailClosed
+                ) | (
+                    Stage34EStage10Expectation::MeaningReconstructionRejected,
+                    Stage10UnderstandingDisposition::MeaningReconstructionRejected
+                )
+            )
+        }
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+    #[serde(rename_all = "snake_case")]
+    enum Stage34EStage10Mode {
+        MeaningCandidate,
+        ProtectedClarify,
+        ProtectedFailClosed,
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+    #[serde(rename_all = "snake_case")]
+    enum Stage34EProtectedSlotKind {
+        Name,
+        Date,
+        Amount,
+        Address,
+        Recipient,
+        AccountOrActionIdentifier,
+        AuthorizationRelevantField,
+    }
+
+    impl Stage34EProtectedSlotKind {
+        const fn to_stage8(self) -> Stage8ProtectedSlotKind {
+            match self {
+                Stage34EProtectedSlotKind::Name => Stage8ProtectedSlotKind::Name,
+                Stage34EProtectedSlotKind::Date => Stage8ProtectedSlotKind::Date,
+                Stage34EProtectedSlotKind::Amount => Stage8ProtectedSlotKind::Amount,
+                Stage34EProtectedSlotKind::Address => Stage8ProtectedSlotKind::Address,
+                Stage34EProtectedSlotKind::Recipient => Stage8ProtectedSlotKind::Recipient,
+                Stage34EProtectedSlotKind::AccountOrActionIdentifier => {
+                    Stage8ProtectedSlotKind::AccountOrActionIdentifier
+                }
+                Stage34EProtectedSlotKind::AuthorizationRelevantField => {
+                    Stage8ProtectedSlotKind::AuthorizationRelevantField
+                }
+            }
+        }
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct Stage34EMeaningRepairCorpusPack {
+        pack_id: String,
+        pack_version: String,
+        ordinary_meaning_threshold_bp: u16,
+        protected_safety_threshold_bp: u16,
+        cases: Vec<Stage34EMeaningRepairCorpusCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct Stage34EMeaningRepairCorpusCase {
+        case_id: String,
+        fixture_case_id: String,
+        lane: Stage34EMeaningRepairLane,
+        expected_stage8e_disposition: Stage34EStage8EExpectation,
+        expected_stage10_disposition: Stage34EStage10Expectation,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct Stage34EMeaningRepairFixtureSet {
+        fixture_set_id: String,
+        fixture_set_version: String,
+        cases: Vec<Stage34EMeaningRepairFixtureCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct Stage34EMeaningRepairFixtureCase {
+        fixture_case_id: String,
+        reference_transcript: String,
+        observed_transcript: String,
+        selected_candidate_transcript: String,
+        repair_candidate: Option<String>,
+        mixed_language_tokens: Vec<String>,
+        domain_tokens: Vec<String>,
+        protected_tokens: Vec<String>,
+        accent_marker: Option<String>,
+        vocabulary_pack_id: Option<String>,
+        pronunciation_profile_id: Option<String>,
+        stage10_mode: Stage34EStage10Mode,
+        protected_slot_kind: Option<Stage34EProtectedSlotKind>,
+        field_hint: Option<String>,
+        ambiguity_id: Option<String>,
+        clarification_question_id: Option<String>,
+        evidence_span_ids: Vec<String>,
+        punctuation_spacing_or_casing_only: bool,
+        introduces_protected_fact: bool,
+        invents_authority_relevant_fact: bool,
+        meaning_drift_detected: bool,
+    }
 
     #[derive(Debug, Default)]
     struct FixedClock {
@@ -41118,6 +41290,211 @@ mod tests {
             MonotonicTimeNs(2),
         )
         .expect("stage8e benchmark result")
+    }
+
+    fn stage34e_eval_corpus_pack_path(file_name: &str) -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../docs/web_search_plan/eval/corpus_packs")
+            .join(file_name)
+    }
+
+    fn stage34e_replay_fixture_path(file_name: &str) -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../docs/web_search_plan/replay_fixtures")
+            .join(file_name)
+    }
+
+    fn load_stage34e_corpus_pack() -> Stage34EMeaningRepairCorpusPack {
+        let text =
+            fs::read_to_string(stage34e_eval_corpus_pack_path("meaning_repair.json"))
+                .expect("stage34e corpus pack should load");
+        serde_json::from_str(&text).expect("stage34e corpus pack should parse")
+    }
+
+    fn load_stage34e_fixture_set() -> Stage34EMeaningRepairFixtureSet {
+        let text =
+            fs::read_to_string(stage34e_replay_fixture_path("stage34e_meaning_repair_cases.json"))
+                .expect("stage34e replay fixtures should load");
+        serde_json::from_str(&text).expect("stage34e replay fixtures should parse")
+    }
+
+    fn stage34e_fixture_case<'a>(
+        fixtures: &'a Stage34EMeaningRepairFixtureSet,
+        fixture_case_id: &str,
+    ) -> &'a Stage34EMeaningRepairFixtureCase {
+        fixtures
+            .cases
+            .iter()
+            .find(|case| case.fixture_case_id == fixture_case_id)
+            .unwrap_or_else(|| panic!("missing stage34e replay fixture for {fixture_case_id}"))
+    }
+
+    fn stage34e_score_bp(passed: usize, total: usize) -> u16 {
+        if total == 0 {
+            return 0;
+        }
+        ((passed * 10_000) / total) as u16
+    }
+
+    fn stage34e_stage10_packet(
+        fixture: &Stage34EMeaningRepairFixtureCase,
+    ) -> Stage10UnderstandingPacket {
+        let authority = stage8_current_authority();
+        let access = stage9_access_context(&authority);
+        let mut input = stage10_understanding_input();
+        input.understanding_id = format!("understanding-{}", fixture.fixture_case_id);
+        input.committed_text_hash = stage8_exact_transcript_hash(&fixture.observed_transcript);
+        input.intent_id = None;
+        input.slot_id = None;
+        input.semantic_frame_id = None;
+        input.language_context_id = None;
+        input.pronunciation_context_id = None;
+        input.ambiguity_id = None;
+        input.protected_slot_disposition = Stage10ProtectedSlotDisposition::EvidenceBacked;
+        input.protected_slot_uncertainties.clear();
+        input.meaning_reconstruction_candidate = None;
+        input.one_best_clarification_question_id = None;
+        input.audit_id = Some(format!("audit-{}", fixture.fixture_case_id));
+
+        match fixture.stage10_mode {
+            Stage34EStage10Mode::MeaningCandidate => {
+                let candidate_text = fixture
+                    .repair_candidate
+                    .as_deref()
+                    .unwrap_or(fixture.reference_transcript.as_str());
+                let mut candidate = Stage10MeaningReconstructionCandidate::bounded(
+                    format!("meaning-candidate-{}", fixture.fixture_case_id),
+                    stage8_exact_transcript_hash(candidate_text),
+                    fixture.evidence_span_ids.clone(),
+                )
+                .expect("stage34e meaning candidate");
+                candidate.punctuation_spacing_or_casing_only =
+                    fixture.punctuation_spacing_or_casing_only;
+                candidate.introduces_protected_fact = fixture.introduces_protected_fact;
+                candidate.invents_authority_relevant_fact =
+                    fixture.invents_authority_relevant_fact;
+                candidate.meaning_drift_detected = fixture.meaning_drift_detected;
+                input.meaning_reconstruction_candidate = Some(candidate);
+            }
+            Stage34EStage10Mode::ProtectedClarify
+            | Stage34EStage10Mode::ProtectedFailClosed => {
+                let slot_kind = fixture
+                    .protected_slot_kind
+                    .expect("protected slot kind required for stage34e protected cases");
+                let field_hint = fixture
+                    .field_hint
+                    .clone()
+                    .expect("field hint required for stage34e protected cases");
+                let evidence_span_id = fixture
+                    .evidence_span_ids
+                    .first()
+                    .cloned()
+                    .expect("protected stage34e cases require one evidence span");
+                let uncertainty = Stage10ProtectedSlotUncertainty::v1(
+                    slot_kind.to_stage8(),
+                    field_hint,
+                    Some(evidence_span_id),
+                    4_900,
+                )
+                .expect("stage34e protected slot uncertainty");
+                input.protected_slot_uncertainties = vec![uncertainty];
+                input.ambiguity_id = fixture.ambiguity_id.clone();
+                input.protected_slot_disposition = match fixture.stage10_mode {
+                    Stage34EStage10Mode::ProtectedClarify => {
+                        input.one_best_clarification_question_id =
+                            fixture.clarification_question_id.clone();
+                        Stage10ProtectedSlotDisposition::ClarificationRequired
+                    }
+                    Stage34EStage10Mode::ProtectedFailClosed => {
+                        input.one_best_clarification_question_id = None;
+                        Stage10ProtectedSlotDisposition::FailClosed
+                    }
+                    Stage34EStage10Mode::MeaningCandidate => unreachable!(),
+                };
+            }
+        }
+
+        Stage10UnderstandingPacket::from_stage_references(&authority, &access, None, None, input)
+            .expect("stage34e understanding packet")
+    }
+
+    fn stage34e_stage8e_packet(
+        fixture: &Stage34EMeaningRepairFixtureCase,
+    ) -> Stage8EListeningRepairBenchmarkPacket {
+        let fixture_id = format!("fixture-stage34e-{}", fixture.fixture_case_id);
+        let candidate_id = format!("candidate-stage34e-{}", fixture.fixture_case_id);
+        let candidate_set_id = format!("candidate-set-stage34e-{}", fixture.fixture_case_id);
+        let repair_decision_id = format!("repair-stage34e-{}", fixture.fixture_case_id);
+        let metric_id = format!("metric-stage34e-{}", fixture.fixture_case_id);
+        let target_id = format!("stage34e-target-{}", fixture.fixture_case_id);
+        let result_id = format!("stage34e-result-{}", fixture.fixture_case_id);
+
+        let repair_fixture = Stage8ERepairBenchmarkFixture::v1(
+            fixture_id.as_str(),
+            fixture.reference_transcript.as_str(),
+            fixture.observed_transcript.as_str(),
+            fixture.accent_marker.clone(),
+            fixture.mixed_language_tokens.clone(),
+            fixture.domain_tokens.clone(),
+            fixture.protected_tokens.clone(),
+            fixture.vocabulary_pack_id.clone(),
+            fixture.pronunciation_profile_id.clone(),
+        )
+        .expect("stage34e repair fixture");
+        let candidate = Stage8EAlternativeTranscriptCandidate::fixture_offline(
+            candidate_id.as_str(),
+            1,
+            fixture.selected_candidate_transcript.as_str(),
+            Stage8DConfidenceBucket::High,
+            &fixture.protected_tokens,
+        )
+        .expect("stage34e repair candidate");
+        let candidate_set = Stage8EAlternativeTranscriptCandidateSetPacket::v1(
+            candidate_set_id.as_str(),
+            fixture_id.as_str(),
+            vec![candidate],
+            Some(candidate_id),
+        )
+        .expect("stage34e candidate set");
+        let repair = Stage8ERepairDecisionPacket::fixture_only(
+            repair_decision_id.as_str(),
+            fixture_id.as_str(),
+            fixture.observed_transcript.as_str(),
+            fixture.reference_transcript.as_str(),
+            fixture.repair_candidate.clone(),
+            &fixture.protected_tokens,
+            &fixture.domain_tokens,
+        )
+        .expect("stage34e repair decision");
+        let metric = repair_fixture
+            .score(metric_id.as_str(), &candidate_set, &repair)
+            .expect("stage34e repair metric");
+        let target = stage8e_target(
+            target_id.as_str(),
+            "scrambled_meaning_repair_corpus",
+            BenchmarkTargetStatus::CertificationTargetPassed,
+        );
+        let result = stage8e_result(
+            result_id.as_str(),
+            &target,
+            BenchmarkComparisonOutcome::Passed,
+            BenchmarkTargetStatus::CertificationTargetPassed,
+        );
+
+        Stage8EListeningRepairBenchmarkPacket::from_stage2_envelope(
+            &target,
+            &result,
+            fixture_id,
+            metric_id,
+            candidate_set_id,
+            repair_decision_id,
+            fixture.vocabulary_pack_id.clone(),
+            fixture.pronunciation_profile_id.clone(),
+            format!("replay-stage34e-{}", fixture.fixture_case_id),
+            format!("audit-stage34e-{}", fixture.fixture_case_id),
+            Some(metric),
+        )
+        .expect("stage34e benchmark packet")
     }
 
     #[test]
@@ -42452,6 +42829,173 @@ mod tests {
         let mut drift = packet;
         drift.language_context_advisory_only = false;
         assert!(drift.validate().is_err());
+    }
+
+    #[test]
+    fn stage_34e_meaning_repair_corpus_closes_offline_benchmark_row() {
+        let pack = load_stage34e_corpus_pack();
+        let fixtures = load_stage34e_fixture_set();
+
+        assert_eq!(pack.pack_id, "meaning_repair");
+        assert_eq!(pack.pack_version, "1.0.0");
+        assert_eq!(fixtures.fixture_set_id, "stage34e_meaning_repair_cases");
+        assert_eq!(fixtures.fixture_set_version, "1.0.0");
+
+        let mut ordinary_total = 0usize;
+        let mut ordinary_pass = 0usize;
+        let mut protected_total = 0usize;
+        let mut protected_pass = 0usize;
+
+        for case in &pack.cases {
+            let fixture = stage34e_fixture_case(&fixtures, &case.fixture_case_id);
+            let benchmark_packet = stage34e_stage8e_packet(fixture);
+            let repair_metric = benchmark_packet
+                .repair_metric
+                .as_ref()
+                .expect("stage34e benchmark packet must carry repair metric");
+            let understanding_packet = stage34e_stage10_packet(fixture);
+
+            assert!(
+                case.expected_stage8e_disposition
+                    .matches(repair_metric.repair_disposition),
+                "stage34e stage8e disposition mismatch for {}",
+                case.case_id
+            );
+            assert!(
+                case.expected_stage10_disposition
+                    .matches(understanding_packet.disposition),
+                "stage34e stage10 disposition mismatch for {}",
+                case.case_id
+            );
+
+            assert_eq!(
+                benchmark_packet.target_status,
+                BenchmarkTargetStatus::CertificationTargetPassed
+            );
+            assert!(!benchmark_packet.can_route_or_mutate());
+            assert!(!benchmark_packet.work_authority.can_capture_microphone_audio);
+            assert!(!benchmark_packet.work_authority.can_transcribe_live_audio);
+            assert!(!benchmark_packet.work_authority.can_call_providers);
+            assert!(!benchmark_packet.work_authority.can_emit_tts);
+            assert!(!benchmark_packet.work_authority.can_route_tools);
+            assert!(!understanding_packet.can_route_or_mutate());
+            assert!(!understanding_packet.work_authority.can_answer);
+            assert!(!understanding_packet.work_authority.can_search);
+            assert!(!understanding_packet.work_authority.can_call_providers);
+            assert!(!understanding_packet.work_authority.can_authorize);
+            assert!(!understanding_packet.work_authority.can_connector_write);
+            assert!(!understanding_packet.work_authority.can_execute_protected_mutation);
+
+            match case.lane {
+                Stage34EMeaningRepairLane::OrdinaryMeaning => {
+                    ordinary_total += 1;
+                    if repair_metric.repair_disposition
+                        == Stage8ERepairDisposition::AcceptedFixtureNormalization
+                        && understanding_packet.disposition
+                            == Stage10UnderstandingDisposition::MeaningCandidateBounded
+                    {
+                        ordinary_pass += 1;
+                    }
+                }
+                Stage34EMeaningRepairLane::ProtectedSafety => {
+                    protected_total += 1;
+                    if matches!(
+                        understanding_packet.disposition,
+                        Stage10UnderstandingDisposition::ProtectedSlotClarificationRequired
+                            | Stage10UnderstandingDisposition::ProtectedSlotFailClosed
+                            | Stage10UnderstandingDisposition::MeaningReconstructionRejected
+                    ) && !understanding_packet.can_route_or_mutate()
+                    {
+                        protected_pass += 1;
+                    }
+                }
+            }
+        }
+
+        let ordinary_bp = stage34e_score_bp(ordinary_pass, ordinary_total);
+        let protected_bp = stage34e_score_bp(protected_pass, protected_total);
+
+        assert!(
+            ordinary_bp >= pack.ordinary_meaning_threshold_bp,
+            "stage34e ordinary meaning threshold failed: actual={} required={}",
+            ordinary_bp,
+            pack.ordinary_meaning_threshold_bp
+        );
+        assert!(
+            protected_bp >= pack.protected_safety_threshold_bp,
+            "stage34e protected safety threshold failed: actual={} required={}",
+            protected_bp,
+            pack.protected_safety_threshold_bp
+        );
+    }
+
+    #[test]
+    fn stage34e_protected_slot_ambiguity_and_authority_invention_fail_closed() {
+        let pack = load_stage34e_corpus_pack();
+        let fixtures = load_stage34e_fixture_set();
+
+        for case in pack
+            .cases
+            .iter()
+            .filter(|case| case.lane == Stage34EMeaningRepairLane::ProtectedSafety)
+        {
+            let fixture = stage34e_fixture_case(&fixtures, &case.fixture_case_id);
+            let understanding_packet = stage34e_stage10_packet(fixture);
+            let benchmark_packet = stage34e_stage8e_packet(fixture);
+            let repair_metric = benchmark_packet
+                .repair_metric
+                .as_ref()
+                .expect("stage34e protected cases must carry repair metric");
+
+            match understanding_packet.disposition {
+                Stage10UnderstandingDisposition::ProtectedSlotClarificationRequired => {
+                    assert!(understanding_packet.work_authority.can_emit_clarification_handoff);
+                    assert!(!understanding_packet.work_authority.can_emit_intent_slot_frame);
+                    assert!(
+                        understanding_packet
+                            .one_best_clarification_question_id
+                            .is_some()
+                    );
+                    assert_eq!(
+                        repair_metric.repair_disposition,
+                        Stage8ERepairDisposition::NotAttempted
+                    );
+                }
+                Stage10UnderstandingDisposition::ProtectedSlotFailClosed => {
+                    assert!(!understanding_packet.can_update_understanding());
+                    assert!(!understanding_packet.work_authority.can_emit_clarification_handoff);
+                    assert!(
+                        understanding_packet
+                            .one_best_clarification_question_id
+                            .is_none()
+                    );
+                    assert_eq!(
+                        repair_metric.repair_disposition,
+                        Stage8ERepairDisposition::NotAttempted
+                    );
+                }
+                Stage10UnderstandingDisposition::MeaningReconstructionRejected => {
+                    let candidate = understanding_packet
+                        .meaning_reconstruction_candidate
+                        .as_ref()
+                        .expect("rejected stage34e meaning case should keep candidate");
+                    assert!(!candidate.is_safe_bounded_candidate());
+                    assert!(!understanding_packet.can_update_understanding());
+                    assert!(!understanding_packet.work_authority.can_emit_intent_slot_frame);
+                    assert_eq!(
+                        repair_metric.repair_disposition,
+                        Stage8ERepairDisposition::RejectedProtectedTokenInvented
+                    );
+                }
+                other => panic!(
+                    "unexpected protected stage34e understanding disposition for {}: {:?}",
+                    case.case_id, other
+                ),
+            }
+
+            assert!(!benchmark_packet.can_route_or_mutate());
+            assert!(!understanding_packet.can_route_or_mutate());
+        }
     }
 
     fn stage11_ready_understanding() -> Stage10UnderstandingPacket {

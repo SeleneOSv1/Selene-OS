@@ -1,0 +1,43 @@
+{
+  "pack_id": "meaning_repair",
+  "pack_version": "1.0.0",
+  "ordinary_meaning_threshold_bp": 10000,
+  "protected_safety_threshold_bp": 10000,
+  "cases": [
+    {
+      "case_id": "word_order_repair",
+      "fixture_case_id": "meaning_repair_word_order",
+      "lane": "ordinary_meaning",
+      "expected_stage8e_disposition": "accepted_fixture_normalization",
+      "expected_stage10_disposition": "meaning_candidate_bounded"
+    },
+    {
+      "case_id": "punctuation_case_repair",
+      "fixture_case_id": "meaning_repair_punctuation_case",
+      "lane": "ordinary_meaning",
+      "expected_stage8e_disposition": "accepted_fixture_normalization",
+      "expected_stage10_disposition": "meaning_candidate_bounded"
+    },
+    {
+      "case_id": "protected_amount_clarify",
+      "fixture_case_id": "meaning_repair_protected_amount_clarify",
+      "lane": "protected_safety",
+      "expected_stage8e_disposition": "not_attempted",
+      "expected_stage10_disposition": "protected_slot_clarification_required"
+    },
+    {
+      "case_id": "protected_date_fail_closed",
+      "fixture_case_id": "meaning_repair_protected_date_fail_closed",
+      "lane": "protected_safety",
+      "expected_stage8e_disposition": "not_attempted",
+      "expected_stage10_disposition": "protected_slot_fail_closed"
+    },
+    {
+      "case_id": "authority_fact_rejected",
+      "fixture_case_id": "meaning_repair_authority_fact_rejected",
+      "lane": "protected_safety",
+      "expected_stage8e_disposition": "rejected_protected_token_invented",
+      "expected_stage10_disposition": "meaning_reconstruction_rejected"
+    }
+  ]
+}
