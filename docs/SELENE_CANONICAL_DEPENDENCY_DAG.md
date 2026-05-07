@@ -5,7 +5,7 @@ Date: 2026-05-03
 
 This graph converts the 34-stage roadmap into build-control dependencies. The numbered order remains canonical. Parallel work is allowed only inside documented slices when the upstream packet proof already exists and write scopes do not overlap.
 
-Stage 34L update: the capped Brave-only controlled live provider/model-governance proof is PROVEN_COMPLETE through the Clash explicit proxy/Rust TLS path. Broad Stage 34 remains partial, `Provider/model governance` remains pending post-Stage-34L closure-map disposition, and the next lawful action is a Stage 34 remaining-row closure-map refresh after Stage 34L.
+Stage 34L refresh update: the capped Brave-only controlled live provider/model-governance proof is PROVEN_COMPLETE through the Clash explicit proxy/Rust TLS path. The post-Stage-34L closure-map refresh reclassifies `Provider/model governance` as `CERTIFICATION_TARGET_PASSED`, keeps broad Stage 34 partial on six remaining rows, and authorizes `Stage 34M - Wake Activation Controlled Native Proof` as the next exact narrowed Stage 34 build.
 
 ## Global Must-Not-Start-Early Rules
 

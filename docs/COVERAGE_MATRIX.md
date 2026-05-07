@@ -2,7 +2,7 @@
 
 Architecture baseline updated to System_Core + Build Sections 01–11.
 
-Stage 34L update: the capped Brave-only controlled live provider/model-governance proof is PROVEN_COMPLETE through the Clash explicit proxy/Rust TLS path. Broad Stage 34 remains partial, `Provider/model governance` remains pending post-Stage-34L closure-map disposition, and the next lawful action is a Stage 34 remaining-row closure-map refresh after Stage 34L.
+Stage 34L refresh update: the capped Brave-only controlled live provider/model-governance proof is PROVEN_COMPLETE through the Clash explicit proxy/Rust TLS path. The post-Stage-34L closure-map refresh reclassifies `Provider/model governance` as `CERTIFICATION_TARGET_PASSED`, keeps broad Stage 34 partial on six remaining rows, and authorizes `Stage 34M - Wake Activation Controlled Native Proof` as the next exact narrowed Stage 34 build.
 
 ## Authoritative Wiring Status (Sections 01–11)
 
