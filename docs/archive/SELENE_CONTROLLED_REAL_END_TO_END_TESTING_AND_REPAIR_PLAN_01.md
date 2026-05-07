@@ -229,7 +229,42 @@ SESSION_TIMING_GAP_FOUND
 
 and repair only if the owning session/timing code path is already authorized and the fix is narrow.
 
-3D. Global Voice-Smoke Rule
+3D. Non-Negotiable Test Report And Next-Test Tracking Law
+
+Codex must maintain an accurate live test report for this plan at all times.
+
+After every phase, subtest, regression command, smoke run, repair, commit, push, interruption, or context switch, Codex must record:
+
+test/run/phase identifier
+exact prompt or command used
+whether the prompt was controlled smoke voice, JD manual voice, typed diagnostic, native/manual UI, or cargo/native command
+pass / failed / repaired-and-pass / blocked / skipped-with-reason
+evidence produced
+commit hash if a repair was committed
+clean-tree status
+the exact next test/run/phase to execute
+
+Codex must not rely on memory alone.
+
+Codex must not drift, skip ahead, repeat the wrong test, forget what already passed, forget what failed, or lose the next lawful test because JD interrupts, asks a side question, changes a requirement, orders a repair, or moves into another build/thread context.
+
+Before resuming any plan after an interruption, Codex must restate from repo/report truth:
+
+last completed test
+last failed test if any
+last repair commit if any
+current clean-tree / remote posture
+the exact next test to run
+
+If Codex cannot reconstruct the plan state from the test report and repo truth, Codex must stop and report:
+
+PLAN_STATE_TRACKING_GAP_FOUND
+
+Codex may not continue testing or repairing until the current test report is reconciled.
+
+This rule is not optional. It is required to stop plan drift and to keep Run 01 and every later run ordered, traceable, and recoverable.
+
+3E. Global Voice-Smoke Rule
 
 For every phase in this plan, any user-facing conversational or functional prompt must be delivered through the approved controlled smoke-voice / voice-origin path whenever the repo has a voice-origin route for that capability.
 
@@ -253,7 +288,7 @@ Typed/API tests may supplement coverage only after voice-origin evidence is prod
 
 Codex must not mark any user-facing conversational or functional phase as fully passed unless the controlled smoke-voice / voice-origin evidence for that phase is present or the limitation is explicitly classified and accepted in the final report.
 
-3E. Per-Repair Root-Cause Discipline
+3F. Per-Repair Root-Cause Discipline
 
 Each confirmed failure must get its own repair loop unless multiple failures are proven to share the same root cause and owning code path.
 
@@ -277,7 +312,7 @@ Codex must not batch unrelated failures into one vague repair.
 
 Related fixes may be grouped only when they share the same root cause, same owning code path, and same regression proof.
 
-3F. Per-Repair AGENTS, Clean-Tree, Commit, And Push Discipline
+3G. Per-Repair AGENTS, Clean-Tree, Commit, And Push Discipline
 
 Before every repair, Codex must re-check AGENTS.md and the active task rules, confirm the repair is within allowed scope, and prove the worktree is clean except for already-classified current repair evidence.
 
@@ -324,7 +359,7 @@ generated runtime residue remains
 HEAD cannot be made equal to origin/main after push
 the final tree is dirty
 
-3G. JD Interruption And On-The-Fly Change Control
+3H. JD Interruption And On-The-Fly Change Control
 
 JD may interrupt controlled testing to order a specific product or UX change when real testing reveals that an already-built behavior should be narrowed, removed, simplified, or repaired.
 

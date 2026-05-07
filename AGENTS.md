@@ -325,6 +325,42 @@ Protected execution remains simulation and authority gated.
 
 No surface patching, pretend fixing, or docs-only masking of broken runtime code is allowed.
 
+Rule: Plan State Tracking and Next-Action Continuity
+
+Whenever Codex is executing a build plan, test plan, repair plan, audit plan, staged run, or any ordered task sequence, Codex must maintain an accurate live plan-state report.
+
+For each phase, subtest, command, smoke run, repair, commit, push, interruption, or context switch, Codex must track:
+
+the plan name
+
+the current run / phase / test identifier
+
+the exact prompt or command used
+
+the input modality when relevant, such as controlled smoke voice, JD manual voice, typed diagnostic, native/manual UI, cargo command, native build command, or browser/UI route
+
+the result: pass, failed, repaired-and-pass, blocked, skipped-with-reason, or not yet run
+
+the evidence produced
+
+the commit hash if a repair was committed
+
+the clean-tree and remote equality posture
+
+the exact next lawful run / phase / test / action
+
+Codex must not rely on memory alone for ordered plan continuation.
+
+Before resuming after an interruption, side question, user-requested change, repair, context switch, or another build thread, Codex must reconstruct and state the current plan state from repo/report truth: last completed test, last failed test if any, last repair commit if any, current clean-tree/remote posture, and the exact next action.
+
+Codex must not drift, skip ahead, repeat the wrong test, forget a passed test, forget an unresolved failure, or continue from a stale next action.
+
+If Codex cannot reconstruct the current plan state honestly, Codex must stop and report:
+
+PLAN_STATE_TRACKING_GAP_FOUND
+
+Codex may not continue the plan until the plan-state report is reconciled.
+
 Rule: Best Available Public Search Answer
 
 Public websearch must not stop at a generic conflicting-evidence response as the normal final answer.
