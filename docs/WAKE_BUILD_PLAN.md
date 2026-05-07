@@ -15,6 +15,7 @@ Stage 34 controlled phase gate:
 - Quiet-control proof passed with wake rejected and no session opened.
 - macOS native build succeeded. iPhone simulator smoke was unavailable because no available simulator was reported, while iPhone activation remains explicit side-button only and iPhone wake-word activation remains blocked by tests.
 - No background listening, STT proof, TTS playback proof, Voice ID proof, native-lab parity proof, billing behavior, production promotion, production rollback, or protected execution was introduced by Stage 34M.
+- The post-Stage-34M closure-map refresh preserves wake/activation as passed and authorizes `Stage 34N - STT Listening Controlled Proof` as the next exact narrowed Stage 34 build; no wake behavior is reopened by that authorization.
 
 Flow:
 Trigger -> Open/Resume Session -> Wake job finished -> Voice pipeline continues.
