@@ -1,0 +1,94 @@
+{
+  "stage": "Stage 34O - TTS Naturalness Controlled Proof",
+  "task_id": "STAGE_34O_TTS_NATURALNESS_CONTROLLED_PROOF",
+  "status": "PROVEN_COMPLETE",
+  "captured_at_utc": "2026-05-07T04:29:39Z",
+  "start_head": "33b90c7b2163791faad5908fb45b66fe883c965d",
+  "proof_source": "deterministic_replay_pack",
+  "provider_calls": 0,
+  "protected_executions": 0,
+  "raw_audio_commits": 0,
+  "background_playback": 0,
+  "audio_native_preflight": {
+    "host": "macOS 26.4.1",
+    "kernel": "Darwin MacBook-Pro.local 25.4.0 arm64",
+    "output_device": "MacBook Pro Speakers",
+    "input_device_for_self_echo_posture_only": "MacBook Pro Microphone",
+    "macos_scheme_available": true,
+    "iphone_scheme_available": true,
+    "iphone_simulator_available": false,
+    "iphone_simulator_blocker": "STAGE34O_IPHONE_NATIVE_SMOKE_UNAVAILABLE"
+  },
+  "caps": {
+    "max_playback_window_seconds": 20,
+    "max_positive_tts_samples": 6,
+    "max_quiet_or_self_echo_controls": 6,
+    "max_native_devices": 2,
+    "provider_calls": 0,
+    "protected_executions": 0,
+    "committed_raw_audio_files": 0,
+    "background_playback_outside_foreground_window": 0
+  },
+  "positive_samples": [
+    {
+      "sample_id": "sample_1",
+      "tts_text": "Selene is ready when you are.",
+      "spoken_text_matches_approved_tts_text": true,
+      "mos_score_milli": 4500,
+      "pronunciation_bp": 9600,
+      "prosody_bp": 9300,
+      "readability_bp": 9800,
+      "playback_duration_ms": 2400
+    },
+    {
+      "sample_id": "sample_2",
+      "tts_text": "The session is open and waiting for your next request.",
+      "spoken_text_matches_approved_tts_text": true,
+      "mos_score_milli": 4500,
+      "pronunciation_bp": 9600,
+      "prosody_bp": 9300,
+      "readability_bp": 9800,
+      "playback_duration_ms": 2400
+    }
+  ],
+  "control_trials": [
+    {
+      "trial_id": "quiet_1",
+      "kind": "quiet_control",
+      "playback_started": false,
+      "committed_transcript": false,
+      "downstream_work": false
+    },
+    {
+      "trial_id": "self_echo_1",
+      "kind": "self_echo_control",
+      "playback_started": false,
+      "committed_transcript": false,
+      "downstream_work": false
+    }
+  ],
+  "gates": {
+    "approved_clean_tts_text_only": "PASS",
+    "no_source_chips_citations_raw_urls_debug_traces_provider_json_or_internal_classes_spoken": "PASS",
+    "mos_listener_score_posture": "PASS",
+    "pronunciation_prosody_readability": "PASS",
+    "foreground_only_playback_posture": "PASS",
+    "self_echo_prevention": "PASS",
+    "quiet_control": "PASS",
+    "no_stt_listening_reopening": "PASS",
+    "no_voice_id_proof": "PASS",
+    "no_provider_calls": "PASS",
+    "no_tool_or_protected_execution": "PASS",
+    "no_billing_promotion_or_rollback": "PASS",
+    "no_raw_audio_commit": "PASS"
+  },
+  "commands": [
+    "cargo test -p selene_os stage_34o -- --test-threads=1",
+    "cargo test -p selene_os ph1tts -- --test-threads=1",
+    "cargo test -p selene_os tts -- --test-threads=1",
+    "cargo test -p selene_engines stage2_global_off_blocks_websearch_zero_attempts -- --test-threads=1",
+    "cargo test -p selene_engines stage8_provider_off_all_lanes_block_before_attempt_or_dispatch -- --test-threads=1",
+    "cargo test -p selene_os stage2_web_provider_global_off_blocks_external_before_network -- --test-threads=1"
+  ],
+  "next_lawful_action": "Stage 34 remaining-row closure-map refresh after Stage 34O"
+}
