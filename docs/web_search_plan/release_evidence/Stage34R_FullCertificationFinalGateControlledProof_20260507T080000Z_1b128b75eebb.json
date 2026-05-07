@@ -1,0 +1,87 @@
+{
+  "artifact_id": "Stage34R_FullCertificationFinalGateControlledProof_20260507T080000Z_1b128b75eebb",
+  "task": "STAGE_34R_FULL_CERTIFICATION_FINAL_GATE_CONTROLLED_PROOF",
+  "stage": "Stage 34R - Full Certification Final Gate Controlled Proof",
+  "status": "PROVEN_COMPLETE",
+  "captured_at_utc": "2026-05-07T08:00:00Z",
+  "start_head": "1b128b75eebb06d003d3fa80f5f1a4fdc7d48c7f",
+  "proof_class": "FINAL_CERTIFICATION_GATE_CONTROLLED_PROOF",
+  "provider_calls": 0,
+  "protected_executions": 0,
+  "connector_writes": 0,
+  "raw_audio_artifact_count": 0,
+  "secret_leak_detected": false,
+  "provider_calls_required_for_final_gate": false,
+  "native_clients_authoritative": false,
+  "post34_numbered_stage_drift": false,
+  "next_build_authorized": false,
+  "full_certification_status": "CERTIFICATION_TARGET_PASSED",
+  "broad_stage_34_complete": true,
+  "release_evidence_validated": {
+    "Provider/model governance": "Stage34L_BraveControlledLiveProof_20260506T163713Z_e3cdd997fb5df495.json",
+    "Wake/activation": "Stage34M_WakeActivationControlledNativeProof_20260507T025704Z_74ccc16df10e.json",
+    "STT/listening": "Stage34N_STTListeningControlledProof_20260507T033227Z_711243173764.json",
+    "TTS naturalness": "Stage34O_TTSNaturalnessControlledProof_20260507T042939Z_33b90c7b2163.json",
+    "Voice ID production quality": "Stage34P_VoiceIDProductionQualityControlledProof_20260507T054654Z_d9f959a81901.json",
+    "Native/runtime parity": "Stage34Q_NativeRuntimeParityControlledProof_20260507T063440Z_2fa04ce28a10.json"
+  },
+  "row_statuses_after_final_gate": {
+    "Provider/model governance": "CERTIFICATION_TARGET_PASSED",
+    "Wake/activation": "CERTIFICATION_TARGET_PASSED",
+    "STT/listening": "CERTIFICATION_TARGET_PASSED",
+    "TTS naturalness": "CERTIFICATION_TARGET_PASSED",
+    "Voice ID production quality": "CERTIFICATION_TARGET_PASSED",
+    "Native/runtime parity": "CERTIFICATION_TARGET_PASSED",
+    "Full certification": "CERTIFICATION_TARGET_PASSED"
+  },
+  "tracker_consistency": {
+    "master_build_plan": "PASS",
+    "stage_build_slice_map": "PASS",
+    "benchmark_target_status_matrix": "PASS",
+    "dependency_dag": "PASS",
+    "coverage_matrix": "PASS",
+    "completion_plan": "PASS",
+    "completion_ledger": "PASS"
+  },
+  "provider_off_proof": {
+    "precheck": [
+      "cargo test -p selene_engines stage2_global_off_blocks_websearch_zero_attempts -- --test-threads=1",
+      "cargo test -p selene_engines stage8_provider_off_all_lanes_block_before_attempt_or_dispatch -- --test-threads=1",
+      "cargo test -p selene_os stage2_web_provider_global_off_blocks_external_before_network -- --test-threads=1"
+    ],
+    "postcheck": [
+      "cargo test -p selene_engines stage2_global_off_blocks_websearch_zero_attempts -- --test-threads=1",
+      "cargo test -p selene_engines stage8_provider_off_all_lanes_block_before_attempt_or_dispatch -- --test-threads=1",
+      "cargo test -p selene_os stage2_web_provider_global_off_blocks_external_before_network -- --test-threads=1"
+    ],
+    "result": "PASS"
+  },
+  "native_smoke": {
+    "host_platform": "macOS 26.4.1 build 25E253, Darwin arm64",
+    "xcode": "Xcode 26.4 build 17E192",
+    "macos_build": "xcodebuild -project apple/mac_desktop/SeleneMacDesktop.xcodeproj -scheme SeleneMacDesktop -destination 'platform=macOS' build",
+    "iphone_simulator": "UNAVAILABLE_NO_AVAILABLE_SIMULATOR_DEVICES_REPORTED",
+    "iphone_posture_accepted_by_stage34q": true,
+    "android_windows_posture": "planned/missing from current repo truth"
+  },
+  "stage34r_targeted_tests": [
+    "stage_34r_full_certification_gate_verifies_all_stage34_rows_passed",
+    "stage_34r_release_evidence_covers_all_passed_rows",
+    "stage_34r_no_post34_numbered_stage_is_minted",
+    "stage_34r_final_gate_preserves_provider_wake_stt_tts_voiceid_native_rows",
+    "stage_34r_full_certification_cannot_pass_with_missing_evidence",
+    "stage_34r_full_certification_marks_stage34_complete_only_after_gate_passes"
+  ],
+  "safety": {
+    "provider_calls_run": false,
+    "protected_execution_run": false,
+    "connector_write_run": false,
+    "billing_behavior_run": false,
+    "model_promotion_run": false,
+    "rollback_automation_run": false,
+    "raw_audio_committed": false,
+    "secret_leak": false
+  },
+  "final_stage34_status": "PROVEN_COMPLETE",
+  "next_lawful_action": "No next build is authorized unless JD explicitly revises the master plan."
+}

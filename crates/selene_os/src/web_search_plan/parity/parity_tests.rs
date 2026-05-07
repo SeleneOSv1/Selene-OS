@@ -12,6 +12,7 @@ use crate::web_search_plan::parity::stitching::{
 use crate::web_search_plan::write::{render_write_packet, WriteFormatMode};
 use serde::Deserialize;
 use serde_json::Value;
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
 
@@ -72,6 +73,82 @@ struct Stage34QNativeParityTarget {
 fn load_stage34q_manifest() -> Stage34QNativeParityManifest {
     serde_json::from_value(load_fixture("native_runtime_parity_case.json"))
         .expect("Stage 34Q native parity fixture should decode")
+}
+
+const STAGE34R_EVIDENCE_FILE: &str =
+    "Stage34R_FullCertificationFinalGateControlledProof_20260507T080000Z_1b128b75eebb.json";
+
+fn load_release_evidence(name: &str) -> Value {
+    let path = repo_root()
+        .join("docs/web_search_plan/release_evidence")
+        .join(name);
+    let text = fs::read_to_string(&path)
+        .unwrap_or_else(|e| panic!("failed to read evidence {}: {}", path.display(), e));
+    serde_json::from_str::<Value>(&text)
+        .unwrap_or_else(|e| panic!("failed to parse evidence {}: {}", path.display(), e))
+}
+
+fn stage34r_evidence() -> Value {
+    load_release_evidence(STAGE34R_EVIDENCE_FILE)
+}
+
+fn json_str<'a>(value: &'a Value, key: &str) -> &'a str {
+    value
+        .get(key)
+        .and_then(Value::as_str)
+        .unwrap_or_else(|| panic!("missing string key {key}"))
+}
+
+fn stage34r_required_passed_rows() -> [&'static str; 7] {
+    [
+        "Provider/model governance",
+        "Wake/activation",
+        "STT/listening",
+        "TTS naturalness",
+        "Voice ID production quality",
+        "Native/runtime parity",
+        "Full certification",
+    ]
+}
+
+fn assert_matrix_row_status(matrix: &str, row_name: &str, status: &str) {
+    let row = matrix
+        .lines()
+        .find(|line| line.starts_with(&format!("| {} |", row_name)))
+        .unwrap_or_else(|| panic!("missing benchmark row {row_name}"));
+    assert!(
+        row.contains(&format!("| {} |", status)),
+        "benchmark row {row_name} must carry status {status}; row={row}"
+    );
+}
+
+fn stage34r_gate_passes(rows: &BTreeMap<&str, bool>, evidence: &BTreeMap<&str, bool>) -> bool {
+    for row in stage34r_required_passed_rows() {
+        if !rows.get(row).copied().unwrap_or(false) {
+            return false;
+        }
+        if row != "Full certification" && !evidence.get(row).copied().unwrap_or(false) {
+            return false;
+        }
+    }
+    true
+}
+
+fn collect_repo_files(dir: &std::path::Path, out: &mut Vec<PathBuf>) {
+    for entry in fs::read_dir(dir)
+        .unwrap_or_else(|e| panic!("failed to read directory {}: {}", dir.display(), e))
+    {
+        let entry = entry.expect("directory entry should be readable");
+        let path = entry.path();
+        if path.ends_with("docs/archive") {
+            continue;
+        }
+        if path.is_dir() {
+            collect_repo_files(&path, out);
+        } else {
+            out.push(path);
+        }
+    }
 }
 
 fn stage34q_target<'a>(
@@ -800,4 +877,157 @@ fn stage_34q_full_certification_remains_blocked_until_final_gate() {
 #[test]
 fn stage34q_native_runtime_parity_controlled_proof_alias_executes_nonzero() {
     stage_34q_native_parity_manifest_records_targets_builds_and_stop_rules();
+}
+
+#[test]
+fn stage_34r_full_certification_gate_verifies_all_stage34_rows_passed() {
+    let matrix = load_repo_text("docs/SELENE_CANONICAL_BENCHMARK_TARGET_STATUS_MATRIX.md");
+    for row in stage34r_required_passed_rows() {
+        assert_matrix_row_status(&matrix, row, "CERTIFICATION_TARGET_PASSED");
+    }
+
+    let evidence = stage34r_evidence();
+    assert_eq!(
+        json_str(&evidence, "stage"),
+        "Stage 34R - Full Certification Final Gate Controlled Proof"
+    );
+    assert_eq!(json_str(&evidence, "status"), "PROVEN_COMPLETE");
+    assert_eq!(
+        json_str(&evidence, "full_certification_status"),
+        "CERTIFICATION_TARGET_PASSED"
+    );
+    assert!(evidence
+        .get("broad_stage_34_complete")
+        .and_then(Value::as_bool)
+        .expect("broad_stage_34_complete bool"));
+}
+
+#[test]
+fn stage_34r_release_evidence_covers_all_passed_rows() {
+    let evidence = stage34r_evidence();
+    let validated = evidence
+        .get("release_evidence_validated")
+        .and_then(Value::as_object)
+        .expect("release_evidence_validated should be object");
+
+    for row in stage34r_required_passed_rows() {
+        if row == "Full certification" {
+            continue;
+        }
+        let file_name = validated
+            .get(row)
+            .and_then(Value::as_str)
+            .unwrap_or_else(|| panic!("missing evidence file for {row}"));
+        let evidence_text = fs::read_to_string(
+            repo_root()
+                .join("docs/web_search_plan/release_evidence")
+                .join(file_name),
+        )
+        .unwrap_or_else(|e| panic!("failed to read evidence file {file_name}: {e}"));
+        assert!(
+            evidence_text.contains("PROVEN_COMPLETE"),
+            "evidence file {file_name} must record PROVEN_COMPLETE"
+        );
+    }
+}
+
+#[test]
+fn stage_34r_no_post34_numbered_stage_is_minted() {
+    let forbidden_tokens = [
+        ["Stage ", "35"].concat(),
+        ["Stage", "35"].concat(),
+        ["STAGE_", "35"].concat(),
+        ["Stage ", "36"].concat(),
+        ["Stage", "36"].concat(),
+        ["STAGE_", "36"].concat(),
+    ];
+
+    let mut files = Vec::new();
+    for root in ["docs", "crates", "apple"] {
+        collect_repo_files(&repo_root().join(root), &mut files);
+    }
+
+    for file in files {
+        let Ok(text) = fs::read_to_string(&file) else {
+            continue;
+        };
+        for token in &forbidden_tokens {
+            assert!(
+                !text.contains(token),
+                "forbidden post-34 numbered-stage token {token} found in {}",
+                file.display()
+            );
+        }
+    }
+
+    let master = load_repo_text("docs/SELENE_CANONICAL_MASTER_BUILD_PLAN.md");
+    assert!(master.contains("No post-34 numbered stages exist or are authorized."));
+}
+
+#[test]
+fn stage_34r_final_gate_preserves_provider_wake_stt_tts_voiceid_native_rows() {
+    let evidence = stage34r_evidence();
+    let rows = evidence
+        .get("row_statuses_after_final_gate")
+        .and_then(Value::as_object)
+        .expect("row_statuses_after_final_gate should be object");
+
+    for row in stage34r_required_passed_rows() {
+        assert_eq!(
+            rows.get(row).and_then(Value::as_str),
+            Some("CERTIFICATION_TARGET_PASSED"),
+            "{row} must remain passed after Stage 34R"
+        );
+    }
+
+    assert_eq!(
+        evidence.get("provider_calls").and_then(Value::as_u64),
+        Some(0)
+    );
+    assert_eq!(
+        evidence.get("protected_executions").and_then(Value::as_u64),
+        Some(0)
+    );
+    assert_eq!(
+        evidence.get("connector_writes").and_then(Value::as_u64),
+        Some(0)
+    );
+    assert_eq!(
+        evidence
+            .get("raw_audio_artifact_count")
+            .and_then(Value::as_u64),
+        Some(0)
+    );
+}
+
+#[test]
+fn stage_34r_full_certification_cannot_pass_with_missing_evidence() {
+    let mut rows = BTreeMap::new();
+    let mut evidence = BTreeMap::new();
+    for row in stage34r_required_passed_rows() {
+        rows.insert(row, true);
+        if row != "Full certification" {
+            evidence.insert(row, true);
+        }
+    }
+
+    assert!(stage34r_gate_passes(&rows, &evidence));
+    evidence.insert("Voice ID production quality", false);
+    assert!(
+        !stage34r_gate_passes(&rows, &evidence),
+        "final certification must fail closed when a passed row lacks evidence"
+    );
+}
+
+#[test]
+fn stage_34r_full_certification_marks_stage34_complete_only_after_gate_passes() {
+    let master = load_repo_text("docs/SELENE_CANONICAL_MASTER_BUILD_PLAN.md");
+    let evidence = stage34r_evidence();
+
+    assert_eq!(json_str(&evidence, "status"), "PROVEN_COMPLETE");
+    assert!(master.contains("| Broad Stage 34 status | PROVEN_COMPLETE |"));
+    assert!(master.contains("| Stages blocked | None for Stage 34. |"));
+    assert!(master
+        .contains("No next build is authorized unless JD explicitly revises the master plan."));
+    assert!(master.contains("No post-34 numbered stages exist or are authorized."));
 }
