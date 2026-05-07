@@ -1,0 +1,113 @@
+{
+  "artifact_id": "Stage34P_VoiceIDProductionQualityControlledProof_20260507T054654Z_d9f959a81901",
+  "task": "STAGE_34P_VOICE_ID_PRODUCTION_QUALITY_CONTROLLED_PROOF",
+  "stage": "Stage 34P - Voice ID Production Quality Controlled Proof",
+  "status": "PROVEN_COMPLETE",
+  "captured_at_utc": "2026-05-07T05:46:54Z",
+  "start_head": "d9f959a819016fb2a329865c5284280da61bb764",
+  "proof_source": "controlled_embedding_pack",
+  "provider_calls": 0,
+  "protected_executions": 0,
+  "background_microphone_capture": 0,
+  "raw_audio_commits": 0,
+  "stage_34p_caps": {
+    "max_foreground_voice_capture_window_seconds": 20,
+    "max_enrollment_samples": 6,
+    "max_genuine_verification_trials": 6,
+    "max_control_trials": 6,
+    "max_native_devices": 2,
+    "provider_calls": 0,
+    "protected_executions": 0,
+    "raw_audio_commits": 0
+  },
+  "device_native_manifest": {
+    "host_platform": "macOS 26.4.1 build 25E253, Darwin arm64",
+    "xcode": "Xcode 26.4 build 17E192",
+    "audio_input": "MacBook Pro Microphone available; attached iPhone microphone also visible",
+    "audio_output": "MacBook Pro Speakers available",
+    "macos_scheme_available": true,
+    "iphone_scheme_available": true,
+    "iphone_simulator_available": false,
+    "iphone_simulator_blocker": "STAGE34P_IPHONE_NATIVE_SMOKE_UNAVAILABLE"
+  },
+  "voice_id_measurements": {
+    "threshold_pack_version": "ph1.voice_id.threshold_pack.mvp_v1",
+    "enrollment_profile_sample_refs": 3,
+    "genuine_verification_trials": 2,
+    "control_trials": 5,
+    "impostor_controls": 1,
+    "quiet_controls": 1,
+    "spoof_replay_controls": 1,
+    "noise_high_echo_controls": 1,
+    "cross_device_controls": 1,
+    "far_bp": 0,
+    "frr_bp": 0,
+    "eer_bp": 0,
+    "roc_eer_posture_recorded": true,
+    "min_genuine_score_bp": 9300,
+    "max_biometric_control_score_bp": 4500,
+    "min_margin_bp": 300,
+    "max_latency_ms": 320
+  },
+  "stage_34p_gates": {
+    "speaker_posture_only": "PASS",
+    "speaker_identity_only_authorization_absent": "PASS",
+    "stt_transcript_absent": "PASS",
+    "tts_absent": "PASS",
+    "provider_path_absent": "PASS",
+    "tool_path_absent": "PASS",
+    "protected_execution_absent": "PASS",
+    "answer_generation_absent": "PASS",
+    "business_state_mutation_absent": "PASS",
+    "raw_audio_free_artifacts": "PASS",
+    "background_capture_absent": "PASS",
+    "far_frr_eer_targets": "PASS"
+  },
+  "provider_off_proof": {
+    "precheck": [
+      "cargo test -p selene_engines stage2_global_off_blocks_websearch_zero_attempts -- --test-threads=1",
+      "cargo test -p selene_engines stage8_provider_off_all_lanes_block_before_attempt_or_dispatch -- --test-threads=1",
+      "cargo test -p selene_os stage2_web_provider_global_off_blocks_external_before_network -- --test-threads=1"
+    ],
+    "postcheck": [
+      "cargo test -p selene_engines stage2_global_off_blocks_websearch_zero_attempts -- --test-threads=1",
+      "cargo test -p selene_engines stage8_provider_off_all_lanes_block_before_attempt_or_dispatch -- --test-threads=1",
+      "cargo test -p selene_os stage2_web_provider_global_off_blocks_external_before_network -- --test-threads=1"
+    ],
+    "result": "PASS"
+  },
+  "nonzero_tests": [
+    "cargo test -p selene_os stage_34p -- --test-threads=1 => 7 passed",
+    "cargo test -p selene_os stage34p -- --test-threads=1 => 1 passed",
+    "cargo test -p selene_os ph1_voice_id -- --test-threads=1 => 56 passed",
+    "cargo test -p selene_os voice_id -- --test-threads=1 => 78 passed",
+    "cargo test -p selene_storage --test db_wiring_ph1vid_tables -- --test-threads=1 => 18 passed",
+    "cargo test -p selene_os stage_34o -- --test-threads=1 => 7 passed",
+    "cargo test -p selene_os stage_34n -- --test-threads=1 => 6 passed",
+    "cargo test -p selene_adapter -- --test-threads=1 => passed",
+    "cargo test -p selene_engines ph1providerctl -- --test-threads=1 => 40 passed",
+    "cargo test -p selene_os eval -- --test-threads=1 => 13 passed",
+    "cargo test -p selene_os replay -- --test-threads=1 => 19 passed"
+  ],
+  "zero_test_filters_reported": [
+    "cargo test -p selene_adapter stage_34p -- --test-threads=1",
+    "cargo test -p selene_adapter stage34p -- --test-threads=1",
+    "cargo test -p selene_storage ph1_voice_id -- --test-threads=1",
+    "cargo test -p selene_storage voice_id -- --test-threads=1"
+  ],
+  "native_smoke": {
+    "macos": "xcodebuild -project apple/mac_desktop/SeleneMacDesktop.xcodeproj -scheme SeleneMacDesktop -destination 'platform=macOS' build => BUILD SUCCEEDED",
+    "iphone": "STAGE34P_IPHONE_NATIVE_SMOKE_UNAVAILABLE"
+  },
+  "row_reclassification": {
+    "Voice ID production quality": "CERTIFICATION_TARGET_PASSED",
+    "Provider/model governance": "CERTIFICATION_TARGET_PASSED",
+    "Wake/activation": "CERTIFICATION_TARGET_PASSED",
+    "STT/listening": "CERTIFICATION_TARGET_PASSED",
+    "TTS naturalness": "CERTIFICATION_TARGET_PASSED",
+    "native/runtime parity": "BLOCKED_WITH_OWNER_AND_NEXT_ACTION",
+    "full certification": "BLOCKED_WITH_OWNER_AND_NEXT_ACTION"
+  },
+  "broad_stage_34_complete": false,
+  "next_lawful_action": "Stage 34 remaining-row closure-map refresh after Stage 34P"
+}

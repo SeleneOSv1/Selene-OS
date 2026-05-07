@@ -4,7 +4,7 @@ Status: CANONICAL_BUILD_ROADMAP
 Created: 2026-05-02
 Last Updated: 2026-05-07
 Repo Root: `/Users/selene/Documents/Selene-OS`
-Current Next Build: Stage 34P - Voice ID Production Quality Controlled Proof
+Current Next Build: Stage 34 remaining-row closure-map refresh after Stage 34P
 
 ## Purpose
 
@@ -82,8 +82,8 @@ After every build, update this section before final reporting.
 | Current active build | Stage 34P - Voice ID Production Quality Controlled Proof |
 | Next build after current stage passes | Stage 34 remaining-row closure-map refresh after Stage 34P |
 | Next required authorization gate | `CONTROLLED_LIVE_AND_NATIVE_CERTIFICATION_PHASE` is AUTHORIZED as a gate / JD scope-decision target only; not a build name |
-| Last completed stage | Stage 34 remaining-row closure-map refresh after Stage 34O |
-| Stages blocked | Broad Stage 34 remains blocked on Voice ID production quality, native/runtime parity, and full certification. |
+| Last completed stage | Stage 34P - Voice ID Production Quality Controlled Proof |
+| Stages blocked | Broad Stage 34 remains blocked on native/runtime parity and full certification. |
 | Plan drift allowed | No |
 
 ## Status Legend
@@ -2848,7 +2848,7 @@ Closure bucket legend:
 
 Current selected next exact build:
 
-- None yet - Stage 34O is PROVEN_COMPLETE and the remaining-row closure map must be refreshed before another narrowed Stage 34 slice is named.
+- None yet - Stage 34P is PROVEN_COMPLETE and the remaining-row closure map must be refreshed before another narrowed Stage 34 slice is named.
 
 Next required authorization gate:
 
@@ -2864,11 +2864,11 @@ Controlled phase rules authorized by JD:
 - Device and mic proof rules: device availability must be recorded before any later native or voice slice; mic/native-lab work must be foreground, operator-started, and device-bound; no background listening is authorized by this phase gate.
 - Smoke rules: later slices must prefer voice-first smoke when the relevant device/hardware is available; fallback smoke is allowed only when the exact device/hardware blocker is recorded.
 - Stop rules: stop on missing provider flag, missing paid-provider flag when needed, missing device, missing mic permission, unexpected network call, cost-cap hit, provider-off proof failure, provider drift, native-lab unavailable, protected-execution request, billing attempt, production promotion attempt, or production rollback attempt.
-- Slice order: provider/model governance proof first, wake/activation second, STT/listening third, TTS naturalness fourth, Voice ID production quality fifth, native/runtime parity sixth, and full certification last. Provider/model governance, wake/activation, STT/listening, and TTS naturalness are now passed; the post-Stage-34O refresh authorizes controlled Voice ID production quality proof next.
+- Slice order: provider/model governance proof first, wake/activation second, STT/listening third, TTS naturalness fourth, Voice ID production quality fifth, native/runtime parity sixth, and full certification last. Provider/model governance, wake/activation, STT/listening, TTS naturalness, and Voice ID production quality are now passed; the next lawful action is a Stage 34 remaining-row closure-map refresh after Stage 34P.
 
 Selection reason:
 
-- Most recently completed narrowed slice: `Stage 34O - TTS Naturalness Controlled Proof`.
+- Most recently completed narrowed slice: `Stage 34P - Voice ID Production Quality Controlled Proof`.
 - Stage 34K is now PROVEN_COMPLETE for the offline-only provider/model-governance slice: prompt/model registry shape, champion-router decision packets, fallback/rollback packets, cost-quality scoring packets, offline synthetic eval proof, and provider-off zero-call proof all have deterministic current-HEAD evidence.
 - Stage 34L is now PROVEN_COMPLETE for the Brave-only controlled live provider proof under Clash explicit proxy, with no-secret Rust transport diagnostic proof, provider-off proof before/after, safe vault presence proof, one successful Brave network dispatch, zero fallback/fanout/background calls, and no secret leakage.
 - This post-Stage-34L closure-map refresh records `Provider/model governance` as `CERTIFICATION_TARGET_PASSED`: Stage 34K closed the offline contract/eval boundary, and Stage 34L closed the controlled live provider proof without promotion, billing, rollback automation, protected execution, secret leakage, fallback/fanout/background provider paths, or broad Stage 34 completion.
@@ -2879,7 +2879,9 @@ Selection reason:
 - This Stage 34N proof reclassifies `STT/listening` as `CERTIFICATION_TARGET_PASSED` without provider calls, live web search, TTS playback, Voice ID proof, native/runtime parity proof, protected execution, raw audio commits, or broad Stage 34 completion.
 - Stage 34O is now PROVEN_COMPLETE for controlled TTS naturalness proof: `ph1tts.rs` adds a controlled TTS proof verifier for deterministic replay/foreground-playback manifests, approved clean `tts_text`, MOS/listener-score posture, pronunciation/prosody/readability gates, quiet and self-echo controls, foreground-only playback posture, raw-audio non-retention, provider-off posture, and hard fail-closed gates for STT/listening transcript commits, Voice ID, providers, tools, protected execution, answer generation, billing, promotion, rollback automation, and raw audio commits.
 - This Stage 34O proof reclassifies `TTS naturalness` as `CERTIFICATION_TARGET_PASSED` without provider calls, live web search, live STT proof, Voice ID proof, native/runtime parity proof, protected execution, raw audio commits, or broad Stage 34 completion.
-- The remaining blocked rows now split across lawful closure buckets: later native-device/native-lab proof (`Voice ID production quality`, `Native/runtime parity`) and the dependent final gate (`Full certification`).
+- Stage 34P is now PROVEN_COMPLETE for controlled Voice ID production-quality proof: `ph1_voice_id.rs` adds a controlled proof verifier for deterministic embedding-pack / foreground-proof manifests, governed enrollment/profile/sample posture, genuine verification, impostor, quiet, spoof/replay, noise, and cross-device controls, FAR/FRR/ROC/EER posture, threshold-pack governance, raw-audio-free artifact refs, provider-off posture, and hard fail-closed gates for STT, TTS, providers, tools, protected execution, answer generation, speaker-identity-only authorization, business-state mutation, background capture, and raw audio commits.
+- This Stage 34P proof reclassifies `Voice ID production quality` as `CERTIFICATION_TARGET_PASSED` without provider calls, live web search, STT/listening proof, TTS naturalness proof, native/runtime parity proof, protected execution, raw audio commits, speaker-identity-only authorization, or broad Stage 34 completion.
+- The remaining blocked rows now split across lawful closure buckets: later native-device/native-lab proof (`Native/runtime parity`) and the dependent final gate (`Full certification`).
 - This post-Stage-34O closure-map refresh authorizes `Stage 34P - Voice ID Production Quality Controlled Proof` as the next exact narrowed Stage 34 build. Stage 34P is controlled Voice ID production quality proof only and must not reopen provider/model governance, wake/activation, STT/listening, TTS naturalness, native/runtime parity, full certification, protected execution, or broad Stage 34 completion.
 - This post-Stage-34N closure-map refresh authorizes `Stage 34O - TTS Naturalness Controlled Proof` as the next exact narrowed Stage 34 build. Stage 34O is controlled TTS naturalness proof only and must not reopen STT/listening, Voice ID production quality, provider/model governance, wake/activation, native/runtime parity, full certification, protected execution, or broad Stage 34 completion.
 
@@ -2889,12 +2891,26 @@ Rows passed and preserved by this refresh:
 - `Wake/activation` -> `CERTIFICATION_TARGET_PASSED` by Stage 34M controlled native proof.
 - `STT/listening` -> `CERTIFICATION_TARGET_PASSED` by Stage 34N controlled replay/listening proof.
 - `TTS naturalness` -> `CERTIFICATION_TARGET_PASSED` by Stage 34O controlled TTS naturalness proof.
+- `Voice ID production quality` -> `CERTIFICATION_TARGET_PASSED` by Stage 34P controlled Voice ID production-quality proof.
 
 | Blocked row | Owner | Current blocker | Closure bucket | Offline/replay-only closure possible now? | Live/native-lab proof required for final row closure? | Planned closure slice | Primary repo seams | Proof required | Batchable with |
 |---|---|---|---|---|---|---|---|---|---|
-| Voice ID production quality | Stage 34, native lab | Current repo truth has PH1.VOICE.ID contracts/runtime, platform/channel embedding gates, threshold-pack governance, KPI/audit surfaces, and deterministic no-execution tests, but it still lacks controlled production-quality proof for FAR/FRR, ROC/EER, spoof resistance, room/noise robustness, cross-device matching, native enrollment UX, and speaker-verification quality. | `LIVE_OR_NATIVE_LAB_PROOF_REQUIRED` | partial | yes | `Stage 34P - Voice ID Production Quality Controlled Proof` | `crates/selene_os/src/ph1_voice_id.rs`; PH1.VOICE.ID contract/runtime surfaces; PH1.F voice enrollment/sample/profile/sync rows; native enrollment and explicit activation seams | controlled Voice ID production-quality proof for FAR/FRR, ROC/EER, spoof/noise/cross-device/enrollment quality, with no authorization-by-speaker-identity-alone and no raw audio commit | no |
 | Native/runtime parity | Stage 33 | Build parity harness for existing native surfaces, planned/missing reports, and cross-client runtime consistency after row-level voice proofs are settled. | `LIVE_OR_NATIVE_LAB_PROOF_REQUIRED` | partial | yes | Native Runtime Parity Harness Closure - not yet authorized | `crates/selene_os/src/web_search_plan/parity/**`; `docs/web_search_plan/parity_fixtures/**`; `apple/mac_desktop/**`; `apple/iphone/**` | real app/native parity harness proof and planned/missing report closure | after Voice ID row disposition is refreshed |
-| Full certification | Stage 34 | Final aggregator row remains blocked until Voice ID production quality and native/runtime parity close or are lawfully reclassified by repo truth. | `DEPENDENT_FINAL_GATE` | no | depends on remaining rows | `Full Certification Final Closure` | current-HEAD Stage 34A/34B/34C/34D/34E/34F/34G/34H/34I/34J/34K/34L/34M/34N/34O proof ledgers; benchmark matrix; current eval/release evidence | rerun the full benchmark matrix after remaining-row disposition is settled | only after all prerequisite rows settle |
+| Full certification | Stage 34 | Final aggregator row remains blocked until native/runtime parity closes or is lawfully reclassified by repo truth. | `DEPENDENT_FINAL_GATE` | no | depends on remaining rows | `Full Certification Final Closure` | current-HEAD Stage 34A/34B/34C/34D/34E/34F/34G/34H/34I/34J/34K/34L/34M/34N/34O/34P proof ledgers; benchmark matrix; current eval/release evidence | rerun the full benchmark matrix after remaining-row disposition is settled | only after all prerequisite rows settle |
+
+Stage 34P status: PROVEN_COMPLETE
+
+Stage 34P proof update:
+
+- Stage 34P proves controlled Voice ID production quality through PH1.VOICE.ID runtime trials and a deterministic controlled embedding-pack proof.
+- The proof records 3 enrollment/profile sample refs, 2 genuine verification trials, 5 control trials, FAR `0 bp`, FRR `0 bp`, EER `0 bp`, threshold pack `ph1.voice_id.threshold_pack.mvp_v1`, ROC/EER posture, spoof/replay control, quiet control, impostor control, noise/high-echo control, and cross-device/device-owner mismatch posture.
+- Voice ID remains governed speaker posture only. It does not authorize by itself, answer, search, call providers, transcribe, speak, route tools, request protected execution, mutate business state, or claim native/runtime parity or full certification.
+- The proof is raw-audio-free: evidence refs use governed embedding/sample refs only, provider calls `0`, protected executions `0`, background microphone capture `0`, and raw audio commits `0`.
+- macOS native build passed. iPhone simulator smoke remains unavailable because no available simulator was reported.
+- `Voice ID production quality` is now `CERTIFICATION_TARGET_PASSED`.
+- `Provider/model governance`, `Wake/activation`, `STT/listening`, and `TTS naturalness` remain `CERTIFICATION_TARGET_PASSED`.
+- Broad Stage 34 remains blocked on native/runtime parity and full certification.
+- No later narrowed build is named here; the next lawful action is a Stage 34 remaining-row closure-map refresh after Stage 34P.
 
 Stage 34 remaining-row closure-map refresh after Stage 34O status: PROVEN_COMPLETE
 

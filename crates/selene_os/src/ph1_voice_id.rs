@@ -51,6 +51,435 @@ pub const PH1_VOICE_ID_ACTIVE_IMPLEMENTATION_IDS: &[&str] = &[PH1VOICEID_IMPLEME
 pub const VOICE_ID_EMBEDDING_GATE_PAYLOAD_REF_V1_PREFIX: &str =
     "voice_id_embedding_gate_profiles:v1:";
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stage34pVoiceIdProofSource {
+    ForegroundMic,
+    ControlledEmbeddingPack,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stage34pVoiceIdTrialKind {
+    GenuineVerification,
+    ImpostorControl,
+    QuietControl,
+    SpoofControl,
+    NoiseControl,
+    CrossDeviceControl,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Stage34pVoiceIdProofConfig {
+    pub max_capture_window_seconds: u16,
+    pub max_enrollment_samples: u8,
+    pub max_genuine_trials: u8,
+    pub max_control_trials: u8,
+    pub min_accept_score_bp: u16,
+    pub min_margin_bp: u16,
+    pub max_biometric_control_score_bp: u16,
+    pub max_latency_ms: u16,
+    pub max_far_bp: u16,
+    pub max_frr_bp: u16,
+    pub max_eer_bp: u16,
+    pub threshold_pack_version: String,
+}
+
+impl Stage34pVoiceIdProofConfig {
+    pub fn controlled_stage34p() -> Self {
+        Self {
+            max_capture_window_seconds: 20,
+            max_enrollment_samples: 6,
+            max_genuine_trials: 6,
+            max_control_trials: 6,
+            min_accept_score_bp: 9_300,
+            min_margin_bp: 300,
+            max_biometric_control_score_bp: 5_500,
+            max_latency_ms: 1_200,
+            max_far_bp: 0,
+            max_frr_bp: 0,
+            max_eer_bp: 0,
+            threshold_pack_version: "ph1.voice_id.threshold_pack.mvp_v1".to_string(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Stage34pVoiceIdTrial {
+    pub trial_id: String,
+    pub kind: Stage34pVoiceIdTrialKind,
+    pub sample_artifact_ref: Option<String>,
+    pub voice_sample_present: bool,
+    pub accepted_identity: bool,
+    pub score_bp: u16,
+    pub margin_to_next_bp: Option<u16>,
+    pub latency_ms: u16,
+    pub foreground_explicit_input: bool,
+    pub background_mic_capture: bool,
+    pub raw_audio_committed: bool,
+    pub provider_call_count: u8,
+    pub stt_transcript_committed: bool,
+    pub tts_requested: bool,
+    pub answer_generated: bool,
+    pub tool_route_invoked: bool,
+    pub protected_execution_requested: bool,
+    pub speaker_identity_authorized: bool,
+    pub business_state_mutated: bool,
+    pub speaker_posture_only: bool,
+}
+
+impl Stage34pVoiceIdTrial {
+    #[allow(clippy::too_many_arguments)]
+    pub fn controlled(
+        trial_id: impl Into<String>,
+        kind: Stage34pVoiceIdTrialKind,
+        sample_artifact_ref: Option<impl Into<String>>,
+        voice_sample_present: bool,
+        accepted_identity: bool,
+        score_bp: u16,
+        margin_to_next_bp: Option<u16>,
+        latency_ms: u16,
+    ) -> Self {
+        Self {
+            trial_id: trial_id.into(),
+            kind,
+            sample_artifact_ref: sample_artifact_ref.map(Into::into),
+            voice_sample_present,
+            accepted_identity,
+            score_bp,
+            margin_to_next_bp,
+            latency_ms,
+            foreground_explicit_input: true,
+            background_mic_capture: false,
+            raw_audio_committed: false,
+            provider_call_count: 0,
+            stt_transcript_committed: false,
+            tts_requested: false,
+            answer_generated: false,
+            tool_route_invoked: false,
+            protected_execution_requested: false,
+            speaker_identity_authorized: false,
+            business_state_mutated: false,
+            speaker_posture_only: true,
+        }
+    }
+
+    pub fn with_forbidden_downstream_work(mut self) -> Self {
+        self.provider_call_count = 1;
+        self.stt_transcript_committed = true;
+        self.tts_requested = true;
+        self.answer_generated = true;
+        self.tool_route_invoked = true;
+        self.protected_execution_requested = true;
+        self
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Stage34pVoiceIdProofReport {
+    pub source: Stage34pVoiceIdProofSource,
+    pub capture_window_seconds: u16,
+    pub enrollment_sample_count: u8,
+    pub genuine_trials: u8,
+    pub control_trials: u8,
+    pub far_bp: u16,
+    pub frr_bp: u16,
+    pub eer_bp: u16,
+    pub roc_eer_posture_recorded: bool,
+    pub spoof_control_recorded: bool,
+    pub quiet_control_recorded: bool,
+    pub impostor_control_recorded: bool,
+    pub noise_control_recorded: bool,
+    pub cross_device_posture_recorded: bool,
+    pub threshold_pack_version: String,
+    pub min_genuine_score_bp: u16,
+    pub max_biometric_control_score_bp: u16,
+    pub min_margin_bp: u16,
+    pub max_latency_ms: u16,
+    pub provider_call_count: u8,
+    pub raw_audio_committed: bool,
+    pub background_mic_capture: bool,
+    pub speaker_posture_only: bool,
+    pub authorization_absent: bool,
+    pub downstream_work_absent: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stage34pVoiceIdProofError {
+    CaptureWindowTooLong,
+    MissingThresholdPack,
+    MissingEnrollmentSamples,
+    TooManyEnrollmentSamples,
+    MissingGenuineTrial,
+    MissingControlTrial,
+    MissingImpostorControl,
+    MissingQuietControl,
+    MissingSpoofControl,
+    TooManyGenuineTrials,
+    TooManyControlTrials,
+    ForegroundInputMissing,
+    BackgroundCapture,
+    RawAudioCommitted,
+    ProfileEvidenceMissing,
+    ProviderCallAttempted,
+    DownstreamWorkAttempted,
+    ProtectedExecutionAttempted,
+    SpeakerIdentityAuthorizationAttempted,
+    BusinessStateMutationAttempted,
+    SpeakerPostureViolation,
+    GenuineVoiceSampleMissing,
+    GenuineRejected,
+    GenuineScoreBelowTarget,
+    GenuineMarginBelowTarget,
+    LatencyAboveTarget,
+    ControlVoiceSamplePresent,
+    ControlAcceptedIdentity,
+    ControlScoreAboveTarget,
+    FarAboveTarget,
+    FrrAboveTarget,
+    RocEerIncomplete,
+}
+
+pub fn verify_stage34p_controlled_voice_id_proof(
+    config: Stage34pVoiceIdProofConfig,
+    source: Stage34pVoiceIdProofSource,
+    capture_window_seconds: u16,
+    enrollment_sample_count: u8,
+    trials: &[Stage34pVoiceIdTrial],
+) -> Result<Stage34pVoiceIdProofReport, Stage34pVoiceIdProofError> {
+    if capture_window_seconds > config.max_capture_window_seconds {
+        return Err(Stage34pVoiceIdProofError::CaptureWindowTooLong);
+    }
+    if config.threshold_pack_version.trim().is_empty() {
+        return Err(Stage34pVoiceIdProofError::MissingThresholdPack);
+    }
+    if enrollment_sample_count == 0 {
+        return Err(Stage34pVoiceIdProofError::MissingEnrollmentSamples);
+    }
+    if enrollment_sample_count > config.max_enrollment_samples {
+        return Err(Stage34pVoiceIdProofError::TooManyEnrollmentSamples);
+    }
+
+    let mut genuine_trials = 0u8;
+    let mut control_trials = 0u8;
+    let false_rejects = 0u8;
+    let false_accepts = 0u8;
+    let mut min_genuine_score_bp = u16::MAX;
+    let mut max_biometric_control_score_bp = 0u16;
+    let mut min_margin_bp = u16::MAX;
+    let mut max_latency_ms = 0u16;
+    let mut provider_call_count = 0u8;
+    let mut impostor_control_recorded = false;
+    let mut quiet_control_recorded = false;
+    let mut spoof_control_recorded = false;
+    let mut noise_control_recorded = false;
+    let mut cross_device_posture_recorded = false;
+
+    for trial in trials {
+        if !trial.foreground_explicit_input {
+            return Err(Stage34pVoiceIdProofError::ForegroundInputMissing);
+        }
+        if trial.background_mic_capture {
+            return Err(Stage34pVoiceIdProofError::BackgroundCapture);
+        }
+        if trial.raw_audio_committed {
+            return Err(Stage34pVoiceIdProofError::RawAudioCommitted);
+        }
+        if trial.provider_call_count > 0 {
+            return Err(Stage34pVoiceIdProofError::ProviderCallAttempted);
+        }
+        if trial.stt_transcript_committed
+            || trial.tts_requested
+            || trial.answer_generated
+            || trial.tool_route_invoked
+        {
+            return Err(Stage34pVoiceIdProofError::DownstreamWorkAttempted);
+        }
+        if trial.protected_execution_requested {
+            return Err(Stage34pVoiceIdProofError::ProtectedExecutionAttempted);
+        }
+        if trial.speaker_identity_authorized {
+            return Err(Stage34pVoiceIdProofError::SpeakerIdentityAuthorizationAttempted);
+        }
+        if trial.business_state_mutated {
+            return Err(Stage34pVoiceIdProofError::BusinessStateMutationAttempted);
+        }
+        if !trial.speaker_posture_only {
+            return Err(Stage34pVoiceIdProofError::SpeakerPostureViolation);
+        }
+
+        provider_call_count = provider_call_count.saturating_add(trial.provider_call_count);
+        max_latency_ms = max_latency_ms.max(trial.latency_ms);
+
+        match trial.kind {
+            Stage34pVoiceIdTrialKind::GenuineVerification => {
+                genuine_trials = genuine_trials.saturating_add(1);
+                if genuine_trials > config.max_genuine_trials {
+                    return Err(Stage34pVoiceIdProofError::TooManyGenuineTrials);
+                }
+                if !trial.voice_sample_present {
+                    return Err(Stage34pVoiceIdProofError::GenuineVoiceSampleMissing);
+                }
+                if trial
+                    .sample_artifact_ref
+                    .as_deref()
+                    .is_none_or(|value| value.trim().is_empty())
+                {
+                    return Err(Stage34pVoiceIdProofError::ProfileEvidenceMissing);
+                }
+                if !trial.accepted_identity {
+                    return Err(Stage34pVoiceIdProofError::GenuineRejected);
+                }
+                if trial.score_bp < config.min_accept_score_bp {
+                    return Err(Stage34pVoiceIdProofError::GenuineScoreBelowTarget);
+                }
+                let margin = trial
+                    .margin_to_next_bp
+                    .ok_or(Stage34pVoiceIdProofError::GenuineMarginBelowTarget)?;
+                if margin < config.min_margin_bp {
+                    return Err(Stage34pVoiceIdProofError::GenuineMarginBelowTarget);
+                }
+                if trial.latency_ms > config.max_latency_ms {
+                    return Err(Stage34pVoiceIdProofError::LatencyAboveTarget);
+                }
+                min_genuine_score_bp = min_genuine_score_bp.min(trial.score_bp);
+                min_margin_bp = min_margin_bp.min(margin);
+            }
+            Stage34pVoiceIdTrialKind::ImpostorControl
+            | Stage34pVoiceIdTrialKind::QuietControl
+            | Stage34pVoiceIdTrialKind::SpoofControl
+            | Stage34pVoiceIdTrialKind::NoiseControl
+            | Stage34pVoiceIdTrialKind::CrossDeviceControl => {
+                control_trials = control_trials.saturating_add(1);
+                if control_trials > config.max_control_trials {
+                    return Err(Stage34pVoiceIdProofError::TooManyControlTrials);
+                }
+                if trial.kind == Stage34pVoiceIdTrialKind::QuietControl
+                    && trial.voice_sample_present
+                {
+                    return Err(Stage34pVoiceIdProofError::ControlVoiceSamplePresent);
+                }
+                if trial.kind != Stage34pVoiceIdTrialKind::QuietControl
+                    && trial
+                        .sample_artifact_ref
+                        .as_deref()
+                        .is_none_or(|value| value.trim().is_empty())
+                {
+                    return Err(Stage34pVoiceIdProofError::ProfileEvidenceMissing);
+                }
+                if trial.accepted_identity {
+                    return Err(Stage34pVoiceIdProofError::ControlAcceptedIdentity);
+                }
+
+                match trial.kind {
+                    Stage34pVoiceIdTrialKind::ImpostorControl => {
+                        impostor_control_recorded = true;
+                        if trial.score_bp > config.max_biometric_control_score_bp {
+                            return Err(Stage34pVoiceIdProofError::ControlScoreAboveTarget);
+                        }
+                        max_biometric_control_score_bp =
+                            max_biometric_control_score_bp.max(trial.score_bp);
+                    }
+                    Stage34pVoiceIdTrialKind::QuietControl => {
+                        quiet_control_recorded = true;
+                        if trial.score_bp > config.max_biometric_control_score_bp {
+                            return Err(Stage34pVoiceIdProofError::ControlScoreAboveTarget);
+                        }
+                        max_biometric_control_score_bp =
+                            max_biometric_control_score_bp.max(trial.score_bp);
+                    }
+                    Stage34pVoiceIdTrialKind::SpoofControl => {
+                        spoof_control_recorded = true;
+                        if trial.score_bp > config.max_biometric_control_score_bp {
+                            return Err(Stage34pVoiceIdProofError::ControlScoreAboveTarget);
+                        }
+                        max_biometric_control_score_bp =
+                            max_biometric_control_score_bp.max(trial.score_bp);
+                    }
+                    Stage34pVoiceIdTrialKind::NoiseControl => {
+                        noise_control_recorded = true;
+                        if trial.score_bp > config.max_biometric_control_score_bp {
+                            return Err(Stage34pVoiceIdProofError::ControlScoreAboveTarget);
+                        }
+                        max_biometric_control_score_bp =
+                            max_biometric_control_score_bp.max(trial.score_bp);
+                    }
+                    Stage34pVoiceIdTrialKind::CrossDeviceControl => {
+                        cross_device_posture_recorded = true;
+                    }
+                    Stage34pVoiceIdTrialKind::GenuineVerification => {}
+                }
+            }
+        }
+    }
+
+    if genuine_trials == 0 {
+        return Err(Stage34pVoiceIdProofError::MissingGenuineTrial);
+    }
+    if control_trials == 0 {
+        return Err(Stage34pVoiceIdProofError::MissingControlTrial);
+    }
+    if !impostor_control_recorded {
+        return Err(Stage34pVoiceIdProofError::MissingImpostorControl);
+    }
+    if !quiet_control_recorded {
+        return Err(Stage34pVoiceIdProofError::MissingQuietControl);
+    }
+    if !spoof_control_recorded {
+        return Err(Stage34pVoiceIdProofError::MissingSpoofControl);
+    }
+
+    let far_bp = stage34p_rate_bp(false_accepts, control_trials);
+    let frr_bp = stage34p_rate_bp(false_rejects, genuine_trials);
+    if far_bp > config.max_far_bp {
+        return Err(Stage34pVoiceIdProofError::FarAboveTarget);
+    }
+    if frr_bp > config.max_frr_bp {
+        return Err(Stage34pVoiceIdProofError::FrrAboveTarget);
+    }
+
+    let roc_eer_posture_recorded =
+        min_genuine_score_bp > max_biometric_control_score_bp && far_bp <= config.max_far_bp;
+    let eer_bp = far_bp.max(frr_bp);
+    if !roc_eer_posture_recorded || eer_bp > config.max_eer_bp {
+        return Err(Stage34pVoiceIdProofError::RocEerIncomplete);
+    }
+
+    Ok(Stage34pVoiceIdProofReport {
+        source,
+        capture_window_seconds,
+        enrollment_sample_count,
+        genuine_trials,
+        control_trials,
+        far_bp,
+        frr_bp,
+        eer_bp,
+        roc_eer_posture_recorded,
+        spoof_control_recorded,
+        quiet_control_recorded,
+        impostor_control_recorded,
+        noise_control_recorded,
+        cross_device_posture_recorded,
+        threshold_pack_version: config.threshold_pack_version,
+        min_genuine_score_bp,
+        max_biometric_control_score_bp,
+        min_margin_bp,
+        max_latency_ms,
+        provider_call_count,
+        raw_audio_committed: false,
+        background_mic_capture: false,
+        speaker_posture_only: true,
+        authorization_absent: true,
+        downstream_work_absent: true,
+    })
+}
+
+fn stage34p_rate_bp(numerator: u8, denominator: u8) -> u16 {
+    if denominator == 0 {
+        return 10_000;
+    }
+    ((u32::from(numerator) * 10_000 + u32::from(denominator) / 2) / u32::from(denominator))
+        .min(10_000) as u16
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum VoiceIdentityPlatform {
     Unknown,
@@ -1937,11 +2366,13 @@ mod tests {
     use super::*;
     use selene_engines::ph1_voice_id::{
         reason_codes as engine_voice_reason_codes, simulation_profile_embedding_from_seed,
+        VoiceEmbedding,
     };
     use selene_kernel_contracts::ph1_voice_id::{
         DeviceTrustLevel, DiarizationSegment, Ph1VoiceIdRequest, Ph1VoiceIdResponse,
         Ph1VoiceIdSimRequest, SpeakerAssertionOk, SpeakerLabel, VoiceIdEnrollStartDraftRequest,
-        VoiceIdSimulationRequest, VoiceIdSimulationType, PH1VOICEID_SIM_CONTRACT_VERSION,
+        VoiceIdRiskSignal, VoiceIdSimulationRequest, VoiceIdSimulationType,
+        PH1VOICEID_SIM_CONTRACT_VERSION,
     };
     use selene_kernel_contracts::ph1art::{
         ArtifactScopeType, ArtifactStatus, ArtifactType, ArtifactVersion,
@@ -7114,5 +7545,496 @@ mod tests {
             !learn_payload.contains_key(&PayloadKey::new("decision_v1").unwrap()),
             "scoped learn row must not gain decision_v1"
         );
+    }
+
+    fn stage34p_competitor_embedding(seed: u64) -> VoiceEmbedding {
+        let mut embedding = simulation_profile_embedding_from_seed(seed);
+        embedding[0] = embedding[0].saturating_add(256);
+        embedding
+    }
+
+    fn stage34p_enrolled_speakers() -> Vec<EngineEnrolledSpeaker> {
+        vec![
+            EngineEnrolledSpeaker {
+                speaker_id: selene_kernel_contracts::ph1_voice_id::SpeakerId::new(
+                    "stage34p_speaker_primary",
+                )
+                .unwrap(),
+                user_id: Some(
+                    selene_kernel_contracts::ph1_voice_id::UserId::new("stage34p_user_primary")
+                        .unwrap(),
+                ),
+                fingerprint: 7,
+                profile_embedding: Some(simulation_profile_embedding_from_seed(7)),
+            },
+            EngineEnrolledSpeaker {
+                speaker_id: selene_kernel_contracts::ph1_voice_id::SpeakerId::new(
+                    "stage34p_speaker_competitor",
+                )
+                .unwrap(),
+                user_id: Some(
+                    selene_kernel_contracts::ph1_voice_id::UserId::new("stage34p_user_competitor")
+                        .unwrap(),
+                ),
+                fingerprint: 17,
+                profile_embedding: Some(stage34p_competitor_embedding(7)),
+            },
+        ]
+    }
+
+    fn stage34p_margin_to_next_bp(response: &Ph1VoiceIdResponse) -> Option<u16> {
+        match response {
+            Ph1VoiceIdResponse::SpeakerAssertionOk(ok) => ok.margin_to_next_bp,
+            Ph1VoiceIdResponse::SpeakerAssertionUnknown(unknown) => unknown.margin_to_next_bp,
+        }
+    }
+
+    fn stage34p_runtime_trial(
+        trial_id: &str,
+        kind: Stage34pVoiceIdTrialKind,
+        mut req: Ph1VoiceIdRequest,
+        obs: EngineVoiceIdObservation,
+        sample_artifact_ref: Option<&str>,
+        voice_sample_present: bool,
+    ) -> Stage34pVoiceIdTrial {
+        let runtime = Ph1VoiceIdLiveRuntime::default();
+        req.now = MonotonicTimeNs(req.now.0.saturating_add(trial_id.len() as u64));
+        let response = runtime
+            .run_identity_assertion(
+                &req,
+                VoiceIdentityRuntimeContext::from_tenant_app_platform(
+                    Some("tenant_stage34p".to_string()),
+                    Some(AppPlatform::Desktop),
+                    VoiceIdentityChannel::Explicit,
+                ),
+                stage34p_enrolled_speakers(),
+                obs,
+            )
+            .expect("Stage 34P controlled Voice ID runtime trial must run");
+        Stage34pVoiceIdTrial::controlled(
+            trial_id,
+            kind,
+            sample_artifact_ref,
+            voice_sample_present,
+            matches!(response, Ph1VoiceIdResponse::SpeakerAssertionOk(_)),
+            voice_score_bp(&response),
+            stage34p_margin_to_next_bp(&response),
+            320,
+        )
+    }
+
+    fn stage34p_genuine_trial(id: &str) -> Stage34pVoiceIdTrial {
+        stage34p_runtime_trial(
+            id,
+            Stage34pVoiceIdTrialKind::GenuineVerification,
+            sample_live_request(),
+            EngineVoiceIdObservation {
+                primary_fingerprint: Some(7),
+                secondary_fingerprint: None,
+                primary_embedding: Some(simulation_profile_embedding_from_seed(7)),
+                secondary_embedding: None,
+                spoof_risk: false,
+            },
+            Some("stage34p://embedding/genuine_primary"),
+            true,
+        )
+    }
+
+    fn stage34p_impostor_control() -> Stage34pVoiceIdTrial {
+        stage34p_runtime_trial(
+            "impostor_1",
+            Stage34pVoiceIdTrialKind::ImpostorControl,
+            sample_live_request(),
+            EngineVoiceIdObservation {
+                primary_fingerprint: Some(99),
+                secondary_fingerprint: None,
+                primary_embedding: Some(simulation_profile_embedding_from_seed(99)),
+                secondary_embedding: None,
+                spoof_risk: false,
+            },
+            Some("stage34p://embedding/impostor"),
+            true,
+        )
+    }
+
+    fn stage34p_quiet_control() -> Stage34pVoiceIdTrial {
+        let mut req = sample_live_request();
+        req.vad_events.clear();
+        stage34p_runtime_trial(
+            "quiet_1",
+            Stage34pVoiceIdTrialKind::QuietControl,
+            req,
+            EngineVoiceIdObservation {
+                primary_fingerprint: None,
+                secondary_fingerprint: None,
+                primary_embedding: None,
+                secondary_embedding: None,
+                spoof_risk: false,
+            },
+            Option::<&str>::None,
+            false,
+        )
+    }
+
+    fn stage34p_spoof_control() -> Stage34pVoiceIdTrial {
+        stage34p_runtime_trial(
+            "spoof_1",
+            Stage34pVoiceIdTrialKind::SpoofControl,
+            sample_live_request(),
+            EngineVoiceIdObservation {
+                primary_fingerprint: Some(7),
+                secondary_fingerprint: None,
+                primary_embedding: Some(simulation_profile_embedding_from_seed(7)),
+                secondary_embedding: None,
+                spoof_risk: true,
+            },
+            Some("stage34p://embedding/spoof_replay_control"),
+            true,
+        )
+    }
+
+    fn stage34p_noise_control() -> Stage34pVoiceIdTrial {
+        let mut req = sample_live_request();
+        req.risk_signals.push(VoiceIdRiskSignal::HighEchoRisk);
+        stage34p_runtime_trial(
+            "noise_1",
+            Stage34pVoiceIdTrialKind::NoiseControl,
+            req,
+            EngineVoiceIdObservation {
+                primary_fingerprint: Some(7),
+                secondary_fingerprint: None,
+                primary_embedding: Some(simulation_profile_embedding_from_seed(7)),
+                secondary_embedding: None,
+                spoof_risk: false,
+            },
+            Some("stage34p://embedding/noise_room_control"),
+            true,
+        )
+    }
+
+    fn stage34p_cross_device_control() -> Stage34pVoiceIdTrial {
+        let mut req = sample_live_request();
+        req.device_owner_user_id = Some(
+            selene_kernel_contracts::ph1_voice_id::UserId::new("stage34p_other_device_owner")
+                .unwrap(),
+        );
+        stage34p_runtime_trial(
+            "cross_device_1",
+            Stage34pVoiceIdTrialKind::CrossDeviceControl,
+            req,
+            EngineVoiceIdObservation {
+                primary_fingerprint: Some(7),
+                secondary_fingerprint: None,
+                primary_embedding: Some(simulation_profile_embedding_from_seed(7)),
+                secondary_embedding: None,
+                spoof_risk: false,
+            },
+            Some("stage34p://embedding/cross_device_control"),
+            true,
+        )
+    }
+
+    fn stage34p_controlled_trials() -> Vec<Stage34pVoiceIdTrial> {
+        vec![
+            stage34p_genuine_trial("genuine_1"),
+            stage34p_genuine_trial("genuine_2"),
+            stage34p_impostor_control(),
+            stage34p_quiet_control(),
+            stage34p_spoof_control(),
+            stage34p_noise_control(),
+            stage34p_cross_device_control(),
+        ]
+    }
+
+    #[test]
+    fn stage_34p_voice_id_manifest_records_device_samples_thresholds_and_stop_rules() {
+        let report = verify_stage34p_controlled_voice_id_proof(
+            Stage34pVoiceIdProofConfig::controlled_stage34p(),
+            Stage34pVoiceIdProofSource::ControlledEmbeddingPack,
+            20,
+            3,
+            &stage34p_controlled_trials(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            report.source,
+            Stage34pVoiceIdProofSource::ControlledEmbeddingPack
+        );
+        assert_eq!(report.capture_window_seconds, 20);
+        assert_eq!(report.enrollment_sample_count, 3);
+        assert_eq!(report.genuine_trials, 2);
+        assert_eq!(report.control_trials, 5);
+        assert_eq!(report.provider_call_count, 0);
+        assert_eq!(report.far_bp, 0);
+        assert_eq!(report.frr_bp, 0);
+        assert_eq!(report.eer_bp, 0);
+        assert!(report.roc_eer_posture_recorded);
+        assert!(report.impostor_control_recorded);
+        assert!(report.quiet_control_recorded);
+        assert!(report.spoof_control_recorded);
+        assert!(report.noise_control_recorded);
+        assert!(report.cross_device_posture_recorded);
+        assert!(report.speaker_posture_only);
+        assert!(report.authorization_absent);
+    }
+
+    #[test]
+    fn stage34p_controlled_voice_id_proof_alias_executes_nonzero() {
+        let report = verify_stage34p_controlled_voice_id_proof(
+            Stage34pVoiceIdProofConfig::controlled_stage34p(),
+            Stage34pVoiceIdProofSource::ControlledEmbeddingPack,
+            20,
+            3,
+            &stage34p_controlled_trials(),
+        )
+        .unwrap();
+
+        assert_eq!(report.far_bp, 0);
+        assert_eq!(report.frr_bp, 0);
+        assert!(report.authorization_absent);
+    }
+
+    #[test]
+    fn stage_34p_genuine_voice_trial_accepts_under_threshold_without_authorization() {
+        let report = verify_stage34p_controlled_voice_id_proof(
+            Stage34pVoiceIdProofConfig::controlled_stage34p(),
+            Stage34pVoiceIdProofSource::ForegroundMic,
+            12,
+            2,
+            &[
+                stage34p_genuine_trial("genuine_foreground_1"),
+                stage34p_impostor_control(),
+                stage34p_quiet_control(),
+                stage34p_spoof_control(),
+            ],
+        )
+        .unwrap();
+
+        assert!(report.min_genuine_score_bp >= 9_300);
+        assert!(report.min_margin_bp >= 300);
+        assert!(report.authorization_absent);
+        assert!(report.downstream_work_absent);
+    }
+
+    #[test]
+    fn stage_34p_impostor_quiet_and_spoof_controls_fail_closed() {
+        let report = verify_stage34p_controlled_voice_id_proof(
+            Stage34pVoiceIdProofConfig::controlled_stage34p(),
+            Stage34pVoiceIdProofSource::ControlledEmbeddingPack,
+            10,
+            2,
+            &[
+                stage34p_genuine_trial("genuine_control_set"),
+                stage34p_impostor_control(),
+                stage34p_quiet_control(),
+                stage34p_spoof_control(),
+            ],
+        )
+        .unwrap();
+
+        assert_eq!(report.far_bp, 0);
+        assert_eq!(report.max_biometric_control_score_bp, 4_500);
+
+        let mut accepted_impostor = stage34p_impostor_control();
+        accepted_impostor.accepted_identity = true;
+        let err = verify_stage34p_controlled_voice_id_proof(
+            Stage34pVoiceIdProofConfig::controlled_stage34p(),
+            Stage34pVoiceIdProofSource::ControlledEmbeddingPack,
+            10,
+            2,
+            &[
+                stage34p_genuine_trial("genuine_bad_impostor"),
+                accepted_impostor,
+                stage34p_quiet_control(),
+                stage34p_spoof_control(),
+            ],
+        )
+        .unwrap_err();
+        assert_eq!(err, Stage34pVoiceIdProofError::ControlAcceptedIdentity);
+
+        let mut quiet = stage34p_quiet_control();
+        quiet.voice_sample_present = true;
+        let err = verify_stage34p_controlled_voice_id_proof(
+            Stage34pVoiceIdProofConfig::controlled_stage34p(),
+            Stage34pVoiceIdProofSource::ControlledEmbeddingPack,
+            10,
+            2,
+            &[
+                stage34p_genuine_trial("genuine_bad_quiet"),
+                stage34p_impostor_control(),
+                quiet,
+                stage34p_spoof_control(),
+            ],
+        )
+        .unwrap_err();
+        assert_eq!(err, Stage34pVoiceIdProofError::ControlVoiceSamplePresent);
+    }
+
+    #[test]
+    fn stage_34p_far_frr_roc_eer_gates_are_recorded_or_fail_closed() {
+        let report = verify_stage34p_controlled_voice_id_proof(
+            Stage34pVoiceIdProofConfig::controlled_stage34p(),
+            Stage34pVoiceIdProofSource::ControlledEmbeddingPack,
+            10,
+            3,
+            &stage34p_controlled_trials(),
+        )
+        .unwrap();
+
+        assert_eq!(report.far_bp, 0);
+        assert_eq!(report.frr_bp, 0);
+        assert_eq!(report.eer_bp, 0);
+        assert!(report.min_genuine_score_bp > report.max_biometric_control_score_bp);
+
+        let mut weak_genuine = stage34p_genuine_trial("weak_genuine");
+        weak_genuine.score_bp = 8_900;
+        let err = verify_stage34p_controlled_voice_id_proof(
+            Stage34pVoiceIdProofConfig::controlled_stage34p(),
+            Stage34pVoiceIdProofSource::ControlledEmbeddingPack,
+            10,
+            2,
+            &[
+                weak_genuine,
+                stage34p_impostor_control(),
+                stage34p_quiet_control(),
+                stage34p_spoof_control(),
+            ],
+        )
+        .unwrap_err();
+        assert_eq!(err, Stage34pVoiceIdProofError::GenuineScoreBelowTarget);
+    }
+
+    #[test]
+    fn stage_34p_voice_id_cannot_route_to_stt_tts_provider_tool_or_protected_execution() {
+        let err = verify_stage34p_controlled_voice_id_proof(
+            Stage34pVoiceIdProofConfig::controlled_stage34p(),
+            Stage34pVoiceIdProofSource::ControlledEmbeddingPack,
+            10,
+            2,
+            &[
+                stage34p_genuine_trial("genuine_forbidden_provider")
+                    .with_forbidden_downstream_work(),
+                stage34p_impostor_control(),
+                stage34p_quiet_control(),
+                stage34p_spoof_control(),
+            ],
+        )
+        .unwrap_err();
+        assert_eq!(err, Stage34pVoiceIdProofError::ProviderCallAttempted);
+
+        let mut downstream = stage34p_genuine_trial("genuine_downstream");
+        downstream.stt_transcript_committed = true;
+        downstream.tts_requested = true;
+        downstream.answer_generated = true;
+        downstream.tool_route_invoked = true;
+        let err = verify_stage34p_controlled_voice_id_proof(
+            Stage34pVoiceIdProofConfig::controlled_stage34p(),
+            Stage34pVoiceIdProofSource::ControlledEmbeddingPack,
+            10,
+            2,
+            &[
+                downstream,
+                stage34p_impostor_control(),
+                stage34p_quiet_control(),
+                stage34p_spoof_control(),
+            ],
+        )
+        .unwrap_err();
+        assert_eq!(err, Stage34pVoiceIdProofError::DownstreamWorkAttempted);
+
+        let mut protected = stage34p_genuine_trial("genuine_protected");
+        protected.protected_execution_requested = true;
+        let err = verify_stage34p_controlled_voice_id_proof(
+            Stage34pVoiceIdProofConfig::controlled_stage34p(),
+            Stage34pVoiceIdProofSource::ControlledEmbeddingPack,
+            10,
+            2,
+            &[
+                protected,
+                stage34p_impostor_control(),
+                stage34p_quiet_control(),
+                stage34p_spoof_control(),
+            ],
+        )
+        .unwrap_err();
+        assert_eq!(err, Stage34pVoiceIdProofError::ProtectedExecutionAttempted);
+    }
+
+    #[test]
+    fn stage_34p_voice_id_artifacts_are_redacted_and_raw_audio_is_not_committed() {
+        let mut raw_audio = stage34p_genuine_trial("genuine_raw_audio");
+        raw_audio.raw_audio_committed = true;
+        let err = verify_stage34p_controlled_voice_id_proof(
+            Stage34pVoiceIdProofConfig::controlled_stage34p(),
+            Stage34pVoiceIdProofSource::ForegroundMic,
+            10,
+            2,
+            &[
+                raw_audio,
+                stage34p_impostor_control(),
+                stage34p_quiet_control(),
+                stage34p_spoof_control(),
+            ],
+        )
+        .unwrap_err();
+        assert_eq!(err, Stage34pVoiceIdProofError::RawAudioCommitted);
+
+        let mut missing_artifact = stage34p_genuine_trial("genuine_missing_artifact");
+        missing_artifact.sample_artifact_ref = None;
+        let err = verify_stage34p_controlled_voice_id_proof(
+            Stage34pVoiceIdProofConfig::controlled_stage34p(),
+            Stage34pVoiceIdProofSource::ControlledEmbeddingPack,
+            10,
+            2,
+            &[
+                missing_artifact,
+                stage34p_impostor_control(),
+                stage34p_quiet_control(),
+                stage34p_spoof_control(),
+            ],
+        )
+        .unwrap_err();
+        assert_eq!(err, Stage34pVoiceIdProofError::ProfileEvidenceMissing);
+    }
+
+    #[test]
+    fn stage_34p_speaker_identity_alone_cannot_authorize_protected_actions() {
+        let mut authorized = stage34p_genuine_trial("genuine_authority");
+        authorized.speaker_identity_authorized = true;
+        let err = verify_stage34p_controlled_voice_id_proof(
+            Stage34pVoiceIdProofConfig::controlled_stage34p(),
+            Stage34pVoiceIdProofSource::ControlledEmbeddingPack,
+            10,
+            2,
+            &[
+                authorized,
+                stage34p_impostor_control(),
+                stage34p_quiet_control(),
+                stage34p_spoof_control(),
+            ],
+        )
+        .unwrap_err();
+        assert_eq!(
+            err,
+            Stage34pVoiceIdProofError::SpeakerIdentityAuthorizationAttempted
+        );
+
+        let mut not_posture_only = stage34p_genuine_trial("genuine_not_posture_only");
+        not_posture_only.speaker_posture_only = false;
+        let err = verify_stage34p_controlled_voice_id_proof(
+            Stage34pVoiceIdProofConfig::controlled_stage34p(),
+            Stage34pVoiceIdProofSource::ControlledEmbeddingPack,
+            10,
+            2,
+            &[
+                not_posture_only,
+                stage34p_impostor_control(),
+                stage34p_quiet_control(),
+                stage34p_spoof_control(),
+            ],
+        )
+        .unwrap_err();
+        assert_eq!(err, Stage34pVoiceIdProofError::SpeakerPostureViolation);
     }
 }
