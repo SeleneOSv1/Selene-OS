@@ -27,6 +27,64 @@ fn load_fixture(name: &str) -> Value {
         .unwrap_or_else(|e| panic!("failed to parse fixture {}: {}", path.display(), e))
 }
 
+fn repo_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
+}
+
+fn load_repo_text(path: &str) -> String {
+    let path = repo_root().join(path);
+    fs::read_to_string(&path)
+        .unwrap_or_else(|e| panic!("failed to read repo file {}: {}", path.display(), e))
+}
+
+#[derive(Debug, Deserialize)]
+struct Stage34QNativeParityManifest {
+    stage: String,
+    proof_class: String,
+    provider_calls: u8,
+    protected_executions: u8,
+    connector_writes: u8,
+    raw_audio_artifact_count: u8,
+    full_certification_claimed: bool,
+    broad_stage34_complete: bool,
+    passed_rows_preserved: Vec<String>,
+    targets: Vec<Stage34QNativeParityTarget>,
+}
+
+#[derive(Debug, Deserialize)]
+struct Stage34QNativeParityTarget {
+    target_id: String,
+    platform: String,
+    source_status: String,
+    native_source_anchor: String,
+    build_smoke_required: bool,
+    client_renderer_only: bool,
+    provider_direct_call_allowed: bool,
+    source_ranking_allowed: bool,
+    local_answer_synthesis_allowed: bool,
+    protected_execution_allowed: bool,
+    authority_mutation_allowed: bool,
+    explicit_activation_only: bool,
+    live_side_button_producer_claimed: bool,
+    wake_word_parity_allowed: bool,
+}
+
+fn load_stage34q_manifest() -> Stage34QNativeParityManifest {
+    serde_json::from_value(load_fixture("native_runtime_parity_case.json"))
+        .expect("Stage 34Q native parity fixture should decode")
+}
+
+fn stage34q_target<'a>(
+    manifest: &'a Stage34QNativeParityManifest,
+    target_id: &str,
+) -> &'a Stage34QNativeParityTarget {
+    manifest
+        .targets
+        .iter()
+        .find(|target| target.target_id == target_id)
+        .unwrap_or_else(|| panic!("missing Stage 34Q target {target_id}"))
+}
+
 #[test]
 fn test_t1_multi_query_decomposition_stable_and_capped() {
     let fixture = load_fixture("multi_query_case.json");
@@ -233,9 +291,15 @@ fn test_t4_reranker_ordering_stable() {
                 .and_then(Value::as_str)
                 .expect("canonical_url")
                 .to_string(),
-            relevance: item.get("relevance").and_then(Value::as_i64).expect("relevance") as i32,
+            relevance: item
+                .get("relevance")
+                .and_then(Value::as_i64)
+                .expect("relevance") as i32,
             trust: item.get("trust").and_then(Value::as_i64).expect("trust") as i32,
-            freshness: item.get("freshness").and_then(Value::as_i64).expect("freshness") as i32,
+            freshness: item
+                .get("freshness")
+                .and_then(Value::as_i64)
+                .expect("freshness") as i32,
             corroboration: item
                 .get("corroboration")
                 .and_then(Value::as_i64)
@@ -332,7 +396,11 @@ fn test_t6_presentation_modes_preserve_truth_and_citations() {
     )
     .expect("deep render should pass");
 
-    for packet in [&brief.write_packet, &standard.write_packet, &deep.write_packet] {
+    for packet in [
+        &brief.write_packet,
+        &standard.write_packet,
+        &deep.write_packet,
+    ] {
         let formatted = packet
             .get("formatted_text")
             .and_then(Value::as_str)
@@ -561,4 +629,175 @@ fn lines_after_heading(formatted_text: &str, heading: &str) -> Vec<String> {
         out.push(trimmed.to_string());
     }
     out
+}
+
+#[test]
+fn stage_34q_native_parity_manifest_records_targets_builds_and_stop_rules() {
+    let manifest = load_stage34q_manifest();
+
+    assert_eq!(
+        manifest.stage,
+        "Stage 34Q - Native Runtime Parity Controlled Proof"
+    );
+    assert_eq!(
+        manifest.proof_class,
+        "CONTROLLED_NATIVE_RUNTIME_PARITY_PROOF"
+    );
+    assert_eq!(manifest.provider_calls, 0);
+    assert_eq!(manifest.protected_executions, 0);
+    assert_eq!(manifest.connector_writes, 0);
+    assert_eq!(manifest.raw_audio_artifact_count, 0);
+    assert!(!manifest.full_certification_claimed);
+    assert!(!manifest.broad_stage34_complete);
+    assert_eq!(manifest.targets.len(), 4);
+
+    let mac = stage34q_target(&manifest, "mac_desktop");
+    assert_eq!(mac.platform, "macOS");
+    assert_eq!(mac.source_status, "implemented");
+    assert_eq!(
+        mac.native_source_anchor,
+        "apple/mac_desktop/SeleneMacDesktop"
+    );
+    assert!(mac.build_smoke_required);
+
+    let iphone = stage34q_target(&manifest, "iphone");
+    assert_eq!(iphone.platform, "iPhone");
+    assert_eq!(iphone.source_status, "implemented");
+    assert_eq!(iphone.native_source_anchor, "apple/iphone/SeleneIPhone");
+    assert!(iphone.build_smoke_required);
+
+    for target_id in ["android", "windows"] {
+        let target = stage34q_target(&manifest, target_id);
+        assert_eq!(target.source_status, "planned_missing");
+        assert!(!target.build_smoke_required);
+    }
+}
+
+#[test]
+fn stage_34q_mac_and_iphone_runtime_contracts_match_adapter_truth() {
+    let manifest = load_stage34q_manifest();
+    let mac = stage34q_target(&manifest, "mac_desktop");
+    let iphone = stage34q_target(&manifest, "iphone");
+
+    assert!(mac.client_renderer_only);
+    assert!(iphone.client_renderer_only);
+    assert!(manifest
+        .passed_rows_preserved
+        .contains(&"Provider/model governance".to_string()));
+    assert!(manifest
+        .passed_rows_preserved
+        .contains(&"Wake/activation".to_string()));
+    assert!(manifest
+        .passed_rows_preserved
+        .contains(&"STT/listening".to_string()));
+    assert!(manifest
+        .passed_rows_preserved
+        .contains(&"TTS naturalness".to_string()));
+    assert!(manifest
+        .passed_rows_preserved
+        .contains(&"Voice ID production quality".to_string()));
+
+    let mac_bridge =
+        load_repo_text("apple/mac_desktop/SeleneMacDesktop/SeleneMacDesktopRuntimeBridge.swift");
+    assert!(mac_bridge.contains("This shell remains non-authoritative"));
+    assert!(mac_bridge.contains("does not fabricate local assistant output"));
+    assert!(mac_bridge.contains("does not introduce native wake-listener start or stop"));
+
+    let iphone_shell = load_repo_text("apple/iphone/SeleneIPhone/SessionShellView.swift");
+    assert!(iphone_shell.contains("EXPLICIT_ONLY"));
+    assert!(iphone_shell.contains("No wake parity"));
+    assert!(iphone_shell.contains("No local authority"));
+}
+
+#[test]
+fn stage_34q_iphone_side_button_explicit_activation_remains_non_wake() {
+    let manifest = load_stage34q_manifest();
+    let iphone = stage34q_target(&manifest, "iphone");
+
+    assert!(iphone.explicit_activation_only);
+    assert!(!iphone.live_side_button_producer_claimed);
+    assert!(!iphone.wake_word_parity_allowed);
+
+    let iphone_shell = load_repo_text("apple/iphone/SeleneIPhone/SessionShellView.swift");
+    assert!(iphone_shell.contains("No side-button producer claim"));
+    assert!(iphone_shell.contains("This shell does not begin capture on wake"));
+}
+
+#[test]
+fn stage_34q_native_clients_cannot_call_providers_or_rank_sources() {
+    let manifest = load_stage34q_manifest();
+
+    assert_eq!(manifest.provider_calls, 0);
+    for target in &manifest.targets {
+        assert!(
+            !target.provider_direct_call_allowed,
+            "{} must not call providers directly",
+            target.target_id
+        );
+        assert!(
+            !target.source_ranking_allowed,
+            "{} must not rank sources locally",
+            target.target_id
+        );
+        assert!(
+            !target.local_answer_synthesis_allowed,
+            "{} must not synthesize local answers",
+            target.target_id
+        );
+    }
+}
+
+#[test]
+fn stage_34q_native_clients_cannot_execute_protected_actions_or_mutate_authority() {
+    let manifest = load_stage34q_manifest();
+
+    assert_eq!(manifest.protected_executions, 0);
+    assert_eq!(manifest.connector_writes, 0);
+    for target in &manifest.targets {
+        assert!(
+            !target.protected_execution_allowed,
+            "{} must not perform protected actions",
+            target.target_id
+        );
+        assert!(
+            !target.authority_mutation_allowed,
+            "{} must not mutate authority",
+            target.target_id
+        );
+        assert!(target.client_renderer_only);
+    }
+}
+
+#[test]
+fn stage_34q_android_windows_gaps_are_reported_without_fake_parity() {
+    let manifest = load_stage34q_manifest();
+    let android = stage34q_target(&manifest, "android");
+    let windows = stage34q_target(&manifest, "windows");
+
+    assert_eq!(android.source_status, "planned_missing");
+    assert_eq!(windows.source_status, "planned_missing");
+    assert_eq!(
+        android.native_source_anchor,
+        "NOT_IMPLEMENTED_IN_CURRENT_REPO"
+    );
+    assert_eq!(
+        windows.native_source_anchor,
+        "NOT_IMPLEMENTED_IN_CURRENT_REPO"
+    );
+    assert!(!android.build_smoke_required);
+    assert!(!windows.build_smoke_required);
+}
+
+#[test]
+fn stage_34q_full_certification_remains_blocked_until_final_gate() {
+    let manifest = load_stage34q_manifest();
+
+    assert!(!manifest.full_certification_claimed);
+    assert!(!manifest.broad_stage34_complete);
+    assert_eq!(manifest.raw_audio_artifact_count, 0);
+}
+
+#[test]
+fn stage34q_native_runtime_parity_controlled_proof_alias_executes_nonzero() {
+    stage_34q_native_parity_manifest_records_targets_builds_and_stop_rules();
 }

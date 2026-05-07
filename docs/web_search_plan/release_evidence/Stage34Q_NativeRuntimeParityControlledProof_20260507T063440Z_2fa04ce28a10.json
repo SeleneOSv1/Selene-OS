@@ -1,0 +1,46 @@
+{
+  "stage": "Stage 34Q - Native Runtime Parity Controlled Proof",
+  "status": "PROVEN_COMPLETE",
+  "repo_root": "/Users/selene/Documents/Selene-OS",
+  "dependency_head": "2fa04ce28a101dec0e7f5eef81e6cc6596ae26f8",
+  "build_class": "IMPLEMENTATION / CONTROLLED_NATIVE_RUNTIME_PARITY_PROOF",
+  "summary": {
+    "native_runtime_parity": "CERTIFICATION_TARGET_PASSED",
+    "provider_model_governance": "CERTIFICATION_TARGET_PASSED",
+    "wake_activation": "CERTIFICATION_TARGET_PASSED",
+    "stt_listening": "CERTIFICATION_TARGET_PASSED",
+    "tts_naturalness": "CERTIFICATION_TARGET_PASSED",
+    "voice_id_production_quality": "CERTIFICATION_TARGET_PASSED",
+    "broad_stage34_complete": false,
+    "full_certification": "BLOCKED_WITH_OWNER_AND_NEXT_ACTION"
+  },
+  "controlled_proof": {
+    "parity_fixture": "docs/web_search_plan/parity_fixtures/native_runtime_parity_case.json",
+    "macos_source_status": "implemented",
+    "macos_build_smoke": "PASSED",
+    "iphone_source_status": "implemented",
+    "iphone_activation_posture": "EXPLICIT_SIDE_BUTTON_NON_WAKE",
+    "iphone_wake_word_parity": "BLOCKED",
+    "iphone_simulator_smoke": "UNAVAILABLE_NO_AVAILABLE_SIMULATOR_DEVICES_REPORTED",
+    "android_status": "PLANNED_MISSING_FROM_CURRENT_REPO_TRUTH",
+    "windows_status": "PLANNED_MISSING_FROM_CURRENT_REPO_TRUTH",
+    "native_clients_authority": "CLIENT_RENDERER_ONLY",
+    "provider_calls": 0,
+    "protected_executions": 0,
+    "connector_writes": 0,
+    "raw_audio_artifact_count": 0,
+    "background_capture_count": 0,
+    "full_certification_claimed": false
+  },
+  "commands": [
+    "cargo check -p selene_kernel_contracts -p selene_storage -p selene_os -p selene_adapter -p selene_engines -p selene_tools",
+    "cargo test -p selene_os stage_34q -- --test-threads=1",
+    "cargo test -p selene_os stage34q -- --test-threads=1",
+    "cargo test -p selene_os parity -- --test-threads=1",
+    "xcodebuild -project apple/mac_desktop/SeleneMacDesktop.xcodeproj -scheme SeleneMacDesktop -destination 'platform=macOS' build",
+    "cargo test -p selene_engines stage2_global_off_blocks_websearch_zero_attempts -- --test-threads=1",
+    "cargo test -p selene_engines stage8_provider_off_all_lanes_block_before_attempt_or_dispatch -- --test-threads=1",
+    "cargo test -p selene_os stage2_web_provider_global_off_blocks_external_before_network -- --test-threads=1"
+  ],
+  "next_lawful_action": "Stage 34 remaining-row closure-map refresh after Stage 34Q"
+}

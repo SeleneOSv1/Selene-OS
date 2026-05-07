@@ -1,0 +1,83 @@
+{
+  "stage": "Stage 34Q - Native Runtime Parity Controlled Proof",
+  "proof_class": "CONTROLLED_NATIVE_RUNTIME_PARITY_PROOF",
+  "provider_calls": 0,
+  "protected_executions": 0,
+  "connector_writes": 0,
+  "raw_audio_artifact_count": 0,
+  "full_certification_claimed": false,
+  "broad_stage34_complete": false,
+  "passed_rows_preserved": [
+    "Provider/model governance",
+    "Wake/activation",
+    "STT/listening",
+    "TTS naturalness",
+    "Voice ID production quality"
+  ],
+  "targets": [
+    {
+      "target_id": "mac_desktop",
+      "platform": "macOS",
+      "source_status": "implemented",
+      "native_source_anchor": "apple/mac_desktop/SeleneMacDesktop",
+      "build_smoke_required": true,
+      "client_renderer_only": true,
+      "provider_direct_call_allowed": false,
+      "source_ranking_allowed": false,
+      "local_answer_synthesis_allowed": false,
+      "protected_execution_allowed": false,
+      "authority_mutation_allowed": false,
+      "explicit_activation_only": false,
+      "live_side_button_producer_claimed": false,
+      "wake_word_parity_allowed": false
+    },
+    {
+      "target_id": "iphone",
+      "platform": "iPhone",
+      "source_status": "implemented",
+      "native_source_anchor": "apple/iphone/SeleneIPhone",
+      "build_smoke_required": true,
+      "client_renderer_only": true,
+      "provider_direct_call_allowed": false,
+      "source_ranking_allowed": false,
+      "local_answer_synthesis_allowed": false,
+      "protected_execution_allowed": false,
+      "authority_mutation_allowed": false,
+      "explicit_activation_only": true,
+      "live_side_button_producer_claimed": false,
+      "wake_word_parity_allowed": false
+    },
+    {
+      "target_id": "android",
+      "platform": "Android",
+      "source_status": "planned_missing",
+      "native_source_anchor": "NOT_IMPLEMENTED_IN_CURRENT_REPO",
+      "build_smoke_required": false,
+      "client_renderer_only": true,
+      "provider_direct_call_allowed": false,
+      "source_ranking_allowed": false,
+      "local_answer_synthesis_allowed": false,
+      "protected_execution_allowed": false,
+      "authority_mutation_allowed": false,
+      "explicit_activation_only": false,
+      "live_side_button_producer_claimed": false,
+      "wake_word_parity_allowed": false
+    },
+    {
+      "target_id": "windows",
+      "platform": "Windows",
+      "source_status": "planned_missing",
+      "native_source_anchor": "NOT_IMPLEMENTED_IN_CURRENT_REPO",
+      "build_smoke_required": false,
+      "client_renderer_only": true,
+      "provider_direct_call_allowed": false,
+      "source_ranking_allowed": false,
+      "local_answer_synthesis_allowed": false,
+      "protected_execution_allowed": false,
+      "authority_mutation_allowed": false,
+      "explicit_activation_only": false,
+      "live_side_button_producer_claimed": false,
+      "wake_word_parity_allowed": false
+    }
+  ]
+}
