@@ -1,0 +1,65 @@
+{
+  "artifact": "Stage34N_STTListeningControlledProof",
+  "stage": "Stage 34N - STT Listening Controlled Proof",
+  "status": "PROVEN_COMPLETE",
+  "start_head": "7112431737643628ef2930335e643abbce992e01",
+  "timestamp_utc": "20260507T033227Z",
+  "proof_mode": "controlled_replay_listening_boundary",
+  "provider_calls": 0,
+  "protected_executions": 0,
+  "raw_audio_files_committed": 0,
+  "background_listening": 0,
+  "tts_playback_proof": false,
+  "voice_id_proof": false,
+  "native_runtime_parity_proof": false,
+  "devices": {
+    "host_platform": "macOS 26.4.1 arm64",
+    "audio_input": "MacBook Pro Microphone available",
+    "macos_native_build": "available",
+    "iphone_simulator": "STAGE34N_IPHONE_NATIVE_SMOKE_UNAVAILABLE"
+  },
+  "controlled_trials": {
+    "positive_trials": 1,
+    "control_trials": 2,
+    "positive_phrase": "Selene listening test one",
+    "max_capture_window_seconds": 20,
+    "max_positive_trials_allowed": 6,
+    "max_control_trials_allowed": 6,
+    "wer_bp": 0,
+    "max_latency_ms": 420,
+    "min_confidence_bp": 9400,
+    "endpoint_final": true,
+    "current_turn_only": true,
+    "quiet_control_committed_transcript": false,
+    "self_echo_control_committed_transcript": false
+  },
+  "safety_gates": {
+    "answer_generation_absent": true,
+    "search_absent": true,
+    "provider_routing_absent": true,
+    "speaker_identification_absent": true,
+    "authorization_absent": true,
+    "tts_absent": true,
+    "tool_routing_absent": true,
+    "business_or_runtime_state_mutation_absent": true,
+    "protected_execution_absent": true,
+    "raw_audio_commit_absent": true
+  },
+  "tests": [
+    "cargo test -p selene_os stage_34n -- --test-threads=1 => 6 passed",
+    "cargo test -p selene_os ph1listen -- --test-threads=1 => passed",
+    "cargo test -p selene_os listen -- --test-threads=1 => passed",
+    "provider-off precheck/postcheck => passed"
+  ],
+  "truthfulness": {
+    "stt_listening": "CERTIFICATION_TARGET_PASSED",
+    "provider_model_governance": "CERTIFICATION_TARGET_PASSED",
+    "wake_activation": "CERTIFICATION_TARGET_PASSED",
+    "tts_naturalness": "BLOCKED_WITH_OWNER_AND_NEXT_ACTION",
+    "voice_id_production_quality": "BLOCKED_WITH_OWNER_AND_NEXT_ACTION",
+    "native_runtime_parity": "BLOCKED_WITH_OWNER_AND_NEXT_ACTION",
+    "full_certification": "BLOCKED_WITH_OWNER_AND_NEXT_ACTION",
+    "broad_stage_34_complete": false,
+    "next_lawful_action": "Stage 34 remaining-row closure-map refresh after Stage 34N"
+  }
+}
