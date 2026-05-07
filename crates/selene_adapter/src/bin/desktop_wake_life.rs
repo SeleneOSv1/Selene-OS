@@ -22,7 +22,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let run_seed = monotonic_seed();
 
     println!(
-        "usage: cargo run -p selene_adapter --bin desktop_wake_life -- [--device <substring>] [--seconds <n>]"
+        "usage: cargo run -p selene_adapter --bin desktop_wake_life -- [--device <substring>] [--seconds <n>] [--quiet-control]"
     );
 
     let actor_user_id = UserId::new(format!(
@@ -60,9 +60,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     producer.wait_until_pre_roll_ready(Duration::from_secs(8))?;
     let capture_start_to_preroll_ready_ms = capture_start_instant.elapsed().as_millis() as u64;
     if cli.capture_seconds > 0 {
+        let capture_instruction = match cli.proof_mode {
+            DesktopWakeProofMode::PositiveWake => "speak wake phrase during this window",
+            DesktopWakeProofMode::QuietControl => "remain quiet during this window",
+        };
         println!(
-            "capture window active: {}s (speak wake phrase during this window)",
-            cli.capture_seconds
+            "capture window active: {}s ({capture_instruction})",
+            cli.capture_seconds,
         );
         std::thread::sleep(Duration::from_secs(cli.capture_seconds));
     }
@@ -124,7 +128,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         guard.ph1w_get_runtime_events().len()
     };
 
-    let request = VoiceTurnAdapterRequest {
+    let mut request = VoiceTurnAdapterRequest {
         correlation_id: (run_seed % 9_000_000).saturating_add(80_000),
         turn_id: (run_seed % 9_000_000).saturating_add(80_000),
         device_turn_sequence: None,
@@ -153,6 +157,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         audio_capture_ref: Some(capture_ref_before.clone()),
         visual_input_ref: None,
     };
+    apply_foreground_wake_capture_attestation(&mut request, run_seed);
 
     let process_before = sample_process_stats();
     let decision_start = Instant::now();
@@ -220,11 +225,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("wake decision: {wake_summary}");
     println!("session summary: {session_summary}");
 
+    let mut runtime_ok = false;
+    let mut runtime_response_text_empty = false;
+    let mut runtime_tts_text_empty = false;
+    let mut runtime_source_chip_count = 0_usize;
     match run_result {
         Ok(response) => {
+            runtime_ok = response.status == "ok";
+            runtime_response_text_empty = response.response_text.trim().is_empty();
+            runtime_tts_text_empty = response.tts_text.trim().is_empty();
+            runtime_source_chip_count = response.source_chips.len();
             println!(
                 "runtime summary: status={} outcome={} next_move={} reason_code={}",
                 response.status, response.outcome, response.next_move, response.reason_code
+            );
+            println!(
+                "runtime downstream: response_text_empty={} tts_text_empty={} source_chips={}",
+                runtime_response_text_empty, runtime_tts_text_empty, runtime_source_chip_count
             );
         }
         Err(err) => {
@@ -262,12 +279,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         wake_event_emitted,
         wake_accepted,
         session_opened,
+        runtime_ok,
+        runtime_response_text_empty,
+        runtime_tts_text_empty,
+        runtime_source_chip_count,
         process_rss_mb_peak: peak_f64(process_before.rss_mb, process_after.rss_mb),
         process_cpu_percent_snapshot: process_after.cpu_percent,
     };
 
     let gate_config = DesktopWakeReleaseGateConfig::default();
-    let gate_results = evaluate_desktop_release_gates(&metrics, &gate_config);
+    let gate_results = match cli.proof_mode {
+        DesktopWakeProofMode::PositiveWake => {
+            evaluate_desktop_release_gates(&metrics, &gate_config)
+        }
+        DesktopWakeProofMode::QuietControl => {
+            evaluate_desktop_quiet_control_gates(&metrics, &gate_config)
+        }
+    };
     for line in render_metric_summary_lines(&metrics) {
         println!("{line}");
     }
@@ -335,6 +363,10 @@ struct DesktopWakeRunMetrics {
     wake_event_emitted: bool,
     wake_accepted: bool,
     session_opened: bool,
+    runtime_ok: bool,
+    runtime_response_text_empty: bool,
+    runtime_tts_text_empty: bool,
+    runtime_source_chip_count: usize,
     process_rss_mb_peak: Option<f64>,
     process_cpu_percent_snapshot: Option<f64>,
 }
@@ -449,6 +481,149 @@ fn evaluate_desktop_release_gates(
     };
     gates.push(session_latency_gate);
 
+    let no_downstream_response = metrics.runtime_ok
+        && metrics.runtime_response_text_empty
+        && metrics.runtime_tts_text_empty
+        && metrics.runtime_source_chip_count == 0;
+    gates.push(GateResult {
+        name: "wake_downstream_work_absent",
+        status: if no_downstream_response {
+            GateStatus::Pass
+        } else {
+            GateStatus::Fail
+        },
+        detail: format!(
+            "runtime_ok={} response_text_empty={} tts_text_empty={} source_chips={}",
+            metrics.runtime_ok,
+            metrics.runtime_response_text_empty,
+            metrics.runtime_tts_text_empty,
+            metrics.runtime_source_chip_count
+        ),
+    });
+
+    let cpu_gate = match metrics.process_cpu_percent_snapshot {
+        Some(cpu_percent) => GateResult {
+            name: "cpu_budget",
+            status: if cpu_percent <= config.max_cpu_percent {
+                GateStatus::Pass
+            } else {
+                GateStatus::Fail
+            },
+            detail: format!(
+                "cpu_percent={} max_allowed={}",
+                format_float_2(cpu_percent),
+                format_float_2(config.max_cpu_percent)
+            ),
+        },
+        None => GateResult {
+            name: "cpu_budget",
+            status: GateStatus::Open,
+            detail: "OPEN / NOT MEASURED YET".to_string(),
+        },
+    };
+    gates.push(cpu_gate);
+
+    let rss_gate = match metrics.process_rss_mb_peak {
+        Some(rss_mb) => GateResult {
+            name: "rss_budget",
+            status: if rss_mb <= config.max_rss_mb {
+                GateStatus::Pass
+            } else {
+                GateStatus::Fail
+            },
+            detail: format!(
+                "rss_mb_peak={} max_allowed={}",
+                format_float_2(rss_mb),
+                format_float_2(config.max_rss_mb)
+            ),
+        },
+        None => GateResult {
+            name: "rss_budget",
+            status: GateStatus::Open,
+            detail: "OPEN / NOT MEASURED YET".to_string(),
+        },
+    };
+    gates.push(rss_gate);
+
+    gates
+}
+
+fn evaluate_desktop_quiet_control_gates(
+    metrics: &DesktopWakeRunMetrics,
+    config: &DesktopWakeReleaseGateConfig,
+) -> Vec<GateResult> {
+    let mut gates = Vec::with_capacity(7);
+
+    gates.push(GateResult {
+        name: "pre_roll_ready",
+        status: if metrics.pre_roll_ms >= config.min_pre_roll_ms {
+            GateStatus::Pass
+        } else {
+            GateStatus::Fail
+        },
+        detail: format!(
+            "pre_roll_ms={} required_min={}",
+            metrics.pre_roll_ms, config.min_pre_roll_ms
+        ),
+    });
+
+    gates.push(GateResult {
+        name: "wake_decision_emitted",
+        status: if metrics.wake_event_emitted {
+            GateStatus::Pass
+        } else {
+            GateStatus::Fail
+        },
+        detail: format!(
+            "wake_event_emitted={} wake_accepted={}",
+            metrics.wake_event_emitted, metrics.wake_accepted
+        ),
+    });
+
+    let speech_metrics_ok = metrics.vad_confidence_bp > 0 && metrics.snr_db_milli != 0;
+    gates.push(GateResult {
+        name: "speech_metrics_nonzero",
+        status: if speech_metrics_ok {
+            GateStatus::Pass
+        } else {
+            GateStatus::Fail
+        },
+        detail: format!(
+            "vad_confidence_bp={} snr_db_milli={}",
+            metrics.vad_confidence_bp, metrics.snr_db_milli
+        ),
+    });
+
+    let quiet_rejected =
+        metrics.wake_event_emitted && !metrics.wake_accepted && !metrics.session_opened;
+    gates.push(GateResult {
+        name: "quiet_control_rejects_wake",
+        status: if quiet_rejected {
+            GateStatus::Pass
+        } else {
+            GateStatus::Fail
+        },
+        detail: format!(
+            "wake_event_emitted={} wake_accepted={} session_opened={}",
+            metrics.wake_event_emitted, metrics.wake_accepted, metrics.session_opened
+        ),
+    });
+
+    let no_downstream_work =
+        !metrics.runtime_ok && !metrics.session_opened && metrics.runtime_source_chip_count == 0;
+    gates.push(GateResult {
+        name: "quiet_downstream_work_absent",
+        status: if no_downstream_work {
+            GateStatus::Pass
+        } else {
+            GateStatus::Fail
+        },
+        detail: format!(
+            "runtime_ok={} session_opened={} source_chips={}",
+            metrics.runtime_ok, metrics.session_opened, metrics.runtime_source_chip_count
+        ),
+    });
+
     let cpu_gate = match metrics.process_cpu_percent_snapshot {
         Some(cpu_percent) => GateResult {
             name: "cpu_budget",
@@ -525,6 +700,19 @@ fn render_metric_summary_lines(metrics: &DesktopWakeRunMetrics) -> Vec<String> {
         format!("metric.wake_event_emitted={}", metrics.wake_event_emitted),
         format!("metric.wake_accepted={}", metrics.wake_accepted),
         format!("metric.session_opened={}", metrics.session_opened),
+        format!("metric.runtime_ok={}", metrics.runtime_ok),
+        format!(
+            "metric.runtime_response_text_empty={}",
+            metrics.runtime_response_text_empty
+        ),
+        format!(
+            "metric.runtime_tts_text_empty={}",
+            metrics.runtime_tts_text_empty
+        ),
+        format!(
+            "metric.runtime_source_chip_count={}",
+            metrics.runtime_source_chip_count
+        ),
         format!(
             "metric.process_rss_mb_peak={}",
             optional_f64(metrics.process_rss_mb_peak)
@@ -643,12 +831,20 @@ fn parse_u32_env(key: &str, min: u32, max: u32) -> Option<u32> {
 struct CliArgs {
     preferred_device_substring: Option<String>,
     capture_seconds: u64,
+    proof_mode: DesktopWakeProofMode,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DesktopWakeProofMode {
+    PositiveWake,
+    QuietControl,
 }
 
 fn parse_cli_args() -> CliArgs {
     let args: Vec<String> = env::args().collect();
     let mut preferred_device_substring = None;
     let mut capture_seconds = 0_u64;
+    let mut proof_mode = DesktopWakeProofMode::PositiveWake;
     let mut idx = 1;
     while idx < args.len() {
         if args[idx] == "--device" && idx + 1 < args.len() {
@@ -666,11 +862,17 @@ fn parse_cli_args() -> CliArgs {
             idx += 2;
             continue;
         }
+        if args[idx] == "--quiet-control" {
+            proof_mode = DesktopWakeProofMode::QuietControl;
+            idx += 1;
+            continue;
+        }
         idx += 1;
     }
     CliArgs {
         preferred_device_substring,
         capture_seconds,
+        proof_mode,
     }
 }
 
@@ -767,9 +969,15 @@ fn life_test_journal_path(seed: u64) -> PathBuf {
     std::env::temp_dir().join(format!("selene_desktop_wake_life_{seed}.jsonl"))
 }
 
+fn apply_foreground_wake_capture_attestation(request: &mut VoiceTurnAdapterRequest, seed: u64) {
+    request.integrity_status = Some("ATTESTED".to_string());
+    request.attestation_ref = Some(format!("attest:desktop_wake_life:{seed}"));
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use selene_adapter::VoiceTurnAudioCaptureRef;
 
     fn sample_metrics() -> DesktopWakeRunMetrics {
         DesktopWakeRunMetrics {
@@ -785,8 +993,83 @@ mod tests {
             wake_event_emitted: true,
             wake_accepted: true,
             session_opened: true,
+            runtime_ok: true,
+            runtime_response_text_empty: true,
+            runtime_tts_text_empty: true,
+            runtime_source_chip_count: 0,
             process_rss_mb_peak: Some(85.5),
             process_cpu_percent_snapshot: Some(2.5),
+        }
+    }
+
+    fn sample_request() -> VoiceTurnAdapterRequest {
+        VoiceTurnAdapterRequest {
+            correlation_id: 34_000_001,
+            turn_id: 34_000_001,
+            device_turn_sequence: Some(1),
+            app_platform: "DESKTOP".to_string(),
+            platform_version: None,
+            device_class: None,
+            runtime_client_version: None,
+            hardware_capability_profile: None,
+            network_profile: None,
+            claimed_capabilities: Some(vec!["WAKE_WORD".to_string(), "MICROPHONE".to_string()]),
+            integrity_status: None,
+            attestation_ref: None,
+            trigger: "WAKE_WORD".to_string(),
+            actor_user_id: "tenant_1:stage34m_desktop_actor".to_string(),
+            tenant_id: Some("tenant_1".to_string()),
+            device_id: Some("stage34m_desktop_device".to_string()),
+            now_ns: Some(34_000_000_000),
+            thread_key: None,
+            project_id: None,
+            pinned_context_refs: None,
+            thread_policy_flags: None,
+            user_text_partial: None,
+            user_text_final: None,
+            selene_text_partial: None,
+            selene_text_final: None,
+            audio_capture_ref: Some(VoiceTurnAudioCaptureRef {
+                stream_id: 1,
+                pre_roll_buffer_id: 1,
+                t_start_ns: 34_000_000_000_u64.saturating_sub(1_200_000_000),
+                t_end_ns: 34_000_000_000,
+                t_candidate_start_ns: 34_000_000_000_u64.saturating_sub(320_000_000),
+                t_confirmed_ns: 34_000_000_000,
+                locale_tag: Some("en-US".to_string()),
+                device_route: Some("BUILT_IN".to_string()),
+                selected_mic: Some("MacBook_Pro_Microphone".to_string()),
+                selected_speaker: Some("MacBook_Pro_Speakers".to_string()),
+                tts_playback_active: Some(false),
+                detection_text: None,
+                detection_confidence_bp: None,
+                vad_confidence_bp: Some(7_500),
+                acoustic_confidence_bp: Some(7_000),
+                prosody_confidence_bp: Some(6_000),
+                speech_likeness_bp: Some(6_500),
+                echo_safe_confidence_bp: Some(9_000),
+                nearfield_confidence_bp: Some(8_000),
+                capture_degraded: Some(false),
+                stream_gap_detected: Some(false),
+                aec_unstable: Some(false),
+                device_changed: Some(false),
+                snr_db_milli: Some(12_000),
+                clipping_ratio_bp: Some(0),
+                echo_delay_ms_milli: Some(25_000),
+                packet_loss_bp: Some(0),
+                double_talk_bp: Some(0),
+                erle_db_milli: Some(18_000),
+                device_failures_24h: Some(0),
+                device_recoveries_24h: Some(0),
+                device_mean_recovery_ms: Some(100),
+                device_reliability_bp: Some(9_900),
+                timing_jitter_ms_milli: Some(4_000),
+                timing_drift_ppm_milli: Some(2_000),
+                timing_buffer_depth_ms_milli: Some(1_250_000),
+                timing_underruns: Some(0),
+                timing_overruns: Some(0),
+            }),
+            visual_input_ref: None,
         }
     }
 
@@ -829,5 +1112,73 @@ mod tests {
             fail.iter().any(|g| g.status == GateStatus::Fail),
             "fail metrics should produce at least one FAIL gate"
         );
+    }
+
+    #[test]
+    fn stage_34m_quiet_control_gates_pass_when_wake_is_rejected_without_session() {
+        let cfg = DesktopWakeReleaseGateConfig::default();
+        let mut metrics = sample_metrics();
+        metrics.wake_accepted = false;
+        metrics.session_opened = false;
+        metrics.session_open_latency_ms = None;
+        metrics.runtime_ok = false;
+        metrics.runtime_response_text_empty = false;
+        metrics.runtime_tts_text_empty = false;
+        metrics.runtime_source_chip_count = 0;
+
+        let gates = evaluate_desktop_quiet_control_gates(&metrics, &cfg);
+        assert!(gates.iter().all(|g| g.status == GateStatus::Pass));
+
+        metrics.session_opened = true;
+        let gates = evaluate_desktop_quiet_control_gates(&metrics, &cfg);
+        assert!(gates
+            .iter()
+            .any(|g| { g.name == "quiet_control_rejects_wake" && g.status == GateStatus::Fail }));
+    }
+
+    #[test]
+    fn stage_34m_foreground_wake_capture_sets_attested_integrity_posture() {
+        let mut request = sample_request();
+        apply_foreground_wake_capture_attestation(&mut request, 34_000_123);
+
+        assert_eq!(request.integrity_status.as_deref(), Some("ATTESTED"));
+        assert_eq!(
+            request.attestation_ref.as_deref(),
+            Some("attest:desktop_wake_life:34000123")
+        );
+        let capture = request
+            .audio_capture_ref
+            .as_ref()
+            .expect("foreground wake proof must keep capture ref");
+        assert_eq!(capture.tts_playback_active, Some(false));
+        assert_eq!(capture.capture_degraded, Some(false));
+        assert_eq!(capture.stream_gap_detected, Some(false));
+        assert_eq!(capture.device_changed, Some(false));
+        assert!(capture
+            .selected_mic
+            .as_deref()
+            .is_some_and(|v| !v.is_empty()));
+        assert!(capture
+            .device_route
+            .as_deref()
+            .is_some_and(|v| !v.is_empty()));
+    }
+
+    #[test]
+    fn stage_34m_wake_gates_require_session_open_and_keep_resource_budget_bounded() {
+        let cfg = DesktopWakeReleaseGateConfig::default();
+        let mut metrics = sample_metrics();
+        metrics.session_open_latency_ms = Some(349);
+        metrics.process_cpu_percent_snapshot = Some(1.9);
+        metrics.process_rss_mb_peak = Some(79.5);
+
+        let gates = evaluate_desktop_release_gates(&metrics, &cfg);
+        assert!(gates.iter().all(|g| g.status == GateStatus::Pass));
+
+        metrics.session_open_latency_ms = None;
+        let gates = evaluate_desktop_release_gates(&metrics, &cfg);
+        assert!(gates
+            .iter()
+            .any(|g| { g.name == "wake_to_session_open_latency" && g.status == GateStatus::Fail }));
     }
 }

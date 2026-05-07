@@ -9,10 +9,12 @@ Wake exists to open or resume a Selene session so the user can start speaking.
 Wake does not process commands, reasoning, or responses.
 
 Stage 34 controlled phase gate:
-- Wake/activation remains blocked until its later controlled slice is explicitly authorized.
-- The controlled phase order keeps provider/model governance proof first, then wake/activation second.
-- Wake proof must record device availability, foreground operator start, mic permission where applicable, native-lab availability, voice-first smoke proof, and stop conditions before any wake measurement begins.
-- No background listening, STT proof, TTS playback proof, Voice ID proof, native-lab measurement, billing behavior, production promotion, production rollback, or protected execution is authorized by the controlled phase rules alone.
+- Stage 34M controlled wake/activation native proof is PROVEN_COMPLETE.
+- Wake/activation is now `CERTIFICATION_TARGET_PASSED` from the controlled positive and quiet native proof.
+- Positive MacBook Pro microphone proof passed with wake accepted, session opened, `15 ms` wake-to-session-open latency, CPU/RSS under cap, and no downstream response/TTS/source-chip work.
+- Quiet-control proof passed with wake rejected and no session opened.
+- macOS native build succeeded. iPhone simulator smoke was unavailable because no available simulator was reported, while iPhone activation remains explicit side-button only and iPhone wake-word activation remains blocked by tests.
+- No background listening, STT proof, TTS playback proof, Voice ID proof, native-lab parity proof, billing behavior, production promotion, production rollback, or protected execution was introduced by Stage 34M.
 
 Flow:
 Trigger -> Open/Resume Session -> Wake job finished -> Voice pipeline continues.

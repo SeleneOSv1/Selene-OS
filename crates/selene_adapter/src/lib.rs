@@ -189,6 +189,7 @@ use selene_storage::ph1f::{
     Ph1kFeedbackIssueKind, Ph1kInterruptCandidateExtendedFields, Ph1kRuntimeEventKind,
     Ph1kRuntimeEventRecord, SessionRecord, StorageError,
 };
+use selene_storage::repo::Ph1jAuditRepo;
 use sha2::{Digest, Sha256};
 pub mod grpc_api {
     tonic::include_proto!("selene.adapter.v1");
@@ -7562,6 +7563,47 @@ impl AdapterRuntime {
                     wake_eval,
                 )
                 .map_err(post_session_error)?;
+            }
+            if is_stage34m_activation_only_wake_turn(
+                trigger,
+                wake_evaluation.as_ref(),
+                &session_turn_state,
+                user_text_partial.as_deref(),
+                user_text_final.as_deref(),
+            ) {
+                finalize_session_turn_record(
+                    &mut store,
+                    now,
+                    correlation_id,
+                    turn_id,
+                    &runtime_device_id,
+                    session_turn_state.session_id_for_commits,
+                    None,
+                    session_turn_state.device_turn_sequence,
+                    &runtime_execution_envelope.idempotency_key,
+                    &self.runtime_node_id,
+                    self.session_lease_ttl_ms,
+                )
+                .map_err(post_session_error)?;
+                commit_stage34m_activation_only_wake_session_audit(
+                    &mut store,
+                    now,
+                    correlation_id,
+                    turn_id,
+                    &actor_user_id,
+                    &runtime_device_id,
+                    session_turn_state.session_id_for_commits,
+                    tenant_id_for_ph1c.as_deref(),
+                    wake_evaluation.as_ref(),
+                )
+                .map_err(post_session_error)?;
+                let response = stage34m_activation_only_wake_response(
+                    &runtime_execution_envelope,
+                    session_turn_state.session_snapshot.session_state,
+                    session_turn_state.session_attach_outcome,
+                    wake_evaluation.as_ref(),
+                );
+                return Ok(response);
             }
             let voice_id_request = build_voice_id_request_from_ph1k_bundle(
                 now,
@@ -16649,6 +16691,122 @@ enum AdapterSessionResolution {
     Retry(VoiceTurnAdapterResponse),
 }
 
+fn is_stage34m_activation_only_wake_turn(
+    trigger: OsVoiceTrigger,
+    wake_evaluation: Option<&WakeEvaluation>,
+    session_turn_state: &AdapterSessionTurnState,
+    user_text_partial: Option<&str>,
+    user_text_final: Option<&str>,
+) -> bool {
+    trigger == OsVoiceTrigger::WakeWord
+        && wake_evaluation.is_some_and(|wake| wake.decision.accepted)
+        && session_turn_state.session_snapshot.session_id.is_some()
+        && session_turn_state.session_snapshot.session_state != SessionState::Closed
+        && user_text_partial.is_none_or(|text| text.trim().is_empty())
+        && user_text_final.is_none_or(|text| text.trim().is_empty())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn commit_stage34m_activation_only_wake_session_audit(
+    store: &mut Ph1fStore,
+    now: MonotonicTimeNs,
+    correlation_id: CorrelationId,
+    turn_id: TurnId,
+    actor_user_id: &UserId,
+    device_id: &DeviceId,
+    session_id: Option<SessionId>,
+    tenant_id: Option<&str>,
+    wake_evaluation: Option<&WakeEvaluation>,
+) -> Result<(), String> {
+    let Some(session_id) = session_id else {
+        return Ok(());
+    };
+    let mut entries = BTreeMap::new();
+    entries.insert(
+        selene_kernel_contracts::ph1j::PayloadKey::new("event_name")
+            .map_err(|err| format!("invalid stage34m audit key: {err:?}"))?,
+        selene_kernel_contracts::ph1j::PayloadValue::new(
+            "stage_34m_activation_only_wake_session_opened",
+        )
+        .map_err(|err| format!("invalid stage34m audit value: {err:?}"))?,
+    );
+    entries.insert(
+        selene_kernel_contracts::ph1j::PayloadKey::new("wake_job")
+            .map_err(|err| format!("invalid stage34m audit key: {err:?}"))?,
+        selene_kernel_contracts::ph1j::PayloadValue::new("open_resume_session_only")
+            .map_err(|err| format!("invalid stage34m audit value: {err:?}"))?,
+    );
+    entries.insert(
+        selene_kernel_contracts::ph1j::PayloadKey::new("downstream_work")
+            .map_err(|err| format!("invalid stage34m audit key: {err:?}"))?,
+        selene_kernel_contracts::ph1j::PayloadValue::new("absent")
+            .map_err(|err| format!("invalid stage34m audit value: {err:?}"))?,
+    );
+    let payload = selene_kernel_contracts::ph1j::AuditPayloadMin::v1(entries)
+        .map_err(|err| format!("invalid stage34m activation-only audit payload: {err:?}"))?;
+    let input = selene_kernel_contracts::ph1j::AuditEventInput::v1(
+        now,
+        tenant_id.map(|value| truncate_ascii(value, 64)),
+        None,
+        Some(session_id),
+        Some(actor_user_id.clone()),
+        Some(device_id.clone()),
+        selene_kernel_contracts::ph1j::AuditEngine::Ph1L,
+        selene_kernel_contracts::ph1j::AuditEventType::SessionOpen,
+        wake_evaluation
+            .map(|wake| wake.decision.reason_code)
+            .unwrap_or(ReasonCodeId(0x3400_340D)),
+        selene_kernel_contracts::ph1j::AuditSeverity::Info,
+        correlation_id,
+        turn_id,
+        payload,
+        None,
+        Some(sanitize_idempotency_token(&format!(
+            "stage34m_activation_only_session_open:{}:{}:{}",
+            correlation_id.0, turn_id.0, session_id.0
+        ))),
+    )
+    .map_err(|err| format!("invalid stage34m activation-only audit event: {err:?}"))?;
+    store
+        .append_audit_row(input)
+        .map_err(storage_error_to_string)?;
+    Ok(())
+}
+
+fn stage34m_activation_only_wake_response(
+    runtime_execution_envelope: &RuntimeExecutionEnvelope,
+    session_state: SessionState,
+    session_attach_outcome: SessionAttachOutcome,
+    wake_evaluation: Option<&WakeEvaluation>,
+) -> VoiceTurnAdapterResponse {
+    VoiceTurnAdapterResponse {
+        status: "ok".to_string(),
+        outcome: "SESSION_OPENED".to_string(),
+        session_id: runtime_execution_envelope
+            .session_id
+            .map(session_id_to_string),
+        turn_id: Some(runtime_execution_envelope.turn_id.0),
+        session_state: Some(session_state_to_api_value(session_state)),
+        session_attach_outcome: Some(session_attach_outcome),
+        failure_class: None,
+        reason: Some("wake_activation_only_session_opened".to_string()),
+        next_move: "wake_finished".to_string(),
+        response_text: String::new(),
+        reason_code: wake_evaluation
+            .map(|wake| wake.decision.reason_code.0.to_string())
+            .unwrap_or_else(|| "STAGE34M_WAKE_ACTIVATION_ONLY".to_string()),
+        provenance: None,
+        tts_text: String::new(),
+        source_chips: Vec::new(),
+        source_cards: Vec::new(),
+        image_cards: Vec::new(),
+        answer_class: None,
+        metadata_safe_for_user: true,
+        trace_id: None,
+        deep_research: None,
+    }
+}
+
 #[derive(Debug, Clone)]
 struct CanonicalActorSessionSelection {
     latest: Option<SessionRecord>,
@@ -23690,6 +23848,122 @@ mod tests {
         assert!(cfg.hop_ms >= 20);
     }
 
+    fn stage34m_activation_only_wake_request(
+        label: &str,
+    ) -> (AdapterRuntime, VoiceTurnAdapterRequest) {
+        let runtime = AdapterRuntime::default();
+        let mut req = base_request();
+        let seed = stable_hash_u64(label).max(1);
+        req.correlation_id = 34_000_000_u64.saturating_add(seed % 10_000);
+        req.turn_id = 34_010_000_u64.saturating_add(seed % 10_000);
+        req.now_ns = Some(34_000_000_000_u64.saturating_add(seed % 1_000_000));
+        req.app_platform = "DESKTOP".to_string();
+        req.trigger = "WAKE_WORD".to_string();
+        req.device_id = Some(format!("stage34m_activation_only_{label}"));
+        req.user_text_partial = None;
+        req.user_text_final = None;
+        req.selene_text_partial = None;
+        req.selene_text_final = None;
+        mark_request_as_echo_safe_for_tests(&mut req);
+        seed_wake_enrollment_complete_for_request(&runtime, &mut req, label);
+        mark_request_as_attested_capture(&mut req);
+        (runtime, req)
+    }
+
+    #[test]
+    fn stage_34m_activation_only_wake_opens_session_without_downstream_work() {
+        let (runtime, req) = stage34m_activation_only_wake_request("wake_opens_only");
+        let out = runtime
+            .run_voice_turn(req.clone())
+            .expect("activation-only wake should open session and stop");
+
+        assert_eq!(out.status, "ok");
+        assert_eq!(out.outcome, "SESSION_OPENED");
+        assert_eq!(out.next_move, "wake_finished");
+        assert_eq!(
+            out.reason.as_deref(),
+            Some("wake_activation_only_session_opened")
+        );
+        assert!(out.response_text.is_empty(), "{out:?}");
+        assert!(out.tts_text.is_empty(), "{out:?}");
+        assert!(out.source_chips.is_empty(), "{out:?}");
+        assert!(out.source_cards.is_empty(), "{out:?}");
+        assert!(out.image_cards.is_empty(), "{out:?}");
+        assert!(out.provenance.is_none(), "{out:?}");
+        assert!(out.deep_research.is_none(), "{out:?}");
+        assert_eq!(out.session_state.as_deref(), Some("ACTIVE"));
+        assert!(out.session_id.is_some());
+
+        let actor_user_id = UserId::new(req.actor_user_id).expect("actor id must parse");
+        let store = runtime.store.lock().expect("store lock must not poison");
+        assert!(store
+            .ph1w_get_runtime_events()
+            .iter()
+            .any(|row| row.accepted));
+        let session = latest_canonical_session_for_actor(&store, &actor_user_id)
+            .expect("session lookup must succeed")
+            .expect("wake-only activation must open session");
+        assert_eq!(session.session_state, SessionState::Active);
+        assert!(store
+            .audit_events()
+            .iter()
+            .filter(|event| event.correlation_id == CorrelationId(req.correlation_id.into()))
+            .any(|event| event.session_id == Some(session.session_id)));
+        assert!(
+            store.conversation_ledger().is_empty(),
+            "activation-only wake must not append user/assistant transcript rows"
+        );
+    }
+
+    #[test]
+    fn stage_34m_activation_only_wake_does_not_emit_tts_sources_provider_or_protected_work() {
+        let (runtime, req) = stage34m_activation_only_wake_request("no_downstream");
+        let out = runtime
+            .run_voice_turn(req)
+            .expect("activation-only wake should stop before downstream work");
+
+        assert!(out.response_text.is_empty(), "{out:?}");
+        assert!(out.tts_text.is_empty(), "{out:?}");
+        assert!(out.source_chips.is_empty(), "{out:?}");
+        assert!(out.source_cards.is_empty(), "{out:?}");
+        assert!(out.image_cards.is_empty(), "{out:?}");
+        assert!(out.provenance.is_none(), "{out:?}");
+        assert!(out.answer_class.is_none(), "{out:?}");
+        assert!(out.trace_id.is_none(), "{out:?}");
+        assert!(out.deep_research.is_none(), "{out:?}");
+        assert!(out.metadata_safe_for_user);
+    }
+
+    #[test]
+    fn stage_34m_iphone_wake_word_remains_disabled() {
+        let runtime = AdapterRuntime::default();
+        let mut req = base_request();
+        req.trigger = "WAKE_WORD".to_string();
+        req.device_id = Some("stage34m_ios_wake_disabled".to_string());
+        seed_wake_enrollment_complete_for_request(&runtime, &mut req, "stage34m_ios_disabled");
+
+        let err = runtime
+            .run_voice_turn(req)
+            .expect_err("iPhone wake word must remain disabled");
+        assert_eq!(err, "ios_wake_disabled");
+    }
+
+    #[test]
+    fn stage_34m_rejected_wake_still_fails_closed() {
+        let (runtime, mut req) = stage34m_activation_only_wake_request("reject_still_closed");
+        if let Some(capture) = req.audio_capture_ref.as_mut() {
+            capture.capture_degraded = Some(true);
+        }
+
+        let err = runtime
+            .run_voice_turn(req)
+            .expect_err("rejected wake must still fail closed");
+        assert!(
+            err.contains("wake_rejected"),
+            "expected wake_rejected fail-closed path, got {err}"
+        );
+    }
+
     #[test]
     fn at_l_01_wake_opens_new_session_persists_session_id() {
         let runtime = AdapterRuntime::default();
@@ -30260,11 +30534,10 @@ mod tests {
     #[test]
     fn at_adapter_21_ios_android_desktop_contract_parity_is_locked() {
         let runtime = AdapterRuntime::default();
-        let mut expected_outcome: Option<String> = None;
-        for (idx, platform, trigger, device_id) in [
-            (1_u64, "IOS", "EXPLICIT", "ios_1"),
-            (2_u64, "ANDROID", "WAKE_WORD", "android_1"),
-            (3_u64, "DESKTOP", "EXPLICIT", "desktop_1"),
+        for (idx, platform, trigger, device_id, expected_outcome) in [
+            (1_u64, "IOS", "EXPLICIT", "ios_1", "FINAL"),
+            (2_u64, "ANDROID", "WAKE_WORD", "android_1", "SESSION_OPENED"),
+            (3_u64, "DESKTOP", "EXPLICIT", "desktop_1", "FINAL"),
         ] {
             let mut req = base_request();
             req.turn_id = 20_100 + idx;
@@ -30279,11 +30552,7 @@ mod tests {
                 .run_voice_turn(req)
                 .expect("platform turn should succeed");
             assert_eq!(out.status, "ok");
-            if let Some(expected) = &expected_outcome {
-                assert_eq!(&out.outcome, expected);
-            } else {
-                expected_outcome = Some(out.outcome.clone());
-            }
+            assert_eq!(out.outcome, expected_outcome);
         }
 
         let checks = runtime

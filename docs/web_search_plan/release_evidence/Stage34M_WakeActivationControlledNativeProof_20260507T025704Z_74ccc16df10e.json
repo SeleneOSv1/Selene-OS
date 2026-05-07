@@ -1,0 +1,81 @@
+{
+  "schema": "stage34m_wake_activation_controlled_native_proof_v1",
+  "captured_at_utc": "2026-05-07T02:57:04Z",
+  "start_head": "74ccc16df10e0f0f3a7c831cd39bb6afb0471929",
+  "stage": "Stage 34M - Wake Activation Controlled Native Proof",
+  "status": "PROVEN_COMPLETE",
+  "benchmark_row": "Wake/activation",
+  "benchmark_status": "CERTIFICATION_TARGET_PASSED",
+  "lane_declaration": {
+    "current_project_phase": "PROBABILISTIC_FOUNDATION_BUILD",
+    "selected_lane": "PROBABILISTIC_PUBLIC_ANSWER",
+    "simulation_required": "no",
+    "authority_required": "no for protected execution",
+    "state_mutation_allowed": "yes for repo files only; no for runtime/business state",
+    "protected_execution_allowed": "no",
+    "provider_degradation_allowed": "no silent degradation",
+    "normal_answer_allowed": "yes",
+    "fail_closed_required": "yes"
+  },
+  "scope": {
+    "provider_calls": 0,
+    "protected_executions": 0,
+    "raw_capture_artifacts_committed": 0,
+    "stt_proof": false,
+    "tts_playback_proof": false,
+    "voice_id_proof": false,
+    "native_runtime_parity_closure": false,
+    "full_certification_closure": false
+  },
+  "implementation_summary": [
+    "Activation-only WAKE_WORD requests with no committed transcript open or resume session attention and stop before downstream work.",
+    "The adapter response preserves session id, session state, and attach outcome, returns SESSION_OPENED, sets next_move=wake_finished, and emits empty response_text, empty tts_text, and zero source chips.",
+    "A PH1.L session-open audit row is emitted with session id for the activation-only wake branch.",
+    "desktop_wake_life records foreground capture attestation, downstream-work absence, and quiet-control gates."
+  ],
+  "positive_native_proof": {
+    "command": "cargo run -p selene_adapter --bin desktop_wake_life -- --seconds 15",
+    "operator_action": "foreground spoken wake phrase",
+    "device": "MacBook_Pro_Microphone",
+    "wake_accepted": true,
+    "session_opened": true,
+    "wake_to_session_open_latency_ms": 15,
+    "target_latency_ms": 350,
+    "cpu_percent_snapshot": 0.00,
+    "rss_mb_peak": 27.52,
+    "response_text_empty": true,
+    "tts_text_empty": true,
+    "source_chip_count": 0,
+    "gate_summary": "PASS"
+  },
+  "quiet_control_proof": {
+    "command": "cargo run -p selene_adapter --bin desktop_wake_life -- --seconds 10 --quiet-control",
+    "operator_action": "foreground quiet control",
+    "device": "MacBook_Pro_Microphone",
+    "wake_accepted": false,
+    "session_opened": false,
+    "cpu_percent_snapshot": 0.90,
+    "rss_mb_peak": 27.02,
+    "source_chip_count": 0,
+    "gate_summary": "PASS"
+  },
+  "native_smoke": {
+    "macos_build": "xcodebuild -project apple/mac_desktop/SeleneMacDesktop.xcodeproj -scheme SeleneMacDesktop -destination 'platform=macOS' build => BUILD SUCCEEDED",
+    "iphone_simulator": "STAGE34M_IPHONE_NATIVE_SMOKE_UNAVAILABLE",
+    "iphone_reason": "xcrun simctl list devices available returned no available devices",
+    "iphone_activation_policy": "explicit side-button activation only; WAKE_WORD remains blocked by Stage 34M tests"
+  },
+  "tests": [
+    "cargo test -p selene_adapter stage_34m -- --test-threads=1 => 7 passed",
+    "cargo test -p selene_adapter stage34m -- --test-threads=1 => 0 tests reported",
+    "cargo test -p selene_adapter desktop_wake_life -- --test-threads=1 => 5 passed",
+    "cargo check -p selene_kernel_contracts -p selene_storage -p selene_os -p selene_adapter -p selene_engines -p selene_tools => passed",
+    "cargo test -p selene_adapter -- --test-threads=1 => lib 280 passed, 4 ignored; desktop_wake_life 5 passed; http_adapter 35 passed; desktop_capture_bundle_valid 2 passed",
+    "cargo test -p selene_os ph1w -- --test-threads=1 => 40 passed",
+    "cargo test -p selene_os wake -- --test-threads=1 => 69 passed",
+    "cargo test -p selene_engines stage2_global_off_blocks_websearch_zero_attempts -- --test-threads=1 => 1 passed",
+    "cargo test -p selene_engines stage8_provider_off_all_lanes_block_before_attempt_or_dispatch -- --test-threads=1 => 1 passed",
+    "cargo test -p selene_os stage2_web_provider_global_off_blocks_external_before_network -- --test-threads=1 => 1 passed"
+  ],
+  "next_lawful_action": "Stage 34 remaining-row closure-map refresh after Stage 34M"
+}

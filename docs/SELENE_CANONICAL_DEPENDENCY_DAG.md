@@ -5,6 +5,8 @@ Date: 2026-05-03
 
 This graph converts the 34-stage roadmap into build-control dependencies. The numbered order remains canonical. Parallel work is allowed only inside documented slices when the upstream packet proof already exists and write scopes do not overlap.
 
+Stage 34M update: controlled wake/activation native proof is PROVEN_COMPLETE. `Wake/activation` is now `CERTIFICATION_TARGET_PASSED` from positive MacBook Pro microphone proof, quiet-control rejection proof, provider-off pre/post proof, macOS native build proof, and preservation of iPhone explicit side-button-only activation with wake-word blocked. Broad Stage 34 remains partial on STT/listening, TTS naturalness, Voice ID production quality, native/runtime parity, and full certification. The next lawful action is a Stage 34 remaining-row closure-map refresh after Stage 34M before naming another narrowed Stage 34 slice.
+
 Stage 34L refresh update: the capped Brave-only controlled live provider/model-governance proof is PROVEN_COMPLETE through the Clash explicit proxy/Rust TLS path. The post-Stage-34L closure-map refresh reclassifies `Provider/model governance` as `CERTIFICATION_TARGET_PASSED`, keeps broad Stage 34 partial on six remaining rows, and authorizes `Stage 34M - Wake Activation Controlled Native Proof` as the next exact narrowed Stage 34 build.
 
 ## Global Must-Not-Start-Early Rules
