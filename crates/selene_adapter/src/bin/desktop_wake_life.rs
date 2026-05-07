@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use selene_adapter::desktop_mic_producer::{DesktopMicProducer, DesktopMicProducerConfig};
-use selene_adapter::{AdapterRuntime, VoiceTurnAdapterRequest};
+use selene_adapter::{AdapterRuntime, VoiceTurnAdapterRequest, VoiceTurnAudioCaptureRef};
 use selene_engines::ph1w::reason_codes as ph1w_reason_codes;
 use selene_kernel_contracts::ph1_voice_id::UserId;
 use selene_kernel_contracts::ph1j::DeviceId;
@@ -22,7 +22,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let run_seed = monotonic_seed();
 
     println!(
-        "usage: cargo run -p selene_adapter --bin desktop_wake_life -- [--device <substring>] [--seconds <n>] [--quiet-control]"
+        "usage: cargo run -p selene_adapter --bin desktop_wake_life -- [--device <substring>] [--seconds <n>] [--quiet-control] [--controlled-wake-text <wake phrase>]"
     );
 
     let actor_user_id = UserId::new(format!(
@@ -47,7 +47,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     .map_err(|err| format!("desktop wake life runtime bootstrap failed: {err}"))?;
 
     let mut config = DesktopMicProducerConfig::default();
-    config.input_device_name_substring = cli.preferred_device_substring;
+    config.input_device_name_substring = cli.preferred_device_substring.clone();
     let capture_start_instant = Instant::now();
     let producer = DesktopMicProducer::start(config)?;
     let sample_rate_hz = producer.source_sample_rate_hz()?;
@@ -71,7 +71,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::thread::sleep(Duration::from_secs(cli.capture_seconds));
     }
 
-    let capture_ref_before = producer.build_capture_ref()?;
+    let mut capture_ref_before = producer.build_capture_ref()?;
+    apply_controlled_wake_detection_hint(&mut capture_ref_before, &cli)?;
     let now_ns = capture_ref_before.t_end_ns.max(1);
     let selected_mic = capture_ref_before
         .selected_mic
@@ -832,6 +833,7 @@ struct CliArgs {
     preferred_device_substring: Option<String>,
     capture_seconds: u64,
     proof_mode: DesktopWakeProofMode,
+    controlled_wake_text: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -845,6 +847,7 @@ fn parse_cli_args() -> CliArgs {
     let mut preferred_device_substring = None;
     let mut capture_seconds = 0_u64;
     let mut proof_mode = DesktopWakeProofMode::PositiveWake;
+    let mut controlled_wake_text = None;
     let mut idx = 1;
     while idx < args.len() {
         if args[idx] == "--device" && idx + 1 < args.len() {
@@ -867,12 +870,70 @@ fn parse_cli_args() -> CliArgs {
             idx += 1;
             continue;
         }
+        if args[idx] == "--controlled-wake-text" && idx + 1 < args.len() {
+            let candidate = args[idx + 1].trim().to_string();
+            if !candidate.is_empty() {
+                controlled_wake_text = Some(candidate);
+            }
+            idx += 2;
+            continue;
+        }
         idx += 1;
     }
     CliArgs {
         preferred_device_substring,
         capture_seconds,
         proof_mode,
+        controlled_wake_text,
+    }
+}
+
+fn apply_controlled_wake_detection_hint(
+    capture: &mut VoiceTurnAudioCaptureRef,
+    cli: &CliArgs,
+) -> Result<(), String> {
+    let Some(raw_text) = cli.controlled_wake_text.as_deref() else {
+        return Ok(());
+    };
+    if cli.proof_mode != DesktopWakeProofMode::PositiveWake {
+        return Err("controlled wake text is only valid for positive wake proof".to_string());
+    }
+    let wake_text = bounded_controlled_wake_text(raw_text)
+        .filter(|v| !v.is_empty())
+        .ok_or_else(|| "controlled wake text is empty after normalization".to_string())?;
+    if !capture_has_live_speech_evidence(capture) {
+        return Err(
+            "controlled wake text refused because live mic speech evidence is missing".to_string(),
+        );
+    }
+    capture.detection_text = Some(wake_text);
+    capture.detection_confidence_bp = Some(controlled_wake_detection_confidence_bp(capture));
+    Ok(())
+}
+
+fn capture_has_live_speech_evidence(capture: &VoiceTurnAudioCaptureRef) -> bool {
+    let vad_present = capture.vad_confidence_bp.unwrap_or(0) > 0;
+    let snr_present = capture.snr_db_milli.unwrap_or(0) > 0;
+    let capture_healthy =
+        !capture.capture_degraded.unwrap_or(true) && !capture.stream_gap_detected.unwrap_or(true);
+    vad_present && snr_present && capture_healthy
+}
+
+fn controlled_wake_detection_confidence_bp(capture: &VoiceTurnAudioCaptureRef) -> u16 {
+    capture
+        .vad_confidence_bp
+        .unwrap_or(0)
+        .max(capture.acoustic_confidence_bp.unwrap_or(0))
+        .max(9_000)
+        .min(9_800)
+}
+
+fn bounded_controlled_wake_text(raw: &str) -> Option<String> {
+    let text: String = raw.trim().chars().take(64).collect();
+    if text.is_empty() {
+        None
+    } else {
+        Some(text)
     }
 }
 
@@ -1162,6 +1223,72 @@ mod tests {
             .device_route
             .as_deref()
             .is_some_and(|v| !v.is_empty()));
+    }
+
+    #[test]
+    fn controlled_wake_detection_hint_requires_live_speech_evidence() {
+        let mut request = sample_request();
+        let capture = request
+            .audio_capture_ref
+            .as_mut()
+            .expect("sample request should include capture");
+        capture.vad_confidence_bp = Some(0);
+        capture.snr_db_milli = Some(0);
+        let cli = CliArgs {
+            preferred_device_substring: None,
+            capture_seconds: 3,
+            proof_mode: DesktopWakeProofMode::PositiveWake,
+            controlled_wake_text: Some("Selene".to_string()),
+        };
+
+        let err = apply_controlled_wake_detection_hint(capture, &cli)
+            .expect_err("controlled hint must refuse missing speech evidence");
+        assert!(err.contains("live mic speech evidence is missing"));
+        assert_eq!(capture.detection_text, None);
+        assert_eq!(capture.detection_confidence_bp, None);
+    }
+
+    #[test]
+    fn controlled_wake_detection_hint_attaches_only_to_positive_speech_capture() {
+        let mut request = sample_request();
+        let capture = request
+            .audio_capture_ref
+            .as_mut()
+            .expect("sample request should include capture");
+        let cli = CliArgs {
+            preferred_device_substring: None,
+            capture_seconds: 3,
+            proof_mode: DesktopWakeProofMode::PositiveWake,
+            controlled_wake_text: Some(" Selene ".to_string()),
+        };
+
+        apply_controlled_wake_detection_hint(capture, &cli)
+            .expect("positive controlled speech capture should accept wake hint");
+        assert_eq!(capture.detection_text.as_deref(), Some("Selene"));
+        assert!(capture
+            .detection_confidence_bp
+            .is_some_and(|bp| (9_000..=9_800).contains(&bp)));
+    }
+
+    #[test]
+    fn controlled_wake_detection_hint_is_rejected_for_quiet_control() {
+        let mut request = sample_request();
+        let capture = request
+            .audio_capture_ref
+            .as_mut()
+            .expect("sample request should include capture");
+        let cli = CliArgs {
+            preferred_device_substring: None,
+            capture_seconds: 3,
+            proof_mode: DesktopWakeProofMode::QuietControl,
+            controlled_wake_text: Some("Selene".to_string()),
+        };
+
+        let err = apply_controlled_wake_detection_hint(capture, &cli)
+            .expect_err("quiet control cannot accept a wake hint");
+        assert!(err.contains("only valid for positive wake proof"));
+        assert_eq!(capture.detection_text, None);
+        assert_eq!(capture.detection_confidence_bp, None);
     }
 
     #[test]

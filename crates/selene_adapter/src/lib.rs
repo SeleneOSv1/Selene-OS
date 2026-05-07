@@ -16969,7 +16969,7 @@ fn run_ph1w_live_decision(
         cfg.strong_score_threshold = cfg.strong_score_threshold.min(0.10);
         cfg.strong_score_threshold_tts = cfg.strong_score_threshold_tts.min(0.12);
         cfg.max_jitter_ms = cfg.max_jitter_ms.max(300.0);
-        cfg.max_drift_ppm = cfg.max_drift_ppm.max(5_000.0);
+        cfg.max_drift_ppm = cfg.max_drift_ppm.max(10_000.0);
         cfg.max_underruns = cfg.max_underruns.max(10);
     }
     let loop_cfg = resolve_ph1w_live_loop_config(app_platform);
