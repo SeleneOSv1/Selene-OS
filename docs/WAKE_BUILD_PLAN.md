@@ -16,7 +16,8 @@ Stage 34 controlled phase gate:
 - macOS native build succeeded. iPhone simulator smoke was unavailable because no available simulator was reported, while iPhone activation remains explicit side-button only and iPhone wake-word activation remains blocked by tests.
 - No background listening, STT proof, TTS playback proof, Voice ID proof, native-lab parity proof, billing behavior, production promotion, production rollback, or protected execution was introduced by Stage 34M.
 - Stage 34N is now PROVEN_COMPLETE for controlled STT/listening proof; no wake behavior was reopened, and iPhone activation remains explicit side-button only.
-- Stage 34O is now PROVEN_COMPLETE for controlled TTS naturalness proof; no wake behavior, STT/listening closure, Voice ID proof, native/runtime parity proof, or full-certification proof was reopened, and broad Stage 34 remains blocked pending a Stage 34 remaining-row closure-map refresh after Stage 34O.
+- Stage 34O is now PROVEN_COMPLETE for controlled TTS naturalness proof; no wake behavior, STT/listening closure, Voice ID proof, native/runtime parity proof, or full-certification proof was reopened.
+- The Stage 34 remaining-row closure-map refresh after Stage 34O is PROVEN_COMPLETE: `TTS naturalness`, `STT/listening`, `Wake/activation`, and `Provider/model governance` remain `CERTIFICATION_TARGET_PASSED`; broad Stage 34 remains blocked on Voice ID production quality, native/runtime parity, and full certification; and `Stage 34P - Voice ID Production Quality Controlled Proof` is the next exact narrowed Stage 34 build.
 
 Flow:
 Trigger -> Open/Resume Session -> Wake job finished -> Voice pipeline continues.
