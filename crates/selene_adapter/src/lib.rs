@@ -16873,6 +16873,144 @@ const WAKE_UNKNOWN_SPEAKER_NAME_PROMPT_SEED: [&str; 5] = [
     "Before I help with anything personal, what should I call you?",
 ];
 
+const WAKE_GREETING_LIBRARY_GENERIC_ACTIVATION_CAP: usize = 100;
+const WAKE_GREETING_LIBRARY_NAMED_ACTIVATION_CAP: usize = 100;
+const WAKE_GREETING_LIBRARY_UNKNOWN_PROMPT_CAP: usize = 25;
+#[cfg(test)]
+const WAKE_GREETING_LIBRARY_MAX_PHRASE_CHARS: usize = 96;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WakeGreetingLibraryCategory {
+    GenericActivation,
+    KnownSpeakerNamedActivation,
+    UnknownSpeakerNamePrompt,
+}
+
+#[cfg(test)]
+#[derive(Debug, Clone, Copy)]
+struct WakeGreetingLibrarySpec {
+    category: WakeGreetingLibraryCategory,
+    phrases: &'static [&'static str],
+    cap: usize,
+}
+
+#[cfg(test)]
+fn wake_greeting_library_specs() -> [WakeGreetingLibrarySpec; 3] {
+    [
+        WakeGreetingLibrarySpec {
+            category: WakeGreetingLibraryCategory::GenericActivation,
+            phrases: &WAKE_GREETING_HANDOFF_LOCAL_SEED,
+            cap: WAKE_GREETING_LIBRARY_GENERIC_ACTIVATION_CAP,
+        },
+        WakeGreetingLibrarySpec {
+            category: WakeGreetingLibraryCategory::KnownSpeakerNamedActivation,
+            phrases: &WAKE_GREETING_HANDOFF_NAMED_SEED,
+            cap: WAKE_GREETING_LIBRARY_NAMED_ACTIVATION_CAP,
+        },
+        WakeGreetingLibrarySpec {
+            category: WakeGreetingLibraryCategory::UnknownSpeakerNamePrompt,
+            phrases: &WAKE_UNKNOWN_SPEAKER_NAME_PROMPT_SEED,
+            cap: WAKE_GREETING_LIBRARY_UNKNOWN_PROMPT_CAP,
+        },
+    ]
+}
+
+fn wake_greeting_library_phrases(category: WakeGreetingLibraryCategory) -> &'static [&'static str] {
+    let phrases: &'static [&'static str] = match category {
+        WakeGreetingLibraryCategory::GenericActivation => &WAKE_GREETING_HANDOFF_LOCAL_SEED,
+        WakeGreetingLibraryCategory::KnownSpeakerNamedActivation => {
+            &WAKE_GREETING_HANDOFF_NAMED_SEED
+        }
+        WakeGreetingLibraryCategory::UnknownSpeakerNamePrompt => {
+            &WAKE_UNKNOWN_SPEAKER_NAME_PROMPT_SEED
+        }
+    };
+    debug_assert!(phrases.len() <= wake_greeting_library_category_cap(category));
+    phrases
+}
+
+fn wake_greeting_library_category_cap(category: WakeGreetingLibraryCategory) -> usize {
+    match category {
+        WakeGreetingLibraryCategory::GenericActivation => {
+            WAKE_GREETING_LIBRARY_GENERIC_ACTIVATION_CAP
+        }
+        WakeGreetingLibraryCategory::KnownSpeakerNamedActivation => {
+            WAKE_GREETING_LIBRARY_NAMED_ACTIVATION_CAP
+        }
+        WakeGreetingLibraryCategory::UnknownSpeakerNamePrompt => {
+            WAKE_GREETING_LIBRARY_UNKNOWN_PROMPT_CAP
+        }
+    }
+}
+
+#[cfg(test)]
+fn wake_greeting_library_phrase_count_within_cap(spec: WakeGreetingLibrarySpec) -> bool {
+    spec.phrases.len() <= spec.cap
+}
+
+#[cfg(test)]
+fn wake_greeting_library_name_placeholder_count(phrase: &str) -> usize {
+    phrase.match_indices("{name}").count()
+}
+
+#[cfg(test)]
+fn wake_greeting_library_phrase_valid(category: WakeGreetingLibraryCategory, phrase: &str) -> bool {
+    let trimmed = phrase.trim();
+    if trimmed.is_empty()
+        || trimmed.len() > WAKE_GREETING_LIBRARY_MAX_PHRASE_CHARS
+        || !trimmed.is_ascii()
+        || trimmed.chars().any(|ch| ch.is_control())
+    {
+        return false;
+    }
+
+    let lower = trimmed.to_ascii_lowercase();
+    let forbidden_fragments = [
+        "source",
+        "citation",
+        "debug",
+        "provider",
+        "json",
+        "api key",
+        "secret",
+        "raw audio",
+        "execute",
+        "approved",
+        "authorized",
+        "verified identity",
+        "confirmed identity",
+        "i completed",
+        "task completed",
+        "searching",
+        "web search",
+        "tool call",
+        "connector",
+        "payroll",
+        "salary",
+    ];
+    if forbidden_fragments
+        .iter()
+        .any(|fragment| lower.contains(fragment))
+    {
+        return false;
+    }
+
+    match category {
+        WakeGreetingLibraryCategory::GenericActivation => {
+            wake_greeting_library_name_placeholder_count(trimmed) == 0
+        }
+        WakeGreetingLibraryCategory::KnownSpeakerNamedActivation => {
+            wake_greeting_library_name_placeholder_count(trimmed) == 1
+        }
+        WakeGreetingLibraryCategory::UnknownSpeakerNamePrompt => {
+            wake_greeting_library_name_placeholder_count(trimmed) == 0
+                && (lower.contains("what should i call you") || lower.contains("tell me your name"))
+                && !lower.contains("profile")
+                && !lower.contains("memory")
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct WakeVoiceIdGreetingPosture {
     display_name: String,
@@ -16905,12 +17043,16 @@ fn select_wake_greeting_handoff_text(
     let selector = wake_greeting_selector(runtime_execution_envelope);
     if let Some(posture) = voice_id_posture {
         if selector % 3 != 1 && !posture.display_name.trim().is_empty() {
-            let template =
-                WAKE_GREETING_HANDOFF_NAMED_SEED[selector % WAKE_GREETING_HANDOFF_NAMED_SEED.len()];
+            let named_phrases = wake_greeting_library_phrases(
+                WakeGreetingLibraryCategory::KnownSpeakerNamedActivation,
+            );
+            let template = named_phrases[selector % named_phrases.len()];
             return template.replace("{name}", posture.display_name.trim());
         }
     }
-    WAKE_GREETING_HANDOFF_LOCAL_SEED[selector % WAKE_GREETING_HANDOFF_LOCAL_SEED.len()].to_string()
+    let generic_phrases =
+        wake_greeting_library_phrases(WakeGreetingLibraryCategory::GenericActivation);
+    generic_phrases[selector % generic_phrases.len()].to_string()
 }
 
 fn wake_greeting_handoff_tts_allowed(flags: Option<&VoiceTurnThreadPolicyFlags>) -> bool {
@@ -16968,9 +17110,9 @@ fn select_unknown_speaker_name_prompt(
         return WAKE_UNKNOWN_SPEAKER_NAME_PROMPT_SEED[4].to_string();
     }
     let selector = wake_greeting_selector(runtime_execution_envelope);
-    WAKE_UNKNOWN_SPEAKER_NAME_PROMPT_SEED
-        [selector % (WAKE_UNKNOWN_SPEAKER_NAME_PROMPT_SEED.len() - 1)]
-        .to_string()
+    let prompt_phrases =
+        wake_greeting_library_phrases(WakeGreetingLibraryCategory::UnknownSpeakerNamePrompt);
+    prompt_phrases[selector % (prompt_phrases.len() - 1)].to_string()
 }
 
 fn display_name_from_confirmed_user_id(user_id: &UserId) -> Option<String> {
@@ -24990,6 +25132,275 @@ mod tests {
         let err = runtime
             .run_voice_turn(req)
             .expect_err("iPhone wake word must remain disabled after Slice 3");
+        assert_eq!(err, "ios_wake_disabled");
+    }
+
+    #[test]
+    fn wake_greeting_library_governance_categories_are_local_and_nonempty() {
+        let specs = wake_greeting_library_specs();
+        assert_eq!(specs.len(), 3);
+        assert!(specs.iter().any(|spec| {
+            spec.category == WakeGreetingLibraryCategory::GenericActivation
+                && !spec.phrases.is_empty()
+        }));
+        assert!(specs.iter().any(|spec| {
+            spec.category == WakeGreetingLibraryCategory::KnownSpeakerNamedActivation
+                && !spec.phrases.is_empty()
+        }));
+        assert!(specs.iter().any(|spec| {
+            spec.category == WakeGreetingLibraryCategory::UnknownSpeakerNamePrompt
+                && !spec.phrases.is_empty()
+        }));
+    }
+
+    #[test]
+    fn wake_greeting_library_governance_category_caps_are_enforced() {
+        for spec in wake_greeting_library_specs() {
+            assert!(
+                wake_greeting_library_phrase_count_within_cap(spec),
+                "{spec:?}"
+            );
+        }
+        assert_eq!(WAKE_GREETING_LIBRARY_GENERIC_ACTIVATION_CAP, 100);
+        assert_eq!(WAKE_GREETING_LIBRARY_NAMED_ACTIVATION_CAP, 100);
+        assert_eq!(WAKE_GREETING_LIBRARY_UNKNOWN_PROMPT_CAP, 25);
+    }
+
+    #[test]
+    fn wake_greeting_library_governance_validates_safe_phrases() {
+        for spec in wake_greeting_library_specs() {
+            for phrase in spec.phrases {
+                assert!(
+                    wake_greeting_library_phrase_valid(spec.category, phrase),
+                    "category={:?} phrase={phrase}",
+                    spec.category
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn wake_greeting_library_governance_rejects_unsafe_phrase_shapes() {
+        assert!(!wake_greeting_library_phrase_valid(
+            WakeGreetingLibraryCategory::GenericActivation,
+            ""
+        ));
+        assert!(!wake_greeting_library_phrase_valid(
+            WakeGreetingLibraryCategory::GenericActivation,
+            "I verified identity and authorized the task."
+        ));
+        assert!(!wake_greeting_library_phrase_valid(
+            WakeGreetingLibraryCategory::GenericActivation,
+            "Searching provider source citation debug now."
+        ));
+        assert!(!wake_greeting_library_phrase_valid(
+            WakeGreetingLibraryCategory::KnownSpeakerNamedActivation,
+            "Hi, I'm here."
+        ));
+        assert!(!wake_greeting_library_phrase_valid(
+            WakeGreetingLibraryCategory::KnownSpeakerNamedActivation,
+            "Hi {name}, {name}."
+        ));
+        assert!(!wake_greeting_library_phrase_valid(
+            WakeGreetingLibraryCategory::UnknownSpeakerNamePrompt,
+            "I created a profile. What should I call you?"
+        ));
+    }
+
+    #[test]
+    fn wake_greeting_library_governance_no_unapproved_runtime_phrases_added() {
+        assert_eq!(
+            wake_greeting_library_phrases(WakeGreetingLibraryCategory::GenericActivation),
+            &[
+                "Hi, I'm here.",
+                "I'm listening.",
+                "Ready when you are.",
+                "Hi, what can I do for you?",
+                "I'm here. What would you like to do?",
+                "Go ahead, I'm listening.",
+                "I'm ready.",
+                "Hi, I'm with you.",
+                "What can I help with?",
+                "I'm here and ready.",
+            ]
+        );
+        assert_eq!(
+            wake_greeting_library_phrases(WakeGreetingLibraryCategory::KnownSpeakerNamedActivation),
+            &[
+                "Hi {name}, I'm here.",
+                "Ready when you are, {name}.",
+                "I'm listening, {name}.",
+                "Hi {name}, what can I do for you?",
+                "I'm here with you, {name}.",
+                "Go ahead, {name}.",
+                "I'm ready, {name}.",
+                "What do you need, {name}?",
+                "Hi {name}, I'm ready to help.",
+                "I'm with you, {name}.",
+            ]
+        );
+        assert_eq!(
+            wake_greeting_library_phrases(WakeGreetingLibraryCategory::UnknownSpeakerNamePrompt),
+            &[
+                "I don't recognize your voice yet. What should I call you?",
+                "I don't think we've met yet. What should I call you?",
+                "I'm not sure who I'm speaking with yet. What should I call you?",
+                "I don't recognize this voice yet. Can you tell me your name?",
+                "Before I help with anything personal, what should I call you?",
+            ]
+        );
+    }
+
+    #[test]
+    fn wake_greeting_library_governance_named_templates_require_voice_id_posture() {
+        for phrase in wake_greeting_library_phrases(WakeGreetingLibraryCategory::GenericActivation)
+        {
+            assert_eq!(wake_greeting_library_name_placeholder_count(phrase), 0);
+        }
+        for phrase in
+            wake_greeting_library_phrases(WakeGreetingLibraryCategory::KnownSpeakerNamedActivation)
+        {
+            assert_eq!(wake_greeting_library_name_placeholder_count(phrase), 1);
+        }
+
+        let (runtime, unknown_req) =
+            stage34m_activation_only_wake_request("slice4_unknown_not_named");
+        let unknown = runtime
+            .run_voice_turn(unknown_req)
+            .expect("unknown wake should still receive generic greeting");
+        assert!(
+            wake_greeting_library_phrases(WakeGreetingLibraryCategory::GenericActivation)
+                .contains(&unknown.response_text.as_str()),
+            "{unknown:?}"
+        );
+
+        let (runtime, mut known_req) =
+            stage34m_known_voice_wake_request("slice4_known_named", "jd");
+        known_req.turn_id = 34_440_003;
+        known_req.device_turn_sequence = Some(2);
+        let known = runtime
+            .run_voice_turn(known_req)
+            .expect("known speaker wake should still be eligible for named greeting");
+        assert!(is_named_wake_greeting_for(&known, "JD"), "{known:?}");
+    }
+
+    #[test]
+    fn wake_greeting_library_governance_unknown_prompt_is_non_authoritative() {
+        for phrase in
+            wake_greeting_library_phrases(WakeGreetingLibraryCategory::UnknownSpeakerNamePrompt)
+        {
+            let lower = phrase.to_ascii_lowercase();
+            assert!(lower.contains("what should i call you?") || lower.contains("your name?"));
+            assert!(!lower.contains("profile"), "{phrase}");
+            assert!(!lower.contains("verified"), "{phrase}");
+            assert!(!lower.contains("authorized"), "{phrase}");
+            assert!(!lower.contains("memory"), "{phrase}");
+        }
+    }
+
+    #[test]
+    fn wake_greeting_library_governance_selection_varies_without_persistence() {
+        let (runtime, mut first) = stage34m_activation_only_wake_request("slice4_variation");
+        first.correlation_id = 44_001;
+        first.turn_id = 44_011;
+        first.device_turn_sequence = Some(44_011);
+        let mut second = first.clone();
+        second.correlation_id = 44_002;
+        second.turn_id = 44_012;
+        second.device_turn_sequence = Some(44_012);
+
+        let first_out = runtime
+            .run_voice_turn(first)
+            .expect("first governed greeting should succeed");
+        let second_out = runtime
+            .run_voice_turn(second)
+            .expect("second governed greeting should succeed");
+
+        assert_ne!(first_out.response_text, second_out.response_text);
+        assert!(
+            wake_greeting_library_phrases(WakeGreetingLibraryCategory::GenericActivation)
+                .contains(&first_out.response_text.as_str())
+        );
+        assert!(
+            wake_greeting_library_phrases(WakeGreetingLibraryCategory::GenericActivation)
+                .contains(&second_out.response_text.as_str())
+        );
+    }
+
+    #[test]
+    fn wake_greeting_library_governance_privacy_suppresses_tts_only() {
+        let (runtime, mut req) = stage34m_activation_only_wake_request("slice4_privacy");
+        req.thread_policy_flags = Some(VoiceTurnThreadPolicyFlags {
+            privacy_mode: true,
+            do_not_disturb: false,
+            strict_safety: false,
+        });
+        let out = runtime
+            .run_voice_turn(req)
+            .expect("privacy mode should preserve response text and suppress tts");
+
+        assert!(
+            wake_greeting_library_phrases(WakeGreetingLibraryCategory::GenericActivation)
+                .contains(&out.response_text.as_str()),
+            "{out:?}"
+        );
+        assert!(out.tts_text.is_empty(), "{out:?}");
+    }
+
+    #[test]
+    fn wake_greeting_library_governance_preserves_slice3_identity_prompt() {
+        let (runtime, wake_req) = stage34m_activation_only_wake_request("slice4_preserves_slice3");
+        runtime
+            .run_voice_turn(wake_req.clone())
+            .expect("wake should open active session");
+        let req = continuing_speech_request_from_wake(
+            &wake_req,
+            "slice4_preserves_slice3",
+            "Can you help me with this testing session today?",
+        );
+        let out = runtime
+            .run_voice_turn(req)
+            .expect("unknown continuing speech should still prompt for identity posture");
+
+        assert_unknown_speaker_identity_prompt(&out);
+    }
+
+    #[test]
+    fn wake_greeting_library_governance_preserves_provider_tool_protected_closure() {
+        let (runtime, wake_req) = stage34m_activation_only_wake_request("slice4_closure");
+        runtime
+            .run_voice_turn(wake_req.clone())
+            .expect("wake should open active session");
+        let req = continuing_speech_request_from_wake(
+            &wake_req,
+            "slice4_closure",
+            "Approve this payroll change.",
+        );
+        let out = runtime
+            .run_voice_turn(req)
+            .expect("unknown protected request should remain an identity prompt");
+
+        assert_unknown_speaker_identity_prompt(&out);
+        assert!(out.source_chips.is_empty(), "{out:?}");
+        assert!(out.source_cards.is_empty(), "{out:?}");
+        assert!(out.image_cards.is_empty(), "{out:?}");
+        assert!(out.provenance.is_none(), "{out:?}");
+        assert!(out.answer_class.is_none(), "{out:?}");
+        assert!(out.deep_research.is_none(), "{out:?}");
+    }
+
+    #[test]
+    fn wake_greeting_library_governance_iphone_wake_word_remains_blocked() {
+        let runtime = AdapterRuntime::default();
+        let mut req = base_request();
+        req.app_platform = "IOS".to_string();
+        req.trigger = "WAKE_WORD".to_string();
+        req.device_id = Some("slice4_ios_wake_disabled".to_string());
+        seed_wake_enrollment_complete_for_request(&runtime, &mut req, "slice4_ios_disabled");
+
+        let err = runtime
+            .run_voice_turn(req)
+            .expect_err("iPhone wake word must remain disabled after Slice 4");
         assert_eq!(err, "ios_wake_disabled");
     }
 
