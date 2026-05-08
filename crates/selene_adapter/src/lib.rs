@@ -11,7 +11,11 @@ use std::sync::{Arc, Mutex};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use selene_engines::device_vault;
-use selene_engines::ph1_voice_id::VoiceIdObservation as EngineVoiceIdObservation;
+use selene_engines::ph1_voice_id::{
+    EnrolledSpeaker as EngineEnrolledSpeaker, Ph1VoiceIdConfig as EngineVoiceIdConfig,
+    Ph1VoiceIdRuntime as EngineVoiceIdRuntime,
+    VoiceIdObservation as EngineVoiceIdObservation,
+};
 use selene_engines::ph1c::{
     reason_codes as ph1c_reason_codes, Ph1cConfig as EnginePh1cConfig, Ph1cLiveProviderContext,
     Ph1cRuntime as EnginePh1cRuntime, Ph1cStreamCommit, ProviderSlot, SttAttempt,
@@ -52,7 +56,7 @@ use selene_engines::ph1w::{
     WakeConfig as EngineWakeConfig, WakeStepInput,
 };
 use selene_kernel_contracts::ph1_voice_id::{
-    DeviceTrustLevel, Ph1VoiceIdRequest, Ph1VoiceIdResponse, UserId,
+    DeviceTrustLevel, IdentityTierV2, Ph1VoiceIdRequest, Ph1VoiceIdResponse, SpeakerId, UserId,
 };
 use selene_kernel_contracts::ph1art::{
     ArtifactScopeType, ArtifactStatus, ArtifactType, ArtifactVersion,
@@ -7564,6 +7568,22 @@ impl AdapterRuntime {
                 )
                 .map_err(post_session_error)?;
             }
+            let voice_id_request = build_voice_id_request_from_ph1k_bundle(
+                now,
+                &ph1k_bundle,
+                session_turn_state.session_snapshot,
+                session_turn_state.wake_event.clone(),
+                device_owner_user_id.clone(),
+            )
+            .map_err(|err| post_session_error(format!("voice request build failed: {err:?}")))?;
+            let voice_id_observation = build_live_voice_id_observation(
+                &store,
+                tenant_id_for_ph1c.as_deref(),
+                &actor_user_id,
+                &runtime_device_id,
+                app_platform,
+                trigger,
+            );
             if is_activation_greeting_handoff_turn(
                 app_platform,
                 trigger,
@@ -7598,23 +7618,25 @@ impl AdapterRuntime {
                     wake_evaluation.as_ref(),
                 )
                 .map_err(post_session_error)?;
+                let voice_id_posture = activation_handoff_voice_id_posture(
+                    &store,
+                    tenant_id_for_ph1c.as_deref(),
+                    &actor_user_id,
+                    &runtime_device_id,
+                    &voice_id_request,
+                    voice_id_observation,
+                )
+                .map_err(post_session_error)?;
                 let response = activation_greeting_handoff_response(
                     &runtime_execution_envelope,
                     session_turn_state.session_snapshot.session_state,
                     session_turn_state.session_attach_outcome,
                     wake_evaluation.as_ref(),
                     request.thread_policy_flags.as_ref(),
+                    voice_id_posture.as_ref(),
                 );
                 return Ok(response);
             }
-            let voice_id_request = build_voice_id_request_from_ph1k_bundle(
-                now,
-                &ph1k_bundle,
-                session_turn_state.session_snapshot,
-                session_turn_state.wake_event.clone(),
-                device_owner_user_id,
-            )
-            .map_err(|err| post_session_error(format!("voice request build failed: {err:?}")))?;
             let committed_voice_ph1c_gate_used =
                 upstream_transcript_supplied && is_desktop_committed_voice_request(&request);
             let ph1c_live_outcome = if upstream_transcript_supplied {
@@ -7812,14 +7834,6 @@ impl AdapterRuntime {
                 eprintln!("selene_adapter ph1k live eval csv append failed: {err}");
             }
 
-            let observation = build_live_voice_id_observation(
-                &store,
-                tenant_id_for_ph1c.as_deref(),
-                &actor_user_id,
-                &runtime_device_id,
-                app_platform,
-                trigger,
-            );
             let ingress_request = AppVoiceIngressRequest::v1_with_runtime_execution_envelope(
                 correlation_id,
                 turn_id,
@@ -7831,7 +7845,7 @@ impl AdapterRuntime {
                 tenant_id_for_ph1c.clone(),
                 Some(runtime_device_id.clone()),
                 Vec::new(),
-                observation,
+                voice_id_observation,
             )
             .map_err(|err| post_session_error(format!("invalid ingress request: {err:?}")))?;
             let thread_key = resolve_adapter_thread_key(request.thread_key.as_deref());
@@ -16794,25 +16808,240 @@ const WAKE_GREETING_HANDOFF_LOCAL_SEED: [&str; 10] = [
     "I'm here and ready.",
 ];
 
-fn select_wake_greeting_handoff_text(
-    runtime_execution_envelope: &RuntimeExecutionEnvelope,
-) -> &'static str {
+const WAKE_GREETING_HANDOFF_NAMED_SEED: [&str; 10] = [
+    "Hi {name}, I'm here.",
+    "Ready when you are, {name}.",
+    "I'm listening, {name}.",
+    "Hi {name}, what can I do for you?",
+    "I'm here with you, {name}.",
+    "Go ahead, {name}.",
+    "I'm ready, {name}.",
+    "What do you need, {name}?",
+    "Hi {name}, I'm ready to help.",
+    "I'm with you, {name}.",
+];
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct WakeVoiceIdGreetingPosture {
+    display_name: String,
+    score_bp: u16,
+}
+
+fn wake_greeting_selector(runtime_execution_envelope: &RuntimeExecutionEnvelope) -> usize {
     let session_component = runtime_execution_envelope
         .session_id
         .map(|session_id| (session_id.0 % (u64::MAX as u128)) as u64)
         .unwrap_or(0);
     let device_turn_component = runtime_execution_envelope.device_turn_sequence.unwrap_or(0);
-    let index = runtime_execution_envelope
+    runtime_execution_envelope
         .turn_id
         .0
         .wrapping_add(session_component)
         .wrapping_add(device_turn_component) as usize
-        % WAKE_GREETING_HANDOFF_LOCAL_SEED.len();
-    WAKE_GREETING_HANDOFF_LOCAL_SEED[index]
+}
+
+fn select_wake_greeting_handoff_text(
+    runtime_execution_envelope: &RuntimeExecutionEnvelope,
+    voice_id_posture: Option<&WakeVoiceIdGreetingPosture>,
+) -> String {
+    let selector = wake_greeting_selector(runtime_execution_envelope);
+    if let Some(posture) = voice_id_posture {
+        if selector % 3 != 1 && !posture.display_name.trim().is_empty() {
+            let template =
+                WAKE_GREETING_HANDOFF_NAMED_SEED[selector % WAKE_GREETING_HANDOFF_NAMED_SEED.len()];
+            return template.replace("{name}", posture.display_name.trim());
+        }
+    }
+    WAKE_GREETING_HANDOFF_LOCAL_SEED[selector % WAKE_GREETING_HANDOFF_LOCAL_SEED.len()].to_string()
 }
 
 fn wake_greeting_handoff_tts_allowed(flags: Option<&VoiceTurnThreadPolicyFlags>) -> bool {
     !flags.is_some_and(|flags| flags.privacy_mode || flags.do_not_disturb)
+}
+
+fn display_name_from_confirmed_user_id(user_id: &UserId) -> Option<String> {
+    let raw = user_id
+        .as_str()
+        .rsplit([':', '/', '|'])
+        .next()
+        .unwrap_or(user_id.as_str())
+        .trim();
+    if raw.is_empty() {
+        return None;
+    }
+    let mut words = Vec::new();
+    for part in raw.split(['_', '-', '.']) {
+        let clean = part
+            .chars()
+            .filter(|c| c.is_ascii_alphabetic())
+            .collect::<String>();
+        if clean.is_empty() {
+            continue;
+        }
+        let word = if clean.len() <= 3 {
+            clean.to_ascii_uppercase()
+        } else {
+            let mut chars = clean.chars();
+            let first = chars.next()?.to_ascii_uppercase();
+            let rest = chars.as_str().to_ascii_lowercase();
+            format!("{first}{rest}")
+        };
+        words.push(word);
+        if words.len() >= 2 {
+            break;
+        }
+    }
+    let display = truncate_ascii(&words.join(" "), 32);
+    if display.is_empty() {
+        None
+    } else {
+        Some(display)
+    }
+}
+
+fn activation_handoff_enrolled_speakers(
+    store: &Ph1fStore,
+    tenant_scope: Option<&str>,
+) -> Result<Vec<EngineEnrolledSpeaker>, String> {
+    let mut enrolled = Vec::new();
+    for profile in store.ph1vid_voice_profile_rows() {
+        let Some(device) = store.get_device(&profile.device_id) else {
+            continue;
+        };
+        if let Some(tenant_scope) = tenant_scope {
+            let Some((profile_tenant, _)) = device.user_id.as_str().split_once(':') else {
+                continue;
+            };
+            if profile_tenant != tenant_scope {
+                continue;
+            }
+        }
+        let fingerprint = stable_voice_profile_seed_u64(&[
+            profile.voice_profile_id.as_str(),
+            profile.device_id.as_str(),
+            device.user_id.as_str(),
+        ]);
+        let speaker_id = SpeakerId::new(format!(
+            "spk_{}",
+            stable_hash_hex_16(&format!(
+                "{}:{}",
+                profile.voice_profile_id,
+                device.user_id.as_str()
+            ))
+        ))
+        .map_err(|err| format!("activation handoff speaker_id invalid: {err:?}"))?;
+        enrolled.push(EngineEnrolledSpeaker {
+            speaker_id,
+            user_id: Some(device.user_id.clone()),
+            fingerprint,
+            profile_embedding: None,
+        });
+    }
+    Ok(enrolled)
+}
+
+fn activation_handoff_voice_id_observation(
+    store: &Ph1fStore,
+    tenant_scope: Option<&str>,
+    actor_user_id: &UserId,
+    device_id: &DeviceId,
+    base_observation: EngineVoiceIdObservation,
+) -> EngineVoiceIdObservation {
+    if base_observation.primary_fingerprint.is_none()
+        && base_observation.primary_embedding.is_none()
+        && base_observation.secondary_fingerprint.is_none()
+        && base_observation.secondary_embedding.is_none()
+    {
+        return base_observation;
+    }
+
+    let profile = store
+        .ph1vid_voice_profile_rows()
+        .into_iter()
+        .find(|profile| {
+            if profile.device_id != *device_id {
+                return false;
+            }
+            let Some(device) = store.get_device(&profile.device_id) else {
+                return false;
+            };
+            if device.user_id != *actor_user_id {
+                return false;
+            }
+            if let Some(tenant_scope) = tenant_scope {
+                let Some((profile_tenant, _)) = device.user_id.as_str().split_once(':') else {
+                    return false;
+                };
+                if profile_tenant != tenant_scope {
+                    return false;
+                }
+            }
+            true
+        });
+
+    let Some(profile) = profile else {
+        return empty_observation();
+    };
+    let Some(device) = store.get_device(&profile.device_id) else {
+        return empty_observation();
+    };
+    EngineVoiceIdObservation {
+        primary_fingerprint: Some(stable_voice_profile_seed_u64(&[
+            profile.voice_profile_id.as_str(),
+            profile.device_id.as_str(),
+            device.user_id.as_str(),
+        ])),
+        secondary_fingerprint: None,
+        primary_embedding: None,
+        secondary_embedding: None,
+        spoof_risk: base_observation.spoof_risk,
+    }
+}
+
+fn activation_handoff_voice_id_posture(
+    store: &Ph1fStore,
+    tenant_scope: Option<&str>,
+    actor_user_id: &UserId,
+    device_id: &DeviceId,
+    voice_id_request: &Ph1VoiceIdRequest,
+    base_observation: EngineVoiceIdObservation,
+) -> Result<Option<WakeVoiceIdGreetingPosture>, String> {
+    let enrolled = activation_handoff_enrolled_speakers(store, tenant_scope)?;
+    if enrolled.is_empty() {
+        return Ok(None);
+    }
+    let observation = activation_handoff_voice_id_observation(
+        store,
+        tenant_scope,
+        actor_user_id,
+        device_id,
+        base_observation,
+    );
+    if observation.primary_fingerprint.is_none() && observation.primary_embedding.is_none() {
+        return Ok(None);
+    }
+    let mut runtime = EngineVoiceIdRuntime::new(EngineVoiceIdConfig::mvp_v1(), enrolled)
+        .map_err(|err| format!("activation handoff Voice ID runtime invalid: {err:?}"))?;
+    let assertion = runtime.run(voice_id_request, observation);
+    let Ph1VoiceIdResponse::SpeakerAssertionOk(ok) = assertion else {
+        return Ok(None);
+    };
+    if ok.identity_v2.identity_tier_v2 != IdentityTierV2::Confirmed || ok.score_bp < 9_300 {
+        return Ok(None);
+    }
+    let Some(user_id) = ok.user_id.as_ref() else {
+        return Ok(None);
+    };
+    if user_id != actor_user_id {
+        return Ok(None);
+    }
+    let Some(display_name) = display_name_from_confirmed_user_id(user_id) else {
+        return Ok(None);
+    };
+    Ok(Some(WakeVoiceIdGreetingPosture {
+        display_name,
+        score_bp: ok.score_bp,
+    }))
 }
 
 fn activation_greeting_handoff_response(
@@ -16821,8 +17050,9 @@ fn activation_greeting_handoff_response(
     session_attach_outcome: SessionAttachOutcome,
     wake_evaluation: Option<&WakeEvaluation>,
     thread_policy_flags: Option<&VoiceTurnThreadPolicyFlags>,
+    voice_id_posture: Option<&WakeVoiceIdGreetingPosture>,
 ) -> VoiceTurnAdapterResponse {
-    let greeting = select_wake_greeting_handoff_text(runtime_execution_envelope).to_string();
+    let greeting = select_wake_greeting_handoff_text(runtime_execution_envelope, voice_id_posture);
     let tts_text = if wake_greeting_handoff_tts_allowed(thread_policy_flags) {
         greeting.clone()
     } else {
@@ -18232,7 +18462,10 @@ fn build_live_voice_id_observation(
     app_platform: AppPlatform,
     trigger: OsVoiceTrigger,
 ) -> EngineVoiceIdObservation {
-    if app_platform != AppPlatform::Desktop || trigger != OsVoiceTrigger::Explicit {
+    if app_platform != AppPlatform::Desktop {
+        return empty_observation();
+    }
+    if !matches!(trigger, OsVoiceTrigger::Explicit | OsVoiceTrigger::WakeWord) {
         return empty_observation();
     }
 
@@ -24106,6 +24339,185 @@ mod tests {
             err.contains("wake_rejected"),
             "expected wake_rejected fail-closed path, got {err}"
         );
+    }
+
+    fn stage34m_known_voice_wake_request(
+        label: &str,
+        user_leaf: &str,
+    ) -> (AdapterRuntime, VoiceTurnAdapterRequest) {
+        let runtime = AdapterRuntime::default();
+        let mut req = base_request();
+        let seed = stable_hash_u64(label).max(1);
+        req.correlation_id = 34_100_000_u64.saturating_add(seed % 10_000);
+        req.turn_id = 34_120_000_u64.saturating_add(seed % 10_000);
+        req.now_ns = Some(34_100_000_000_u64.saturating_add(seed % 1_000_000));
+        req.actor_user_id = format!("tenant_a:{user_leaf}");
+        req.tenant_id = Some("tenant_a".to_string());
+        req.device_id = Some(format!("stage34m_known_voice_{label}"));
+        req.user_text_partial = None;
+        req.user_text_final = None;
+        req.selene_text_partial = None;
+        req.selene_text_final = None;
+        mark_request_as_echo_safe_for_tests(&mut req);
+        mark_request_as_attested_capture(&mut req);
+        seed_desktop_voice_profile_for_request(&runtime, &mut req, label);
+        req.trigger = "WAKE_WORD".to_string();
+        req.user_text_partial = None;
+        req.user_text_final = None;
+        req.selene_text_partial = None;
+        req.selene_text_final = None;
+        seed_wake_enrollment_complete_for_request(&runtime, &mut req, label);
+        mark_request_as_echo_safe_for_tests(&mut req);
+        mark_request_as_attested_capture(&mut req);
+        (runtime, req)
+    }
+
+    fn is_named_wake_greeting_for(out: &VoiceTurnAdapterResponse, name: &str) -> bool {
+        WAKE_GREETING_HANDOFF_NAMED_SEED.iter().any(|template| {
+            let rendered = template.replace("{name}", name);
+            out.response_text == rendered && out.tts_text == rendered
+        })
+    }
+
+    #[test]
+    fn wake_voice_id_posture_handoff_known_speaker_can_receive_named_greeting() {
+        let (runtime, mut req) = stage34m_known_voice_wake_request("known_jd", "jd");
+        req.turn_id = 34_120_002;
+        req.device_turn_sequence = Some(2);
+        let out = runtime
+            .run_voice_turn(req)
+            .expect("known high-confidence wake speaker should hand off greeting");
+
+        assert_eq!(out.outcome, "SESSION_OPENED");
+        assert_eq!(out.next_move, "listening_window_open");
+        assert!(is_named_wake_greeting_for(&out, "JD"), "{out:?}");
+        assert!(out.source_chips.is_empty(), "{out:?}");
+        assert!(out.provenance.is_none(), "{out:?}");
+        assert!(out.deep_research.is_none(), "{out:?}");
+    }
+
+    #[test]
+    fn wake_voice_id_posture_handoff_unknown_speaker_uses_generic_greeting() {
+        let (runtime, req) = stage34m_activation_only_wake_request("unknown_generic");
+        let out = runtime
+            .run_voice_turn(req)
+            .expect("unknown wake speaker should still receive generic handoff");
+
+        assert_wake_greeting_handoff_response(&out);
+        assert!(
+            WAKE_GREETING_HANDOFF_LOCAL_SEED.contains(&out.response_text.as_str()),
+            "{out:?}"
+        );
+    }
+
+    #[test]
+    fn wake_voice_id_posture_handoff_device_trust_does_not_imply_identity() {
+        let (runtime, owner_req) =
+            stage34m_known_voice_wake_request("trusted_device_owner", "jd");
+        let owner_device = owner_req
+            .device_id
+            .clone()
+            .expect("owner device id must be present");
+        let out = runtime
+            .run_voice_turn(owner_req.clone())
+            .expect("owner known speaker baseline should pass");
+        assert!(out.response_text.contains("JD"), "{out:?}");
+
+        let guest_user = UserId::new("tenant_a:guest_user").expect("guest user id must parse");
+        let owner_device = DeviceId::new(owner_device).expect("owner device id must parse");
+        let store = runtime.store.lock().expect("store lock must not poison");
+        let base_observation = build_live_voice_id_observation(
+            &store,
+            Some("tenant_a"),
+            &guest_user,
+            &owner_device,
+            AppPlatform::Desktop,
+            OsVoiceTrigger::WakeWord,
+        );
+        let strict_handoff_observation = activation_handoff_voice_id_observation(
+            &store,
+            Some("tenant_a"),
+            &guest_user,
+            &owner_device,
+            base_observation,
+        );
+        assert!(
+            strict_handoff_observation.primary_fingerprint.is_none()
+                && strict_handoff_observation.primary_embedding.is_none(),
+            "handoff posture must not convert trusted device owner into speaker identity"
+        );
+    }
+
+    #[test]
+    fn wake_voice_id_posture_handoff_low_confidence_does_not_use_name() {
+        let (runtime, mut req) = stage34m_known_voice_wake_request("low_confidence", "jd");
+        if let Some(capture) = req.audio_capture_ref.as_mut() {
+            capture.tts_playback_active = Some(true);
+        }
+        let out = runtime
+            .run_voice_turn(req)
+            .expect("echo-unsafe Voice ID posture should remain generic");
+
+        assert_eq!(out.next_move, "listening_window_open");
+        assert!(
+            WAKE_GREETING_HANDOFF_LOCAL_SEED.contains(&out.response_text.as_str()),
+            "{out:?}"
+        );
+        assert!(
+            !out.response_text.contains("JD"),
+            "low-confidence posture must not produce named greeting: {out:?}"
+        );
+    }
+
+    #[test]
+    fn wake_voice_id_posture_handoff_voice_id_remains_non_authoritative() {
+        let (runtime, mut req) = stage34m_known_voice_wake_request("non_authority", "jd");
+        req.turn_id = 34_121_002;
+        req.device_turn_sequence = Some(2);
+        let out = runtime
+            .run_voice_turn(req)
+            .expect("Voice ID posture greeting should not authorize work");
+
+        assert_eq!(out.outcome, "SESSION_OPENED");
+        assert_eq!(out.next_move, "listening_window_open");
+        assert!(out.answer_class.is_none(), "{out:?}");
+        assert!(out.provenance.is_none(), "{out:?}");
+        assert!(out.source_chips.is_empty(), "{out:?}");
+        assert!(out.source_cards.is_empty(), "{out:?}");
+        assert!(out.image_cards.is_empty(), "{out:?}");
+        assert!(out.deep_research.is_none(), "{out:?}");
+    }
+
+    #[test]
+    fn wake_voice_id_posture_handoff_preserves_slice1_provider_tool_protected_closure() {
+        let (runtime, req) = stage34m_known_voice_wake_request("closure_preserved", "jd");
+        let out = runtime
+            .run_voice_turn(req)
+            .expect("Voice ID posture handoff should remain activation-only");
+
+        assert_eq!(out.outcome, "SESSION_OPENED");
+        assert_eq!(out.next_move, "listening_window_open");
+        assert!(out.provenance.is_none(), "{out:?}");
+        assert!(out.source_chips.is_empty(), "{out:?}");
+        assert!(out.source_cards.is_empty(), "{out:?}");
+        assert!(out.image_cards.is_empty(), "{out:?}");
+        assert!(out.deep_research.is_none(), "{out:?}");
+        assert!(out.metadata_safe_for_user);
+    }
+
+    #[test]
+    fn wake_voice_id_posture_handoff_iphone_wake_word_remains_blocked() {
+        let runtime = AdapterRuntime::default();
+        let mut req = base_request();
+        req.app_platform = "IOS".to_string();
+        req.trigger = "WAKE_WORD".to_string();
+        req.device_id = Some("slice2_ios_wake_disabled".to_string());
+        seed_wake_enrollment_complete_for_request(&runtime, &mut req, "slice2_ios_disabled");
+
+        let err = runtime
+            .run_voice_turn(req)
+            .expect_err("iPhone wake word must remain disabled after Slice 2");
+        assert_eq!(err, "ios_wake_disabled");
     }
 
     #[test]
