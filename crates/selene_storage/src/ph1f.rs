@@ -1798,6 +1798,9 @@ pub struct Ph1fStore {
     person_profile_by_actor_user_ref: BTreeMap<String, String>,
     local_voice_caches: BTreeMap<String, LocalVoiceCacheRecord>,
     local_voice_cache_by_device_voice: BTreeMap<(String, String), String>,
+    device_sync_postures: BTreeMap<String, DeviceSyncPostureRecord>,
+    device_sync_posture_by_device_ref: BTreeMap<String, String>,
+    device_revocation_ledger: Vec<DeviceRevocationPostureRecord>,
     voice_artifact_revocation_ledger: Vec<VoiceArtifactRevocationRecord>,
     // Unique revocation binding: (tenant_id, artifact_type, artifact_version) -> revocation_event_id.
     voice_artifact_revoked_version_index: BTreeMap<(String, ArtifactType, ArtifactVersion), u64>,
@@ -2017,6 +2020,7 @@ pub struct Ph1fStore {
     next_proof_event_id: u64,
     next_position_lifecycle_event_id: u64,
     next_voice_enrollment_sample_seq: u16,
+    next_device_revocation_event_id: u64,
     next_process_blueprint_event_id: u64,
     next_simulation_catalog_event_id: u64,
     next_engine_capability_map_event_id: u64,
@@ -3137,6 +3141,151 @@ pub enum LocalVoiceRecognitionDisposition {
     FailClosed,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum DeviceSyncStatus {
+    Current,
+    CheckDue,
+    Stale,
+    OfflineDeferred,
+    Revoked,
+    Blocked,
+}
+
+impl DeviceSyncStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            DeviceSyncStatus::Current => "CURRENT",
+            DeviceSyncStatus::CheckDue => "CHECK_DUE",
+            DeviceSyncStatus::Stale => "STALE",
+            DeviceSyncStatus::OfflineDeferred => "OFFLINE_DEFERRED",
+            DeviceSyncStatus::Revoked => "REVOKED",
+            DeviceSyncStatus::Blocked => "BLOCKED",
+        }
+    }
+
+    fn allows_update(self) -> bool {
+        !matches!(self, DeviceSyncStatus::Revoked | DeviceSyncStatus::Blocked)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum DeviceSyncTriggerClass {
+    AppStart,
+    DeviceUnlock,
+    ActivationStart,
+    LocalVoiceIdFail,
+    SessionEnd,
+    PushCriticalUpdate,
+    NetworkRestored,
+    ChargingWifiMaintenance,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeviceSyncDecision {
+    NoCheckNeeded,
+    VersionCheckDue,
+    AfterSessionUploadDueMetadataOnly,
+    CriticalRevocationDue,
+    OfflineDeferred,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeviceSyncPostureRecord {
+    pub schema_version: SchemaVersion,
+    pub device_sync_posture_id: String,
+    pub device_ref: String,
+    pub person_profile_version: u64,
+    pub voice_profile_version: u64,
+    pub recognition_pack_version: u64,
+    pub device_trust_version: u64,
+    pub greeting_library_version: u64,
+    pub access_policy_version: u64,
+    pub revocation_state_version: u64,
+    pub sync_status: DeviceSyncStatus,
+    pub last_checked_at_ns: Option<MonotonicTimeNs>,
+    pub next_allowed_check_at_ns: Option<MonotonicTimeNs>,
+    pub updated_at_ns: MonotonicTimeNs,
+    pub audit_refs: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeviceSyncPostureUpsertInput {
+    pub device_sync_posture_id: Option<String>,
+    pub device_ref: String,
+    pub person_profile_version: u64,
+    pub voice_profile_version: u64,
+    pub recognition_pack_version: u64,
+    pub device_trust_version: u64,
+    pub greeting_library_version: u64,
+    pub access_policy_version: u64,
+    pub revocation_state_version: u64,
+    pub sync_status: DeviceSyncStatus,
+    pub last_checked_at_ns: Option<MonotonicTimeNs>,
+    pub next_allowed_check_at_ns: Option<MonotonicTimeNs>,
+    pub audit_refs: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum DeviceRevocationKind {
+    LostDevice,
+    DeviceRevoked,
+    PersonProfileRevoked,
+    VoiceProfileBlocked,
+    RecognitionPackBlocked,
+    AccessPolicyCriticalChange,
+}
+
+impl DeviceRevocationKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            DeviceRevocationKind::LostDevice => "LOST_DEVICE",
+            DeviceRevocationKind::DeviceRevoked => "DEVICE_REVOKED",
+            DeviceRevocationKind::PersonProfileRevoked => "PERSON_PROFILE_REVOKED",
+            DeviceRevocationKind::VoiceProfileBlocked => "VOICE_PROFILE_BLOCKED",
+            DeviceRevocationKind::RecognitionPackBlocked => "RECOGNITION_PACK_BLOCKED",
+            DeviceRevocationKind::AccessPolicyCriticalChange => "ACCESS_POLICY_CRITICAL_CHANGE",
+        }
+    }
+
+    fn cache_status(self) -> LocalVoiceCacheStatus {
+        match self {
+            DeviceRevocationKind::LostDevice
+            | DeviceRevocationKind::DeviceRevoked
+            | DeviceRevocationKind::PersonProfileRevoked => LocalVoiceCacheStatus::Revoked,
+            DeviceRevocationKind::VoiceProfileBlocked
+            | DeviceRevocationKind::RecognitionPackBlocked
+            | DeviceRevocationKind::AccessPolicyCriticalChange => LocalVoiceCacheStatus::Blocked,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeviceRevocationPostureRecord {
+    pub schema_version: SchemaVersion,
+    pub revocation_event_id: u64,
+    pub device_ref: String,
+    pub person_profile_ref: String,
+    pub voice_profile_ref: String,
+    pub local_voice_cache_ref: String,
+    pub revocation_kind: DeviceRevocationKind,
+    pub revocation_state_version: u64,
+    pub reason_ref: String,
+    pub created_at_ns: MonotonicTimeNs,
+    pub audit_refs: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeviceRevocationPostureInput {
+    pub device_ref: String,
+    pub person_profile_ref: String,
+    pub voice_profile_ref: String,
+    pub local_voice_cache_ref: String,
+    pub revocation_kind: DeviceRevocationKind,
+    pub revocation_state_version: u64,
+    pub reason_ref: String,
+    pub audit_refs: Vec<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VoiceArtifactRevocationRecord {
     pub schema_version: SchemaVersion,
@@ -3749,6 +3898,9 @@ impl Ph1fStore {
             person_profile_by_actor_user_ref: BTreeMap::new(),
             local_voice_caches: BTreeMap::new(),
             local_voice_cache_by_device_voice: BTreeMap::new(),
+            device_sync_postures: BTreeMap::new(),
+            device_sync_posture_by_device_ref: BTreeMap::new(),
+            device_revocation_ledger: Vec::new(),
             voice_artifact_revocation_ledger: Vec::new(),
             voice_artifact_revoked_version_index: BTreeMap::new(),
             voice_artifact_revocation_idempotency_index: BTreeMap::new(),
@@ -3855,6 +4007,7 @@ impl Ph1fStore {
             next_proof_event_id: 1,
             next_position_lifecycle_event_id: 1,
             next_voice_enrollment_sample_seq: 1,
+            next_device_revocation_event_id: 1,
             next_process_blueprint_event_id: 1,
             next_simulation_catalog_event_id: 1,
             next_engine_capability_map_event_id: 1,
@@ -17003,6 +17156,301 @@ impl Ph1fStore {
         })
     }
 
+    fn device_sync_posture_id_for_input(
+        input: &DeviceSyncPostureUpsertInput,
+    ) -> Result<String, StorageError> {
+        if let Some(id) = input.device_sync_posture_id.as_ref() {
+            let trimmed = id.trim().to_string();
+            Self::person_profile_validate_id(
+                "device_sync_postures.device_sync_posture_id",
+                &trimmed,
+            )?;
+            return Ok(trimmed);
+        }
+        Ok(format!(
+            "device_sync_posture_{}",
+            hash_hex_64(input.device_ref.trim())
+        ))
+    }
+
+    pub fn device_sync_posture_upsert_governed(
+        &mut self,
+        now: MonotonicTimeNs,
+        input: DeviceSyncPostureUpsertInput,
+    ) -> Result<DeviceSyncPostureRecord, StorageError> {
+        let device_sync_posture_id = Self::device_sync_posture_id_for_input(&input)?;
+        let device_ref = input.device_ref.trim().to_string();
+        Self::person_profile_validate_id("device_sync_postures.device_ref", &device_ref)?;
+        for (field, value) in [
+            (
+                "device_sync_postures.person_profile_version",
+                input.person_profile_version,
+            ),
+            (
+                "device_sync_postures.voice_profile_version",
+                input.voice_profile_version,
+            ),
+            (
+                "device_sync_postures.recognition_pack_version",
+                input.recognition_pack_version,
+            ),
+            (
+                "device_sync_postures.device_trust_version",
+                input.device_trust_version,
+            ),
+            (
+                "device_sync_postures.greeting_library_version",
+                input.greeting_library_version,
+            ),
+            (
+                "device_sync_postures.access_policy_version",
+                input.access_policy_version,
+            ),
+            (
+                "device_sync_postures.revocation_state_version",
+                input.revocation_state_version,
+            ),
+        ] {
+            if value == 0 {
+                return Err(StorageError::ContractViolation(
+                    ContractViolation::InvalidValue {
+                        field,
+                        reason: "version metadata must be nonzero",
+                    },
+                ));
+            }
+        }
+        if let Some(existing) = self.device_sync_postures.get(&device_sync_posture_id) {
+            if !existing.sync_status.allows_update() && existing.sync_status != input.sync_status {
+                return Err(StorageError::ContractViolation(
+                    ContractViolation::InvalidValue {
+                        field: "device_sync_postures.sync_status",
+                        reason: "revoked or blocked sync posture cannot be upgraded",
+                    },
+                ));
+            }
+        }
+        if let Some(existing) = self
+            .device_sync_posture_by_device_ref
+            .get(&device_ref)
+            .filter(|existing| *existing != &device_sync_posture_id)
+        {
+            return Err(StorageError::DuplicateKey {
+                table: "device_sync_postures.device_ref",
+                key: format!("{device_ref}->{existing}"),
+            });
+        }
+        let audit_refs = Self::person_profile_dedupe_safe_ids(
+            "device_sync_postures.audit_refs",
+            input.audit_refs,
+        )?;
+        let rec = DeviceSyncPostureRecord {
+            schema_version: SchemaVersion(1),
+            device_sync_posture_id: device_sync_posture_id.clone(),
+            device_ref: device_ref.clone(),
+            person_profile_version: input.person_profile_version,
+            voice_profile_version: input.voice_profile_version,
+            recognition_pack_version: input.recognition_pack_version,
+            device_trust_version: input.device_trust_version,
+            greeting_library_version: input.greeting_library_version,
+            access_policy_version: input.access_policy_version,
+            revocation_state_version: input.revocation_state_version,
+            sync_status: input.sync_status,
+            last_checked_at_ns: input.last_checked_at_ns,
+            next_allowed_check_at_ns: input.next_allowed_check_at_ns,
+            updated_at_ns: now,
+            audit_refs,
+        };
+        self.device_sync_postures
+            .insert(device_sync_posture_id.clone(), rec.clone());
+        self.device_sync_posture_by_device_ref
+            .insert(device_ref, device_sync_posture_id);
+        Ok(rec)
+    }
+
+    pub fn device_sync_posture_row(
+        &self,
+        device_sync_posture_id: &str,
+    ) -> Option<&DeviceSyncPostureRecord> {
+        self.device_sync_postures.get(device_sync_posture_id)
+    }
+
+    pub fn device_sync_posture_for_device_ref(
+        &self,
+        device_ref: &str,
+    ) -> Option<&DeviceSyncPostureRecord> {
+        self.device_sync_posture_by_device_ref
+            .get(device_ref)
+            .and_then(|id| self.device_sync_postures.get(id))
+    }
+
+    pub fn device_sync_posture_rows(&self) -> Vec<&DeviceSyncPostureRecord> {
+        self.device_sync_postures.values().collect()
+    }
+
+    pub fn device_sync_decide_event(
+        &self,
+        now: MonotonicTimeNs,
+        device_sync_posture_id: &str,
+        trigger: DeviceSyncTriggerClass,
+        network_available: bool,
+    ) -> Result<DeviceSyncDecision, StorageError> {
+        let rec = self
+            .device_sync_postures
+            .get(device_sync_posture_id)
+            .ok_or(StorageError::ForeignKeyViolation {
+                table: "device_sync_postures.device_sync_posture_id",
+                key: device_sync_posture_id.to_string(),
+            })?;
+        if !network_available {
+            return Ok(DeviceSyncDecision::OfflineDeferred);
+        }
+        if matches!(
+            rec.sync_status,
+            DeviceSyncStatus::Revoked | DeviceSyncStatus::Blocked
+        ) {
+            return Ok(DeviceSyncDecision::CriticalRevocationDue);
+        }
+        if rec
+            .next_allowed_check_at_ns
+            .map(|next| now < next)
+            .unwrap_or(false)
+            && !matches!(
+                trigger,
+                DeviceSyncTriggerClass::PushCriticalUpdate
+                    | DeviceSyncTriggerClass::LocalVoiceIdFail
+                    | DeviceSyncTriggerClass::SessionEnd
+            )
+        {
+            return Ok(DeviceSyncDecision::NoCheckNeeded);
+        }
+        Ok(match trigger {
+            DeviceSyncTriggerClass::SessionEnd => {
+                DeviceSyncDecision::AfterSessionUploadDueMetadataOnly
+            }
+            DeviceSyncTriggerClass::PushCriticalUpdate => DeviceSyncDecision::CriticalRevocationDue,
+            DeviceSyncTriggerClass::AppStart
+            | DeviceSyncTriggerClass::DeviceUnlock
+            | DeviceSyncTriggerClass::ActivationStart
+            | DeviceSyncTriggerClass::LocalVoiceIdFail
+            | DeviceSyncTriggerClass::NetworkRestored
+            | DeviceSyncTriggerClass::ChargingWifiMaintenance => {
+                DeviceSyncDecision::VersionCheckDue
+            }
+        })
+    }
+
+    pub fn device_revocation_apply_governed(
+        &mut self,
+        now: MonotonicTimeNs,
+        input: DeviceRevocationPostureInput,
+    ) -> Result<DeviceRevocationPostureRecord, StorageError> {
+        let device_ref = input.device_ref.trim().to_string();
+        Self::person_profile_validate_id("device_revocations.device_ref", &device_ref)?;
+        let person_profile_ref = input.person_profile_ref.trim().to_string();
+        Self::person_profile_validate_id(
+            "device_revocations.person_profile_ref",
+            &person_profile_ref,
+        )?;
+        let voice_profile_ref = input.voice_profile_ref.trim().to_string();
+        Self::person_profile_validate_id(
+            "device_revocations.voice_profile_ref",
+            &voice_profile_ref,
+        )?;
+        let local_voice_cache_ref = input.local_voice_cache_ref.trim().to_string();
+        Self::person_profile_validate_id(
+            "device_revocations.local_voice_cache_ref",
+            &local_voice_cache_ref,
+        )?;
+        let reason_ref = input.reason_ref.trim().to_string();
+        Self::person_profile_validate_id("device_revocations.reason_ref", &reason_ref)?;
+        if input.revocation_state_version == 0 {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "device_revocations.revocation_state_version",
+                    reason: "revocation state version must be nonzero",
+                },
+            ));
+        }
+        let cache = self.local_voice_caches.get(&local_voice_cache_ref).ok_or(
+            StorageError::ForeignKeyViolation {
+                table: "local_voice_caches.local_voice_cache_id",
+                key: local_voice_cache_ref.clone(),
+            },
+        )?;
+        if cache.device_ref != device_ref
+            || cache.person_profile_ref != person_profile_ref
+            || cache.voice_profile_ref != voice_profile_ref
+        {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "device_revocations.local_voice_cache_ref",
+                    reason: "revocation refs must match linked local voice cache",
+                },
+            ));
+        }
+        let audit_refs = Self::person_profile_dedupe_safe_ids(
+            "device_revocations.audit_refs",
+            input.audit_refs,
+        )?;
+        let next_cache_status = input.revocation_kind.cache_status();
+        if matches!(
+            cache.cache_status,
+            LocalVoiceCacheStatus::Revoked | LocalVoiceCacheStatus::Blocked
+        ) && cache.cache_status != next_cache_status
+        {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "local_voice_caches.cache_status",
+                    reason: "revoked or blocked cache cannot be changed by revocation posture",
+                },
+            ));
+        }
+        let revocation_event_id = self.next_device_revocation_event_id;
+        let record = DeviceRevocationPostureRecord {
+            schema_version: SchemaVersion(1),
+            revocation_event_id,
+            device_ref: device_ref.clone(),
+            person_profile_ref,
+            voice_profile_ref,
+            local_voice_cache_ref: local_voice_cache_ref.clone(),
+            revocation_kind: input.revocation_kind,
+            revocation_state_version: input.revocation_state_version,
+            reason_ref,
+            created_at_ns: now,
+            audit_refs,
+        };
+        self.local_voice_cache_mark_status(now, &local_voice_cache_ref, next_cache_status)?;
+        if let Some(sync_id) = self
+            .device_sync_posture_by_device_ref
+            .get(&device_ref)
+            .cloned()
+        {
+            if let Some(sync) = self.device_sync_postures.get_mut(&sync_id) {
+                sync.sync_status = match input.revocation_kind {
+                    DeviceRevocationKind::LostDevice
+                    | DeviceRevocationKind::DeviceRevoked
+                    | DeviceRevocationKind::PersonProfileRevoked => DeviceSyncStatus::Revoked,
+                    DeviceRevocationKind::VoiceProfileBlocked
+                    | DeviceRevocationKind::RecognitionPackBlocked
+                    | DeviceRevocationKind::AccessPolicyCriticalChange => DeviceSyncStatus::Blocked,
+                };
+                sync.revocation_state_version = input.revocation_state_version;
+                sync.updated_at_ns = now;
+            }
+        }
+        self.next_device_revocation_event_id = self
+            .next_device_revocation_event_id
+            .checked_add(1)
+            .expect("device revocation event id should not overflow");
+        self.device_revocation_ledger.push(record.clone());
+        Ok(record)
+    }
+
+    pub fn device_revocation_rows(&self) -> &[DeviceRevocationPostureRecord] {
+        &self.device_revocation_ledger
+    }
+
     // ------------------------
     // PH1.ACCESS.001 + PH2.ACCESS.002 (Access/Authority)
     // ------------------------
@@ -25443,6 +25891,46 @@ mod tests {
         (rec.person_profile_id, voice_profile_id)
     }
 
+    fn device_sync_posture_test_input() -> DeviceSyncPostureUpsertInput {
+        DeviceSyncPostureUpsertInput {
+            device_sync_posture_id: Some("device_sync_posture_test_1".to_string()),
+            device_ref: device().as_str().to_string(),
+            person_profile_version: 1,
+            voice_profile_version: 2,
+            recognition_pack_version: 3,
+            device_trust_version: 4,
+            greeting_library_version: 5,
+            access_policy_version: 6,
+            revocation_state_version: 7,
+            sync_status: DeviceSyncStatus::Current,
+            last_checked_at_ns: Some(MonotonicTimeNs(300)),
+            next_allowed_check_at_ns: Some(MonotonicTimeNs(600)),
+            audit_refs: vec!["audit_ref_1".to_string()],
+        }
+    }
+
+    fn seed_device_sync_cache(s: &mut Ph1fStore) -> LocalVoiceCacheRecord {
+        let (person_profile_id, voice_profile_id) = seed_person_profile_for_local_voice_cache(s);
+        s.local_voice_cache_upsert_governed(
+            MonotonicTimeNs(300),
+            local_voice_cache_test_input(person_profile_id, voice_profile_id),
+        )
+        .unwrap()
+    }
+
+    fn device_revocation_input(cache: &LocalVoiceCacheRecord) -> DeviceRevocationPostureInput {
+        DeviceRevocationPostureInput {
+            device_ref: cache.device_ref.clone(),
+            person_profile_ref: cache.person_profile_ref.clone(),
+            voice_profile_ref: cache.voice_profile_ref.clone(),
+            local_voice_cache_ref: cache.local_voice_cache_id.clone(),
+            revocation_kind: DeviceRevocationKind::LostDevice,
+            revocation_state_version: 8,
+            reason_ref: "revocation_reason_1".to_string(),
+            audit_refs: vec!["audit_ref_1".to_string()],
+        }
+    }
+
     fn mem_event(kind: MemoryLedgerEventKind, key: &str, value: Option<&str>) -> MemoryLedgerEvent {
         MemoryLedgerEvent::v1(
             kind,
@@ -28646,6 +29134,216 @@ mod tests {
         assert!(!format!("{rec:?}")
             .to_ascii_lowercase()
             .contains("authority"));
+    }
+
+    #[test]
+    fn device_sync_posture_contract_versions_are_governed() {
+        let mut s = store_with_user_and_device();
+        let rec = s
+            .device_sync_posture_upsert_governed(
+                MonotonicTimeNs(301),
+                device_sync_posture_test_input(),
+            )
+            .unwrap();
+
+        assert_eq!(rec.person_profile_version, 1);
+        assert_eq!(rec.voice_profile_version, 2);
+        assert_eq!(rec.recognition_pack_version, 3);
+        assert_eq!(rec.device_trust_version, 4);
+        assert_eq!(rec.greeting_library_version, 5);
+        assert_eq!(rec.access_policy_version, 6);
+        assert_eq!(rec.revocation_state_version, 7);
+        assert_eq!(rec.sync_status, DeviceSyncStatus::Current);
+        assert_eq!(
+            s.device_sync_posture_for_device_ref(device().as_str())
+                .unwrap()
+                .device_sync_posture_id,
+            rec.device_sync_posture_id
+        );
+
+        let mut invalid = device_sync_posture_test_input();
+        invalid.recognition_pack_version = 0;
+        assert!(matches!(
+            s.device_sync_posture_upsert_governed(MonotonicTimeNs(302), invalid),
+            Err(StorageError::ContractViolation(_))
+        ));
+    }
+
+    #[test]
+    fn device_sync_event_driven_check_does_not_poll_every_minute() {
+        let mut s = store_with_user_and_device();
+        let rec = s
+            .device_sync_posture_upsert_governed(
+                MonotonicTimeNs(303),
+                device_sync_posture_test_input(),
+            )
+            .unwrap();
+        let decision = s
+            .device_sync_decide_event(
+                MonotonicTimeNs(350),
+                &rec.device_sync_posture_id,
+                DeviceSyncTriggerClass::AppStart,
+                true,
+            )
+            .unwrap();
+        assert_eq!(decision, DeviceSyncDecision::NoCheckNeeded);
+
+        let due = s
+            .device_sync_decide_event(
+                MonotonicTimeNs(350),
+                &rec.device_sync_posture_id,
+                DeviceSyncTriggerClass::LocalVoiceIdFail,
+                true,
+            )
+            .unwrap();
+        assert_eq!(due, DeviceSyncDecision::VersionCheckDue);
+    }
+
+    #[test]
+    fn device_sync_activation_check_does_not_block_wake() {
+        let mut s = store_with_user_and_device();
+        let mut input = device_sync_posture_test_input();
+        input.next_allowed_check_at_ns = None;
+        let rec = s
+            .device_sync_posture_upsert_governed(MonotonicTimeNs(304), input)
+            .unwrap();
+        let decision = s
+            .device_sync_decide_event(
+                MonotonicTimeNs(305),
+                &rec.device_sync_posture_id,
+                DeviceSyncTriggerClass::ActivationStart,
+                true,
+            )
+            .unwrap();
+        assert_eq!(decision, DeviceSyncDecision::VersionCheckDue);
+    }
+
+    #[test]
+    fn device_sync_session_end_marks_upload_due_without_upload() {
+        let mut s = store_with_user_and_device();
+        let rec = s
+            .device_sync_posture_upsert_governed(
+                MonotonicTimeNs(306),
+                device_sync_posture_test_input(),
+            )
+            .unwrap();
+        let before = s.mobile_artifact_sync_queue_rows().len();
+        let decision = s
+            .device_sync_decide_event(
+                MonotonicTimeNs(307),
+                &rec.device_sync_posture_id,
+                DeviceSyncTriggerClass::SessionEnd,
+                true,
+            )
+            .unwrap();
+        assert_eq!(
+            decision,
+            DeviceSyncDecision::AfterSessionUploadDueMetadataOnly
+        );
+        assert_eq!(s.mobile_artifact_sync_queue_rows().len(), before);
+    }
+
+    #[test]
+    fn device_sync_lost_device_revokes_trust_and_cache() {
+        let mut s = store_with_user_and_device();
+        let cache = seed_device_sync_cache(&mut s);
+        s.device_sync_posture_upsert_governed(
+            MonotonicTimeNs(308),
+            device_sync_posture_test_input(),
+        )
+        .unwrap();
+        let rec = s
+            .device_revocation_apply_governed(MonotonicTimeNs(309), device_revocation_input(&cache))
+            .unwrap();
+
+        assert_eq!(rec.revocation_kind, DeviceRevocationKind::LostDevice);
+        assert_eq!(
+            s.local_voice_cache_row(&cache.local_voice_cache_id)
+                .unwrap()
+                .cache_status,
+            LocalVoiceCacheStatus::Revoked
+        );
+        assert_eq!(
+            s.device_sync_posture_for_device_ref(device().as_str())
+                .unwrap()
+                .sync_status,
+            DeviceSyncStatus::Revoked
+        );
+    }
+
+    #[test]
+    fn device_sync_revoked_cache_fails_closed() {
+        let mut s = store_with_user_and_device();
+        let cache = seed_device_sync_cache(&mut s);
+        s.device_revocation_apply_governed(MonotonicTimeNs(310), device_revocation_input(&cache))
+            .unwrap();
+        let decision = s
+            .local_voice_cache_decide_posture(
+                MonotonicTimeNs(311),
+                &cache.local_voice_cache_id,
+                9_900,
+                LocalVoiceCloudFallbackStatus::DeferredNoSurface,
+            )
+            .unwrap();
+        assert_eq!(
+            decision,
+            LocalVoiceRecognitionDisposition::LocalFailedCloudUnavailableNotRecognizedOnDevice
+        );
+    }
+
+    #[test]
+    fn device_sync_device_trust_does_not_identify_speaker() {
+        let mut s = store_with_user_and_device();
+        let cache = seed_device_sync_cache(&mut s);
+        let decision = s
+            .local_voice_cache_decide_posture(
+                MonotonicTimeNs(312),
+                &cache.local_voice_cache_id,
+                8_000,
+                LocalVoiceCloudFallbackStatus::DeferredNoSurface,
+            )
+            .unwrap();
+        assert_ne!(
+            decision,
+            LocalVoiceRecognitionDisposition::KnownSpeakerPosture
+        );
+    }
+
+    #[test]
+    fn device_sync_revocation_creates_no_profile_memory_or_authority() {
+        let mut s = store_with_user_and_device();
+        let cache = seed_device_sync_cache(&mut s);
+        let before_profiles = s.person_profile_rows().len();
+        let before_voice_profiles = s.ph1vid_voice_profile_rows().len();
+        let before_memory = s.memory_ledger_rows().len();
+        let rec = s
+            .device_revocation_apply_governed(MonotonicTimeNs(313), device_revocation_input(&cache))
+            .unwrap();
+        assert_eq!(s.person_profile_rows().len(), before_profiles);
+        assert_eq!(s.ph1vid_voice_profile_rows().len(), before_voice_profiles);
+        assert_eq!(s.memory_ledger_rows().len(), before_memory);
+        assert!(!format!("{rec:?}")
+            .to_ascii_lowercase()
+            .contains("authority"));
+    }
+
+    #[test]
+    fn device_sync_does_not_store_raw_audio_or_unencrypted_embeddings() {
+        let mut s = store_with_user_and_device();
+        let cache = seed_device_sync_cache(&mut s);
+        let posture = s
+            .device_sync_posture_upsert_governed(
+                MonotonicTimeNs(314),
+                device_sync_posture_test_input(),
+            )
+            .unwrap();
+        let revocation = s
+            .device_revocation_apply_governed(MonotonicTimeNs(315), device_revocation_input(&cache))
+            .unwrap();
+        let rendered = format!("{posture:?} {revocation:?}").to_ascii_lowercase();
+        assert!(!rendered.contains("raw_audio"));
+        assert!(!rendered.contains("unencrypted"));
+        assert!(!rendered.contains("embedding"));
     }
 
     // Ensures we still compile against other crate contracts used elsewhere.

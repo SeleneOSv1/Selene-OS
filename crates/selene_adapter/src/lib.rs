@@ -22269,10 +22269,11 @@ mod tests {
     };
     use selene_storage::ph1f::{
         AccessDeviceTrustLevel, AccessLifecycleState, AccessMode, AccessVerificationLevel,
-        DeviceRecord, IdentityRecord, IdentityStatus, LocalVoiceCacheStatus,
-        LocalVoiceCacheUpsertInput, LocalVoiceCloudFallbackStatus,
-        LocalVoiceRecognitionDisposition, MobileArtifactSyncKind, PersonProfileStatus,
-        PersonProfileUpsertInput, WakeSampleResult,
+        DeviceRecord, DeviceRevocationKind, DeviceRevocationPostureInput, DeviceSyncDecision,
+        DeviceSyncPostureUpsertInput, DeviceSyncStatus, DeviceSyncTriggerClass, IdentityRecord,
+        IdentityStatus, LocalVoiceCacheRecord, LocalVoiceCacheStatus, LocalVoiceCacheUpsertInput,
+        LocalVoiceCloudFallbackStatus, LocalVoiceRecognitionDisposition, MobileArtifactSyncKind,
+        PersonProfileStatus, PersonProfileUpsertInput, WakeSampleResult,
     };
     use std::ffi::OsString;
     use std::sync::{Mutex, OnceLock};
@@ -26270,6 +26271,39 @@ mod tests {
         }
     }
 
+    fn adapter_device_sync_posture_input() -> DeviceSyncPostureUpsertInput {
+        DeviceSyncPostureUpsertInput {
+            device_sync_posture_id: Some("device_sync_posture_adapter_slice8".to_string()),
+            device_ref: "adapter_device_1".to_string(),
+            person_profile_version: 1,
+            voice_profile_version: 2,
+            recognition_pack_version: 3,
+            device_trust_version: 4,
+            greeting_library_version: 5,
+            access_policy_version: 6,
+            revocation_state_version: 7,
+            sync_status: DeviceSyncStatus::Current,
+            last_checked_at_ns: Some(MonotonicTimeNs(34_800_000_000)),
+            next_allowed_check_at_ns: Some(MonotonicTimeNs(34_800_001_000)),
+            audit_refs: vec!["audit_ref_adapter".to_string()],
+        }
+    }
+
+    fn adapter_device_revocation_input(
+        cache: &LocalVoiceCacheRecord,
+    ) -> DeviceRevocationPostureInput {
+        DeviceRevocationPostureInput {
+            device_ref: cache.device_ref.clone(),
+            person_profile_ref: cache.person_profile_ref.clone(),
+            voice_profile_ref: cache.voice_profile_ref.clone(),
+            local_voice_cache_ref: cache.local_voice_cache_id.clone(),
+            revocation_kind: DeviceRevocationKind::LostDevice,
+            revocation_state_version: 8,
+            reason_ref: "revocation_reason_adapter".to_string(),
+            audit_refs: vec!["audit_ref_adapter".to_string()],
+        }
+    }
+
     fn seed_adapter_person_profile_for_local_voice_cache(
         label: &str,
     ) -> (AdapterRuntime, String, String) {
@@ -26731,6 +26765,295 @@ mod tests {
 
     #[test]
     fn wake_local_voice_cache_iphone_wake_word_remains_blocked() {
+        wake_guest_lane_iphone_wake_word_remains_blocked();
+    }
+
+    #[test]
+    fn wake_device_sync_posture_contract_versions_are_governed() {
+        let (runtime, _person_profile_id, _voice_profile_id) =
+            seed_adapter_person_profile_for_local_voice_cache("slice8_sync_versions");
+        let mut store = runtime.store.lock().expect("store lock must not poison");
+        let rec = store
+            .device_sync_posture_upsert_governed(
+                MonotonicTimeNs(34_800_000_010),
+                adapter_device_sync_posture_input(),
+            )
+            .expect("device sync posture should be governed metadata");
+
+        assert_eq!(rec.person_profile_version, 1);
+        assert_eq!(rec.voice_profile_version, 2);
+        assert_eq!(rec.recognition_pack_version, 3);
+        assert_eq!(rec.device_trust_version, 4);
+        assert_eq!(rec.greeting_library_version, 5);
+        assert_eq!(rec.access_policy_version, 6);
+        assert_eq!(rec.revocation_state_version, 7);
+    }
+
+    #[test]
+    fn wake_device_sync_event_driven_check_does_not_poll_every_minute() {
+        let (runtime, _person_profile_id, _voice_profile_id) =
+            seed_adapter_person_profile_for_local_voice_cache("slice8_event_driven");
+        let mut store = runtime.store.lock().expect("store lock must not poison");
+        let rec = store
+            .device_sync_posture_upsert_governed(
+                MonotonicTimeNs(34_801_000_010),
+                adapter_device_sync_posture_input(),
+            )
+            .expect("device sync posture should be created");
+        let quiet = store
+            .device_sync_decide_event(
+                MonotonicTimeNs(34_800_000_500),
+                &rec.device_sync_posture_id,
+                DeviceSyncTriggerClass::AppStart,
+                true,
+            )
+            .expect("metadata decision should not require background work");
+        assert_eq!(quiet, DeviceSyncDecision::NoCheckNeeded);
+        let due = store
+            .device_sync_decide_event(
+                MonotonicTimeNs(34_800_000_500),
+                &rec.device_sync_posture_id,
+                DeviceSyncTriggerClass::LocalVoiceIdFail,
+                true,
+            )
+            .expect("local miss may mark a check due");
+        assert_eq!(due, DeviceSyncDecision::VersionCheckDue);
+    }
+
+    #[test]
+    fn wake_device_sync_activation_check_does_not_block_wake() {
+        let (runtime, req) = stage34m_activation_only_wake_request("slice8_activation_fast");
+        let out = runtime
+            .run_voice_turn(req)
+            .expect("activation should remain local-first");
+        assert!(
+            wake_greeting_library_phrases(WakeGreetingLibraryCategory::GenericActivation)
+                .contains(&out.response_text.as_str()),
+            "{out:?}"
+        );
+
+        let mut store = runtime.store.lock().expect("store lock must not poison");
+        let mut input = adapter_device_sync_posture_input();
+        input.next_allowed_check_at_ns = None;
+        let rec = store
+            .device_sync_posture_upsert_governed(MonotonicTimeNs(34_802_000_010), input)
+            .expect("activation metadata posture should be representable");
+        assert_eq!(
+            store
+                .device_sync_decide_event(
+                    MonotonicTimeNs(34_802_000_011),
+                    &rec.device_sync_posture_id,
+                    DeviceSyncTriggerClass::ActivationStart,
+                    true,
+                )
+                .unwrap(),
+            DeviceSyncDecision::VersionCheckDue
+        );
+    }
+
+    #[test]
+    fn wake_device_sync_session_end_marks_upload_due_without_upload() {
+        let (runtime, _person_profile_id, _voice_profile_id) =
+            seed_adapter_person_profile_for_local_voice_cache("slice8_session_end");
+        let mut store = runtime.store.lock().expect("store lock must not poison");
+        let rec = store
+            .device_sync_posture_upsert_governed(
+                MonotonicTimeNs(34_803_000_010),
+                adapter_device_sync_posture_input(),
+            )
+            .expect("device sync posture should be created");
+        let before = store.mobile_artifact_sync_queue_rows().len();
+        assert_eq!(
+            store
+                .device_sync_decide_event(
+                    MonotonicTimeNs(34_803_000_011),
+                    &rec.device_sync_posture_id,
+                    DeviceSyncTriggerClass::SessionEnd,
+                    true,
+                )
+                .unwrap(),
+            DeviceSyncDecision::AfterSessionUploadDueMetadataOnly
+        );
+        assert_eq!(store.mobile_artifact_sync_queue_rows().len(), before);
+    }
+
+    #[test]
+    fn wake_device_sync_lost_device_revokes_trust_and_cache() {
+        let (runtime, person_profile_id, voice_profile_id) =
+            seed_adapter_person_profile_for_local_voice_cache("slice8_revocation");
+        let mut store = runtime.store.lock().expect("store lock must not poison");
+        let cache = store
+            .local_voice_cache_upsert_governed(
+                MonotonicTimeNs(34_804_000_010),
+                adapter_local_voice_cache_input(person_profile_id, voice_profile_id),
+            )
+            .expect("local cache should be created");
+        store
+            .device_sync_posture_upsert_governed(
+                MonotonicTimeNs(34_804_000_011),
+                adapter_device_sync_posture_input(),
+            )
+            .expect("sync posture should be created");
+        store
+            .device_revocation_apply_governed(
+                MonotonicTimeNs(34_804_000_012),
+                adapter_device_revocation_input(&cache),
+            )
+            .expect("revocation should invalidate cache");
+
+        assert_eq!(
+            store
+                .local_voice_cache_row(&cache.local_voice_cache_id)
+                .unwrap()
+                .cache_status,
+            LocalVoiceCacheStatus::Revoked
+        );
+        assert_eq!(
+            store
+                .device_sync_posture_for_device_ref("adapter_device_1")
+                .unwrap()
+                .sync_status,
+            DeviceSyncStatus::Revoked
+        );
+    }
+
+    #[test]
+    fn wake_device_sync_revoked_cache_fails_closed() {
+        let (runtime, person_profile_id, voice_profile_id) =
+            seed_adapter_person_profile_for_local_voice_cache("slice8_revoked_closed");
+        let mut store = runtime.store.lock().expect("store lock must not poison");
+        let cache = store
+            .local_voice_cache_upsert_governed(
+                MonotonicTimeNs(34_805_000_010),
+                adapter_local_voice_cache_input(person_profile_id, voice_profile_id),
+            )
+            .expect("local cache should be created");
+        store
+            .device_revocation_apply_governed(
+                MonotonicTimeNs(34_805_000_011),
+                adapter_device_revocation_input(&cache),
+            )
+            .expect("revocation should be applied");
+        let decision = store
+            .local_voice_cache_decide_posture(
+                MonotonicTimeNs(34_805_000_012),
+                &cache.local_voice_cache_id,
+                9_900,
+                LocalVoiceCloudFallbackStatus::DeferredNoSurface,
+            )
+            .unwrap();
+        assert_eq!(
+            decision,
+            LocalVoiceRecognitionDisposition::LocalFailedCloudUnavailableNotRecognizedOnDevice
+        );
+    }
+
+    #[test]
+    fn wake_device_sync_device_trust_does_not_identify_speaker() {
+        wake_local_voice_cache_device_trust_does_not_identify_speaker();
+    }
+
+    #[test]
+    fn wake_device_sync_revocation_creates_no_profile_memory_or_authority() {
+        let (runtime, person_profile_id, voice_profile_id) =
+            seed_adapter_person_profile_for_local_voice_cache("slice8_no_mutation");
+        let mut store = runtime.store.lock().expect("store lock must not poison");
+        let cache = store
+            .local_voice_cache_upsert_governed(
+                MonotonicTimeNs(34_806_000_010),
+                adapter_local_voice_cache_input(person_profile_id, voice_profile_id),
+            )
+            .expect("local cache should be created");
+        let before_profiles = store.person_profile_rows().len();
+        let before_voice_profiles = store.ph1vid_voice_profile_rows().len();
+        let before_memory = store.memory_ledger_rows().len();
+        let rec = store
+            .device_revocation_apply_governed(
+                MonotonicTimeNs(34_806_000_011),
+                adapter_device_revocation_input(&cache),
+            )
+            .expect("revocation should be metadata-only");
+        assert_eq!(store.person_profile_rows().len(), before_profiles);
+        assert_eq!(
+            store.ph1vid_voice_profile_rows().len(),
+            before_voice_profiles
+        );
+        assert_eq!(store.memory_ledger_rows().len(), before_memory);
+        assert!(!format!("{rec:?}")
+            .to_ascii_lowercase()
+            .contains("authority"));
+    }
+
+    #[test]
+    fn wake_device_sync_does_not_store_raw_audio_or_unencrypted_embeddings() {
+        let (runtime, person_profile_id, voice_profile_id) =
+            seed_adapter_person_profile_for_local_voice_cache("slice8_no_payload");
+        let mut store = runtime.store.lock().expect("store lock must not poison");
+        let cache = store
+            .local_voice_cache_upsert_governed(
+                MonotonicTimeNs(34_807_000_010),
+                adapter_local_voice_cache_input(person_profile_id, voice_profile_id),
+            )
+            .expect("local cache should be created");
+        let posture = store
+            .device_sync_posture_upsert_governed(
+                MonotonicTimeNs(34_807_000_011),
+                adapter_device_sync_posture_input(),
+            )
+            .expect("device sync posture should be created");
+        let revocation = store
+            .device_revocation_apply_governed(
+                MonotonicTimeNs(34_807_000_012),
+                adapter_device_revocation_input(&cache),
+            )
+            .expect("revocation should be applied");
+        let rendered = format!("{posture:?} {revocation:?}").to_ascii_lowercase();
+        assert!(!rendered.contains("raw_audio"));
+        assert!(!rendered.contains("unencrypted"));
+        assert!(!rendered.contains("embedding"));
+    }
+
+    #[test]
+    fn wake_device_sync_does_not_introduce_live_network() {
+        let (runtime, _person_profile_id, _voice_profile_id) =
+            seed_adapter_person_profile_for_local_voice_cache("slice8_no_live");
+        let mut store = runtime.store.lock().expect("store lock must not poison");
+        let rec = store
+            .device_sync_posture_upsert_governed(
+                MonotonicTimeNs(34_808_000_010),
+                adapter_device_sync_posture_input(),
+            )
+            .expect("device sync posture should be metadata-only");
+        let rendered = format!("{rec:?}").to_ascii_lowercase();
+        assert!(!rendered.contains("http"));
+        assert!(!rendered.contains("service_client"));
+        assert!(!rendered.contains("credential"));
+        assert!(!rendered.contains("provider"));
+    }
+
+    #[test]
+    fn wake_device_sync_preserves_local_voice_cache() {
+        wake_local_voice_cache_active_high_confidence_can_identify_posture();
+    }
+
+    #[test]
+    fn wake_device_sync_preserves_person_profile_linkage() {
+        wake_person_profile_linkage_contract_links_governed_refs();
+    }
+
+    #[test]
+    fn wake_device_sync_preserves_guest_lane() {
+        wake_guest_lane_allows_anonymous_public_safe_guest_chat();
+        wake_guest_lane_claimed_name_does_not_authorize_protected_work();
+    }
+
+    #[test]
+    fn wake_device_sync_preserves_provider_tool_protected_closure() {
+        wake_guest_lane_preserves_provider_tool_protected_closure();
+    }
+
+    #[test]
+    fn wake_device_sync_iphone_wake_word_remains_blocked() {
         wake_guest_lane_iphone_wake_word_remains_blocked();
     }
 

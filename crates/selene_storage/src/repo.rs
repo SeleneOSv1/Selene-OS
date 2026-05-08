@@ -81,13 +81,15 @@ use crate::ph1f::{
     AccessSchemaScope, AccessVerificationLevel, BuilderApprovalStateLedgerRow,
     BuilderPostDeployJudgeResultLedgerRow, BuilderProposalLedgerRow, BuilderProposalLedgerRowInput,
     BuilderReleaseStateLedgerRow, BuilderValidationGateResultLedgerRow,
-    BuilderValidationRunLedgerRow, ConsentStateRecord, DeviceRecord, IdentityRecord,
-    LinkGenerateResultParts, LocalVoiceCacheRecord, LocalVoiceCacheStatus,
-    LocalVoiceCacheUpsertInput, LocalVoiceCloudFallbackStatus, LocalVoiceRecognitionDisposition,
-    MemoryArchiveIndexRecord, MemoryCurrentRecord, MemoryEmotionalThreadCurrentRecord,
-    MemoryEmotionalThreadLedgerRow, MemoryGraphEdgeRecord, MemoryGraphNodeRecord, MemoryLedgerRow,
-    MemoryMetricLedgerRow, MemoryRetentionPreferenceRecord, MemorySuppressionRuleRecord,
-    MemoryThreadCurrentRecord, MemoryThreadEventKind, MemoryThreadLedgerRow, MemoryThreadRefRecord,
+    BuilderValidationRunLedgerRow, ConsentStateRecord, DeviceRecord, DeviceRevocationPostureInput,
+    DeviceRevocationPostureRecord, DeviceSyncDecision, DeviceSyncPostureRecord,
+    DeviceSyncPostureUpsertInput, DeviceSyncTriggerClass, IdentityRecord, LinkGenerateResultParts,
+    LocalVoiceCacheRecord, LocalVoiceCacheStatus, LocalVoiceCacheUpsertInput,
+    LocalVoiceCloudFallbackStatus, LocalVoiceRecognitionDisposition, MemoryArchiveIndexRecord,
+    MemoryCurrentRecord, MemoryEmotionalThreadCurrentRecord, MemoryEmotionalThreadLedgerRow,
+    MemoryGraphEdgeRecord, MemoryGraphNodeRecord, MemoryLedgerRow, MemoryMetricLedgerRow,
+    MemoryRetentionPreferenceRecord, MemorySuppressionRuleRecord, MemoryThreadCurrentRecord,
+    MemoryThreadEventKind, MemoryThreadLedgerRow, MemoryThreadRefRecord,
     MobileArtifactSyncQueueRecord, MobileArtifactSyncState, OnboardingSessionRecord,
     PersonProfileRecord, PersonProfileUpsertInput, Ph1cTranscriptOkCommitResult,
     Ph1cTranscriptRejectCommitResult, Ph1fStore, Ph1kDeviceHealth, Ph1kFeedbackCaptureInput,
@@ -440,6 +442,37 @@ pub trait LocalVoiceCacheRepo {
         local_confidence_bp: u16,
         cloud_fallback_status: LocalVoiceCloudFallbackStatus,
     ) -> Result<LocalVoiceRecognitionDisposition, StorageError>;
+}
+
+/// Typed repository interface for event-driven device sync and revocation posture.
+pub trait DeviceSyncRevocationRepo {
+    fn device_sync_posture_upsert_row(
+        &mut self,
+        now: MonotonicTimeNs,
+        input: DeviceSyncPostureUpsertInput,
+    ) -> Result<DeviceSyncPostureRecord, StorageError>;
+    fn device_sync_posture_row(
+        &self,
+        device_sync_posture_id: &str,
+    ) -> Option<&DeviceSyncPostureRecord>;
+    fn device_sync_posture_for_device_ref_row(
+        &self,
+        device_ref: &str,
+    ) -> Option<&DeviceSyncPostureRecord>;
+    fn device_sync_posture_rows(&self) -> Vec<&DeviceSyncPostureRecord>;
+    fn device_sync_decide_event_row(
+        &self,
+        now: MonotonicTimeNs,
+        device_sync_posture_id: &str,
+        trigger: DeviceSyncTriggerClass,
+        network_available: bool,
+    ) -> Result<DeviceSyncDecision, StorageError>;
+    fn device_revocation_apply_row(
+        &mut self,
+        now: MonotonicTimeNs,
+        input: DeviceRevocationPostureInput,
+    ) -> Result<DeviceRevocationPostureRecord, StorageError>;
+    fn device_revocation_rows(&self) -> &[DeviceRevocationPostureRecord];
 }
 
 /// Typed repository interface for phone-local artifact sync queue lifecycle.
@@ -2636,6 +2669,56 @@ impl LocalVoiceCacheRepo for Ph1fStore {
             local_confidence_bp,
             cloud_fallback_status,
         )
+    }
+}
+
+impl DeviceSyncRevocationRepo for Ph1fStore {
+    fn device_sync_posture_upsert_row(
+        &mut self,
+        now: MonotonicTimeNs,
+        input: DeviceSyncPostureUpsertInput,
+    ) -> Result<DeviceSyncPostureRecord, StorageError> {
+        self.device_sync_posture_upsert_governed(now, input)
+    }
+
+    fn device_sync_posture_row(
+        &self,
+        device_sync_posture_id: &str,
+    ) -> Option<&DeviceSyncPostureRecord> {
+        Ph1fStore::device_sync_posture_row(self, device_sync_posture_id)
+    }
+
+    fn device_sync_posture_for_device_ref_row(
+        &self,
+        device_ref: &str,
+    ) -> Option<&DeviceSyncPostureRecord> {
+        self.device_sync_posture_for_device_ref(device_ref)
+    }
+
+    fn device_sync_posture_rows(&self) -> Vec<&DeviceSyncPostureRecord> {
+        Ph1fStore::device_sync_posture_rows(self)
+    }
+
+    fn device_sync_decide_event_row(
+        &self,
+        now: MonotonicTimeNs,
+        device_sync_posture_id: &str,
+        trigger: DeviceSyncTriggerClass,
+        network_available: bool,
+    ) -> Result<DeviceSyncDecision, StorageError> {
+        self.device_sync_decide_event(now, device_sync_posture_id, trigger, network_available)
+    }
+
+    fn device_revocation_apply_row(
+        &mut self,
+        now: MonotonicTimeNs,
+        input: DeviceRevocationPostureInput,
+    ) -> Result<DeviceRevocationPostureRecord, StorageError> {
+        self.device_revocation_apply_governed(now, input)
+    }
+
+    fn device_revocation_rows(&self) -> &[DeviceRevocationPostureRecord] {
+        Ph1fStore::device_revocation_rows(self)
     }
 }
 
