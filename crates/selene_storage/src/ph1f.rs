@@ -1793,6 +1793,9 @@ pub struct Ph1fStore {
     voice_enrollment_samples: Vec<VoiceEnrollmentSampleRecord>,
     voice_profiles: BTreeMap<String, VoiceProfileRecord>,
     voice_profile_bindings: BTreeMap<(OnboardingSessionId, DeviceId), String>,
+    person_profiles: BTreeMap<String, PersonProfileRecord>,
+    person_profile_by_voice_profile_ref: BTreeMap<String, String>,
+    person_profile_by_actor_user_ref: BTreeMap<String, String>,
     voice_artifact_revocation_ledger: Vec<VoiceArtifactRevocationRecord>,
     // Unique revocation binding: (tenant_id, artifact_type, artifact_version) -> revocation_event_id.
     voice_artifact_revoked_version_index: BTreeMap<(String, ArtifactType, ArtifactVersion), u64>,
@@ -2997,6 +3000,68 @@ pub struct VoiceProfileRecord {
     pub created_at: MonotonicTimeNs,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum PersonProfileStatus {
+    Active,
+    PendingOnboarding,
+    Suspended,
+    Revoked,
+}
+
+impl PersonProfileStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            PersonProfileStatus::Active => "ACTIVE",
+            PersonProfileStatus::PendingOnboarding => "PENDING_ONBOARDING",
+            PersonProfileStatus::Suspended => "SUSPENDED",
+            PersonProfileStatus::Revoked => "REVOKED",
+        }
+    }
+
+    fn allows_mutation(self) -> bool {
+        matches!(
+            self,
+            PersonProfileStatus::Active | PersonProfileStatus::PendingOnboarding
+        )
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PersonProfileRecord {
+    pub schema_version: SchemaVersion,
+    pub person_profile_id: String,
+    pub actor_user_ref: Option<String>,
+    pub preferred_name: String,
+    pub aliases: Vec<String>,
+    pub voice_profile_refs: Vec<String>,
+    pub onboarding_consent_ref: Option<String>,
+    pub memory_scope_ref: Option<String>,
+    pub preference_ref: Option<String>,
+    pub access_policy_ref: Option<String>,
+    pub device_association_refs: Vec<String>,
+    pub audit_refs: Vec<String>,
+    pub profile_status: PersonProfileStatus,
+    pub created_at_ns: MonotonicTimeNs,
+    pub updated_at_ns: MonotonicTimeNs,
+    pub last_seen_at_ns: Option<MonotonicTimeNs>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PersonProfileUpsertInput {
+    pub person_profile_id: Option<String>,
+    pub actor_user_ref: Option<String>,
+    pub preferred_name: String,
+    pub aliases: Vec<String>,
+    pub voice_profile_refs: Vec<String>,
+    pub onboarding_consent_ref: Option<String>,
+    pub memory_scope_ref: Option<String>,
+    pub preference_ref: Option<String>,
+    pub access_policy_ref: Option<String>,
+    pub device_association_refs: Vec<String>,
+    pub audit_refs: Vec<String>,
+    pub profile_status: PersonProfileStatus,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VoiceArtifactRevocationRecord {
     pub schema_version: SchemaVersion,
@@ -3604,6 +3669,9 @@ impl Ph1fStore {
             voice_enrollment_samples: Vec::new(),
             voice_profiles: BTreeMap::new(),
             voice_profile_bindings: BTreeMap::new(),
+            person_profiles: BTreeMap::new(),
+            person_profile_by_voice_profile_ref: BTreeMap::new(),
+            person_profile_by_actor_user_ref: BTreeMap::new(),
             voice_artifact_revocation_ledger: Vec::new(),
             voice_artifact_revoked_version_index: BTreeMap::new(),
             voice_artifact_revocation_idempotency_index: BTreeMap::new(),
@@ -16297,6 +16365,335 @@ impl Ph1fStore {
         })
     }
 
+    fn person_profile_validate_id(field: &'static str, value: &str) -> Result<(), StorageError> {
+        let trimmed = value.trim();
+        if trimmed.is_empty()
+            || trimmed.len() > 96
+            || !trimmed.is_ascii()
+            || trimmed.chars().any(|ch| ch.is_control())
+            || !trimmed
+                .chars()
+                .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '-' || ch == ':')
+        {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field,
+                    reason: "must be non-empty ASCII id <= 96 using alnum _ - :",
+                },
+            ));
+        }
+        Ok(())
+    }
+
+    fn person_profile_validate_display_label(
+        field: &'static str,
+        value: &str,
+    ) -> Result<String, StorageError> {
+        let trimmed = value.trim();
+        let lower = trimmed.to_ascii_lowercase();
+        if trimmed.is_empty()
+            || trimmed.len() > 64
+            || !trimmed.is_ascii()
+            || trimmed.chars().any(|ch| ch.is_control())
+            || trimmed.contains("://")
+            || trimmed.contains('@')
+            || lower.contains("api")
+            || lower.contains("secret")
+            || lower.contains("provider")
+            || lower.contains("debug")
+            || lower.contains("source")
+            || lower.contains("citation")
+            || lower.contains("approve")
+            || lower.contains("payroll")
+            || lower.contains("authority")
+            || !trimmed
+                .chars()
+                .all(|ch| ch.is_ascii_alphabetic() || ch == ' ' || ch == '-' || ch == '\'')
+        {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field,
+                    reason: "must be a safe display label, not an action, source, secret, or authority claim",
+                },
+            ));
+        }
+        Ok(trimmed
+            .split_whitespace()
+            .map(|part| {
+                if part.len() <= 3 {
+                    part.to_ascii_uppercase()
+                } else {
+                    let mut chars = part.chars();
+                    let first = chars.next().unwrap().to_ascii_uppercase();
+                    let rest = chars.as_str().to_ascii_lowercase();
+                    format!("{first}{rest}")
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(" "))
+    }
+
+    fn person_profile_dedupe_safe_ids(
+        field: &'static str,
+        values: Vec<String>,
+    ) -> Result<Vec<String>, StorageError> {
+        let mut deduped = Vec::new();
+        let mut seen = BTreeSet::new();
+        for value in values {
+            let trimmed = value.trim();
+            Self::person_profile_validate_id(field, trimmed)?;
+            if seen.insert(trimmed.to_string()) {
+                deduped.push(trimmed.to_string());
+            }
+            if deduped.len() > 32 {
+                return Err(StorageError::ContractViolation(
+                    ContractViolation::InvalidValue {
+                        field,
+                        reason: "must contain <= 32 refs",
+                    },
+                ));
+            }
+        }
+        Ok(deduped)
+    }
+
+    fn person_profile_dedupe_safe_aliases(
+        values: Vec<String>,
+    ) -> Result<Vec<String>, StorageError> {
+        let mut deduped = Vec::new();
+        let mut seen = BTreeSet::new();
+        for value in values {
+            let normalized =
+                Self::person_profile_validate_display_label("person_profiles.aliases", &value)?;
+            if seen.insert(normalized.clone()) {
+                deduped.push(normalized);
+            }
+            if deduped.len() > 16 {
+                return Err(StorageError::ContractViolation(
+                    ContractViolation::InvalidValue {
+                        field: "person_profiles.aliases",
+                        reason: "must contain <= 16 aliases",
+                    },
+                ));
+            }
+        }
+        Ok(deduped)
+    }
+
+    fn person_profile_id_for_input(
+        input: &PersonProfileUpsertInput,
+    ) -> Result<String, StorageError> {
+        if let Some(id) = input.person_profile_id.as_ref() {
+            let trimmed = id.trim().to_string();
+            Self::person_profile_validate_id("person_profiles.person_profile_id", &trimmed)?;
+            return Ok(trimmed);
+        }
+        let seed = format!(
+            "{}:{}:{}",
+            input
+                .actor_user_ref
+                .as_deref()
+                .unwrap_or("actor_ref_absent"),
+            input.preferred_name.trim(),
+            input.voice_profile_refs.join("|")
+        );
+        Ok(format!("person_prof_{}", hash_hex_64(&seed)))
+    }
+
+    pub fn person_profile_upsert_governed(
+        &mut self,
+        now: MonotonicTimeNs,
+        input: PersonProfileUpsertInput,
+    ) -> Result<PersonProfileRecord, StorageError> {
+        let person_profile_id = Self::person_profile_id_for_input(&input)?;
+        let preferred_name = Self::person_profile_validate_display_label(
+            "person_profiles.preferred_name",
+            &input.preferred_name,
+        )?;
+        let aliases = Self::person_profile_dedupe_safe_aliases(input.aliases)?;
+        let voice_profile_refs = Self::person_profile_dedupe_safe_ids(
+            "person_profiles.voice_profile_refs",
+            input.voice_profile_refs,
+        )?;
+        for voice_profile_ref in &voice_profile_refs {
+            if !self.voice_profiles.contains_key(voice_profile_ref) {
+                return Err(StorageError::ForeignKeyViolation {
+                    table: "voice_profiles.voice_profile_id",
+                    key: voice_profile_ref.clone(),
+                });
+            }
+            if let Some(existing) = self
+                .person_profile_by_voice_profile_ref
+                .get(voice_profile_ref)
+                .filter(|existing| *existing != &person_profile_id)
+            {
+                return Err(StorageError::DuplicateKey {
+                    table: "person_profiles.voice_profile_refs",
+                    key: format!("{voice_profile_ref}->{existing}"),
+                });
+            }
+        }
+        let actor_user_ref = input
+            .actor_user_ref
+            .map(|value| {
+                let trimmed = value.trim().to_string();
+                Self::person_profile_validate_id("person_profiles.actor_user_ref", &trimmed)?;
+                Ok::<_, StorageError>(trimmed)
+            })
+            .transpose()?;
+        if let Some(actor_user_ref) = actor_user_ref.as_ref() {
+            if let Some(existing) = self
+                .person_profile_by_actor_user_ref
+                .get(actor_user_ref)
+                .filter(|existing| *existing != &person_profile_id)
+            {
+                return Err(StorageError::DuplicateKey {
+                    table: "person_profiles.actor_user_ref",
+                    key: format!("{actor_user_ref}->{existing}"),
+                });
+            }
+        }
+        let onboarding_consent_ref = input
+            .onboarding_consent_ref
+            .map(|value| {
+                let trimmed = value.trim().to_string();
+                Self::person_profile_validate_id(
+                    "person_profiles.onboarding_consent_ref",
+                    &trimmed,
+                )?;
+                Ok::<_, StorageError>(trimmed)
+            })
+            .transpose()?;
+        let memory_scope_ref = input
+            .memory_scope_ref
+            .map(|value| {
+                let trimmed = value.trim().to_string();
+                Self::person_profile_validate_id("person_profiles.memory_scope_ref", &trimmed)?;
+                Ok::<_, StorageError>(trimmed)
+            })
+            .transpose()?;
+        let preference_ref = input
+            .preference_ref
+            .map(|value| {
+                let trimmed = value.trim().to_string();
+                Self::person_profile_validate_id("person_profiles.preference_ref", &trimmed)?;
+                Ok::<_, StorageError>(trimmed)
+            })
+            .transpose()?;
+        let access_policy_ref = input
+            .access_policy_ref
+            .map(|value| {
+                let trimmed = value.trim().to_string();
+                Self::person_profile_validate_id("person_profiles.access_policy_ref", &trimmed)?;
+                Ok::<_, StorageError>(trimmed)
+            })
+            .transpose()?;
+        let device_association_refs = Self::person_profile_dedupe_safe_ids(
+            "person_profiles.device_association_refs",
+            input.device_association_refs,
+        )?;
+        let audit_refs =
+            Self::person_profile_dedupe_safe_ids("person_profiles.audit_refs", input.audit_refs)?;
+
+        if let Some(existing) = self.person_profiles.get(&person_profile_id) {
+            if !existing.profile_status.allows_mutation()
+                && existing.profile_status != input.profile_status
+            {
+                return Err(StorageError::ContractViolation(
+                    ContractViolation::InvalidValue {
+                        field: "person_profiles.profile_status",
+                        reason: "revoked or suspended profile cannot be upgraded by upsert",
+                    },
+                ));
+            }
+        }
+
+        let created_at_ns = self
+            .person_profiles
+            .get(&person_profile_id)
+            .map(|existing| existing.created_at_ns)
+            .unwrap_or(now);
+        let rec = PersonProfileRecord {
+            schema_version: SchemaVersion(1),
+            person_profile_id: person_profile_id.clone(),
+            actor_user_ref: actor_user_ref.clone(),
+            preferred_name,
+            aliases,
+            voice_profile_refs: voice_profile_refs.clone(),
+            onboarding_consent_ref,
+            memory_scope_ref,
+            preference_ref,
+            access_policy_ref,
+            device_association_refs,
+            audit_refs,
+            profile_status: input.profile_status,
+            created_at_ns,
+            updated_at_ns: now,
+            last_seen_at_ns: None,
+        };
+        self.person_profiles
+            .insert(person_profile_id.clone(), rec.clone());
+        for voice_profile_ref in voice_profile_refs {
+            self.person_profile_by_voice_profile_ref
+                .insert(voice_profile_ref, person_profile_id.clone());
+        }
+        if let Some(actor_user_ref) = actor_user_ref {
+            self.person_profile_by_actor_user_ref
+                .insert(actor_user_ref, person_profile_id);
+        }
+        Ok(rec)
+    }
+
+    pub fn person_profile_row(&self, person_profile_id: &str) -> Option<&PersonProfileRecord> {
+        self.person_profiles.get(person_profile_id)
+    }
+
+    pub fn person_profile_rows(&self) -> Vec<&PersonProfileRecord> {
+        self.person_profiles.values().collect()
+    }
+
+    pub fn person_profile_for_voice_profile_ref(
+        &self,
+        voice_profile_ref: &str,
+    ) -> Option<&PersonProfileRecord> {
+        self.person_profile_by_voice_profile_ref
+            .get(voice_profile_ref)
+            .and_then(|person_profile_id| self.person_profiles.get(person_profile_id))
+    }
+
+    pub fn person_profile_for_actor_user_ref(
+        &self,
+        actor_user_ref: &str,
+    ) -> Option<&PersonProfileRecord> {
+        self.person_profile_by_actor_user_ref
+            .get(actor_user_ref)
+            .and_then(|person_profile_id| self.person_profiles.get(person_profile_id))
+    }
+
+    pub fn person_profile_mark_seen(
+        &mut self,
+        now: MonotonicTimeNs,
+        person_profile_id: &str,
+    ) -> Result<PersonProfileRecord, StorageError> {
+        let rec = self.person_profiles.get_mut(person_profile_id).ok_or(
+            StorageError::ForeignKeyViolation {
+                table: "person_profiles.person_profile_id",
+                key: person_profile_id.to_string(),
+            },
+        )?;
+        if !rec.profile_status.allows_mutation() {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "person_profiles.profile_status",
+                    reason: "revoked or suspended profile cannot be marked seen",
+                },
+            ));
+        }
+        rec.updated_at_ns = now;
+        rec.last_seen_at_ns = Some(now);
+        Ok(rec.clone())
+    }
+
     // ------------------------
     // PH1.ACCESS.001 + PH2.ACCESS.002 (Access/Authority)
     // ------------------------
@@ -24674,6 +25071,40 @@ mod tests {
         onb_id
     }
 
+    fn insert_test_voice_profile(s: &mut Ph1fStore, voice_profile_id: &str) -> String {
+        let onb = insert_onboarding_session(s, "onb_person_profile_test");
+        let profile_id = voice_profile_id.to_string();
+        s.voice_profiles.insert(
+            profile_id.clone(),
+            VoiceProfileRecord {
+                schema_version: SchemaVersion(1),
+                voice_profile_id: profile_id.clone(),
+                onboarding_session_id: onb,
+                device_id: device(),
+                profile_embedding_capture_ref: None,
+                created_at: MonotonicTimeNs(10),
+            },
+        );
+        profile_id
+    }
+
+    fn person_profile_test_input(voice_profile_id: String) -> PersonProfileUpsertInput {
+        PersonProfileUpsertInput {
+            person_profile_id: Some("person_prof_test_1".to_string()),
+            actor_user_ref: Some(user().as_str().to_string()),
+            preferred_name: "Test User".to_string(),
+            aliases: vec!["Tester".to_string()],
+            voice_profile_refs: vec![voice_profile_id],
+            onboarding_consent_ref: Some("consent_ref_1".to_string()),
+            memory_scope_ref: Some("memory_scope_ref_1".to_string()),
+            preference_ref: Some("preference_ref_1".to_string()),
+            access_policy_ref: Some("access_policy_ref_1".to_string()),
+            device_association_refs: vec![device().as_str().to_string()],
+            audit_refs: vec!["audit_ref_1".to_string()],
+            profile_status: PersonProfileStatus::Active,
+        }
+    }
+
     fn mem_event(kind: MemoryLedgerEventKind, key: &str, value: Option<&str>) -> MemoryLedgerEvent {
         MemoryLedgerEvent::v1(
             kind,
@@ -27560,6 +27991,159 @@ mod tests {
             .unwrap();
         assert_eq!(rolled_back.state, WakePromotionState::RolledBack);
         assert_eq!(s.wake_promotion_active_artifact_version(), None);
+    }
+
+    #[test]
+    fn person_profile_linkage_contract_links_governed_refs() {
+        let mut s = store_with_user_and_device();
+        let voice_profile_id = insert_test_voice_profile(&mut s, "voice_prof_person_1");
+        let rec = s
+            .person_profile_upsert_governed(
+                MonotonicTimeNs(100),
+                person_profile_test_input(voice_profile_id.clone()),
+            )
+            .unwrap();
+
+        assert_eq!(rec.person_profile_id, "person_prof_test_1");
+        assert_eq!(rec.preferred_name, "Test User");
+        assert_eq!(rec.aliases, vec!["Tester"]);
+        assert_eq!(rec.voice_profile_refs, vec![voice_profile_id.clone()]);
+        assert_eq!(rec.onboarding_consent_ref.as_deref(), Some("consent_ref_1"));
+        assert_eq!(rec.memory_scope_ref.as_deref(), Some("memory_scope_ref_1"));
+        assert_eq!(rec.preference_ref.as_deref(), Some("preference_ref_1"));
+        assert_eq!(
+            rec.access_policy_ref.as_deref(),
+            Some("access_policy_ref_1")
+        );
+        assert_eq!(
+            rec.device_association_refs,
+            vec![device().as_str().to_string()]
+        );
+        assert_eq!(rec.audit_refs, vec!["audit_ref_1"]);
+        assert_eq!(rec.profile_status, PersonProfileStatus::Active);
+        assert_eq!(
+            s.person_profile_for_voice_profile_ref(&voice_profile_id)
+                .unwrap()
+                .person_profile_id,
+            rec.person_profile_id
+        );
+        assert_eq!(
+            s.person_profile_for_actor_user_ref(user().as_str())
+                .unwrap()
+                .person_profile_id,
+            rec.person_profile_id
+        );
+    }
+
+    #[test]
+    fn person_profile_linkage_voice_profile_refs_are_reference_only() {
+        let mut s = store_with_user_and_device();
+        let voice_profile_id = insert_test_voice_profile(&mut s, "voice_prof_person_ref_only");
+        let before = s.ph1vid_voice_profile_rows().len();
+        s.person_profile_upsert_governed(
+            MonotonicTimeNs(101),
+            person_profile_test_input(voice_profile_id.clone()),
+        )
+        .unwrap();
+        let profile = s.ph1vid_get_voice_profile(&voice_profile_id).unwrap();
+        assert_eq!(s.ph1vid_voice_profile_rows().len(), before);
+        assert_eq!(profile.voice_profile_id, voice_profile_id);
+        assert!(profile.profile_embedding_capture_ref.is_none());
+    }
+
+    #[test]
+    fn person_profile_linkage_rejects_missing_voice_profile_ref() {
+        let mut s = store_with_user_and_device();
+        let err = s
+            .person_profile_upsert_governed(
+                MonotonicTimeNs(102),
+                person_profile_test_input("voice_prof_missing".to_string()),
+            )
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            StorageError::ForeignKeyViolation {
+                table: "voice_profiles.voice_profile_id",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn person_profile_linkage_does_not_store_raw_audio_or_embeddings() {
+        let mut s = store_with_user_and_device();
+        let voice_profile_id = insert_test_voice_profile(&mut s, "voice_prof_no_audio");
+        let rec = s
+            .person_profile_upsert_governed(
+                MonotonicTimeNs(103),
+                person_profile_test_input(voice_profile_id),
+            )
+            .unwrap();
+        let rendered = format!("{rec:?}").to_ascii_lowercase();
+        assert!(!rendered.contains("raw_audio"));
+        assert!(!rendered.contains("embedding"));
+        assert!(!rendered.contains("microphone"));
+    }
+
+    #[test]
+    fn person_profile_linkage_does_not_write_memory() {
+        let mut s = store_with_user_and_device();
+        let voice_profile_id = insert_test_voice_profile(&mut s, "voice_prof_no_memory");
+        let before_memory_rows = s.memory_ledger_rows().len();
+        s.person_profile_upsert_governed(
+            MonotonicTimeNs(104),
+            person_profile_test_input(voice_profile_id),
+        )
+        .unwrap();
+        assert_eq!(s.memory_ledger_rows().len(), before_memory_rows);
+    }
+
+    #[test]
+    fn person_profile_linkage_does_not_grant_authority() {
+        let mut s = store_with_user_and_device();
+        let voice_profile_id = insert_test_voice_profile(&mut s, "voice_prof_no_authz");
+        let rec = s
+            .person_profile_upsert_governed(
+                MonotonicTimeNs(105),
+                person_profile_test_input(voice_profile_id),
+            )
+            .unwrap();
+        assert_eq!(
+            rec.access_policy_ref.as_deref(),
+            Some("access_policy_ref_1")
+        );
+        assert_eq!(rec.profile_status, PersonProfileStatus::Active);
+        assert!(!format!("{rec:?}")
+            .to_ascii_lowercase()
+            .contains("authority"));
+    }
+
+    #[test]
+    fn person_profile_linkage_revoked_or_suspended_fails_closed() {
+        let mut s = store_with_user_and_device();
+        let voice_profile_id = insert_test_voice_profile(&mut s, "voice_prof_revoked");
+        let mut input = person_profile_test_input(voice_profile_id);
+        input.profile_status = PersonProfileStatus::Revoked;
+        let rec = s
+            .person_profile_upsert_governed(MonotonicTimeNs(106), input.clone())
+            .unwrap();
+        assert_eq!(rec.profile_status, PersonProfileStatus::Revoked);
+        let seen_err = s
+            .person_profile_mark_seen(MonotonicTimeNs(107), &rec.person_profile_id)
+            .unwrap_err();
+        assert!(matches!(
+            seen_err,
+            StorageError::ContractViolation(ContractViolation::InvalidValue { .. })
+        ));
+
+        input.profile_status = PersonProfileStatus::Active;
+        let upgrade_err = s
+            .person_profile_upsert_governed(MonotonicTimeNs(108), input)
+            .unwrap_err();
+        assert!(matches!(
+            upgrade_err,
+            StorageError::ContractViolation(ContractViolation::InvalidValue { .. })
+        ));
     }
 
     // Ensures we still compile against other crate contracts used elsewhere.

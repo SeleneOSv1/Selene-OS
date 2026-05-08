@@ -87,15 +87,15 @@ use crate::ph1f::{
     MemoryGraphNodeRecord, MemoryLedgerRow, MemoryMetricLedgerRow, MemoryRetentionPreferenceRecord,
     MemorySuppressionRuleRecord, MemoryThreadCurrentRecord, MemoryThreadEventKind,
     MemoryThreadLedgerRow, MemoryThreadRefRecord, MobileArtifactSyncQueueRecord,
-    MobileArtifactSyncState, OnboardingSessionRecord, Ph1cTranscriptOkCommitResult,
-    Ph1cTranscriptRejectCommitResult, Ph1fStore, Ph1kDeviceHealth, Ph1kFeedbackCaptureInput,
-    Ph1kFeedbackCaptureRecord, Ph1kInterruptCandidateExtendedFields, Ph1kRuntimeCurrentRecord,
-    Ph1kRuntimeEventKind, Ph1kRuntimeEventRecord, PositionLifecycleEventRecord,
-    SelfHealFailureEventLedgerRow, SelfHealFixCardLedgerRow, SelfHealProblemCardLedgerRow,
-    SelfHealPromotionDecisionLedgerRow, SessionRecord, StorageError, TenantCompanyRecord,
-    VoiceEnrollmentSampleRecord, VoiceEnrollmentSessionRecord, VoiceProfileRecord,
-    WakeEnrollmentSampleRecord, WakeEnrollmentSessionRecord, WakeRuntimeEventRecord,
-    WakeSampleResult,
+    MobileArtifactSyncState, OnboardingSessionRecord, PersonProfileRecord,
+    PersonProfileUpsertInput, Ph1cTranscriptOkCommitResult, Ph1cTranscriptRejectCommitResult,
+    Ph1fStore, Ph1kDeviceHealth, Ph1kFeedbackCaptureInput, Ph1kFeedbackCaptureRecord,
+    Ph1kInterruptCandidateExtendedFields, Ph1kRuntimeCurrentRecord, Ph1kRuntimeEventKind,
+    Ph1kRuntimeEventRecord, PositionLifecycleEventRecord, SelfHealFailureEventLedgerRow,
+    SelfHealFixCardLedgerRow, SelfHealProblemCardLedgerRow, SelfHealPromotionDecisionLedgerRow,
+    SessionRecord, StorageError, TenantCompanyRecord, VoiceEnrollmentSampleRecord,
+    VoiceEnrollmentSessionRecord, VoiceProfileRecord, WakeEnrollmentSampleRecord,
+    WakeEnrollmentSessionRecord, WakeRuntimeEventRecord, WakeSampleResult,
 };
 
 /// Typed repository interface for PH1.F foundational storage wiring.
@@ -385,6 +385,30 @@ pub trait Ph1VidEnrollmentRepo {
         voice_enrollment_session_id: &str,
         sample_seq: u16,
     ) -> Result<(), StorageError>;
+}
+
+/// Typed repository interface for governed person-profile linkage.
+pub trait PersonProfileLinkageRepo {
+    fn person_profile_upsert_row(
+        &mut self,
+        now: MonotonicTimeNs,
+        input: PersonProfileUpsertInput,
+    ) -> Result<PersonProfileRecord, StorageError>;
+    fn person_profile_row(&self, person_profile_id: &str) -> Option<&PersonProfileRecord>;
+    fn person_profile_rows(&self) -> Vec<&PersonProfileRecord>;
+    fn person_profile_for_voice_profile_ref_row(
+        &self,
+        voice_profile_ref: &str,
+    ) -> Option<&PersonProfileRecord>;
+    fn person_profile_for_actor_user_ref_row(
+        &self,
+        actor_user_ref: &str,
+    ) -> Option<&PersonProfileRecord>;
+    fn person_profile_mark_seen_row(
+        &mut self,
+        now: MonotonicTimeNs,
+        person_profile_id: &str,
+    ) -> Result<PersonProfileRecord, StorageError>;
 }
 
 /// Typed repository interface for phone-local artifact sync queue lifecycle.
@@ -2491,6 +2515,46 @@ impl Ph1VidEnrollmentRepo for Ph1fStore {
         sample_seq: u16,
     ) -> Result<(), StorageError> {
         self.attempt_overwrite_voice_enrollment_sample(voice_enrollment_session_id, sample_seq)
+    }
+}
+
+impl PersonProfileLinkageRepo for Ph1fStore {
+    fn person_profile_upsert_row(
+        &mut self,
+        now: MonotonicTimeNs,
+        input: PersonProfileUpsertInput,
+    ) -> Result<PersonProfileRecord, StorageError> {
+        self.person_profile_upsert_governed(now, input)
+    }
+
+    fn person_profile_row(&self, person_profile_id: &str) -> Option<&PersonProfileRecord> {
+        Ph1fStore::person_profile_row(self, person_profile_id)
+    }
+
+    fn person_profile_rows(&self) -> Vec<&PersonProfileRecord> {
+        Ph1fStore::person_profile_rows(self)
+    }
+
+    fn person_profile_for_voice_profile_ref_row(
+        &self,
+        voice_profile_ref: &str,
+    ) -> Option<&PersonProfileRecord> {
+        self.person_profile_for_voice_profile_ref(voice_profile_ref)
+    }
+
+    fn person_profile_for_actor_user_ref_row(
+        &self,
+        actor_user_ref: &str,
+    ) -> Option<&PersonProfileRecord> {
+        self.person_profile_for_actor_user_ref(actor_user_ref)
+    }
+
+    fn person_profile_mark_seen_row(
+        &mut self,
+        now: MonotonicTimeNs,
+        person_profile_id: &str,
+    ) -> Result<PersonProfileRecord, StorageError> {
+        self.person_profile_mark_seen(now, person_profile_id)
     }
 }
 

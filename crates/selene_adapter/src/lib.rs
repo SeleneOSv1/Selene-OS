@@ -22269,7 +22269,8 @@ mod tests {
     };
     use selene_storage::ph1f::{
         AccessDeviceTrustLevel, AccessLifecycleState, AccessMode, AccessVerificationLevel,
-        DeviceRecord, IdentityRecord, IdentityStatus, MobileArtifactSyncKind, WakeSampleResult,
+        DeviceRecord, IdentityRecord, IdentityStatus, MobileArtifactSyncKind, PersonProfileStatus,
+        PersonProfileUpsertInput, WakeSampleResult,
     };
     use std::ffi::OsString;
     use std::sync::{Mutex, OnceLock};
@@ -26230,6 +26231,166 @@ mod tests {
     #[test]
     fn wake_guest_lane_iphone_wake_word_remains_blocked() {
         wake_greeting_library_governance_iphone_wake_word_remains_blocked();
+    }
+
+    fn adapter_person_profile_input(voice_profile_id: String) -> PersonProfileUpsertInput {
+        PersonProfileUpsertInput {
+            person_profile_id: Some("person_prof_adapter_slice6".to_string()),
+            actor_user_ref: Some("tenant_a:jd".to_string()),
+            preferred_name: "JD".to_string(),
+            aliases: vec!["Test User".to_string()],
+            voice_profile_refs: vec![voice_profile_id],
+            onboarding_consent_ref: Some("consent_ref_adapter".to_string()),
+            memory_scope_ref: Some("memory_scope_adapter".to_string()),
+            preference_ref: Some("preference_ref_adapter".to_string()),
+            access_policy_ref: Some("access_policy_adapter".to_string()),
+            device_association_refs: vec!["device_ref_adapter".to_string()],
+            audit_refs: vec!["audit_ref_adapter".to_string()],
+            profile_status: PersonProfileStatus::Active,
+        }
+    }
+
+    #[test]
+    fn wake_person_profile_linkage_contract_links_governed_refs() {
+        let (runtime, mut req) = stage34m_known_voice_wake_request("slice6_contract_refs", "jd");
+        req.turn_id = 34_660_002;
+        req.device_turn_sequence = Some(2);
+        runtime
+            .run_voice_turn(req)
+            .expect("known wake should remain valid before profile linkage");
+        let mut store = runtime.store.lock().expect("store lock must not poison");
+        let voice_profile_id = store.ph1vid_voice_profile_rows()[0]
+            .voice_profile_id
+            .clone();
+        let rec = store
+            .person_profile_upsert_governed(
+                MonotonicTimeNs(34_660_000_000),
+                adapter_person_profile_input(voice_profile_id.clone()),
+            )
+            .expect("governed person profile fixture should link refs");
+
+        assert_eq!(rec.preferred_name, "JD");
+        assert_eq!(rec.voice_profile_refs, vec![voice_profile_id.clone()]);
+        assert_eq!(
+            rec.onboarding_consent_ref.as_deref(),
+            Some("consent_ref_adapter")
+        );
+        assert_eq!(
+            rec.memory_scope_ref.as_deref(),
+            Some("memory_scope_adapter")
+        );
+        assert_eq!(
+            rec.preference_ref.as_deref(),
+            Some("preference_ref_adapter")
+        );
+        assert_eq!(
+            rec.access_policy_ref.as_deref(),
+            Some("access_policy_adapter")
+        );
+        assert_eq!(
+            store
+                .person_profile_for_voice_profile_ref(&voice_profile_id)
+                .unwrap()
+                .person_profile_id,
+            rec.person_profile_id
+        );
+    }
+
+    #[test]
+    fn wake_person_profile_linkage_voice_profile_refs_are_reference_only() {
+        let (runtime, req) = stage34m_known_voice_wake_request("slice6_ref_only", "jd");
+        runtime
+            .run_voice_turn(req)
+            .expect("known wake should seed voice profile");
+        let mut store = runtime.store.lock().expect("store lock must not poison");
+        let before = store.ph1vid_voice_profile_rows().len();
+        let voice_profile_id = store.ph1vid_voice_profile_rows()[0]
+            .voice_profile_id
+            .clone();
+        store
+            .person_profile_upsert_governed(
+                MonotonicTimeNs(34_661_000_000),
+                adapter_person_profile_input(voice_profile_id),
+            )
+            .expect("profile linkage should not mutate voice data");
+        assert_eq!(store.ph1vid_voice_profile_rows().len(), before);
+    }
+
+    #[test]
+    fn wake_person_profile_linkage_claimed_guest_does_not_auto_promote() {
+        let (runtime, _wake_req, prompt_req) =
+            open_unknown_guest_session("slice6_guest_no_promote");
+        let name_req =
+            continuing_speech_request_from_wake(&prompt_req, "slice6_guest_no_promote", "I'm JD");
+        let out = runtime
+            .run_voice_turn(name_req)
+            .expect("claimed guest name should stay session-only");
+        assert_eq!(out.outcome, "GUEST_LANE_POSTURE", "{out:?}");
+        let store = runtime.store.lock().expect("store lock must not poison");
+        assert!(
+            store.person_profile_rows().is_empty(),
+            "claimed guest posture must not auto-promote into PersonProfile"
+        );
+    }
+
+    #[test]
+    fn wake_person_profile_linkage_does_not_grant_authority() {
+        let (runtime, _wake_req, prompt_req) = open_unknown_guest_session("slice6_no_auth");
+        let name_req =
+            continuing_speech_request_from_wake(&prompt_req, "slice6_no_auth_name", "I'm JD");
+        runtime
+            .run_voice_turn(name_req.clone())
+            .expect("claimed name should be captured");
+        let protected_req = continuing_speech_request_from_wake(
+            &name_req,
+            "slice6_no_auth_protected",
+            "Approve this payroll change.",
+        );
+        let out = runtime
+            .run_voice_turn(protected_req)
+            .expect("claimed profile-adjacent posture must not authorize protected work");
+        assert_eq!(out.outcome, "IDENTITY_REQUIRED", "{out:?}");
+        assert_eq!(
+            out.reason_code, "WAKE_GUEST_LANE_VERIFIED_IDENTITY_REQUIRED",
+            "{out:?}"
+        );
+    }
+
+    #[test]
+    fn wake_person_profile_linkage_revoked_or_suspended_fails_closed() {
+        let (runtime, req) = stage34m_known_voice_wake_request("slice6_revoked", "jd");
+        runtime
+            .run_voice_turn(req)
+            .expect("known wake should seed voice");
+        let mut store = runtime.store.lock().expect("store lock must not poison");
+        let voice_profile_id = store.ph1vid_voice_profile_rows()[0]
+            .voice_profile_id
+            .clone();
+        let mut input = adapter_person_profile_input(voice_profile_id);
+        input.profile_status = PersonProfileStatus::Suspended;
+        let rec = store
+            .person_profile_upsert_governed(MonotonicTimeNs(34_662_000_000), input)
+            .expect("suspended profile row can be represented");
+        let err = store
+            .person_profile_mark_seen(MonotonicTimeNs(34_662_000_001), &rec.person_profile_id)
+            .expect_err("suspended profile cannot update runtime linkage");
+        assert!(matches!(err, StorageError::ContractViolation(_)));
+    }
+
+    #[test]
+    fn wake_person_profile_linkage_preserves_guest_lane() {
+        wake_guest_lane_allows_anonymous_public_safe_guest_chat();
+        wake_guest_lane_claimed_name_does_not_authorize_protected_work();
+    }
+
+    #[test]
+    fn wake_person_profile_linkage_preserves_provider_tool_protected_closure() {
+        wake_guest_lane_preserves_provider_tool_protected_closure();
+    }
+
+    #[test]
+    fn wake_person_profile_linkage_iphone_wake_word_remains_blocked() {
+        wake_guest_lane_iphone_wake_word_remains_blocked();
     }
 
     #[test]
