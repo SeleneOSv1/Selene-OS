@@ -36,3 +36,7 @@ path = "src/bin/grpc_adapter.rs"
 [[bin]]
 name = "desktop_wake_life"
 path = "src/bin/desktop_wake_life.rs"
+
+[[bin]]
+name = "desktop_voice_e2e"
+path = "src/bin/desktop_voice_e2e.rs"
