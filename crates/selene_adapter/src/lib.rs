@@ -13,8 +13,7 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use selene_engines::device_vault;
 use selene_engines::ph1_voice_id::{
     EnrolledSpeaker as EngineEnrolledSpeaker, Ph1VoiceIdConfig as EngineVoiceIdConfig,
-    Ph1VoiceIdRuntime as EngineVoiceIdRuntime,
-    VoiceIdObservation as EngineVoiceIdObservation,
+    Ph1VoiceIdRuntime as EngineVoiceIdRuntime, VoiceIdObservation as EngineVoiceIdObservation,
 };
 use selene_engines::ph1c::{
     reason_codes as ph1c_reason_codes, Ph1cConfig as EnginePh1cConfig, Ph1cLiveProviderContext,
@@ -7790,6 +7789,51 @@ impl AdapterRuntime {
                         return Ok(response);
                     }
                 }
+            }
+            if let Some(response) = continuing_speech_identity_prompt_response(
+                &store,
+                tenant_id_for_ph1c.as_deref(),
+                &actor_user_id,
+                &runtime_device_id,
+                &runtime_execution_envelope,
+                session_turn_state.session_snapshot.session_state,
+                session_turn_state.session_attach_outcome,
+                &voice_id_request,
+                voice_id_observation,
+                user_text_final.as_deref(),
+                request.thread_policy_flags.as_ref(),
+            )
+            .map_err(post_session_error)?
+            {
+                self.record_transcript_updates(
+                    &mut store,
+                    now,
+                    correlation_id,
+                    turn_id,
+                    &actor_user_id,
+                    Some(&runtime_device_id),
+                    session_turn_state.session_id_for_commits,
+                    user_text_partial.clone(),
+                    user_text_final.clone(),
+                    None,
+                    Some(response.response_text.clone()),
+                )
+                .map_err(post_session_error)?;
+                finalize_session_turn_record(
+                    &mut store,
+                    now,
+                    correlation_id,
+                    turn_id,
+                    &runtime_device_id,
+                    session_turn_state.session_id_for_commits,
+                    None,
+                    session_turn_state.device_turn_sequence,
+                    &runtime_execution_envelope.idempotency_key,
+                    &self.runtime_node_id,
+                    self.session_lease_ttl_ms,
+                )
+                .map_err(post_session_error)?;
+                return Ok(response);
             }
             self.run_ph1vision_os_orchestration_step(
                 &request,
@@ -16821,10 +16865,24 @@ const WAKE_GREETING_HANDOFF_NAMED_SEED: [&str; 10] = [
     "I'm with you, {name}.",
 ];
 
+const WAKE_UNKNOWN_SPEAKER_NAME_PROMPT_SEED: [&str; 5] = [
+    "I don't recognize your voice yet. What should I call you?",
+    "I don't think we've met yet. What should I call you?",
+    "I'm not sure who I'm speaking with yet. What should I call you?",
+    "I don't recognize this voice yet. Can you tell me your name?",
+    "Before I help with anything personal, what should I call you?",
+];
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct WakeVoiceIdGreetingPosture {
     display_name: String,
     score_bp: u16,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WakeUnknownSpeakerPromptReason {
+    CleanCurrentTurnSpeech,
+    ProtectedOrPersonalRequest,
 }
 
 fn wake_greeting_selector(runtime_execution_envelope: &RuntimeExecutionEnvelope) -> usize {
@@ -16857,6 +16915,62 @@ fn select_wake_greeting_handoff_text(
 
 fn wake_greeting_handoff_tts_allowed(flags: Option<&VoiceTurnThreadPolicyFlags>) -> bool {
     !flags.is_some_and(|flags| flags.privacy_mode || flags.do_not_disturb)
+}
+
+fn continuing_speech_identity_prompt_session_surface(
+    session_attach_outcome: SessionAttachOutcome,
+) -> bool {
+    matches!(
+        session_attach_outcome,
+        SessionAttachOutcome::ExistingSessionAttached | SessionAttachOutcome::ExistingSessionReused
+    )
+}
+
+fn current_turn_speech_sufficient_for_identity_prompt(text: &str) -> bool {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    let word_count = trimmed
+        .split_whitespace()
+        .filter(|word| word.chars().any(|ch| ch.is_alphanumeric()))
+        .count();
+    word_count >= 3 || trimmed.chars().filter(|ch| !ch.is_whitespace()).count() >= 12
+}
+
+fn existing_protected_or_private_classification_for_identity_prompt(text: &str) -> bool {
+    let lower = text.trim().to_ascii_lowercase();
+    h411_looks_like_protected_execution(&lower)
+        || committed_voice_has_protected_latin_action(&lower)
+}
+
+fn continuing_speech_identity_prompt_reason(
+    user_text_final: Option<&str>,
+) -> Option<WakeUnknownSpeakerPromptReason> {
+    let text = user_text_final?.trim();
+    if text.is_empty() {
+        return None;
+    }
+    if existing_protected_or_private_classification_for_identity_prompt(text) {
+        return Some(WakeUnknownSpeakerPromptReason::ProtectedOrPersonalRequest);
+    }
+    if current_turn_speech_sufficient_for_identity_prompt(text) {
+        return Some(WakeUnknownSpeakerPromptReason::CleanCurrentTurnSpeech);
+    }
+    None
+}
+
+fn select_unknown_speaker_name_prompt(
+    runtime_execution_envelope: &RuntimeExecutionEnvelope,
+    reason: WakeUnknownSpeakerPromptReason,
+) -> String {
+    if reason == WakeUnknownSpeakerPromptReason::ProtectedOrPersonalRequest {
+        return WAKE_UNKNOWN_SPEAKER_NAME_PROMPT_SEED[4].to_string();
+    }
+    let selector = wake_greeting_selector(runtime_execution_envelope);
+    WAKE_UNKNOWN_SPEAKER_NAME_PROMPT_SEED
+        [selector % (WAKE_UNKNOWN_SPEAKER_NAME_PROMPT_SEED.len() - 1)]
+        .to_string()
 }
 
 fn display_name_from_confirmed_user_id(user_id: &UserId) -> Option<String> {
@@ -17041,6 +17155,77 @@ fn activation_handoff_voice_id_posture(
     Ok(Some(WakeVoiceIdGreetingPosture {
         display_name,
         score_bp: ok.score_bp,
+    }))
+}
+
+fn continuing_speech_identity_prompt_response(
+    store: &Ph1fStore,
+    tenant_scope: Option<&str>,
+    actor_user_id: &UserId,
+    device_id: &DeviceId,
+    runtime_execution_envelope: &RuntimeExecutionEnvelope,
+    session_state: SessionState,
+    session_attach_outcome: SessionAttachOutcome,
+    voice_id_request: &Ph1VoiceIdRequest,
+    base_observation: EngineVoiceIdObservation,
+    user_text_final: Option<&str>,
+    thread_policy_flags: Option<&VoiceTurnThreadPolicyFlags>,
+) -> Result<Option<VoiceTurnAdapterResponse>, String> {
+    if !continuing_speech_identity_prompt_session_surface(session_attach_outcome) {
+        return Ok(None);
+    }
+    let Some(reason) = continuing_speech_identity_prompt_reason(user_text_final) else {
+        return Ok(None);
+    };
+    if activation_handoff_voice_id_posture(
+        store,
+        tenant_scope,
+        actor_user_id,
+        device_id,
+        voice_id_request,
+        base_observation,
+    )?
+    .is_some()
+    {
+        return Ok(None);
+    }
+    let prompt = select_unknown_speaker_name_prompt(runtime_execution_envelope, reason);
+    let tts_text = if wake_greeting_handoff_tts_allowed(thread_policy_flags) {
+        prompt.clone()
+    } else {
+        String::new()
+    };
+    let reason_code = match reason {
+        WakeUnknownSpeakerPromptReason::CleanCurrentTurnSpeech => {
+            "WAKE_CONTINUING_SPEECH_IDENTITY_PROMPT"
+        }
+        WakeUnknownSpeakerPromptReason::ProtectedOrPersonalRequest => {
+            "WAKE_UNKNOWN_SPEAKER_PROTECTED_IDENTITY_REQUIRED"
+        }
+    };
+    Ok(Some(VoiceTurnAdapterResponse {
+        status: "ok".to_string(),
+        outcome: "IDENTITY_PROMPT".to_string(),
+        session_id: runtime_execution_envelope
+            .session_id
+            .map(session_id_to_string),
+        turn_id: Some(runtime_execution_envelope.turn_id.0),
+        session_state: Some(session_state_to_api_value(session_state)),
+        session_attach_outcome: Some(session_attach_outcome),
+        failure_class: None,
+        reason: Some("wake_continuing_speech_identity_prompt".to_string()),
+        next_move: "identity_name_prompt".to_string(),
+        response_text: prompt,
+        reason_code: reason_code.to_string(),
+        provenance: None,
+        tts_text,
+        source_chips: Vec::new(),
+        source_cards: Vec::new(),
+        image_cards: Vec::new(),
+        answer_class: None,
+        metadata_safe_for_user: true,
+        trace_id: None,
+        deep_research: None,
     }))
 }
 
@@ -24412,8 +24597,7 @@ mod tests {
 
     #[test]
     fn wake_voice_id_posture_handoff_device_trust_does_not_imply_identity() {
-        let (runtime, owner_req) =
-            stage34m_known_voice_wake_request("trusted_device_owner", "jd");
+        let (runtime, owner_req) = stage34m_known_voice_wake_request("trusted_device_owner", "jd");
         let owner_device = owner_req
             .device_id
             .clone()
@@ -24517,6 +24701,295 @@ mod tests {
         let err = runtime
             .run_voice_turn(req)
             .expect_err("iPhone wake word must remain disabled after Slice 2");
+        assert_eq!(err, "ios_wake_disabled");
+    }
+
+    fn continuing_speech_request_from_wake(
+        wake_req: &VoiceTurnAdapterRequest,
+        label: &str,
+        text: &str,
+    ) -> VoiceTurnAdapterRequest {
+        let seed = stable_hash_u64(label).max(1);
+        let mut req = wake_req.clone();
+        req.correlation_id = 34_300_000_u64.saturating_add(seed % 10_000);
+        req.turn_id = 34_310_000_u64.saturating_add(seed % 10_000);
+        req.device_turn_sequence = Some(34_320_000_u64.saturating_add(seed % 10_000));
+        req.now_ns = Some(
+            wake_req
+                .now_ns
+                .unwrap_or(34_000_000_000)
+                .saturating_add(5_000_000_000)
+                .saturating_add(seed % 1_000_000),
+        );
+        req.trigger = "EXPLICIT".to_string();
+        req.user_text_partial = None;
+        req.user_text_final = Some(text.to_string());
+        req.selene_text_partial = None;
+        req.selene_text_final = None;
+        mark_request_as_echo_safe_for_tests(&mut req);
+        mark_request_as_attested_capture(&mut req);
+        req
+    }
+
+    fn assert_unknown_speaker_identity_prompt(out: &VoiceTurnAdapterResponse) {
+        assert_eq!(out.status, "ok", "{out:?}");
+        assert_eq!(out.outcome, "IDENTITY_PROMPT", "{out:?}");
+        assert_eq!(out.next_move, "identity_name_prompt", "{out:?}");
+        assert_eq!(
+            out.reason.as_deref(),
+            Some("wake_continuing_speech_identity_prompt"),
+            "{out:?}"
+        );
+        assert!(
+            WAKE_UNKNOWN_SPEAKER_NAME_PROMPT_SEED.contains(&out.response_text.as_str()),
+            "{out:?}"
+        );
+        assert_eq!(out.tts_text, out.response_text, "{out:?}");
+        assert!(out.source_chips.is_empty(), "{out:?}");
+        assert!(out.source_cards.is_empty(), "{out:?}");
+        assert!(out.image_cards.is_empty(), "{out:?}");
+        assert!(out.provenance.is_none(), "{out:?}");
+        assert!(out.answer_class.is_none(), "{out:?}");
+        assert!(out.trace_id.is_none(), "{out:?}");
+        assert!(out.deep_research.is_none(), "{out:?}");
+        assert_eq!(out.session_state.as_deref(), Some("ACTIVE"), "{out:?}");
+        assert!(out.session_id.is_some(), "{out:?}");
+        assert!(out.metadata_safe_for_user);
+    }
+
+    #[test]
+    fn wake_unknown_speaker_prompt_does_not_interrupt_wake_only_greeting() {
+        let (runtime, req) =
+            stage34m_activation_only_wake_request("slice3_wake_only_stays_greeting");
+        let out = runtime
+            .run_voice_turn(req)
+            .expect("wake-only unknown speaker should keep greeting handoff");
+
+        assert_wake_greeting_handoff_response(&out);
+        assert_ne!(out.outcome, "IDENTITY_PROMPT", "{out:?}");
+    }
+
+    #[test]
+    fn wake_unknown_speaker_prompt_known_speaker_still_gets_named_greeting() {
+        let (runtime, mut req) = stage34m_known_voice_wake_request("slice3_known_wake", "jd");
+        req.turn_id = 34_310_003;
+        req.device_turn_sequence = Some(2);
+        let out = runtime
+            .run_voice_turn(req)
+            .expect("known speaker wake greeting should remain named where selected");
+
+        assert_eq!(out.next_move, "listening_window_open");
+        assert!(is_named_wake_greeting_for(&out, "JD"), "{out:?}");
+    }
+
+    #[test]
+    fn wake_unknown_speaker_prompt_retries_voice_id_on_clean_current_turn_speech() {
+        let (runtime, wake_req) =
+            stage34m_activation_only_wake_request("slice3_unknown_retry_before_prompt");
+        let wake_out = runtime
+            .run_voice_turn(wake_req.clone())
+            .expect("wake should open active session first");
+        assert_wake_greeting_handoff_response(&wake_out);
+
+        let req = continuing_speech_request_from_wake(
+            &wake_req,
+            "slice3_unknown_retry_before_prompt",
+            "Can you help me with this testing session today?",
+        );
+        let out = runtime
+            .run_voice_turn(req)
+            .expect("unknown continuing speech should prompt only after Voice ID retry");
+
+        assert_unknown_speaker_identity_prompt(&out);
+        assert_eq!(
+            out.reason_code, "WAKE_CONTINUING_SPEECH_IDENTITY_PROMPT",
+            "{out:?}"
+        );
+    }
+
+    #[test]
+    fn wake_unknown_speaker_prompt_retry_known_speaker_suppresses_name_prompt() {
+        let (runtime, wake_req) =
+            stage34m_known_voice_wake_request("slice3_retry_known_suppresses_prompt", "jd");
+        runtime
+            .run_voice_turn(wake_req.clone())
+            .expect("known speaker wake should open active session");
+
+        let req = continuing_speech_request_from_wake(
+            &wake_req,
+            "slice3_retry_known_suppresses_prompt",
+            "Tell me one short sentence about the moon.",
+        );
+        let out = runtime
+            .run_voice_turn(req)
+            .expect("known speaker continuing speech should continue without name prompt");
+
+        assert_ne!(out.outcome, "IDENTITY_PROMPT", "{out:?}");
+        assert_ne!(out.next_move, "identity_name_prompt", "{out:?}");
+        assert!(
+            !WAKE_UNKNOWN_SPEAKER_NAME_PROMPT_SEED.contains(&out.response_text.as_str()),
+            "{out:?}"
+        );
+    }
+
+    #[test]
+    fn wake_unknown_speaker_prompt_after_retry_remains_unknown() {
+        let (runtime, wake_req) =
+            stage34m_activation_only_wake_request("slice3_unknown_after_retry");
+        runtime
+            .run_voice_turn(wake_req.clone())
+            .expect("wake should open active session before continuing speech");
+
+        let req = continuing_speech_request_from_wake(
+            &wake_req,
+            "slice3_unknown_after_retry",
+            "Summarize what we are testing today in one sentence.",
+        );
+        let out = runtime
+            .run_voice_turn(req)
+            .expect("unknown continuing speech should ask what to call the speaker");
+
+        assert_unknown_speaker_identity_prompt(&out);
+        assert_eq!(
+            out.reason_code, "WAKE_CONTINUING_SPEECH_IDENTITY_PROMPT",
+            "{out:?}"
+        );
+    }
+
+    #[test]
+    fn wake_unknown_speaker_prompt_personal_request_requires_identity() {
+        let (runtime, wake_req) =
+            stage34m_activation_only_wake_request("slice3_protected_unknown_identity");
+        runtime
+            .run_voice_turn(wake_req.clone())
+            .expect("wake should open active session before protected request");
+
+        let req = continuing_speech_request_from_wake(
+            &wake_req,
+            "slice3_protected_unknown_identity",
+            "Approve this payroll change.",
+        );
+        let out = runtime
+            .run_voice_turn(req)
+            .expect("unknown protected request should require identity before anything else");
+
+        assert_unknown_speaker_identity_prompt(&out);
+        assert_eq!(
+            out.reason_code, "WAKE_UNKNOWN_SPEAKER_PROTECTED_IDENTITY_REQUIRED",
+            "{out:?}"
+        );
+        assert!(
+            out.response_text
+                .contains("Before I help with anything personal"),
+            "{out:?}"
+        );
+    }
+
+    #[test]
+    fn wake_unknown_speaker_prompt_device_trust_does_not_grant_identity() {
+        let (runtime, owner_req) =
+            stage34m_known_voice_wake_request("slice3_trusted_device_owner", "jd");
+        let out = runtime
+            .run_voice_turn(owner_req.clone())
+            .expect("owner known speaker should open active session");
+        assert!(
+            is_named_wake_greeting_for(&out, "JD")
+                || WAKE_GREETING_HANDOFF_LOCAL_SEED.contains(&out.response_text.as_str()),
+            "{out:?}"
+        );
+
+        let owner_device = DeviceId::new(owner_req.device_id.expect("owner device id must parse"))
+            .expect("owner device id must parse");
+        let guest_user = UserId::new("tenant_a:guest_user").expect("guest user id must parse");
+        let store = runtime.store.lock().expect("store lock must not poison");
+        let base_observation = build_live_voice_id_observation(
+            &store,
+            Some("tenant_a"),
+            &guest_user,
+            &owner_device,
+            AppPlatform::Desktop,
+            OsVoiceTrigger::Explicit,
+        );
+        let strict_observation = activation_handoff_voice_id_observation(
+            &store,
+            Some("tenant_a"),
+            &guest_user,
+            &owner_device,
+            base_observation,
+        );
+        assert!(
+            strict_observation.primary_fingerprint.is_none()
+                && strict_observation.primary_embedding.is_none(),
+            "device trust alone must not name the device owner"
+        );
+    }
+
+    #[test]
+    fn wake_unknown_speaker_prompt_creates_no_persistent_profile_or_memory() {
+        let (runtime, wake_req) = stage34m_activation_only_wake_request("slice3_no_persistence");
+        runtime
+            .run_voice_turn(wake_req.clone())
+            .expect("wake should open active session before identity prompt");
+        let before_profiles = {
+            let store = runtime.store.lock().expect("store lock must not poison");
+            store.ph1vid_voice_profile_rows().len()
+        };
+
+        let req = continuing_speech_request_from_wake(
+            &wake_req,
+            "slice3_no_persistence",
+            "Can you help me with this testing session today?",
+        );
+        let out = runtime
+            .run_voice_turn(req)
+            .expect("unknown identity prompt should remain non-persistent");
+        assert_unknown_speaker_identity_prompt(&out);
+
+        let store = runtime.store.lock().expect("store lock must not poison");
+        assert_eq!(
+            store.ph1vid_voice_profile_rows().len(),
+            before_profiles,
+            "Slice 3 must not create voice profiles or candidates"
+        );
+    }
+
+    #[test]
+    fn wake_unknown_speaker_prompt_preserves_provider_tool_protected_closure() {
+        let (runtime, wake_req) = stage34m_activation_only_wake_request("slice3_closure");
+        runtime
+            .run_voice_turn(wake_req.clone())
+            .expect("wake should open active session before prompt");
+
+        let req = continuing_speech_request_from_wake(
+            &wake_req,
+            "slice3_closure",
+            "Approve this payroll change.",
+        );
+        let out = runtime
+            .run_voice_turn(req)
+            .expect("unknown protected request should prompt before downstream work");
+
+        assert_unknown_speaker_identity_prompt(&out);
+        assert!(out.source_chips.is_empty(), "{out:?}");
+        assert!(out.source_cards.is_empty(), "{out:?}");
+        assert!(out.image_cards.is_empty(), "{out:?}");
+        assert!(out.provenance.is_none(), "{out:?}");
+        assert!(out.answer_class.is_none(), "{out:?}");
+        assert!(out.deep_research.is_none(), "{out:?}");
+    }
+
+    #[test]
+    fn wake_unknown_speaker_prompt_iphone_wake_word_remains_blocked() {
+        let runtime = AdapterRuntime::default();
+        let mut req = base_request();
+        req.app_platform = "IOS".to_string();
+        req.trigger = "WAKE_WORD".to_string();
+        req.device_id = Some("slice3_ios_wake_disabled".to_string());
+        seed_wake_enrollment_complete_for_request(&runtime, &mut req, "slice3_ios_disabled");
+
+        let err = runtime
+            .run_voice_turn(req)
+            .expect_err("iPhone wake word must remain disabled after Slice 3");
         assert_eq!(err, "ios_wake_disabled");
     }
 
