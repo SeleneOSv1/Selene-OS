@@ -22,9 +22,10 @@ Stage 34 controlled phase gate:
 - The Stage 34 remaining-row closure-map refresh after Stage 34P is PROVEN_COMPLETE: `Voice ID production quality`, `TTS naturalness`, `STT/listening`, `Wake/activation`, and `Provider/model governance` remained `CERTIFICATION_TARGET_PASSED`; at that historical point, broad Stage 34 remained blocked on native/runtime parity and full certification; and `Stage 34Q - Native Runtime Parity Controlled Proof` was the next exact narrowed Stage 34 build. No wake behavior was reopened by this docs-only refresh.
 - Stage 34Q is now PROVEN_COMPLETE for controlled native/runtime parity proof; no wake behavior, provider/model governance, STT/listening, TTS naturalness, Voice ID production quality, full-certification proof, protected execution, provider calls, connector writes, or raw audio commits were introduced. iPhone remains explicit side-button/non-wake posture only.
 - Stage 34R is now PROVEN_COMPLETE for final certification. `Full certification` is `CERTIFICATION_TARGET_PASSED`, broad Stage 34 is complete, all Stage 34 certification rows remain passed, and no next build is authorized unless JD explicitly revises the master plan.
+- The post-Stage-34R wake/session greeting handoff master-system change is governed by `docs/SELENE_WAKE_SESSION_VOICE_ID_GREETING_HANDOFF_PLAN.md`. Slice 1 deliberately supersedes silent post-wake handoff behavior after session open only: wake remains activation-only, session opens/resumes, a local approved greeting is returned as clean `response_text` / `tts_text` when audible policy allows, and listening remains open. Wake still does not reason, answer, search, call providers, route tools, identify, authorize, access memory, connector-write, or execute protected work.
 
 Flow:
-Trigger -> Open/Resume Session -> Wake job finished -> Voice pipeline continues.
+Trigger -> Open/Resume Session -> Activation Greeting Handoff -> Voice pipeline continues.
 
 After session opens the system continues:
 Voice ID -> STT -> PH1.X -> tools -> response.

@@ -7564,7 +7564,8 @@ impl AdapterRuntime {
                 )
                 .map_err(post_session_error)?;
             }
-            if is_stage34m_activation_only_wake_turn(
+            if is_activation_greeting_handoff_turn(
+                app_platform,
                 trigger,
                 wake_evaluation.as_ref(),
                 &session_turn_state,
@@ -7597,11 +7598,12 @@ impl AdapterRuntime {
                     wake_evaluation.as_ref(),
                 )
                 .map_err(post_session_error)?;
-                let response = stage34m_activation_only_wake_response(
+                let response = activation_greeting_handoff_response(
                     &runtime_execution_envelope,
                     session_turn_state.session_snapshot.session_state,
                     session_turn_state.session_attach_outcome,
                     wake_evaluation.as_ref(),
+                    request.thread_policy_flags.as_ref(),
                 );
                 return Ok(response);
             }
@@ -16691,15 +16693,21 @@ enum AdapterSessionResolution {
     Retry(VoiceTurnAdapterResponse),
 }
 
-fn is_stage34m_activation_only_wake_turn(
+fn is_activation_greeting_handoff_turn(
+    app_platform: AppPlatform,
     trigger: OsVoiceTrigger,
     wake_evaluation: Option<&WakeEvaluation>,
     session_turn_state: &AdapterSessionTurnState,
     user_text_partial: Option<&str>,
     user_text_final: Option<&str>,
 ) -> bool {
-    trigger == OsVoiceTrigger::WakeWord
-        && wake_evaluation.is_some_and(|wake| wake.decision.accepted)
+    let activation_accepted = match (app_platform, trigger) {
+        (_, OsVoiceTrigger::WakeWord) => wake_evaluation.is_some_and(|wake| wake.decision.accepted),
+        (AppPlatform::Ios, OsVoiceTrigger::Explicit) => true,
+        _ => false,
+    };
+
+    activation_accepted
         && session_turn_state.session_snapshot.session_id.is_some()
         && session_turn_state.session_snapshot.session_state != SessionState::Closed
         && user_text_partial.is_none_or(|text| text.trim().is_empty())
@@ -16773,12 +16781,53 @@ fn commit_stage34m_activation_only_wake_session_audit(
     Ok(())
 }
 
-fn stage34m_activation_only_wake_response(
+const WAKE_GREETING_HANDOFF_LOCAL_SEED: [&str; 10] = [
+    "Hi, I'm here.",
+    "I'm listening.",
+    "Ready when you are.",
+    "Hi, what can I do for you?",
+    "I'm here. What would you like to do?",
+    "Go ahead, I'm listening.",
+    "I'm ready.",
+    "Hi, I'm with you.",
+    "What can I help with?",
+    "I'm here and ready.",
+];
+
+fn select_wake_greeting_handoff_text(
+    runtime_execution_envelope: &RuntimeExecutionEnvelope,
+) -> &'static str {
+    let session_component = runtime_execution_envelope
+        .session_id
+        .map(|session_id| (session_id.0 % (u64::MAX as u128)) as u64)
+        .unwrap_or(0);
+    let device_turn_component = runtime_execution_envelope.device_turn_sequence.unwrap_or(0);
+    let index = runtime_execution_envelope
+        .turn_id
+        .0
+        .wrapping_add(session_component)
+        .wrapping_add(device_turn_component) as usize
+        % WAKE_GREETING_HANDOFF_LOCAL_SEED.len();
+    WAKE_GREETING_HANDOFF_LOCAL_SEED[index]
+}
+
+fn wake_greeting_handoff_tts_allowed(flags: Option<&VoiceTurnThreadPolicyFlags>) -> bool {
+    !flags.is_some_and(|flags| flags.privacy_mode || flags.do_not_disturb)
+}
+
+fn activation_greeting_handoff_response(
     runtime_execution_envelope: &RuntimeExecutionEnvelope,
     session_state: SessionState,
     session_attach_outcome: SessionAttachOutcome,
     wake_evaluation: Option<&WakeEvaluation>,
+    thread_policy_flags: Option<&VoiceTurnThreadPolicyFlags>,
 ) -> VoiceTurnAdapterResponse {
+    let greeting = select_wake_greeting_handoff_text(runtime_execution_envelope).to_string();
+    let tts_text = if wake_greeting_handoff_tts_allowed(thread_policy_flags) {
+        greeting.clone()
+    } else {
+        String::new()
+    };
     VoiceTurnAdapterResponse {
         status: "ok".to_string(),
         outcome: "SESSION_OPENED".to_string(),
@@ -16790,13 +16839,13 @@ fn stage34m_activation_only_wake_response(
         session_attach_outcome: Some(session_attach_outcome),
         failure_class: None,
         reason: Some("wake_activation_only_session_opened".to_string()),
-        next_move: "wake_finished".to_string(),
-        response_text: String::new(),
+        next_move: "listening_window_open".to_string(),
+        response_text: greeting,
         reason_code: wake_evaluation
             .map(|wake| wake.decision.reason_code.0.to_string())
-            .unwrap_or_else(|| "STAGE34M_WAKE_ACTIVATION_ONLY".to_string()),
+            .unwrap_or_else(|| "WAKE_GREETING_HANDOFF_EXPLICIT_ACTIVATION".to_string()),
         provenance: None,
-        tts_text: String::new(),
+        tts_text,
         source_chips: Vec::new(),
         source_cards: Vec::new(),
         image_cards: Vec::new(),
@@ -23870,29 +23919,38 @@ mod tests {
         (runtime, req)
     }
 
-    #[test]
-    fn stage_34m_activation_only_wake_opens_session_without_downstream_work() {
-        let (runtime, req) = stage34m_activation_only_wake_request("wake_opens_only");
-        let out = runtime
-            .run_voice_turn(req.clone())
-            .expect("activation-only wake should open session and stop");
-
+    fn assert_wake_greeting_handoff_response(out: &VoiceTurnAdapterResponse) {
         assert_eq!(out.status, "ok");
         assert_eq!(out.outcome, "SESSION_OPENED");
-        assert_eq!(out.next_move, "wake_finished");
+        assert_eq!(out.next_move, "listening_window_open");
         assert_eq!(
             out.reason.as_deref(),
             Some("wake_activation_only_session_opened")
         );
-        assert!(out.response_text.is_empty(), "{out:?}");
-        assert!(out.tts_text.is_empty(), "{out:?}");
+        assert!(
+            WAKE_GREETING_HANDOFF_LOCAL_SEED.contains(&out.response_text.as_str()),
+            "{out:?}"
+        );
+        assert_eq!(out.tts_text, out.response_text, "{out:?}");
         assert!(out.source_chips.is_empty(), "{out:?}");
         assert!(out.source_cards.is_empty(), "{out:?}");
         assert!(out.image_cards.is_empty(), "{out:?}");
         assert!(out.provenance.is_none(), "{out:?}");
+        assert!(out.answer_class.is_none(), "{out:?}");
+        assert!(out.trace_id.is_none(), "{out:?}");
         assert!(out.deep_research.is_none(), "{out:?}");
         assert_eq!(out.session_state.as_deref(), Some("ACTIVE"));
         assert!(out.session_id.is_some());
+        assert!(out.metadata_safe_for_user);
+    }
+
+    #[test]
+    fn wake_greeting_handoff_opens_session_and_emits_local_greeting() {
+        let (runtime, req) = stage34m_activation_only_wake_request("wake_opens_only");
+        let out = runtime
+            .run_voice_turn(req.clone())
+            .expect("activation-only wake should open session and hand off greeting");
+        assert_wake_greeting_handoff_response(&out);
 
         let actor_user_id = UserId::new(req.actor_user_id).expect("actor id must parse");
         let store = runtime.store.lock().expect("store lock must not poison");
@@ -23916,14 +23974,13 @@ mod tests {
     }
 
     #[test]
-    fn stage_34m_activation_only_wake_does_not_emit_tts_sources_provider_or_protected_work() {
+    fn wake_greeting_handoff_keeps_provider_tool_and_protected_paths_closed() {
         let (runtime, req) = stage34m_activation_only_wake_request("no_downstream");
         let out = runtime
             .run_voice_turn(req)
-            .expect("activation-only wake should stop before downstream work");
+            .expect("activation-only wake should hand off greeting before downstream work");
 
-        assert!(out.response_text.is_empty(), "{out:?}");
-        assert!(out.tts_text.is_empty(), "{out:?}");
+        assert_wake_greeting_handoff_response(&out);
         assert!(out.source_chips.is_empty(), "{out:?}");
         assert!(out.source_cards.is_empty(), "{out:?}");
         assert!(out.image_cards.is_empty(), "{out:?}");
@@ -23935,7 +23992,40 @@ mod tests {
     }
 
     #[test]
-    fn stage_34m_iphone_wake_word_remains_disabled() {
+    fn stage_34m_activation_only_wake_now_uses_greeting_handoff() {
+        let (runtime, req) = stage34m_activation_only_wake_request("stage34m_greeting_handoff");
+        let out = runtime
+            .run_voice_turn(req)
+            .expect("Stage 34M wake proof should now use Slice 1 greeting handoff");
+
+        assert_wake_greeting_handoff_response(&out);
+    }
+
+    #[test]
+    fn wake_greeting_handoff_suppresses_tts_when_audible_policy_disallows() {
+        let (runtime, mut req) = stage34m_activation_only_wake_request("privacy_tts_suppressed");
+        req.thread_policy_flags = Some(VoiceTurnThreadPolicyFlags {
+            privacy_mode: true,
+            do_not_disturb: false,
+            strict_safety: false,
+        });
+        let out = runtime
+            .run_voice_turn(req)
+            .expect("activation greeting should still produce text under privacy mode");
+
+        assert_eq!(out.next_move, "listening_window_open");
+        assert!(
+            WAKE_GREETING_HANDOFF_LOCAL_SEED.contains(&out.response_text.as_str()),
+            "{out:?}"
+        );
+        assert!(out.tts_text.is_empty(), "{out:?}");
+        assert!(out.source_chips.is_empty(), "{out:?}");
+        assert!(out.provenance.is_none(), "{out:?}");
+        assert!(out.deep_research.is_none(), "{out:?}");
+    }
+
+    #[test]
+    fn wake_greeting_handoff_iphone_wake_word_remains_blocked() {
         let runtime = AdapterRuntime::default();
         let mut req = base_request();
         req.trigger = "WAKE_WORD".to_string();
@@ -23949,7 +24039,61 @@ mod tests {
     }
 
     #[test]
-    fn stage_34m_rejected_wake_still_fails_closed() {
+    fn wake_greeting_handoff_iphone_explicit_activation_uses_same_handoff_when_supported() {
+        let runtime = AdapterRuntime::default();
+        let mut req = base_request();
+        req.app_platform = "IOS".to_string();
+        req.trigger = "EXPLICIT".to_string();
+        req.user_text_partial = None;
+        req.user_text_final = None;
+        mark_request_as_echo_safe_for_tests(&mut req);
+        mark_request_as_attested_capture(&mut req);
+
+        let out = runtime
+            .run_voice_turn(req)
+            .expect("iPhone explicit activation should use greeting handoff where supported");
+
+        assert_wake_greeting_handoff_response(&out);
+    }
+
+    #[test]
+    fn wake_greeting_handoff_uses_local_seed_without_provider() {
+        let (runtime, mut first) = stage34m_activation_only_wake_request("seed_first");
+        first.correlation_id = 23_901;
+        first.turn_id = 23_911;
+        first.device_turn_sequence = Some(23_911);
+        let mut second = first.clone();
+        second.correlation_id = 23_902;
+        second.turn_id = 23_912;
+        second.device_turn_sequence = Some(23_912);
+
+        let first_out = runtime
+            .run_voice_turn(first)
+            .expect("first greeting handoff should succeed");
+        let second_out = runtime
+            .run_voice_turn(second)
+            .expect("second greeting handoff should succeed");
+
+        assert!(
+            WAKE_GREETING_HANDOFF_LOCAL_SEED.contains(&first_out.response_text.as_str()),
+            "{first_out:?}"
+        );
+        assert!(
+            WAKE_GREETING_HANDOFF_LOCAL_SEED.contains(&second_out.response_text.as_str()),
+            "{second_out:?}"
+        );
+        assert_ne!(
+            first_out.response_text, second_out.response_text,
+            "stable request material should allow greeting variation"
+        );
+        assert!(first_out.provenance.is_none(), "{first_out:?}");
+        assert!(second_out.provenance.is_none(), "{second_out:?}");
+        assert!(first_out.source_chips.is_empty(), "{first_out:?}");
+        assert!(second_out.source_chips.is_empty(), "{second_out:?}");
+    }
+
+    #[test]
+    fn wake_greeting_handoff_rejected_wake_remains_silent() {
         let (runtime, mut req) = stage34m_activation_only_wake_request("reject_still_closed");
         if let Some(capture) = req.audio_capture_ref.as_mut() {
             capture.capture_degraded = Some(true);
