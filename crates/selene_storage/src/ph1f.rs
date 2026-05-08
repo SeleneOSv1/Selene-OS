@@ -1796,6 +1796,8 @@ pub struct Ph1fStore {
     person_profiles: BTreeMap<String, PersonProfileRecord>,
     person_profile_by_voice_profile_ref: BTreeMap<String, String>,
     person_profile_by_actor_user_ref: BTreeMap<String, String>,
+    local_voice_caches: BTreeMap<String, LocalVoiceCacheRecord>,
+    local_voice_cache_by_device_voice: BTreeMap<(String, String), String>,
     voice_artifact_revocation_ledger: Vec<VoiceArtifactRevocationRecord>,
     // Unique revocation binding: (tenant_id, artifact_type, artifact_version) -> revocation_event_id.
     voice_artifact_revoked_version_index: BTreeMap<(String, ArtifactType, ArtifactVersion), u64>,
@@ -3062,6 +3064,79 @@ pub struct PersonProfileUpsertInput {
     pub profile_status: PersonProfileStatus,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum LocalVoiceCacheStatus {
+    Active,
+    Stale,
+    Revoked,
+    Blocked,
+    Expired,
+}
+
+impl LocalVoiceCacheStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            LocalVoiceCacheStatus::Active => "ACTIVE",
+            LocalVoiceCacheStatus::Stale => "STALE",
+            LocalVoiceCacheStatus::Revoked => "REVOKED",
+            LocalVoiceCacheStatus::Blocked => "BLOCKED",
+            LocalVoiceCacheStatus::Expired => "EXPIRED",
+        }
+    }
+
+    fn allows_local_match(self) -> bool {
+        matches!(self, LocalVoiceCacheStatus::Active)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LocalVoiceCacheRecord {
+    pub schema_version: SchemaVersion,
+    pub local_voice_cache_id: String,
+    pub device_ref: String,
+    pub person_profile_ref: String,
+    pub voice_profile_ref: String,
+    pub recognition_pack_ref: String,
+    pub pack_version: u64,
+    pub cache_status: LocalVoiceCacheStatus,
+    pub created_at_ns: MonotonicTimeNs,
+    pub updated_at_ns: MonotonicTimeNs,
+    pub last_checked_at_ns: Option<MonotonicTimeNs>,
+    pub expires_at_ns: Option<MonotonicTimeNs>,
+    pub audit_refs: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LocalVoiceCacheUpsertInput {
+    pub local_voice_cache_id: Option<String>,
+    pub device_ref: String,
+    pub person_profile_ref: String,
+    pub voice_profile_ref: String,
+    pub recognition_pack_ref: String,
+    pub pack_version: u64,
+    pub cache_status: LocalVoiceCacheStatus,
+    pub last_checked_at_ns: Option<MonotonicTimeNs>,
+    pub expires_at_ns: Option<MonotonicTimeNs>,
+    pub audit_refs: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LocalVoiceCloudFallbackStatus {
+    NonLiveUnavailable,
+    NonLiveNoMatch,
+    NonLiveMatched,
+    DeferredNoSurface,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LocalVoiceRecognitionDisposition {
+    KnownSpeakerPosture,
+    LocalFailedCloudUnavailableNotRecognizedOnDevice,
+    UnknownAfterLocalAndCloudNoMatch,
+    CloudMatchedPosture,
+    FailClosed,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VoiceArtifactRevocationRecord {
     pub schema_version: SchemaVersion,
@@ -3672,6 +3747,8 @@ impl Ph1fStore {
             person_profiles: BTreeMap::new(),
             person_profile_by_voice_profile_ref: BTreeMap::new(),
             person_profile_by_actor_user_ref: BTreeMap::new(),
+            local_voice_caches: BTreeMap::new(),
+            local_voice_cache_by_device_voice: BTreeMap::new(),
             voice_artifact_revocation_ledger: Vec::new(),
             voice_artifact_revoked_version_index: BTreeMap::new(),
             voice_artifact_revocation_idempotency_index: BTreeMap::new(),
@@ -16694,6 +16771,238 @@ impl Ph1fStore {
         Ok(rec.clone())
     }
 
+    fn local_voice_cache_id_for_input(
+        input: &LocalVoiceCacheUpsertInput,
+    ) -> Result<String, StorageError> {
+        if let Some(id) = input.local_voice_cache_id.as_ref() {
+            let trimmed = id.trim().to_string();
+            Self::person_profile_validate_id("local_voice_caches.local_voice_cache_id", &trimmed)?;
+            return Ok(trimmed);
+        }
+        let seed = format!(
+            "{}:{}:{}:{}",
+            input.device_ref.trim(),
+            input.person_profile_ref.trim(),
+            input.voice_profile_ref.trim(),
+            input.pack_version
+        );
+        Ok(format!("local_voice_cache_{}", hash_hex_64(&seed)))
+    }
+
+    pub fn local_voice_cache_upsert_governed(
+        &mut self,
+        now: MonotonicTimeNs,
+        input: LocalVoiceCacheUpsertInput,
+    ) -> Result<LocalVoiceCacheRecord, StorageError> {
+        let local_voice_cache_id = Self::local_voice_cache_id_for_input(&input)?;
+        let device_ref = input.device_ref.trim().to_string();
+        Self::person_profile_validate_id("local_voice_caches.device_ref", &device_ref)?;
+        let person_profile_ref = input.person_profile_ref.trim().to_string();
+        Self::person_profile_validate_id(
+            "local_voice_caches.person_profile_ref",
+            &person_profile_ref,
+        )?;
+        let voice_profile_ref = input.voice_profile_ref.trim().to_string();
+        Self::person_profile_validate_id(
+            "local_voice_caches.voice_profile_ref",
+            &voice_profile_ref,
+        )?;
+        let recognition_pack_ref = input.recognition_pack_ref.trim().to_string();
+        Self::person_profile_validate_id(
+            "local_voice_caches.recognition_pack_ref",
+            &recognition_pack_ref,
+        )?;
+        if input.pack_version == 0 {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "local_voice_caches.pack_version",
+                    reason: "must be nonzero governed version metadata",
+                },
+            ));
+        }
+        if !self.voice_profiles.contains_key(&voice_profile_ref) {
+            return Err(StorageError::ForeignKeyViolation {
+                table: "voice_profiles.voice_profile_id",
+                key: voice_profile_ref.clone(),
+            });
+        }
+        let person_profile = self.person_profiles.get(&person_profile_ref).ok_or(
+            StorageError::ForeignKeyViolation {
+                table: "person_profiles.person_profile_id",
+                key: person_profile_ref.clone(),
+            },
+        )?;
+        if !person_profile
+            .voice_profile_refs
+            .contains(&voice_profile_ref)
+        {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "local_voice_caches.voice_profile_ref",
+                    reason: "voice profile ref must be linked by PersonProfile before cache use",
+                },
+            ));
+        }
+        if !person_profile.profile_status.allows_mutation() {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "person_profiles.profile_status",
+                    reason: "revoked or suspended profile cannot back local voice cache",
+                },
+            ));
+        }
+        let audit_refs = Self::person_profile_dedupe_safe_ids(
+            "local_voice_caches.audit_refs",
+            input.audit_refs,
+        )?;
+        let device_voice_key = (device_ref.clone(), voice_profile_ref.clone());
+        if let Some(existing) = self
+            .local_voice_cache_by_device_voice
+            .get(&device_voice_key)
+            .filter(|existing| *existing != &local_voice_cache_id)
+        {
+            return Err(StorageError::DuplicateKey {
+                table: "local_voice_caches.device_ref_voice_profile_ref",
+                key: format!("{}:{}->{existing}", device_ref, voice_profile_ref),
+            });
+        }
+        let created_at_ns = self
+            .local_voice_caches
+            .get(&local_voice_cache_id)
+            .map(|existing| existing.created_at_ns)
+            .unwrap_or(now);
+        let rec = LocalVoiceCacheRecord {
+            schema_version: SchemaVersion(1),
+            local_voice_cache_id: local_voice_cache_id.clone(),
+            device_ref: device_ref.clone(),
+            person_profile_ref,
+            voice_profile_ref: voice_profile_ref.clone(),
+            recognition_pack_ref,
+            pack_version: input.pack_version,
+            cache_status: input.cache_status,
+            created_at_ns,
+            updated_at_ns: now,
+            last_checked_at_ns: input.last_checked_at_ns,
+            expires_at_ns: input.expires_at_ns,
+            audit_refs,
+        };
+        self.local_voice_caches
+            .insert(local_voice_cache_id.clone(), rec.clone());
+        self.local_voice_cache_by_device_voice
+            .insert(device_voice_key, local_voice_cache_id);
+        Ok(rec)
+    }
+
+    pub fn local_voice_cache_row(
+        &self,
+        local_voice_cache_id: &str,
+    ) -> Option<&LocalVoiceCacheRecord> {
+        self.local_voice_caches.get(local_voice_cache_id)
+    }
+
+    pub fn local_voice_cache_rows(&self) -> Vec<&LocalVoiceCacheRecord> {
+        self.local_voice_caches.values().collect()
+    }
+
+    pub fn local_voice_cache_for_device_voice_ref(
+        &self,
+        device_ref: &str,
+        voice_profile_ref: &str,
+    ) -> Option<&LocalVoiceCacheRecord> {
+        self.local_voice_cache_by_device_voice
+            .get(&(device_ref.to_string(), voice_profile_ref.to_string()))
+            .and_then(|cache_id| self.local_voice_caches.get(cache_id))
+    }
+
+    pub fn local_voice_cache_mark_status(
+        &mut self,
+        now: MonotonicTimeNs,
+        local_voice_cache_id: &str,
+        cache_status: LocalVoiceCacheStatus,
+    ) -> Result<LocalVoiceCacheRecord, StorageError> {
+        let rec = self
+            .local_voice_caches
+            .get_mut(local_voice_cache_id)
+            .ok_or(StorageError::ForeignKeyViolation {
+                table: "local_voice_caches.local_voice_cache_id",
+                key: local_voice_cache_id.to_string(),
+            })?;
+        if matches!(
+            rec.cache_status,
+            LocalVoiceCacheStatus::Revoked | LocalVoiceCacheStatus::Blocked
+        ) && rec.cache_status != cache_status
+        {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "local_voice_caches.cache_status",
+                    reason: "revoked or blocked cache cannot be upgraded by status update",
+                },
+            ));
+        }
+        rec.cache_status = cache_status;
+        rec.updated_at_ns = now;
+        rec.last_checked_at_ns = Some(now);
+        Ok(rec.clone())
+    }
+
+    pub fn local_voice_cache_decide_posture(
+        &self,
+        now: MonotonicTimeNs,
+        local_voice_cache_id: &str,
+        local_confidence_bp: u16,
+        cloud_fallback_status: LocalVoiceCloudFallbackStatus,
+    ) -> Result<LocalVoiceRecognitionDisposition, StorageError> {
+        let rec = self.local_voice_caches.get(local_voice_cache_id).ok_or(
+            StorageError::ForeignKeyViolation {
+                table: "local_voice_caches.local_voice_cache_id",
+                key: local_voice_cache_id.to_string(),
+            },
+        )?;
+        if !rec.cache_status.allows_local_match()
+            || rec
+                .expires_at_ns
+                .map(|expires| expires <= now)
+                .unwrap_or(false)
+        {
+            return Ok(match cloud_fallback_status {
+                LocalVoiceCloudFallbackStatus::NonLiveNoMatch => {
+                    LocalVoiceRecognitionDisposition::UnknownAfterLocalAndCloudNoMatch
+                }
+                LocalVoiceCloudFallbackStatus::NonLiveMatched => {
+                    LocalVoiceRecognitionDisposition::CloudMatchedPosture
+                }
+                LocalVoiceCloudFallbackStatus::NonLiveUnavailable
+                | LocalVoiceCloudFallbackStatus::DeferredNoSurface => {
+                    LocalVoiceRecognitionDisposition::LocalFailedCloudUnavailableNotRecognizedOnDevice
+                }
+            });
+        }
+        if !self.voice_profiles.contains_key(&rec.voice_profile_ref)
+            || self
+                .person_profiles
+                .get(&rec.person_profile_ref)
+                .map(|profile| !profile.profile_status.allows_mutation())
+                .unwrap_or(true)
+        {
+            return Ok(LocalVoiceRecognitionDisposition::FailClosed);
+        }
+        if local_confidence_bp >= 9_000 {
+            return Ok(LocalVoiceRecognitionDisposition::KnownSpeakerPosture);
+        }
+        Ok(match cloud_fallback_status {
+            LocalVoiceCloudFallbackStatus::NonLiveNoMatch => {
+                LocalVoiceRecognitionDisposition::UnknownAfterLocalAndCloudNoMatch
+            }
+            LocalVoiceCloudFallbackStatus::NonLiveMatched => {
+                LocalVoiceRecognitionDisposition::CloudMatchedPosture
+            }
+            LocalVoiceCloudFallbackStatus::NonLiveUnavailable
+            | LocalVoiceCloudFallbackStatus::DeferredNoSurface => {
+                LocalVoiceRecognitionDisposition::LocalFailedCloudUnavailableNotRecognizedOnDevice
+            }
+        })
+    }
+
     // ------------------------
     // PH1.ACCESS.001 + PH2.ACCESS.002 (Access/Authority)
     // ------------------------
@@ -25105,6 +25414,35 @@ mod tests {
         }
     }
 
+    fn local_voice_cache_test_input(
+        person_profile_id: String,
+        voice_profile_id: String,
+    ) -> LocalVoiceCacheUpsertInput {
+        LocalVoiceCacheUpsertInput {
+            local_voice_cache_id: Some("local_voice_cache_test_1".to_string()),
+            device_ref: device().as_str().to_string(),
+            person_profile_ref: person_profile_id,
+            voice_profile_ref: voice_profile_id,
+            recognition_pack_ref: "recognition_pack_ref_1".to_string(),
+            pack_version: 1,
+            cache_status: LocalVoiceCacheStatus::Active,
+            last_checked_at_ns: Some(MonotonicTimeNs(100)),
+            expires_at_ns: Some(MonotonicTimeNs(10_000)),
+            audit_refs: vec!["audit_ref_1".to_string()],
+        }
+    }
+
+    fn seed_person_profile_for_local_voice_cache(s: &mut Ph1fStore) -> (String, String) {
+        let voice_profile_id = insert_test_voice_profile(s, "voice_prof_local_cache");
+        let rec = s
+            .person_profile_upsert_governed(
+                MonotonicTimeNs(100),
+                person_profile_test_input(voice_profile_id.clone()),
+            )
+            .unwrap();
+        (rec.person_profile_id, voice_profile_id)
+    }
+
     fn mem_event(kind: MemoryLedgerEventKind, key: &str, value: Option<&str>) -> MemoryLedgerEvent {
         MemoryLedgerEvent::v1(
             kind,
@@ -28144,6 +28482,170 @@ mod tests {
             upgrade_err,
             StorageError::ContractViolation(ContractViolation::InvalidValue { .. })
         ));
+    }
+
+    #[test]
+    fn local_voice_cache_contract_links_refs_only() {
+        let mut s = store_with_user_and_device();
+        let (person_profile_id, voice_profile_id) =
+            seed_person_profile_for_local_voice_cache(&mut s);
+        let rec = s
+            .local_voice_cache_upsert_governed(
+                MonotonicTimeNs(200),
+                local_voice_cache_test_input(person_profile_id.clone(), voice_profile_id.clone()),
+            )
+            .unwrap();
+
+        assert_eq!(rec.person_profile_ref, person_profile_id);
+        assert_eq!(rec.voice_profile_ref, voice_profile_id);
+        assert_eq!(rec.recognition_pack_ref, "recognition_pack_ref_1");
+        assert_eq!(rec.pack_version, 1);
+        assert_eq!(rec.cache_status, LocalVoiceCacheStatus::Active);
+        assert_eq!(
+            s.local_voice_cache_for_device_voice_ref(device().as_str(), &rec.voice_profile_ref)
+                .unwrap()
+                .local_voice_cache_id,
+            rec.local_voice_cache_id
+        );
+    }
+
+    #[test]
+    fn local_voice_cache_active_high_confidence_can_identify_posture() {
+        let mut s = store_with_user_and_device();
+        let (person_profile_id, voice_profile_id) =
+            seed_person_profile_for_local_voice_cache(&mut s);
+        let rec = s
+            .local_voice_cache_upsert_governed(
+                MonotonicTimeNs(201),
+                local_voice_cache_test_input(person_profile_id, voice_profile_id),
+            )
+            .unwrap();
+
+        let decision = s
+            .local_voice_cache_decide_posture(
+                MonotonicTimeNs(202),
+                &rec.local_voice_cache_id,
+                9_500,
+                LocalVoiceCloudFallbackStatus::DeferredNoSurface,
+            )
+            .unwrap();
+        assert_eq!(
+            decision,
+            LocalVoiceRecognitionDisposition::KnownSpeakerPosture
+        );
+    }
+
+    #[test]
+    fn local_voice_cache_stale_revoked_blocked_expired_fail_closed() {
+        let mut s = store_with_user_and_device();
+        let (person_profile_id, voice_profile_id) =
+            seed_person_profile_for_local_voice_cache(&mut s);
+        let rec = s
+            .local_voice_cache_upsert_governed(
+                MonotonicTimeNs(203),
+                local_voice_cache_test_input(person_profile_id, voice_profile_id),
+            )
+            .unwrap();
+
+        for status in [
+            LocalVoiceCacheStatus::Stale,
+            LocalVoiceCacheStatus::Revoked,
+            LocalVoiceCacheStatus::Blocked,
+            LocalVoiceCacheStatus::Expired,
+        ] {
+            let mut input = local_voice_cache_test_input(
+                rec.person_profile_ref.clone(),
+                rec.voice_profile_ref.clone(),
+            );
+            input.local_voice_cache_id = Some(format!("local_voice_cache_{status:?}"));
+            input.device_ref = format!("device_{status:?}");
+            input.cache_status = status;
+            let cache = s
+                .local_voice_cache_upsert_governed(MonotonicTimeNs(204), input)
+                .unwrap();
+            let decision = s
+                .local_voice_cache_decide_posture(
+                    MonotonicTimeNs(205),
+                    &cache.local_voice_cache_id,
+                    9_900,
+                    LocalVoiceCloudFallbackStatus::DeferredNoSurface,
+                )
+                .unwrap();
+            assert_eq!(
+                decision,
+                LocalVoiceRecognitionDisposition::LocalFailedCloudUnavailableNotRecognizedOnDevice
+            );
+        }
+    }
+
+    #[test]
+    fn local_voice_cache_low_confidence_and_cloud_rules_are_non_authoritative() {
+        let mut s = store_with_user_and_device();
+        let (person_profile_id, voice_profile_id) =
+            seed_person_profile_for_local_voice_cache(&mut s);
+        let rec = s
+            .local_voice_cache_upsert_governed(
+                MonotonicTimeNs(206),
+                local_voice_cache_test_input(person_profile_id, voice_profile_id),
+            )
+            .unwrap();
+
+        assert_eq!(
+            s.local_voice_cache_decide_posture(
+                MonotonicTimeNs(207),
+                &rec.local_voice_cache_id,
+                8_000,
+                LocalVoiceCloudFallbackStatus::NonLiveUnavailable,
+            )
+            .unwrap(),
+            LocalVoiceRecognitionDisposition::LocalFailedCloudUnavailableNotRecognizedOnDevice
+        );
+        assert_eq!(
+            s.local_voice_cache_decide_posture(
+                MonotonicTimeNs(208),
+                &rec.local_voice_cache_id,
+                8_000,
+                LocalVoiceCloudFallbackStatus::NonLiveNoMatch,
+            )
+            .unwrap(),
+            LocalVoiceRecognitionDisposition::UnknownAfterLocalAndCloudNoMatch
+        );
+    }
+
+    #[test]
+    fn local_voice_cache_does_not_store_raw_audio_or_unencrypted_embeddings() {
+        let mut s = store_with_user_and_device();
+        let (person_profile_id, voice_profile_id) =
+            seed_person_profile_for_local_voice_cache(&mut s);
+        let rec = s
+            .local_voice_cache_upsert_governed(
+                MonotonicTimeNs(209),
+                local_voice_cache_test_input(person_profile_id, voice_profile_id),
+            )
+            .unwrap();
+        let rendered = format!("{rec:?}").to_ascii_lowercase();
+        assert!(!rendered.contains("raw_audio"));
+        assert!(!rendered.contains("unencrypted"));
+        assert!(!rendered.contains("embedding"));
+        assert!(!rendered.contains("microphone"));
+    }
+
+    #[test]
+    fn local_voice_cache_does_not_write_memory_or_grant_authority() {
+        let mut s = store_with_user_and_device();
+        let (person_profile_id, voice_profile_id) =
+            seed_person_profile_for_local_voice_cache(&mut s);
+        let before_memory_rows = s.memory_ledger_rows().len();
+        let rec = s
+            .local_voice_cache_upsert_governed(
+                MonotonicTimeNs(210),
+                local_voice_cache_test_input(person_profile_id, voice_profile_id),
+            )
+            .unwrap();
+        assert_eq!(s.memory_ledger_rows().len(), before_memory_rows);
+        assert!(!format!("{rec:?}")
+            .to_ascii_lowercase()
+            .contains("authority"));
     }
 
     // Ensures we still compile against other crate contracts used elsewhere.

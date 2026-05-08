@@ -22269,7 +22269,9 @@ mod tests {
     };
     use selene_storage::ph1f::{
         AccessDeviceTrustLevel, AccessLifecycleState, AccessMode, AccessVerificationLevel,
-        DeviceRecord, IdentityRecord, IdentityStatus, MobileArtifactSyncKind, PersonProfileStatus,
+        DeviceRecord, IdentityRecord, IdentityStatus, LocalVoiceCacheStatus,
+        LocalVoiceCacheUpsertInput, LocalVoiceCloudFallbackStatus,
+        LocalVoiceRecognitionDisposition, MobileArtifactSyncKind, PersonProfileStatus,
         PersonProfileUpsertInput, WakeSampleResult,
     };
     use std::ffi::OsString;
@@ -26250,6 +26252,46 @@ mod tests {
         }
     }
 
+    fn adapter_local_voice_cache_input(
+        person_profile_id: String,
+        voice_profile_id: String,
+    ) -> LocalVoiceCacheUpsertInput {
+        LocalVoiceCacheUpsertInput {
+            local_voice_cache_id: Some("local_voice_cache_adapter_slice7".to_string()),
+            device_ref: "adapter_device_1".to_string(),
+            person_profile_ref: person_profile_id,
+            voice_profile_ref: voice_profile_id,
+            recognition_pack_ref: "recognition_pack_adapter_ref".to_string(),
+            pack_version: 1,
+            cache_status: LocalVoiceCacheStatus::Active,
+            last_checked_at_ns: Some(MonotonicTimeNs(34_770_000_000)),
+            expires_at_ns: Some(MonotonicTimeNs(34_780_000_000)),
+            audit_refs: vec!["audit_ref_adapter".to_string()],
+        }
+    }
+
+    fn seed_adapter_person_profile_for_local_voice_cache(
+        label: &str,
+    ) -> (AdapterRuntime, String, String) {
+        let (runtime, req) = stage34m_known_voice_wake_request(label, "jd");
+        runtime
+            .run_voice_turn(req)
+            .expect("known wake should seed voice profile before local cache");
+        let mut store = runtime.store.lock().expect("store lock must not poison");
+        let voice_profile_id = store.ph1vid_voice_profile_rows()[0]
+            .voice_profile_id
+            .clone();
+        let rec = store
+            .person_profile_upsert_governed(
+                MonotonicTimeNs(34_770_000_001),
+                adapter_person_profile_input(voice_profile_id.clone()),
+            )
+            .expect("governed PersonProfile fixture should link VoiceProfile ref");
+        let person_profile_id = rec.person_profile_id;
+        drop(store);
+        (runtime, person_profile_id, voice_profile_id)
+    }
+
     #[test]
     fn wake_person_profile_linkage_contract_links_governed_refs() {
         let (runtime, mut req) = stage34m_known_voice_wake_request("slice6_contract_refs", "jd");
@@ -26390,6 +26432,305 @@ mod tests {
 
     #[test]
     fn wake_person_profile_linkage_iphone_wake_word_remains_blocked() {
+        wake_guest_lane_iphone_wake_word_remains_blocked();
+    }
+
+    #[test]
+    fn wake_local_voice_cache_contract_links_refs_only() {
+        let (runtime, person_profile_id, voice_profile_id) =
+            seed_adapter_person_profile_for_local_voice_cache("slice7_contract_refs");
+        let mut store = runtime.store.lock().expect("store lock must not poison");
+        let before_voice_profiles = store.ph1vid_voice_profile_rows().len();
+        let rec = store
+            .local_voice_cache_upsert_governed(
+                MonotonicTimeNs(34_770_000_010),
+                adapter_local_voice_cache_input(
+                    person_profile_id.clone(),
+                    voice_profile_id.clone(),
+                ),
+            )
+            .expect("local cache should link existing refs");
+
+        assert_eq!(rec.person_profile_ref, person_profile_id);
+        assert_eq!(rec.voice_profile_ref, voice_profile_id);
+        assert_eq!(
+            store.ph1vid_voice_profile_rows().len(),
+            before_voice_profiles
+        );
+        assert_eq!(rec.recognition_pack_ref, "recognition_pack_adapter_ref");
+    }
+
+    #[test]
+    fn wake_local_voice_cache_active_high_confidence_can_identify_posture() {
+        let (runtime, person_profile_id, voice_profile_id) =
+            seed_adapter_person_profile_for_local_voice_cache("slice7_high_conf");
+        let mut store = runtime.store.lock().expect("store lock must not poison");
+        let rec = store
+            .local_voice_cache_upsert_governed(
+                MonotonicTimeNs(34_771_000_010),
+                adapter_local_voice_cache_input(person_profile_id, voice_profile_id),
+            )
+            .expect("local cache should be created");
+        let decision = store
+            .local_voice_cache_decide_posture(
+                MonotonicTimeNs(34_771_000_020),
+                &rec.local_voice_cache_id,
+                9_600,
+                LocalVoiceCloudFallbackStatus::DeferredNoSurface,
+            )
+            .expect("local cache posture decision should succeed");
+        assert_eq!(
+            decision,
+            LocalVoiceRecognitionDisposition::KnownSpeakerPosture
+        );
+    }
+
+    #[test]
+    fn wake_local_voice_cache_stale_revoked_blocked_expired_fail_closed() {
+        let (runtime, person_profile_id, voice_profile_id) =
+            seed_adapter_person_profile_for_local_voice_cache("slice7_status_closed");
+        let mut store = runtime.store.lock().expect("store lock must not poison");
+
+        for status in [
+            LocalVoiceCacheStatus::Stale,
+            LocalVoiceCacheStatus::Revoked,
+            LocalVoiceCacheStatus::Blocked,
+            LocalVoiceCacheStatus::Expired,
+        ] {
+            let mut input = adapter_local_voice_cache_input(
+                person_profile_id.clone(),
+                voice_profile_id.clone(),
+            );
+            input.local_voice_cache_id = Some(format!("local_voice_cache_adapter_{status:?}"));
+            input.device_ref = format!("adapter_device_{status:?}");
+            input.cache_status = status;
+            let rec = store
+                .local_voice_cache_upsert_governed(MonotonicTimeNs(34_772_000_010), input)
+                .expect("non-active cache states should be representable");
+            let decision = store
+                .local_voice_cache_decide_posture(
+                    MonotonicTimeNs(34_772_000_020),
+                    &rec.local_voice_cache_id,
+                    9_900,
+                    LocalVoiceCloudFallbackStatus::DeferredNoSurface,
+                )
+                .expect("non-active decision should still be governed");
+            assert_eq!(
+                decision,
+                LocalVoiceRecognitionDisposition::LocalFailedCloudUnavailableNotRecognizedOnDevice
+            );
+        }
+    }
+
+    #[test]
+    fn wake_local_voice_cache_device_trust_does_not_identify_speaker() {
+        let (_runtime, req) = stage34m_activation_only_wake_request("slice7_device_trust_only");
+        let out = _runtime
+            .run_voice_turn(req)
+            .expect("wake without voice match should stay generic");
+        assert!(
+            wake_greeting_library_phrases(WakeGreetingLibraryCategory::GenericActivation)
+                .contains(&out.response_text.as_str())
+        );
+        assert!(!out.response_text.contains("JD"), "{out:?}");
+    }
+
+    #[test]
+    fn wake_local_voice_cache_low_confidence_does_not_use_name() {
+        let (runtime, person_profile_id, voice_profile_id) =
+            seed_adapter_person_profile_for_local_voice_cache("slice7_low_conf");
+        let mut store = runtime.store.lock().expect("store lock must not poison");
+        let rec = store
+            .local_voice_cache_upsert_governed(
+                MonotonicTimeNs(34_773_000_010),
+                adapter_local_voice_cache_input(person_profile_id, voice_profile_id),
+            )
+            .expect("local cache should be created");
+        let decision = store
+            .local_voice_cache_decide_posture(
+                MonotonicTimeNs(34_773_000_020),
+                &rec.local_voice_cache_id,
+                8_000,
+                LocalVoiceCloudFallbackStatus::DeferredNoSurface,
+            )
+            .expect("low confidence decision should succeed");
+        assert_eq!(
+            decision,
+            LocalVoiceRecognitionDisposition::LocalFailedCloudUnavailableNotRecognizedOnDevice
+        );
+    }
+
+    #[test]
+    fn wake_cloud_fallback_runs_only_after_local_failure_when_supported() {
+        let (runtime, person_profile_id, voice_profile_id) =
+            seed_adapter_person_profile_for_local_voice_cache("slice7_cloud_boundary");
+        let mut store = runtime.store.lock().expect("store lock must not poison");
+        let rec = store
+            .local_voice_cache_upsert_governed(
+                MonotonicTimeNs(34_774_000_010),
+                adapter_local_voice_cache_input(person_profile_id, voice_profile_id),
+            )
+            .expect("local cache should be created");
+
+        let local_known = store
+            .local_voice_cache_decide_posture(
+                MonotonicTimeNs(34_774_000_020),
+                &rec.local_voice_cache_id,
+                9_600,
+                LocalVoiceCloudFallbackStatus::NonLiveNoMatch,
+            )
+            .unwrap();
+        assert_eq!(
+            local_known,
+            LocalVoiceRecognitionDisposition::KnownSpeakerPosture
+        );
+
+        let low_conf_cloud_checked = store
+            .local_voice_cache_decide_posture(
+                MonotonicTimeNs(34_774_000_030),
+                &rec.local_voice_cache_id,
+                8_000,
+                LocalVoiceCloudFallbackStatus::NonLiveNoMatch,
+            )
+            .unwrap();
+        assert_eq!(
+            low_conf_cloud_checked,
+            LocalVoiceRecognitionDisposition::UnknownAfterLocalAndCloudNoMatch
+        );
+    }
+
+    #[test]
+    fn wake_cloud_fallback_unavailable_is_not_new_person() {
+        let (runtime, person_profile_id, voice_profile_id) =
+            seed_adapter_person_profile_for_local_voice_cache("slice7_cloud_unavailable");
+        let mut store = runtime.store.lock().expect("store lock must not poison");
+        let rec = store
+            .local_voice_cache_upsert_governed(
+                MonotonicTimeNs(34_775_000_010),
+                adapter_local_voice_cache_input(person_profile_id, voice_profile_id),
+            )
+            .expect("local cache should be created");
+        let decision = store
+            .local_voice_cache_decide_posture(
+                MonotonicTimeNs(34_775_000_020),
+                &rec.local_voice_cache_id,
+                8_000,
+                LocalVoiceCloudFallbackStatus::NonLiveUnavailable,
+            )
+            .unwrap();
+        assert_eq!(
+            decision,
+            LocalVoiceRecognitionDisposition::LocalFailedCloudUnavailableNotRecognizedOnDevice
+        );
+    }
+
+    #[test]
+    fn wake_cloud_fallback_no_match_can_mark_unknown_only_when_checked() {
+        let (runtime, person_profile_id, voice_profile_id) =
+            seed_adapter_person_profile_for_local_voice_cache("slice7_cloud_no_match");
+        let mut store = runtime.store.lock().expect("store lock must not poison");
+        let rec = store
+            .local_voice_cache_upsert_governed(
+                MonotonicTimeNs(34_776_000_010),
+                adapter_local_voice_cache_input(person_profile_id, voice_profile_id),
+            )
+            .expect("local cache should be created");
+        let decision = store
+            .local_voice_cache_decide_posture(
+                MonotonicTimeNs(34_776_000_020),
+                &rec.local_voice_cache_id,
+                8_000,
+                LocalVoiceCloudFallbackStatus::NonLiveNoMatch,
+            )
+            .unwrap();
+        assert_eq!(
+            decision,
+            LocalVoiceRecognitionDisposition::UnknownAfterLocalAndCloudNoMatch
+        );
+    }
+
+    #[test]
+    fn wake_cloud_fallback_does_not_introduce_live_network() {
+        let (runtime, person_profile_id, voice_profile_id) =
+            seed_adapter_person_profile_for_local_voice_cache("slice7_no_live_cloud");
+        let mut store = runtime.store.lock().expect("store lock must not poison");
+        let rec = store
+            .local_voice_cache_upsert_governed(
+                MonotonicTimeNs(34_777_000_010),
+                adapter_local_voice_cache_input(person_profile_id, voice_profile_id),
+            )
+            .expect("local cache should be created");
+        let rendered = format!("{rec:?}").to_ascii_lowercase();
+        assert!(!rendered.contains("http"));
+        assert!(!rendered.contains("service_client"));
+        assert!(!rendered.contains("credential"));
+        assert!(!rendered.contains("provider"));
+    }
+
+    #[test]
+    fn wake_local_voice_cache_does_not_store_raw_audio_or_unencrypted_embeddings() {
+        let (runtime, person_profile_id, voice_profile_id) =
+            seed_adapter_person_profile_for_local_voice_cache("slice7_no_audio");
+        let mut store = runtime.store.lock().expect("store lock must not poison");
+        let rec = store
+            .local_voice_cache_upsert_governed(
+                MonotonicTimeNs(34_778_000_010),
+                adapter_local_voice_cache_input(person_profile_id, voice_profile_id),
+            )
+            .expect("local cache should be created");
+        let rendered = format!("{rec:?}").to_ascii_lowercase();
+        assert!(!rendered.contains("raw_audio"));
+        assert!(!rendered.contains("unencrypted"));
+        assert!(!rendered.contains("embedding"));
+    }
+
+    #[test]
+    fn wake_local_voice_cache_does_not_grant_authority() {
+        let (runtime, person_profile_id, voice_profile_id) =
+            seed_adapter_person_profile_for_local_voice_cache("slice7_no_auth");
+        let mut store = runtime.store.lock().expect("store lock must not poison");
+        let rec = store
+            .local_voice_cache_upsert_governed(
+                MonotonicTimeNs(34_779_000_010),
+                adapter_local_voice_cache_input(person_profile_id, voice_profile_id),
+            )
+            .expect("local cache should be created");
+        assert!(!format!("{rec:?}")
+            .to_ascii_lowercase()
+            .contains("authority"));
+        drop(store);
+
+        let (_guest_runtime, _wake_req, prompt_req) =
+            open_unknown_guest_session("slice7_no_auth_guest");
+        let protected_req = continuing_speech_request_from_wake(
+            &prompt_req,
+            "slice7_no_auth_guest_protected",
+            "Approve this payroll change.",
+        );
+        let out = _guest_runtime
+            .run_voice_turn(protected_req)
+            .expect("protected guest request should remain blocked");
+        assert_unknown_speaker_identity_prompt(&out);
+    }
+
+    #[test]
+    fn wake_local_voice_cache_preserves_person_profile_linkage() {
+        wake_person_profile_linkage_contract_links_governed_refs();
+    }
+
+    #[test]
+    fn wake_local_voice_cache_preserves_guest_lane() {
+        wake_guest_lane_allows_anonymous_public_safe_guest_chat();
+        wake_guest_lane_claimed_name_does_not_authorize_protected_work();
+    }
+
+    #[test]
+    fn wake_local_voice_cache_preserves_provider_tool_protected_closure() {
+        wake_guest_lane_preserves_provider_tool_protected_closure();
+    }
+
+    #[test]
+    fn wake_local_voice_cache_iphone_wake_word_remains_blocked() {
         wake_guest_lane_iphone_wake_word_remains_blocked();
     }
 

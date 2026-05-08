@@ -82,20 +82,22 @@ use crate::ph1f::{
     BuilderPostDeployJudgeResultLedgerRow, BuilderProposalLedgerRow, BuilderProposalLedgerRowInput,
     BuilderReleaseStateLedgerRow, BuilderValidationGateResultLedgerRow,
     BuilderValidationRunLedgerRow, ConsentStateRecord, DeviceRecord, IdentityRecord,
-    LinkGenerateResultParts, MemoryArchiveIndexRecord, MemoryCurrentRecord,
-    MemoryEmotionalThreadCurrentRecord, MemoryEmotionalThreadLedgerRow, MemoryGraphEdgeRecord,
-    MemoryGraphNodeRecord, MemoryLedgerRow, MemoryMetricLedgerRow, MemoryRetentionPreferenceRecord,
-    MemorySuppressionRuleRecord, MemoryThreadCurrentRecord, MemoryThreadEventKind,
-    MemoryThreadLedgerRow, MemoryThreadRefRecord, MobileArtifactSyncQueueRecord,
-    MobileArtifactSyncState, OnboardingSessionRecord, PersonProfileRecord,
-    PersonProfileUpsertInput, Ph1cTranscriptOkCommitResult, Ph1cTranscriptRejectCommitResult,
-    Ph1fStore, Ph1kDeviceHealth, Ph1kFeedbackCaptureInput, Ph1kFeedbackCaptureRecord,
-    Ph1kInterruptCandidateExtendedFields, Ph1kRuntimeCurrentRecord, Ph1kRuntimeEventKind,
-    Ph1kRuntimeEventRecord, PositionLifecycleEventRecord, SelfHealFailureEventLedgerRow,
-    SelfHealFixCardLedgerRow, SelfHealProblemCardLedgerRow, SelfHealPromotionDecisionLedgerRow,
-    SessionRecord, StorageError, TenantCompanyRecord, VoiceEnrollmentSampleRecord,
-    VoiceEnrollmentSessionRecord, VoiceProfileRecord, WakeEnrollmentSampleRecord,
-    WakeEnrollmentSessionRecord, WakeRuntimeEventRecord, WakeSampleResult,
+    LinkGenerateResultParts, LocalVoiceCacheRecord, LocalVoiceCacheStatus,
+    LocalVoiceCacheUpsertInput, LocalVoiceCloudFallbackStatus, LocalVoiceRecognitionDisposition,
+    MemoryArchiveIndexRecord, MemoryCurrentRecord, MemoryEmotionalThreadCurrentRecord,
+    MemoryEmotionalThreadLedgerRow, MemoryGraphEdgeRecord, MemoryGraphNodeRecord, MemoryLedgerRow,
+    MemoryMetricLedgerRow, MemoryRetentionPreferenceRecord, MemorySuppressionRuleRecord,
+    MemoryThreadCurrentRecord, MemoryThreadEventKind, MemoryThreadLedgerRow, MemoryThreadRefRecord,
+    MobileArtifactSyncQueueRecord, MobileArtifactSyncState, OnboardingSessionRecord,
+    PersonProfileRecord, PersonProfileUpsertInput, Ph1cTranscriptOkCommitResult,
+    Ph1cTranscriptRejectCommitResult, Ph1fStore, Ph1kDeviceHealth, Ph1kFeedbackCaptureInput,
+    Ph1kFeedbackCaptureRecord, Ph1kInterruptCandidateExtendedFields, Ph1kRuntimeCurrentRecord,
+    Ph1kRuntimeEventKind, Ph1kRuntimeEventRecord, PositionLifecycleEventRecord,
+    SelfHealFailureEventLedgerRow, SelfHealFixCardLedgerRow, SelfHealProblemCardLedgerRow,
+    SelfHealPromotionDecisionLedgerRow, SessionRecord, StorageError, TenantCompanyRecord,
+    VoiceEnrollmentSampleRecord, VoiceEnrollmentSessionRecord, VoiceProfileRecord,
+    WakeEnrollmentSampleRecord, WakeEnrollmentSessionRecord, WakeRuntimeEventRecord,
+    WakeSampleResult,
 };
 
 /// Typed repository interface for PH1.F foundational storage wiring.
@@ -409,6 +411,35 @@ pub trait PersonProfileLinkageRepo {
         now: MonotonicTimeNs,
         person_profile_id: &str,
     ) -> Result<PersonProfileRecord, StorageError>;
+}
+
+/// Typed repository interface for local-first VoiceProfile cache posture.
+pub trait LocalVoiceCacheRepo {
+    fn local_voice_cache_upsert_row(
+        &mut self,
+        now: MonotonicTimeNs,
+        input: LocalVoiceCacheUpsertInput,
+    ) -> Result<LocalVoiceCacheRecord, StorageError>;
+    fn local_voice_cache_row(&self, local_voice_cache_id: &str) -> Option<&LocalVoiceCacheRecord>;
+    fn local_voice_cache_rows(&self) -> Vec<&LocalVoiceCacheRecord>;
+    fn local_voice_cache_for_device_voice_ref_row(
+        &self,
+        device_ref: &str,
+        voice_profile_ref: &str,
+    ) -> Option<&LocalVoiceCacheRecord>;
+    fn local_voice_cache_mark_status_row(
+        &mut self,
+        now: MonotonicTimeNs,
+        local_voice_cache_id: &str,
+        cache_status: LocalVoiceCacheStatus,
+    ) -> Result<LocalVoiceCacheRecord, StorageError>;
+    fn local_voice_cache_decide_posture_row(
+        &self,
+        now: MonotonicTimeNs,
+        local_voice_cache_id: &str,
+        local_confidence_bp: u16,
+        cloud_fallback_status: LocalVoiceCloudFallbackStatus,
+    ) -> Result<LocalVoiceRecognitionDisposition, StorageError>;
 }
 
 /// Typed repository interface for phone-local artifact sync queue lifecycle.
@@ -2555,6 +2586,56 @@ impl PersonProfileLinkageRepo for Ph1fStore {
         person_profile_id: &str,
     ) -> Result<PersonProfileRecord, StorageError> {
         self.person_profile_mark_seen(now, person_profile_id)
+    }
+}
+
+impl LocalVoiceCacheRepo for Ph1fStore {
+    fn local_voice_cache_upsert_row(
+        &mut self,
+        now: MonotonicTimeNs,
+        input: LocalVoiceCacheUpsertInput,
+    ) -> Result<LocalVoiceCacheRecord, StorageError> {
+        self.local_voice_cache_upsert_governed(now, input)
+    }
+
+    fn local_voice_cache_row(&self, local_voice_cache_id: &str) -> Option<&LocalVoiceCacheRecord> {
+        Ph1fStore::local_voice_cache_row(self, local_voice_cache_id)
+    }
+
+    fn local_voice_cache_rows(&self) -> Vec<&LocalVoiceCacheRecord> {
+        Ph1fStore::local_voice_cache_rows(self)
+    }
+
+    fn local_voice_cache_for_device_voice_ref_row(
+        &self,
+        device_ref: &str,
+        voice_profile_ref: &str,
+    ) -> Option<&LocalVoiceCacheRecord> {
+        self.local_voice_cache_for_device_voice_ref(device_ref, voice_profile_ref)
+    }
+
+    fn local_voice_cache_mark_status_row(
+        &mut self,
+        now: MonotonicTimeNs,
+        local_voice_cache_id: &str,
+        cache_status: LocalVoiceCacheStatus,
+    ) -> Result<LocalVoiceCacheRecord, StorageError> {
+        self.local_voice_cache_mark_status(now, local_voice_cache_id, cache_status)
+    }
+
+    fn local_voice_cache_decide_posture_row(
+        &self,
+        now: MonotonicTimeNs,
+        local_voice_cache_id: &str,
+        local_confidence_bp: u16,
+        cloud_fallback_status: LocalVoiceCloudFallbackStatus,
+    ) -> Result<LocalVoiceRecognitionDisposition, StorageError> {
+        self.local_voice_cache_decide_posture(
+            now,
+            local_voice_cache_id,
+            local_confidence_bp,
+            cloud_fallback_status,
+        )
     }
 }
 
