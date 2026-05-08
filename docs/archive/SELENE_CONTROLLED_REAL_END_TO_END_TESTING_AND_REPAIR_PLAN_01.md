@@ -2592,3 +2592,191 @@ CONTROLLED_REAL_TESTING_FAILED
 If environment prevents meaningful execution without proving Selene failure, classify:
 
 CONTROLLED_REAL_TESTING_BLOCKED
+
+ADDENDUM A: WAKE / VOICE RECOGNITION TEST PLAN
+
+Goal
+
+Verify the completed wake -> session -> Voice ID recognition path:
+
+- wake/explicit activation opens or resumes a session;
+- Selene emits the local greeting;
+- listening/handoff stays open;
+- Voice ID is attempted where repo-supported evidence exists;
+- known speaker can be recognized by name;
+- unknown speaker stays generic or guest-safe;
+- no provider, protected execution, cloud, sync, memory, or profile authority is accidentally used.
+
+Phase A1: Repo Sanity
+
+Run from `/Users/selene/Documents/Selene-OS`:
+
+```sh
+git status --short
+git rev-parse HEAD
+git rev-parse origin/main
+test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)"
+```
+
+Expected:
+
+- clean tree;
+- HEAD equals `origin/main`;
+- current build includes Slice 9.
+
+Phase A2: Fast Automated Smoke
+
+Run the adapter smoke set first:
+
+```sh
+cargo test -p selene_adapter wake_greeting_handoff -- --test-threads=1
+cargo test -p selene_adapter wake_voice_id_posture_handoff -- --test-threads=1
+cargo test -p selene_adapter wake_unknown_speaker_prompt -- --test-threads=1
+cargo test -p selene_adapter wake_guest_lane -- --test-threads=1
+cargo test -p selene_adapter wake_cross_platform_activation_parity -- --test-threads=1
+```
+
+Expected:
+
+- accepted wake opens session;
+- rejected wake stays silent/closed;
+- known high-confidence speaker gets named greeting;
+- unknown speaker gets generic greeting;
+- continuing speech retries Voice ID before asking for name;
+- iPhone wake-word remains blocked.
+
+Phase A3: Smoke Voice Without Name
+
+Test a basic voice activation with no recognized speaker identity.
+
+Expected behavior:
+
+- Selene accepts activation if wake/explicit gate passes;
+- emits generic local greeting;
+- does not use a name;
+- does not infer identity from device trust;
+- keeps listening open;
+- provider/tool/protected paths remain absent.
+
+Pass condition:
+
+```text
+Generic greeting only.
+No named greeting.
+No profile/memory/write behavior.
+Listening handoff remains open.
+```
+
+Phase A4: Add Smoke Voice With Name
+
+Create or use an existing governed Voice ID test fixture for a named speaker, for example:
+
+```text
+speaker name: JD
+voice posture: high confidence known speaker
+voice/profile ref: existing governed fixture only
+```
+
+Then run the named Voice ID posture path.
+
+Expected behavior:
+
+- Selene accepts activation;
+- Voice ID posture resolves as high-confidence known speaker;
+- Selene may greet by name, such as "Hi, JD.";
+- name comes from Voice ID posture, not device trust;
+- still no protected authority is granted.
+
+Pass condition:
+
+```text
+Named greeting appears only for high-confidence known Voice ID posture.
+Device trust alone still cannot produce the name.
+```
+
+Phase A5: Continuing-Speech Retry
+
+Start with unknown/low-confidence activation.
+
+Then provide clean current-turn speech with recognized speaker evidence.
+
+Expected behavior:
+
+- first greeting is generic;
+- Selene retries Voice ID using current-turn/continuing-speech evidence;
+- if retry identifies JD, Selene suppresses the "what should I call you?" prompt;
+- if retry remains unknown, Selene may ask what to call the speaker.
+
+Pass condition:
+
+```text
+Voice ID retry happens before name prompt.
+Known retry suppresses name prompt.
+Unknown retry may prompt for name.
+```
+
+Phase A6: Guest / Claimed Name Boundary
+
+For an unknown speaker, answer the name prompt with a safe name.
+
+Expected:
+
+- claimed name is session-only;
+- posture remains unverified;
+- public-safe guest lane works;
+- protected/personal/business requests still fail closed or require verified identity.
+
+Pass condition:
+
+```text
+Selene can call the guest by the claimed name in public-safe context.
+Claimed name does not become identity or authority.
+```
+
+Phase A7: Platform Parity
+
+Run or simulate:
+
+- macOS wake-word accepted path;
+- Windows wake-word accepted path;
+- Android wake-word accepted path;
+- iPhone explicit path;
+- iPhone wake-word blocked path;
+- unknown platform rejected path.
+
+Expected:
+
+- accepted paths share same downstream handoff;
+- iPhone wake-word remains blocked;
+- iPhone explicit remains explicit-only;
+- native clients remain capture/render shells.
+
+Phase A8: Safety Regression
+
+Run:
+
+```sh
+cargo test -p selene_adapter wake -- --test-threads=1
+cargo test -p selene_adapter voice_id -- --test-threads=1
+cargo test -p selene_os ph1_voice_id -- --test-threads=1
+cargo test -p selene_os parity -- --test-threads=1
+cargo test -p selene_engines stage2_global_off_blocks_websearch_zero_attempts -- --test-threads=1
+cargo test -p selene_engines stage8_provider_off_all_lanes_block_before_attempt_or_dispatch -- --test-threads=1
+```
+
+Final Acceptance
+
+This wake / voice recognition addendum is green when:
+
+```text
+Wake opens session.
+Generic unknown greeting works.
+Known high-confidence Voice ID named greeting works.
+Continuing speech retries identity before name prompt.
+Smoke voice with name is recognized from Voice ID fixture/evidence.
+Claimed names remain session-only.
+Device trust alone never identifies speaker.
+iPhone wake-word stays blocked.
+Provider/protected/tool paths stay closed.
+Tree remains clean after tests.
+```
