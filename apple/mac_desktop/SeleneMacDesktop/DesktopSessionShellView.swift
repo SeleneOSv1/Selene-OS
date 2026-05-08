@@ -6609,6 +6609,7 @@ struct DesktopSessionShellView: View {
         _ state: DesktopOperationalConversationShellState
     ) -> some View {
         VStack(alignment: .leading, spacing: 16) {
+            DesktopLiveVoiceE2EProofView()
             desktopSessionSurfaceSelectionRailCard
             desktopSessionRecentListVisibilityCard
             desktopSessionPostureEvidenceVisibilityCard
@@ -6623,6 +6624,7 @@ struct DesktopSessionShellView: View {
 
     private var desktopEvidenceFirstWorkspacePanel: some View {
         VStack(alignment: .leading, spacing: 16) {
+            DesktopLiveVoiceE2EProofView()
             explicitVoiceEntryAffordanceCard
 
             if desktopReadyTimeHandoffIsActive {
