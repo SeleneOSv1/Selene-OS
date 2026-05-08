@@ -5385,6 +5385,7 @@ private enum DesktopShellSecondaryPanel: String, Identifiable {
     case history
     case workspace
     case liveVoiceProof
+    case controlledWakeMode
     case developer
 
     var id: String { rawValue }
@@ -6153,6 +6154,13 @@ struct DesktopSessionShellView: View {
                         desktopPresentedSecondaryPanel = .liveVoiceProof
                     }
 
+                    desktopSidebarActionRow(
+                        title: "Controlled Wake Mode",
+                        systemImage: "ear.badge.waveform"
+                    ) {
+                        desktopPresentedSecondaryPanel = .controlledWakeMode
+                    }
+
                     if desktopSidebarSearchIsVisible {
                         TextField("Search chats", text: $desktopSidebarSearchQuery)
                             .textFieldStyle(.plain)
@@ -6574,6 +6582,15 @@ struct DesktopSessionShellView: View {
                     DesktopLiveVoiceE2EProofView()
                 }
             )
+        case .controlledWakeMode:
+            return AnyView(
+                desktopSecondaryPanelSheetContainer(
+                    title: "Controlled Wake Mode",
+                    detail: "A visible explicit Desktop wake-listening toggle that preserves runtime authority and fails closed."
+                ) {
+                    DesktopControlledWakeModeView()
+                }
+            )
         case .developer:
             return AnyView(
                 desktopSecondaryPanelSheetContainer(
@@ -6619,6 +6636,15 @@ struct DesktopSessionShellView: View {
                     DesktopLiveVoiceE2EProofView()
                 }
             )
+        case .controlledWakeMode:
+            return AnyView(
+                desktopSecondaryPanelSheetContainer(
+                    title: "Controlled Wake Mode",
+                    detail: "A visible explicit Desktop wake-listening toggle that preserves runtime authority and fails closed."
+                ) {
+                    DesktopControlledWakeModeView()
+                }
+            )
         case .developer:
             return AnyView(
                 desktopSecondaryPanelSheetContainer(
@@ -6635,6 +6661,7 @@ struct DesktopSessionShellView: View {
         _ state: DesktopOperationalConversationShellState
     ) -> some View {
         VStack(alignment: .leading, spacing: 16) {
+            DesktopControlledWakeModeView()
             DesktopLiveVoiceE2EProofView()
             desktopSessionSurfaceSelectionRailCard
             desktopSessionRecentListVisibilityCard
@@ -6650,6 +6677,7 @@ struct DesktopSessionShellView: View {
 
     private var desktopEvidenceFirstWorkspacePanel: some View {
         VStack(alignment: .leading, spacing: 16) {
+            DesktopControlledWakeModeView()
             DesktopLiveVoiceE2EProofView()
             explicitVoiceEntryAffordanceCard
 

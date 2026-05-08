@@ -27432,6 +27432,137 @@ mod tests {
     }
 
     #[test]
+    fn desktop_controlled_wake_mode_off_by_default() {
+        let decision = resolve_cross_platform_activation_parity("MACOS", "WAKE_WORD", false);
+        assert!(!decision.activation_supported);
+        assert!(decision.fail_closed);
+        assert!(
+            !decision.may_open_or_resume_session,
+            "controlled Desktop wake must require explicit user enablement"
+        );
+    }
+
+    #[test]
+    fn desktop_controlled_wake_mode_start_stop_is_bounded() {
+        let start = resolve_cross_platform_activation_parity("MACOS", "WAKE_WORD", true);
+        assert!(start.activation_supported);
+        assert!(start.downstream_handoff_required);
+        assert!(start.may_open_or_resume_session);
+
+        let stopped = resolve_cross_platform_activation_parity("MACOS", "WAKE_WORD", false);
+        assert!(stopped.fail_closed);
+        assert!(!stopped.may_open_or_resume_session);
+    }
+
+    #[test]
+    fn desktop_controlled_wake_mode_quiet_control_rejects_without_session() {
+        let (runtime, mut req) = stage34m_activation_only_wake_request("desktop_controlled_quiet");
+        if let Some(capture) = req.audio_capture_ref.as_mut() {
+            capture.detection_text = None;
+            capture.detection_confidence_bp = None;
+        }
+
+        let err = runtime
+            .run_voice_turn(req)
+            .expect_err("quiet controlled wake must not open a session");
+        assert!(
+            err.contains("wake_rejected"),
+            "quiet controlled wake should fail closed: {err}"
+        );
+    }
+
+    #[test]
+    fn desktop_controlled_wake_mode_live_selene_opens_session() {
+        let (runtime, req) = stage34m_activation_only_wake_request("desktop_controlled_live");
+        let out = runtime
+            .run_voice_turn(req)
+            .expect("explicitly enabled controlled wake should open a session");
+
+        assert_wake_greeting_handoff_response(&out);
+    }
+
+    #[test]
+    fn desktop_controlled_wake_mode_known_voice_named_greeting() {
+        let (runtime, mut req) =
+            stage34m_known_voice_wake_request("desktop_controlled_known", "jd");
+        req.turn_id = 34_120_002;
+        req.device_turn_sequence = Some(2);
+        let out = runtime
+            .run_voice_turn(req)
+            .expect("known controlled wake speaker should receive named posture greeting");
+
+        assert_eq!(out.outcome, "SESSION_OPENED");
+        assert_eq!(out.next_move, "listening_window_open");
+        assert!(is_named_wake_greeting_for(&out, "JD"), "{out:?}");
+        assert!(out.source_chips.is_empty(), "{out:?}");
+        assert!(out.provenance.is_none(), "{out:?}");
+        assert!(out.deep_research.is_none(), "{out:?}");
+    }
+
+    #[test]
+    fn desktop_controlled_wake_mode_unknown_voice_generic_guest() {
+        let (runtime, req) = stage34m_activation_only_wake_request("desktop_controlled_unknown");
+        let out = runtime
+            .run_voice_turn(req)
+            .expect("unknown controlled wake speaker should remain generic");
+
+        assert_wake_greeting_handoff_response(&out);
+        assert!(
+            !out.response_text.contains("JD"),
+            "unknown controlled wake must not infer the known speaker: {out:?}"
+        );
+    }
+
+    #[test]
+    fn desktop_controlled_wake_mode_echo_guard_blocks_self_trigger() {
+        let (runtime, mut req) = stage34m_known_voice_wake_request("desktop_controlled_echo", "jd");
+        if let Some(capture) = req.audio_capture_ref.as_mut() {
+            capture.tts_playback_active = Some(true);
+        }
+
+        let out = runtime
+            .run_voice_turn(req)
+            .expect("self-echo posture should keep wake handoff generic");
+        assert_eq!(out.next_move, "listening_window_open");
+        assert!(
+            WAKE_GREETING_HANDOFF_LOCAL_SEED.contains(&out.response_text.as_str()),
+            "{out:?}"
+        );
+        assert!(
+            !out.response_text.contains("JD"),
+            "self-echo guarded wake must not identify speaker: {out:?}"
+        );
+    }
+
+    #[test]
+    fn desktop_controlled_wake_mode_timeout_closes_safely() {
+        at_l_03_timeout_closes_session_next_turn_opens_new();
+    }
+
+    #[test]
+    fn desktop_controlled_wake_mode_provider_tool_protected_closed() {
+        let (runtime, req) = stage34m_known_voice_wake_request("desktop_controlled_closed", "jd");
+        let out = runtime
+            .run_voice_turn(req)
+            .expect("controlled wake named greeting should stay activation-only");
+
+        assert_eq!(out.outcome, "SESSION_OPENED");
+        assert_eq!(out.next_move, "listening_window_open");
+        assert!(out.provenance.is_none(), "{out:?}");
+        assert!(out.source_chips.is_empty(), "{out:?}");
+        assert!(out.source_cards.is_empty(), "{out:?}");
+        assert!(out.image_cards.is_empty(), "{out:?}");
+        assert!(out.answer_class.is_none(), "{out:?}");
+        assert!(out.deep_research.is_none(), "{out:?}");
+        assert!(out.metadata_safe_for_user);
+    }
+
+    #[test]
+    fn desktop_controlled_wake_mode_iphone_wake_word_remains_blocked() {
+        wake_cross_platform_activation_parity_iphone_wake_word_remains_blocked();
+    }
+
+    #[test]
     fn at_l_01_wake_opens_new_session_persists_session_id() {
         let runtime = AdapterRuntime::default();
         let mut req = base_request();

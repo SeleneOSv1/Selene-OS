@@ -11,6 +11,7 @@
 			B10000000000000000000003 /* DesktopSessionShellView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000004 /* DesktopSessionShellView.swift */; };
 			B10000000000000000000017 /* SeleneMacDesktopRuntimeBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000018 /* SeleneMacDesktopRuntimeBridge.swift */; };
 			B10000000000000000000019 /* DesktopLiveVoiceE2EProofView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000001A /* DesktopLiveVoiceE2EProofView.swift */; };
+			B1000000000000000000001B /* DesktopControlledWakeModeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000001C /* DesktopControlledWakeModeView.swift */; };
 			B10000000000000000000015 /* AppIcon.icns in Resources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000016 /* AppIcon.icns */; };
 /* End PBXBuildFile section */
 
@@ -19,6 +20,7 @@
 			B10000000000000000000004 /* DesktopSessionShellView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DesktopSessionShellView.swift; sourceTree = "<group>"; };
 			B10000000000000000000018 /* SeleneMacDesktopRuntimeBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SeleneMacDesktopRuntimeBridge.swift; sourceTree = "<group>"; };
 			B1000000000000000000001A /* DesktopLiveVoiceE2EProofView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DesktopLiveVoiceE2EProofView.swift; sourceTree = "<group>"; };
+			B1000000000000000000001C /* DesktopControlledWakeModeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DesktopControlledWakeModeView.swift; sourceTree = "<group>"; };
 			B10000000000000000000005 /* SeleneMacDesktop.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = SeleneMacDesktop.app; sourceTree = BUILT_PRODUCTS_DIR; };
 			B10000000000000000000006 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 			B10000000000000000000016 /* AppIcon.icns */ = {isa = PBXFileReference; lastKnownFileType = image.icns; path = Resources/AppIcon.icns; sourceTree = "<group>"; };
@@ -50,6 +52,7 @@
 					B10000000000000000000004 /* DesktopSessionShellView.swift */,
 					B10000000000000000000018 /* SeleneMacDesktopRuntimeBridge.swift */,
 					B1000000000000000000001A /* DesktopLiveVoiceE2EProofView.swift */,
+					B1000000000000000000001C /* DesktopControlledWakeModeView.swift */,
 					B10000000000000000000006 /* Info.plist */,
 					B10000000000000000000016 /* AppIcon.icns */,
 				);
@@ -137,6 +140,7 @@
 				B10000000000000000000003 /* DesktopSessionShellView.swift in Sources */,
 				B10000000000000000000017 /* SeleneMacDesktopRuntimeBridge.swift in Sources */,
 				B10000000000000000000019 /* DesktopLiveVoiceE2EProofView.swift in Sources */,
+				B1000000000000000000001B /* DesktopControlledWakeModeView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
