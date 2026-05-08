@@ -190,7 +190,7 @@ use selene_storage::ph1f::{
     DeviceRecord, IdentityRecord, IdentityStatus, MobileArtifactSyncKind, MobileArtifactSyncState,
     OutcomeUtilizationLedgerRowInput, Ph1fStore, Ph1kDeviceHealth, Ph1kFeedbackCaptureInput,
     Ph1kFeedbackIssueKind, Ph1kInterruptCandidateExtendedFields, Ph1kRuntimeEventKind,
-    Ph1kRuntimeEventRecord, SessionRecord, StorageError,
+    Ph1kRuntimeEventRecord, SessionRecord, StorageError, WakeSampleResult,
 };
 use selene_storage::repo::Ph1jAuditRepo;
 use sha2::{Digest, Sha256};
@@ -9522,7 +9522,9 @@ impl AdapterRuntime {
             executor.set_voice_id_live_config(config);
         }
         let ingress = AppServerIngressRuntime::new(executor);
-        let store = Arc::new(Mutex::new(Ph1fStore::new_in_memory()));
+        let mut store = Ph1fStore::new_in_memory();
+        bootstrap_desktop_controlled_wake_profile_from_env(&mut store)?;
+        let store = Arc::new(Mutex::new(store));
         let journal_path = env::var("SELENE_ADAPTER_STORE_PATH")
             .ok()
             .map(|v| v.trim().to_string())
@@ -20635,6 +20637,95 @@ fn default_adapter_store_path() -> PathBuf {
         }
     }
     PathBuf::from(".selene/adapter/voice_turns.jsonl")
+}
+
+fn bootstrap_desktop_controlled_wake_profile_from_env(store: &mut Ph1fStore) -> Result<(), String> {
+    if !parse_bool_env("SELENE_DESKTOP_CONTROLLED_WAKE_BOOTSTRAP_ENABLED", false) {
+        return Ok(());
+    }
+
+    let actor_user_id = env::var("SELENE_DESKTOP_CONTROLLED_WAKE_BOOTSTRAP_ACTOR_USER_ID")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            "SELENE_DESKTOP_CONTROLLED_WAKE_BOOTSTRAP_ACTOR_USER_ID is required".to_string()
+        })
+        .and_then(|value| {
+            UserId::new(value).map_err(|err| format!("invalid desktop wake actor user id: {err:?}"))
+        })?;
+    let device_id = env::var("SELENE_DESKTOP_CONTROLLED_WAKE_BOOTSTRAP_DEVICE_ID")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            "SELENE_DESKTOP_CONTROLLED_WAKE_BOOTSTRAP_DEVICE_ID is required".to_string()
+        })
+        .and_then(|value| {
+            DeviceId::new(value).map_err(|err| format!("invalid desktop wake device id: {err:?}"))
+        })?;
+
+    if store
+        .ph1w_get_active_wake_profile(&actor_user_id, &device_id)
+        .is_some()
+    {
+        return Ok(());
+    }
+
+    let now = MonotonicTimeNs(system_time_now_ns().max(1));
+    ensure_actor_identity_and_device(
+        store,
+        &actor_user_id,
+        Some(&device_id),
+        AppPlatform::Desktop,
+        now,
+        true,
+    )?;
+    let label = format!(
+        "desktop_controlled_wake_bootstrap_{}_{}",
+        stable_hash_hex_16(actor_user_id.as_str()),
+        stable_hash_hex_16(device_id.as_str())
+    );
+    let started = store
+        .ph1w_enroll_start_draft(
+            now,
+            actor_user_id,
+            device_id,
+            None,
+            3,
+            8,
+            180_000,
+            format!("{label}_wake_start"),
+        )
+        .map_err(storage_error_to_string)?;
+    for seq in 1_u16..=3 {
+        store
+            .ph1w_enroll_sample_commit(
+                MonotonicTimeNs(now.0.saturating_add(seq as u64)),
+                started.wake_enrollment_session_id.clone(),
+                1_200,
+                0.95,
+                18.0,
+                0.02,
+                -20.0,
+                -45.0,
+                -5.0,
+                0.0,
+                WakeSampleResult::Pass,
+                None,
+                format!("{label}_wake_sample_{seq}"),
+            )
+            .map_err(storage_error_to_string)?;
+    }
+    store
+        .ph1w_enroll_complete_commit(
+            MonotonicTimeNs(now.0.saturating_add(10)),
+            started.wake_enrollment_session_id,
+            format!("{label}_wake_profile"),
+            format!("{label}_wake_complete"),
+        )
+        .map_err(storage_error_to_string)?;
+    Ok(())
 }
 
 fn parse_tenant_id(raw: Option<&str>) -> Result<TenantId, String> {

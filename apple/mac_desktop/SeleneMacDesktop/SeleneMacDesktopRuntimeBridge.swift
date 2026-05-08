@@ -7005,11 +7005,6 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
         pinnedContextRefs: [String] = []
     ) throws -> DesktopWakeTriggeredVoiceIngressContext {
         let transcript = preparedRequest.transcript.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !transcript.isEmpty else {
-            throw BridgeError.invalidPreparedRequest(
-                "the prepared wake-triggered voice request contained no post-wake transcript after bounded shell validation"
-            )
-        }
 
         let detectionText = Self.nonEmpty(preparedRequest.audioCaptureRefState.detectionText)
         guard detectionText == "Selene" else {
@@ -7063,7 +7058,7 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
             pinnedContextRefs: boundedPinnedContextRefs.isEmpty ? nil : boundedPinnedContextRefs,
             threadPolicyFlags: threadPolicyFlags,
             userTextPartial: nil,
-            userTextFinal: transcript,
+            userTextFinal: transcript.isEmpty ? nil : transcript,
             seleneTextPartial: nil,
             seleneTextFinal: nil,
             audioCaptureRef: audioCaptureRef,
@@ -9221,6 +9216,9 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
         environment["SELENE_HTTP_BIND"] = bindValue
         environment["SELENE_ADAPTER_SYNC_WORKER_ENABLED"] = "true"
         environment["SELENE_ADAPTER_LEGACY_JOURNAL_REPLAY_ENABLED"] = "false"
+        environment["SELENE_DESKTOP_CONTROLLED_WAKE_BOOTSTRAP_ENABLED"] = "true"
+        environment["SELENE_DESKTOP_CONTROLLED_WAKE_BOOTSTRAP_ACTOR_USER_ID"] = actorUserID
+        environment["SELENE_DESKTOP_CONTROLLED_WAKE_BOOTSTRAP_DEVICE_ID"] = deviceID
         environment["PATH"] = Self.managedAdapterLaunchPath(environment["PATH"])
         process.environment = environment
         let logHandle = Self.openManagedAdapterLogHandle()

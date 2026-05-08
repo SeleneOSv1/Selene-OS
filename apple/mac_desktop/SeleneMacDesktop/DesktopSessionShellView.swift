@@ -242,16 +242,25 @@ private func boundedWakePrefixMatch(
         offsetBy: normalizedWakeTriggerPhrase.count
     )
     let candidatePrefix = String(trimmedTranscript[..<prefixEndIndex])
-    guard candidatePrefix.compare(
+    let boundedWakePrefixVariants = [
         normalizedWakeTriggerPhrase,
-        options: [.caseInsensitive, .diacriticInsensitive]
-    ) == .orderedSame else {
+        "Celine",
+    ]
+    guard boundedWakePrefixVariants.contains(where: { variant in
+        candidatePrefix.compare(
+            variant,
+            options: [.caseInsensitive, .diacriticInsensitive]
+        ) == .orderedSame
+    }) else {
         return nil
     }
 
     let suffix = String(trimmedTranscript[prefixEndIndex...])
-    guard !suffix.isEmpty, let firstScalar = suffix.unicodeScalars.first else {
-        return nil
+    guard let firstScalar = suffix.unicodeScalars.first else {
+        return WakePrefixMatch(
+            detectionText: normalizedWakeTriggerPhrase,
+            transcriptRemainder: ""
+        )
     }
 
     let separatorCharacterSet = CharacterSet.whitespacesAndNewlines
@@ -268,9 +277,6 @@ private func boundedWakePrefixMatch(
     }) ?? suffix.endIndex
     let transcriptRemainder = suffix[remainderStartIndex...]
         .trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !transcriptRemainder.isEmpty else {
-        return nil
-    }
 
     return WakePrefixMatch(
         detectionText: normalizedWakeTriggerPhrase,
@@ -2688,10 +2694,24 @@ private final class DesktopWakeListenerController: ObservableObject {
 
     private let wakeTriggerPhrase = "Selene"
     private let maxVoiceTurnBytes = 16_384
+    private let wakeAutoCommitAfterDetectionDelay: TimeInterval = 1.1
     private let audioEngine = AVAudioEngine()
+    private let realtimeAudioQueue = DispatchQueue(label: "selene.desktop.wake-realtime-transcription.audio")
+    private let realtimeURLSession = URLSession(configuration: .ephemeral)
     private var hasInputTap = false
     private var lastGeneratedDeviceTurnSequence: UInt64 = 0
     private var activeCaptureContext: CaptureSessionTransportContext?
+    private var wakeAutoCommitAfterDetectionWorkItem: DispatchWorkItem?
+    private var realtimeSession: DesktopRealtimeTranscriptionSessionState?
+    private var realtimeWebSocketTask: URLSessionWebSocketTask?
+    private var realtimeOutputFormat: AVAudioFormat?
+    private var realtimeAudioConverter: AVAudioConverter?
+    private var realtimePartialTranscript = ""
+    private var realtimeCommittedTranscript = ""
+    private var realtimeCaptureStopNS: UInt64?
+    private var realtimeCompletionTimeoutWorkItem: DispatchWorkItem?
+    private var realtimeMaxSessionDurationWorkItem: DispatchWorkItem?
+    private var realtimeFirstDeltaNS: UInt64?
 
     init(locale: Locale? = nil) {
         _ = locale
@@ -2726,6 +2746,74 @@ private final class DesktopWakeListenerController: ObservableObject {
             title: "Failed wake listener start",
             summary: "Foreground wake listening requires the approved realtime transcription path.",
             detail: "Local platform speech recognition is disabled. No local wake transcript, hidden capture, or wake-triggered dispatch was created."
+        )
+    }
+
+    func startRealtimeListening(
+        promptState: DesktopWakeListenerPromptState,
+        session: DesktopRealtimeTranscriptionSessionState
+    ) {
+        failedRequest = nil
+
+        guard !listenerState.isActiveForMicrophone else {
+            return
+        }
+
+        guard pendingRequest == nil else {
+            listenerState = .failed
+            recordFailure(
+                id: "failed_wake_listener_pending_request",
+                title: "Failed wake listener start",
+                summary: "A later bounded wake-listener session could not begin while the current wake-triggered voice request is already awaiting canonical handoff.",
+                detail: "Foreground wake listening remains bounded and single-request only. This shell does not queue another local wake request, invent local session continuity, or fabricate assistant output."
+            )
+            return
+        }
+
+        transcriptPreview = ""
+        activePromptStateID = promptState.id
+        refreshPermissionState()
+        requestMicrophonePermissionIfNeeded { [weak self] granted in
+            guard let self else {
+                return
+            }
+
+            DispatchQueue.main.async {
+                self.refreshPermissionState()
+                guard granted else {
+                    self.listenerState = .failed
+                    self.activePromptStateID = nil
+                    self.recordFailure(
+                        id: "failed_wake_listener_microphone_permission",
+                        title: "Failed wake listener start",
+                        summary: "Microphone permission is required before foreground wake listening can begin.",
+                        detail: "Permission visibility only; no wake behavior, background capture, local transcript authority, or provider fallback was introduced."
+                    )
+                    return
+                }
+
+                self.beginRealtimeTranscriptionCapture(session: session)
+            }
+        }
+    }
+
+    func failOpenAIRealtimeWakeUnavailable(
+        promptState: DesktopWakeListenerPromptState,
+        id: String,
+        summary: String,
+        detail: String
+    ) {
+        teardownRecognitionSession()
+        failedRequest = nil
+        pendingRequest = nil
+        transcriptPreview = ""
+        activePromptStateID = promptState.id
+        listenerState = .failed
+        recordFailure(
+            id: id,
+            title: "Failed wake listener start",
+            summary: summary,
+            detail: detail
         )
     }
 
@@ -2776,9 +2864,6 @@ private final class DesktopWakeListenerController: ObservableObject {
         }
 
         let boundedTranscript = prefixMatch.transcriptRemainder.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !boundedTranscript.isEmpty else {
-            return
-        }
 
         guard boundedTranscript.utf8.count <= maxVoiceTurnBytes else {
             teardownRecognitionSession()
@@ -2827,7 +2912,468 @@ private final class DesktopWakeListenerController: ObservableObject {
         completeStoppedCaptureSession()
     }
 
+    private func beginRealtimeTranscriptionCapture(
+        session: DesktopRealtimeTranscriptionSessionState
+    ) {
+        failedRequest = nil
+        teardownRecognitionSession()
+        refreshPermissionState()
+        realtimeSession = session
+        realtimePartialTranscript = ""
+        realtimeCommittedTranscript = ""
+        realtimeCaptureStopNS = nil
+        realtimeFirstDeltaNS = nil
+        transcriptPreview = ""
+
+        guard let websocketURL = URL(string: session.websocketURL) else {
+            teardownRealtimeTranscriptionSession()
+            listenerState = .failed
+            activePromptStateID = nil
+            recordFailure(
+                id: "failed_wake_listener_realtime_websocket_url",
+                title: "Failed wake listener start",
+                summary: "The realtime transcription WebSocket URL was not valid.",
+                detail: "Token/session failure visibility only; the shell did not expose provider payloads, retain audio, or fabricate local wake output."
+            )
+            return
+        }
+
+        do {
+            let captureContext = Self.makeCaptureSessionTransportContext()
+            let inputNode = audioEngine.inputNode
+            let inputFormat = inputNode.outputFormat(forBus: 0)
+            guard let outputFormat = AVAudioFormat(
+                commonFormat: .pcmFormatInt16,
+                sampleRate: 24_000,
+                channels: 1,
+                interleaved: false
+            ),
+            let converter = AVAudioConverter(from: inputFormat, to: outputFormat) else {
+                teardownRealtimeTranscriptionSession()
+                listenerState = .failed
+                activePromptStateID = nil
+                recordFailure(
+                    id: "failed_wake_listener_realtime_audio_format",
+                    title: "Failed wake listener start",
+                    summary: "The microphone audio format could not be converted into the required realtime transcription PCM16 stream.",
+                    detail: "Failure visibility only; no raw audio was retained and no fallback success is counted as realtime wake success."
+                )
+                return
+            }
+
+            let websocketTask = realtimeURLSession.webSocketTask(
+                with: websocketURL,
+                protocols: [
+                    "realtime",
+                    "openai-insecure-api-key.\(session.clientSecret)",
+                    "openai-beta.realtime-v1",
+                ]
+            )
+            realtimeWebSocketTask = websocketTask
+            realtimeOutputFormat = outputFormat
+            realtimeAudioConverter = converter
+            activeCaptureContext = captureContext
+
+            websocketTask.resume()
+            receiveRealtimeTranscriptionEvents()
+
+            inputNode.installTap(onBus: 0, bufferSize: 2_048, format: inputFormat) { [weak self] buffer, _ in
+                self?.appendRealtimeAudioBuffer(buffer, inputFormat: inputFormat)
+            }
+            hasInputTap = true
+
+            audioEngine.prepare()
+            try audioEngine.start()
+            listenerState = .listening
+            desktopAppendRuntimeBridgeDebugLog(
+                "openai wake realtime transcription start stt_provider_id=\(DesktopVoiceProviderLane.sttProviderID) flag=\(DesktopRealtimeTranscriptionFeatureFlag.name) model=\(session.transcriptionModel) language_hint_policy=\(session.languageHintPolicy) request=\(session.requestID)"
+            )
+            scheduleRealtimeMaxSessionDuration(session.maxSessionDurationMS)
+        } catch {
+            teardownRecognitionSession()
+            listenerState = .failed
+            activePromptStateID = nil
+            recordFailure(
+                id: "failed_wake_listener_realtime_capture_start",
+                title: "Failed wake listener start",
+                summary: "The realtime transcription capture session could not start from this foreground wake surface.",
+                detail: "Capture start failed without exposing provider payloads or retaining audio. Detail: \(error.localizedDescription)"
+            )
+        }
+    }
+
+    private func appendRealtimeAudioBuffer(
+        _ buffer: AVAudioPCMBuffer,
+        inputFormat: AVAudioFormat
+    ) {
+        realtimeAudioQueue.async { [weak self] in
+            guard let self,
+                  let converter = self.realtimeAudioConverter,
+                  let outputFormat = self.realtimeOutputFormat,
+                  self.realtimeWebSocketTask != nil else {
+                return
+            }
+
+            let ratio = outputFormat.sampleRate / Swift.max(inputFormat.sampleRate, 1)
+            let frameCapacity = AVAudioFrameCount(
+                Swift.max(1, Double(buffer.frameLength) * ratio + 128)
+            )
+            guard let outputBuffer = AVAudioPCMBuffer(
+                pcmFormat: outputFormat,
+                frameCapacity: frameCapacity
+            ) else {
+                return
+            }
+
+            var conversionError: NSError?
+            var suppliedInput = false
+            let status = converter.convert(to: outputBuffer, error: &conversionError) { _, outStatus in
+                if suppliedInput {
+                    outStatus.pointee = .noDataNow
+                    return nil
+                }
+
+                suppliedInput = true
+                outStatus.pointee = .haveData
+                return buffer
+            }
+
+            guard status != .error,
+                  outputBuffer.frameLength > 0,
+                  let channelData = outputBuffer.int16ChannelData else {
+                return
+            }
+
+            let byteCount = Int(outputBuffer.frameLength) * MemoryLayout<Int16>.size
+            let audioData = Data(bytes: channelData[0], count: byteCount)
+            self.sendRealtimeTranscriptionEvent([
+                "type": "input_audio_buffer.append",
+                "audio": audioData.base64EncodedString()
+            ])
+        }
+    }
+
+    private func sendRealtimeTranscriptionEvent(_ event: [String: Any]) {
+        guard let websocketTask = realtimeWebSocketTask,
+              JSONSerialization.isValidJSONObject(event),
+              let data = try? JSONSerialization.data(withJSONObject: event),
+              let message = String(data: data, encoding: .utf8) else {
+            return
+        }
+
+        websocketTask.send(.string(message)) { error in
+            if error != nil {
+                desktopAppendRuntimeBridgeDebugLog(
+                    "openai wake realtime transcription send failure redacted=true"
+                )
+            }
+        }
+    }
+
+    private func receiveRealtimeTranscriptionEvents() {
+        guard let websocketTask = realtimeWebSocketTask else {
+            return
+        }
+
+        websocketTask.receive { [weak self] result in
+            guard let self else {
+                return
+            }
+
+            switch result {
+            case .success(let message):
+                switch message {
+                case .string(let text):
+                    self.handleRealtimeTranscriptionEvent(text)
+                case .data(let data):
+                    if let text = String(data: data, encoding: .utf8) {
+                        self.handleRealtimeTranscriptionEvent(text)
+                    }
+                @unknown default:
+                    break
+                }
+                if self.realtimeWebSocketTask === websocketTask {
+                    self.receiveRealtimeTranscriptionEvents()
+                }
+            case .failure:
+                DispatchQueue.main.async {
+                    guard self.realtimeWebSocketTask === websocketTask,
+                          self.pendingRequest == nil else {
+                        return
+                    }
+
+                    desktopAppendRuntimeBridgeDebugLog(
+                        "openai wake realtime transcription receive failure redacted=true"
+                    )
+                    self.listenerState = .failed
+                    self.activePromptStateID = nil
+                    self.recordFailure(
+                        id: "failed_wake_listener_realtime_connection",
+                        title: "Failed wake listener start",
+                        summary: "Realtime transcription connection failed before a committed wake transcript was available.",
+                        detail: "Failure visibility only; provider internals were redacted and no fallback wake success was counted."
+                    )
+                    self.teardownRecognitionSession()
+                }
+            }
+        }
+    }
+
+    private func handleRealtimeTranscriptionEvent(_ text: String) {
+        guard let data = text.data(using: .utf8),
+              let rawObject = try? JSONSerialization.jsonObject(with: data),
+              let object = rawObject as? [String: Any],
+              let eventType = object["type"] as? String else {
+            return
+        }
+
+        desktopAppendRuntimeBridgeDebugLog(
+            "openai wake realtime transcription event type=\(boundedFailureLogToken(eventType))"
+        )
+
+        if eventType == "transcription_session.created" || eventType == "session.created" {
+            desktopAppendRuntimeBridgeDebugLog(
+                "openai wake realtime transcription session created observed=true"
+            )
+            return
+        }
+
+        if eventType == "transcription_session.updated" || eventType == "session.updated" {
+            desktopAppendRuntimeBridgeDebugLog(
+                "openai wake realtime transcription session updated observed=true"
+            )
+            return
+        }
+
+        if eventType == "conversation.item.input_audio_transcription.delta",
+           let delta = object["delta"] as? String,
+           !delta.isEmpty {
+            DispatchQueue.main.async {
+                if self.realtimeFirstDeltaNS == nil {
+                    self.realtimeFirstDeltaNS = DispatchTime.now().uptimeNanoseconds
+                    desktopAppendRuntimeBridgeDebugLog(
+                        "openai wake realtime transcription first_delta observed=true"
+                    )
+                }
+                self.realtimePartialTranscript += delta
+                self.transcriptPreview = self.realtimePartialTranscript
+                self.scheduleAutoCommitAfterWakeIfNeeded(using: self.realtimePartialTranscript)
+            }
+            return
+        }
+
+        if eventType == "conversation.item.input_audio_transcription.completed",
+           let transcript = object["transcript"] as? String {
+            DispatchQueue.main.async {
+                self.completeRealtimeTranscription(with: transcript)
+            }
+            return
+        }
+
+        if eventType == "conversation.item.input_audio_transcription.failed" {
+            let error = object["error"] as? [String: Any]
+            let code = (error?["code"] as? String)
+                .map { boundedFailureLogToken($0) } ?? "unavailable"
+            let param = (error?["param"] as? String)
+                .map { boundedFailureLogToken($0) } ?? "unavailable"
+            desktopAppendRuntimeBridgeDebugLog(
+                "openai wake realtime transcription failed event observed=true code=\(code) param=\(param) redacted=true"
+            )
+            DispatchQueue.main.async {
+                self.listenerState = .failed
+                self.activePromptStateID = nil
+                self.recordFailure(
+                    id: "failed_wake_listener_realtime_provider_transcription",
+                    title: "Failed wake listener start",
+                    summary: "Realtime transcription failed closed before a committed wake transcript was available.",
+                    detail: "Transcription failure details were redacted. No runtime execution, local wake output, or raw provider payload was exposed."
+                )
+                self.teardownRecognitionSession()
+            }
+            return
+        }
+
+        if eventType == "error" {
+            let error = object["error"] as? [String: Any]
+            let code = (error?["code"] as? String)
+                .map { boundedFailureLogToken($0) } ?? "unavailable"
+            let param = (error?["param"] as? String)
+                .map { boundedFailureLogToken($0) } ?? "unavailable"
+            desktopAppendRuntimeBridgeDebugLog(
+                "openai wake realtime transcription error event observed=true code=\(code) param=\(param) redacted=true"
+            )
+            DispatchQueue.main.async {
+                self.listenerState = .failed
+                self.activePromptStateID = nil
+                self.recordFailure(
+                    id: "failed_wake_listener_realtime_provider_error",
+                    title: "Failed wake listener start",
+                    summary: "Realtime transcription failed closed before a committed wake transcript was available.",
+                    detail: "Provider error details were redacted. No raw provider payload, audio archive, or local wake lane was exposed."
+                )
+                self.teardownRecognitionSession()
+            }
+            return
+        }
+
+        if eventType == "input_audio_buffer.committed" {
+            desktopAppendRuntimeBridgeDebugLog(
+                "openai wake realtime transcription audio_committed observed=true"
+            )
+        }
+    }
+
+    private func stopRealtimeTranscriptionCaptureAndCommit() {
+        guard listenerState.isActiveForMicrophone else {
+            recordFailure(
+                id: "failed_wake_listener_realtime_not_listening",
+                title: "Failed wake-triggered voice request",
+                summary: "Realtime transcription was not actively listening when wake commit was requested.",
+                detail: "Foreground wake production remains bounded and user-visible."
+            )
+            return
+        }
+
+        realtimeCaptureStopNS = Swift.max(DispatchTime.now().uptimeNanoseconds, 1)
+        endCaptureInput()
+        sendRealtimeTranscriptionEvent(["type": "input_audio_buffer.commit"])
+        scheduleRealtimeCompletionTimeout()
+        desktopAppendRuntimeBridgeDebugLog(
+            "openai wake realtime transcription commit sent=true partial_chars=\(realtimePartialTranscript.count)"
+        )
+    }
+
+    private func completeRealtimeTranscription(with transcript: String) {
+        cancelRealtimeCompletionTimeout()
+        let trimmedTranscript = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedTranscript.isEmpty else {
+            listenerState = .failed
+            activePromptStateID = nil
+            recordFailure(
+                id: "failed_wake_listener_realtime_empty_transcript",
+                title: "Failed wake-triggered voice request",
+                summary: "OpenAI realtime transcription completed without usable wake transcript text.",
+                detail: "Failure visibility only; no runtime execution, tool call, or local wake output was triggered."
+            )
+            teardownRecognitionSession()
+            return
+        }
+
+        guard trimmedTranscript.utf8.count <= maxVoiceTurnBytes + wakeTriggerPhrase.utf8.count + 8 else {
+            listenerState = .failed
+            activePromptStateID = nil
+            recordFailure(
+                id: "failed_wake_listener_realtime_transcript_validation",
+                title: "Failed wake-triggered voice request",
+                summary: "The realtime transcription result exceeded the bounded wake listener transcript limit.",
+                detail: "Failure visibility only; retry a shorter wake utterance. No final runtime dispatch was triggered."
+            )
+            teardownRecognitionSession()
+            return
+        }
+
+        realtimeCommittedTranscript = trimmedTranscript
+        transcriptPreview = trimmedTranscript
+        desktopAppendRuntimeBridgeDebugLog(
+            "openai wake realtime transcription completed final_chars=\(trimmedTranscript.count) wake_prefix_match=\(boundedWakePrefixMatch(in: trimmedTranscript, wakeTriggerPhrase: wakeTriggerPhrase) != nil)"
+        )
+        prepareWakeTriggeredVoiceTurnIfDetected(trimmedTranscript)
+        desktopAppendRuntimeBridgeDebugLog(
+            "openai wake realtime transcription post_prepare pending=\(pendingRequest != nil) listener_state=\(listenerState.rawValue)"
+        )
+        if pendingRequest == nil, listenerState != .failed {
+            listenerState = .idle
+            activePromptStateID = nil
+            teardownRecognitionSession()
+        }
+    }
+
+    private func scheduleAutoCommitAfterWakeIfNeeded(using transcript: String) {
+        let trimmedTranscript = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard listenerState == .listening,
+              pendingRequest == nil,
+              boundedWakePrefixMatch(in: trimmedTranscript, wakeTriggerPhrase: wakeTriggerPhrase) != nil else {
+            cancelAutoCommitAfterWake()
+            return
+        }
+
+        cancelAutoCommitAfterWake()
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self,
+                  self.listenerState == .listening,
+                  self.pendingRequest == nil,
+                  self.transcriptPreview.trimmingCharacters(in: .whitespacesAndNewlines) == trimmedTranscript else {
+                return
+            }
+
+            self.stopRealtimeTranscriptionCaptureAndCommit()
+        }
+        wakeAutoCommitAfterDetectionWorkItem = workItem
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + wakeAutoCommitAfterDetectionDelay,
+            execute: workItem
+        )
+    }
+
+    private func cancelAutoCommitAfterWake() {
+        wakeAutoCommitAfterDetectionWorkItem?.cancel()
+        wakeAutoCommitAfterDetectionWorkItem = nil
+    }
+
+    private func scheduleRealtimeCompletionTimeout() {
+        cancelRealtimeCompletionTimeout()
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self,
+                  self.pendingRequest == nil,
+                  self.realtimeWebSocketTask != nil else {
+                return
+            }
+
+            self.listenerState = .failed
+            self.activePromptStateID = nil
+            self.recordFailure(
+                id: "failed_wake_listener_realtime_timeout",
+                title: "Failed wake-triggered voice request",
+                summary: "Realtime transcription timed out before a committed wake transcript was available.",
+                detail: "Timeout handling is bounded and deterministic. No raw audio was retained and no local wake lane was used."
+            )
+            self.teardownRecognitionSession()
+        }
+        realtimeCompletionTimeoutWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 6.0, execute: workItem)
+    }
+
+    private func cancelRealtimeCompletionTimeout() {
+        realtimeCompletionTimeoutWorkItem?.cancel()
+        realtimeCompletionTimeoutWorkItem = nil
+    }
+
+    private func scheduleRealtimeMaxSessionDuration(_ durationMS: UInt64) {
+        realtimeMaxSessionDurationWorkItem?.cancel()
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self,
+                  self.listenerState.isActiveForMicrophone,
+                  self.realtimeWebSocketTask != nil else {
+                return
+            }
+
+            self.listenerState = .failed
+            self.activePromptStateID = nil
+            self.recordFailure(
+                id: "failed_wake_listener_realtime_session_duration",
+                title: "Failed wake listener start",
+                summary: "Realtime transcription reached its bounded session duration before wake commit.",
+                detail: "The session was closed deterministically to prevent runaway cost or stuck capture."
+            )
+            self.teardownRecognitionSession()
+        }
+        realtimeMaxSessionDurationWorkItem = workItem
+        let boundedDelay = TimeInterval(Swift.max(5_000, Swift.min(durationMS, 300_000))) / 1_000
+        DispatchQueue.main.asyncAfter(deadline: .now() + boundedDelay, execute: workItem)
+    }
+
     private func endCaptureInput() {
+        cancelAutoCommitAfterWake()
         if audioEngine.isRunning {
             audioEngine.stop()
         }
@@ -2842,6 +3388,7 @@ private final class DesktopWakeListenerController: ObservableObject {
     private func teardownRecognitionSession() {
         endCaptureInput()
         activeCaptureContext = nil
+        teardownRealtimeTranscriptionSession()
     }
 
     private func nextDeviceTurnSequence() -> UInt64 {
@@ -2853,6 +3400,22 @@ private final class DesktopWakeListenerController: ObservableObject {
 
     private func completeStoppedCaptureSession() {
         activeCaptureContext = nil
+        teardownRealtimeTranscriptionSession()
+    }
+
+    private func teardownRealtimeTranscriptionSession() {
+        cancelRealtimeCompletionTimeout()
+        realtimeMaxSessionDurationWorkItem?.cancel()
+        realtimeMaxSessionDurationWorkItem = nil
+        realtimeWebSocketTask?.cancel(with: .normalClosure, reason: nil)
+        realtimeWebSocketTask = nil
+        realtimeSession = nil
+        realtimeAudioConverter = nil
+        realtimeOutputFormat = nil
+        realtimePartialTranscript = ""
+        realtimeCommittedTranscript = ""
+        realtimeCaptureStopNS = nil
+        realtimeFirstDeltaNS = nil
     }
 
     private func recordFailure(id: String, title: String, summary: String, detail: String) {
@@ -4439,18 +5002,18 @@ struct DesktopWakeProfileAvailabilityPromptState: Identifiable, Equatable {
 struct DesktopWakeListenerPromptState: Identifiable, Equatable {
     let receiptKind: String
     let deviceID: String
-    let wakeProfileID: String
-    let activeWakeArtifactVersion: String
-    let voiceArtifactSyncReceiptRef: String
+    let wakeProfileID: String?
+    let activeWakeArtifactVersion: String?
+    let voiceArtifactSyncReceiptRef: String?
     let wakeTriggerPhrase: String
 
     var id: String {
         [
             receiptKind,
             deviceID,
-            wakeProfileID,
-            activeWakeArtifactVersion,
-            voiceArtifactSyncReceiptRef,
+            wakeProfileID ?? "wake_profile_not_available",
+            activeWakeArtifactVersion ?? "wake_artifact_not_available",
+            voiceArtifactSyncReceiptRef ?? "voice_receipt_not_available",
             wakeTriggerPhrase,
         ].joined(separator: "::")
     }
@@ -5385,6 +5948,7 @@ private struct DesktopSelectedSessionProjectContextState: Equatable {
 private enum DesktopShellSecondaryPanel: String, Identifiable {
     case history
     case workspace
+    case settings
     case liveVoiceProof
     case controlledWakeMode
     case developer
@@ -5647,6 +6211,9 @@ struct DesktopSessionShellView: View {
     @State private var desktopWakeAutoStartAttemptedPromptID: String?
     @State private var desktopWakeAutoStartSuppressedPromptID: String?
     @State private var desktopPresentedSecondaryPanel: DesktopShellSecondaryPanel?
+    @State private var desktopAccountMenuIsPresented: Bool = false
+    @AppStorage("selene.desktop.controlledWake.enabled")
+    private var desktopControlledWakeEnabled: Bool = false
     private let maxDesktopTypedTurnBytes = 16_384
     private let desktopConversationBottomAnchorID = "desktop_conversation_bottom_anchor"
 
@@ -5685,9 +6252,28 @@ struct DesktopSessionShellView: View {
             await dispatchPreparedExplicitVoiceRequestIfNeeded()
             await synchronizeDesktopWakeListenerLifecycleState()
         }
-        .task(id: desktopWakeListenerController.pendingRequest?.id) {
-            await dispatchPreparedWakeTriggeredVoiceRequestIfNeeded()
-            await synchronizeDesktopWakeListenerLifecycleState()
+        .onReceive(desktopWakeListenerController.$pendingRequest) { pendingRequest in
+            desktopAppendRuntimeBridgeDebugLog(
+                "desktop wake pending subscriber observed pending=\(pendingRequest != nil)"
+            )
+            guard let pendingRequest,
+                  desktopWakeListenerController.listenerState != .dispatching,
+                  lastStagedWakeTriggeredVoiceTurnRequestState?.id != pendingRequest.id else {
+                return
+            }
+
+            Task { @MainActor in
+                await dispatchPreparedWakeTriggeredVoiceRequestIfNeeded()
+                await synchronizeDesktopWakeListenerLifecycleState()
+            }
+        }
+        .onReceive(desktopWakeListenerController.$listenerState) { listenerState in
+            desktopAppendRuntimeBridgeDebugLog(
+                "desktop wake listener state subscriber observed state=\(listenerState.rawValue)"
+            )
+            Task { @MainActor in
+                await synchronizeDesktopWakeListenerLifecycleState()
+            }
         }
         .task(id: desktopTypedTurnPendingRequest?.id) {
             await dispatchPreparedTypedTurnRequestIfNeeded()
@@ -6196,9 +6782,122 @@ struct DesktopSessionShellView: View {
                 .padding(.vertical, 8)
                 .frame(maxWidth: .infinity, alignment: .topLeading)
             }
+
+            Divider()
+                .padding(.horizontal, 16)
+
+            desktopSidebarAccountButton
+                .padding(.horizontal, 16)
+                .padding(.top, 10)
+                .padding(.bottom, 14)
         }
         .frame(minWidth: 190, idealWidth: 250, maxWidth: 290, maxHeight: .infinity, alignment: .topLeading)
         .background(sidebarBackground)
+    }
+
+    private var desktopSidebarAccountButton: some View {
+        Button {
+            desktopAccountMenuIsPresented.toggle()
+        } label: {
+            HStack(spacing: 10) {
+                Text("SE")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .frame(width: 34, height: 34)
+                    .background(Circle().fill(Color.secondary.opacity(0.82)))
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Selene")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+
+                    Text("Pro")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+
+                Spacer(minLength: 0)
+
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 9)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color.white.opacity(0.72))
+            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Selene account menu")
+        .popover(isPresented: $desktopAccountMenuIsPresented, arrowEdge: .trailing) {
+            desktopAccountMenuPopover
+        }
+    }
+
+    private var desktopAccountMenuPopover: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 12) {
+                Text("SE")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .frame(width: 38, height: 38)
+                    .background(Circle().fill(Color.secondary.opacity(0.82)))
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Selene")
+                        .font(.system(size: 17, weight: .semibold))
+                    Text("Pro")
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer(minLength: 0)
+            }
+            .padding(.bottom, 14)
+
+            Divider()
+                .padding(.bottom, 8)
+
+            desktopAccountMenuRow(title: "Personalization", systemImage: "wand.and.stars", isEnabled: false) {}
+            desktopAccountMenuRow(title: "Profile", systemImage: "person.circle", isEnabled: false) {}
+            desktopAccountMenuRow(title: "Settings", systemImage: "gearshape") {
+                desktopAccountMenuIsPresented = false
+                desktopPresentedSecondaryPanel = .settings
+            }
+
+            Divider()
+                .padding(.vertical, 8)
+
+            desktopAccountMenuRow(title: "Help", systemImage: "lifepreserver", isEnabled: false) {}
+            desktopAccountMenuRow(title: "Log out", systemImage: "rectangle.portrait.and.arrow.right", isEnabled: false) {}
+        }
+        .padding(16)
+        .frame(width: 280, alignment: .leading)
+    }
+
+    private func desktopAccountMenuRow(
+        title: String,
+        systemImage: String,
+        isEnabled: Bool = true,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: 12) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 16, weight: .semibold))
+                    .frame(width: 22)
+                Text(title)
+                    .font(.system(size: 16, weight: .medium))
+                Spacer(minLength: 0)
+            }
+            .padding(.vertical, 9)
+            .foregroundStyle(isEnabled ? Color.primary : Color.secondary)
+        }
+        .buttonStyle(.plain)
+        .disabled(!isEnabled)
     }
 
     private var desktopSidebarToggleButton: some View {
@@ -6554,6 +7253,15 @@ struct DesktopSessionShellView: View {
                     desktopOperationalWorkspacePanel(state)
                 }
             )
+        case .settings:
+            return AnyView(
+                desktopSecondaryPanelSheetContainer(
+                    title: "Settings",
+                    detail: "Desktop preferences stay visible, user-controlled, and non-authoritative."
+                ) {
+                    desktopSettingsPanel
+                }
+            )
         case .liveVoiceProof:
             return AnyView(
                 desktopSecondaryPanelSheetContainer(
@@ -6608,6 +7316,15 @@ struct DesktopSessionShellView: View {
                     desktopEvidenceFirstWorkspacePanel
                 }
             )
+        case .settings:
+            return AnyView(
+                desktopSecondaryPanelSheetContainer(
+                    title: "Settings",
+                    detail: "Desktop preferences stay visible, user-controlled, and non-authoritative."
+                ) {
+                    desktopSettingsPanel
+                }
+            )
         case .liveVoiceProof:
             return AnyView(
                 desktopSecondaryPanelSheetContainer(
@@ -6636,6 +7353,89 @@ struct DesktopSessionShellView: View {
                 }
             )
         }
+    }
+
+    private var desktopSettingsPanel: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            GroupBox {
+                VStack(alignment: .leading, spacing: 14) {
+                    HStack(alignment: .center, spacing: 14) {
+                        VStack(alignment: .leading, spacing: 5) {
+                            Text("Wake for \"Selene\"")
+                                .font(.headline)
+
+                            Text("When enabled, Desktop may keep the foreground wake listener available according to app lifecycle and runtime policy. Desktop remains capture/render only.")
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+
+                        Spacer(minLength: 12)
+
+                        Toggle(
+                            "",
+                            isOn: Binding(
+                                get: { desktopControlledWakeEnabled },
+                                set: { newValue in
+                                    desktopSetControlledWakeEnabled(newValue)
+                                }
+                            )
+                        )
+                        .labelsHidden()
+                        .accessibilityLabel("Wake for Selene")
+                    }
+
+                    Divider()
+
+                    metadataRow(
+                        label: "controlled_wake",
+                        value: desktopControlledWakeEnabled ? "ON" : "OFF"
+                    )
+                    metadataRow(
+                        label: "listener_state",
+                        value: desktopWakeListenerController.listenerState.rawValue
+                    )
+                    metadataRow(
+                        label: "wake_surface",
+                        value: desktopWakeListenerPromptState == nil ? "waiting_for_runtime" : "ready"
+                    )
+
+                    Text("The waveform button remains manual wake / explicit activation. The microphone button remains meeting recording. No Apple STT/TTS fallback, provider call, protected execution, memory write, or authority grant is introduced by this setting.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .padding(.vertical, 2)
+            } label: {
+                Text("Voice")
+                    .font(.headline)
+            }
+
+            GroupBox {
+                VStack(alignment: .leading, spacing: 10) {
+                    desktopSettingsPlaceholderRow(title: "Personalization", detail: "Coming later. No local profile or memory write is made here.")
+                    desktopSettingsPlaceholderRow(title: "Profile", detail: "Coming later. No identity or authority decision is made here.")
+                    desktopSettingsPlaceholderRow(title: "Help", detail: "Coming later. No external request is sent from this placeholder.")
+                    desktopSettingsPlaceholderRow(title: "Log out", detail: "Not wired yet. This placeholder does not mutate account state.")
+                }
+            } label: {
+                Text("Account")
+                    .font(.headline)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+    }
+
+    private func desktopSettingsPlaceholderRow(title: String, detail: String) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(title)
+                .font(.subheadline.weight(.semibold))
+            Text(detail)
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.vertical, 4)
     }
 
     private func desktopOperationalWorkspacePanel(
@@ -7848,6 +8648,22 @@ struct DesktopSessionShellView: View {
         startDesktopComposerVoiceTurn()
     }
 
+    private func startPostWakeInstructionListeningAfterGreeting() {
+        desktopComposerVoiceModeEnabled = true
+        guard !desktopOpenAITtsSelfEchoGateActive,
+              desktopAuthoritativeReplyPlaybackState.phase != .speaking,
+              desktopAuthoritativeReplyPlaybackState.phase != .requesting else {
+            desktopComposerVoiceModeAwaitingReplyPlaybackCompletion = true
+            desktopAppendRuntimeBridgeDebugLog(
+                "desktop post-wake instruction listening delayed reason=openai_tts_self_echo_gate"
+            )
+            return
+        }
+
+        desktopComposerVoiceModeAwaitingReplyPlaybackCompletion = false
+        startDesktopExplicitVoiceTurn()
+    }
+
     private func startDesktopComposerVoiceTurn() {
         guard !desktopOpenAITtsSelfEchoGateActive else {
             desktopAppendRuntimeBridgeDebugLog(
@@ -8824,35 +9640,52 @@ struct DesktopSessionShellView: View {
     }
 
     private var desktopWakeListenerPromptState: DesktopWakeListenerPromptState? {
-        guard desktopReadyTimeHandoffIsActive,
-              let wakewordProofContext = desktopWakewordConfiguredProofContext,
-              let desktopWakeProfileAvailabilityRuntimeOutcomeState,
-              desktopWakeProfileAvailabilityRuntimeOutcomeState.phase == .completed,
-              desktopWakeProfileAvailabilityRuntimeOutcomeState.receiptKind == "desktop_wakeword_configured",
-              desktopWakeProfileAvailabilityRuntimeOutcomeState.deviceID == wakewordProofContext.deviceID,
-              desktopWakeProfileAvailabilityRuntimeOutcomeState.wakeProfileID
-                == wakewordProofContext.wakeRuntimeEventWakeProfileID,
-              desktopWakeProfileAvailabilityRuntimeOutcomeState.voiceArtifactSyncReceiptRef
-                == wakewordProofContext.voiceArtifactSyncReceiptRef,
-              let activeWakeArtifactVersion = desktopWakeProfileAvailabilityRuntimeOutcomeState
-                .activeWakeArtifactVersion else {
+        if desktopReadyTimeHandoffIsActive,
+           let wakewordProofContext = desktopWakewordConfiguredProofContext,
+           let desktopWakeProfileAvailabilityRuntimeOutcomeState,
+           desktopWakeProfileAvailabilityRuntimeOutcomeState.phase == .completed,
+           desktopWakeProfileAvailabilityRuntimeOutcomeState.receiptKind == "desktop_wakeword_configured",
+           desktopWakeProfileAvailabilityRuntimeOutcomeState.deviceID == wakewordProofContext.deviceID,
+           desktopWakeProfileAvailabilityRuntimeOutcomeState.wakeProfileID
+            == wakewordProofContext.wakeRuntimeEventWakeProfileID,
+           desktopWakeProfileAvailabilityRuntimeOutcomeState.voiceArtifactSyncReceiptRef
+            == wakewordProofContext.voiceArtifactSyncReceiptRef,
+           let activeWakeArtifactVersion = desktopWakeProfileAvailabilityRuntimeOutcomeState
+            .activeWakeArtifactVersion {
+            return DesktopWakeListenerPromptState(
+                receiptKind: "desktop_wakeword_configured",
+                deviceID: wakewordProofContext.deviceID,
+                wakeProfileID: wakewordProofContext.wakeRuntimeEventWakeProfileID,
+                activeWakeArtifactVersion: activeWakeArtifactVersion,
+                voiceArtifactSyncReceiptRef: wakewordProofContext.voiceArtifactSyncReceiptRef,
+                wakeTriggerPhrase: "Selene"
+            )
+        }
+
+        guard desktopControlledWakeEnabled,
+              let deviceID = desktopManagedPrimaryDeviceID else {
             return nil
         }
 
         return DesktopWakeListenerPromptState(
-            receiptKind: "desktop_wakeword_configured",
-            deviceID: wakewordProofContext.deviceID,
-            wakeProfileID: wakewordProofContext.wakeRuntimeEventWakeProfileID,
-            activeWakeArtifactVersion: activeWakeArtifactVersion,
-            voiceArtifactSyncReceiptRef: wakewordProofContext.voiceArtifactSyncReceiptRef,
+            receiptKind: "desktop_settings_controlled_wake",
+            deviceID: deviceID,
+            wakeProfileID: nil,
+            activeWakeArtifactVersion: nil,
+            voiceArtifactSyncReceiptRef: nil,
             wakeTriggerPhrase: "Selene"
         )
     }
 
     private var desktopWakeAutoStartEligiblePromptState: DesktopWakeListenerPromptState? {
         guard scenePhase == .active,
-              desktopOperationalConversationShellState != nil,
               let promptState = desktopWakeListenerPromptState,
+              !desktopComposerVoiceModeEnabled,
+              !desktopComposerVoiceModeAwaitingReplyPlaybackCompletion,
+              !desktopRealtimeTranscriptionStartInFlight,
+              !desktopOpenAITtsSelfEchoGateActive,
+              desktopAuthoritativeReplyPlaybackState.phase != .speaking,
+              desktopAuthoritativeReplyPlaybackState.phase != .requesting,
               !explicitVoiceController.isListening,
               explicitVoiceController.pendingRequest == nil,
               desktopTypedTurnPendingRequest == nil,
@@ -18651,8 +19484,20 @@ struct DesktopSessionShellView: View {
             || explicitVoiceController.pendingRequest != nil
         let wakeDispatchInFlight = desktopWakeListenerController.listenerState == .dispatching
 
-        guard scenePhase == .active,
-              desktopOperationalConversationShellState != nil else {
+        guard desktopControlledWakeEnabled else {
+            if desktopWakeListenerController.listenerState.isActiveForMicrophone
+                || (desktopWakeListenerController.pendingRequest != nil && !wakeDispatchInFlight)
+                || (lastStagedWakeTriggeredVoiceTurnRequestState != nil && !wakeDispatchInFlight) {
+                desktopWakeListenerController.haltCaptureSession()
+                if !wakeDispatchInFlight {
+                    desktopWakeListenerController.clearPendingPreparedWakeTurn()
+                    lastStagedWakeTriggeredVoiceTurnRequestState = nil
+                }
+            }
+            return
+        }
+
+        guard scenePhase == .active else {
             if desktopWakeListenerController.listenerState.isActiveForMicrophone
                 || (desktopWakeListenerController.pendingRequest != nil && !wakeDispatchInFlight)
                 || (lastStagedWakeTriggeredVoiceTurnRequestState != nil && !wakeDispatchInFlight) {
@@ -18706,7 +19551,8 @@ struct DesktopSessionShellView: View {
 
     @MainActor
     private func synchronizeDesktopWakeAutoStartState() {
-        guard scenePhase == .active,
+        guard desktopControlledWakeEnabled,
+              scenePhase == .active,
               let promptState = desktopWakeListenerPromptState else {
             desktopWakeAutoStartAttemptedPromptID = nil
             desktopWakeAutoStartSuppressedPromptID = nil
@@ -18719,6 +19565,11 @@ struct DesktopSessionShellView: View {
 
         if desktopWakeAutoStartSuppressedPromptID != promptState.id {
             desktopWakeAutoStartSuppressedPromptID = nil
+        }
+
+        if desktopWakeListenerController.listenerState == .idle,
+           desktopWakeListenerController.activePromptStateID == nil {
+            desktopWakeAutoStartAttemptedPromptID = nil
         }
 
         guard let eligiblePromptState = desktopWakeAutoStartEligiblePromptState,
@@ -19261,7 +20112,10 @@ struct DesktopSessionShellView: View {
             return
         }
 
+        let conversationKey = desktopForegroundConversationHistoryKey
+
         do {
+            desktopAppendRuntimeBridgeDebugLog("wake dispatch start id=\(pendingRequest.id)")
             let ingressContext = try desktopCanonicalRuntimeBridge
                 .desktopWakeTriggeredVoiceIngressRequestBuilder(
                     pendingRequest,
@@ -19270,6 +20124,9 @@ struct DesktopSessionShellView: View {
                     projectID: desktopForegroundVoiceTurnSelectedProjectID,
                     pinnedContextRefs: desktopForegroundVoiceTurnSelectedPinnedContextRefs
                 )
+            desktopAppendRuntimeBridgeDebugLog(
+                "wake dispatch built ingress id=\(pendingRequest.id) endpoint=\(ingressContext.endpoint)"
+            )
             lastStagedWakeTriggeredVoiceTurnRequestState = pendingRequest
             desktopWakeListenerController.markDispatching()
             desktopCanonicalRuntimeOutcomeState = .dispatchingWake(
@@ -19284,11 +20141,23 @@ struct DesktopSessionShellView: View {
 
             let outcomeState = await desktopCanonicalRuntimeBridge
                 .dispatchPreparedWakeTriggeredVoiceRequest(ingressContext)
+            desktopAppendRuntimeBridgeDebugLog(
+                "wake dispatch outcome id=\(pendingRequest.id) phase=\(outcomeState.phase.rawValue) next_move=\(outcomeState.nextMove ?? "not_provided") reason=\(outcomeState.reasonCode ?? "not_provided")"
+            )
             guard desktopWakeListenerController.pendingRequest?.id == pendingRequest.id else {
                 return
             }
 
+            let shouldStartPostWakeInstructionListening =
+                pendingRequest.transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    && outcomeState.nextMove == "listening_window_open"
             desktopCanonicalRuntimeOutcomeState = outcomeState
+            desktopPersistSubmittedUserContinuityIfNeeded(
+                requestID: pendingRequest.id,
+                inputMode: .explicitVoice,
+                text: pendingRequest.transcript,
+                conversationKey: conversationKey
+            )
             if outcomeState.phase == .completed {
                 desktopAuthoritativeReplyRenderState = DesktopAuthoritativeReplyRenderState(
                     title: "Cloud-authored authoritative reply",
@@ -19348,13 +20217,33 @@ struct DesktopSessionShellView: View {
                     ),
                     cacheStatusLabel: outcomeState.authoritativeResponseProvenance?.cacheStatus
                 )
+                desktopPersistAuthoritativeReplyIfNeeded(
+                    requestID: pendingRequest.id,
+                    text: outcomeState.authoritativeResponseText,
+                    conversationKey: conversationKey
+                )
                 _ = await playExplicitVoiceAuthoritativeReply(outcomeState: outcomeState)
             } else {
                 desktopAuthoritativeReplyRenderState = nil
                 desktopAuthoritativeReplyProvenanceRenderState = nil
+                desktopPersistRuntimeFailureReplyIfNeeded(
+                    requestID: pendingRequest.id,
+                    summary: outcomeState.summary,
+                    reasonCode: outcomeState.reasonCode,
+                    failureClass: outcomeState.failureClass,
+                    detail: outcomeState.detail,
+                    conversationKey: conversationKey
+                )
             }
             desktopWakeListenerController.clearPendingPreparedWakeTurn()
+            lastStagedWakeTriggeredVoiceTurnRequestState = nil
+            if shouldStartPostWakeInstructionListening {
+                startPostWakeInstructionListeningAfterGreeting()
+            }
         } catch {
+            desktopAppendRuntimeBridgeDebugLog(
+                "wake dispatch catch id=\(pendingRequest.id) error=\(error.localizedDescription)"
+            )
             desktopCanonicalRuntimeOutcomeState = .failedWake(
                 preparedRequestID: pendingRequest.id,
                 endpoint: desktopCanonicalRuntimeBridge.voiceTurnEndpoint,
@@ -19369,6 +20258,7 @@ struct DesktopSessionShellView: View {
             desktopAuthoritativeReplyPlaybackController.reset()
             desktopAuthoritativeReplyPlaybackState = .idle
             desktopWakeListenerController.clearPendingPreparedWakeTurn()
+            lastStagedWakeTriggeredVoiceTurnRequestState = nil
         }
     }
 
@@ -19615,7 +20505,46 @@ struct DesktopSessionShellView: View {
         desktopAuthoritativeReplyPlaybackController.reset()
         desktopAuthoritativeReplyPlaybackState = .idle
         lastStagedWakeTriggeredVoiceTurnRequestState = nil
-        desktopWakeListenerController.startListening(promptState: promptState)
+        let featureFlagEnabled = DesktopRealtimeTranscriptionFeatureFlag.isEnabled
+        desktopAppendRuntimeBridgeDebugLog(
+            "desktop wake realtime transcription flag name=\(DesktopRealtimeTranscriptionFeatureFlag.name) enabled=\(featureFlagEnabled)"
+        )
+        guard featureFlagEnabled else {
+            desktopWakeListenerController.failOpenAIRealtimeWakeUnavailable(
+                promptState: promptState,
+                id: "failed_wake_listener_openai_realtime_stt_disabled",
+                summary: "Controlled Desktop wake requires the approved OpenAI realtime STT runtime surface.",
+                detail: "The native wake listener did not fall back to Apple STT, local STT, CLI proof runners, provider shortcuts, or a second wake engine."
+            )
+            return
+        }
+
+        Task { @MainActor in
+            do {
+                let session = try await desktopCanonicalRuntimeBridge
+                    .createDesktopRealtimeTranscriptionSession(
+                        featureFlagName: DesktopRealtimeTranscriptionFeatureFlag.name,
+                        featureFlagEnabled: true
+                    )
+                desktopAppendRuntimeBridgeDebugLog(
+                    "desktop wake realtime transcription token mint ok request=\(session.requestID) endpoint=\(session.endpoint) model=\(session.transcriptionModel) language_hint_policy=\(session.languageHintPolicy)"
+                )
+                desktopWakeListenerController.startRealtimeListening(
+                    promptState: promptState,
+                    session: session
+                )
+            } catch {
+                desktopAppendRuntimeBridgeDebugLog(
+                    "desktop wake realtime transcription unavailable reason=token_mint_failure redacted=true"
+                )
+                desktopWakeListenerController.failOpenAIRealtimeWakeUnavailable(
+                    promptState: promptState,
+                    id: "failed_wake_listener_openai_realtime_stt_unavailable",
+                    summary: "The approved OpenAI realtime STT wake session could not be created.",
+                    detail: "Token/session creation failed closed without provider payload exposure, Apple STT fallback, CLI proof-runner runtime, or local wake output fabrication."
+                )
+            }
+        }
     }
 
     private func nextDesktopTypedTurnSequence() -> UInt64 {
@@ -19633,6 +20562,18 @@ struct DesktopSessionShellView: View {
             desktopWakeAutoStartSuppressedPromptID = promptState.id
         }
         desktopWakeListenerController.stopListening()
+    }
+
+    private func desktopSetControlledWakeEnabled(_ isEnabled: Bool) {
+        desktopControlledWakeEnabled = isEnabled
+        if isEnabled {
+            desktopWakeAutoStartSuppressedPromptID = nil
+            Task { @MainActor in
+                await synchronizeDesktopWakeListenerLifecycleState()
+            }
+        } else {
+            stopDesktopWakeListenerAndSuppressAutoStart(promptState: desktopWakeListenerPromptState)
+        }
     }
 
     private func submitDesktopTypedTurn() {
