@@ -5639,6 +5639,7 @@ struct DesktopSessionShellView: View {
     @State private var desktopComposerAttachmentSelections: [DesktopComposerAttachmentSelection] = []
     @State private var desktopComposerVoiceModeEnabled: Bool = false
     @State private var desktopComposerVoiceModeAwaitingReplyPlaybackCompletion: Bool = false
+    @State private var desktopMeetingRecordingUnavailableAlertIsPresented: Bool = false
     @State private var desktopSearchRequestFailedRequest: InterruptContinuityResponseFailureState?
     @State private var desktopToolRequestFailedRequest: InterruptContinuityResponseFailureState?
     @State private var desktopLastGeneratedTypedTurnSequence: UInt64 = 0
@@ -6131,13 +6132,6 @@ struct DesktopSessionShellView: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    desktopSidebarActionRow(
-                        title: "New chat",
-                        systemImage: "square.and.pencil"
-                    ) {
-                        desktopStartNewChatFromSidebar()
-                    }
-
                     desktopSidebarActionRow(
                         title: "Search chats",
                         systemImage: "magnifyingglass"
@@ -7844,6 +7838,16 @@ struct DesktopSessionShellView: View {
         startDesktopComposerVoiceTurn()
     }
 
+    private func presentDesktopMeetingRecordingUnavailable() {
+        desktopMeetingRecordingUnavailableAlertIsPresented = true
+    }
+
+    private func startDesktopManualWakeActivationFromWaveButton() {
+        desktopComposerVoiceModeEnabled = false
+        desktopComposerVoiceModeAwaitingReplyPlaybackCompletion = false
+        startDesktopComposerVoiceTurn()
+    }
+
     private func startDesktopComposerVoiceTurn() {
         guard !desktopOpenAITtsSelfEchoGateActive else {
             desktopAppendRuntimeBridgeDebugLog(
@@ -8157,26 +8161,29 @@ struct DesktopSessionShellView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
 
                 HStack(spacing: 10) {
-                    if desktopExplicitVoiceCaptureControlActive || !desktopComposerShouldShowSendButton {
+                    if !desktopComposerShouldShowSendButton {
                         Button {
-                            if desktopExplicitVoiceCaptureControlActive {
-                                stopDesktopComposerVoiceTurnAndSend()
-                            } else {
-                                startDesktopComposerVoiceTurn()
-                            }
+                            presentDesktopMeetingRecordingUnavailable()
                         } label: {
-                            Image(systemName: desktopExplicitVoiceCaptureControlActive ? "stop.fill" : "mic")
+                            Image(systemName: "mic")
                                 .font(.system(size: 17, weight: .medium))
                                 .foregroundStyle(Color.primary.opacity(0.92))
                                 .frame(width: 28, height: 28)
                         }
                         .buttonStyle(.plain)
+                        .disabled(desktopExplicitVoiceCaptureControlActive)
+                        .opacity(desktopExplicitVoiceCaptureControlActive ? 0.45 : 1)
+                        .help("Meeting recording")
                     }
 
                     Button {
-                        toggleDesktopComposerVoiceMode()
+                        if desktopExplicitVoiceCaptureControlActive {
+                            stopDesktopComposerVoiceTurnAndSend()
+                        } else {
+                            startDesktopManualWakeActivationFromWaveButton()
+                        }
                     } label: {
-                        Image(systemName: "waveform")
+                        Image(systemName: desktopExplicitVoiceCaptureControlActive ? "stop.fill" : "waveform")
                             .font(.system(size: 18, weight: .semibold))
                             .foregroundStyle(desktopComposerShouldShowWaveformActiveState ? .primary : .secondary)
                             .frame(width: 36, height: 36)
@@ -8188,6 +8195,11 @@ struct DesktopSessionShellView: View {
                             .clipShape(Circle())
                     }
                     .buttonStyle(.plain)
+                    .help(
+                        desktopExplicitVoiceCaptureControlActive
+                            ? "Stop and send voice turn"
+                            : "Manual wake / explicit activation"
+                    )
 
                     if desktopComposerShouldShowSendButton {
                         Button {
@@ -8222,6 +8234,14 @@ struct DesktopSessionShellView: View {
                 .stroke(Color.primary.opacity(0.12), lineWidth: 1)
         )
         .shadow(color: Color.black.opacity(0.04), radius: 10, x: 0, y: 5)
+        .alert(
+            "Meeting recording not ready",
+            isPresented: $desktopMeetingRecordingUnavailableAlertIsPresented
+        ) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("The microphone button is reserved for meeting recording. Use the waveform button for manual wake.")
+        }
     }
 
     private var desktopToolRequestAuthoringCard: some View {
