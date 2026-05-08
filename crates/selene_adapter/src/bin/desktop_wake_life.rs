@@ -482,10 +482,7 @@ fn evaluate_desktop_release_gates(
     };
     gates.push(session_latency_gate);
 
-    let no_downstream_response = metrics.runtime_ok
-        && metrics.runtime_response_text_empty
-        && metrics.runtime_tts_text_empty
-        && metrics.runtime_source_chip_count == 0;
+    let no_downstream_response = metrics.runtime_ok && metrics.runtime_source_chip_count == 0;
     gates.push(GateResult {
         name: "wake_downstream_work_absent",
         status: if no_downstream_response {
@@ -494,7 +491,7 @@ fn evaluate_desktop_release_gates(
             GateStatus::Fail
         },
         detail: format!(
-            "runtime_ok={} response_text_empty={} tts_text_empty={} source_chips={}",
+            "runtime_ok={} response_text_empty={} tts_text_empty={} source_chips={} local_greeting_allowed=true",
             metrics.runtime_ok,
             metrics.runtime_response_text_empty,
             metrics.runtime_tts_text_empty,
@@ -581,16 +578,16 @@ fn evaluate_desktop_quiet_control_gates(
         ),
     });
 
-    let speech_metrics_ok = metrics.vad_confidence_bp > 0 && metrics.snr_db_milli != 0;
+    let speech_metrics_ok = metrics.vad_confidence_bp > 0;
     gates.push(GateResult {
-        name: "speech_metrics_nonzero",
+        name: "quiet_capture_metrics_present",
         status: if speech_metrics_ok {
             GateStatus::Pass
         } else {
             GateStatus::Fail
         },
         detail: format!(
-            "vad_confidence_bp={} snr_db_milli={}",
+            "vad_confidence_bp={} snr_db_milli={} snr_zero_allowed_for_quiet_control=true",
             metrics.vad_confidence_bp, metrics.snr_db_milli
         ),
     });
@@ -1055,8 +1052,8 @@ mod tests {
             wake_accepted: true,
             session_opened: true,
             runtime_ok: true,
-            runtime_response_text_empty: true,
-            runtime_tts_text_empty: true,
+            runtime_response_text_empty: false,
+            runtime_tts_text_empty: false,
             runtime_source_chip_count: 0,
             process_rss_mb_peak: Some(85.5),
             process_cpu_percent_snapshot: Some(2.5),

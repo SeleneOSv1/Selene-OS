@@ -18220,7 +18220,8 @@ fn run_ph1w_live_decision(
     let hop_ns = (loop_cfg.hop_ms as u64).saturating_mul(1_000_000);
     for idx in 0..loop_cfg.max_steps {
         let step_now = MonotonicTimeNs(now.0.saturating_add(idx.saturating_mul(hop_ns)));
-        let step_input = build_ph1w_live_step_input(step_now, ph1k, true)?;
+        let step_input =
+            build_ph1w_live_step_input(step_now, ph1k, ph1k.interrupt_input.detection.is_some())?;
         let events = runtime
             .step_for_implementation(PH1W_IMPLEMENTATION_ID, step_input)
             .map_err(|err| format!("PH1.W runtime rejected step input: {err:?}"))?;
@@ -25092,6 +25093,28 @@ mod tests {
         assert!(cfg.hop_ms >= 20);
     }
 
+    #[test]
+    fn at_wake_06_desktop_live_wake_requires_detection_alignment() {
+        let (runtime, mut req) =
+            stage34m_activation_only_wake_request("at_wake_06_no_detection_alignment");
+        if let Some(capture) = req.audio_capture_ref.as_mut() {
+            capture.detection_text = None;
+            capture.detection_confidence_bp = None;
+            capture.vad_confidence_bp = Some(7_500);
+            capture.acoustic_confidence_bp = Some(7_000);
+            capture.speech_likeness_bp = Some(6_500);
+            capture.snr_db_milli = Some(12_000);
+        }
+
+        let err = runtime
+            .run_voice_turn(req)
+            .expect_err("desktop wake without detection alignment must fail closed");
+        assert!(
+            err.contains("wake_rejected"),
+            "expected wake_rejected from PH1.W alignment gate, got {err}"
+        );
+    }
+
     fn stage34m_activation_only_wake_request(
         label: &str,
     ) -> (AdapterRuntime, VoiceTurnAdapterRequest) {
@@ -25111,6 +25134,10 @@ mod tests {
         mark_request_as_echo_safe_for_tests(&mut req);
         seed_wake_enrollment_complete_for_request(&runtime, &mut req, label);
         mark_request_as_attested_capture(&mut req);
+        if let Some(capture) = req.audio_capture_ref.as_mut() {
+            capture.detection_text = Some("Selene".to_string());
+            capture.detection_confidence_bp = Some(9_600);
+        }
         (runtime, req)
     }
 
@@ -25341,6 +25368,10 @@ mod tests {
         seed_wake_enrollment_complete_for_request(&runtime, &mut req, label);
         mark_request_as_echo_safe_for_tests(&mut req);
         mark_request_as_attested_capture(&mut req);
+        if let Some(capture) = req.audio_capture_ref.as_mut() {
+            capture.detection_text = Some("Selene".to_string());
+            capture.detection_confidence_bp = Some(9_600);
+        }
         (runtime, req)
     }
 
