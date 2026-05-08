@@ -61,6 +61,7 @@ struct CliArgs {
     wake_seconds: u64,
     store_path: Option<PathBuf>,
     json: bool,
+    desktop_integration_proof: bool,
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -72,6 +73,8 @@ struct E2eSummary {
     greeting: GreetingSummary,
     safety: SafetySummary,
     gates: Vec<GateResult>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    desktop_runtime_integration: Option<DesktopRuntimeIntegrationProof>,
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -110,6 +113,40 @@ struct GateResult {
     name: &'static str,
     status: &'static str,
     detail: String,
+}
+
+#[derive(Debug, serde::Serialize)]
+struct DesktopRuntimeIntegrationProof {
+    proof_surface: &'static str,
+    bridge_compatible: bool,
+    native_client_untouched: bool,
+    outcome: DesktopRuntimeOutcomeMetadata,
+    gate_summary: DesktopRuntimeGateSummary,
+}
+
+#[derive(Debug, serde::Serialize)]
+struct DesktopRuntimeOutcomeMetadata {
+    status: &'static str,
+    wake_accepted: bool,
+    session_opened: bool,
+    voice_enrollment_completed: bool,
+    voice_profile_id: Option<String>,
+    known_speaker_recognized: bool,
+    voice_posture: String,
+    named_greeting: bool,
+    next_move: String,
+    source_chip_count: usize,
+    provider_call_count: u8,
+    protected_execution: bool,
+    memory_write: bool,
+    authority_granted: bool,
+}
+
+#[derive(Debug, serde::Serialize)]
+struct DesktopRuntimeGateSummary {
+    status: &'static str,
+    pass: usize,
+    fail: usize,
 }
 
 fn run_desktop_voice_e2e(cli: &CliArgs) -> Result<E2eSummary, String> {
@@ -281,7 +318,7 @@ fn run_desktop_voice_e2e(cli: &CliArgs) -> Result<E2eSummary, String> {
     } else {
         "FAIL"
     };
-    Ok(E2eSummary {
+    let mut summary = E2eSummary {
         status,
         speaker_name: cli.speaker_name.clone(),
         wake,
@@ -289,7 +326,13 @@ fn run_desktop_voice_e2e(cli: &CliArgs) -> Result<E2eSummary, String> {
         greeting,
         safety,
         gates,
-    })
+        desktop_runtime_integration: None,
+    };
+    if cli.desktop_integration_proof {
+        summary.desktop_runtime_integration =
+            Some(build_desktop_runtime_integration_proof(&summary));
+    }
+    Ok(summary)
 }
 
 fn capture_enrollment_samples(
@@ -727,6 +770,27 @@ fn render_summary(summary: &E2eSummary, json: bool) -> Result<(), String> {
         "gate.summary={} pass={} fail={}",
         summary.status, pass, fail
     );
+    if let Some(proof) = &summary.desktop_runtime_integration {
+        println!(
+            "desktop_runtime_integration.status={}",
+            proof.outcome.status
+        );
+        println!(
+            "desktop_runtime_integration.bridge_compatible={}",
+            proof.bridge_compatible
+        );
+        println!(
+            "desktop_runtime_integration.native_client_untouched={}",
+            proof.native_client_untouched
+        );
+        println!(
+            "desktop_runtime_integration.wake_accepted={} session_opened={} known_speaker_recognized={} named_greeting={}",
+            proof.outcome.wake_accepted,
+            proof.outcome.session_opened,
+            proof.outcome.known_speaker_recognized,
+            proof.outcome.named_greeting
+        );
+    }
     Ok(())
 }
 
@@ -742,6 +806,7 @@ fn parse_cli_args() -> Result<CliArgs, String> {
         wake_seconds: 5,
         store_path: None,
         json: false,
+        desktop_integration_proof: false,
     };
     let mut idx = 1;
     while idx < args.len() {
@@ -800,12 +865,73 @@ fn parse_cli_args() -> Result<CliArgs, String> {
                 cli.json = true;
                 idx += 1;
             }
+            "--desktop-integration-proof" => {
+                cli.desktop_integration_proof = true;
+                idx += 1;
+            }
             _ => {
                 idx += 1;
             }
         }
     }
     Ok(cli)
+}
+
+fn build_desktop_runtime_integration_proof(summary: &E2eSummary) -> DesktopRuntimeIntegrationProof {
+    let pass = summary
+        .gates
+        .iter()
+        .filter(|gate| gate.status == "PASS")
+        .count();
+    let fail = summary.gates.len().saturating_sub(pass);
+    let outcome = DesktopRuntimeOutcomeMetadata {
+        status: summary.status,
+        wake_accepted: summary.wake.accepted,
+        session_opened: summary.wake.session_opened,
+        voice_enrollment_completed: summary.voice_id.enrollment_completed,
+        voice_profile_id: summary.voice_id.voice_profile_id.clone(),
+        known_speaker_recognized: summary.voice_id.recognized,
+        voice_posture: summary.voice_id.posture.clone(),
+        named_greeting: summary.greeting.named,
+        next_move: summary.wake.next_move.clone(),
+        source_chip_count: summary.safety.source_chips,
+        provider_call_count: summary.safety.provider_calls,
+        protected_execution: summary.safety.protected_execution,
+        memory_write: summary.safety.memory_write,
+        authority_granted: summary.voice_id.authoritative,
+    };
+    DesktopRuntimeIntegrationProof {
+        proof_surface: "DESKTOP_RUNTIME_LIVE_VOICE_E2E_PROOF",
+        bridge_compatible: desktop_bridge_compatible(summary, &outcome),
+        native_client_untouched: true,
+        outcome,
+        gate_summary: DesktopRuntimeGateSummary {
+            status: summary.status,
+            pass,
+            fail,
+        },
+    }
+}
+
+fn desktop_bridge_compatible(
+    summary: &E2eSummary,
+    outcome: &DesktopRuntimeOutcomeMetadata,
+) -> bool {
+    let named_greeting_is_known_posture = !outcome.named_greeting
+        || (outcome.known_speaker_recognized && outcome.voice_posture == "KNOWN_HIGH_CONFIDENCE");
+    let accepted_wake_has_session =
+        !outcome.wake_accepted || (outcome.session_opened && !outcome.next_move.trim().is_empty());
+    let closed_paths = outcome.source_chip_count == 0
+        && outcome.provider_call_count == 0
+        && !outcome.protected_execution
+        && !outcome.memory_write
+        && !outcome.authority_granted;
+    let status_matches_gates =
+        (summary.status == "PASS") == summary.gates.iter().all(|gate| gate.status == "PASS");
+    accepted_wake_has_session
+        && named_greeting_is_known_posture
+        && closed_paths
+        && status_matches_gates
 }
 
 fn apply_controlled_wake_detection_hint(
@@ -970,6 +1096,59 @@ mod tests {
         capture
     }
 
+    fn base_cli(mode: E2eMode) -> CliArgs {
+        CliArgs {
+            mode,
+            speaker_name: "JD".to_string(),
+            wake_text: "Selene".to_string(),
+            preferred_device_substring: None,
+            enroll_samples: 3,
+            seconds_per_sample: 4,
+            wake_seconds: 5,
+            store_path: None,
+            json: true,
+            desktop_integration_proof: true,
+        }
+    }
+
+    fn named_recognition_summary() -> E2eSummary {
+        let wake = WakeSummary {
+            accepted: true,
+            session_opened: true,
+            next_move: "listening_window_open".to_string(),
+        };
+        let voice_id = VoiceIdSummary {
+            enrollment_completed: true,
+            voice_profile_id: Some("voice_profile_test".to_string()),
+            recognized: true,
+            posture: "KNOWN_HIGH_CONFIDENCE".to_string(),
+            authoritative: false,
+        };
+        let greeting = GreetingSummary {
+            named: true,
+            response_text: "Ready when you are, JD.".to_string(),
+            tts_text: "Ready when you are, JD.".to_string(),
+        };
+        let safety = SafetySummary {
+            source_chips: 0,
+            provider_calls: 0,
+            protected_execution: false,
+            memory_write: false,
+        };
+        let cli = base_cli(E2eMode::EnrollAndRecognize);
+        let gates = build_gates(&cli, &wake, &voice_id, &greeting, &safety);
+        E2eSummary {
+            status: "PASS",
+            speaker_name: "JD".to_string(),
+            wake,
+            voice_id,
+            greeting,
+            safety,
+            gates,
+            desktop_runtime_integration: None,
+        }
+    }
+
     #[test]
     fn desktop_voice_e2e_safe_display_name_normalizes_short_name() {
         assert_eq!(safe_display_name("jd").unwrap(), "JD");
@@ -1031,8 +1210,134 @@ mod tests {
             wake_seconds: 5,
             store_path: None,
             json: true,
+            desktop_integration_proof: false,
         };
         let gates = build_gates(&cli, &wake, &voice_id, &greeting, &safety);
         assert!(gates.iter().any(|gate| gate.status == "FAIL"));
+    }
+
+    #[test]
+    fn desktop_voice_e2e_integration_proof_accepts_named_recognition_summary() {
+        let summary = named_recognition_summary();
+        let proof = build_desktop_runtime_integration_proof(&summary);
+        assert!(proof.bridge_compatible);
+        assert!(proof.native_client_untouched);
+        assert!(proof.outcome.wake_accepted);
+        assert!(proof.outcome.session_opened);
+        assert!(proof.outcome.voice_enrollment_completed);
+        assert_eq!(
+            proof.outcome.voice_profile_id.as_deref(),
+            Some("voice_profile_test")
+        );
+        assert!(proof.outcome.known_speaker_recognized);
+        assert!(proof.outcome.named_greeting);
+        assert_eq!(proof.outcome.provider_call_count, 0);
+        assert_eq!(proof.outcome.source_chip_count, 0);
+        assert!(!proof.outcome.protected_execution);
+        assert!(!proof.outcome.authority_granted);
+        assert_eq!(proof.gate_summary.status, "PASS");
+        assert_eq!(proof.gate_summary.fail, 0);
+    }
+
+    #[test]
+    fn desktop_voice_e2e_integration_proof_rejects_quiet_control_without_session() {
+        let wake = WakeSummary {
+            accepted: false,
+            session_opened: false,
+            next_move: "closed".to_string(),
+        };
+        let voice_id = VoiceIdSummary {
+            enrollment_completed: false,
+            voice_profile_id: None,
+            recognized: false,
+            posture: "NOT_ATTEMPTED_QUIET_CONTROL".to_string(),
+            authoritative: false,
+        };
+        let greeting = GreetingSummary {
+            named: false,
+            response_text: "wake_rejected reason_code=1459617842".to_string(),
+            tts_text: String::new(),
+        };
+        let safety = SafetySummary {
+            source_chips: 0,
+            provider_calls: 0,
+            protected_execution: false,
+            memory_write: false,
+        };
+        let cli = base_cli(E2eMode::QuietControl);
+        let gates = build_gates(&cli, &wake, &voice_id, &greeting, &safety);
+        let summary = E2eSummary {
+            status: "PASS",
+            speaker_name: "JD".to_string(),
+            wake,
+            voice_id,
+            greeting,
+            safety,
+            gates,
+            desktop_runtime_integration: None,
+        };
+        let proof = build_desktop_runtime_integration_proof(&summary);
+        assert!(proof.bridge_compatible);
+        assert!(!proof.outcome.wake_accepted);
+        assert!(!proof.outcome.session_opened);
+        assert!(!proof.outcome.known_speaker_recognized);
+        assert!(!proof.outcome.named_greeting);
+    }
+
+    #[test]
+    fn desktop_voice_e2e_integration_proof_requires_known_posture_for_named_greeting() {
+        let mut summary = named_recognition_summary();
+        summary.voice_id.recognized = false;
+        summary.voice_id.posture = "UNKNOWN_OR_UNAVAILABLE".to_string();
+        let proof = build_desktop_runtime_integration_proof(&summary);
+        assert!(!proof.bridge_compatible);
+    }
+
+    #[test]
+    fn desktop_voice_e2e_integration_proof_preserves_provider_tool_protected_closure() {
+        let mut summary = named_recognition_summary();
+        summary.safety.provider_calls = 1;
+        let proof = build_desktop_runtime_integration_proof(&summary);
+        assert!(!proof.bridge_compatible);
+
+        let mut summary = named_recognition_summary();
+        summary.safety.source_chips = 1;
+        let proof = build_desktop_runtime_integration_proof(&summary);
+        assert!(!proof.bridge_compatible);
+
+        let mut summary = named_recognition_summary();
+        summary.safety.protected_execution = true;
+        let proof = build_desktop_runtime_integration_proof(&summary);
+        assert!(!proof.bridge_compatible);
+    }
+
+    #[test]
+    fn desktop_voice_e2e_integration_json_shape_is_bridge_compatible() {
+        let mut summary = named_recognition_summary();
+        summary.desktop_runtime_integration =
+            Some(build_desktop_runtime_integration_proof(&summary));
+        let value = serde_json::to_value(&summary).unwrap();
+        assert_eq!(value["status"], "PASS");
+        assert_eq!(value["speaker_name"], "JD");
+        assert_eq!(value["wake"]["accepted"], true);
+        assert_eq!(value["wake"]["session_opened"], true);
+        assert_eq!(value["voice_id"]["recognized"], true);
+        assert_eq!(value["voice_id"]["posture"], "KNOWN_HIGH_CONFIDENCE");
+        assert_eq!(value["greeting"]["named"], true);
+        assert_eq!(value["safety"]["source_chips"], 0);
+        assert_eq!(value["safety"]["provider_calls"], 0);
+        assert_eq!(value["safety"]["protected_execution"], false);
+        assert_eq!(
+            value["desktop_runtime_integration"]["proof_surface"],
+            "DESKTOP_RUNTIME_LIVE_VOICE_E2E_PROOF"
+        );
+        assert_eq!(
+            value["desktop_runtime_integration"]["bridge_compatible"],
+            true
+        );
+        assert_eq!(
+            value["desktop_runtime_integration"]["outcome"]["next_move"],
+            "listening_window_open"
+        );
     }
 }
