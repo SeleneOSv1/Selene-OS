@@ -1533,6 +1533,7 @@ pub struct AdapterRuntime {
     ingress: AppServerIngressRuntime,
     store: Arc<Mutex<Ph1fStore>>,
     session_retry_cache: Arc<Mutex<BTreeMap<AdapterRetryCacheKey, VoiceTurnAdapterResponse>>>,
+    wake_guest_lane_state: Arc<Mutex<BTreeMap<WakeGuestLaneKey, WakeGuestLanePosture>>>,
     sync_worker_counters: Arc<Mutex<AdapterSyncWorkerCounters>>,
     improvement_counters: Arc<Mutex<AdapterImprovementCounters>>,
     transcript_state: Arc<Mutex<AdapterTranscriptState>>,
@@ -1556,6 +1557,28 @@ pub struct AdapterRuntime {
 struct AdapterRetryCacheKey {
     actor_user_id: UserId,
     idempotency_key: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct WakeGuestLaneKey {
+    actor_user_id: String,
+    session_id: Option<String>,
+    device_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum WakeGuestLanePosture {
+    UnknownGuestUnverified,
+    ClaimedNameUnverified {
+        display_name: String,
+        public_name_use_count: u8,
+    },
+}
+
+#[derive(Debug, Clone)]
+enum WakeGuestLaneTurnDecision {
+    Respond(VoiceTurnAdapterResponse),
+    AllowPublicSafeGuest,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -3974,6 +3997,7 @@ impl Default for AdapterRuntime {
             ingress: AppServerIngressRuntime::default(),
             store: Arc::new(Mutex::new(Ph1fStore::new_in_memory())),
             session_retry_cache: Arc::new(Mutex::new(BTreeMap::new())),
+            wake_guest_lane_state: Arc::new(Mutex::new(BTreeMap::new())),
             sync_worker_counters: Arc::new(Mutex::new(AdapterSyncWorkerCounters::default())),
             improvement_counters: Arc::new(Mutex::new(AdapterImprovementCounters::default())),
             transcript_state: Arc::new(Mutex::new(AdapterTranscriptState::default())),
@@ -4015,6 +4039,7 @@ impl AdapterRuntime {
             ingress,
             store,
             session_retry_cache: Arc::new(Mutex::new(BTreeMap::new())),
+            wake_guest_lane_state: Arc::new(Mutex::new(BTreeMap::new())),
             sync_worker_counters: Arc::new(Mutex::new(AdapterSyncWorkerCounters::default())),
             improvement_counters: Arc::new(Mutex::new(AdapterImprovementCounters::default())),
             transcript_state: Arc::new(Mutex::new(AdapterTranscriptState::default())),
@@ -4051,6 +4076,7 @@ impl AdapterRuntime {
             ingress,
             store,
             session_retry_cache: Arc::new(Mutex::new(BTreeMap::new())),
+            wake_guest_lane_state: Arc::new(Mutex::new(BTreeMap::new())),
             sync_worker_counters: Arc::new(Mutex::new(AdapterSyncWorkerCounters::default())),
             improvement_counters: Arc::new(Mutex::new(AdapterImprovementCounters::default())),
             transcript_state: Arc::new(Mutex::new(AdapterTranscriptState::default())),
@@ -4086,6 +4112,145 @@ impl AdapterRuntime {
             PersistenceInvocationMode::Standard,
         )
         .map_err(|err| err.to_runtime_reason())
+    }
+
+    fn wake_guest_lane_key(
+        actor_user_id: &UserId,
+        device_id: &DeviceId,
+        runtime_execution_envelope: &RuntimeExecutionEnvelope,
+    ) -> WakeGuestLaneKey {
+        WakeGuestLaneKey {
+            actor_user_id: actor_user_id.as_str().to_string(),
+            session_id: runtime_execution_envelope
+                .session_id
+                .map(session_id_to_string),
+            device_id: device_id.as_str().to_string(),
+        }
+    }
+
+    fn wake_guest_lane_posture(
+        &self,
+        key: &WakeGuestLaneKey,
+    ) -> Result<Option<WakeGuestLanePosture>, String> {
+        let state = self
+            .wake_guest_lane_state
+            .lock()
+            .map_err(|_| "wake guest lane state lock poisoned".to_string())?;
+        Ok(state.get(key).cloned())
+    }
+
+    fn set_wake_guest_lane_posture(
+        &self,
+        key: WakeGuestLaneKey,
+        posture: WakeGuestLanePosture,
+    ) -> Result<(), String> {
+        let mut state = self
+            .wake_guest_lane_state
+            .lock()
+            .map_err(|_| "wake guest lane state lock poisoned".to_string())?;
+        state.insert(key, posture);
+        Ok(())
+    }
+
+    fn wake_guest_lane_turn_decision(
+        &self,
+        runtime_execution_envelope: &RuntimeExecutionEnvelope,
+        session_state: SessionState,
+        session_attach_outcome: SessionAttachOutcome,
+        actor_user_id: &UserId,
+        device_id: &DeviceId,
+        user_text_final: Option<&str>,
+        thread_policy_flags: Option<&VoiceTurnThreadPolicyFlags>,
+    ) -> Result<Option<WakeGuestLaneTurnDecision>, String> {
+        if !continuing_speech_identity_prompt_session_surface(session_attach_outcome) {
+            return Ok(None);
+        }
+        let Some(text) = user_text_final
+            .map(str::trim)
+            .filter(|text| !text.is_empty())
+        else {
+            return Ok(None);
+        };
+        let key = Self::wake_guest_lane_key(actor_user_id, device_id, runtime_execution_envelope);
+        let Some(posture) = self.wake_guest_lane_posture(&key)? else {
+            return Ok(None);
+        };
+        if existing_protected_or_private_classification_for_identity_prompt(text) {
+            if let WakeGuestLanePosture::ClaimedNameUnverified { display_name, .. } = posture {
+                return Ok(Some(WakeGuestLaneTurnDecision::Respond(
+                    wake_guest_lane_verified_identity_required_response(
+                        runtime_execution_envelope,
+                        session_state,
+                        session_attach_outcome,
+                        &display_name,
+                        thread_policy_flags,
+                    ),
+                )));
+            }
+            return Ok(None);
+        }
+        match posture {
+            WakeGuestLanePosture::UnknownGuestUnverified => {
+                match wake_guest_lane_extract_claimed_name(text) {
+                    WakeClaimedNameExtraction::Accepted(display_name) => {
+                        self.set_wake_guest_lane_posture(
+                            key,
+                            WakeGuestLanePosture::ClaimedNameUnverified {
+                                display_name: display_name.clone(),
+                                public_name_use_count: 0,
+                            },
+                        )?;
+                        Ok(Some(WakeGuestLaneTurnDecision::Respond(
+                            wake_guest_lane_claimed_name_ack_response(
+                                runtime_execution_envelope,
+                                session_state,
+                                session_attach_outcome,
+                                &display_name,
+                                thread_policy_flags,
+                            ),
+                        )))
+                    }
+                    WakeClaimedNameExtraction::Unsafe => {
+                        Ok(Some(WakeGuestLaneTurnDecision::Respond(
+                            wake_guest_lane_name_clarification_response(
+                                runtime_execution_envelope,
+                                session_state,
+                                session_attach_outcome,
+                                thread_policy_flags,
+                            ),
+                        )))
+                    }
+                    WakeClaimedNameExtraction::NoClaim => {
+                        Ok(Some(WakeGuestLaneTurnDecision::AllowPublicSafeGuest))
+                    }
+                }
+            }
+            WakeGuestLanePosture::ClaimedNameUnverified {
+                display_name,
+                public_name_use_count,
+            } => {
+                if wake_guest_lane_public_followup_should_use_name(text, public_name_use_count) {
+                    self.set_wake_guest_lane_posture(
+                        key,
+                        WakeGuestLanePosture::ClaimedNameUnverified {
+                            display_name: display_name.clone(),
+                            public_name_use_count: public_name_use_count.saturating_add(1),
+                        },
+                    )?;
+                    Ok(Some(WakeGuestLaneTurnDecision::Respond(
+                        wake_guest_lane_public_followup_response(
+                            runtime_execution_envelope,
+                            session_state,
+                            session_attach_outcome,
+                            &display_name,
+                            thread_policy_flags,
+                        ),
+                    )))
+                } else {
+                    Ok(Some(WakeGuestLaneTurnDecision::AllowPublicSafeGuest))
+                }
+            }
+        }
     }
 
     pub fn run_voice_turn_ingress(
@@ -7790,50 +7955,111 @@ impl AdapterRuntime {
                     }
                 }
             }
-            if let Some(response) = continuing_speech_identity_prompt_response(
-                &store,
-                tenant_id_for_ph1c.as_deref(),
-                &actor_user_id,
-                &runtime_device_id,
-                &runtime_execution_envelope,
-                session_turn_state.session_snapshot.session_state,
-                session_turn_state.session_attach_outcome,
-                &voice_id_request,
-                voice_id_observation,
-                user_text_final.as_deref(),
-                request.thread_policy_flags.as_ref(),
-            )
-            .map_err(post_session_error)?
-            {
-                self.record_transcript_updates(
-                    &mut store,
-                    now,
-                    correlation_id,
-                    turn_id,
+            let mut skip_identity_prompt_for_guest_lane = false;
+            if let Some(decision) = self
+                .wake_guest_lane_turn_decision(
+                    &runtime_execution_envelope,
+                    session_turn_state.session_snapshot.session_state,
+                    session_turn_state.session_attach_outcome,
                     &actor_user_id,
-                    Some(&runtime_device_id),
-                    session_turn_state.session_id_for_commits,
-                    user_text_partial.clone(),
-                    user_text_final.clone(),
-                    None,
-                    Some(response.response_text.clone()),
-                )
-                .map_err(post_session_error)?;
-                finalize_session_turn_record(
-                    &mut store,
-                    now,
-                    correlation_id,
-                    turn_id,
                     &runtime_device_id,
-                    session_turn_state.session_id_for_commits,
-                    None,
-                    session_turn_state.device_turn_sequence,
-                    &runtime_execution_envelope.idempotency_key,
-                    &self.runtime_node_id,
-                    self.session_lease_ttl_ms,
+                    user_text_final.as_deref(),
+                    request.thread_policy_flags.as_ref(),
                 )
-                .map_err(post_session_error)?;
-                return Ok(response);
+                .map_err(post_session_error)?
+            {
+                match decision {
+                    WakeGuestLaneTurnDecision::Respond(response) => {
+                        self.record_transcript_updates(
+                            &mut store,
+                            now,
+                            correlation_id,
+                            turn_id,
+                            &actor_user_id,
+                            Some(&runtime_device_id),
+                            session_turn_state.session_id_for_commits,
+                            user_text_partial.clone(),
+                            user_text_final.clone(),
+                            None,
+                            Some(response.response_text.clone()),
+                        )
+                        .map_err(post_session_error)?;
+                        finalize_session_turn_record(
+                            &mut store,
+                            now,
+                            correlation_id,
+                            turn_id,
+                            &runtime_device_id,
+                            session_turn_state.session_id_for_commits,
+                            None,
+                            session_turn_state.device_turn_sequence,
+                            &runtime_execution_envelope.idempotency_key,
+                            &self.runtime_node_id,
+                            self.session_lease_ttl_ms,
+                        )
+                        .map_err(post_session_error)?;
+                        return Ok(response);
+                    }
+                    WakeGuestLaneTurnDecision::AllowPublicSafeGuest => {
+                        skip_identity_prompt_for_guest_lane = true;
+                    }
+                }
+            }
+            if !skip_identity_prompt_for_guest_lane {
+                if let Some(response) = continuing_speech_identity_prompt_response(
+                    &store,
+                    tenant_id_for_ph1c.as_deref(),
+                    &actor_user_id,
+                    &runtime_device_id,
+                    &runtime_execution_envelope,
+                    session_turn_state.session_snapshot.session_state,
+                    session_turn_state.session_attach_outcome,
+                    &voice_id_request,
+                    voice_id_observation,
+                    user_text_final.as_deref(),
+                    request.thread_policy_flags.as_ref(),
+                )
+                .map_err(post_session_error)?
+                {
+                    self.set_wake_guest_lane_posture(
+                        Self::wake_guest_lane_key(
+                            &actor_user_id,
+                            &runtime_device_id,
+                            &runtime_execution_envelope,
+                        ),
+                        WakeGuestLanePosture::UnknownGuestUnverified,
+                    )
+                    .map_err(post_session_error)?;
+                    self.record_transcript_updates(
+                        &mut store,
+                        now,
+                        correlation_id,
+                        turn_id,
+                        &actor_user_id,
+                        Some(&runtime_device_id),
+                        session_turn_state.session_id_for_commits,
+                        user_text_partial.clone(),
+                        user_text_final.clone(),
+                        None,
+                        Some(response.response_text.clone()),
+                    )
+                    .map_err(post_session_error)?;
+                    finalize_session_turn_record(
+                        &mut store,
+                        now,
+                        correlation_id,
+                        turn_id,
+                        &runtime_device_id,
+                        session_turn_state.session_id_for_commits,
+                        None,
+                        session_turn_state.device_turn_sequence,
+                        &runtime_execution_envelope.idempotency_key,
+                        &self.runtime_node_id,
+                        self.session_lease_ttl_ms,
+                    )
+                    .map_err(post_session_error)?;
+                    return Ok(response);
+                }
             }
             self.run_ph1vision_os_orchestration_step(
                 &request,
@@ -16873,9 +17099,18 @@ const WAKE_UNKNOWN_SPEAKER_NAME_PROMPT_SEED: [&str; 5] = [
     "Before I help with anything personal, what should I call you?",
 ];
 
+const WAKE_GUEST_LANE_CLAIMED_NAME_ACK_SEED: [&str; 5] = [
+    "Thanks, {name}. I'll call you {name} for this session.",
+    "Got it, {name}. I'll use that for this session.",
+    "Thanks, {name}. I'm listening.",
+    "Okay, {name}. What would you like to do?",
+    "Understood, {name}. How can I help?",
+];
+
 const WAKE_GREETING_LIBRARY_GENERIC_ACTIVATION_CAP: usize = 100;
 const WAKE_GREETING_LIBRARY_NAMED_ACTIVATION_CAP: usize = 100;
 const WAKE_GREETING_LIBRARY_UNKNOWN_PROMPT_CAP: usize = 25;
+const WAKE_GREETING_LIBRARY_CLAIMED_NAME_ACK_CAP: usize = 25;
 #[cfg(test)]
 const WAKE_GREETING_LIBRARY_MAX_PHRASE_CHARS: usize = 96;
 
@@ -16884,6 +17119,7 @@ enum WakeGreetingLibraryCategory {
     GenericActivation,
     KnownSpeakerNamedActivation,
     UnknownSpeakerNamePrompt,
+    ClaimedNameAcknowledgement,
 }
 
 #[cfg(test)]
@@ -16895,7 +17131,7 @@ struct WakeGreetingLibrarySpec {
 }
 
 #[cfg(test)]
-fn wake_greeting_library_specs() -> [WakeGreetingLibrarySpec; 3] {
+fn wake_greeting_library_specs() -> [WakeGreetingLibrarySpec; 4] {
     [
         WakeGreetingLibrarySpec {
             category: WakeGreetingLibraryCategory::GenericActivation,
@@ -16912,6 +17148,11 @@ fn wake_greeting_library_specs() -> [WakeGreetingLibrarySpec; 3] {
             phrases: &WAKE_UNKNOWN_SPEAKER_NAME_PROMPT_SEED,
             cap: WAKE_GREETING_LIBRARY_UNKNOWN_PROMPT_CAP,
         },
+        WakeGreetingLibrarySpec {
+            category: WakeGreetingLibraryCategory::ClaimedNameAcknowledgement,
+            phrases: &WAKE_GUEST_LANE_CLAIMED_NAME_ACK_SEED,
+            cap: WAKE_GREETING_LIBRARY_CLAIMED_NAME_ACK_CAP,
+        },
     ]
 }
 
@@ -16923,6 +17164,9 @@ fn wake_greeting_library_phrases(category: WakeGreetingLibraryCategory) -> &'sta
         }
         WakeGreetingLibraryCategory::UnknownSpeakerNamePrompt => {
             &WAKE_UNKNOWN_SPEAKER_NAME_PROMPT_SEED
+        }
+        WakeGreetingLibraryCategory::ClaimedNameAcknowledgement => {
+            &WAKE_GUEST_LANE_CLAIMED_NAME_ACK_SEED
         }
     };
     debug_assert!(phrases.len() <= wake_greeting_library_category_cap(category));
@@ -16939,6 +17183,9 @@ fn wake_greeting_library_category_cap(category: WakeGreetingLibraryCategory) -> 
         }
         WakeGreetingLibraryCategory::UnknownSpeakerNamePrompt => {
             WAKE_GREETING_LIBRARY_UNKNOWN_PROMPT_CAP
+        }
+        WakeGreetingLibraryCategory::ClaimedNameAcknowledgement => {
+            WAKE_GREETING_LIBRARY_CLAIMED_NAME_ACK_CAP
         }
     }
 }
@@ -17008,6 +17255,16 @@ fn wake_greeting_library_phrase_valid(category: WakeGreetingLibraryCategory, phr
                 && !lower.contains("profile")
                 && !lower.contains("memory")
         }
+        WakeGreetingLibraryCategory::ClaimedNameAcknowledgement => {
+            let count = wake_greeting_library_name_placeholder_count(trimmed);
+            (count == 1 || count == 2)
+                && (lower.contains("session")
+                    || lower.contains("listening")
+                    || lower.contains("what would you like")
+                    || lower.contains("how can i help"))
+                && !lower.contains("verified")
+                && !lower.contains("authority")
+        }
     }
 }
 
@@ -17021,6 +17278,13 @@ struct WakeVoiceIdGreetingPosture {
 enum WakeUnknownSpeakerPromptReason {
     CleanCurrentTurnSpeech,
     ProtectedOrPersonalRequest,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum WakeClaimedNameExtraction {
+    Accepted(String),
+    Unsafe,
+    NoClaim,
 }
 
 fn wake_greeting_selector(runtime_execution_envelope: &RuntimeExecutionEnvelope) -> usize {
@@ -17113,6 +17377,277 @@ fn select_unknown_speaker_name_prompt(
     let prompt_phrases =
         wake_greeting_library_phrases(WakeGreetingLibraryCategory::UnknownSpeakerNamePrompt);
     prompt_phrases[selector % (prompt_phrases.len() - 1)].to_string()
+}
+
+fn wake_guest_lane_name_candidate(text: &str) -> (Option<&str>, bool) {
+    let trimmed = text.trim().trim_matches(['"', '\'']);
+    let lower = trimmed.to_ascii_lowercase();
+    for prefix in [
+        "i'm ",
+        "i am ",
+        "my name is ",
+        "call me ",
+        "you can call me ",
+    ] {
+        if lower.starts_with(prefix) {
+            return (Some(trimmed[prefix.len()..].trim()), true);
+        }
+    }
+    let visible_count = trimmed.chars().filter(|ch| !ch.is_whitespace()).count();
+    let word_count = trimmed
+        .split_whitespace()
+        .filter(|word| word.chars().any(|ch| ch.is_alphabetic()))
+        .count();
+    if word_count > 0 && word_count <= 3 && visible_count <= 32 && !trimmed.contains('?') {
+        return (Some(trimmed), false);
+    }
+    (None, false)
+}
+
+fn wake_guest_lane_normalize_claimed_name(candidate: &str) -> Option<String> {
+    let trimmed = candidate
+        .trim()
+        .trim_matches(|ch: char| ch.is_ascii_punctuation() && ch != '\'' && ch != '-')
+        .trim();
+    if trimmed.is_empty()
+        || !trimmed.is_ascii()
+        || trimmed.chars().any(|ch| ch.is_control())
+        || trimmed.chars().filter(|ch| !ch.is_whitespace()).count() > 32
+    {
+        return None;
+    }
+    let lower = trimmed.to_ascii_lowercase();
+    let forbidden_fragments = [
+        "://",
+        "www.",
+        "@",
+        "api",
+        "key",
+        "secret",
+        "source",
+        "citation",
+        "debug",
+        "provider",
+        "search",
+        "tool",
+        "connector",
+        "approve",
+        "payroll",
+        "salary",
+        "transfer",
+        "delete",
+        "update",
+        "invoice",
+        "customer",
+        "business",
+        "personal",
+        "help",
+        "tell",
+        "summarize",
+        "what",
+        "please",
+        "selene",
+    ];
+    if forbidden_fragments
+        .iter()
+        .any(|fragment| lower.contains(fragment))
+        || trimmed.chars().any(|ch| ch.is_ascii_digit())
+        || trimmed
+            .chars()
+            .any(|ch| !(ch.is_ascii_alphabetic() || ch == ' ' || ch == '-' || ch == '\''))
+    {
+        return None;
+    }
+    let mut words = Vec::new();
+    for word in trimmed.split_whitespace() {
+        let clean = word.trim_matches(|ch: char| ch == '-' || ch == '\'');
+        if clean.is_empty() {
+            return None;
+        }
+        let normalized = if clean.len() <= 3 {
+            clean.to_ascii_uppercase()
+        } else {
+            let mut chars = clean.chars();
+            let first = chars.next()?.to_ascii_uppercase();
+            let rest = chars.as_str().to_ascii_lowercase();
+            format!("{first}{rest}")
+        };
+        words.push(normalized);
+    }
+    if words.is_empty() || words.len() > 3 {
+        return None;
+    }
+    Some(words.join(" "))
+}
+
+fn wake_guest_lane_extract_claimed_name(text: &str) -> WakeClaimedNameExtraction {
+    let (candidate, explicit_claim) = wake_guest_lane_name_candidate(text);
+    let Some(candidate) = candidate else {
+        return WakeClaimedNameExtraction::NoClaim;
+    };
+    if let Some(display_name) = wake_guest_lane_normalize_claimed_name(candidate) {
+        return WakeClaimedNameExtraction::Accepted(display_name);
+    }
+    if explicit_claim {
+        WakeClaimedNameExtraction::Unsafe
+    } else {
+        WakeClaimedNameExtraction::NoClaim
+    }
+}
+
+fn select_wake_guest_lane_claimed_name_ack_text(
+    runtime_execution_envelope: &RuntimeExecutionEnvelope,
+    display_name: &str,
+) -> String {
+    let selector = wake_greeting_selector(runtime_execution_envelope);
+    let phrases =
+        wake_greeting_library_phrases(WakeGreetingLibraryCategory::ClaimedNameAcknowledgement);
+    phrases[selector % 2].replace("{name}", display_name.trim())
+}
+
+fn wake_guest_lane_response_tts_text(
+    response_text: &str,
+    thread_policy_flags: Option<&VoiceTurnThreadPolicyFlags>,
+) -> String {
+    if wake_greeting_handoff_tts_allowed(thread_policy_flags) {
+        response_text.to_string()
+    } else {
+        String::new()
+    }
+}
+
+fn wake_guest_lane_response(
+    runtime_execution_envelope: &RuntimeExecutionEnvelope,
+    session_state: SessionState,
+    session_attach_outcome: SessionAttachOutcome,
+    outcome: &str,
+    reason: &str,
+    next_move: &str,
+    reason_code: &str,
+    response_text: String,
+    thread_policy_flags: Option<&VoiceTurnThreadPolicyFlags>,
+) -> VoiceTurnAdapterResponse {
+    let tts_text = wake_guest_lane_response_tts_text(&response_text, thread_policy_flags);
+    VoiceTurnAdapterResponse {
+        status: "ok".to_string(),
+        outcome: outcome.to_string(),
+        session_id: runtime_execution_envelope
+            .session_id
+            .map(session_id_to_string),
+        turn_id: Some(runtime_execution_envelope.turn_id.0),
+        session_state: Some(session_state_to_api_value(session_state)),
+        session_attach_outcome: Some(session_attach_outcome),
+        failure_class: None,
+        reason: Some(reason.to_string()),
+        next_move: next_move.to_string(),
+        response_text,
+        reason_code: reason_code.to_string(),
+        provenance: None,
+        tts_text,
+        source_chips: Vec::new(),
+        source_cards: Vec::new(),
+        image_cards: Vec::new(),
+        answer_class: None,
+        metadata_safe_for_user: true,
+        trace_id: None,
+        deep_research: None,
+    }
+}
+
+fn wake_guest_lane_claimed_name_ack_response(
+    runtime_execution_envelope: &RuntimeExecutionEnvelope,
+    session_state: SessionState,
+    session_attach_outcome: SessionAttachOutcome,
+    display_name: &str,
+    thread_policy_flags: Option<&VoiceTurnThreadPolicyFlags>,
+) -> VoiceTurnAdapterResponse {
+    wake_guest_lane_response(
+        runtime_execution_envelope,
+        session_state,
+        session_attach_outcome,
+        "GUEST_LANE_POSTURE",
+        "wake_guest_lane_claimed_name_unverified",
+        "guest_public_safe_listening",
+        "WAKE_GUEST_LANE_CLAIMED_NAME_UNVERIFIED",
+        select_wake_guest_lane_claimed_name_ack_text(runtime_execution_envelope, display_name),
+        thread_policy_flags,
+    )
+}
+
+fn wake_guest_lane_name_clarification_response(
+    runtime_execution_envelope: &RuntimeExecutionEnvelope,
+    session_state: SessionState,
+    session_attach_outcome: SessionAttachOutcome,
+    thread_policy_flags: Option<&VoiceTurnThreadPolicyFlags>,
+) -> VoiceTurnAdapterResponse {
+    wake_guest_lane_response(
+        runtime_execution_envelope,
+        session_state,
+        session_attach_outcome,
+        "IDENTITY_PROMPT",
+        "wake_guest_lane_claimed_name_clarification",
+        "identity_name_prompt",
+        "WAKE_GUEST_LANE_CLAIMED_NAME_UNSAFE",
+        select_unknown_speaker_name_prompt(
+            runtime_execution_envelope,
+            WakeUnknownSpeakerPromptReason::CleanCurrentTurnSpeech,
+        ),
+        thread_policy_flags,
+    )
+}
+
+fn wake_guest_lane_verified_identity_required_response(
+    runtime_execution_envelope: &RuntimeExecutionEnvelope,
+    session_state: SessionState,
+    session_attach_outcome: SessionAttachOutcome,
+    display_name: &str,
+    thread_policy_flags: Option<&VoiceTurnThreadPolicyFlags>,
+) -> VoiceTurnAdapterResponse {
+    wake_guest_lane_response(
+        runtime_execution_envelope,
+        session_state,
+        session_attach_outcome,
+        "IDENTITY_REQUIRED",
+        "wake_guest_lane_verified_identity_required",
+        "verified_identity_required",
+        "WAKE_GUEST_LANE_VERIFIED_IDENTITY_REQUIRED",
+        format!(
+            "I can call you {}, but I still need verified identity and authority before helping with that.",
+            display_name.trim()
+        ),
+        thread_policy_flags,
+    )
+}
+
+fn wake_guest_lane_public_followup_should_use_name(text: &str, use_count: u8) -> bool {
+    if use_count > 0 {
+        return false;
+    }
+    let lower = text.trim().to_ascii_lowercase();
+    lower.contains("what can you do")
+        || lower.contains("what can selene do")
+        || lower.contains("help me")
+        || lower.contains("can you help")
+}
+
+fn wake_guest_lane_public_followup_response(
+    runtime_execution_envelope: &RuntimeExecutionEnvelope,
+    session_state: SessionState,
+    session_attach_outcome: SessionAttachOutcome,
+    display_name: &str,
+    thread_policy_flags: Option<&VoiceTurnThreadPolicyFlags>,
+) -> VoiceTurnAdapterResponse {
+    wake_guest_lane_response(
+        runtime_execution_envelope,
+        session_state,
+        session_attach_outcome,
+        "GUEST_LANE_PUBLIC_SAFE",
+        "wake_guest_lane_public_safe_followup",
+        "guest_public_safe_listening",
+        "WAKE_GUEST_LANE_PUBLIC_SAFE",
+        WAKE_GUEST_LANE_CLAIMED_NAME_ACK_SEED[3].replace("{name}", display_name.trim()),
+        thread_policy_flags,
+    )
 }
 
 fn display_name_from_confirmed_user_id(user_id: &UserId) -> Option<String> {
@@ -24853,9 +25388,11 @@ mod tests {
     ) -> VoiceTurnAdapterRequest {
         let seed = stable_hash_u64(label).max(1);
         let mut req = wake_req.clone();
-        req.correlation_id = 34_300_000_u64.saturating_add(seed % 10_000);
-        req.turn_id = 34_310_000_u64.saturating_add(seed % 10_000);
-        req.device_turn_sequence = Some(34_320_000_u64.saturating_add(seed % 10_000));
+        req.correlation_id = wake_req.correlation_id.saturating_add(1 + (seed % 10_000));
+        req.turn_id = wake_req.turn_id.saturating_add(1 + (seed % 10_000));
+        let prior_device_turn_sequence = wake_req.device_turn_sequence.unwrap_or(34_320_000);
+        req.device_turn_sequence =
+            Some(prior_device_turn_sequence.saturating_add(1 + (seed % 10_000)));
         req.now_ns = Some(
             wake_req
                 .now_ns
@@ -25138,7 +25675,7 @@ mod tests {
     #[test]
     fn wake_greeting_library_governance_categories_are_local_and_nonempty() {
         let specs = wake_greeting_library_specs();
-        assert_eq!(specs.len(), 3);
+        assert_eq!(specs.len(), 4);
         assert!(specs.iter().any(|spec| {
             spec.category == WakeGreetingLibraryCategory::GenericActivation
                 && !spec.phrases.is_empty()
@@ -25149,6 +25686,10 @@ mod tests {
         }));
         assert!(specs.iter().any(|spec| {
             spec.category == WakeGreetingLibraryCategory::UnknownSpeakerNamePrompt
+                && !spec.phrases.is_empty()
+        }));
+        assert!(specs.iter().any(|spec| {
+            spec.category == WakeGreetingLibraryCategory::ClaimedNameAcknowledgement
                 && !spec.phrases.is_empty()
         }));
     }
@@ -25164,6 +25705,7 @@ mod tests {
         assert_eq!(WAKE_GREETING_LIBRARY_GENERIC_ACTIVATION_CAP, 100);
         assert_eq!(WAKE_GREETING_LIBRARY_NAMED_ACTIVATION_CAP, 100);
         assert_eq!(WAKE_GREETING_LIBRARY_UNKNOWN_PROMPT_CAP, 25);
+        assert_eq!(WAKE_GREETING_LIBRARY_CLAIMED_NAME_ACK_CAP, 25);
     }
 
     #[test]
@@ -25247,6 +25789,16 @@ mod tests {
                 "I'm not sure who I'm speaking with yet. What should I call you?",
                 "I don't recognize this voice yet. Can you tell me your name?",
                 "Before I help with anything personal, what should I call you?",
+            ]
+        );
+        assert_eq!(
+            wake_greeting_library_phrases(WakeGreetingLibraryCategory::ClaimedNameAcknowledgement),
+            &[
+                "Thanks, {name}. I'll call you {name} for this session.",
+                "Got it, {name}. I'll use that for this session.",
+                "Thanks, {name}. I'm listening.",
+                "Okay, {name}. What would you like to do?",
+                "Understood, {name}. How can I help?",
             ]
         );
     }
@@ -25402,6 +25954,282 @@ mod tests {
             .run_voice_turn(req)
             .expect_err("iPhone wake word must remain disabled after Slice 4");
         assert_eq!(err, "ios_wake_disabled");
+    }
+
+    fn open_unknown_guest_session(
+        label: &str,
+    ) -> (
+        AdapterRuntime,
+        VoiceTurnAdapterRequest,
+        VoiceTurnAdapterRequest,
+    ) {
+        let (runtime, wake_req) = stage34m_activation_only_wake_request(label);
+        runtime
+            .run_voice_turn(wake_req.clone())
+            .expect("wake should open active session before guest lane");
+        let prompt_req = continuing_speech_request_from_wake(
+            &wake_req,
+            &format!("{label}_prompt"),
+            "Can you help me understand this public-safe test?",
+        );
+        let prompt = runtime
+            .run_voice_turn(prompt_req.clone())
+            .expect("unknown continuing speech should establish guest posture");
+        assert_unknown_speaker_identity_prompt(&prompt);
+        (runtime, wake_req, prompt_req)
+    }
+
+    fn assert_guest_lane_local_response(out: &VoiceTurnAdapterResponse) {
+        assert!(out.source_chips.is_empty(), "{out:?}");
+        assert!(out.source_cards.is_empty(), "{out:?}");
+        assert!(out.image_cards.is_empty(), "{out:?}");
+        assert!(out.provenance.is_none(), "{out:?}");
+        assert!(out.answer_class.is_none(), "{out:?}");
+        assert!(out.deep_research.is_none(), "{out:?}");
+        assert!(out.metadata_safe_for_user);
+    }
+
+    #[test]
+    fn wake_guest_lane_allows_anonymous_public_safe_guest_chat() {
+        let (runtime, _wake_req, prompt_req) = open_unknown_guest_session("slice5_anonymous");
+        let public_req = continuing_speech_request_from_wake(
+            &prompt_req,
+            "slice5_anonymous_public",
+            "Tell me a simple public-safe greeting.",
+        );
+        let out = runtime
+            .run_voice_turn(public_req)
+            .expect("anonymous guest should continue in public-safe lane");
+
+        assert_ne!(out.outcome, "IDENTITY_PROMPT", "{out:?}");
+        assert_ne!(out.next_move, "identity_name_prompt", "{out:?}");
+        assert_guest_lane_local_response(&out);
+    }
+
+    #[test]
+    fn wake_guest_lane_anonymous_guest_cannot_access_protected_work() {
+        let (runtime, _wake_req, prompt_req) =
+            open_unknown_guest_session("slice5_anonymous_protected");
+        let protected_req = continuing_speech_request_from_wake(
+            &prompt_req,
+            "slice5_anonymous_protected",
+            "Approve this payroll change.",
+        );
+        let out = runtime
+            .run_voice_turn(protected_req)
+            .expect("anonymous protected request should stay blocked by identity prompt");
+
+        assert_unknown_speaker_identity_prompt(&out);
+        assert_eq!(
+            out.reason_code, "WAKE_UNKNOWN_SPEAKER_PROTECTED_IDENTITY_REQUIRED",
+            "{out:?}"
+        );
+    }
+
+    #[test]
+    fn wake_guest_lane_accepts_safe_claimed_name_after_prompt() {
+        let (runtime, _wake_req, prompt_req) = open_unknown_guest_session("slice5_claim_jd");
+        let name_req =
+            continuing_speech_request_from_wake(&prompt_req, "slice5_claim_jd", "I'm JD");
+        let out = runtime
+            .run_voice_turn(name_req)
+            .expect("safe claimed name should be accepted for session posture");
+
+        assert_eq!(out.outcome, "GUEST_LANE_POSTURE", "{out:?}");
+        assert_eq!(out.next_move, "guest_public_safe_listening", "{out:?}");
+        assert_eq!(
+            out.reason_code, "WAKE_GUEST_LANE_CLAIMED_NAME_UNVERIFIED",
+            "{out:?}"
+        );
+        assert!(out.response_text.contains("JD"), "{out:?}");
+        assert!(out.response_text.contains("session"), "{out:?}");
+        assert_eq!(out.tts_text, out.response_text, "{out:?}");
+        assert_guest_lane_local_response(&out);
+    }
+
+    #[test]
+    fn wake_guest_lane_rejects_unsafe_claimed_name() {
+        let (runtime, _wake_req, prompt_req) = open_unknown_guest_session("slice5_unsafe_name");
+        let name_req = continuing_speech_request_from_wake(
+            &prompt_req,
+            "slice5_unsafe_name",
+            "Call me https://bad.test",
+        );
+        let out = runtime
+            .run_voice_turn(name_req)
+            .expect("unsafe claimed name should clarify without persistence");
+
+        assert_eq!(out.outcome, "IDENTITY_PROMPT", "{out:?}");
+        assert_eq!(out.next_move, "identity_name_prompt", "{out:?}");
+        assert_eq!(out.reason_code, "WAKE_GUEST_LANE_CLAIMED_NAME_UNSAFE");
+        assert!(
+            wake_greeting_library_phrases(WakeGreetingLibraryCategory::UnknownSpeakerNamePrompt)
+                .contains(&out.response_text.as_str()),
+            "{out:?}"
+        );
+        assert_guest_lane_local_response(&out);
+    }
+
+    #[test]
+    fn wake_guest_lane_claimed_name_is_session_only() {
+        let (runtime, _wake_req, prompt_req) = open_unknown_guest_session("slice5_session_only");
+        let name_req = continuing_speech_request_from_wake(
+            &prompt_req,
+            "slice5_session_only",
+            "My name is Mark",
+        );
+        let out = runtime
+            .run_voice_turn(name_req)
+            .expect("claimed name should be acknowledged as session-only");
+
+        assert_eq!(out.outcome, "GUEST_LANE_POSTURE", "{out:?}");
+        assert!(out.response_text.contains("Mark"), "{out:?}");
+        assert!(
+            out.response_text.to_ascii_lowercase().contains("session"),
+            "{out:?}"
+        );
+        assert!(!out.response_text.to_ascii_lowercase().contains("verified"));
+        assert_guest_lane_local_response(&out);
+    }
+
+    #[test]
+    fn wake_guest_lane_creates_no_persistent_profile_or_memory() {
+        let (runtime, _wake_req, prompt_req) = open_unknown_guest_session("slice5_no_persistence");
+        let before_profiles = {
+            let store = runtime.store.lock().expect("store lock must not poison");
+            store.ph1vid_voice_profile_rows().len()
+        };
+        let name_req =
+            continuing_speech_request_from_wake(&prompt_req, "slice5_no_persistence", "Call me JD");
+        let out = runtime
+            .run_voice_turn(name_req)
+            .expect("claimed name should remain transient");
+        assert_eq!(out.outcome, "GUEST_LANE_POSTURE", "{out:?}");
+
+        let store = runtime.store.lock().expect("store lock must not poison");
+        assert_eq!(
+            store.ph1vid_voice_profile_rows().len(),
+            before_profiles,
+            "guest lane must not create durable voice profiles"
+        );
+    }
+
+    #[test]
+    fn wake_guest_lane_claimed_name_does_not_authorize_protected_work() {
+        let (runtime, _wake_req, prompt_req) = open_unknown_guest_session("slice5_no_authority");
+        let name_req =
+            continuing_speech_request_from_wake(&prompt_req, "slice5_no_authority_name", "I'm JD");
+        runtime
+            .run_voice_turn(name_req.clone())
+            .expect("claimed name should be captured before protected follow-up");
+        let protected_req = continuing_speech_request_from_wake(
+            &name_req,
+            "slice5_no_authority_protected",
+            "Approve this payroll change.",
+        );
+        let out = runtime
+            .run_voice_turn(protected_req)
+            .expect("claimed name must not authorize protected work");
+
+        assert_eq!(out.outcome, "IDENTITY_REQUIRED", "{out:?}");
+        assert_eq!(
+            out.reason_code, "WAKE_GUEST_LANE_VERIFIED_IDENTITY_REQUIRED",
+            "{out:?}"
+        );
+        assert!(out.response_text.contains("JD"), "{out:?}");
+        assert!(out.response_text.contains("verified identity"), "{out:?}");
+        assert!(out.response_text.contains("authority"), "{out:?}");
+        assert_guest_lane_local_response(&out);
+    }
+
+    #[test]
+    fn wake_guest_lane_claimed_name_does_not_override_voice_id() {
+        let (runtime, mut known_req) = stage34m_known_voice_wake_request("slice5_known_wins", "jd");
+        let guest_key = AdapterRuntime::wake_guest_lane_key(
+            &UserId::new(known_req.actor_user_id.clone()).expect("user id must parse"),
+            &DeviceId::new(known_req.device_id.clone().expect("device id must parse"))
+                .expect("device id must parse"),
+            &fallback_runtime_execution_envelope_for_voice_turn_request(&known_req)
+                .expect("fallback envelope must build"),
+        );
+        runtime
+            .set_wake_guest_lane_posture(
+                guest_key,
+                WakeGuestLanePosture::ClaimedNameUnverified {
+                    display_name: "Mark".to_string(),
+                    public_name_use_count: 0,
+                },
+            )
+            .expect("test should seed transient guest posture");
+        known_req.turn_id = 34_550_002;
+        known_req.device_turn_sequence = Some(2);
+        let out = runtime
+            .run_voice_turn(known_req)
+            .expect("known Voice ID posture should still control wake greeting");
+
+        assert!(
+            is_named_wake_greeting_for(&out, "JD")
+                || wake_greeting_library_phrases(WakeGreetingLibraryCategory::GenericActivation)
+                    .contains(&out.response_text.as_str()),
+            "{out:?}"
+        );
+        assert!(!out.response_text.contains("Mark"), "{out:?}");
+    }
+
+    #[test]
+    fn wake_guest_lane_public_followup_may_use_claimed_name() {
+        let (runtime, _wake_req, prompt_req) = open_unknown_guest_session("slice5_public_name");
+        let name_req =
+            continuing_speech_request_from_wake(&prompt_req, "slice5_public_name", "Call me JD");
+        runtime
+            .run_voice_turn(name_req.clone())
+            .expect("safe claimed name should be captured");
+        let followup_req = continuing_speech_request_from_wake(
+            &name_req,
+            "slice5_public_name_followup",
+            "What can you do?",
+        );
+        let out = runtime
+            .run_voice_turn(followup_req)
+            .expect("public-safe follow-up may use the claimed name naturally");
+
+        assert_eq!(out.outcome, "GUEST_LANE_PUBLIC_SAFE", "{out:?}");
+        assert!(out.response_text.contains("JD"), "{out:?}");
+        assert_guest_lane_local_response(&out);
+    }
+
+    #[test]
+    fn wake_guest_lane_protected_followup_still_requires_verified_identity() {
+        wake_guest_lane_claimed_name_does_not_authorize_protected_work();
+    }
+
+    #[test]
+    fn wake_guest_lane_preserves_slice3_retry_before_prompt() {
+        wake_greeting_library_governance_preserves_slice3_identity_prompt();
+    }
+
+    #[test]
+    fn wake_guest_lane_preserves_greeting_library_governance() {
+        wake_greeting_library_governance_category_caps_are_enforced();
+        wake_greeting_library_governance_no_unapproved_runtime_phrases_added();
+    }
+
+    #[test]
+    fn wake_guest_lane_preserves_provider_tool_protected_closure() {
+        let (runtime, _wake_req, prompt_req) = open_unknown_guest_session("slice5_closure");
+        let name_req =
+            continuing_speech_request_from_wake(&prompt_req, "slice5_closure_name", "I'm JD");
+        let out = runtime
+            .run_voice_turn(name_req)
+            .expect("claimed name capture should stay local");
+
+        assert_eq!(out.outcome, "GUEST_LANE_POSTURE", "{out:?}");
+        assert_guest_lane_local_response(&out);
+    }
+
+    #[test]
+    fn wake_guest_lane_iphone_wake_word_remains_blocked() {
+        wake_greeting_library_governance_iphone_wake_word_remains_blocked();
     }
 
     #[test]
