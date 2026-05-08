@@ -1645,6 +1645,7 @@ private final class DesktopAuthoritativeReplyPlaybackController: NSObject, Obser
             )
         }
     }
+
 }
 
 private enum VoicePermissionState: String {
@@ -6147,20 +6148,6 @@ struct DesktopSessionShellView: View {
                         }
                     }
 
-                    desktopSidebarActionRow(
-                        title: "Live Voice E2E Proof",
-                        systemImage: "waveform.badge.mic"
-                    ) {
-                        desktopPresentedSecondaryPanel = .liveVoiceProof
-                    }
-
-                    desktopSidebarActionRow(
-                        title: "Controlled Wake Mode",
-                        systemImage: "ear.badge.waveform"
-                    ) {
-                        desktopPresentedSecondaryPanel = .controlledWakeMode
-                    }
-
                     if desktopSidebarSearchIsVisible {
                         TextField("Search chats", text: $desktopSidebarSearchQuery)
                             .textFieldStyle(.plain)
@@ -6661,8 +6648,6 @@ struct DesktopSessionShellView: View {
         _ state: DesktopOperationalConversationShellState
     ) -> some View {
         VStack(alignment: .leading, spacing: 16) {
-            DesktopControlledWakeModeView()
-            DesktopLiveVoiceE2EProofView()
             desktopSessionSurfaceSelectionRailCard
             desktopSessionRecentListVisibilityCard
             desktopSessionPostureEvidenceVisibilityCard
@@ -6677,8 +6662,6 @@ struct DesktopSessionShellView: View {
 
     private var desktopEvidenceFirstWorkspacePanel: some View {
         VStack(alignment: .leading, spacing: 16) {
-            DesktopControlledWakeModeView()
-            DesktopLiveVoiceE2EProofView()
             explicitVoiceEntryAffordanceCard
 
             if desktopReadyTimeHandoffIsActive {
@@ -6713,6 +6696,7 @@ struct DesktopSessionShellView: View {
         _ state: DesktopOperationalConversationShellState
     ) -> some View {
         VStack(alignment: .leading, spacing: 16) {
+            desktopProofToolsDeveloperSection
             desktopWakeProfileAvailabilityCard
             desktopWakeListenerControlCard
             posturePanel
@@ -6732,6 +6716,7 @@ struct DesktopSessionShellView: View {
 
     private var desktopEvidenceFirstDeveloperPanel: some View {
         VStack(alignment: .leading, spacing: 16) {
+            desktopProofToolsDeveloperSection
             desktopWakeProfileAvailabilityCard
             desktopWakeListenerControlCard
             posturePanel
@@ -6747,6 +6732,24 @@ struct DesktopSessionShellView: View {
             needsAttentionCard
         }
         .frame(maxWidth: .infinity, alignment: .topLeading)
+    }
+
+    private var desktopProofToolsDeveloperSection: some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 14) {
+                Text("Developer proof tools stay outside the normal conversation flow. They remain available here for bounded live proof and diagnostics only.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                DesktopControlledWakeModeView()
+                DesktopLiveVoiceE2EProofView()
+            }
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+        } label: {
+            Text("Proof Tools")
+                .font(.headline)
+        }
     }
 
     private var activeRecoveryVisibleSurface: DesktopRecoveryVisibleSurface? {
@@ -13278,16 +13281,195 @@ struct DesktopSessionShellView: View {
         isWritable: Bool,
         readOnlyMessage: String?
     ) -> some View {
-        Group {
-            if isWritable {
-                desktopTypedTurnComposerCard
-            } else {
-                desktopReadOnlyComposerCard(
-                    message: readOnlyMessage ?? "This conversation is read-only here."
-                )
+        VStack(alignment: .leading, spacing: 12) {
+            desktopNormalVoiceConversationStatusStrip
+
+            Group {
+                if isWritable {
+                    desktopTypedTurnComposerCard
+                } else {
+                    desktopReadOnlyComposerCard(
+                        message: readOnlyMessage ?? "This conversation is read-only here."
+                    )
+                }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var desktopNormalVoiceConversationStatusStrip: some View {
+        HStack(spacing: 14) {
+            HStack(spacing: 8) {
+                Image(systemName: desktopNormalVoiceStatusSymbolName)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(desktopNormalVoiceStatusTint)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(desktopNormalVoiceStatusTitle)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(.primary)
+
+                    Text(desktopNormalVoiceStatusDetail)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            }
+
+            Spacer(minLength: 8)
+
+            Button {
+                desktopToggleNormalWakeMode()
+            } label: {
+                Label(desktopNormalWakeButtonTitle, systemImage: desktopNormalWakeButtonSymbolName)
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .disabled(desktopNormalWakeButtonIsDisabled)
+            .help(desktopNormalWakeButtonHelp)
+
+            Button {
+                if explicitVoiceController.isListening {
+                    explicitVoiceController.discardCurrentVoiceTurn()
+                } else {
+                    startDesktopComposerVoiceTurn()
+                }
+            } label: {
+                Label(
+                    explicitVoiceController.isListening ? "Stop" : "Mic",
+                    systemImage: explicitVoiceController.isListening ? "stop.fill" : "mic.fill"
+                )
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.small)
+            .disabled(!desktopReadyTimeHandoffIsActive && !explicitVoiceController.isListening)
+            .help("Start or stop bounded voice capture for this conversation.")
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(nsColor: .textBackgroundColor).opacity(0.96))
+        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .stroke(Color.primary.opacity(0.07), lineWidth: 1)
+        )
+    }
+
+    private var desktopNormalVoiceStatusTitle: String {
+        if desktopAuthoritativeReplyPlaybackState.phase == .speaking {
+            return "Speaking"
+        }
+        if explicitVoiceController.isListening {
+            return "Listening"
+        }
+        switch desktopWakeListenerController.listenerState {
+        case .listening:
+            return "Wake listening"
+        case .wakeRequestStaged, .dispatching:
+            return "Wake detected"
+        case .failed:
+            return "Wake unavailable"
+        case .idle:
+            return desktopReadyTimeHandoffIsActive ? "Ready" : "Setup needed"
+        }
+    }
+
+    private var desktopNormalVoiceStatusDetail: String {
+        if desktopAuthoritativeReplyPlaybackState.phase == .speaking {
+            return "Selene is speaking the runtime answer."
+        }
+        if explicitVoiceController.isListening {
+            return "Speak your command. Your words will appear in the conversation."
+        }
+        switch desktopWakeListenerController.listenerState {
+        case .listening:
+            return "Say Selene to open or resume the session."
+        case .wakeRequestStaged, .dispatching:
+            return "Runtime is opening the session."
+        case .failed:
+            return desktopWakeListenerController.failedRequest?.summary ?? "Wake failed closed."
+        case .idle:
+            return desktopReadyTimeHandoffIsActive
+                ? "Use the mic or turn on controlled wake."
+                : "Complete setup before voice conversation."
+        }
+    }
+
+    private var desktopNormalVoiceStatusSymbolName: String {
+        if desktopAuthoritativeReplyPlaybackState.phase == .speaking {
+            return "speaker.wave.2.fill"
+        }
+        if explicitVoiceController.isListening {
+            return "waveform"
+        }
+        switch desktopWakeListenerController.listenerState {
+        case .listening:
+            return "ear.badge.waveform"
+        case .wakeRequestStaged, .dispatching:
+            return "sparkles"
+        case .failed:
+            return "exclamationmark.triangle.fill"
+        case .idle:
+            return "circle.fill"
+        }
+    }
+
+    private var desktopNormalVoiceStatusTint: Color {
+        if desktopAuthoritativeReplyPlaybackState.phase == .speaking {
+            return .blue
+        }
+        if explicitVoiceController.isListening {
+            return .green
+        }
+        switch desktopWakeListenerController.listenerState {
+        case .listening:
+            return .green
+        case .wakeRequestStaged, .dispatching:
+            return .blue
+        case .failed:
+            return .orange
+        case .idle:
+            return .secondary
+        }
+    }
+
+    private var desktopNormalWakeButtonTitle: String {
+        desktopWakeListenerController.listenerState.isActiveForMicrophone ? "Wake Off" : "Wake On"
+    }
+
+    private var desktopNormalWakeButtonSymbolName: String {
+        desktopWakeListenerController.listenerState.isActiveForMicrophone ? "stop.circle" : "ear"
+    }
+
+    private var desktopNormalWakeButtonHelp: String {
+        if desktopWakeListenerController.listenerState.isActiveForMicrophone {
+            return "Stop controlled wake listening."
+        }
+        return "Start controlled wake listening for Selene."
+    }
+
+    private var desktopNormalWakeButtonIsDisabled: Bool {
+        if desktopWakeListenerController.listenerState.isActiveForMicrophone {
+            return false
+        }
+        return desktopWakeListenerPromptState == nil
+            || explicitVoiceController.isListening
+            || explicitVoiceController.pendingRequest != nil
+            || desktopWakeListenerController.pendingRequest != nil
+            || lastStagedWakeTriggeredVoiceTurnRequestState != nil
+    }
+
+    private func desktopToggleNormalWakeMode() {
+        if desktopWakeListenerController.listenerState.isActiveForMicrophone {
+            stopDesktopWakeListenerAndSuppressAutoStart(promptState: desktopWakeListenerPromptState)
+            return
+        }
+
+        guard let promptState = desktopWakeListenerPromptState else {
+            return
+        }
+        startDesktopWakeListener(promptState: promptState)
     }
 
     private var desktopConversationReadOnlyComposerMessage: String {
@@ -19325,6 +19507,7 @@ struct DesktopSessionShellView: View {
                     ),
                     cacheStatusLabel: outcomeState.authoritativeResponseProvenance?.cacheStatus
                 )
+                _ = await playExplicitVoiceAuthoritativeReply(outcomeState: outcomeState)
             } else {
                 desktopAuthoritativeReplyRenderState = nil
                 desktopAuthoritativeReplyProvenanceRenderState = nil
