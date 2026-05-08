@@ -20157,6 +20157,12 @@ fn committed_voice_unsafe_transcript_reason(
             Ph1cRetryAdvice::Repeat,
         ));
     }
+    if committed_voice_cjk_noise_or_filler_fragment(trimmed) {
+        return Some((
+            ph1c_reason_codes::STT_FAIL_LOW_SEMANTIC_CONFIDENCE,
+            Ph1cRetryAdvice::Repeat,
+        ));
+    }
     if committed_voice_unsupported_latin_language(trimmed, capture) {
         return Some((
             ph1c_reason_codes::STT_FAIL_LANGUAGE_MISMATCH,
@@ -20244,6 +20250,78 @@ fn committed_voice_single_short_unsafe_token(transcript_text: &str) -> bool {
         return false;
     }
     token.chars().filter(|ch| ch.is_ascii_alphabetic()).count() <= 4
+}
+
+fn committed_voice_cjk_noise_or_filler_fragment(transcript_text: &str) -> bool {
+    let compact: String = transcript_text
+        .chars()
+        .filter(|ch| !ch.is_whitespace() && !ch.is_ascii_punctuation())
+        .collect();
+    if compact.is_empty() || committed_voice_has_actionable_cjk_intent(&compact) {
+        return false;
+    }
+    let cjk_count = compact.chars().filter(|ch| is_cjk_char_for_build1c(*ch)).count();
+    if cjk_count == 0 {
+        return false;
+    }
+    let filler_count = compact
+        .chars()
+        .filter(|ch| committed_voice_cjk_filler_char(*ch))
+        .count();
+    let ascii_alpha_count = compact.chars().filter(|ch| ch.is_ascii_alphabetic()).count();
+    let non_filler_cjk_count = cjk_count.saturating_sub(filler_count);
+
+    if cjk_count >= 4 && filler_count * 100 >= cjk_count * 80 {
+        return true;
+    }
+
+    cjk_count <= 2 && non_filler_cjk_count == 0 && ascii_alpha_count <= 2
+}
+
+fn committed_voice_cjk_filler_char(ch: char) -> bool {
+    matches!(
+        ch,
+        '啊' | '呀'
+            | '呃'
+            | '嗯'
+            | '唔'
+            | '哦'
+            | '噢'
+            | '哎'
+            | '诶'
+            | '欸'
+            | '额'
+            | '呐'
+            | '啦'
+            | '哈'
+            | '呵'
+            | '嘿'
+            | '喂'
+    )
+}
+
+fn committed_voice_has_actionable_cjk_intent(text: &str) -> bool {
+    [
+        "现在",
+        "几点",
+        "天气",
+        "告诉",
+        "搜索",
+        "查找",
+        "解释",
+        "什么",
+        "为什么",
+        "怎么",
+        "可以",
+        "帮",
+        "请",
+        "回答",
+        "翻译",
+        "纽约",
+        "东京",
+    ]
+    .iter()
+    .any(|needle| text.contains(needle))
 }
 
 fn committed_voice_unclear_short_latin_fragment(transcript_text: &str) -> bool {
@@ -37140,6 +37218,72 @@ mod tests {
             .source
             .iter()
             .any(|source| source == ACTIVE_DESKTOP_STT_PROVIDER_SOURCE));
+    }
+
+    #[test]
+    fn h418_cjk_filler_noise_transcript_clarifies_before_runtime() {
+        let runtime = AdapterRuntime::default();
+        let mut req = base_request();
+        mark_request_as_live_desktop_capture_for_h417_tests(&mut req);
+        req.correlation_id = 418_107;
+        req.turn_id = 418_107;
+        req.user_text_final = Some("呃啊呃啊呃啊呃啊呃啊".to_string());
+        if let Some(capture) = req.audio_capture_ref.as_mut() {
+            capture.locale_tag = Some("en-US".to_string());
+            capture.acoustic_confidence_bp = Some(9_000);
+            capture.vad_confidence_bp = Some(9_000);
+            capture.speech_likeness_bp = Some(9_000);
+        }
+
+        let out = runtime
+            .run_voice_turn(req)
+            .expect("voice-like CJK filler noise should clarify");
+        assert_eq!(out.status, "ok");
+        assert_eq!(out.outcome, "CLARIFY");
+        assert_eq!(
+            out.reason_code,
+            ph1c_reason_codes::STT_FAIL_LOW_SEMANTIC_CONFIDENCE
+                .0
+                .to_string()
+        );
+        assert!(
+            out.response_text.contains("语音转写"),
+            "CJK filler should ask for a voice retry: {}",
+            out.response_text
+        );
+        assert!(
+            runtime.ingress.debug_last_agent_input_packet().is_none(),
+            "CJK filler noise must stop before PH1.LANG/PH1.X runtime entry"
+        );
+    }
+
+    #[test]
+    fn h418_mixed_filler_noise_transcript_clarifies_before_runtime() {
+        let runtime = AdapterRuntime::default();
+        let mut req = base_request();
+        mark_request_as_live_desktop_capture_for_h417_tests(&mut req);
+        req.correlation_id = 418_108;
+        req.turn_id = 418_108;
+        req.user_text_final = Some("e呀".to_string());
+        if let Some(capture) = req.audio_capture_ref.as_mut() {
+            capture.locale_tag = Some("en-US".to_string());
+            capture.acoustic_confidence_bp = Some(9_000);
+            capture.vad_confidence_bp = Some(9_000);
+            capture.speech_likeness_bp = Some(9_000);
+        }
+
+        let out = runtime
+            .run_voice_turn(req)
+            .expect("voice-like mixed filler noise should clarify");
+        assert_eq!(out.status, "ok");
+        assert_eq!(out.outcome, "CLARIFY");
+        assert_eq!(
+            out.reason_code,
+            ph1c_reason_codes::STT_FAIL_LOW_SEMANTIC_CONFIDENCE
+                .0
+                .to_string()
+        );
+        assert!(runtime.ingress.debug_last_agent_input_packet().is_none());
     }
 
     #[test]
