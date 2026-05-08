@@ -10631,11 +10631,107 @@ fn parse_app_platform(value: &str) -> Result<AppPlatform, String> {
         "IOS" => Ok(AppPlatform::Ios),
         "ANDROID" => Ok(AppPlatform::Android),
         "TABLET" => Ok(AppPlatform::Tablet),
-        "DESKTOP" => Ok(AppPlatform::Desktop),
+        "DESKTOP" | "MACOS" | "WINDOWS" => Ok(AppPlatform::Desktop),
         _ => Err(format!(
-            "invalid app_platform '{}'; expected IOS|ANDROID|TABLET|DESKTOP",
+            "invalid app_platform '{}'; expected IOS|ANDROID|TABLET|DESKTOP|MACOS|WINDOWS",
             value
         )),
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
+enum CrossPlatformActivationPlatform {
+    Macos,
+    Windows,
+    Android,
+    IphoneIos,
+    UnknownPlatform,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
+enum CrossPlatformActivationMethod {
+    WakeWord,
+    Explicit,
+    PushToTalk,
+    SideButton,
+    Keyboard,
+    UnknownActivation,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
+struct CrossPlatformActivationParityDecision {
+    platform: CrossPlatformActivationPlatform,
+    activation_method: CrossPlatformActivationMethod,
+    activation_supported: bool,
+    wake_equivalent: bool,
+    may_open_or_resume_session: bool,
+    downstream_handoff_required: bool,
+    fail_closed: bool,
+}
+
+#[allow(dead_code)]
+fn parse_cross_platform_activation_platform(value: &str) -> CrossPlatformActivationPlatform {
+    match value.trim().to_ascii_uppercase().as_str() {
+        "MACOS" | "MAC" | "DESKTOP" => CrossPlatformActivationPlatform::Macos,
+        "WINDOWS" | "WIN32" => CrossPlatformActivationPlatform::Windows,
+        "ANDROID" => CrossPlatformActivationPlatform::Android,
+        "IOS" | "IPHONE_IOS" | "IPHONE" => CrossPlatformActivationPlatform::IphoneIos,
+        _ => CrossPlatformActivationPlatform::UnknownPlatform,
+    }
+}
+
+#[allow(dead_code)]
+fn parse_cross_platform_activation_method(value: &str) -> CrossPlatformActivationMethod {
+    match value.trim().to_ascii_uppercase().as_str() {
+        "WAKE_WORD" => CrossPlatformActivationMethod::WakeWord,
+        "EXPLICIT" => CrossPlatformActivationMethod::Explicit,
+        "PUSH_TO_TALK" => CrossPlatformActivationMethod::PushToTalk,
+        "SIDE_BUTTON" => CrossPlatformActivationMethod::SideButton,
+        "KEYBOARD" => CrossPlatformActivationMethod::Keyboard,
+        _ => CrossPlatformActivationMethod::UnknownActivation,
+    }
+}
+
+#[allow(dead_code)]
+fn resolve_cross_platform_activation_parity(
+    platform_token: &str,
+    activation_token: &str,
+    wake_capability_present: bool,
+) -> CrossPlatformActivationParityDecision {
+    let platform = parse_cross_platform_activation_platform(platform_token);
+    let activation_method = parse_cross_platform_activation_method(activation_token);
+    let supported = match (platform, activation_method) {
+        (
+            CrossPlatformActivationPlatform::Macos
+            | CrossPlatformActivationPlatform::Windows
+            | CrossPlatformActivationPlatform::Android,
+            CrossPlatformActivationMethod::WakeWord,
+        ) => wake_capability_present,
+        (
+            CrossPlatformActivationPlatform::Macos
+            | CrossPlatformActivationPlatform::Windows
+            | CrossPlatformActivationPlatform::Android
+            | CrossPlatformActivationPlatform::IphoneIos,
+            CrossPlatformActivationMethod::Explicit,
+        ) => true,
+        _ => false,
+    };
+    let wake_equivalent = supported
+        && matches!(
+            activation_method,
+            CrossPlatformActivationMethod::WakeWord | CrossPlatformActivationMethod::Explicit
+        );
+    CrossPlatformActivationParityDecision {
+        platform,
+        activation_method,
+        activation_supported: supported,
+        wake_equivalent,
+        may_open_or_resume_session: supported,
+        downstream_handoff_required: supported,
+        fail_closed: !supported,
     }
 }
 
@@ -25018,6 +25114,16 @@ mod tests {
         (runtime, req)
     }
 
+    fn stage34m_activation_only_wake_request_for_platform(
+        label: &str,
+        platform: &str,
+    ) -> (AdapterRuntime, VoiceTurnAdapterRequest) {
+        let (runtime, mut req) = stage34m_activation_only_wake_request(label);
+        req.app_platform = platform.to_string();
+        seed_wake_enrollment_complete_for_request(&runtime, &mut req, label);
+        (runtime, req)
+    }
+
     fn assert_wake_greeting_handoff_response(out: &VoiceTurnAdapterResponse) {
         assert_eq!(out.status, "ok");
         assert_eq!(out.outcome, "SESSION_OPENED");
@@ -27055,6 +27161,243 @@ mod tests {
     #[test]
     fn wake_device_sync_iphone_wake_word_remains_blocked() {
         wake_guest_lane_iphone_wake_word_remains_blocked();
+    }
+
+    fn assert_cross_platform_activation_local_handoff(out: &VoiceTurnAdapterResponse) {
+        assert_wake_greeting_handoff_response(out);
+        assert!(out.source_chips.is_empty(), "{out:?}");
+        assert!(out.source_cards.is_empty(), "{out:?}");
+        assert!(out.image_cards.is_empty(), "{out:?}");
+        assert!(out.provenance.is_none(), "{out:?}");
+        assert!(out.answer_class.is_none(), "{out:?}");
+        assert!(out.trace_id.is_none(), "{out:?}");
+        assert!(out.deep_research.is_none(), "{out:?}");
+    }
+
+    #[test]
+    fn wake_cross_platform_activation_parity_macos_wake_word_uses_same_handoff() {
+        let decision = resolve_cross_platform_activation_parity("MACOS", "WAKE_WORD", true);
+        assert_eq!(decision.platform, CrossPlatformActivationPlatform::Macos);
+        assert!(decision.activation_supported);
+        assert!(decision.wake_equivalent);
+        assert!(decision.may_open_or_resume_session);
+        assert!(decision.downstream_handoff_required);
+        assert!(!decision.fail_closed);
+
+        let (runtime, req) =
+            stage34m_activation_only_wake_request_for_platform("slice9_macos", "MACOS");
+        let out = runtime
+            .run_voice_turn(req)
+            .expect("macOS wake-word activation should use desktop handoff semantics");
+        assert_cross_platform_activation_local_handoff(&out);
+    }
+
+    #[test]
+    fn wake_cross_platform_activation_parity_windows_wake_word_uses_same_handoff() {
+        let decision = resolve_cross_platform_activation_parity("WINDOWS", "WAKE_WORD", true);
+        assert_eq!(decision.platform, CrossPlatformActivationPlatform::Windows);
+        assert!(decision.activation_supported);
+        assert!(decision.wake_equivalent);
+        assert!(decision.may_open_or_resume_session);
+        assert!(decision.downstream_handoff_required);
+        assert!(!decision.fail_closed);
+
+        let (runtime, req) =
+            stage34m_activation_only_wake_request_for_platform("slice9_windows", "WINDOWS");
+        let out = runtime
+            .run_voice_turn(req)
+            .expect("Windows wake-word activation should use desktop handoff semantics");
+        assert_cross_platform_activation_local_handoff(&out);
+    }
+
+    #[test]
+    fn wake_cross_platform_activation_parity_android_wake_word_uses_same_handoff() {
+        let decision = resolve_cross_platform_activation_parity("ANDROID", "WAKE_WORD", true);
+        assert_eq!(decision.platform, CrossPlatformActivationPlatform::Android);
+        assert!(decision.activation_supported);
+        assert!(decision.wake_equivalent);
+        assert!(decision.may_open_or_resume_session);
+        assert!(decision.downstream_handoff_required);
+        assert!(!decision.fail_closed);
+
+        let (runtime, mut req) =
+            stage34m_activation_only_wake_request_for_platform("slice9_android", "ANDROID");
+        req.device_class = Some("PHONE".to_string());
+        req.hardware_capability_profile = Some("ANDROID_PHONE".to_string());
+        req.claimed_capabilities = Some(vec![
+            "MICROPHONE".to_string(),
+            "SPEAKER_OUTPUT".to_string(),
+            "WAKE_WORD".to_string(),
+        ]);
+        let out = runtime
+            .run_voice_turn(req)
+            .expect("Android wake-word activation should use same handoff semantics");
+        assert_cross_platform_activation_local_handoff(&out);
+    }
+
+    #[test]
+    fn wake_cross_platform_activation_parity_iphone_wake_word_remains_blocked() {
+        let decision = resolve_cross_platform_activation_parity("IPHONE_IOS", "WAKE_WORD", true);
+        assert_eq!(
+            decision.platform,
+            CrossPlatformActivationPlatform::IphoneIos
+        );
+        assert_eq!(
+            decision.activation_method,
+            CrossPlatformActivationMethod::WakeWord
+        );
+        assert!(!decision.activation_supported);
+        assert!(decision.fail_closed);
+
+        wake_guest_lane_iphone_wake_word_remains_blocked();
+    }
+
+    #[test]
+    fn wake_cross_platform_activation_parity_iphone_explicit_uses_same_handoff() {
+        let decision = resolve_cross_platform_activation_parity("IPHONE_IOS", "EXPLICIT", false);
+        assert_eq!(
+            decision.platform,
+            CrossPlatformActivationPlatform::IphoneIos
+        );
+        assert!(decision.activation_supported);
+        assert!(decision.wake_equivalent);
+        assert!(decision.may_open_or_resume_session);
+
+        let runtime = AdapterRuntime::default();
+        let mut req = base_request();
+        req.app_platform = "IOS".to_string();
+        req.trigger = "EXPLICIT".to_string();
+        req.user_text_partial = None;
+        req.user_text_final = None;
+        mark_request_as_echo_safe_for_tests(&mut req);
+        mark_request_as_attested_capture(&mut req);
+
+        let out = runtime
+            .run_voice_turn(req)
+            .expect("iPhone explicit activation should preserve handoff semantics");
+        assert_cross_platform_activation_local_handoff(&out);
+    }
+
+    #[test]
+    fn wake_cross_platform_activation_parity_side_button_deferred_or_equivalent() {
+        let side_button =
+            resolve_cross_platform_activation_parity("IPHONE_IOS", "SIDE_BUTTON", false);
+        let push_to_talk =
+            resolve_cross_platform_activation_parity("IPHONE_IOS", "PUSH_TO_TALK", false);
+        assert_eq!(
+            side_button.activation_method,
+            CrossPlatformActivationMethod::SideButton
+        );
+        assert_eq!(
+            push_to_talk.activation_method,
+            CrossPlatformActivationMethod::PushToTalk
+        );
+        assert!(side_button.fail_closed);
+        assert!(push_to_talk.fail_closed);
+
+        let runtime = AdapterRuntime::default();
+        let mut req = base_request();
+        req.trigger = "SIDE_BUTTON".to_string();
+        let err = runtime
+            .run_voice_turn(req)
+            .expect_err("side-button requires a later API/native trigger surface");
+        assert!(err.contains("invalid trigger"));
+    }
+
+    #[test]
+    fn wake_cross_platform_activation_parity_rejected_wake_remains_silent() {
+        wake_greeting_handoff_rejected_wake_remains_silent();
+    }
+
+    #[test]
+    fn wake_cross_platform_activation_parity_unknown_platform_fails_closed() {
+        let decision =
+            resolve_cross_platform_activation_parity("UNKNOWN_PLATFORM", "WAKE_WORD", true);
+        assert_eq!(
+            decision.platform,
+            CrossPlatformActivationPlatform::UnknownPlatform
+        );
+        assert!(decision.fail_closed);
+        assert!(!decision.activation_supported);
+
+        let runtime = AdapterRuntime::default();
+        let mut req = base_request();
+        req.app_platform = "UNKNOWN_PLATFORM".to_string();
+        let err = runtime
+            .run_voice_turn(req)
+            .expect_err("unknown platform must fail closed");
+        assert!(err.contains("invalid app_platform"));
+    }
+
+    #[test]
+    fn wake_cross_platform_activation_parity_unknown_activation_fails_closed() {
+        let decision =
+            resolve_cross_platform_activation_parity("MACOS", "UNKNOWN_ACTIVATION", true);
+        assert_eq!(
+            decision.activation_method,
+            CrossPlatformActivationMethod::UnknownActivation
+        );
+        assert!(decision.fail_closed);
+        assert!(!decision.activation_supported);
+
+        let runtime = AdapterRuntime::default();
+        let mut req = base_request();
+        req.app_platform = "MACOS".to_string();
+        req.trigger = "UNKNOWN_ACTIVATION".to_string();
+        let err = runtime
+            .run_voice_turn(req)
+            .expect_err("unknown activation must fail closed");
+        assert!(err.contains("invalid trigger"));
+    }
+
+    #[test]
+    fn wake_cross_platform_activation_parity_provider_tool_protected_paths_closed() {
+        let (runtime, req) =
+            stage34m_activation_only_wake_request_for_platform("slice9_closed", "WINDOWS");
+        let out = runtime
+            .run_voice_turn(req)
+            .expect("accepted activation should stay local");
+        assert_cross_platform_activation_local_handoff(&out);
+    }
+
+    #[test]
+    fn wake_cross_platform_activation_parity_voice_id_named_greeting_still_gated() {
+        wake_voice_id_posture_handoff_known_speaker_can_receive_named_greeting();
+        wake_voice_id_posture_handoff_low_confidence_does_not_use_name();
+    }
+
+    #[test]
+    fn wake_cross_platform_activation_parity_device_trust_does_not_identify() {
+        wake_local_voice_cache_device_trust_does_not_identify_speaker();
+    }
+
+    #[test]
+    fn wake_cross_platform_activation_parity_preserves_guest_lane() {
+        wake_guest_lane_allows_anonymous_public_safe_guest_chat();
+        wake_guest_lane_claimed_name_does_not_authorize_protected_work();
+    }
+
+    #[test]
+    fn wake_cross_platform_activation_parity_preserves_device_sync_revocation() {
+        wake_device_sync_lost_device_revokes_trust_and_cache();
+        wake_device_sync_revoked_cache_fails_closed();
+    }
+
+    #[test]
+    fn wake_cross_platform_activation_parity_native_clients_remain_renderers() {
+        let decision = resolve_cross_platform_activation_parity("IPHONE_IOS", "EXPLICIT", false);
+        assert!(decision.activation_supported);
+        let runtime = AdapterRuntime::default();
+        let mut req = base_request();
+        req.app_platform = "IOS".to_string();
+        req.trigger = "EXPLICIT".to_string();
+        req.user_text_partial = None;
+        req.user_text_final = None;
+        mark_request_as_echo_safe_for_tests(&mut req);
+        let out = runtime
+            .run_voice_turn(req)
+            .expect("native client shell should receive runtime-authored handoff");
+        assert_cross_platform_activation_local_handoff(&out);
     }
 
     #[test]
