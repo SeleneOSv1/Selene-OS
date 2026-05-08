@@ -5384,6 +5384,7 @@ private struct DesktopSelectedSessionProjectContextState: Equatable {
 private enum DesktopShellSecondaryPanel: String, Identifiable {
     case history
     case workspace
+    case liveVoiceProof
     case developer
 
     var id: String { rawValue }
@@ -6145,6 +6146,13 @@ struct DesktopSessionShellView: View {
                         }
                     }
 
+                    desktopSidebarActionRow(
+                        title: "Live Voice E2E Proof",
+                        systemImage: "waveform.badge.mic"
+                    ) {
+                        desktopPresentedSecondaryPanel = .liveVoiceProof
+                    }
+
                     if desktopSidebarSearchIsVisible {
                         TextField("Search chats", text: $desktopSidebarSearchQuery)
                             .textFieldStyle(.plain)
@@ -6557,6 +6565,15 @@ struct DesktopSessionShellView: View {
                     desktopOperationalWorkspacePanel(state)
                 }
             )
+        case .liveVoiceProof:
+            return AnyView(
+                desktopSecondaryPanelSheetContainer(
+                    title: "Live Voice E2E Proof",
+                    detail: "A bounded native Desktop proof surface for runtime-authoritative live wake and Voice ID posture."
+                ) {
+                    DesktopLiveVoiceE2EProofView()
+                }
+            )
         case .developer:
             return AnyView(
                 desktopSecondaryPanelSheetContainer(
@@ -6591,6 +6608,15 @@ struct DesktopSessionShellView: View {
                         : "Onboarding and setup remain available here without turning the default shell into an engineering dashboard."
                 ) {
                     desktopEvidenceFirstWorkspacePanel
+                }
+            )
+        case .liveVoiceProof:
+            return AnyView(
+                desktopSecondaryPanelSheetContainer(
+                    title: "Live Voice E2E Proof",
+                    detail: "A bounded native Desktop proof surface for runtime-authoritative live wake and Voice ID posture."
+                ) {
+                    DesktopLiveVoiceE2EProofView()
                 }
             )
         case .developer:
