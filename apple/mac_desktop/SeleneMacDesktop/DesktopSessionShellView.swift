@@ -1825,7 +1825,7 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
     @Published private(set) var failedRequest: InterruptContinuityResponseFailureState?
 
     private let maxVoiceTurnBytes = 16_384
-    private let autoPrepareAfterSilenceDelay: TimeInterval = 1.1
+    private let autoPrepareAfterSilenceDelay: TimeInterval = 1.8
     private let audioEngine = AVAudioEngine()
     private let realtimeAudioQueue = DispatchQueue(label: "selene.desktop.realtime-transcription.audio")
     private let realtimeURLSession = URLSession(configuration: .ephemeral)
@@ -6216,6 +6216,7 @@ struct DesktopSessionShellView: View {
     private var desktopControlledWakeEnabled: Bool = false
     private let maxDesktopTypedTurnBytes = 16_384
     private let desktopConversationBottomAnchorID = "desktop_conversation_bottom_anchor"
+    private let desktopOpenAITtsSelfEchoCooldownNanoseconds: UInt64 = 2_400_000_000
 
     var body: some View {
         Group {
@@ -18787,11 +18788,12 @@ struct DesktopSessionShellView: View {
     private func releaseDesktopOpenAITtsSelfEchoGateAfterCooldown(reason: String) {
         desktopOpenAITtsSelfEchoGateGeneration &+= 1
         let gateGeneration = desktopOpenAITtsSelfEchoGateGeneration
+        let cooldownMS = desktopOpenAITtsSelfEchoCooldownNanoseconds / 1_000_000
         desktopAppendRuntimeBridgeDebugLog(
-            "desktop voice self echo gate release scheduled reason=\(boundedFailureLogToken(reason)) cooldown_ms=900"
+            "desktop voice self echo gate release scheduled reason=\(boundedFailureLogToken(reason)) cooldown_ms=\(cooldownMS)"
         )
         Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 900_000_000)
+            try? await Task.sleep(nanoseconds: desktopOpenAITtsSelfEchoCooldownNanoseconds)
             guard desktopOpenAITtsSelfEchoGateGeneration == gateGeneration,
                   desktopAuthoritativeReplyPlaybackState.phase != .speaking,
                   desktopAuthoritativeReplyPlaybackState.phase != .requesting else {

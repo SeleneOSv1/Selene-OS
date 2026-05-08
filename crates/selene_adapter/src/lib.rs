@@ -7956,6 +7956,7 @@ impl AdapterRuntime {
                 }
             }
             let mut skip_identity_prompt_for_guest_lane = false;
+            let mut append_unknown_speaker_prompt_after_public_answer_text: Option<String> = None;
             if let Some(decision) = self
                 .wake_guest_lane_turn_decision(
                     &runtime_execution_envelope,
@@ -8006,59 +8007,92 @@ impl AdapterRuntime {
                 }
             }
             if !skip_identity_prompt_for_guest_lane {
-                if let Some(response) = continuing_speech_identity_prompt_response(
-                    &store,
-                    tenant_id_for_ph1c.as_deref(),
-                    &actor_user_id,
-                    &runtime_device_id,
-                    &runtime_execution_envelope,
-                    session_turn_state.session_snapshot.session_state,
-                    session_turn_state.session_attach_outcome,
-                    &voice_id_request,
-                    voice_id_observation,
-                    user_text_final.as_deref(),
-                    request.thread_policy_flags.as_ref(),
-                )
-                .map_err(post_session_error)?
-                {
-                    self.set_wake_guest_lane_posture(
-                        Self::wake_guest_lane_key(
-                            &actor_user_id,
-                            &runtime_device_id,
-                            &runtime_execution_envelope,
-                        ),
-                        WakeGuestLanePosture::UnknownGuestUnverified,
-                    )
-                    .map_err(post_session_error)?;
-                    self.record_transcript_updates(
-                        &mut store,
-                        now,
-                        correlation_id,
-                        turn_id,
+                let continuing_speech_prompt_reason =
+                    if continuing_speech_identity_prompt_session_surface(
+                        session_turn_state.session_attach_outcome,
+                    ) {
+                        continuing_speech_identity_prompt_reason(user_text_final.as_deref())
+                    } else {
+                        None
+                    };
+                if let Some(prompt_reason) = continuing_speech_prompt_reason {
+                    let voice_id_posture_after_retry = activation_handoff_voice_id_posture(
+                        &store,
+                        tenant_id_for_ph1c.as_deref(),
                         &actor_user_id,
-                        Some(&runtime_device_id),
-                        session_turn_state.session_id_for_commits,
-                        user_text_partial.clone(),
-                        user_text_final.clone(),
-                        None,
-                        Some(response.response_text.clone()),
-                    )
-                    .map_err(post_session_error)?;
-                    finalize_session_turn_record(
-                        &mut store,
-                        now,
-                        correlation_id,
-                        turn_id,
                         &runtime_device_id,
-                        session_turn_state.session_id_for_commits,
-                        None,
-                        session_turn_state.device_turn_sequence,
-                        &runtime_execution_envelope.idempotency_key,
-                        &self.runtime_node_id,
-                        self.session_lease_ttl_ms,
+                        &voice_id_request,
+                        voice_id_observation,
                     )
                     .map_err(post_session_error)?;
-                    return Ok(response);
+                    if voice_id_posture_after_retry.is_none() {
+                        self.set_wake_guest_lane_posture(
+                            Self::wake_guest_lane_key(
+                                &actor_user_id,
+                                &runtime_device_id,
+                                &runtime_execution_envelope,
+                            ),
+                            WakeGuestLanePosture::UnknownGuestUnverified,
+                        )
+                        .map_err(post_session_error)?;
+                        match prompt_reason {
+                            WakeUnknownSpeakerPromptReason::ProtectedOrPersonalRequest => {
+                                if let Some(response) = continuing_speech_identity_prompt_response(
+                                    &store,
+                                    tenant_id_for_ph1c.as_deref(),
+                                    &actor_user_id,
+                                    &runtime_device_id,
+                                    &runtime_execution_envelope,
+                                    session_turn_state.session_snapshot.session_state,
+                                    session_turn_state.session_attach_outcome,
+                                    &voice_id_request,
+                                    voice_id_observation,
+                                    user_text_final.as_deref(),
+                                    request.thread_policy_flags.as_ref(),
+                                )
+                                .map_err(post_session_error)?
+                                {
+                                    self.record_transcript_updates(
+                                        &mut store,
+                                        now,
+                                        correlation_id,
+                                        turn_id,
+                                        &actor_user_id,
+                                        Some(&runtime_device_id),
+                                        session_turn_state.session_id_for_commits,
+                                        user_text_partial.clone(),
+                                        user_text_final.clone(),
+                                        None,
+                                        Some(response.response_text.clone()),
+                                    )
+                                    .map_err(post_session_error)?;
+                                    finalize_session_turn_record(
+                                        &mut store,
+                                        now,
+                                        correlation_id,
+                                        turn_id,
+                                        &runtime_device_id,
+                                        session_turn_state.session_id_for_commits,
+                                        None,
+                                        session_turn_state.device_turn_sequence,
+                                        &runtime_execution_envelope.idempotency_key,
+                                        &self.runtime_node_id,
+                                        self.session_lease_ttl_ms,
+                                    )
+                                    .map_err(post_session_error)?;
+                                    return Ok(response);
+                                }
+                            }
+                            WakeUnknownSpeakerPromptReason::CleanCurrentTurnSpeech => {
+                                append_unknown_speaker_prompt_after_public_answer_text = Some(
+                                    select_unknown_speaker_name_prompt(
+                                        &runtime_execution_envelope,
+                                        prompt_reason,
+                                    ),
+                                );
+                            }
+                        }
+                    }
                 }
             }
             self.run_ph1vision_os_orchestration_step(
@@ -8171,6 +8205,10 @@ impl AdapterRuntime {
                             .map(|response| (text, response))
                     })
                 {
+                    let response_text = append_unknown_speaker_prompt_after_public_answer(
+                        &h411_response.response_text,
+                        append_unknown_speaker_prompt_after_public_answer_text.as_deref(),
+                    );
                     finalize_session_turn_record(
                         &mut store,
                         now,
@@ -8200,10 +8238,10 @@ impl AdapterRuntime {
                         failure_class: None,
                         reason: None,
                         next_move: "respond".to_string(),
-                        response_text: h411_response.response_text.clone(),
+                        response_text: response_text.clone(),
                         reason_code: h411_response.reason_code.to_string(),
                         provenance: None,
-                        tts_text: h411_response.response_text,
+                        tts_text: response_text,
                         source_chips: Vec::new(),
                         source_cards: Vec::new(),
                         image_cards: Vec::new(),
@@ -8252,6 +8290,10 @@ impl AdapterRuntime {
                         None,
                     )
                 }) {
+                    let response_text = append_unknown_speaker_prompt_after_public_answer(
+                        &response_text,
+                        append_unknown_speaker_prompt_after_public_answer_text.as_deref(),
+                    );
                     finalize_session_turn_record(
                         &mut store,
                         now,
@@ -8453,12 +8495,21 @@ impl AdapterRuntime {
                 user_text_final.as_deref(),
                 &mut execution_outcome,
             );
+            if append_unknown_speaker_prompt_after_public_answer_text.is_some() {
+                if let Some(response_text) = execution_outcome.response_text.as_mut() {
+                    *response_text = append_unknown_speaker_prompt_after_public_answer(
+                        response_text,
+                        append_unknown_speaker_prompt_after_public_answer_text.as_deref(),
+                    );
+                }
+            }
             if language_packet
                 .as_ref()
                 .and_then(|packet| {
                     language_switch_ack_for_build1c(packet, user_text_final.as_deref())
                 })
                 .is_some()
+                || append_unknown_speaker_prompt_after_public_answer_text.is_some()
             {
                 ph1d_public_answer_text = execution_outcome.response_text.clone();
             }
@@ -17388,14 +17439,21 @@ enum WakeClaimedNameExtraction {
 fn wake_greeting_selector(runtime_execution_envelope: &RuntimeExecutionEnvelope) -> usize {
     let session_component = runtime_execution_envelope
         .session_id
-        .map(|session_id| (session_id.0 % (u64::MAX as u128)) as u64)
-        .unwrap_or(0);
-    let device_turn_component = runtime_execution_envelope.device_turn_sequence.unwrap_or(0);
-    runtime_execution_envelope
-        .turn_id
-        .0
-        .wrapping_add(session_component)
-        .wrapping_add(device_turn_component) as usize
+        .map(|session_id| session_id.0.to_string())
+        .unwrap_or_else(|| "none".to_string());
+    let device_turn_component = runtime_execution_envelope
+        .device_turn_sequence
+        .map(|sequence| sequence.to_string())
+        .unwrap_or_else(|| "none".to_string());
+    let seed = format!(
+        "{}|{}|{}|{}|{}",
+        runtime_execution_envelope.turn_id.0,
+        session_component,
+        device_turn_component,
+        runtime_execution_envelope.actor_identity.as_str(),
+        runtime_execution_envelope.device_identity.as_str()
+    );
+    stable_hash_u64(&seed) as usize
 }
 
 fn select_wake_greeting_handoff_text(
@@ -17475,6 +17533,23 @@ fn select_unknown_speaker_name_prompt(
     let prompt_phrases =
         wake_greeting_library_phrases(WakeGreetingLibraryCategory::UnknownSpeakerNamePrompt);
     prompt_phrases[selector % (prompt_phrases.len() - 1)].to_string()
+}
+
+fn append_unknown_speaker_prompt_after_public_answer(
+    response_text: &str,
+    prompt: Option<&str>,
+) -> String {
+    let Some(prompt) = prompt.map(str::trim).filter(|value| !value.is_empty()) else {
+        return response_text.to_string();
+    };
+    let answer = response_text.trim();
+    if answer.is_empty() {
+        return prompt.to_string();
+    }
+    if answer.ends_with(prompt) {
+        return response_text.to_string();
+    }
+    format!("{answer} Also, {prompt}")
 }
 
 fn wake_guest_lane_name_candidate(text: &str) -> (Option<&str>, bool) {
@@ -25668,6 +25743,39 @@ mod tests {
         assert!(out.metadata_safe_for_user);
     }
 
+    fn assert_public_answer_before_unknown_speaker_prompt(out: &VoiceTurnAdapterResponse) {
+        assert_eq!(out.status, "ok", "{out:?}");
+        assert_eq!(out.outcome, "FINAL", "{out:?}");
+        assert_ne!(out.next_move, "identity_name_prompt", "{out:?}");
+        assert!(
+            out.response_text.contains(" Also, "),
+            "public answer should precede the identity prompt: {out:?}"
+        );
+        assert!(
+            WAKE_UNKNOWN_SPEAKER_NAME_PROMPT_SEED
+                .iter()
+                .any(|prompt| out.response_text.ends_with(prompt)),
+            "identity prompt should stay in the approved local prompt library: {out:?}"
+        );
+        assert!(
+            !WAKE_UNKNOWN_SPEAKER_NAME_PROMPT_SEED
+                .iter()
+                .any(|prompt| out.response_text.starts_with(prompt)),
+            "identity prompt must not preempt public-safe answer: {out:?}"
+        );
+        assert_eq!(out.tts_text, out.response_text, "{out:?}");
+        assert!(out.source_chips.is_empty(), "{out:?}");
+        assert!(out.source_cards.is_empty(), "{out:?}");
+        assert!(out.image_cards.is_empty(), "{out:?}");
+        assert!(out.provenance.is_none(), "{out:?}");
+        assert!(out.answer_class.is_none(), "{out:?}");
+        assert!(out.trace_id.is_none(), "{out:?}");
+        assert!(out.deep_research.is_none(), "{out:?}");
+        assert_eq!(out.session_state.as_deref(), Some("ACTIVE"), "{out:?}");
+        assert!(out.session_id.is_some(), "{out:?}");
+        assert!(out.metadata_safe_for_user);
+    }
+
     #[test]
     fn wake_unknown_speaker_prompt_does_not_interrupt_wake_only_greeting() {
         let (runtime, req) =
@@ -25711,11 +25819,7 @@ mod tests {
             .run_voice_turn(req)
             .expect("unknown continuing speech should prompt only after Voice ID retry");
 
-        assert_unknown_speaker_identity_prompt(&out);
-        assert_eq!(
-            out.reason_code, "WAKE_CONTINUING_SPEECH_IDENTITY_PROMPT",
-            "{out:?}"
-        );
+        assert_public_answer_before_unknown_speaker_prompt(&out);
     }
 
     #[test]
@@ -25760,11 +25864,7 @@ mod tests {
             .run_voice_turn(req)
             .expect("unknown continuing speech should ask what to call the speaker");
 
-        assert_unknown_speaker_identity_prompt(&out);
-        assert_eq!(
-            out.reason_code, "WAKE_CONTINUING_SPEECH_IDENTITY_PROMPT",
-            "{out:?}"
-        );
+        assert_public_answer_before_unknown_speaker_prompt(&out);
     }
 
     #[test]
@@ -25854,7 +25954,7 @@ mod tests {
         let out = runtime
             .run_voice_turn(req)
             .expect("unknown identity prompt should remain non-persistent");
-        assert_unknown_speaker_identity_prompt(&out);
+        assert_public_answer_before_unknown_speaker_prompt(&out);
 
         let store = runtime.store.lock().expect("store lock must not poison");
         assert_eq!(
@@ -26140,11 +26240,11 @@ mod tests {
         let req = continuing_speech_request_from_wake(
             &wake_req,
             "slice4_preserves_slice3",
-            "Can you help me with this testing session today?",
+            "Approve this payroll change.",
         );
         let out = runtime
             .run_voice_turn(req)
-            .expect("unknown continuing speech should still prompt for identity posture");
+            .expect("unknown protected speech should still prompt for identity posture");
 
         assert_unknown_speaker_identity_prompt(&out);
     }
@@ -26202,7 +26302,7 @@ mod tests {
         let prompt_req = continuing_speech_request_from_wake(
             &wake_req,
             &format!("{label}_prompt"),
-            "Can you help me understand this public-safe test?",
+            "Approve this payroll change.",
         );
         let prompt = runtime
             .run_voice_turn(prompt_req.clone())
