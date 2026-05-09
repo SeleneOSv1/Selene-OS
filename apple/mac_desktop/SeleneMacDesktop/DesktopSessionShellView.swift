@@ -1158,19 +1158,79 @@ private struct DesktopAudioEvidenceContext: Equatable {
     let ttsPlaybackActiveAtCaptureStart: Bool
     let ttsPlaybackStartedNS: UInt64?
     let lastTtsPlaybackEndedNS: UInt64?
+    let ttsPlaybackReferenceText: String?
 
-    func ttsOverlapsCapture(startNS: UInt64, endNS: UInt64) -> Bool {
-        if ttsPlaybackActiveAtCaptureStart {
-            return true
+    func ttsActiveDuringCapture(startNS: UInt64, endNS: UInt64) -> Bool {
+        guard let ttsPlaybackStartedNS else {
+            return ttsPlaybackActiveAtCaptureStart
         }
 
-        guard let lastTtsPlaybackEndedNS else {
+        let playbackEndNS = lastTtsPlaybackEndedNS ?? endNS
+        return ttsPlaybackStartedNS <= endNS && playbackEndNS >= startNS
+    }
+
+    func ttsEchoRiskForSpeech(speechStartNS: UInt64?, captureStartNS: UInt64, captureEndNS: UInt64) -> Bool {
+        let observedSpeechStartNS = speechStartNS ?? captureStartNS
+        if ttsPlaybackActiveAtCaptureStart {
+            guard let lastTtsPlaybackEndedNS else {
+                return true
+            }
+
+            let postPlaybackEchoGuardNS: UInt64 = 150_000_000
+            return observedSpeechStartNS <= lastTtsPlaybackEndedNS
+                || observedSpeechStartNS.saturatingSubtract(lastTtsPlaybackEndedNS) < postPlaybackEchoGuardNS
+        }
+
+        guard ttsActiveDuringCapture(startNS: captureStartNS, endNS: captureEndNS) else {
             return false
         }
 
-        let echoGuardWindowNS: UInt64 = 800_000_000
-        return startNS <= lastTtsPlaybackEndedNS
-            || startNS.saturatingSubtract(lastTtsPlaybackEndedNS) < echoGuardWindowNS
+        guard let lastTtsPlaybackEndedNS else {
+            return true
+        }
+
+        let postPlaybackEchoGuardNS: UInt64 = 150_000_000
+        return observedSpeechStartNS <= lastTtsPlaybackEndedNS
+            || observedSpeechStartNS.saturatingSubtract(lastTtsPlaybackEndedNS) < postPlaybackEchoGuardNS
+    }
+
+    func transcriptMatchesTtsReference(_ transcript: String?) -> Bool {
+        guard let transcript,
+              let ttsPlaybackReferenceText else {
+            return false
+        }
+
+        let transcriptTokens = DesktopAudioEvidenceContext.normalizedTokens(transcript)
+        let ttsTokens = DesktopAudioEvidenceContext.normalizedTokens(ttsPlaybackReferenceText)
+        guard !transcriptTokens.isEmpty,
+              !ttsTokens.isEmpty else {
+            return false
+        }
+
+        let transcriptJoined = transcriptTokens.joined()
+        let ttsJoined = ttsTokens.joined()
+        if transcriptJoined.count >= 6,
+           (ttsJoined.contains(transcriptJoined) || transcriptJoined.contains(ttsJoined)) {
+            return true
+        }
+
+        let overlap = Set(transcriptTokens).intersection(Set(ttsTokens)).count
+        let overlapBP = (overlap * 10_000) / Swift.max(transcriptTokens.count, 1)
+        if transcriptTokens.count <= 3 {
+            return overlapBP >= 5_000
+        }
+
+        return overlapBP >= 6_500
+    }
+
+    private static func normalizedTokens(_ text: String) -> [String] {
+        text
+            .lowercased()
+            .split { character in
+                !character.isLetter && !character.isNumber
+            }
+            .map(String.init)
+            .filter { !$0.isEmpty }
     }
 }
 
@@ -1223,11 +1283,22 @@ private struct DesktopAudioEvidenceAccumulator {
     func snapshot(
         captureStartNS: UInt64,
         captureEndNS: UInt64,
+        finalTranscript: String?,
         finalTranscriptPresent: Bool,
         partialTranscriptPresent: Bool,
+        speechStartNS: UInt64?,
         evidenceContext: DesktopAudioEvidenceContext
     ) -> DesktopAudioEvidenceSnapshot {
-        let ttsOverlapped = evidenceContext.ttsOverlapsCapture(startNS: captureStartNS, endNS: captureEndNS)
+        let ttsPlaybackActive = evidenceContext.ttsActiveDuringCapture(
+            startNS: captureStartNS,
+            endNS: captureEndNS
+        )
+        let ttsEchoRiskForSpeech = evidenceContext.ttsEchoRiskForSpeech(
+            speechStartNS: speechStartNS,
+            captureStartNS: captureStartNS,
+            captureEndNS: captureEndNS
+        )
+        let finalTranscriptMatchesTtsEcho = evidenceContext.transcriptMatchesTtsReference(finalTranscript)
         let streamGapDetected = maxInterBufferGapNS > 750_000_000 || audioBufferCount == 0
         let rms = appendedAudioBytes == 0 ? 0 : sqrt(accumulatedMeanSquare / Double(Swift.max(appendedAudioBytes / 2, 1)))
         let peakRatio = Double(peakSampleMagnitude) / 32_768.0
@@ -1235,9 +1306,11 @@ private struct DesktopAudioEvidenceAccumulator {
         let clipped = peakRatio >= 0.98
 
         let evidenceClass: DesktopAudioEvidenceClass
-        if ttsOverlapped && (finalTranscriptPresent || partialTranscriptPresent || audibleEnergy) {
+        if finalTranscriptMatchesTtsEcho {
+            evidenceClass = .likelyTtsEcho
+        } else if ttsEchoRiskForSpeech && (finalTranscriptPresent || partialTranscriptPresent || audibleEnergy) {
             evidenceClass = .doubleTalkUncertain
-        } else if ttsOverlapped {
+        } else if ttsPlaybackActive && !finalTranscriptPresent {
             evidenceClass = .likelyTtsEcho
         } else if streamGapDetected {
             evidenceClass = .unsafeUncertain
@@ -1253,10 +1326,10 @@ private struct DesktopAudioEvidenceAccumulator {
 
         return DesktopAudioEvidenceSnapshot(
             evidenceClass: evidenceClass,
-            ttsPlaybackActive: ttsOverlapped,
+            ttsPlaybackActive: ttsPlaybackActive,
             streamGapDetected: streamGapDetected,
             captureDegraded: streamGapDetected || clipped || matchesUnsafeEvidence(evidenceClass),
-            aecUnstable: ttsOverlapped,
+            aecUnstable: ttsEchoRiskForSpeech,
             audibleEnergyDetected: audibleEnergy,
             peakRatio: peakRatio,
             rmsRatio: rms,
@@ -2088,7 +2161,7 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
         let deviceRoute: String
         let selectedMic: String
         let selectedSpeaker: String
-        let evidenceContext: DesktopAudioEvidenceContext
+        var evidenceContext: DesktopAudioEvidenceContext
     }
 
     @Published private(set) var microphonePermission: VoicePermissionState = .notRequested
@@ -2116,6 +2189,7 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
     private var realtimeCaptureStopNS: UInt64?
     private var realtimeCompletionTimeoutWorkItem: DispatchWorkItem?
     private var realtimeMaxSessionDurationWorkItem: DispatchWorkItem?
+    private var realtimeSpeechStartedNS: UInt64?
     private var realtimeFirstDeltaNS: UInt64?
     private var realtimeAudioEvidenceAccumulator = DesktopAudioEvidenceAccumulator()
 
@@ -2252,6 +2326,17 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
             return
         }
 
+        guard !shouldRejectCommittedUserTurnEvidence(audioCaptureRefState) else {
+            completeStoppedCaptureSession()
+            recordFailure(
+                id: "failed_explicit_voice_unsafe_audio_evidence",
+                title: "Failed explicit voice request",
+                summary: "Desktop rejected the bounded voice turn because the audio evidence was echo, noise, degraded, or otherwise unsafe.",
+                detail: "Failure visibility only; no runtime dispatch, local answer, provider call, protected execution, memory write, or authority grant was produced."
+            )
+            return
+        }
+
         let deviceTurnSequence = nextDeviceTurnSequence()
         transcriptPreview = trimmedTranscript
         pendingRequest = ExplicitVoiceTurnRequestState(
@@ -2281,6 +2366,15 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
     func haltCaptureSession() {
         cancelAutoPrepareAfterSilence()
         teardownRecognitionSession()
+    }
+
+    func updateActiveAudioEvidenceContext(_ evidenceContext: DesktopAudioEvidenceContext) {
+        guard var activeCaptureContext else {
+            return
+        }
+
+        activeCaptureContext.evidenceContext = evidenceContext
+        self.activeCaptureContext = activeCaptureContext
     }
 
     func discardCurrentVoiceTurn() {
@@ -2318,6 +2412,7 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
         realtimePartialTranscript = ""
         realtimeCommittedTranscript = ""
         realtimeCaptureStopNS = nil
+        realtimeSpeechStartedNS = nil
         realtimeFirstDeltaNS = nil
         transcriptPreview = ""
 
@@ -2537,6 +2632,18 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
             return
         }
 
+        if eventType == "input_audio_buffer.speech_started" {
+            DispatchQueue.main.async {
+                if self.realtimeSpeechStartedNS == nil {
+                    self.realtimeSpeechStartedNS = DispatchTime.now().uptimeNanoseconds
+                    desktopAppendRuntimeBridgeDebugLog(
+                        "openai realtime transcription speech_started observed=true"
+                    )
+                }
+            }
+            return
+        }
+
         if eventType == "conversation.item.input_audio_transcription.delta",
            let delta = object["delta"] as? String,
            !delta.isEmpty {
@@ -2673,6 +2780,17 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
             return
         }
 
+        guard !shouldRejectCommittedUserTurnEvidence(audioCaptureRefState) else {
+            recordFailure(
+                id: "failed_realtime_transcription_unsafe_audio_evidence",
+                title: "Failed explicit voice request",
+                summary: "Desktop rejected the committed realtime transcript because the audio evidence was echo, noise, degraded, or otherwise unsafe.",
+                detail: "Failure visibility only; no runtime dispatch, local answer, provider call, protected execution, memory write, or authority grant was produced."
+            )
+            teardownRecognitionSession()
+            return
+        }
+
         let deviceTurnSequence = nextDeviceTurnSequence()
         realtimeCommittedTranscript = trimmedTranscript
         transcriptPreview = trimmedTranscript
@@ -2689,6 +2807,23 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
             "openai realtime transcription completed stt_provider_id=\(DesktopVoiceProviderLane.sttProviderID) final_chars=\(trimmedTranscript.count) runtime_handoff=/v1/voice/turn"
         )
         completeStoppedCaptureSession()
+    }
+
+    private func shouldRejectCommittedUserTurnEvidence(_ state: DesktopVoiceTurnAudioCaptureRefState) -> Bool {
+        if state.captureDegraded || state.streamGapDetected || state.aecUnstable {
+            return true
+        }
+
+        if state.echoSafeConfidenceBP < 5_000 || state.speechLikenessBP < 5_000 {
+            return true
+        }
+
+        guard let nearfieldConfidenceBP = state.nearfieldConfidenceBP,
+              nearfieldConfidenceBP >= 4_000 else {
+            return true
+        }
+
+        return false
     }
 
     private func scheduleRealtimeCompletionTimeout() {
@@ -2778,6 +2913,7 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
         realtimePartialTranscript = ""
         realtimeCommittedTranscript = ""
         realtimeCaptureStopNS = nil
+        realtimeSpeechStartedNS = nil
         realtimeFirstDeltaNS = nil
         realtimeAudioQueue.sync {
             realtimeAudioEvidenceAccumulator = DesktopAudioEvidenceAccumulator()
@@ -2936,8 +3072,10 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
             realtimeAudioEvidenceAccumulator.snapshot(
                 captureStartNS: tStartNS,
                 captureEndNS: tEndNS,
+                finalTranscript: finalTranscript,
                 finalTranscriptPresent: finalTranscriptPresent,
                 partialTranscriptPresent: partialTranscriptPresent,
+                speechStartNS: realtimeSpeechStartedNS ?? realtimeFirstDeltaNS,
                 evidenceContext: activeCaptureContext.evidenceContext
             )
         }
@@ -2998,7 +3136,7 @@ private final class DesktopWakeListenerController: ObservableObject {
         let deviceRoute: String
         let selectedMic: String
         let selectedSpeaker: String
-        let evidenceContext: DesktopAudioEvidenceContext
+        var evidenceContext: DesktopAudioEvidenceContext
     }
 
     @Published private(set) var microphonePermission: VoicePermissionState = .notRequested
@@ -3028,6 +3166,7 @@ private final class DesktopWakeListenerController: ObservableObject {
     private var realtimeCaptureStopNS: UInt64?
     private var realtimeCompletionTimeoutWorkItem: DispatchWorkItem?
     private var realtimeMaxSessionDurationWorkItem: DispatchWorkItem?
+    private var realtimeSpeechStartedNS: UInt64?
     private var realtimeFirstDeltaNS: UInt64?
     private var realtimeAudioEvidenceAccumulator = DesktopAudioEvidenceAccumulator()
 
@@ -3161,6 +3300,15 @@ private final class DesktopWakeListenerController: ObservableObject {
         listenerState = .dispatching
     }
 
+    func updateActiveAudioEvidenceContext(_ evidenceContext: DesktopAudioEvidenceContext) {
+        guard var activeCaptureContext else {
+            return
+        }
+
+        activeCaptureContext.evidenceContext = evidenceContext
+        self.activeCaptureContext = activeCaptureContext
+    }
+
     private func beginCaptureSession() {
         failedRequest = nil
         teardownRecognitionSession()
@@ -3242,6 +3390,7 @@ private final class DesktopWakeListenerController: ObservableObject {
         realtimePartialTranscript = ""
         realtimeCommittedTranscript = ""
         realtimeCaptureStopNS = nil
+        realtimeSpeechStartedNS = nil
         realtimeFirstDeltaNS = nil
         transcriptPreview = ""
 
@@ -3470,6 +3619,18 @@ private final class DesktopWakeListenerController: ObservableObject {
             desktopAppendRuntimeBridgeDebugLog(
                 "openai wake realtime transcription session updated observed=true"
             )
+            return
+        }
+
+        if eventType == "input_audio_buffer.speech_started" {
+            DispatchQueue.main.async {
+                if self.realtimeSpeechStartedNS == nil {
+                    self.realtimeSpeechStartedNS = DispatchTime.now().uptimeNanoseconds
+                    desktopAppendRuntimeBridgeDebugLog(
+                        "openai wake realtime transcription speech_started observed=true"
+                    )
+                }
+            }
             return
         }
 
@@ -3743,6 +3904,7 @@ private final class DesktopWakeListenerController: ObservableObject {
         realtimePartialTranscript = ""
         realtimeCommittedTranscript = ""
         realtimeCaptureStopNS = nil
+        realtimeSpeechStartedNS = nil
         realtimeFirstDeltaNS = nil
         realtimeAudioQueue.sync {
             realtimeAudioEvidenceAccumulator = DesktopAudioEvidenceAccumulator()
@@ -3863,8 +4025,10 @@ private final class DesktopWakeListenerController: ObservableObject {
             realtimeAudioEvidenceAccumulator.snapshot(
                 captureStartNS: tStartNS,
                 captureEndNS: tEndNS,
+                finalTranscript: detectionText,
                 finalTranscriptPresent: finalTranscriptPresent,
                 partialTranscriptPresent: partialTranscriptPresent,
+                speechStartNS: realtimeSpeechStartedNS ?? realtimeFirstDeltaNS,
                 evidenceContext: activeCaptureContext.evidenceContext
             )
         }
@@ -6536,7 +6700,9 @@ struct DesktopSessionShellView: View {
     @State private var desktopAuthoritativeReplyProvenanceRenderState: DesktopAuthoritativeReplyProvenanceRenderState?
     @State private var desktopAuthoritativeReplyPlaybackState: DesktopAuthoritativeReplyPlaybackState = .idle
     @State private var desktopOpenAITtsPlaybackActiveSinceNS: UInt64?
+    @State private var desktopOpenAITtsPlaybackMostRecentStartedNS: UInt64?
     @State private var desktopOpenAITtsPlaybackLastEndedNS: UInt64?
+    @State private var desktopOpenAITtsPlaybackReferenceText: String?
     @State private var desktopTypedTurnDraft: String = ""
     @State private var desktopTypedTurnComposerMeasuredHeight: CGFloat = 34
     @State private var desktopSearchRequestDraft: String = ""
@@ -6570,7 +6736,6 @@ struct DesktopSessionShellView: View {
     private var desktopControlledWakeEnabled: Bool = false
     private let maxDesktopTypedTurnBytes = 16_384
     private let desktopConversationBottomAnchorID = "desktop_conversation_bottom_anchor"
-    private let desktopOpenAITtsSelfEchoCooldownNanoseconds: UInt64 = 2_400_000_000
 
     var body: some View {
         Group {
@@ -6605,6 +6770,16 @@ struct DesktopSessionShellView: View {
         }
         .task(id: explicitVoiceController.pendingRequest?.id) {
             await dispatchPreparedExplicitVoiceRequestIfNeeded()
+            await synchronizeDesktopWakeListenerLifecycleState()
+        }
+        .task(id: explicitVoiceController.failedRequest?.id) {
+            if explicitVoiceController.failedRequest?.id == "failed_realtime_transcription_unsafe_audio_evidence"
+                || explicitVoiceController.failedRequest?.id == "failed_explicit_voice_unsafe_audio_evidence" {
+                desktopAppendRuntimeBridgeDebugLog(
+                    "desktop unsafe voice evidence rejected rearm=evidence_gated_duplex"
+                )
+                desktopAttemptResumeComposerVoiceMode()
+            }
             await synchronizeDesktopWakeListenerLifecycleState()
         }
         .onReceive(desktopWakeListenerController.$pendingRequest) { pendingRequest in
@@ -8996,18 +9171,15 @@ struct DesktopSessionShellView: View {
               explicitVoiceController.pendingRequest == nil,
               desktopTypedTurnPendingRequest == nil,
               !desktopRealtimeTranscriptionStartInFlight,
-              !desktopOpenAITtsSelfEchoGateActive,
               !desktopWakeListenerController.listenerState.isActiveForMicrophone,
               desktopWakeListenerController.listenerState != .dispatching,
               desktopWakeListenerController.pendingRequest == nil,
               lastStagedWakeTriggeredVoiceTurnRequestState == nil,
-              desktopTypedTurnDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-              desktopAuthoritativeReplyPlaybackState.phase != .speaking,
-              desktopAuthoritativeReplyPlaybackState.phase != .requesting else {
+              desktopTypedTurnDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return
         }
 
-        startDesktopComposerVoiceTurn()
+        startDesktopExplicitVoiceTurn()
     }
 
     private func presentDesktopMeetingRecordingUnavailable() {
@@ -9022,28 +9194,14 @@ struct DesktopSessionShellView: View {
 
     private func startPostWakeInstructionListeningAfterGreeting() {
         desktopComposerVoiceModeEnabled = true
-        guard !desktopOpenAITtsSelfEchoGateActive,
-              desktopAuthoritativeReplyPlaybackState.phase != .speaking,
-              desktopAuthoritativeReplyPlaybackState.phase != .requesting else {
-            desktopComposerVoiceModeAwaitingReplyPlaybackCompletion = true
-            desktopAppendRuntimeBridgeDebugLog(
-                "desktop post-wake instruction listening delayed reason=openai_tts_self_echo_gate"
-            )
-            return
-        }
-
         desktopComposerVoiceModeAwaitingReplyPlaybackCompletion = false
+        desktopAppendRuntimeBridgeDebugLog(
+            "desktop post-wake instruction listening starting reason=evidence_gated_duplex"
+        )
         startDesktopExplicitVoiceTurn()
     }
 
     private func startDesktopComposerVoiceTurn() {
-        guard !desktopOpenAITtsSelfEchoGateActive else {
-            desktopAppendRuntimeBridgeDebugLog(
-                "desktop voice capture start blocked reason=openai_tts_self_echo_gate"
-            )
-            return
-        }
-
         let wakeDispatchInFlight = desktopWakeListenerController.listenerState == .dispatching
         desktopWakeListenerController.haltCaptureSession()
         if !wakeDispatchInFlight {
@@ -9070,13 +9228,6 @@ struct DesktopSessionShellView: View {
     }
 
     private func startDesktopExplicitVoiceTurn() {
-        guard !desktopOpenAITtsSelfEchoGateActive else {
-            desktopAppendRuntimeBridgeDebugLog(
-                "desktop explicit voice capture start blocked reason=openai_tts_self_echo_gate"
-            )
-            return
-        }
-
         let featureFlagEnabled = DesktopRealtimeTranscriptionFeatureFlag.isEnabled
         desktopAppendRuntimeBridgeDebugLog(
             "desktop realtime transcription flag name=\(DesktopRealtimeTranscriptionFeatureFlag.name) enabled=\(featureFlagEnabled)"
@@ -19047,6 +19198,7 @@ struct DesktopSessionShellView: View {
         guard !authoritativeResponseText.isEmpty else {
             return false
         }
+        desktopOpenAITtsPlaybackReferenceText = authoritativeResponseText
 
         guard DesktopOpenAITtsFeatureFlag.isEnabled else {
             desktopAppendRuntimeBridgeDebugLog(
@@ -19132,8 +19284,9 @@ struct DesktopSessionShellView: View {
     private func desktopCurrentAudioEvidenceContext() -> DesktopAudioEvidenceContext {
         DesktopAudioEvidenceContext(
             ttsPlaybackActiveAtCaptureStart: desktopAuthoritativeReplyPlaybackState.phase == .speaking,
-            ttsPlaybackStartedNS: desktopOpenAITtsPlaybackActiveSinceNS,
-            lastTtsPlaybackEndedNS: desktopOpenAITtsPlaybackLastEndedNS
+            ttsPlaybackStartedNS: desktopOpenAITtsPlaybackMostRecentStartedNS,
+            lastTtsPlaybackEndedNS: desktopOpenAITtsPlaybackLastEndedNS,
+            ttsPlaybackReferenceText: desktopOpenAITtsPlaybackReferenceText
         )
     }
 
@@ -19144,7 +19297,10 @@ struct DesktopSessionShellView: View {
         if playbackState.phase == .speaking {
             if desktopOpenAITtsPlaybackActiveSinceNS == nil {
                 desktopOpenAITtsPlaybackActiveSinceNS = nowNS
+                desktopOpenAITtsPlaybackMostRecentStartedNS = nowNS
             }
+            explicitVoiceController.updateActiveAudioEvidenceContext(desktopCurrentAudioEvidenceContext())
+            desktopWakeListenerController.updateActiveAudioEvidenceContext(desktopCurrentAudioEvidenceContext())
             return
         }
 
@@ -19152,46 +19308,34 @@ struct DesktopSessionShellView: View {
             desktopOpenAITtsPlaybackLastEndedNS = nowNS
             desktopOpenAITtsPlaybackActiveSinceNS = nil
         }
+        explicitVoiceController.updateActiveAudioEvidenceContext(desktopCurrentAudioEvidenceContext())
+        desktopWakeListenerController.updateActiveAudioEvidenceContext(desktopCurrentAudioEvidenceContext())
     }
 
     private func beginDesktopOpenAITtsSelfEchoGate(reason: String) {
         desktopOpenAITtsSelfEchoGateGeneration &+= 1
         desktopOpenAITtsSelfEchoGateActive = true
-        cancelDesktopRealtimeTranscriptionStartIfNeeded()
-
-        if explicitVoiceController.isListening {
-            explicitVoiceController.discardCurrentVoiceTurn()
-        }
-
         desktopAppendRuntimeBridgeDebugLog(
-            "desktop voice self echo gate active=true reason=\(boundedFailureLogToken(reason)) capture_paused=true"
+            "desktop voice self echo gate active=true reason=\(boundedFailureLogToken(reason)) capture_mode=evidence_gated_duplex"
         )
+        desktopAttemptResumeComposerVoiceMode()
     }
 
     private func releaseDesktopOpenAITtsSelfEchoGateAfterCooldown(reason: String) {
         desktopOpenAITtsSelfEchoGateGeneration &+= 1
-        let gateGeneration = desktopOpenAITtsSelfEchoGateGeneration
-        let cooldownMS = desktopOpenAITtsSelfEchoCooldownNanoseconds / 1_000_000
+        guard desktopAuthoritativeReplyPlaybackState.phase != .speaking,
+              desktopAuthoritativeReplyPlaybackState.phase != .requesting else {
+            return
+        }
+
+        desktopOpenAITtsSelfEchoGateActive = false
         desktopAppendRuntimeBridgeDebugLog(
-            "desktop voice self echo gate release scheduled reason=\(boundedFailureLogToken(reason)) cooldown_ms=\(cooldownMS)"
+            "desktop voice self echo gate active=false reason=\(boundedFailureLogToken(reason)) release=immediate"
         )
-        Task { @MainActor in
-            try? await Task.sleep(nanoseconds: desktopOpenAITtsSelfEchoCooldownNanoseconds)
-            guard desktopOpenAITtsSelfEchoGateGeneration == gateGeneration,
-                  desktopAuthoritativeReplyPlaybackState.phase != .speaking,
-                  desktopAuthoritativeReplyPlaybackState.phase != .requesting else {
-                return
-            }
 
-            desktopOpenAITtsSelfEchoGateActive = false
-            desktopAppendRuntimeBridgeDebugLog(
-                "desktop voice self echo gate active=false reason=cooldown_elapsed"
-            )
-
-            if desktopComposerVoiceModeAwaitingReplyPlaybackCompletion {
-                desktopComposerVoiceModeAwaitingReplyPlaybackCompletion = false
-                desktopAttemptResumeComposerVoiceMode()
-            }
+        if desktopComposerVoiceModeAwaitingReplyPlaybackCompletion || desktopComposerVoiceModeEnabled {
+            desktopComposerVoiceModeAwaitingReplyPlaybackCompletion = false
+            desktopAttemptResumeComposerVoiceMode()
         }
     }
 
