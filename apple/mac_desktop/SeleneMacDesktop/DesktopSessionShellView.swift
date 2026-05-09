@@ -2234,8 +2234,8 @@ private final class DesktopLightVerticalScroller: NSScroller {
 
     override func drawKnob() {
         let rawKnobRect = rect(for: .knob)
-        let knobWidth: CGFloat = 11
-        let trailingInset: CGFloat = 2
+        let knobWidth: CGFloat = 13
+        let trailingInset: CGFloat = 0
         let knobRect = NSRect(
             x: bounds.maxX - knobWidth - trailingInset,
             y: rawKnobRect.minY + 1.2,
@@ -14446,7 +14446,7 @@ struct DesktopSessionShellView: View {
                 readOnlyMessage: nil
             )
             .padding(.leading, 24)
-            .padding(.trailing, 12)
+            .padding(.trailing, 0)
             .padding(.top, 18)
             .padding(.bottom, 24)
             .background(Color(nsColor: .windowBackgroundColor))
@@ -14487,7 +14487,7 @@ struct DesktopSessionShellView: View {
                 readOnlyMessage: desktopConversationReadOnlyComposerMessage
             )
             .padding(.leading, 24)
-            .padding(.trailing, 12)
+            .padding(.trailing, 0)
             .padding(.top, 18)
             .padding(.bottom, 24)
             .background(Color(nsColor: .windowBackgroundColor))
