@@ -10414,6 +10414,8 @@ struct DesktopSessionShellView: View {
             )
         }
 
+        timelineEntries = desktopConversationTimelineEntriesSuppressingDuplicateTransientUserText(timelineEntries)
+
         guard !timelineEntries.isEmpty
             || dominantPosture == "SESSION_SUSPENDED_VISIBLE"
             || dominantPosture == "QUARANTINED_LOCAL_STATE" else {
@@ -10653,6 +10655,8 @@ struct DesktopSessionShellView: View {
                 )
             )
         }
+
+        timelineEntries = desktopConversationTimelineEntriesSuppressingDuplicateTransientUserText(timelineEntries)
 
         let explicitVoiceLivePreviewAttachmentState =
             desktopConversationExplicitVoiceLivePreviewAttachmentState(for: timelineEntries)
@@ -15251,6 +15255,49 @@ struct DesktopSessionShellView: View {
                 || entry.sourceSurface == "KEYBOARD_TYPED_TURN_SUBMITTED"
                 || entry.sourceSurface == "EXPLICIT_VOICE_SUBMITTED"
         }
+    }
+
+    private func desktopConversationTimelineEntryIsTransientSubmittedUserText(
+        _ entry: DesktopConversationTimelineEntryState
+    ) -> Bool {
+        entry.posture == "typed_turn_submitted_continuity"
+            || entry.posture == "explicit_voice_submitted_continuity"
+            || entry.posture == "explicit_voice_live_preview"
+            || entry.posture == "wake_voice_live_preview"
+            || entry.posture == "explicit_voice_pending_preview"
+            || entry.posture == "wake_voice_pending_preview"
+            || entry.posture == "typed_turn_pending_preview"
+            || entry.sourceSurface == "KEYBOARD_TYPED_TURN_SUBMITTED"
+            || entry.sourceSurface == "EXPLICIT_VOICE_SUBMITTED"
+            || entry.sourceSurface == "EXPLICIT_VOICE_LISTENING"
+            || entry.sourceSurface == "WAKE_TRIGGERED_VOICE_LISTENING"
+            || entry.sourceSurface == "EXPLICIT_VOICE_PENDING"
+            || entry.sourceSurface == "WAKE_TRIGGERED_VOICE_PENDING"
+    }
+
+    private func desktopConversationTimelineEntriesSuppressingDuplicateTransientUserText(
+        _ timelineEntries: [DesktopConversationTimelineEntryState]
+    ) -> [DesktopConversationTimelineEntryState] {
+        var visibleUserTexts = Set<String>()
+        var filteredEntries: [DesktopConversationTimelineEntryState] = []
+
+        for entry in timelineEntries {
+            let normalizedBody = desktopConversationNormalizedSubmittedUserText(entry.body)
+            if entry.isUserAuthored,
+               !normalizedBody.isEmpty,
+               desktopConversationTimelineEntryIsTransientSubmittedUserText(entry),
+               visibleUserTexts.contains(normalizedBody) {
+                continue
+            }
+
+            filteredEntries.append(entry)
+
+            if entry.isUserAuthored, !normalizedBody.isEmpty {
+                visibleUserTexts.insert(normalizedBody)
+            }
+        }
+
+        return filteredEntries
     }
 
     private func desktopConversationShouldSuppressSupportRailArchivedRecentSliceTranscript() -> Bool {
