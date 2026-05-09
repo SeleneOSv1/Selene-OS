@@ -8892,6 +8892,10 @@ struct DesktopSessionShellView: View {
 
             let alreadyVisible = mergedTimelineEntries.contains { entry in
                 entry.id == persistedEntry.id
+                    || desktopConversationTimelineEntriesRenderSameTurn(
+                        entry,
+                        persistedEntry
+                    )
             }
 
             if !alreadyVisible {
@@ -15215,9 +15219,19 @@ struct DesktopSessionShellView: View {
         _ timelineEntries: [DesktopConversationTimelineEntryState],
         authoritativeResponseText: String
     ) -> Bool {
-        timelineEntries.contains { entry in
-            let normalizedEntryBody = entry.body.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard normalizedEntryBody == authoritativeResponseText else {
+        let normalizedAuthoritativeResponseText = desktopConversationNormalizedSubmittedUserText(
+            authoritativeResponseText
+        )
+        guard !normalizedAuthoritativeResponseText.isEmpty else {
+            return false
+        }
+
+        return timelineEntries.contains { entry in
+            let normalizedEntryBody = desktopConversationNormalizedSubmittedUserText(entry.body)
+            guard !normalizedEntryBody.isEmpty,
+                  normalizedEntryBody == normalizedAuthoritativeResponseText
+                    || normalizedEntryBody.contains(normalizedAuthoritativeResponseText)
+                    || normalizedAuthoritativeResponseText.contains(normalizedEntryBody) else {
                 return false
             }
 
@@ -15260,13 +15274,17 @@ struct DesktopSessionShellView: View {
     private func desktopConversationTimelineEntryIsTransientSubmittedUserText(
         _ entry: DesktopConversationTimelineEntryState
     ) -> Bool {
-        entry.posture == "typed_turn_submitted_continuity"
+        entry.posture == "current_user_turn_text"
+            || entry.posture == "archived_user_turn_text"
+            || entry.posture == "typed_turn_submitted_continuity"
             || entry.posture == "explicit_voice_submitted_continuity"
             || entry.posture == "explicit_voice_live_preview"
             || entry.posture == "wake_voice_live_preview"
             || entry.posture == "explicit_voice_pending_preview"
             || entry.posture == "wake_voice_pending_preview"
             || entry.posture == "typed_turn_pending_preview"
+            || entry.sourceSurface == "SESSION_ACTIVE_VISIBLE"
+            || entry.sourceSurface == "SESSION_SOFT_CLOSED_VISIBLE"
             || entry.sourceSurface == "KEYBOARD_TYPED_TURN_SUBMITTED"
             || entry.sourceSurface == "EXPLICIT_VOICE_SUBMITTED"
             || entry.sourceSurface == "EXPLICIT_VOICE_LISTENING"
@@ -15298,6 +15316,38 @@ struct DesktopSessionShellView: View {
         }
 
         return filteredEntries
+    }
+
+    private func desktopConversationTimelineEntriesRenderSameTurn(
+        _ lhs: DesktopConversationTimelineEntryState,
+        _ rhs: DesktopConversationTimelineEntryState
+    ) -> Bool {
+        guard lhs.speaker == rhs.speaker else {
+            return false
+        }
+
+        let lhsBody = desktopConversationNormalizedSubmittedUserText(lhs.body)
+        let rhsBody = desktopConversationNormalizedSubmittedUserText(rhs.body)
+        guard !lhsBody.isEmpty, lhsBody == rhsBody else {
+            return false
+        }
+
+        if lhs.isUserAuthored {
+            return desktopConversationTimelineEntryIsTransientSubmittedUserText(lhs)
+                || desktopConversationTimelineEntryIsTransientSubmittedUserText(rhs)
+        }
+
+        return desktopConversationTimelineEntryIsSessionReplyText(lhs)
+            || desktopConversationTimelineEntryIsSessionReplyText(rhs)
+    }
+
+    private func desktopConversationTimelineEntryIsSessionReplyText(
+        _ entry: DesktopConversationTimelineEntryState
+    ) -> Bool {
+        entry.posture == "current_selene_turn_text"
+            || entry.posture == "archived_selene_turn_text"
+            || entry.sourceSurface == "SESSION_ACTIVE_VISIBLE"
+            || entry.sourceSurface == "SESSION_SOFT_CLOSED_VISIBLE"
     }
 
     private func desktopConversationShouldSuppressSupportRailArchivedRecentSliceTranscript() -> Bool {
