@@ -2026,20 +2026,21 @@ private enum VoicePermissionState: String {
 private struct DesktopChatComposerTextView: NSViewRepresentable {
     @Binding var text: String
     @Binding var measuredHeight: CGFloat
+    @Binding var isFocused: Bool
     @Binding var focusRequestID: UInt64
 
     let isEditable: Bool
     let onSubmit: () -> Void
 
     private let minHeight: CGFloat = 22
-    private let maxHeight: CGFloat = 204
+    private let maxHeight: CGFloat = 224
 
     func makeCoordinator() -> Coordinator {
         Coordinator(self)
     }
 
     func makeNSView(context: Context) -> NSScrollView {
-        let scrollView = NSScrollView()
+        let scrollView = DesktopChatComposerScrollView()
         scrollView.drawsBackground = false
         scrollView.borderType = .noBorder
         scrollView.hasHorizontalScroller = false
@@ -2067,13 +2068,29 @@ private struct DesktopChatComposerTextView: NSViewRepresentable {
             width: 0,
             height: CGFloat.greatestFiniteMagnitude
         )
+        textView.minSize = NSSize(width: 0, height: minHeight)
+        textView.maxSize = NSSize(
+            width: CGFloat.greatestFiniteMagnitude,
+            height: CGFloat.greatestFiniteMagnitude
+        )
+        textView.autoresizingMask = [.width]
+        textView.frame = NSRect(
+            x: 0,
+            y: 0,
+            width: max(scrollView.contentSize.width, 1),
+            height: minHeight
+        )
         textView.string = text
         textView.isEditable = isEditable
         textView.isSelectable = true
         scrollView.documentView = textView
+        scrollView.composerTextView = textView
 
         DispatchQueue.main.async {
             context.coordinator.updateMeasuredHeight(for: textView)
+            if isFocused {
+                scrollView.focusComposerTextView()
+            }
         }
 
         return scrollView
@@ -2099,10 +2116,10 @@ private struct DesktopChatComposerTextView: NSViewRepresentable {
         DispatchQueue.main.async {
             context.coordinator.updateMeasuredHeight(for: textView)
             scrollView.hasVerticalScroller = measuredHeight >= maxHeight - 1
-            if focusRequestChanged,
-               textView.window?.firstResponder !== textView {
-                textView.window?.makeFirstResponder(textView)
-                textView.moveToEndOfDocument(nil)
+            if (isFocused || focusRequestChanged),
+               textView.window?.firstResponder !== textView,
+               let composerScrollView = scrollView as? DesktopChatComposerScrollView {
+                composerScrollView.focusComposerTextView()
             }
         }
     }
@@ -2125,6 +2142,14 @@ private struct DesktopChatComposerTextView: NSViewRepresentable {
             updateMeasuredHeight(for: textView)
         }
 
+        func textDidBeginEditing(_ notification: Notification) {
+            parent.isFocused = true
+        }
+
+        func textDidEndEditing(_ notification: Notification) {
+            parent.isFocused = false
+        }
+
         func updateMeasuredHeight(for textView: NSTextView) {
             let fittingWidth = max(textView.enclosingScrollView?.contentSize.width ?? textView.bounds.width, 1)
             textView.textContainer?.containerSize = NSSize(
@@ -2137,6 +2162,7 @@ private struct DesktopChatComposerTextView: NSViewRepresentable {
                 parent.maxHeight,
                 max(parent.minHeight, ceil(fittingSize.height + textView.textContainerInset.height * 2))
             )
+            textView.frame.size = NSSize(width: fittingWidth, height: clampedHeight)
 
             if abs(parent.measuredHeight - clampedHeight) > 0.5 {
                 parent.measuredHeight = clampedHeight
@@ -2145,8 +2171,54 @@ private struct DesktopChatComposerTextView: NSViewRepresentable {
     }
 }
 
+private final class DesktopChatComposerScrollView: NSScrollView {
+    weak var composerTextView: DesktopChatComposerNativeTextView?
+
+    override var acceptsFirstResponder: Bool {
+        true
+    }
+
+    override func becomeFirstResponder() -> Bool {
+        if let composerTextView {
+            window?.makeFirstResponder(composerTextView)
+            return true
+        }
+
+        return super.becomeFirstResponder()
+    }
+
+    func focusComposerTextView() {
+        if let composerTextView {
+            window?.makeFirstResponder(composerTextView)
+        }
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        if let composerTextView {
+            window?.makeFirstResponder(composerTextView)
+        }
+        super.mouseDown(with: event)
+        if let composerTextView {
+            DispatchQueue.main.async { [weak self, weak composerTextView] in
+                guard let self, let composerTextView else {
+                    return
+                }
+                self.window?.makeFirstResponder(composerTextView)
+            }
+        }
+    }
+}
+
 private final class DesktopChatComposerNativeTextView: NSTextView {
     var onSubmit: (() -> Void)?
+
+    override var acceptsFirstResponder: Bool {
+        true
+    }
+
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
+        true
+    }
 
     override func keyDown(with event: NSEvent) {
         let isReturnKey = event.keyCode == 36 || event.keyCode == 76
@@ -2185,44 +2257,25 @@ private struct DesktopLightScrollBarInstaller: NSViewRepresentable {
             return
         }
 
+        scrollView.drawsBackground = true
+        scrollView.backgroundColor = .white
+        scrollView.contentView.drawsBackground = true
+        scrollView.contentView.backgroundColor = .white
+        scrollView.wantsLayer = true
+        scrollView.layer?.backgroundColor = NSColor.white.cgColor
+        scrollView.contentView.wantsLayer = true
+        scrollView.contentView.layer?.backgroundColor = NSColor.white.cgColor
         scrollView.scrollerStyle = .overlay
         scrollView.autohidesScrollers = true
         scrollView.hasVerticalScroller = true
         scrollView.scrollerInsets = NSEdgeInsetsZero
 
-        if !(scrollView.verticalScroller is DesktopLightVerticalScroller) {
-            scrollView.verticalScroller = DesktopLightVerticalScroller()
+        if scrollView.verticalScroller is DesktopLightVerticalScroller {
+            scrollView.verticalScroller = NSScroller()
         }
 
-        scrollView.verticalScroller?.controlSize = .mini
+        scrollView.verticalScroller?.controlSize = .regular
         scrollView.reflectScrolledClipView(scrollView.contentView)
-        positionLightScrollBar(in: scrollView)
-        DispatchQueue.main.async {
-            positionLightScrollBar(in: scrollView)
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-            positionLightScrollBar(in: scrollView)
-        }
-    }
-
-    private static func positionLightScrollBar(in scrollView: NSScrollView) {
-        guard let scroller = scrollView.verticalScroller else {
-            return
-        }
-
-        let scrollerWidth: CGFloat = 16
-        let targetFrame = NSRect(
-            x: scrollView.bounds.maxX - scrollerWidth,
-            y: scrollView.bounds.minY,
-            width: scrollerWidth,
-            height: scrollView.bounds.height
-        )
-
-        if scroller.frame != targetFrame {
-            scroller.frame = targetFrame
-        }
-        scroller.autoresizingMask = [.minXMargin, .height]
-        scroller.needsDisplay = true
     }
 }
 
@@ -6848,6 +6901,7 @@ struct DesktopSessionShellView: View {
     @State private var desktopTypedTurnDraft: String = ""
     @State private var desktopTypedTurnComposerMeasuredHeight: CGFloat = 34
     @State private var desktopTypedTurnComposerFocusRequestID: UInt64 = 0
+    @FocusState private var desktopTypedTurnComposerFocused: Bool
     @State private var desktopSearchRequestDraft: String = ""
     @State private var desktopToolRequestDraft: String = ""
     @State private var desktopTypedTurnPendingRequest: DesktopTypedTurnRequestState?
@@ -7358,10 +7412,28 @@ struct DesktopSessionShellView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(Color(nsColor: .windowBackgroundColor))
         .overlay(
-            RoundedRectangle(cornerRadius: 28, style: .continuous)
+            UnevenRoundedRectangle(
+                cornerRadii: RectangleCornerRadii(
+                    topLeading: 28,
+                    bottomLeading: 28,
+                    bottomTrailing: 28,
+                    topTrailing: 0
+                ),
+                style: .continuous
+            )
                 .stroke(Color.primary.opacity(0.06), lineWidth: 1)
         )
-        .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
+        .clipShape(
+            UnevenRoundedRectangle(
+                cornerRadii: RectangleCornerRadii(
+                    topLeading: 28,
+                    bottomLeading: 28,
+                    bottomTrailing: 28,
+                    topTrailing: 0
+                ),
+                style: .continuous
+            )
+        )
     }
 
     private var desktopVisibleConversationSidebar: some View {
@@ -9239,7 +9311,18 @@ struct DesktopSessionShellView: View {
     }
 
     private var desktopTypedTurnComposerEditorHeight: CGFloat {
-        min(176, max(24, desktopTypedTurnComposerMeasuredHeight))
+        min(224, max(24, desktopTypedTurnComposerMeasuredHeight))
+    }
+
+    private var desktopTypedTurnComposerFocusedBinding: Binding<Bool> {
+        Binding(
+            get: {
+                desktopTypedTurnComposerFocused
+            },
+            set: { isFocused in
+                desktopTypedTurnComposerFocused = isFocused
+            }
+        )
     }
 
     private var desktopTypedTurnComposerDraftBinding: Binding<String> {
@@ -9347,6 +9430,7 @@ struct DesktopSessionShellView: View {
     }
 
     private func requestDesktopTypedTurnComposerFocus() {
+        desktopTypedTurnComposerFocused = true
         desktopTypedTurnComposerFocusRequestID &+= 1
     }
 
@@ -9636,14 +9720,14 @@ struct DesktopSessionShellView: View {
                 desktopComposerAttachmentChips
             }
 
-            HStack(alignment: .bottom, spacing: 12) {
+            HStack(alignment: .bottom, spacing: 10) {
                 Button {
                     presentDesktopComposerAttachmentPicker()
                 } label: {
                     Image(systemName: "plus")
                         .font(.system(size: 20, weight: .light))
                         .foregroundStyle(Color.primary.opacity(0.92))
-                        .frame(width: 34, height: 34)
+                        .frame(width: 32, height: 34)
                 }
                 .buttonStyle(.plain)
 
@@ -9651,23 +9735,30 @@ struct DesktopSessionShellView: View {
                     if desktopVisibleTypedTurnDraft.isEmpty {
                         Text(desktopVisibleComposerPlaceholder)
                             .font(.system(size: 16))
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(Color.primary.opacity(0.42))
                             .padding(.top, 2)
+                            .allowsHitTesting(false)
                     }
 
                     DesktopChatComposerTextView(
                         text: desktopTypedTurnComposerDraftBinding,
                         measuredHeight: $desktopTypedTurnComposerMeasuredHeight,
+                        isFocused: desktopTypedTurnComposerFocusedBinding,
                         focusRequestID: $desktopTypedTurnComposerFocusRequestID,
-                        isEditable: !desktopTypedTurnComposerEditingInterlocksActive
-                    ) {
-                        submitDesktopTypedTurnFromPrimaryControl()
-                    }
+                        isEditable: !desktopTypedTurnComposerEditingInterlocksActive,
+                        onSubmit: {
+                            submitDesktopTypedTurnFromPrimaryControl()
+                        }
+                    )
                     .frame(height: desktopTypedTurnComposerEditorHeight)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(
+                    maxWidth: .infinity,
+                    minHeight: desktopTypedTurnComposerEditorHeight,
+                    alignment: .topLeading
+                )
 
-                HStack(spacing: 10) {
+                HStack(spacing: 6) {
                     if !desktopComposerShouldShowSendButton {
                         Button {
                             presentDesktopMeetingRecordingUnavailable()
@@ -9693,7 +9784,7 @@ struct DesktopSessionShellView: View {
                         Image(systemName: desktopExplicitVoiceCaptureControlActive ? "stop.fill" : "waveform")
                             .font(.system(size: 18, weight: .semibold))
                             .foregroundStyle(desktopComposerShouldShowWaveformActiveState ? .primary : .secondary)
-                            .frame(width: 36, height: 36)
+                            .frame(width: 34, height: 36)
                             .background(
                                 desktopComposerShouldShowWaveformActiveState
                                     ? Color.primary.opacity(0.10)
@@ -9715,7 +9806,7 @@ struct DesktopSessionShellView: View {
                             Image(systemName: "arrow.up")
                                 .font(.system(size: 16, weight: .semibold))
                                 .foregroundStyle(.white)
-                                .frame(width: 40, height: 40)
+                                .frame(width: 38, height: 40)
                                 .background(Color.black)
                                 .clipShape(Circle())
                         }
@@ -9731,13 +9822,31 @@ struct DesktopSessionShellView: View {
                 .padding(.bottom, 2)
             }
         }
-        .padding(.horizontal, 16)
+        .padding(.horizontal, 14)
         .padding(.vertical, 10)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color.white)
-        .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
+        .clipShape(
+            UnevenRoundedRectangle(
+                cornerRadii: RectangleCornerRadii(
+                    topLeading: 28,
+                    bottomLeading: 28,
+                    bottomTrailing: 28,
+                    topTrailing: 0
+                ),
+                style: .continuous
+            )
+        )
         .overlay(
-            RoundedRectangle(cornerRadius: 28, style: .continuous)
+            UnevenRoundedRectangle(
+                cornerRadii: RectangleCornerRadii(
+                    topLeading: 28,
+                    bottomLeading: 28,
+                    bottomTrailing: 28,
+                    topTrailing: 0
+                ),
+                style: .continuous
+            )
                 .stroke(Color.primary.opacity(0.12), lineWidth: 1)
         )
         .shadow(color: Color.black.opacity(0.04), radius: 10, x: 0, y: 5)
