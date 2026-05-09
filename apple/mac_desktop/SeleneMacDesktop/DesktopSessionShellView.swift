@@ -2026,6 +2026,7 @@ private enum VoicePermissionState: String {
 private struct DesktopChatComposerTextView: NSViewRepresentable {
     @Binding var text: String
     @Binding var measuredHeight: CGFloat
+    @Binding var focusRequestID: UInt64
 
     let isEditable: Bool
     let onSubmit: () -> Void
@@ -2083,8 +2084,13 @@ private struct DesktopChatComposerTextView: NSViewRepresentable {
             return
         }
 
+        context.coordinator.parent = self
         textView.onSubmit = onSubmit
         textView.isEditable = isEditable
+        let focusRequestChanged = context.coordinator.lastAppliedFocusRequestID != focusRequestID
+        if focusRequestChanged {
+            context.coordinator.lastAppliedFocusRequestID = focusRequestID
+        }
 
         if textView.string != text {
             textView.string = text
@@ -2093,14 +2099,21 @@ private struct DesktopChatComposerTextView: NSViewRepresentable {
         DispatchQueue.main.async {
             context.coordinator.updateMeasuredHeight(for: textView)
             scrollView.hasVerticalScroller = measuredHeight >= maxHeight - 1
+            if focusRequestChanged,
+               textView.window?.firstResponder !== textView {
+                textView.window?.makeFirstResponder(textView)
+                textView.moveToEndOfDocument(nil)
+            }
         }
     }
 
     final class Coordinator: NSObject, NSTextViewDelegate {
         var parent: DesktopChatComposerTextView
+        var lastAppliedFocusRequestID: UInt64
 
         init(_ parent: DesktopChatComposerTextView) {
             self.parent = parent
+            self.lastAppliedFocusRequestID = parent.focusRequestID
         }
 
         func textDidChange(_ notification: Notification) {
@@ -2214,6 +2227,8 @@ private struct DesktopLightScrollBarInstaller: NSViewRepresentable {
 }
 
 private final class DesktopLightVerticalScroller: NSScroller {
+    private static let trackColor = NSColor.white
+
     private static let thumbColor = NSColor(
         calibratedRed: 0.72,
         green: 0.72,
@@ -2228,7 +2243,13 @@ private final class DesktopLightVerticalScroller: NSScroller {
         8
     }
 
+    override var isOpaque: Bool {
+        true
+    }
+
     override func draw(_ dirtyRect: NSRect) {
+        Self.trackColor.setFill()
+        dirtyRect.fill()
         drawKnob()
     }
 
@@ -2254,7 +2275,10 @@ private final class DesktopLightVerticalScroller: NSScroller {
         ).fill()
     }
 
-    override func drawKnobSlot(in slotRect: NSRect, highlight flag: Bool) {}
+    override func drawKnobSlot(in slotRect: NSRect, highlight flag: Bool) {
+        Self.trackColor.setFill()
+        slotRect.fill()
+    }
 }
 
 private extension NSView {
@@ -6823,6 +6847,7 @@ struct DesktopSessionShellView: View {
     @State private var desktopOpenAITtsPlaybackReferenceText: String?
     @State private var desktopTypedTurnDraft: String = ""
     @State private var desktopTypedTurnComposerMeasuredHeight: CGFloat = 34
+    @State private var desktopTypedTurnComposerFocusRequestID: UInt64 = 0
     @State private var desktopSearchRequestDraft: String = ""
     @State private var desktopToolRequestDraft: String = ""
     @State private var desktopTypedTurnPendingRequest: DesktopTypedTurnRequestState?
@@ -6925,8 +6950,12 @@ struct DesktopSessionShellView: View {
             }
         }
         .task(id: desktopTypedTurnPendingRequest?.id) {
+            let pendingTypedTurnOrigin = desktopTypedTurnPendingRequest?.origin
             await dispatchPreparedTypedTurnRequestIfNeeded()
             await synchronizeDesktopWakeListenerLifecycleState()
+            if pendingTypedTurnOrigin == .keyboardComposer {
+                requestDesktopTypedTurnComposerFocus()
+            }
         }
         .task(id: desktopOnboardingEntryContext?.id) {
             await openInviteLinkAndStartOnboardingIfNeeded()
@@ -9317,6 +9346,10 @@ struct DesktopSessionShellView: View {
         desktopMeetingRecordingUnavailableAlertIsPresented = true
     }
 
+    private func requestDesktopTypedTurnComposerFocus() {
+        desktopTypedTurnComposerFocusRequestID &+= 1
+    }
+
     private func startDesktopManualWakeActivationFromWaveButton() {
         desktopComposerVoiceModeEnabled = false
         desktopComposerVoiceModeAwaitingReplyPlaybackCompletion = false
@@ -9625,6 +9658,7 @@ struct DesktopSessionShellView: View {
                     DesktopChatComposerTextView(
                         text: desktopTypedTurnComposerDraftBinding,
                         measuredHeight: $desktopTypedTurnComposerMeasuredHeight,
+                        focusRequestID: $desktopTypedTurnComposerFocusRequestID,
                         isEditable: !desktopTypedTurnComposerEditingInterlocksActive
                     ) {
                         submitDesktopTypedTurnFromPrimaryControl()
@@ -21442,8 +21476,10 @@ struct DesktopSessionShellView: View {
             )
             desktopTypedTurnDraft = ""
             desktopComposerAttachmentSelections = []
+            requestDesktopTypedTurnComposerFocus()
             Task { @MainActor in
                 await dispatchPreparedTypedTurnRequestIfNeeded()
+                requestDesktopTypedTurnComposerFocus()
                 await synchronizeDesktopWakeListenerLifecycleState()
             }
         case .emptyDraft:
