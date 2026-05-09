@@ -1145,6 +1145,279 @@ struct DesktopVoiceTurnAudioCaptureRefState: Equatable {
     let timingOverruns: UInt64
 }
 
+private enum DesktopAudioEvidenceClass: String, Equatable {
+    case safeUserSpeech = "safe_user_speech"
+    case likelyUserSpeech = "likely_user_speech"
+    case likelyTtsEcho = "likely_tts_echo"
+    case doubleTalkUncertain = "double_talk_uncertain"
+    case noiseRejected = "noise_rejected"
+    case unsafeUncertain = "unsafe_uncertain"
+}
+
+private struct DesktopAudioEvidenceContext: Equatable {
+    let ttsPlaybackActiveAtCaptureStart: Bool
+    let ttsPlaybackStartedNS: UInt64?
+    let lastTtsPlaybackEndedNS: UInt64?
+
+    func ttsOverlapsCapture(startNS: UInt64, endNS: UInt64) -> Bool {
+        if ttsPlaybackActiveAtCaptureStart {
+            return true
+        }
+
+        guard let lastTtsPlaybackEndedNS else {
+            return false
+        }
+
+        let echoGuardWindowNS: UInt64 = 800_000_000
+        return startNS <= lastTtsPlaybackEndedNS
+            || startNS.saturatingSubtract(lastTtsPlaybackEndedNS) < echoGuardWindowNS
+    }
+}
+
+private struct DesktopAudioEvidenceAccumulator {
+    private(set) var captureStartNS: UInt64?
+    private(set) var lastAudioBufferNS: UInt64?
+    private(set) var maxInterBufferGapNS: UInt64 = 0
+    private(set) var audioBufferCount: UInt64 = 0
+    private(set) var appendedAudioBytes: UInt64 = 0
+    private(set) var peakSampleMagnitude: Int32 = 0
+    private(set) var accumulatedMeanSquare: Double = 0
+
+    mutating func reset(captureStartNS: UInt64) {
+        self.captureStartNS = captureStartNS
+        lastAudioBufferNS = nil
+        maxInterBufferGapNS = 0
+        audioBufferCount = 0
+        appendedAudioBytes = 0
+        peakSampleMagnitude = 0
+        accumulatedMeanSquare = 0
+    }
+
+    mutating func recordInt16AudioBuffer(_ buffer: AVAudioPCMBuffer, byteCount: Int, observedNS: UInt64) {
+        if let lastAudioBufferNS {
+            maxInterBufferGapNS = Swift.max(maxInterBufferGapNS, observedNS.saturatingSubtract(lastAudioBufferNS))
+        }
+        lastAudioBufferNS = observedNS
+        audioBufferCount &+= 1
+        appendedAudioBytes &+= UInt64(Swift.max(byteCount, 0))
+
+        guard let channelData = buffer.int16ChannelData,
+              buffer.frameLength > 0 else {
+            return
+        }
+
+        let samples = UnsafeBufferPointer(start: channelData[0], count: Int(buffer.frameLength))
+        var localPeak: Int32 = 0
+        var localSquareSum = 0.0
+        for sample in samples {
+            let magnitude = Int32(abs(Int(sample)))
+            localPeak = Swift.max(localPeak, magnitude)
+            let normalized = Double(sample) / 32_768.0
+            localSquareSum += normalized * normalized
+        }
+
+        peakSampleMagnitude = Swift.max(peakSampleMagnitude, localPeak)
+        accumulatedMeanSquare += localSquareSum
+    }
+
+    func snapshot(
+        captureStartNS: UInt64,
+        captureEndNS: UInt64,
+        finalTranscriptPresent: Bool,
+        partialTranscriptPresent: Bool,
+        evidenceContext: DesktopAudioEvidenceContext
+    ) -> DesktopAudioEvidenceSnapshot {
+        let ttsOverlapped = evidenceContext.ttsOverlapsCapture(startNS: captureStartNS, endNS: captureEndNS)
+        let streamGapDetected = maxInterBufferGapNS > 750_000_000 || audioBufferCount == 0
+        let rms = appendedAudioBytes == 0 ? 0 : sqrt(accumulatedMeanSquare / Double(Swift.max(appendedAudioBytes / 2, 1)))
+        let peakRatio = Double(peakSampleMagnitude) / 32_768.0
+        let audibleEnergy = peakRatio >= 0.015 || rms >= 0.006
+        let clipped = peakRatio >= 0.98
+
+        let evidenceClass: DesktopAudioEvidenceClass
+        if ttsOverlapped && (finalTranscriptPresent || partialTranscriptPresent || audibleEnergy) {
+            evidenceClass = .doubleTalkUncertain
+        } else if ttsOverlapped {
+            evidenceClass = .likelyTtsEcho
+        } else if streamGapDetected {
+            evidenceClass = .unsafeUncertain
+        } else if !finalTranscriptPresent && audibleEnergy {
+            evidenceClass = .noiseRejected
+        } else if finalTranscriptPresent && audibleEnergy {
+            evidenceClass = .safeUserSpeech
+        } else if finalTranscriptPresent {
+            evidenceClass = .likelyUserSpeech
+        } else {
+            evidenceClass = .unsafeUncertain
+        }
+
+        return DesktopAudioEvidenceSnapshot(
+            evidenceClass: evidenceClass,
+            ttsPlaybackActive: ttsOverlapped,
+            streamGapDetected: streamGapDetected,
+            captureDegraded: streamGapDetected || clipped || matchesUnsafeEvidence(evidenceClass),
+            aecUnstable: ttsOverlapped,
+            audibleEnergyDetected: audibleEnergy,
+            peakRatio: peakRatio,
+            rmsRatio: rms,
+            audioBufferCount: audioBufferCount,
+            appendedAudioBytes: appendedAudioBytes,
+            maxInterBufferGapNS: maxInterBufferGapNS
+        )
+    }
+
+    private func matchesUnsafeEvidence(_ evidenceClass: DesktopAudioEvidenceClass) -> Bool {
+        switch evidenceClass {
+        case .likelyTtsEcho, .doubleTalkUncertain, .noiseRejected, .unsafeUncertain:
+            return true
+        case .safeUserSpeech, .likelyUserSpeech:
+            return false
+        }
+    }
+}
+
+private struct DesktopAudioEvidenceSnapshot: Equatable {
+    let evidenceClass: DesktopAudioEvidenceClass
+    let ttsPlaybackActive: Bool
+    let streamGapDetected: Bool
+    let captureDegraded: Bool
+    let aecUnstable: Bool
+    let audibleEnergyDetected: Bool
+    let peakRatio: Double
+    let rmsRatio: Double
+    let audioBufferCount: UInt64
+    let appendedAudioBytes: UInt64
+    let maxInterBufferGapNS: UInt64
+
+    var vadConfidenceBP: UInt16 {
+        switch evidenceClass {
+        case .safeUserSpeech:
+            return 8_800
+        case .likelyUserSpeech:
+            return 7_200
+        case .doubleTalkUncertain:
+            return 5_400
+        case .likelyTtsEcho, .noiseRejected, .unsafeUncertain:
+            return 2_500
+        }
+    }
+
+    var acousticConfidenceBP: UInt16 {
+        switch evidenceClass {
+        case .safeUserSpeech:
+            return 8_500
+        case .likelyUserSpeech:
+            return 6_800
+        case .doubleTalkUncertain:
+            return 5_000
+        case .likelyTtsEcho, .noiseRejected, .unsafeUncertain:
+            return 2_400
+        }
+    }
+
+    var prosodyConfidenceBP: UInt16 {
+        switch evidenceClass {
+        case .safeUserSpeech:
+            return 8_100
+        case .likelyUserSpeech:
+            return 6_000
+        case .doubleTalkUncertain:
+            return 4_500
+        case .likelyTtsEcho, .noiseRejected, .unsafeUncertain:
+            return 2_000
+        }
+    }
+
+    var speechLikenessBP: UInt16 {
+        switch evidenceClass {
+        case .safeUserSpeech:
+            return 8_700
+        case .likelyUserSpeech:
+            return 6_900
+        case .doubleTalkUncertain:
+            return 5_600
+        case .likelyTtsEcho:
+            return 3_200
+        case .noiseRejected, .unsafeUncertain:
+            return 1_800
+        }
+    }
+
+    var echoSafeConfidenceBP: UInt16 {
+        switch evidenceClass {
+        case .safeUserSpeech:
+            return 9_200
+        case .likelyUserSpeech:
+            return 6_400
+        case .doubleTalkUncertain:
+            return 2_800
+        case .likelyTtsEcho:
+            return 1_200
+        case .noiseRejected, .unsafeUncertain:
+            return 2_000
+        }
+    }
+
+    var nearfieldConfidenceBP: UInt16? {
+        switch evidenceClass {
+        case .safeUserSpeech:
+            return 8_300
+        case .likelyUserSpeech:
+            return 5_200
+        case .likelyTtsEcho, .doubleTalkUncertain, .noiseRejected, .unsafeUncertain:
+            return nil
+        }
+    }
+
+    var doubleTalkBP: UInt16 {
+        switch evidenceClass {
+        case .doubleTalkUncertain:
+            return 7_500
+        case .likelyTtsEcho:
+            return 5_500
+        case .safeUserSpeech, .likelyUserSpeech:
+            return 600
+        case .noiseRejected, .unsafeUncertain:
+            return 2_500
+        }
+    }
+
+    var snrDBMilli: Int32 {
+        switch evidenceClass {
+        case .safeUserSpeech:
+            return 21_000
+        case .likelyUserSpeech:
+            return 12_000
+        case .doubleTalkUncertain:
+            return 6_000
+        case .likelyTtsEcho, .noiseRejected, .unsafeUncertain:
+            return 3_000
+        }
+    }
+
+    var clippingRatioBP: UInt16 {
+        UInt16(Swift.min(10_000, Swift.max(0, Int((peakRatio >= 0.98 ? 1_000 : peakRatio * 150).rounded()))))
+    }
+
+    var echoDelayMSMilli: UInt32 {
+        ttsPlaybackActive ? 160_000 : 0
+    }
+
+    var erleDBMilli: Int32 {
+        ttsPlaybackActive ? 0 : 12_000
+    }
+
+    var timingJitterMSMilli: UInt32 {
+        UInt32(Swift.min(60_000, maxInterBufferGapNS / 1_000))
+    }
+}
+
+private extension UInt64 {
+    func saturatingSubtract(_ other: UInt64) -> UInt64 {
+        self >= other ? self - other : 0
+    }
+}
+
 struct ExplicitVoiceTurnRequestState: Identifiable {
     let id: String
     let deviceTurnSequence: UInt64
@@ -1815,6 +2088,7 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
         let deviceRoute: String
         let selectedMic: String
         let selectedSpeaker: String
+        let evidenceContext: DesktopAudioEvidenceContext
     }
 
     @Published private(set) var microphonePermission: VoicePermissionState = .notRequested
@@ -1843,6 +2117,7 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
     private var realtimeCompletionTimeoutWorkItem: DispatchWorkItem?
     private var realtimeMaxSessionDurationWorkItem: DispatchWorkItem?
     private var realtimeFirstDeltaNS: UInt64?
+    private var realtimeAudioEvidenceAccumulator = DesktopAudioEvidenceAccumulator()
 
     init(locale: Locale? = nil) {
         _ = locale
@@ -1850,7 +2125,8 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
     }
 
     func startRealtimeTranscriptionVoiceTurn(
-        session: DesktopRealtimeTranscriptionSessionState
+        session: DesktopRealtimeTranscriptionSessionState,
+        evidenceContext: DesktopAudioEvidenceContext
     ) {
         failedRequest = nil
 
@@ -1887,7 +2163,7 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
                     return
                 }
 
-                self.beginRealtimeTranscriptionCapture(session: session)
+                self.beginRealtimeTranscriptionCapture(session: session, evidenceContext: evidenceContext)
             }
         }
     }
@@ -1962,7 +2238,10 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
             return
         }
 
-        guard let audioCaptureRefState = preparedAudioCaptureRefState(captureStopNS: captureStopNS) else {
+        guard let audioCaptureRefState = preparedAudioCaptureRefState(
+            captureStopNS: captureStopNS,
+            finalTranscript: trimmedTranscript
+        ) else {
             completeStoppedCaptureSession()
             recordFailure(
                 id: "failed_explicit_voice_audio_capture_ref_unavailable",
@@ -2029,7 +2308,8 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
     }
 
     private func beginRealtimeTranscriptionCapture(
-        session: DesktopRealtimeTranscriptionSessionState
+        session: DesktopRealtimeTranscriptionSessionState,
+        evidenceContext: DesktopAudioEvidenceContext
     ) {
         failedRequest = nil
         teardownRecognitionSession()
@@ -2053,7 +2333,10 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
         }
 
         do {
-            let captureContext = Self.makeCaptureSessionTransportContext()
+            let captureContext = Self.makeCaptureSessionTransportContext(evidenceContext: evidenceContext)
+            realtimeAudioQueue.sync {
+                realtimeAudioEvidenceAccumulator.reset(captureStartNS: captureContext.tStartNS)
+            }
             let inputNode = audioEngine.inputNode
             let inputFormat = inputNode.outputFormat(forBus: 0)
             guard let outputFormat = AVAudioFormat(
@@ -2155,6 +2438,11 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
             }
 
             let byteCount = Int(outputBuffer.frameLength) * MemoryLayout<Int16>.size
+            self.realtimeAudioEvidenceAccumulator.recordInt16AudioBuffer(
+                outputBuffer,
+                byteCount: byteCount,
+                observedNS: Swift.max(DispatchTime.now().uptimeNanoseconds, 1)
+            )
             let audioData = Data(bytes: channelData[0], count: byteCount)
             self.sendRealtimeTranscriptionEvent([
                 "type": "input_audio_buffer.append",
@@ -2371,7 +2659,10 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
         realtimeCaptureStopNS = captureStopNS
         endCaptureInput()
 
-        guard let audioCaptureRefState = preparedAudioCaptureRefState(captureStopNS: captureStopNS) else {
+        guard let audioCaptureRefState = preparedAudioCaptureRefState(
+            captureStopNS: captureStopNS,
+            finalTranscript: trimmedTranscript
+        ) else {
             recordFailure(
                 id: "failed_realtime_transcription_audio_capture_ref_unavailable",
                 title: "Failed explicit voice request",
@@ -2488,6 +2779,9 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
         realtimeCommittedTranscript = ""
         realtimeCaptureStopNS = nil
         realtimeFirstDeltaNS = nil
+        realtimeAudioQueue.sync {
+            realtimeAudioEvidenceAccumulator = DesktopAudioEvidenceAccumulator()
+        }
     }
 
     private func scheduleAutoPrepareAfterSilenceIfNeeded(using transcript: String) {
@@ -2587,7 +2881,9 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
         return Locale(identifier: "en-US")
     }
 
-    private static func makeCaptureSessionTransportContext() -> CaptureSessionTransportContext {
+    private static func makeCaptureSessionTransportContext(
+        evidenceContext: DesktopAudioEvidenceContext
+    ) -> CaptureSessionTransportContext {
         let tStartNS = Swift.max(DispatchTime.now().uptimeNanoseconds, 1)
         let selectedMic = boundedAudioCaptureToken(
             AVCaptureDevice.default(for: .audio)?.localizedName,
@@ -2611,12 +2907,14 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
                 selectedSpeaker: selectedSpeaker
             ),
             selectedMic: selectedMic,
-            selectedSpeaker: selectedSpeaker
+            selectedSpeaker: selectedSpeaker,
+            evidenceContext: evidenceContext
         )
     }
 
     private func preparedAudioCaptureRefState(
-        captureStopNS: UInt64
+        captureStopNS: UInt64,
+        finalTranscript: String?
     ) -> DesktopVoiceTurnAudioCaptureRefState? {
         guard let activeCaptureContext else {
             return nil
@@ -2630,6 +2928,24 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
             return nil
         }
 
+        let finalTranscriptPresent = !(finalTranscript ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || !realtimeCommittedTranscript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let partialTranscriptPresent = !realtimePartialTranscript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || !transcriptPreview.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let evidenceSnapshot = realtimeAudioQueue.sync {
+            realtimeAudioEvidenceAccumulator.snapshot(
+                captureStartNS: tStartNS,
+                captureEndNS: tEndNS,
+                finalTranscriptPresent: finalTranscriptPresent,
+                partialTranscriptPresent: partialTranscriptPresent,
+                evidenceContext: activeCaptureContext.evidenceContext
+            )
+        }
+
+        desktopAppendRuntimeBridgeDebugLog(
+            "desktop audio evidence class=\(evidenceSnapshot.evidenceClass.rawValue) tts_active=\(evidenceSnapshot.ttsPlaybackActive) stream_gap=\(evidenceSnapshot.streamGapDetected) capture_degraded=\(evidenceSnapshot.captureDegraded) buffers=\(evidenceSnapshot.audioBufferCount)"
+        )
+
         return DesktopVoiceTurnAudioCaptureRefState(
             streamID: activeCaptureContext.streamID,
             preRollBufferID: activeCaptureContext.preRollBufferID,
@@ -2641,30 +2957,30 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
             deviceRoute: activeCaptureContext.deviceRoute,
             selectedMic: activeCaptureContext.selectedMic,
             selectedSpeaker: activeCaptureContext.selectedSpeaker,
-            ttsPlaybackActive: false,
+            ttsPlaybackActive: evidenceSnapshot.ttsPlaybackActive,
             detectionText: nil,
             detectionConfidenceBP: nil,
-            vadConfidenceBP: 8_800,
-            acousticConfidenceBP: 8_500,
-            prosodyConfidenceBP: 8_100,
-            speechLikenessBP: 8_700,
-            echoSafeConfidenceBP: 9_200,
-            nearfieldConfidenceBP: 8_300,
-            captureDegraded: false,
-            streamGapDetected: false,
-            aecUnstable: false,
+            vadConfidenceBP: evidenceSnapshot.vadConfidenceBP,
+            acousticConfidenceBP: evidenceSnapshot.acousticConfidenceBP,
+            prosodyConfidenceBP: evidenceSnapshot.prosodyConfidenceBP,
+            speechLikenessBP: evidenceSnapshot.speechLikenessBP,
+            echoSafeConfidenceBP: evidenceSnapshot.echoSafeConfidenceBP,
+            nearfieldConfidenceBP: evidenceSnapshot.nearfieldConfidenceBP,
+            captureDegraded: evidenceSnapshot.captureDegraded,
+            streamGapDetected: evidenceSnapshot.streamGapDetected,
+            aecUnstable: evidenceSnapshot.aecUnstable,
             deviceChanged: false,
-            snrDBMilli: 21_000,
-            clippingRatioBP: 80,
-            echoDelayMSMilli: 25_000,
+            snrDBMilli: evidenceSnapshot.snrDBMilli,
+            clippingRatioBP: evidenceSnapshot.clippingRatioBP,
+            echoDelayMSMilli: evidenceSnapshot.echoDelayMSMilli,
             packetLossBP: 0,
-            doubleTalkBP: 350,
-            erleDBMilli: 18_000,
+            doubleTalkBP: evidenceSnapshot.doubleTalkBP,
+            erleDBMilli: evidenceSnapshot.erleDBMilli,
             deviceFailures24H: 0,
             deviceRecoveries24H: 0,
             deviceMeanRecoveryMS: 100,
             deviceReliabilityBP: 9_900,
-            timingJitterMSMilli: 4_000,
+            timingJitterMSMilli: evidenceSnapshot.timingJitterMSMilli,
             timingDriftPPMMilli: 2_000,
             timingBufferDepthMSMilli: 1_250_000,
             timingUnderruns: 0,
@@ -2682,6 +2998,7 @@ private final class DesktopWakeListenerController: ObservableObject {
         let deviceRoute: String
         let selectedMic: String
         let selectedSpeaker: String
+        let evidenceContext: DesktopAudioEvidenceContext
     }
 
     @Published private(set) var microphonePermission: VoicePermissionState = .notRequested
@@ -2712,6 +3029,7 @@ private final class DesktopWakeListenerController: ObservableObject {
     private var realtimeCompletionTimeoutWorkItem: DispatchWorkItem?
     private var realtimeMaxSessionDurationWorkItem: DispatchWorkItem?
     private var realtimeFirstDeltaNS: UInt64?
+    private var realtimeAudioEvidenceAccumulator = DesktopAudioEvidenceAccumulator()
 
     init(locale: Locale? = nil) {
         _ = locale
@@ -2751,7 +3069,8 @@ private final class DesktopWakeListenerController: ObservableObject {
 
     func startRealtimeListening(
         promptState: DesktopWakeListenerPromptState,
-        session: DesktopRealtimeTranscriptionSessionState
+        session: DesktopRealtimeTranscriptionSessionState,
+        evidenceContext: DesktopAudioEvidenceContext
     ) {
         failedRequest = nil
 
@@ -2792,7 +3111,7 @@ private final class DesktopWakeListenerController: ObservableObject {
                     return
                 }
 
-                self.beginRealtimeTranscriptionCapture(session: session)
+                self.beginRealtimeTranscriptionCapture(session: session, evidenceContext: evidenceContext)
             }
         }
     }
@@ -2913,7 +3232,8 @@ private final class DesktopWakeListenerController: ObservableObject {
     }
 
     private func beginRealtimeTranscriptionCapture(
-        session: DesktopRealtimeTranscriptionSessionState
+        session: DesktopRealtimeTranscriptionSessionState,
+        evidenceContext: DesktopAudioEvidenceContext
     ) {
         failedRequest = nil
         teardownRecognitionSession()
@@ -2939,7 +3259,10 @@ private final class DesktopWakeListenerController: ObservableObject {
         }
 
         do {
-            let captureContext = Self.makeCaptureSessionTransportContext()
+            let captureContext = Self.makeCaptureSessionTransportContext(evidenceContext: evidenceContext)
+            realtimeAudioQueue.sync {
+                realtimeAudioEvidenceAccumulator.reset(captureStartNS: captureContext.tStartNS)
+            }
             let inputNode = audioEngine.inputNode
             let inputFormat = inputNode.outputFormat(forBus: 0)
             guard let outputFormat = AVAudioFormat(
@@ -3045,6 +3368,11 @@ private final class DesktopWakeListenerController: ObservableObject {
             }
 
             let byteCount = Int(outputBuffer.frameLength) * MemoryLayout<Int16>.size
+            self.realtimeAudioEvidenceAccumulator.recordInt16AudioBuffer(
+                outputBuffer,
+                byteCount: byteCount,
+                observedNS: Swift.max(DispatchTime.now().uptimeNanoseconds, 1)
+            )
             let audioData = Data(bytes: channelData[0], count: byteCount)
             self.sendRealtimeTranscriptionEvent([
                 "type": "input_audio_buffer.append",
@@ -3416,6 +3744,9 @@ private final class DesktopWakeListenerController: ObservableObject {
         realtimeCommittedTranscript = ""
         realtimeCaptureStopNS = nil
         realtimeFirstDeltaNS = nil
+        realtimeAudioQueue.sync {
+            realtimeAudioEvidenceAccumulator = DesktopAudioEvidenceAccumulator()
+        }
     }
 
     private func recordFailure(id: String, title: String, summary: String, detail: String) {
@@ -3476,7 +3807,9 @@ private final class DesktopWakeListenerController: ObservableObject {
         return Locale(identifier: "en-US")
     }
 
-    private static func makeCaptureSessionTransportContext() -> CaptureSessionTransportContext {
+    private static func makeCaptureSessionTransportContext(
+        evidenceContext: DesktopAudioEvidenceContext
+    ) -> CaptureSessionTransportContext {
         let tStartNS = Swift.max(DispatchTime.now().uptimeNanoseconds, 1)
         let selectedMic = boundedAudioCaptureToken(
             AVCaptureDevice.default(for: .audio)?.localizedName,
@@ -3500,7 +3833,8 @@ private final class DesktopWakeListenerController: ObservableObject {
                 selectedSpeaker: selectedSpeaker
             ),
             selectedMic: selectedMic,
-            selectedSpeaker: selectedSpeaker
+            selectedSpeaker: selectedSpeaker,
+            evidenceContext: evidenceContext
         )
     }
 
@@ -3521,6 +3855,24 @@ private final class DesktopWakeListenerController: ObservableObject {
             return nil
         }
 
+        let finalTranscriptPresent = !realtimeCommittedTranscript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || !detectionText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let partialTranscriptPresent = !realtimePartialTranscript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || !transcriptPreview.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let evidenceSnapshot = realtimeAudioQueue.sync {
+            realtimeAudioEvidenceAccumulator.snapshot(
+                captureStartNS: tStartNS,
+                captureEndNS: tEndNS,
+                finalTranscriptPresent: finalTranscriptPresent,
+                partialTranscriptPresent: partialTranscriptPresent,
+                evidenceContext: activeCaptureContext.evidenceContext
+            )
+        }
+
+        desktopAppendRuntimeBridgeDebugLog(
+            "desktop wake audio evidence class=\(evidenceSnapshot.evidenceClass.rawValue) tts_active=\(evidenceSnapshot.ttsPlaybackActive) stream_gap=\(evidenceSnapshot.streamGapDetected) capture_degraded=\(evidenceSnapshot.captureDegraded) buffers=\(evidenceSnapshot.audioBufferCount)"
+        )
+
         return DesktopVoiceTurnAudioCaptureRefState(
             streamID: activeCaptureContext.streamID,
             preRollBufferID: activeCaptureContext.preRollBufferID,
@@ -3532,30 +3884,30 @@ private final class DesktopWakeListenerController: ObservableObject {
             deviceRoute: activeCaptureContext.deviceRoute,
             selectedMic: activeCaptureContext.selectedMic,
             selectedSpeaker: activeCaptureContext.selectedSpeaker,
-            ttsPlaybackActive: false,
+            ttsPlaybackActive: evidenceSnapshot.ttsPlaybackActive,
             detectionText: detectionText,
             detectionConfidenceBP: detectionConfidenceBP,
-            vadConfidenceBP: 8_800,
-            acousticConfidenceBP: 8_500,
-            prosodyConfidenceBP: 8_100,
-            speechLikenessBP: 8_700,
-            echoSafeConfidenceBP: 9_200,
-            nearfieldConfidenceBP: 8_300,
-            captureDegraded: false,
-            streamGapDetected: false,
-            aecUnstable: false,
+            vadConfidenceBP: evidenceSnapshot.vadConfidenceBP,
+            acousticConfidenceBP: evidenceSnapshot.acousticConfidenceBP,
+            prosodyConfidenceBP: evidenceSnapshot.prosodyConfidenceBP,
+            speechLikenessBP: evidenceSnapshot.speechLikenessBP,
+            echoSafeConfidenceBP: evidenceSnapshot.echoSafeConfidenceBP,
+            nearfieldConfidenceBP: evidenceSnapshot.nearfieldConfidenceBP,
+            captureDegraded: evidenceSnapshot.captureDegraded,
+            streamGapDetected: evidenceSnapshot.streamGapDetected,
+            aecUnstable: evidenceSnapshot.aecUnstable,
             deviceChanged: false,
-            snrDBMilli: 21_000,
-            clippingRatioBP: 80,
-            echoDelayMSMilli: 25_000,
+            snrDBMilli: evidenceSnapshot.snrDBMilli,
+            clippingRatioBP: evidenceSnapshot.clippingRatioBP,
+            echoDelayMSMilli: evidenceSnapshot.echoDelayMSMilli,
             packetLossBP: 0,
-            doubleTalkBP: 350,
-            erleDBMilli: 18_000,
+            doubleTalkBP: evidenceSnapshot.doubleTalkBP,
+            erleDBMilli: evidenceSnapshot.erleDBMilli,
             deviceFailures24H: 0,
             deviceRecoveries24H: 0,
             deviceMeanRecoveryMS: 100,
             deviceReliabilityBP: 9_900,
-            timingJitterMSMilli: 4_000,
+            timingJitterMSMilli: evidenceSnapshot.timingJitterMSMilli,
             timingDriftPPMMilli: 2_000,
             timingBufferDepthMSMilli: 1_250_000,
             timingUnderruns: 0,
@@ -6183,6 +6535,8 @@ struct DesktopSessionShellView: View {
     @State private var desktopAuthoritativeReplyRenderState: DesktopAuthoritativeReplyRenderState?
     @State private var desktopAuthoritativeReplyProvenanceRenderState: DesktopAuthoritativeReplyProvenanceRenderState?
     @State private var desktopAuthoritativeReplyPlaybackState: DesktopAuthoritativeReplyPlaybackState = .idle
+    @State private var desktopOpenAITtsPlaybackActiveSinceNS: UInt64?
+    @State private var desktopOpenAITtsPlaybackLastEndedNS: UInt64?
     @State private var desktopTypedTurnDraft: String = ""
     @State private var desktopTypedTurnComposerMeasuredHeight: CGFloat = 34
     @State private var desktopSearchRequestDraft: String = ""
@@ -6326,6 +6680,7 @@ struct DesktopSessionShellView: View {
         }
         .onReceive(desktopAuthoritativeReplyPlaybackController.$playbackState) { playbackState in
             desktopAuthoritativeReplyPlaybackState = playbackState
+            updateDesktopOpenAITtsPlaybackEvidenceClock(playbackState)
             if playbackState.phase != .speaking,
                playbackState.phase != .requesting,
                (desktopOpenAITtsSelfEchoGateActive
@@ -8767,7 +9122,10 @@ struct DesktopSessionShellView: View {
                     )
                     return
                 }
-                explicitVoiceController.startRealtimeTranscriptionVoiceTurn(session: session)
+                explicitVoiceController.startRealtimeTranscriptionVoiceTurn(
+                    session: session,
+                    evidenceContext: desktopCurrentAudioEvidenceContext()
+                )
             } catch {
                 guard desktopRealtimeTranscriptionStartGeneration == startGeneration,
                       desktopRealtimeTranscriptionStartInFlight else {
@@ -18771,6 +19129,31 @@ struct DesktopSessionShellView: View {
         }
     }
 
+    private func desktopCurrentAudioEvidenceContext() -> DesktopAudioEvidenceContext {
+        DesktopAudioEvidenceContext(
+            ttsPlaybackActiveAtCaptureStart: desktopAuthoritativeReplyPlaybackState.phase == .speaking,
+            ttsPlaybackStartedNS: desktopOpenAITtsPlaybackActiveSinceNS,
+            lastTtsPlaybackEndedNS: desktopOpenAITtsPlaybackLastEndedNS
+        )
+    }
+
+    private func updateDesktopOpenAITtsPlaybackEvidenceClock(
+        _ playbackState: DesktopAuthoritativeReplyPlaybackState
+    ) {
+        let nowNS = Swift.max(DispatchTime.now().uptimeNanoseconds, 1)
+        if playbackState.phase == .speaking {
+            if desktopOpenAITtsPlaybackActiveSinceNS == nil {
+                desktopOpenAITtsPlaybackActiveSinceNS = nowNS
+            }
+            return
+        }
+
+        if desktopOpenAITtsPlaybackActiveSinceNS != nil {
+            desktopOpenAITtsPlaybackLastEndedNS = nowNS
+            desktopOpenAITtsPlaybackActiveSinceNS = nil
+        }
+    }
+
     private func beginDesktopOpenAITtsSelfEchoGate(reason: String) {
         desktopOpenAITtsSelfEchoGateGeneration &+= 1
         desktopOpenAITtsSelfEchoGateActive = true
@@ -18820,6 +19203,7 @@ struct DesktopSessionShellView: View {
         desktopAppendRuntimeBridgeDebugLog(
             "desktop openai tts playback cancelled reason=\(boundedFailureLogToken(reason))"
         )
+        updateDesktopOpenAITtsPlaybackEvidenceClock(.idle)
         desktopAuthoritativeReplyPlaybackController.reset()
         desktopAuthoritativeReplyPlaybackState = .idle
     }
@@ -20549,7 +20933,8 @@ struct DesktopSessionShellView: View {
                 )
                 desktopWakeListenerController.startRealtimeListening(
                     promptState: promptState,
-                    session: session
+                    session: session,
+                    evidenceContext: desktopCurrentAudioEvidenceContext()
                 )
             } catch {
                 desktopAppendRuntimeBridgeDebugLog(

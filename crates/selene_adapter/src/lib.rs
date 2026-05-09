@@ -27898,6 +27898,118 @@ mod tests {
         wake_cross_platform_activation_parity_iphone_wake_word_remains_blocked();
     }
 
+    fn desktop_echo_evidence_bundle_from_request(
+        request: &VoiceTurnAdapterRequest,
+    ) -> Ph1kLiveSignalBundle {
+        let store = Ph1fStore::new_in_memory();
+        let device_id = DeviceId::new(
+            request
+                .device_id
+                .clone()
+                .unwrap_or_else(|| "adapter_desktop_echo_device".to_string()),
+        )
+        .expect("device id must parse");
+        build_ph1k_live_signal_bundle(
+            &store,
+            request,
+            MonotonicTimeNs(request.now_ns.unwrap_or(1)),
+            request.tenant_id.as_deref(),
+            Some(&device_id),
+        )
+        .expect("desktop echo evidence bundle must build")
+    }
+
+    #[test]
+    fn desktop_echo_evidence_ph1k_receives_truthful_values() {
+        let mut req = base_request();
+        req.app_platform = "DESKTOP".to_string();
+        req.trigger = "EXPLICIT".to_string();
+        req.user_text_final = Some("Please summarize the current session.".to_string());
+        if let Some(capture) = req.audio_capture_ref.as_mut() {
+            capture.tts_playback_active = Some(true);
+            capture.echo_safe_confidence_bp = Some(1_200);
+            capture.nearfield_confidence_bp = None;
+            capture.double_talk_bp = Some(7_500);
+            capture.capture_degraded = Some(true);
+            capture.stream_gap_detected = Some(true);
+            capture.aec_unstable = Some(true);
+            capture.snr_db_milli = Some(3_000);
+            capture.erle_db_milli = Some(0);
+        }
+
+        let bundle = desktop_echo_evidence_bundle_from_request(&req);
+        assert!(bundle.interrupt_input.tts_playback_active);
+        assert!(bundle.interrupt_input.capture_degraded);
+        assert!(bundle.interrupt_input.stream_gap_detected);
+        assert!(bundle.interrupt_input.aec_unstable);
+        assert!(bundle.interrupt_input.nearfield_confidence.is_none());
+        assert!(
+            bundle.interrupt_input.echo_safe_confidence <= 0.13,
+            "{:?}",
+            bundle.interrupt_input
+        );
+        assert!(
+            bundle.interrupt_input.adaptive_policy_input.quality_metrics.double_talk_score
+                >= 0.74,
+            "{:?}",
+            bundle.interrupt_input.adaptive_policy_input.quality_metrics
+        );
+    }
+
+    #[test]
+    fn desktop_echo_evidence_no_static_fake_safe_capture() {
+        let mut req = base_request();
+        req.app_platform = "DESKTOP".to_string();
+        req.trigger = "EXPLICIT".to_string();
+        if let Some(capture) = req.audio_capture_ref.as_mut() {
+            capture.tts_playback_active = Some(true);
+            capture.echo_safe_confidence_bp = Some(2_000);
+            capture.nearfield_confidence_bp = None;
+            capture.double_talk_bp = Some(5_500);
+            capture.capture_degraded = Some(true);
+            capture.stream_gap_detected = Some(false);
+            capture.aec_unstable = Some(true);
+        }
+
+        let bundle = desktop_echo_evidence_bundle_from_request(&req);
+        assert!(bundle.interrupt_input.tts_playback_active);
+        assert_ne!(bundle.interrupt_input.echo_safe_confidence, 0.92);
+        assert!(bundle.interrupt_input.echo_safe_confidence < 0.5);
+        assert!(bundle.interrupt_input.nearfield_confidence.is_none());
+        assert!(
+            bundle.interrupt_input.adaptive_policy_input.quality_metrics.double_talk_score
+                > 0.5
+        );
+    }
+
+    #[test]
+    fn desktop_echo_evidence_noise_rejected_before_fake_good_ph1k() {
+        let mut req = base_request();
+        req.app_platform = "DESKTOP".to_string();
+        req.trigger = "EXPLICIT".to_string();
+        req.user_text_final = None;
+        if let Some(capture) = req.audio_capture_ref.as_mut() {
+            capture.tts_playback_active = Some(false);
+            capture.vad_confidence_bp = Some(2_500);
+            capture.acoustic_confidence_bp = Some(2_400);
+            capture.prosody_confidence_bp = Some(2_000);
+            capture.speech_likeness_bp = Some(1_800);
+            capture.echo_safe_confidence_bp = Some(2_000);
+            capture.nearfield_confidence_bp = None;
+            capture.double_talk_bp = Some(2_500);
+            capture.capture_degraded = Some(true);
+            capture.stream_gap_detected = Some(true);
+        }
+
+        let bundle = desktop_echo_evidence_bundle_from_request(&req);
+        assert!(bundle.interrupt_input.capture_degraded);
+        assert!(bundle.interrupt_input.stream_gap_detected);
+        assert!(bundle.interrupt_input.vad_confidence <= 0.26);
+        assert!(bundle.interrupt_input.speech_likeness <= 0.19);
+        assert!(bundle.interrupt_input.echo_safe_confidence <= 0.21);
+        assert!(bundle.interrupt_input.nearfield_confidence.is_none());
+    }
+
     #[test]
     fn at_l_01_wake_opens_new_session_persists_session_id() {
         let runtime = AdapterRuntime::default();
