@@ -2152,6 +2152,124 @@ private final class DesktopChatComposerNativeTextView: NSTextView {
     }
 }
 
+private struct DesktopLightScrollBarInstaller: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView(frame: .zero)
+        DispatchQueue.main.async {
+            Self.installLightScrollBar(from: view)
+        }
+        return view
+    }
+
+    func updateNSView(_ view: NSView, context: Context) {
+        DispatchQueue.main.async {
+            Self.installLightScrollBar(from: view)
+        }
+    }
+
+    private static func installLightScrollBar(from view: NSView) {
+        guard let scrollView = view.desktopNearestScrollView else {
+            return
+        }
+
+        scrollView.scrollerStyle = .overlay
+        scrollView.autohidesScrollers = true
+        scrollView.hasVerticalScroller = true
+        scrollView.scrollerInsets = NSEdgeInsetsZero
+
+        if !(scrollView.verticalScroller is DesktopLightVerticalScroller) {
+            scrollView.verticalScroller = DesktopLightVerticalScroller()
+        }
+
+        scrollView.verticalScroller?.controlSize = .mini
+        scrollView.reflectScrolledClipView(scrollView.contentView)
+        positionLightScrollBar(in: scrollView)
+        DispatchQueue.main.async {
+            positionLightScrollBar(in: scrollView)
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            positionLightScrollBar(in: scrollView)
+        }
+    }
+
+    private static func positionLightScrollBar(in scrollView: NSScrollView) {
+        guard let scroller = scrollView.verticalScroller else {
+            return
+        }
+
+        let scrollerWidth: CGFloat = 16
+        let targetFrame = NSRect(
+            x: scrollView.bounds.maxX - scrollerWidth,
+            y: scrollView.bounds.minY,
+            width: scrollerWidth,
+            height: scrollView.bounds.height
+        )
+
+        if scroller.frame != targetFrame {
+            scroller.frame = targetFrame
+        }
+        scroller.autoresizingMask = [.minXMargin, .height]
+        scroller.needsDisplay = true
+    }
+}
+
+private final class DesktopLightVerticalScroller: NSScroller {
+    private static let thumbColor = NSColor(
+        calibratedRed: 0.72,
+        green: 0.72,
+        blue: 0.72,
+        alpha: 0.86
+    )
+
+    override class func scrollerWidth(
+        for controlSize: NSControl.ControlSize,
+        scrollerStyle: NSScroller.Style
+    ) -> CGFloat {
+        8
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        drawKnob()
+    }
+
+    override func drawKnob() {
+        let rawKnobRect = rect(for: .knob)
+        let knobWidth: CGFloat = 11
+        let trailingInset: CGFloat = 2
+        let knobRect = NSRect(
+            x: bounds.maxX - knobWidth - trailingInset,
+            y: rawKnobRect.minY + 1.2,
+            width: knobWidth,
+            height: max(0, rawKnobRect.height - 2.4)
+        )
+        guard knobRect.width > 0, knobRect.height > 0 else {
+            return
+        }
+
+        Self.thumbColor.setFill()
+        NSBezierPath(
+            roundedRect: knobRect,
+            xRadius: knobRect.width / 2,
+            yRadius: knobRect.width / 2
+        ).fill()
+    }
+
+    override func drawKnobSlot(in slotRect: NSRect, highlight flag: Bool) {}
+}
+
+private extension NSView {
+    var desktopNearestScrollView: NSScrollView? {
+        var candidate: NSView? = self
+        while let current = candidate {
+            if let scrollView = current as? NSScrollView {
+                return scrollView
+            }
+            candidate = current.superview
+        }
+        return nil
+    }
+}
+
 private final class ExplicitVoiceCaptureController: ObservableObject {
     private struct CaptureSessionTransportContext {
         let streamID: UInt64
@@ -6745,7 +6863,8 @@ struct DesktopSessionShellView: View {
                 desktopEvidenceFirstOperationalShell
             }
         }
-        .padding(24)
+        .padding(.leading, 24)
+        .padding(.vertical, 24)
         .frame(minWidth: 680, minHeight: 520, alignment: .topLeading)
         .background(Color(nsColor: .windowBackgroundColor))
         .sheet(item: $desktopPresentedSecondaryPanel) { panel in
@@ -14314,7 +14433,9 @@ struct DesktopSessionShellView: View {
                 .padding(.horizontal, 36)
                 .padding(.vertical, 28)
                 .frame(maxWidth: .infinity, alignment: .center)
+                .background(DesktopLightScrollBarInstaller())
             }
+            .background(DesktopLightScrollBarInstaller())
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
 
             Divider()
@@ -14324,7 +14445,8 @@ struct DesktopSessionShellView: View {
                 isWritable: true,
                 readOnlyMessage: nil
             )
-            .padding(.horizontal, 24)
+            .padding(.leading, 24)
+            .padding(.trailing, 12)
             .padding(.top, 18)
             .padding(.bottom, 24)
             .background(Color(nsColor: .windowBackgroundColor))
@@ -14345,7 +14467,9 @@ struct DesktopSessionShellView: View {
                         .padding(.horizontal, 36)
                         .padding(.vertical, 28)
                         .frame(maxWidth: .infinity, alignment: .topLeading)
+                        .background(DesktopLightScrollBarInstaller())
                 }
+                .background(DesktopLightScrollBarInstaller())
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                 .onAppear {
                     desktopScrollConversationToBottom(scrollProxy)
@@ -14362,7 +14486,8 @@ struct DesktopSessionShellView: View {
                 isWritable: isWritable,
                 readOnlyMessage: desktopConversationReadOnlyComposerMessage
             )
-            .padding(.horizontal, 24)
+            .padding(.leading, 24)
+            .padding(.trailing, 12)
             .padding(.top, 18)
             .padding(.bottom, 24)
             .background(Color(nsColor: .windowBackgroundColor))
