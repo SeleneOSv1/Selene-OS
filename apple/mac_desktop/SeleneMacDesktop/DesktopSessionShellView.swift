@@ -8838,7 +8838,15 @@ struct DesktopSessionShellView: View {
             return "surface::\(currentDominantObservedSessionSurface.id)"
         }
 
-        return "conversation::dominant"
+        return desktopNormalContinuousConversationHistoryKey
+    }
+
+    private var desktopNormalContinuousConversationHistoryKey: String {
+        "conversation::desktop_continuous"
+    }
+
+    private var desktopNormalContinuousVoiceThreadKey: String {
+        "desktop_continuous_voice"
     }
 
     private var desktopPersistedTimelineEntriesForForegroundConversation: [DesktopConversationTimelineEntryState] {
@@ -11576,27 +11584,25 @@ struct DesktopSessionShellView: View {
     }
 
     private var desktopForegroundVoiceTurnMatchingSelectedThreadKey: String? {
-        guard let activeSessionID = latestSessionActiveVisibleContext?.sessionID else {
-            return nil
+        if let activeSessionID = latestSessionActiveVisibleContext?.sessionID {
+            if let completedEntryOutcome = desktopSessionMultiPostureEntryRuntimeOutcomeState,
+               completedEntryOutcome.phase == .completed,
+               completedEntryOutcome.entryMode == .softClosedExplicitResume,
+               completedEntryOutcome.sessionID == activeSessionID,
+               let selectedThreadID = completedEntryOutcome.selectedThreadID {
+                return selectedThreadID
+            }
+
+            if let completedResumeOutcome = desktopSessionMultiPostureResumeRuntimeOutcomeState,
+               completedResumeOutcome.phase == .completed,
+               completedResumeOutcome.resumeMode == .softClosedExplicitResume,
+               completedResumeOutcome.sessionID == activeSessionID,
+               let selectedThreadID = completedResumeOutcome.selectedThreadID {
+                return selectedThreadID
+            }
         }
 
-        if let completedEntryOutcome = desktopSessionMultiPostureEntryRuntimeOutcomeState,
-           completedEntryOutcome.phase == .completed,
-           completedEntryOutcome.entryMode == .softClosedExplicitResume,
-           completedEntryOutcome.sessionID == activeSessionID,
-           let selectedThreadID = completedEntryOutcome.selectedThreadID {
-            return selectedThreadID
-        }
-
-        if let completedResumeOutcome = desktopSessionMultiPostureResumeRuntimeOutcomeState,
-           completedResumeOutcome.phase == .completed,
-           completedResumeOutcome.resumeMode == .softClosedExplicitResume,
-           completedResumeOutcome.sessionID == activeSessionID,
-           let selectedThreadID = completedResumeOutcome.selectedThreadID {
-            return selectedThreadID
-        }
-
-        return nil
+        return desktopNormalContinuousVoiceThreadKey
     }
 
     private var desktopForegroundVoiceTurnActiveAuthorityPolicyContextRef: String? {
@@ -20609,10 +20615,9 @@ struct DesktopSessionShellView: View {
             clearComposerDraftIfItOnlyMirrorsVoiceTranscript(pendingRequest.transcript)
             explicitVoiceController.clearPendingPreparedVoiceTurn()
             if shouldAwaitVoiceModeReplyPlaybackCompletion {
-                desktopComposerVoiceModeAwaitingReplyPlaybackCompletion = true
-            } else {
-                desktopAttemptResumeComposerVoiceMode()
+                desktopComposerVoiceModeAwaitingReplyPlaybackCompletion = false
             }
+            desktopAttemptResumeComposerVoiceMode()
         } catch {
             desktopCanonicalRuntimeOutcomeState = .failed(
                 preparedRequestID: pendingRequest.id,

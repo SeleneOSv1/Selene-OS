@@ -8084,12 +8084,11 @@ impl AdapterRuntime {
                                 }
                             }
                             WakeUnknownSpeakerPromptReason::CleanCurrentTurnSpeech => {
-                                append_unknown_speaker_prompt_after_public_answer_text = Some(
-                                    select_unknown_speaker_name_prompt(
+                                append_unknown_speaker_prompt_after_public_answer_text =
+                                    Some(select_unknown_speaker_name_prompt(
                                         &runtime_execution_envelope,
                                         prompt_reason,
-                                    ),
-                                );
+                                    ));
                             }
                         }
                     }
@@ -20260,7 +20259,10 @@ fn committed_voice_cjk_noise_or_filler_fragment(transcript_text: &str) -> bool {
     if compact.is_empty() || committed_voice_has_actionable_cjk_intent(&compact) {
         return false;
     }
-    let cjk_count = compact.chars().filter(|ch| is_cjk_char_for_build1c(*ch)).count();
+    let cjk_count = compact
+        .chars()
+        .filter(|ch| is_cjk_char_for_build1c(*ch))
+        .count();
     if cjk_count == 0 {
         return false;
     }
@@ -20268,7 +20270,10 @@ fn committed_voice_cjk_noise_or_filler_fragment(transcript_text: &str) -> bool {
         .chars()
         .filter(|ch| committed_voice_cjk_filler_char(*ch))
         .count();
-    let ascii_alpha_count = compact.chars().filter(|ch| ch.is_ascii_alphabetic()).count();
+    let ascii_alpha_count = compact
+        .chars()
+        .filter(|ch| ch.is_ascii_alphabetic())
+        .count();
     let non_filler_cjk_count = cjk_count.saturating_sub(filler_count);
 
     if cjk_count >= 4 && filler_count * 100 >= cjk_count * 80 {
@@ -20819,9 +20824,7 @@ fn bootstrap_desktop_controlled_wake_profile_from_env(store: &mut Ph1fStore) -> 
         .ok()
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
-        .ok_or_else(|| {
-            "SELENE_DESKTOP_CONTROLLED_WAKE_BOOTSTRAP_DEVICE_ID is required".to_string()
-        })
+        .ok_or_else(|| "SELENE_DESKTOP_CONTROLLED_WAKE_BOOTSTRAP_DEVICE_ID is required".to_string())
         .and_then(|value| {
             DeviceId::new(value).map_err(|err| format!("invalid desktop wake device id: {err:?}"))
         })?;
@@ -27949,7 +27952,11 @@ mod tests {
             bundle.interrupt_input
         );
         assert!(
-            bundle.interrupt_input.adaptive_policy_input.quality_metrics.double_talk_score
+            bundle
+                .interrupt_input
+                .adaptive_policy_input
+                .quality_metrics
+                .double_talk_score
                 >= 0.74,
             "{:?}",
             bundle.interrupt_input.adaptive_policy_input.quality_metrics
@@ -27977,7 +27984,11 @@ mod tests {
         assert!(bundle.interrupt_input.echo_safe_confidence < 0.5);
         assert!(bundle.interrupt_input.nearfield_confidence.is_none());
         assert!(
-            bundle.interrupt_input.adaptive_policy_input.quality_metrics.double_talk_score
+            bundle
+                .interrupt_input
+                .adaptive_policy_input
+                .quality_metrics
+                .double_talk_score
                 > 0.5
         );
     }
@@ -28213,6 +28224,125 @@ mod tests {
             .attached_devices
             .contains(&explicit_device));
         assert_eq!(canonical_session.last_attached_device_id, explicit_device);
+    }
+
+    #[test]
+    fn desktop_continuous_session_followup_attaches_to_wake_session() {
+        let runtime = AdapterRuntime::default();
+        let thread_key = "desktop_continuous_voice";
+
+        let mut wake = base_request();
+        wake.correlation_id = 531_001;
+        wake.turn_id = 541_001;
+        wake.device_turn_sequence = Some(1);
+        wake.now_ns = Some(10_000_000_000);
+        wake.app_platform = "DESKTOP".to_string();
+        wake.trigger = "WAKE_WORD".to_string();
+        wake.thread_key = Some(thread_key.to_string());
+        wake.user_text_final = None;
+        seed_wake_enrollment_complete_for_request(
+            &runtime,
+            &mut wake,
+            "desktop_continuous_session_wake",
+        );
+        let wake_response = runtime
+            .run_voice_turn(wake.clone())
+            .expect("wake-only activation must open a runtime session");
+        assert_eq!(wake_response.next_move, "listening_window_open");
+        let wake_session_id = wake_response
+            .session_id
+            .clone()
+            .expect("wake response must expose runtime session_id");
+
+        let mut followup = base_request();
+        followup.correlation_id = 531_002;
+        followup.turn_id = 541_002;
+        followup.device_turn_sequence = Some(2);
+        followup.now_ns = Some(11_000_000_000);
+        followup.app_platform = "DESKTOP".to_string();
+        followup.trigger = "EXPLICIT".to_string();
+        followup.actor_user_id = wake.actor_user_id.clone();
+        followup.device_id = wake.device_id.clone();
+        followup.thread_key = Some(thread_key.to_string());
+        followup.user_text_final = Some("What is the time in New York?".to_string());
+        mark_request_as_attested_capture(&mut followup);
+        mark_request_as_echo_safe_for_tests(&mut followup);
+
+        let followup_response = runtime
+            .run_voice_turn(followup)
+            .expect("explicit follow-up must attach to active wake session");
+        assert_eq!(
+            followup_response.session_id.as_deref(),
+            Some(wake_session_id.as_str())
+        );
+        assert_eq!(
+            followup_response.session_attach_outcome,
+            Some(SessionAttachOutcome::ExistingSessionReused)
+        );
+
+        let actor_user_id = UserId::new(wake.actor_user_id).expect("actor id must parse");
+        let store = runtime.store.lock().expect("store lock must not poison");
+        let loaded_thread = store
+            .ph1x_thread_state_current_row(&actor_user_id, thread_key)
+            .expect("thread-state lookup must succeed");
+        assert!(
+            loaded_thread.thread_state.last_turn_context.is_some()
+                || loaded_thread.thread_state.pending.is_some(),
+            "continuous Desktop thread key must retain runtime conversation context"
+        );
+    }
+
+    #[test]
+    fn desktop_continuous_session_multiple_voice_turns_share_thread_key() {
+        let runtime = AdapterRuntime::default();
+        let thread_key = "desktop_continuous_voice";
+
+        let mut first = base_request();
+        first.correlation_id = 531_011;
+        first.turn_id = 541_011;
+        first.device_turn_sequence = Some(1);
+        first.now_ns = Some(12_000_000_000);
+        first.app_platform = "DESKTOP".to_string();
+        first.trigger = "EXPLICIT".to_string();
+        first.thread_key = Some(thread_key.to_string());
+        first.user_text_final = Some(
+            "Remember this context for the next question: I am comparing New York and London."
+                .to_string(),
+        );
+        mark_request_as_attested_capture(&mut first);
+        mark_request_as_echo_safe_for_tests(&mut first);
+        let first_response = runtime
+            .run_voice_turn(first.clone())
+            .expect("first explicit Desktop turn must succeed");
+
+        let mut second = base_request();
+        second.correlation_id = 531_012;
+        second.turn_id = 541_012;
+        second.device_turn_sequence = Some(2);
+        second.now_ns = Some(13_000_000_000);
+        second.app_platform = "DESKTOP".to_string();
+        second.trigger = "EXPLICIT".to_string();
+        second.actor_user_id = first.actor_user_id.clone();
+        second.device_id = first.device_id.clone();
+        second.thread_key = Some(thread_key.to_string());
+        second.user_text_final = Some("Which city did I mention first?".to_string());
+        mark_request_as_attested_capture(&mut second);
+        mark_request_as_echo_safe_for_tests(&mut second);
+        let second_response = runtime
+            .run_voice_turn(second)
+            .expect("second explicit Desktop turn must succeed");
+
+        assert_eq!(second_response.session_id, first_response.session_id);
+
+        let actor_user_id = UserId::new(first.actor_user_id).expect("actor id must parse");
+        let store = runtime.store.lock().expect("store lock must not poison");
+        let loaded_thread = store
+            .ph1x_thread_state_current_row(&actor_user_id, thread_key)
+            .expect("thread-state lookup must succeed");
+        assert!(
+            loaded_thread.thread_state.last_turn_context.is_some(),
+            "continuous Desktop thread key must preserve last-turn context across voice turns"
+        );
     }
 
     #[test]
