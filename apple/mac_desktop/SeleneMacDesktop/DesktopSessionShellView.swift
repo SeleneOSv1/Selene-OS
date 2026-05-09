@@ -10343,7 +10343,11 @@ struct DesktopSessionShellView: View {
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             if explicitVoiceController.isListening,
                explicitVoiceController.pendingRequest == nil,
-               !trimmedExplicitVoiceTranscriptPreview.isEmpty {
+               !trimmedExplicitVoiceTranscriptPreview.isEmpty,
+               !desktopConversationTimelineContainsSubmittedUserText(
+                   timelineEntries,
+                   candidateText: trimmedExplicitVoiceTranscriptPreview
+               ) {
                 timelineEntries.append(
                     DesktopConversationTimelineEntryState(
                         speaker: "You",
@@ -10356,27 +10360,37 @@ struct DesktopSessionShellView: View {
             }
 
             if let pendingRequest = explicitVoiceController.pendingRequest {
-                timelineEntries.append(
-                    DesktopConversationTimelineEntryState(
-                        speaker: "You",
-                        posture: "explicit_voice_pending_preview",
-                        body: pendingRequest.boundedPreview,
-                        detail: "Bounded explicit voice pending preview only. Canonical runtime and later cloud-visible acceptance remain authoritative.",
-                        sourceSurface: "EXPLICIT_VOICE_PENDING"
+                if !desktopConversationTimelineContainsSubmittedUserText(
+                    timelineEntries,
+                    candidateText: pendingRequest.boundedPreview
+                ) {
+                    timelineEntries.append(
+                        DesktopConversationTimelineEntryState(
+                            speaker: "You",
+                            posture: "explicit_voice_pending_preview",
+                            body: pendingRequest.boundedPreview,
+                            detail: "Bounded explicit voice pending preview only. Canonical runtime and later cloud-visible acceptance remain authoritative.",
+                            sourceSurface: "EXPLICIT_VOICE_PENDING"
+                        )
                     )
-                )
+                }
             }
 
             if let pendingTypedTurnRequest = desktopTypedTurnPendingRequest {
-                timelineEntries.append(
-                    DesktopConversationTimelineEntryState(
-                        speaker: "You",
-                        posture: pendingTypedTurnRequest.origin.timelinePendingPosture,
-                        body: pendingTypedTurnRequest.boundedPreview,
-                        detail: pendingTypedTurnRequest.origin.timelinePendingDetail,
-                        sourceSurface: pendingTypedTurnRequest.origin.pendingSourceSurface
+                if !desktopConversationTimelineContainsSubmittedUserText(
+                    timelineEntries,
+                    candidateText: pendingTypedTurnRequest.boundedPreview
+                ) {
+                    timelineEntries.append(
+                        DesktopConversationTimelineEntryState(
+                            speaker: "You",
+                            posture: pendingTypedTurnRequest.origin.timelinePendingPosture,
+                            body: pendingTypedTurnRequest.boundedPreview,
+                            detail: pendingTypedTurnRequest.origin.timelinePendingDetail,
+                            sourceSurface: pendingTypedTurnRequest.origin.pendingSourceSurface
+                        )
                     )
-                )
+                }
             }
         }
 
@@ -10522,7 +10536,11 @@ struct DesktopSessionShellView: View {
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             if explicitVoiceController.isListening,
                explicitVoiceController.pendingRequest == nil,
-               !trimmedExplicitVoiceTranscriptPreview.isEmpty {
+               !trimmedExplicitVoiceTranscriptPreview.isEmpty,
+               !desktopConversationTimelineContainsSubmittedUserText(
+                   timelineEntries,
+                   candidateText: trimmedExplicitVoiceTranscriptPreview
+               ) {
                 timelineEntries.append(
                     DesktopConversationTimelineEntryState(
                         speaker: "You",
@@ -10540,7 +10558,11 @@ struct DesktopSessionShellView: View {
                desktopWakeListenerController.listenerState == .listening,
                desktopWakeListenerController.pendingRequest == nil,
                lastStagedWakeTriggeredVoiceTurnRequestState == nil,
-               !trimmedWakeTranscriptPreview.isEmpty {
+               !trimmedWakeTranscriptPreview.isEmpty,
+               !desktopConversationTimelineContainsSubmittedUserText(
+                   timelineEntries,
+                   candidateText: trimmedWakeTranscriptPreview
+               ) {
                 timelineEntries.append(
                     DesktopConversationTimelineEntryState(
                         speaker: "You",
@@ -10553,40 +10575,55 @@ struct DesktopSessionShellView: View {
             }
 
             if let pendingRequest = explicitVoiceController.pendingRequest {
-                timelineEntries.append(
-                    DesktopConversationTimelineEntryState(
-                        speaker: "You",
-                        posture: "explicit_voice_pending_preview",
-                        body: pendingRequest.boundedPreview,
-                        detail: "Bounded explicit voice pending preview only. Canonical runtime and later cloud-visible acceptance remain authoritative.",
-                        sourceSurface: "EXPLICIT_VOICE_PENDING"
+                if !desktopConversationTimelineContainsSubmittedUserText(
+                    timelineEntries,
+                    candidateText: pendingRequest.boundedPreview
+                ) {
+                    timelineEntries.append(
+                        DesktopConversationTimelineEntryState(
+                            speaker: "You",
+                            posture: "explicit_voice_pending_preview",
+                            body: pendingRequest.boundedPreview,
+                            detail: "Bounded explicit voice pending preview only. Canonical runtime and later cloud-visible acceptance remain authoritative.",
+                            sourceSurface: "EXPLICIT_VOICE_PENDING"
+                        )
                     )
-                )
+                }
             }
 
             if let pendingWakeRequest = desktopWakeListenerController.pendingRequest
                 ?? lastStagedWakeTriggeredVoiceTurnRequestState {
-                timelineEntries.append(
-                    DesktopConversationTimelineEntryState(
-                        speaker: "You",
-                        posture: "wake_voice_pending_preview",
-                        body: pendingWakeRequest.boundedPreview,
-                        detail: "Bounded post-wake transcript remainder only. This foreground wake-trigger preview remains non-authoritative until canonical runtime returns.",
-                        sourceSurface: "WAKE_TRIGGERED_VOICE_PENDING"
+                if !desktopConversationTimelineContainsSubmittedUserText(
+                    timelineEntries,
+                    candidateText: pendingWakeRequest.boundedPreview
+                ) {
+                    timelineEntries.append(
+                        DesktopConversationTimelineEntryState(
+                            speaker: "You",
+                            posture: "wake_voice_pending_preview",
+                            body: pendingWakeRequest.boundedPreview,
+                            detail: "Bounded post-wake transcript remainder only. This foreground wake-trigger preview remains non-authoritative until canonical runtime returns.",
+                            sourceSurface: "WAKE_TRIGGERED_VOICE_PENDING"
+                        )
                     )
-                )
+                }
             }
 
             if let pendingTypedTurnRequest = desktopTypedTurnPendingRequest {
-                timelineEntries.append(
-                    DesktopConversationTimelineEntryState(
-                        speaker: "You",
-                        posture: pendingTypedTurnRequest.origin.timelinePendingPosture,
-                        body: pendingTypedTurnRequest.boundedPreview,
-                        detail: pendingTypedTurnRequest.origin.timelinePendingDetail,
-                        sourceSurface: pendingTypedTurnRequest.origin.pendingSourceSurface
+                if !desktopConversationTimelineContainsSubmittedUserText(
+                    timelineEntries,
+                    candidateText: pendingTypedTurnRequest.boundedPreview
+                ) {
+                    timelineEntries.append(
+                        DesktopConversationTimelineEntryState(
+                            speaker: "You",
+                            posture: pendingTypedTurnRequest.origin.timelinePendingPosture,
+                            body: pendingTypedTurnRequest.boundedPreview,
+                            detail: pendingTypedTurnRequest.origin.timelinePendingDetail,
+                            sourceSurface: pendingTypedTurnRequest.origin.pendingSourceSurface
+                        )
                     )
-                )
+                }
             }
         }
 
@@ -15183,6 +15220,36 @@ struct DesktopSessionShellView: View {
             return entry.posture == "authoritative_reply_text"
                 || entry.posture == "current_selene_turn_text"
                 || entry.posture == "archived_selene_turn_text"
+        }
+    }
+
+    private func desktopConversationNormalizedSubmittedUserText(_ text: String) -> String {
+        text.split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
+    }
+
+    private func desktopConversationTimelineContainsSubmittedUserText(
+        _ timelineEntries: [DesktopConversationTimelineEntryState],
+        candidateText: String
+    ) -> Bool {
+        let normalizedCandidateText = desktopConversationNormalizedSubmittedUserText(candidateText)
+        guard !normalizedCandidateText.isEmpty else {
+            return false
+        }
+
+        return timelineEntries.contains { entry in
+            guard entry.isUserAuthored,
+                  desktopConversationNormalizedSubmittedUserText(entry.body) == normalizedCandidateText else {
+                return false
+            }
+
+            return entry.posture == "current_user_turn_text"
+                || entry.posture == "archived_user_turn_text"
+                || entry.posture == "typed_turn_submitted_continuity"
+                || entry.posture == "explicit_voice_submitted_continuity"
+                || entry.sourceSurface == "SESSION_ACTIVE_VISIBLE"
+                || entry.sourceSurface == "SESSION_SOFT_CLOSED_VISIBLE"
+                || entry.sourceSurface == "KEYBOARD_TYPED_TURN_SUBMITTED"
+                || entry.sourceSurface == "EXPLICIT_VOICE_SUBMITTED"
         }
     }
 
