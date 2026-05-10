@@ -7985,7 +7985,6 @@ impl AdapterRuntime {
                 }
             }
             let mut skip_identity_prompt_for_guest_lane = false;
-            let mut append_unknown_speaker_prompt_after_public_answer_text: Option<String> = None;
             if let Some(decision) = self
                 .wake_guest_lane_turn_decision(
                     &runtime_execution_envelope,
@@ -8055,17 +8054,17 @@ impl AdapterRuntime {
                     )
                     .map_err(post_session_error)?;
                     if voice_id_posture_after_retry.is_none() {
-                        self.set_wake_guest_lane_posture(
-                            Self::wake_guest_lane_key(
-                                &actor_user_id,
-                                &runtime_device_id,
-                                &runtime_execution_envelope,
-                            ),
-                            WakeGuestLanePosture::UnknownGuestUnverified,
-                        )
-                        .map_err(post_session_error)?;
                         match prompt_reason {
                             WakeUnknownSpeakerPromptReason::ProtectedOrPersonalRequest => {
+                                self.set_wake_guest_lane_posture(
+                                    Self::wake_guest_lane_key(
+                                        &actor_user_id,
+                                        &runtime_device_id,
+                                        &runtime_execution_envelope,
+                                    ),
+                                    WakeGuestLanePosture::UnknownGuestUnverified,
+                                )
+                                .map_err(post_session_error)?;
                                 if let Some(response) = continuing_speech_identity_prompt_response(
                                     &store,
                                     tenant_id_for_ph1c.as_deref(),
@@ -8112,13 +8111,7 @@ impl AdapterRuntime {
                                     return Ok(response);
                                 }
                             }
-                            WakeUnknownSpeakerPromptReason::CleanCurrentTurnSpeech => {
-                                append_unknown_speaker_prompt_after_public_answer_text =
-                                    Some(select_unknown_speaker_name_prompt(
-                                        &runtime_execution_envelope,
-                                        prompt_reason,
-                                    ));
-                            }
+                            WakeUnknownSpeakerPromptReason::CleanCurrentTurnSpeech => {}
                         }
                     }
                 }
@@ -8233,10 +8226,7 @@ impl AdapterRuntime {
                             .map(|response| (text, response))
                     })
                 {
-                    let response_text = append_unknown_speaker_prompt_after_public_answer(
-                        &h411_response.response_text,
-                        append_unknown_speaker_prompt_after_public_answer_text.as_deref(),
-                    );
+                    let response_text = h411_response.response_text.clone();
                     finalize_session_turn_record(
                         &mut store,
                         now,
@@ -8318,10 +8308,6 @@ impl AdapterRuntime {
                         None,
                     )
                 }) {
-                    let response_text = append_unknown_speaker_prompt_after_public_answer(
-                        &response_text,
-                        append_unknown_speaker_prompt_after_public_answer_text.as_deref(),
-                    );
                     finalize_session_turn_record(
                         &mut store,
                         now,
@@ -8523,21 +8509,12 @@ impl AdapterRuntime {
                 user_text_final.as_deref(),
                 &mut execution_outcome,
             );
-            if append_unknown_speaker_prompt_after_public_answer_text.is_some() {
-                if let Some(response_text) = execution_outcome.response_text.as_mut() {
-                    *response_text = append_unknown_speaker_prompt_after_public_answer(
-                        response_text,
-                        append_unknown_speaker_prompt_after_public_answer_text.as_deref(),
-                    );
-                }
-            }
             if language_packet
                 .as_ref()
                 .and_then(|packet| {
                     language_switch_ack_for_build1c(packet, user_text_final.as_deref())
                 })
                 .is_some()
-                || append_unknown_speaker_prompt_after_public_answer_text.is_some()
             {
                 ph1d_public_answer_text = execution_outcome.response_text.clone();
             }
@@ -17571,23 +17548,6 @@ fn wake_unknown_speaker_name_prompt_selector(
         .unwrap_or(runtime_execution_envelope.turn_id.0.max(1)) as usize
 }
 
-fn append_unknown_speaker_prompt_after_public_answer(
-    response_text: &str,
-    prompt: Option<&str>,
-) -> String {
-    let Some(prompt) = prompt.map(str::trim).filter(|value| !value.is_empty()) else {
-        return response_text.to_string();
-    };
-    let answer = response_text.trim();
-    if answer.is_empty() {
-        return prompt.to_string();
-    }
-    if answer.ends_with(prompt) {
-        return response_text.to_string();
-    }
-    format!("{answer} Also, {prompt}")
-}
-
 fn wake_guest_lane_name_candidate(text: &str) -> (Option<&str>, bool) {
     let trimmed = text.trim().trim_matches(['"', '\'']);
     let lower = trimmed.to_ascii_lowercase();
@@ -18060,9 +18020,14 @@ fn continuing_speech_identity_prompt_response(
     if !continuing_speech_identity_prompt_session_surface(session_attach_outcome) {
         return Ok(None);
     }
-    let Some(reason) = continuing_speech_identity_prompt_reason(user_text_final) else {
+
+    let Some(text) = user_text_final.map(str::trim).filter(|text| !text.is_empty()) else {
         return Ok(None);
     };
+    if !existing_protected_or_private_classification_for_identity_prompt(text) {
+        return Ok(None);
+    }
+
     if activation_handoff_voice_id_posture(
         store,
         tenant_scope,
@@ -18075,19 +18040,12 @@ fn continuing_speech_identity_prompt_response(
     {
         return Ok(None);
     }
+    let reason = WakeUnknownSpeakerPromptReason::ProtectedOrPersonalRequest;
     let prompt = select_unknown_speaker_name_prompt(runtime_execution_envelope, reason);
     let tts_text = if wake_greeting_handoff_tts_allowed(thread_policy_flags) {
         prompt.clone()
     } else {
         String::new()
-    };
-    let reason_code = match reason {
-        WakeUnknownSpeakerPromptReason::CleanCurrentTurnSpeech => {
-            "WAKE_CONTINUING_SPEECH_IDENTITY_PROMPT"
-        }
-        WakeUnknownSpeakerPromptReason::ProtectedOrPersonalRequest => {
-            "WAKE_UNKNOWN_SPEAKER_PROTECTED_IDENTITY_REQUIRED"
-        }
     };
     Ok(Some(VoiceTurnAdapterResponse {
         status: "ok".to_string(),
@@ -18102,7 +18060,7 @@ fn continuing_speech_identity_prompt_response(
         reason: Some("wake_continuing_speech_identity_prompt".to_string()),
         next_move: "identity_name_prompt".to_string(),
         response_text: prompt,
-        reason_code: reason_code.to_string(),
+        reason_code: "WAKE_UNKNOWN_SPEAKER_PROTECTED_IDENTITY_REQUIRED".to_string(),
         provenance: None,
         tts_text,
         source_chips: Vec::new(),
@@ -26000,25 +25958,21 @@ mod tests {
         assert!(out.metadata_safe_for_user);
     }
 
-    fn assert_public_answer_before_unknown_speaker_prompt(out: &VoiceTurnAdapterResponse) {
+    fn assert_public_answer_without_unknown_speaker_prompt(out: &VoiceTurnAdapterResponse) {
         assert_eq!(out.status, "ok", "{out:?}");
         assert_eq!(out.outcome, "FINAL", "{out:?}");
         assert_ne!(out.next_move, "identity_name_prompt", "{out:?}");
         assert!(
-            out.response_text.contains(" Also, "),
-            "public answer should precede the identity prompt: {out:?}"
-        );
-        assert!(
-            WAKE_UNKNOWN_SPEAKER_NAME_PROMPT_SEED
+            !WAKE_UNKNOWN_SPEAKER_NAME_PROMPT_SEED
                 .iter()
-                .any(|prompt| out.response_text.ends_with(prompt)),
-            "identity prompt should stay in the approved local prompt library: {out:?}"
+                .any(|prompt| out.response_text.contains(prompt)),
+            "unknown-speaker prompt must be deferred from public-safe answer text: {out:?}"
         );
         assert!(
             !WAKE_UNKNOWN_SPEAKER_NAME_PROMPT_SEED
                 .iter()
-                .any(|prompt| out.response_text.starts_with(prompt)),
-            "identity prompt must not preempt public-safe answer: {out:?}"
+                .any(|prompt| out.tts_text.contains(prompt)),
+            "unknown-speaker prompt must be deferred from public-safe TTS text: {out:?}"
         );
         assert_eq!(out.tts_text, out.response_text, "{out:?}");
         assert!(out.source_chips.is_empty(), "{out:?}");
@@ -26031,13 +25985,6 @@ mod tests {
         assert_eq!(out.session_state.as_deref(), Some("ACTIVE"), "{out:?}");
         assert!(out.session_id.is_some(), "{out:?}");
         assert!(out.metadata_safe_for_user);
-    }
-
-    fn public_answer_unknown_speaker_prompt_suffix(out: &VoiceTurnAdapterResponse) -> String {
-        out.response_text
-            .rsplit_once(" Also, ")
-            .map(|(_, prompt)| prompt.to_string())
-            .expect("public answer should include appended unknown speaker prompt")
     }
 
     #[test]
@@ -26081,18 +26028,56 @@ mod tests {
         );
         let out = runtime
             .run_voice_turn(req)
-            .expect("unknown continuing speech should prompt only after Voice ID retry");
+            .expect("unknown continuing speech should answer public-safe request cleanly");
 
-        assert_public_answer_before_unknown_speaker_prompt(&out);
+        assert_public_answer_without_unknown_speaker_prompt(&out);
     }
 
     #[test]
-    fn wake_unknown_speaker_prompt_public_prompt_rotates_by_turn_sequence() {
+    fn voice_id_unknown_prompt_not_appended_to_public_answer() {
+        let (runtime, wake_req) = stage34m_activation_only_wake_request("voice_id_clean_public");
+        runtime
+            .run_voice_turn(wake_req.clone())
+            .expect("wake should open active session before public answer");
+
+        let req = continuing_speech_request_from_wake(
+            &wake_req,
+            "voice_id_clean_public",
+            "Tell me one public-safe thing you can help with today.",
+        );
+        let out = runtime
+            .run_voice_turn(req)
+            .expect("unknown public answer should remain free of onboarding copy");
+
+        assert_public_answer_without_unknown_speaker_prompt(&out);
+    }
+
+    #[test]
+    fn voice_id_unknown_prompt_not_appended_to_tts_text() {
+        let (runtime, wake_req) = stage34m_activation_only_wake_request("voice_id_clean_tts");
+        runtime
+            .run_voice_turn(wake_req.clone())
+            .expect("wake should open active session before public TTS answer");
+
+        let req = continuing_speech_request_from_wake(
+            &wake_req,
+            "voice_id_clean_tts",
+            "Tell me one simple public-safe fact.",
+        );
+        let out = runtime
+            .run_voice_turn(req)
+            .expect("unknown public TTS should remain free of onboarding copy");
+
+        assert_public_answer_without_unknown_speaker_prompt(&out);
+    }
+
+    #[test]
+    fn voice_id_unknown_prompt_deferred_until_governed_enrollment() {
         let (runtime_first, wake_req_first) =
             stage34m_activation_only_wake_request("slice3_prompt_rotation_first");
         runtime_first
             .run_voice_turn(wake_req_first.clone())
-            .expect("first wake should open active session before public prompt");
+            .expect("first wake should open active session before public answer");
 
         let mut first_req = continuing_speech_request_from_wake(
             &wake_req_first,
@@ -26102,14 +26087,14 @@ mod tests {
         first_req.device_turn_sequence = Some(34_920_001);
         let first_out = runtime_first
             .run_voice_turn(first_req)
-            .expect("first unknown public prompt should succeed");
-        assert_public_answer_before_unknown_speaker_prompt(&first_out);
+            .expect("first unknown public answer should succeed");
+        assert_public_answer_without_unknown_speaker_prompt(&first_out);
 
         let (runtime_second, wake_req_second) =
             stage34m_activation_only_wake_request("slice3_prompt_rotation_second");
         runtime_second
             .run_voice_turn(wake_req_second.clone())
-            .expect("second wake should open active session before public prompt");
+            .expect("second wake should open active session before public answer");
 
         let mut second_req = continuing_speech_request_from_wake(
             &wake_req_second,
@@ -26119,23 +26104,8 @@ mod tests {
         second_req.device_turn_sequence = Some(34_920_002);
         let second_out = runtime_second
             .run_voice_turn(second_req)
-            .expect("second unknown public prompt should succeed");
-        assert_public_answer_before_unknown_speaker_prompt(&second_out);
-
-        let first_prompt = public_answer_unknown_speaker_prompt_suffix(&first_out);
-        let second_prompt = public_answer_unknown_speaker_prompt_suffix(&second_out);
-        assert_ne!(
-            first_prompt, second_prompt,
-            "adjacent public unknown-speaker turns should rotate prompt phrasing"
-        );
-        assert!(
-            WAKE_UNKNOWN_SPEAKER_NAME_PROMPT_SEED[..4].contains(&first_prompt.as_str()),
-            "{first_prompt}"
-        );
-        assert!(
-            WAKE_UNKNOWN_SPEAKER_NAME_PROMPT_SEED[..4].contains(&second_prompt.as_str()),
-            "{second_prompt}"
-        );
+            .expect("second unknown public answer should succeed");
+        assert_public_answer_without_unknown_speaker_prompt(&second_out);
     }
 
     #[test]
@@ -26178,9 +26148,9 @@ mod tests {
         );
         let out = runtime
             .run_voice_turn(req)
-            .expect("unknown continuing speech should ask what to call the speaker");
+            .expect("unknown continuing speech should keep public answer clean");
 
-        assert_public_answer_before_unknown_speaker_prompt(&out);
+        assert_public_answer_without_unknown_speaker_prompt(&out);
     }
 
     #[test]
@@ -26269,8 +26239,8 @@ mod tests {
         );
         let out = runtime
             .run_voice_turn(req)
-            .expect("unknown identity prompt should remain non-persistent");
-        assert_public_answer_before_unknown_speaker_prompt(&out);
+            .expect("unknown public answer should remain non-persistent");
+        assert_public_answer_without_unknown_speaker_prompt(&out);
 
         let store = runtime.store.lock().expect("store lock must not poison");
         assert_eq!(

@@ -3819,7 +3819,7 @@ private final class DesktopWakeListenerController: ObservableObject {
             try audioEngine.start()
             listenerState = .listening
             desktopAppendRuntimeBridgeDebugLog(
-                "openai wake realtime transcription start stt_provider_id=\(DesktopVoiceProviderLane.sttProviderID) flag=\(DesktopRealtimeTranscriptionFeatureFlag.name) model=\(session.transcriptionModel) language_hint_policy=\(session.languageHintPolicy) request=\(session.requestID)"
+                "\(desktopTraceClockFields()) openai wake realtime transcription capture_ready=true stt_provider_id=\(DesktopVoiceProviderLane.sttProviderID) flag=\(DesktopRealtimeTranscriptionFeatureFlag.name) model=\(session.transcriptionModel) language_hint_policy=\(session.languageHintPolicy) request=\(session.requestID)"
             )
             scheduleRealtimeMaxSessionDuration(session.maxSessionDurationMS)
         } catch {
@@ -3971,7 +3971,7 @@ private final class DesktopWakeListenerController: ObservableObject {
 
         if eventType == "transcription_session.created" || eventType == "session.created" {
             desktopAppendRuntimeBridgeDebugLog(
-                "openai wake realtime transcription session created observed=true"
+                "\(desktopTraceClockFields()) openai wake realtime transcription session created observed=true"
             )
             return
         }
@@ -3988,7 +3988,7 @@ private final class DesktopWakeListenerController: ObservableObject {
                 if self.realtimeSpeechStartedNS == nil {
                     self.realtimeSpeechStartedNS = DispatchTime.now().uptimeNanoseconds
                     desktopAppendRuntimeBridgeDebugLog(
-                        "openai wake realtime transcription speech_started observed=true"
+                        "\(desktopTraceClockFields()) openai wake realtime transcription speech_started observed=true"
                     )
                 }
             }
@@ -4002,7 +4002,7 @@ private final class DesktopWakeListenerController: ObservableObject {
                 if self.realtimeFirstDeltaNS == nil {
                     self.realtimeFirstDeltaNS = DispatchTime.now().uptimeNanoseconds
                     desktopAppendRuntimeBridgeDebugLog(
-                        "openai wake realtime transcription first_delta observed=true"
+                        "\(desktopTraceClockFields()) openai wake realtime transcription first_delta observed=true"
                     )
                 }
                 self.realtimePartialTranscript += delta
@@ -4068,7 +4068,7 @@ private final class DesktopWakeListenerController: ObservableObject {
 
         if eventType == "input_audio_buffer.committed" {
             desktopAppendRuntimeBridgeDebugLog(
-                "openai wake realtime transcription audio_committed observed=true"
+                "\(desktopTraceClockFields()) openai wake realtime transcription audio_committed observed=true"
             )
         }
     }
@@ -4125,7 +4125,7 @@ private final class DesktopWakeListenerController: ObservableObject {
         realtimeCommittedTranscript = trimmedTranscript
         transcriptPreview = trimmedTranscript
         desktopAppendRuntimeBridgeDebugLog(
-            "openai wake realtime transcription completed final_chars=\(trimmedTranscript.count) wake_prefix_match=\(boundedWakePrefixMatch(in: trimmedTranscript, wakeTriggerPhrase: wakeTriggerPhrase) != nil)"
+            "\(desktopTraceClockFields()) openai wake realtime transcription completed final_chars=\(trimmedTranscript.count) wake_prefix_match=\(boundedWakePrefixMatch(in: trimmedTranscript, wakeTriggerPhrase: wakeTriggerPhrase) != nil)"
         )
         prepareWakeTriggeredVoiceTurnIfDetected(trimmedTranscript)
         desktopAppendRuntimeBridgeDebugLog(
@@ -19929,8 +19929,7 @@ struct DesktopSessionShellView: View {
 
     private func desktopCurrentAudioEvidenceContext() -> DesktopAudioEvidenceContext {
         DesktopAudioEvidenceContext(
-            ttsPlaybackActiveAtCaptureStart: desktopAuthoritativeReplyPlaybackState.phase == .speaking
-                || desktopOpenAITtsSelfEchoGateActive,
+            ttsPlaybackActiveAtCaptureStart: desktopAuthoritativeReplyPlaybackState.phase == .speaking,
             ttsPlaybackStartedNS: desktopOpenAITtsPlaybackMostRecentStartedNS,
             lastTtsPlaybackEndedNS: desktopOpenAITtsPlaybackLastEndedNS,
             ttsPlaybackReferenceText: desktopOpenAITtsPlaybackReferenceText

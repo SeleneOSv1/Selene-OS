@@ -2027,6 +2027,80 @@ tests/checks must pass
 
 if ledger update is required by repo law, do it
 
+Mandatory Dead Surface Cleanup Gate
+
+Codex must not leave stale, dead, obsolete, or rubbish code surfaces behind when they are directly related to the current repair.
+
+Before commit, Codex must identify obsolete symbols, helpers, fields, constructors, compatibility shims, preview paths, fallback paths, and owner paths created by or made obsolete by the repair.
+
+Codex must run rg -n for each identified symbol/path before deciding its fate.
+
+Each stale-surface candidate must be classified as exactly one of:
+
+STILL_ACTIVE_REQUIRED
+
+DEAD_LOCAL_SURFACE
+
+WRONG_OWNER_SURFACE
+
+LEGACY_COMPATIBILITY_REQUIRED
+
+DEAD_LOCAL_SURFACE code must be removed immediately when removal stays inside the approved file scope.
+
+WRONG_OWNER_SURFACE behavior must not be kept in the wrong layer. Move it to the owning module only if that owner is already inside the approved scope. If the owner is outside scope, stop and report exactly:
+
+STALE_SURFACE_OWNER_SCOPE_REQUIRED
+
+LEGACY_COMPATIBILITY_REQUIRED may remain only when repo truth proves an active dependency still needs it. The final report must explain what depends on it and what future cleanup should remove it.
+
+If directly related stale-surface cleanup requires broader unrelated files or systems, stop and report exactly:
+
+DEDICATED_DEAD_SURFACE_CLEANUP_REQUIRED
+
+Codex must fix warnings introduced by the current repair before commit.
+
+Desktop-specific dead-surface rule:
+
+Desktop must not retain stale decision surfaces for:
+
+final transcript validity
+
+barge-in acceptance
+
+echo/user intent
+
+turn commit/reject authority
+
+TTS cancel decision
+
+session/listening policy
+
+identity
+
+memory
+
+provider/protected execution
+
+Desktop may keep only:
+
+capture
+
+playback
+
+transport
+
+preview mechanics
+
+runtime bridge
+
+rendering accepted runtime output
+
+obeying runtime control
+
+Before commit, Codex must prove Desktop did not gain decision authority.
+
+The final report for every implementation run must list stale symbols found, classifications, removed symbols, kept symbols with reasons, rg -n proof for removed symbols, Desktop authority proof when Desktop is touched, warning status, and tests still passing.
+
 commit only relevant files
 
 push to origin
