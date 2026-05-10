@@ -1540,6 +1540,7 @@ pub struct AdapterRuntime {
     public_brain_trace_state: Arc<Mutex<AdapterPublicBrainTraceState>>,
     public_discourse_state: Arc<Mutex<AdapterPublicDiscourseState>>,
     public_answer_state: Arc<Mutex<AdapterPublicAnswerState>>,
+    active_session_context_state: Arc<Mutex<BTreeMap<String, String>>>,
     weather_context_state: Arc<Mutex<BTreeMap<String, String>>>,
     report_display_target_defaults: Arc<Mutex<BTreeMap<String, String>>>,
     auto_builder_enabled: bool,
@@ -2844,6 +2845,7 @@ fn h380_detects_implied_intent(lower: &str, previous: Option<&LastTurnContext>) 
         || lower == "meaning"
         || lower == "proper check"
         || lower.contains("same for")
+        || (previous.is_some() && h380_contextual_place_followup_location(lower).is_some())
         || lower.starts_with("and ")
         || lower.contains("there")
         || lower.contains("same place")
@@ -2915,6 +2917,7 @@ fn h380_resolves_previous_route(
     previous.is_some_and(|ctx| {
         ctx.route_class == route
             && (lower.contains("same for")
+                || h380_contextual_place_followup_location(lower).is_some()
                 || lower.starts_with("and ")
                 || lower.contains("there")
                 || lower.contains("the other place")
@@ -2959,9 +2962,107 @@ fn h380_slots_present(lower: &str, original: &str) -> Vec<String> {
     if original.contains("悉尼") {
         slots.push("location:Sydney".to_string());
     }
+    if let Some(place) = h380_contextual_place_followup_location(original) {
+        slots.push(format!("location:{place}"));
+    }
     slots.sort();
     slots.dedup();
     slots
+}
+
+fn h380_contextual_place_followup_location(text: &str) -> Option<String> {
+    let normalized = normalize_h379_followup_text(text);
+    let candidate = [
+        "what about ",
+        "same for ",
+        "same question for ",
+        "same question in ",
+        "and ",
+    ]
+    .iter()
+    .find_map(|prefix| normalized.strip_prefix(prefix))?;
+    h380_clean_contextual_place_candidate(candidate)
+}
+
+fn h380_clean_contextual_place_candidate(candidate: &str) -> Option<String> {
+    let cleaned = candidate
+        .chars()
+        .map(|ch| {
+            if ch.is_alphanumeric() || ch.is_whitespace() || matches!(ch, '/' | '-' | '\'' | ',') {
+                ch
+            } else {
+                ' '
+            }
+        })
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    if cleaned.is_empty() || cleaned.len() > 96 {
+        return None;
+    }
+    let lower = cleaned.to_ascii_lowercase();
+    let tokens = lower.split_whitespace().collect::<Vec<_>>();
+    if tokens.is_empty() || tokens.len() > 5 {
+        return None;
+    }
+    if matches!(
+        tokens.as_slice(),
+        ["there"] | ["here"] | ["that"] | ["it"] | ["that", "city"] | ["same", "place"]
+    ) {
+        return None;
+    }
+    if tokens.iter().any(|token| {
+        matches!(
+            *token,
+            "weather"
+                | "forecast"
+                | "temperature"
+                | "time"
+                | "proof"
+                | "source"
+                | "meaning"
+                | "explain"
+                | "payroll"
+                | "salary"
+                | "rules"
+                | "rule"
+                | "policy"
+                | "memory"
+                | "remember"
+                | "approve"
+                | "execute"
+                | "protected"
+                | "search"
+                | "web"
+                | "joke"
+        )
+    }) {
+        return None;
+    }
+    if !cleaned.chars().any(char::is_alphabetic) {
+        return None;
+    }
+    Some(h380_titlecase_contextual_place(&cleaned))
+}
+
+fn h380_titlecase_contextual_place(value: &str) -> String {
+    value
+        .split_whitespace()
+        .map(|token| {
+            if token.chars().any(|ch| !ch.is_ascii_alphabetic()) {
+                token.to_string()
+            } else {
+                let mut chars = token.chars();
+                let Some(first) = chars.next() else {
+                    return String::new();
+                };
+                format!("{}{}", first.to_ascii_uppercase(), chars.as_str())
+            }
+        })
+        .filter(|token| !token.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn h380_secondary_intents(
@@ -4004,6 +4105,7 @@ impl Default for AdapterRuntime {
             public_brain_trace_state: Arc::new(Mutex::new(AdapterPublicBrainTraceState::default())),
             public_discourse_state: Arc::new(Mutex::new(AdapterPublicDiscourseState::default())),
             public_answer_state: Arc::new(Mutex::new(AdapterPublicAnswerState::default())),
+            active_session_context_state: Arc::new(Mutex::new(BTreeMap::new())),
             weather_context_state: Arc::new(Mutex::new(BTreeMap::new())),
             report_display_target_defaults: Arc::new(Mutex::new(BTreeMap::new())),
             auto_builder_enabled: true,
@@ -4046,6 +4148,7 @@ impl AdapterRuntime {
             public_brain_trace_state: Arc::new(Mutex::new(AdapterPublicBrainTraceState::default())),
             public_discourse_state: Arc::new(Mutex::new(AdapterPublicDiscourseState::default())),
             public_answer_state: Arc::new(Mutex::new(AdapterPublicAnswerState::default())),
+            active_session_context_state: Arc::new(Mutex::new(BTreeMap::new())),
             weather_context_state: Arc::new(Mutex::new(BTreeMap::new())),
             report_display_target_defaults: Arc::new(Mutex::new(BTreeMap::new())),
             auto_builder_enabled: true,
@@ -4083,6 +4186,7 @@ impl AdapterRuntime {
             public_brain_trace_state: Arc::new(Mutex::new(AdapterPublicBrainTraceState::default())),
             public_discourse_state: Arc::new(Mutex::new(AdapterPublicDiscourseState::default())),
             public_answer_state: Arc::new(Mutex::new(AdapterPublicAnswerState::default())),
+            active_session_context_state: Arc::new(Mutex::new(BTreeMap::new())),
             weather_context_state: Arc::new(Mutex::new(BTreeMap::new())),
             report_display_target_defaults: Arc::new(Mutex::new(BTreeMap::new())),
             auto_builder_enabled,
@@ -8200,6 +8304,17 @@ impl AdapterRuntime {
                         post_session_error(format!("invalid thread policy flags: {err:?}"))
                     })?;
             }
+            base_thread_state = reset_session_scoped_active_context_if_needed(
+                &self.active_session_context_state,
+                &self.weather_context_state,
+                &self.public_discourse_state,
+                &actor_user_id,
+                &thread_key,
+                session_turn_state.session_id_for_commits,
+                session_turn_state.session_attach_outcome,
+                base_thread_state,
+            )
+            .map_err(post_session_error)?;
             let weather_context_place = latest_weather_context_place(
                 &self.weather_context_state,
                 &actor_user_id,
@@ -12623,6 +12738,71 @@ fn deterministic_weather_context_followup_query(
     Some(format!("what is the weather in {place}"))
 }
 
+fn active_session_context_scope_key(actor_user_id: &UserId, thread_key: &str) -> String {
+    format!("{}::{}", actor_user_id.as_str(), thread_key)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn reset_session_scoped_active_context_if_needed(
+    active_session_context_state: &Arc<Mutex<BTreeMap<String, String>>>,
+    weather_context_state: &Arc<Mutex<BTreeMap<String, String>>>,
+    public_discourse_state: &Arc<Mutex<AdapterPublicDiscourseState>>,
+    actor_user_id: &UserId,
+    thread_key: &str,
+    session_id: Option<SessionId>,
+    session_attach_outcome: SessionAttachOutcome,
+    thread_state: ThreadState,
+) -> Result<ThreadState, String> {
+    let Some(session_id) = session_id else {
+        return Ok(thread_state);
+    };
+    let scope_key = active_session_context_scope_key(actor_user_id, thread_key);
+    let session_key = session_id_to_string(session_id);
+    let mut state = active_session_context_state
+        .lock()
+        .map_err(|_| "active_session_context_state_poisoned".to_string())?;
+    let session_changed = match state.get(&scope_key) {
+        Some(previous) => previous != &session_key,
+        None => matches!(
+            session_attach_outcome,
+            SessionAttachOutcome::NewSessionCreated
+        ),
+    };
+    state.insert(scope_key, session_key);
+    drop(state);
+
+    if !session_changed {
+        return Ok(thread_state);
+    }
+    forget_latest_weather_place(weather_context_state, actor_user_id, thread_key)?;
+    forget_public_discourse_frame(public_discourse_state, actor_user_id, thread_key)?;
+    Ok(clear_session_scoped_thread_context(thread_state))
+}
+
+fn clear_session_scoped_thread_context(mut thread_state: ThreadState) -> ThreadState {
+    thread_state.pending = None;
+    thread_state.resume_buffer = None;
+    thread_state.last_turn_context = None;
+    thread_state.active_subject_ref = None;
+    thread_state.interrupted_subject_ref = None;
+    thread_state.return_check_pending = false;
+    thread_state.return_check_expires_at = None;
+    thread_state
+}
+
+fn forget_public_discourse_frame(
+    public_discourse_state: &Arc<Mutex<AdapterPublicDiscourseState>>,
+    actor_user_id: &UserId,
+    thread_key: &str,
+) -> Result<(), String> {
+    let key = h411_public_discourse_scope_key(actor_user_id, thread_key);
+    let mut state = public_discourse_state
+        .lock()
+        .map_err(|_| "adapter public discourse lock poisoned".to_string())?;
+    state.frames.remove(&key);
+    Ok(())
+}
+
 fn weather_context_scope_key(actor_user_id: &UserId, thread_key: &str) -> String {
     format!("{}::{}", actor_user_id.as_str(), thread_key)
 }
@@ -12677,6 +12857,18 @@ fn remember_latest_weather_place(
         };
         guard.remove(&oldest_key);
     }
+    Ok(())
+}
+
+fn forget_latest_weather_place(
+    weather_context_state: &Arc<Mutex<BTreeMap<String, String>>>,
+    actor_user_id: &UserId,
+    thread_key: &str,
+) -> Result<(), String> {
+    let mut guard = weather_context_state
+        .lock()
+        .map_err(|_| "weather_context_state_poisoned".to_string())?;
+    guard.remove(&weather_context_scope_key(actor_user_id, thread_key));
     Ok(())
 }
 
@@ -18021,7 +18213,10 @@ fn continuing_speech_identity_prompt_response(
         return Ok(None);
     }
 
-    let Some(text) = user_text_final.map(str::trim).filter(|text| !text.is_empty()) else {
+    let Some(text) = user_text_final
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+    else {
         return Ok(None);
     };
     if !existing_protected_or_private_classification_for_identity_prompt(text) {
@@ -35953,6 +36148,69 @@ mod tests {
     }
 
     #[test]
+    fn active_session_context_time_what_about_location_inherits_time_intent() {
+        let runtime = AdapterRuntime::default();
+        let thread_key = "active-session-time-what-about-location";
+        let seed = h363_run_desktop_typed_time_query_on_thread(
+            &runtime,
+            thread_key,
+            363_201,
+            "What time is it in New York?",
+        );
+        assert_h363_clean_time_answer(&seed, "New York");
+
+        let followup = h363_run_desktop_typed_time_query_on_thread(
+            &runtime,
+            thread_key,
+            363_202,
+            "What about London?",
+        );
+        assert_h363_clean_time_answer(&followup, "London");
+        assert!(!followup.response_text.contains("weather"));
+
+        let packet = runtime
+            .ingress
+            .debug_last_agent_input_packet()
+            .expect("follow-up should reach PH1.X through adapter runtime");
+        assert!(
+            packet.memory_candidates.is_empty(),
+            "active time follow-up must not require PH1.M recall candidates"
+        );
+    }
+
+    #[test]
+    fn active_session_context_topic_switch_does_not_reuse_time_intent() {
+        let runtime = AdapterRuntime::default();
+        let thread_key = "active-session-topic-switch";
+        let seed = h363_run_desktop_typed_time_query_on_thread(
+            &runtime,
+            thread_key,
+            363_211,
+            "What time is it in New York?",
+        );
+        assert_h363_clean_time_answer(&seed, "New York");
+
+        let switched = h363_run_desktop_typed_time_query_on_thread(
+            &runtime,
+            thread_key,
+            363_212,
+            "Explain payroll rules.",
+        );
+        assert_eq!(switched.status, "ok");
+        assert!(
+            !switched.response_text.starts_with("It's "),
+            "{}",
+            switched.response_text
+        );
+        assert!(
+            !switched.response_text.contains(" in New York.")
+                && !switched.response_text.contains(" in London."),
+            "{}",
+            switched.response_text
+        );
+    }
+
+    #[test]
     fn h363_springfield_disambiguated_followup_completes_same_thread() {
         for (thread_key, turn_id, followup, place) in [
             (
@@ -36391,6 +36649,205 @@ mod tests {
                 );
                 assert_h364_clean_weather_answer(&answer, "Springfield, Illinois");
                 assert!(answer.response_text.contains("16.8°C"));
+            },
+        );
+    }
+
+    #[test]
+    fn active_session_context_weather_australia_sydney_fills_pending_slot_and_clears() {
+        let endpoint = h361_spawn_tomorrow_weather_endpoint(
+            r#"{
+                "data": {
+                    "time": "2026-04-25T03:00:00Z",
+                    "values": {
+                        "temperature": 23.0,
+                        "humidity": 52,
+                        "windSpeed": 5.1,
+                        "weatherCode": 1000
+                    }
+                },
+                "location": {
+                    "name": "Sydney, Australia"
+                }
+            }"#,
+        );
+        with_isolated_device_vault(
+            "active-session-weather-australia-sydney",
+            &[],
+            &[
+                ("SELENE_REALTIME_TOMORROW_IO_ENDPOINT", endpoint.as_str()),
+                (
+                    "SELENE_REALTIME_TOMORROW_IO_API_KEY",
+                    "active-session-secret",
+                ),
+                ("SELENE_REALTIME_WEATHER_API_KEY", " "),
+                ("SELENE_REALTIME_PROXY_MODE", "off"),
+            ],
+            || {
+                let runtime = AdapterRuntime::default();
+                let thread_key = "active-session-weather-australia-sydney";
+                let before_memory = {
+                    let store = runtime.store.lock().expect("store lock should succeed");
+                    (
+                        store.memory_ledger_rows().len(),
+                        store.ph1m_thread_ledger_rows().len(),
+                    )
+                };
+
+                let clarify = h364_run_desktop_typed_weather_query_on_thread(
+                    &runtime,
+                    thread_key,
+                    364_201,
+                    "What's the weather like in Australia?",
+                );
+                assert_h364_clean_weather_clarification(&clarify, "Sydney, Australia");
+
+                let answer = h364_run_desktop_typed_weather_query_on_thread(
+                    &runtime, thread_key, 364_202, "Sydney.",
+                );
+                assert_h364_clean_weather_answer(&answer, "Sydney");
+                assert!(answer.response_text.contains("23°C"));
+
+                let actor_user_id = UserId::new("tenant_a:user_adapter_test").unwrap();
+                let store = runtime.store.lock().expect("store lock should succeed");
+                let current = store
+                    .ph1x_thread_state_current_row(&actor_user_id, thread_key)
+                    .expect("active session thread state should persist");
+                assert!(
+                    current.thread_state.pending.is_none(),
+                    "pending city clarification should clear after Sydney resolves"
+                );
+                assert!(
+                    current.thread_state.resume_buffer.is_none(),
+                    "weather clarification resume buffer should clear after Sydney resolves"
+                );
+                assert_eq!(
+                    current
+                        .thread_state
+                        .last_turn_context
+                        .as_ref()
+                        .map(|context| context.route_class),
+                    Some(LastTurnRouteClass::ToolWeather)
+                );
+                assert_eq!(
+                    (
+                        store.memory_ledger_rows().len(),
+                        store.ph1m_thread_ledger_rows().len()
+                    ),
+                    before_memory,
+                    "same-session city slot fill must not write or require PH1.M durable memory"
+                );
+                let packet = runtime
+                    .ingress
+                    .debug_last_agent_input_packet()
+                    .expect("Sydney follow-up should reach PH1.X through adapter runtime");
+                assert!(
+                    packet.memory_candidates.is_empty(),
+                    "Sydney slot fill must not require PH1.M recall candidates"
+                );
+            },
+        );
+    }
+
+    #[test]
+    fn active_session_context_new_session_does_not_leak_weather_slot() {
+        let endpoint = h373_spawn_tomorrow_weather_endpoint_sequence(vec![
+            r#"{
+                "data": {
+                    "time": "2026-04-25T03:00:00Z",
+                    "values": {
+                        "temperature": 23.0,
+                        "humidity": 52,
+                        "windSpeed": 5.1,
+                        "weatherCode": 1000
+                    }
+                },
+                "location": {
+                    "name": "Sydney, Australia"
+                }
+            }"#,
+        ]);
+        with_isolated_device_vault(
+            "active-session-new-session-no-weather-leak",
+            &[],
+            &[
+                ("SELENE_REALTIME_TOMORROW_IO_ENDPOINT", endpoint.as_str()),
+                (
+                    "SELENE_REALTIME_TOMORROW_IO_API_KEY",
+                    "active-session-secret",
+                ),
+                ("SELENE_REALTIME_WEATHER_API_KEY", " "),
+                ("SELENE_REALTIME_PROXY_MODE", "off"),
+            ],
+            || {
+                let runtime = AdapterRuntime::default();
+                let thread_key = "active-session-new-session-no-weather-leak";
+                let clarify = h364_run_desktop_typed_weather_query_on_thread(
+                    &runtime,
+                    thread_key,
+                    364_221,
+                    "What's the weather like in Australia?",
+                );
+                assert_h364_clean_weather_clarification(&clarify, "Sydney, Australia");
+                let answer = h364_run_desktop_typed_weather_query_on_thread(
+                    &runtime, thread_key, 364_222, "Sydney.",
+                );
+                assert_h364_clean_weather_answer(&answer, "Sydney");
+
+                let actor_user_id = UserId::new("tenant_a:user_adapter_test").unwrap();
+                let first_session_id = {
+                    let mut store = runtime.store.lock().expect("store lock should succeed");
+                    let first_session = latest_canonical_session_for_actor(&store, &actor_user_id)
+                        .expect("canonical session lookup should succeed")
+                        .expect("first session should exist");
+                    let first_session_id = first_session.session_id;
+                    let mut soft_closed = first_session.clone();
+                    soft_closed.session_state = SessionState::SoftClosed;
+                    soft_closed.active_turn_id = None;
+                    soft_closed.lease_owner_id = None;
+                    soft_closed.lease_acquired_at = None;
+                    soft_closed.lease_expires_at = None;
+                    store
+                        .upsert_session_lifecycle(
+                            soft_closed,
+                            Some("active_context_force_soft_closed".to_string()),
+                        )
+                        .expect("forced soft close should persist");
+                    first_session_id
+                };
+
+                let mut next = base_request();
+                next.correlation_id = 364_223;
+                next.turn_id = 364_223;
+                next.device_turn_sequence = Some(364_223);
+                next.now_ns = Some(250_000_000_000);
+                next.thread_key = Some(thread_key.to_string());
+                next.app_platform = "DESKTOP".to_string();
+                next.audio_capture_ref = None;
+                next.user_text_final = Some("Sydney.".to_string());
+                let new_session_answer = runtime
+                    .run_voice_turn(next)
+                    .expect("new-session Sydney turn should complete safely");
+                assert_eq!(new_session_answer.status, "ok");
+                assert!(
+                    !new_session_answer.response_text.starts_with("Sydney is")
+                        && !new_session_answer.response_text.contains("°C"),
+                    "new session must not inherit old weather context: {}",
+                    new_session_answer.response_text
+                );
+
+                let store = runtime.store.lock().expect("store lock should succeed");
+                let latest = latest_canonical_session_for_actor(&store, &actor_user_id)
+                    .expect("canonical session lookup should succeed")
+                    .expect("latest session should exist");
+                assert_ne!(latest.session_id, first_session_id);
+                let current = store
+                    .ph1x_thread_state_current_row(&actor_user_id, thread_key)
+                    .expect("thread state should still persist");
+                assert!(
+                    current.thread_state.pending.is_none(),
+                    "new session should not inherit old pending weather slot"
+                );
             },
         );
     }
