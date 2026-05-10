@@ -23,6 +23,10 @@ private func desktopAppendRuntimeBridgeDebugLog(_ message: String) {
     try? handle.close()
 }
 
+private func desktopTraceClockFields() -> String {
+    "t_epoch_ns=\(desktopEpochNowNS()) t_uptime_ns=\(Swift.max(DispatchTime.now().uptimeNanoseconds, 1))"
+}
+
 private func desktopEpochNowNS() -> UInt64 {
     UInt64(Date().timeIntervalSince1970 * 1_000) &* 1_000_000
 }
@@ -1155,6 +1159,8 @@ private enum DesktopAudioEvidenceClass: String, Equatable {
 }
 
 private struct DesktopAudioEvidenceContext: Equatable {
+    private static let postTtsEchoTailPreviewGuardNS: UInt64 = 900_000_000
+
     let ttsPlaybackActiveAtCaptureStart: Bool
     let ttsPlaybackStartedNS: UInt64?
     let lastTtsPlaybackEndedNS: UInt64?
@@ -1192,6 +1198,29 @@ private struct DesktopAudioEvidenceContext: Equatable {
         let postPlaybackEchoGuardNS: UInt64 = 150_000_000
         return observedSpeechStartNS <= lastTtsPlaybackEndedNS
             || observedSpeechStartNS.saturatingSubtract(lastTtsPlaybackEndedNS) < postPlaybackEchoGuardNS
+    }
+
+    func suppressesUnacceptedPreview(
+        observedNS: UInt64,
+        captureStartNS: UInt64,
+        speechStartNS: UInt64?
+    ) -> Bool {
+        if ttsPlaybackActiveAtCaptureStart {
+            return true
+        }
+
+        if ttsActiveDuringCapture(startNS: captureStartNS, endNS: observedNS) {
+            return true
+        }
+
+        guard let lastTtsPlaybackEndedNS else {
+            return false
+        }
+
+        let observedSpeechStartNS = speechStartNS ?? observedNS
+        return observedSpeechStartNS <= lastTtsPlaybackEndedNS
+            || observedSpeechStartNS.saturatingSubtract(lastTtsPlaybackEndedNS)
+                < Self.postTtsEchoTailPreviewGuardNS
     }
 
     func transcriptMatchesTtsReference(_ transcript: String?) -> Bool {
@@ -2386,6 +2415,8 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
     private var realtimeMaxSessionDurationWorkItem: DispatchWorkItem?
     private var realtimeSpeechStartedNS: UInt64?
     private var realtimeFirstDeltaNS: UInt64?
+    private var realtimeFirstAudioFrameNS: UInt64?
+    private var realtimePreviewSuppressedForEchoTail = false
     private var realtimeAudioEvidenceAccumulator = DesktopAudioEvidenceAccumulator()
 
     init(locale: Locale? = nil) {
@@ -2435,6 +2466,48 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
                 self.beginRealtimeTranscriptionCapture(session: session, evidenceContext: evidenceContext)
             }
         }
+    }
+
+    func prepareRealtimeTranscriptionTransport(
+        session: DesktopRealtimeTranscriptionSessionState
+    ) {
+        failedRequest = nil
+
+        guard !isListening,
+              pendingRequest == nil,
+              realtimeWebSocketTask == nil else {
+            return
+        }
+
+        guard let websocketURL = URL(string: session.websocketURL) else {
+            return
+        }
+
+        teardownRecognitionSession()
+        realtimeSession = session
+        realtimePartialTranscript = ""
+        realtimeCommittedTranscript = ""
+        realtimeCaptureStopNS = nil
+        realtimeSpeechStartedNS = nil
+        realtimeFirstDeltaNS = nil
+        realtimeFirstAudioFrameNS = nil
+        realtimePreviewSuppressedForEchoTail = false
+        transcriptPreview = ""
+
+        let websocketTask = realtimeURLSession.webSocketTask(
+            with: websocketURL,
+            protocols: [
+                "realtime",
+                "openai-insecure-api-key.\(session.clientSecret)",
+                "openai-beta.realtime-v1",
+            ]
+        )
+        realtimeWebSocketTask = websocketTask
+        websocketTask.resume()
+        receiveRealtimeTranscriptionEvents()
+        desktopAppendRuntimeBridgeDebugLog(
+            "\(desktopTraceClockFields()) openai realtime transcription websocket_preconnect=true request=\(session.requestID)"
+        )
     }
 
     func startExplicitVoiceTurn() {
@@ -2580,6 +2653,16 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
         failedRequest = nil
     }
 
+    func discardPreparedRealtimeTransportIfIdle() {
+        guard !isListening,
+              pendingRequest == nil,
+              realtimeWebSocketTask != nil else {
+            return
+        }
+
+        teardownRecognitionSession()
+    }
+
     func clearPendingPreparedVoiceTurn() {
         pendingRequest = nil
     }
@@ -2601,7 +2684,12 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
         evidenceContext: DesktopAudioEvidenceContext
     ) {
         failedRequest = nil
-        teardownRecognitionSession()
+        let reusePreparedTransport = realtimeWebSocketTask != nil
+            && realtimeSession?.requestID == session.requestID
+            && !isListening
+        if !reusePreparedTransport {
+            teardownRecognitionSession()
+        }
         refreshPermissionState()
         realtimeSession = session
         realtimePartialTranscript = ""
@@ -2609,6 +2697,8 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
         realtimeCaptureStopNS = nil
         realtimeSpeechStartedNS = nil
         realtimeFirstDeltaNS = nil
+        realtimeFirstAudioFrameNS = nil
+        realtimePreviewSuppressedForEchoTail = false
         transcriptPreview = ""
 
         guard let websocketURL = URL(string: session.websocketURL) else {
@@ -2646,21 +2736,26 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
                 return
             }
 
-            let websocketTask = realtimeURLSession.webSocketTask(
-                with: websocketURL,
-                protocols: [
-                    "realtime",
-                    "openai-insecure-api-key.\(session.clientSecret)",
-                    "openai-beta.realtime-v1",
-                ]
-            )
-            realtimeWebSocketTask = websocketTask
+            if realtimeWebSocketTask == nil {
+                let websocketTask = realtimeURLSession.webSocketTask(
+                    with: websocketURL,
+                    protocols: [
+                        "realtime",
+                        "openai-insecure-api-key.\(session.clientSecret)",
+                        "openai-beta.realtime-v1",
+                    ]
+                )
+                realtimeWebSocketTask = websocketTask
+                websocketTask.resume()
+                receiveRealtimeTranscriptionEvents()
+            } else {
+                desktopAppendRuntimeBridgeDebugLog(
+                    "\(desktopTraceClockFields()) openai realtime transcription websocket_preconnect_consumed=true request=\(session.requestID)"
+                )
+            }
             realtimeOutputFormat = outputFormat
             realtimeAudioConverter = converter
             activeCaptureContext = captureContext
-
-            websocketTask.resume()
-            receiveRealtimeTranscriptionEvents()
 
             inputNode.installTap(onBus: 0, bufferSize: 2_048, format: inputFormat) { [weak self] buffer, _ in
                 self?.appendRealtimeAudioBuffer(buffer, inputFormat: inputFormat)
@@ -2671,7 +2766,7 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
             try audioEngine.start()
             isListening = true
             desktopAppendRuntimeBridgeDebugLog(
-                "openai realtime transcription start stt_provider_id=\(DesktopVoiceProviderLane.sttProviderID) flag=\(DesktopRealtimeTranscriptionFeatureFlag.name) model=\(session.transcriptionModel) language_hint_policy=\(session.languageHintPolicy) request=\(session.requestID)"
+                "\(desktopTraceClockFields()) openai realtime transcription capture_ready=true stt_provider_id=\(DesktopVoiceProviderLane.sttProviderID) flag=\(DesktopRealtimeTranscriptionFeatureFlag.name) model=\(session.transcriptionModel) language_hint_policy=\(session.languageHintPolicy) request=\(session.requestID)"
             )
             scheduleRealtimeMaxSessionDuration(session.maxSessionDurationMS)
         } catch {
@@ -2733,6 +2828,13 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
                 byteCount: byteCount,
                 observedNS: Swift.max(DispatchTime.now().uptimeNanoseconds, 1)
             )
+            if self.realtimeFirstAudioFrameNS == nil {
+                let observedNS = Swift.max(DispatchTime.now().uptimeNanoseconds, 1)
+                self.realtimeFirstAudioFrameNS = observedNS
+                desktopAppendRuntimeBridgeDebugLog(
+                    "\(desktopTraceClockFields()) openai realtime transcription first_audio_frame accepted=true byte_count=\(byteCount)"
+                )
+            }
             let audioData = Data(bytes: channelData[0], count: byteCount)
             self.sendRealtimeTranscriptionEvent([
                 "type": "input_audio_buffer.append",
@@ -2815,14 +2917,14 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
 
         if eventType == "transcription_session.created" || eventType == "session.created" {
             desktopAppendRuntimeBridgeDebugLog(
-                "openai realtime transcription session created observed=true"
+                "\(desktopTraceClockFields()) openai realtime transcription session created observed=true"
             )
             return
         }
 
         if eventType == "transcription_session.updated" || eventType == "session.updated" {
             desktopAppendRuntimeBridgeDebugLog(
-                "openai realtime transcription session updated observed=true"
+                "\(desktopTraceClockFields()) openai realtime transcription session updated observed=true"
             )
             return
         }
@@ -2832,7 +2934,7 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
                 if self.realtimeSpeechStartedNS == nil {
                     self.realtimeSpeechStartedNS = DispatchTime.now().uptimeNanoseconds
                     desktopAppendRuntimeBridgeDebugLog(
-                        "openai realtime transcription speech_started observed=true"
+                        "\(desktopTraceClockFields()) openai realtime transcription speech_started observed=true"
                     )
                 }
             }
@@ -2843,14 +2945,15 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
            let delta = object["delta"] as? String,
            !delta.isEmpty {
             DispatchQueue.main.async {
+                let observedNS = Swift.max(DispatchTime.now().uptimeNanoseconds, 1)
                 if self.realtimeFirstDeltaNS == nil {
-                    self.realtimeFirstDeltaNS = DispatchTime.now().uptimeNanoseconds
+                    self.realtimeFirstDeltaNS = observedNS
                     desktopAppendRuntimeBridgeDebugLog(
-                        "openai realtime transcription first_delta observed=true"
+                        "\(desktopTraceClockFields()) openai realtime transcription first_delta observed=true"
                     )
                 }
                 self.realtimePartialTranscript += delta
-                self.transcriptPreview = self.realtimePartialTranscript
+                self.updateRealtimeTranscriptPreviewIfAllowed(observedNS: observedNS)
             }
             return
         }
@@ -2907,7 +3010,7 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
 
         if eventType == "input_audio_buffer.committed" {
             desktopAppendRuntimeBridgeDebugLog(
-                "openai realtime transcription audio_committed observed=true"
+                "\(desktopTraceClockFields()) openai realtime transcription audio_committed observed=true"
             )
         }
     }
@@ -2928,7 +3031,7 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
         sendRealtimeTranscriptionEvent(["type": "input_audio_buffer.commit"])
         scheduleRealtimeCompletionTimeout()
         desktopAppendRuntimeBridgeDebugLog(
-            "openai realtime transcription commit sent=true partial_chars=\(realtimePartialTranscript.count)"
+            "\(desktopTraceClockFields()) openai realtime transcription commit sent=true partial_chars=\(realtimePartialTranscript.count)"
         )
     }
 
@@ -2936,6 +3039,7 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
         cancelRealtimeCompletionTimeout()
         let trimmedTranscript = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedTranscript.isEmpty else {
+            clearTransientTranscriptPreview()
             recordFailure(
                 id: "failed_realtime_transcription_empty_transcript",
                 title: "Failed explicit voice request",
@@ -2947,6 +3051,7 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
         }
 
         guard trimmedTranscript.utf8.count <= maxVoiceTurnBytes else {
+            clearTransientTranscriptPreview()
             recordFailure(
                 id: "failed_realtime_transcription_transcript_validation",
                 title: "Failed explicit voice request",
@@ -2965,6 +3070,7 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
             captureStopNS: captureStopNS,
             finalTranscript: trimmedTranscript
         ) else {
+            clearTransientTranscriptPreview()
             recordFailure(
                 id: "failed_realtime_transcription_audio_capture_ref_unavailable",
                 title: "Failed explicit voice request",
@@ -2976,13 +3082,14 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
         }
 
         guard !shouldRejectCommittedUserTurnEvidence(audioCaptureRefState) else {
+            clearTransientTranscriptPreview()
             recordFailure(
                 id: "failed_realtime_transcription_unsafe_audio_evidence",
                 title: "Failed explicit voice request",
                 summary: "Desktop rejected the committed realtime transcript because the audio evidence was echo, noise, degraded, or otherwise unsafe.",
                 detail: "Failure visibility only; no runtime dispatch, local answer, provider call, protected execution, memory write, or authority grant was produced."
             )
-            teardownRecognitionSession()
+            resetRealtimeSegmentAfterRejectedEvidence()
             return
         }
 
@@ -2999,7 +3106,7 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
             audioCaptureRefState: audioCaptureRefState
         )
         desktopAppendRuntimeBridgeDebugLog(
-            "openai realtime transcription completed stt_provider_id=\(DesktopVoiceProviderLane.sttProviderID) final_chars=\(trimmedTranscript.count) runtime_handoff=/v1/voice/turn"
+            "\(desktopTraceClockFields()) openai realtime transcription completed stt_provider_id=\(DesktopVoiceProviderLane.sttProviderID) final_chars=\(trimmedTranscript.count) runtime_handoff=/v1/voice/turn"
         )
         completeStoppedCaptureSession()
     }
@@ -3110,8 +3217,67 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
         realtimeCaptureStopNS = nil
         realtimeSpeechStartedNS = nil
         realtimeFirstDeltaNS = nil
+        realtimeFirstAudioFrameNS = nil
+        realtimePreviewSuppressedForEchoTail = false
         realtimeAudioQueue.sync {
             realtimeAudioEvidenceAccumulator = DesktopAudioEvidenceAccumulator()
+        }
+    }
+
+    func clearTransientTranscriptPreview() {
+        realtimePartialTranscript = ""
+        realtimeCommittedTranscript = ""
+        transcriptPreview = ""
+        realtimePreviewSuppressedForEchoTail = false
+    }
+
+    private func resetRealtimeSegmentAfterRejectedEvidence() {
+        realtimePartialTranscript = ""
+        realtimeCommittedTranscript = ""
+        realtimeCaptureStopNS = nil
+        realtimeSpeechStartedNS = nil
+        realtimeFirstDeltaNS = nil
+        realtimeFirstAudioFrameNS = nil
+        realtimePreviewSuppressedForEchoTail = false
+        transcriptPreview = ""
+
+        if let activeCaptureContext {
+            let refreshedContext = Self.makeCaptureSessionTransportContext(
+                evidenceContext: activeCaptureContext.evidenceContext
+            )
+            self.activeCaptureContext = refreshedContext
+            realtimeAudioQueue.sync {
+                realtimeAudioEvidenceAccumulator.reset(captureStartNS: refreshedContext.tStartNS)
+            }
+        }
+
+        desktopAppendRuntimeBridgeDebugLog(
+            "\(desktopTraceClockFields()) desktop realtime transcription segment reset reason=unsafe_evidence_keep_transport"
+        )
+    }
+
+    private func updateRealtimeTranscriptPreviewIfAllowed(observedNS: UInt64) {
+        guard let activeCaptureContext else {
+            transcriptPreview = realtimePartialTranscript
+            return
+        }
+
+        let shouldSuppress = activeCaptureContext.evidenceContext.suppressesUnacceptedPreview(
+            observedNS: observedNS,
+            captureStartNS: activeCaptureContext.tStartNS,
+            speechStartNS: realtimeSpeechStartedNS ?? realtimeFirstDeltaNS
+        )
+        guard shouldSuppress else {
+            transcriptPreview = realtimePartialTranscript
+            return
+        }
+
+        transcriptPreview = ""
+        if !realtimePreviewSuppressedForEchoTail {
+            realtimePreviewSuppressedForEchoTail = true
+            desktopAppendRuntimeBridgeDebugLog(
+                "\(desktopTraceClockFields()) desktop post-tts transcript preview suppressed reason=echo_tail_unaccepted"
+            )
         }
     }
 
@@ -3276,7 +3442,7 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
         }
 
         desktopAppendRuntimeBridgeDebugLog(
-            "desktop audio evidence class=\(evidenceSnapshot.evidenceClass.rawValue) tts_active=\(evidenceSnapshot.ttsPlaybackActive) stream_gap=\(evidenceSnapshot.streamGapDetected) capture_degraded=\(evidenceSnapshot.captureDegraded) buffers=\(evidenceSnapshot.audioBufferCount)"
+            "\(desktopTraceClockFields()) desktop audio evidence class=\(evidenceSnapshot.evidenceClass.rawValue) tts_active=\(evidenceSnapshot.ttsPlaybackActive) stream_gap=\(evidenceSnapshot.streamGapDetected) capture_degraded=\(evidenceSnapshot.captureDegraded) buffers=\(evidenceSnapshot.audioBufferCount)"
         )
 
         return DesktopVoiceTurnAudioCaptureRefState(
@@ -6860,6 +7026,9 @@ struct DesktopSessionShellView: View {
     @StateObject private var desktopAuthoritativeReplyPlaybackController = DesktopAuthoritativeReplyPlaybackController()
     @State private var desktopRealtimeTranscriptionStartInFlight = false
     @State private var desktopRealtimeTranscriptionStartGeneration: UInt64 = 0
+    @State private var desktopRealtimeTranscriptionPrepareInFlight = false
+    @State private var desktopRealtimeTranscriptionPrepareGeneration: UInt64 = 0
+    @State private var desktopPreparedRealtimeTranscriptionSession: DesktopRealtimeTranscriptionSessionState?
     @State private var desktopOpenAITtsPlaybackGeneration: UInt64 = 0
     @State private var desktopOpenAITtsSelfEchoGateGeneration: UInt64 = 0
     @State private var desktopOpenAITtsSelfEchoGateActive = false
@@ -6932,6 +7101,7 @@ struct DesktopSessionShellView: View {
     @AppStorage("selene.desktop.controlledWake.enabled")
     private var desktopControlledWakeEnabled: Bool = false
     private let maxDesktopTypedTurnBytes = 16_384
+    private let desktopOpenAITtsSelfEchoTailReleaseDelay: TimeInterval = 0.45
     private let desktopConversationBottomAnchorID = "desktop_conversation_bottom_anchor"
 
     var body: some View {
@@ -6976,7 +7146,7 @@ struct DesktopSessionShellView: View {
                 desktopAppendRuntimeBridgeDebugLog(
                     "desktop unsafe voice evidence rejected rearm=evidence_gated_duplex"
                 )
-                desktopAttemptResumeComposerVoiceMode()
+                desktopAttemptResumeComposerVoiceModeAfterUnsafeEvidenceRejection()
             }
             await synchronizeDesktopWakeListenerLifecycleState()
         }
@@ -7000,6 +7170,7 @@ struct DesktopSessionShellView: View {
                 "desktop wake listener state subscriber observed state=\(listenerState.rawValue)"
             )
             Task { @MainActor in
+                await recoverDesktopWakeListenerAfterTransientFailureIfNeeded()
                 await synchronizeDesktopWakeListenerLifecycleState()
             }
         }
@@ -7057,6 +7228,9 @@ struct DesktopSessionShellView: View {
         }
         .onReceive(desktopAuthoritativeReplyPlaybackController.$playbackState) { playbackState in
             desktopAuthoritativeReplyPlaybackState = playbackState
+            desktopAppendRuntimeBridgeDebugLog(
+                "\(desktopTraceClockFields()) desktop openai tts playback phase=\(playbackState.phase.rawValue)"
+            )
             updateDesktopOpenAITtsPlaybackEvidenceClock(playbackState)
             if playbackState.phase != .speaking,
                playbackState.phase != .requesting,
@@ -8925,28 +9099,6 @@ struct DesktopSessionShellView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
 
-                if !explicitVoiceController.transcriptPreview.isEmpty {
-                    if let operationalConversationShellState = desktopOperationalConversationShellState,
-                       desktopConversationShouldAttachExplicitVoiceLivePreview(
-                           operationalConversationShellState.primaryPaneState.explicitVoiceLivePreviewAttachmentState
-                       ) {
-                        EmptyView()
-                    } else {
-                        explicitVoiceTranscriptPreviewCard
-                    }
-                }
-
-                if let pendingRequest = explicitVoiceController.pendingRequest {
-                    if let operationalConversationShellState = desktopOperationalConversationShellState,
-                       desktopConversationShouldAttachExplicitVoicePendingAttachment(
-                           operationalConversationShellState.primaryPaneState.explicitVoicePendingAttachmentState
-                       ) {
-                        EmptyView()
-                    } else {
-                        explicitVoicePendingRequestCard(pendingRequest)
-                    }
-                }
-
                 if desktopOperationalConversationShellState == nil {
                     if let desktopCanonicalRuntimeOutcomeState {
                         desktopCanonicalRuntimeOutcomeCard(desktopCanonicalRuntimeOutcomeState)
@@ -9148,6 +9300,18 @@ struct DesktopSessionShellView: View {
         desktopPersistConversationTimelineEntry(entry, conversationKey: conversationKey)
     }
 
+    private func desktopRuntimeIgnoredUnsafeVoiceTranscript(
+        _ outcomeState: DesktopCanonicalRuntimeOutcomeState
+    ) -> Bool {
+        guard outcomeState.phase == .completed else {
+            return false
+        }
+
+        return outcomeState.outcome?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .uppercased() == "IGNORED"
+    }
+
     private func desktopPersistAuthoritativeReplyIfNeeded(
         requestID: String,
         text: String?,
@@ -9279,12 +9443,6 @@ struct DesktopSessionShellView: View {
     }
 
     private var desktopVisibleTypedTurnDraft: String {
-        if explicitVoiceController.isListening,
-           desktopTypedTurnDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-           !explicitVoiceController.transcriptPreview.isEmpty {
-            return explicitVoiceController.transcriptPreview
-        }
-
         return desktopTypedTurnDraft
     }
 
@@ -9393,6 +9551,7 @@ struct DesktopSessionShellView: View {
         desktopComposerVoiceModeEnabled = false
         desktopComposerVoiceModeAwaitingReplyPlaybackCompletion = false
         cancelDesktopRealtimeTranscriptionStartIfNeeded()
+        cancelDesktopRealtimeTranscriptionPrepareIfNeeded(reason: "composer_voice_mode_deactivated")
 
         if explicitVoiceController.isListening {
             if preserveTranscriptPreview {
@@ -9414,6 +9573,8 @@ struct DesktopSessionShellView: View {
               explicitVoiceController.pendingRequest == nil,
               desktopTypedTurnPendingRequest == nil,
               !desktopRealtimeTranscriptionStartInFlight,
+              desktopAuthoritativeReplyPlaybackState.phase != .speaking,
+              desktopAuthoritativeReplyPlaybackState.phase != .requesting,
               !desktopWakeListenerController.listenerState.isActiveForMicrophone,
               desktopWakeListenerController.listenerState != .dispatching,
               desktopWakeListenerController.pendingRequest == nil,
@@ -9423,6 +9584,132 @@ struct DesktopSessionShellView: View {
         }
 
         startDesktopExplicitVoiceTurn()
+    }
+
+    private func desktopRealtimeTranscriptionSessionIsUsable(
+        _ session: DesktopRealtimeTranscriptionSessionState
+    ) -> Bool {
+        guard !session.clientSecret.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              !session.websocketURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return false
+        }
+
+        guard let expiresAt = session.expiresAt else {
+            return true
+        }
+
+        let nowSeconds = desktopEpochNowNS() / 1_000_000_000
+        return expiresAt > nowSeconds &+ 5
+    }
+
+    private func desktopPreparedRealtimeTranscriptionSessionIfUsable()
+        -> DesktopRealtimeTranscriptionSessionState? {
+        guard let preparedSession = desktopPreparedRealtimeTranscriptionSession,
+              desktopRealtimeTranscriptionSessionIsUsable(preparedSession) else {
+            desktopPreparedRealtimeTranscriptionSession = nil
+            explicitVoiceController.discardPreparedRealtimeTransportIfIdle()
+            return nil
+        }
+
+        desktopPreparedRealtimeTranscriptionSession = nil
+        return preparedSession
+    }
+
+    private func cancelDesktopRealtimeTranscriptionPrepareIfNeeded(reason: String) {
+        desktopRealtimeTranscriptionPrepareGeneration &+= 1
+        desktopRealtimeTranscriptionPrepareInFlight = false
+        if desktopPreparedRealtimeTranscriptionSession != nil {
+            desktopAppendRuntimeBridgeDebugLog(
+                "\(desktopTraceClockFields()) desktop realtime transcription prewarm cleared reason=\(boundedFailureLogToken(reason))"
+            )
+        }
+        desktopPreparedRealtimeTranscriptionSession = nil
+        explicitVoiceController.discardPreparedRealtimeTransportIfIdle()
+    }
+
+    private func prepareDesktopRealtimeTranscriptionSessionIfNeeded(reason: String) {
+        let featureFlagEnabled = DesktopRealtimeTranscriptionFeatureFlag.isEnabled
+        guard featureFlagEnabled else {
+            return
+        }
+
+        if let preparedSession = desktopPreparedRealtimeTranscriptionSession,
+           desktopRealtimeTranscriptionSessionIsUsable(preparedSession) {
+            desktopAppendRuntimeBridgeDebugLog(
+                "\(desktopTraceClockFields()) desktop realtime transcription prewarm skipped reason=already_ready request=\(preparedSession.requestID)"
+            )
+            return
+        }
+
+        guard !desktopRealtimeTranscriptionPrepareInFlight,
+              !desktopRealtimeTranscriptionStartInFlight,
+              !explicitVoiceController.isListening else {
+            desktopAppendRuntimeBridgeDebugLog(
+                "\(desktopTraceClockFields()) desktop realtime transcription prewarm skipped reason=busy requested_reason=\(boundedFailureLogToken(reason))"
+            )
+            return
+        }
+
+        desktopPreparedRealtimeTranscriptionSession = nil
+        desktopRealtimeTranscriptionPrepareGeneration &+= 1
+        let prepareGeneration = desktopRealtimeTranscriptionPrepareGeneration
+        desktopRealtimeTranscriptionPrepareInFlight = true
+        desktopAppendRuntimeBridgeDebugLog(
+            "\(desktopTraceClockFields()) desktop realtime transcription prewarm start reason=\(boundedFailureLogToken(reason))"
+        )
+
+        Task { @MainActor in
+            defer {
+                if desktopRealtimeTranscriptionPrepareGeneration == prepareGeneration {
+                    desktopRealtimeTranscriptionPrepareInFlight = false
+                }
+            }
+
+            do {
+                let session = try await desktopCanonicalRuntimeBridge
+                    .createDesktopRealtimeTranscriptionSession(
+                        featureFlagName: DesktopRealtimeTranscriptionFeatureFlag.name,
+                        featureFlagEnabled: true
+                    )
+                guard desktopRealtimeTranscriptionPrepareGeneration == prepareGeneration else {
+                    desktopAppendRuntimeBridgeDebugLog(
+                        "\(desktopTraceClockFields()) desktop realtime transcription prewarm stale result discarded request=\(session.requestID)"
+                    )
+                    return
+                }
+
+                desktopPreparedRealtimeTranscriptionSession = session
+                desktopAppendRuntimeBridgeDebugLog(
+                    "\(desktopTraceClockFields()) desktop realtime transcription prewarm ready request=\(session.requestID) endpoint=\(session.endpoint) model=\(session.transcriptionModel) language_hint_policy=\(session.languageHintPolicy)"
+                )
+                explicitVoiceController.prepareRealtimeTranscriptionTransport(session: session)
+                desktopAttemptResumeComposerVoiceMode()
+            } catch {
+                guard desktopRealtimeTranscriptionPrepareGeneration == prepareGeneration else {
+                    desktopAppendRuntimeBridgeDebugLog(
+                        "\(desktopTraceClockFields()) desktop realtime transcription prewarm failure absorbed reason=stale_generation"
+                    )
+                    return
+                }
+
+                desktopPreparedRealtimeTranscriptionSession = nil
+                desktopAppendRuntimeBridgeDebugLog(
+                    "\(desktopTraceClockFields()) desktop realtime transcription prewarm unavailable reason=token_mint_failure redacted=true requested_reason=\(boundedFailureLogToken(reason))"
+                )
+            }
+        }
+    }
+
+    private func desktopAttemptResumeComposerVoiceModeAfterUnsafeEvidenceRejection() {
+        guard desktopAuthoritativeReplyPlaybackState.phase != .speaking,
+              desktopAuthoritativeReplyPlaybackState.phase != .requesting else {
+            return
+        }
+
+        desktopAppendRuntimeBridgeDebugLog(
+            "desktop unsafe voice evidence rearm immediate reason=post_tts_echo_tail_guard_remains_preview_only"
+        )
+        desktopAttemptResumeComposerVoiceMode()
     }
 
     private func presentDesktopMeetingRecordingUnavailable() {
@@ -9442,9 +9729,22 @@ struct DesktopSessionShellView: View {
 
     private func startPostWakeInstructionListeningAfterGreeting() {
         desktopComposerVoiceModeEnabled = true
+        if desktopAuthoritativeReplyPlaybackState.phase == .speaking
+            || desktopAuthoritativeReplyPlaybackState.phase == .requesting
+            || desktopOpenAITtsSelfEchoGateActive {
+            desktopComposerVoiceModeAwaitingReplyPlaybackCompletion = true
+            desktopAppendRuntimeBridgeDebugLog(
+                "\(desktopTraceClockFields()) desktop post-wake instruction listening deferred reason=await_tts_idle"
+            )
+            prepareDesktopRealtimeTranscriptionSessionIfNeeded(
+                reason: "post_wake_instruction_await_tts_idle"
+            )
+            return
+        }
+
         desktopComposerVoiceModeAwaitingReplyPlaybackCompletion = false
         desktopAppendRuntimeBridgeDebugLog(
-            "desktop post-wake instruction listening starting reason=evidence_gated_duplex"
+            "\(desktopTraceClockFields()) desktop post-wake instruction listening starting reason=tts_idle_evidence_gated"
         )
         startDesktopExplicitVoiceTurn()
     }
@@ -9478,7 +9778,7 @@ struct DesktopSessionShellView: View {
     private func startDesktopExplicitVoiceTurn() {
         let featureFlagEnabled = DesktopRealtimeTranscriptionFeatureFlag.isEnabled
         desktopAppendRuntimeBridgeDebugLog(
-            "desktop realtime transcription flag name=\(DesktopRealtimeTranscriptionFeatureFlag.name) enabled=\(featureFlagEnabled)"
+            "\(desktopTraceClockFields()) desktop realtime transcription flag name=\(DesktopRealtimeTranscriptionFeatureFlag.name) enabled=\(featureFlagEnabled)"
         )
         guard featureFlagEnabled else {
             desktopAppendRuntimeBridgeDebugLog(
@@ -9488,9 +9788,27 @@ struct DesktopSessionShellView: View {
             return
         }
 
+        if let preparedSession = desktopPreparedRealtimeTranscriptionSessionIfUsable() {
+            desktopAppendRuntimeBridgeDebugLog(
+                "\(desktopTraceClockFields()) desktop realtime transcription prewarm consumed request=\(preparedSession.requestID)"
+            )
+            explicitVoiceController.startRealtimeTranscriptionVoiceTurn(
+                session: preparedSession,
+                evidenceContext: desktopCurrentAudioEvidenceContext()
+            )
+            return
+        }
+
+        if desktopRealtimeTranscriptionPrepareInFlight {
+            desktopAppendRuntimeBridgeDebugLog(
+                "\(desktopTraceClockFields()) desktop realtime transcription start deferred reason=prewarm_in_flight"
+            )
+            return
+        }
+
         guard !desktopRealtimeTranscriptionStartInFlight else {
             desktopAppendRuntimeBridgeDebugLog(
-                "desktop realtime transcription start skipped reason=start_in_flight"
+                "\(desktopTraceClockFields()) desktop realtime transcription start skipped reason=start_in_flight"
             )
             return
         }
@@ -9498,6 +9816,9 @@ struct DesktopSessionShellView: View {
         desktopRealtimeTranscriptionStartGeneration &+= 1
         let startGeneration = desktopRealtimeTranscriptionStartGeneration
         desktopRealtimeTranscriptionStartInFlight = true
+        desktopAppendRuntimeBridgeDebugLog(
+            "\(desktopTraceClockFields()) desktop realtime transcription token mint start reason=foreground_capture_start"
+        )
         Task { @MainActor in
             defer {
                 if desktopRealtimeTranscriptionStartGeneration == startGeneration {
@@ -9512,12 +9833,12 @@ struct DesktopSessionShellView: View {
                         featureFlagEnabled: true
                     )
                 desktopAppendRuntimeBridgeDebugLog(
-                    "desktop realtime transcription token mint ok request=\(session.requestID) endpoint=\(session.endpoint) model=\(session.transcriptionModel) language_hint_policy=\(session.languageHintPolicy)"
+                    "\(desktopTraceClockFields()) desktop realtime transcription token mint ok request=\(session.requestID) endpoint=\(session.endpoint) model=\(session.transcriptionModel) language_hint_policy=\(session.languageHintPolicy)"
                 )
                 guard desktopRealtimeTranscriptionStartGeneration == startGeneration,
                       desktopRealtimeTranscriptionStartInFlight else {
                     desktopAppendRuntimeBridgeDebugLog(
-                        "desktop realtime transcription start cancelled before capture"
+                        "\(desktopTraceClockFields()) desktop realtime transcription start cancelled before capture"
                     )
                     return
                 }
@@ -9529,12 +9850,12 @@ struct DesktopSessionShellView: View {
                 guard desktopRealtimeTranscriptionStartGeneration == startGeneration,
                       desktopRealtimeTranscriptionStartInFlight else {
                     desktopAppendRuntimeBridgeDebugLog(
-                        "desktop realtime transcription start cancellation absorbed token_mint_failure"
+                        "\(desktopTraceClockFields()) desktop realtime transcription start cancellation absorbed token_mint_failure"
                     )
                     return
                 }
                 desktopAppendRuntimeBridgeDebugLog(
-                    "desktop realtime transcription unavailable reason=token_mint_failure redacted=true local_stt_fallback=false"
+                    "\(desktopTraceClockFields()) desktop realtime transcription unavailable reason=token_mint_failure redacted=true local_stt_fallback=false"
                 )
                 explicitVoiceController.startExplicitVoiceTurn()
             }
@@ -9542,6 +9863,7 @@ struct DesktopSessionShellView: View {
     }
 
     private func cancelDesktopRealtimeTranscriptionStartIfNeeded() {
+        cancelDesktopRealtimeTranscriptionPrepareIfNeeded(reason: "foreground_start_cancelled")
         guard desktopRealtimeTranscriptionStartInFlight else {
             return
         }
@@ -9549,7 +9871,7 @@ struct DesktopSessionShellView: View {
         desktopRealtimeTranscriptionStartGeneration &+= 1
         desktopRealtimeTranscriptionStartInFlight = false
         desktopAppendRuntimeBridgeDebugLog(
-            "desktop realtime transcription start cancelled by user before capture"
+            "\(desktopTraceClockFields()) desktop realtime transcription start cancelled by user before capture"
         )
     }
 
@@ -10605,43 +10927,6 @@ struct DesktopSessionShellView: View {
         timelineEntries = desktopTimelineEntriesIncludingPersistedHistory(timelineEntries)
 
         if isShowingCurrentDominantSurface {
-            let trimmedExplicitVoiceTranscriptPreview = explicitVoiceController.transcriptPreview
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            if explicitVoiceController.isListening,
-               explicitVoiceController.pendingRequest == nil,
-               !trimmedExplicitVoiceTranscriptPreview.isEmpty,
-               !desktopConversationTimelineContainsSubmittedUserText(
-                   timelineEntries,
-                   candidateText: trimmedExplicitVoiceTranscriptPreview
-               ) {
-                timelineEntries.append(
-                    DesktopConversationTimelineEntryState(
-                        speaker: "You",
-                        posture: "explicit_voice_live_preview",
-                        body: trimmedExplicitVoiceTranscriptPreview,
-                        detail: "Bounded explicit live transcript preview only. Canonical runtime acceptance and later cloud-visible response remain authoritative.",
-                        sourceSurface: "EXPLICIT_VOICE_LISTENING"
-                    )
-                )
-            }
-
-            if let pendingRequest = explicitVoiceController.pendingRequest {
-                if !desktopConversationTimelineContainsSubmittedUserText(
-                    timelineEntries,
-                    candidateText: pendingRequest.boundedPreview
-                ) {
-                    timelineEntries.append(
-                        DesktopConversationTimelineEntryState(
-                            speaker: "You",
-                            posture: "explicit_voice_pending_preview",
-                            body: pendingRequest.boundedPreview,
-                            detail: "Bounded explicit voice pending preview only. Canonical runtime and later cloud-visible acceptance remain authoritative.",
-                            sourceSurface: "EXPLICIT_VOICE_PENDING"
-                        )
-                    )
-                }
-            }
-
             if let pendingTypedTurnRequest = desktopTypedTurnPendingRequest {
                 if !desktopConversationTimelineContainsSubmittedUserText(
                     timelineEntries,
@@ -10800,83 +11085,6 @@ struct DesktopSessionShellView: View {
         timelineEntries = desktopTimelineEntriesIncludingPersistedHistory(timelineEntries)
 
         if isShowingCurrentDominantSurface {
-            let trimmedExplicitVoiceTranscriptPreview = explicitVoiceController.transcriptPreview
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            if explicitVoiceController.isListening,
-               explicitVoiceController.pendingRequest == nil,
-               !trimmedExplicitVoiceTranscriptPreview.isEmpty,
-               !desktopConversationTimelineContainsSubmittedUserText(
-                   timelineEntries,
-                   candidateText: trimmedExplicitVoiceTranscriptPreview
-               ) {
-                timelineEntries.append(
-                    DesktopConversationTimelineEntryState(
-                        speaker: "You",
-                        posture: "explicit_voice_live_preview",
-                        body: trimmedExplicitVoiceTranscriptPreview,
-                        detail: "Bounded explicit live transcript preview only. Canonical runtime acceptance and later cloud-visible response remain authoritative.",
-                        sourceSurface: "EXPLICIT_VOICE_LISTENING"
-                    )
-                )
-            }
-
-            let trimmedWakeTranscriptPreview = desktopWakeListenerController.transcriptPreview
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            if desktopWakeListenerPromptState != nil,
-               desktopWakeListenerController.listenerState == .listening,
-               desktopWakeListenerController.pendingRequest == nil,
-               lastStagedWakeTriggeredVoiceTurnRequestState == nil,
-               !trimmedWakeTranscriptPreview.isEmpty,
-               !desktopConversationTimelineContainsSubmittedUserText(
-                   timelineEntries,
-                   candidateText: trimmedWakeTranscriptPreview
-               ) {
-                timelineEntries.append(
-                    DesktopConversationTimelineEntryState(
-                        speaker: "You",
-                        posture: "wake_voice_live_preview",
-                        body: trimmedWakeTranscriptPreview,
-                        detail: "Bounded wake live transcript preview only. Exact wake-prefix detection, canonical runtime acceptance, and later cloud-visible response remain authoritative.",
-                        sourceSurface: "WAKE_TRIGGERED_VOICE_LISTENING"
-                    )
-                )
-            }
-
-            if let pendingRequest = explicitVoiceController.pendingRequest {
-                if !desktopConversationTimelineContainsSubmittedUserText(
-                    timelineEntries,
-                    candidateText: pendingRequest.boundedPreview
-                ) {
-                    timelineEntries.append(
-                        DesktopConversationTimelineEntryState(
-                            speaker: "You",
-                            posture: "explicit_voice_pending_preview",
-                            body: pendingRequest.boundedPreview,
-                            detail: "Bounded explicit voice pending preview only. Canonical runtime and later cloud-visible acceptance remain authoritative.",
-                            sourceSurface: "EXPLICIT_VOICE_PENDING"
-                        )
-                    )
-                }
-            }
-
-            if let pendingWakeRequest = desktopWakeListenerController.pendingRequest
-                ?? lastStagedWakeTriggeredVoiceTurnRequestState {
-                if !desktopConversationTimelineContainsSubmittedUserText(
-                    timelineEntries,
-                    candidateText: pendingWakeRequest.boundedPreview
-                ) {
-                    timelineEntries.append(
-                        DesktopConversationTimelineEntryState(
-                            speaker: "You",
-                            posture: "wake_voice_pending_preview",
-                            body: pendingWakeRequest.boundedPreview,
-                            detail: "Bounded post-wake transcript remainder only. This foreground wake-trigger preview remains non-authoritative until canonical runtime returns.",
-                            sourceSurface: "WAKE_TRIGGERED_VOICE_PENDING"
-                        )
-                    )
-                }
-            }
-
             if let pendingTypedTurnRequest = desktopTypedTurnPendingRequest {
                 if !desktopConversationTimelineContainsSubmittedUserText(
                     timelineEntries,
@@ -19664,7 +19872,7 @@ struct DesktopSessionShellView: View {
         desktopAuthoritativeReplyPlaybackState = desktopAuthoritativeReplyPlaybackController
             .prepareOpenAITTS(authoritativeResponseText: authoritativeResponseText, token: token)
         desktopAppendRuntimeBridgeDebugLog(
-            "desktop openai tts state=TTS_REQUESTING tts_provider_id=\(DesktopVoiceProviderLane.ttsProviderID) endpoint=\(desktopCanonicalRuntimeBridge.desktopOpenAITtsSpeechEndpoint) answer_text_sha256=\(answerTextSHA256)"
+            "\(desktopTraceClockFields()) desktop openai tts state=TTS_REQUESTING tts_provider_id=\(DesktopVoiceProviderLane.ttsProviderID) endpoint=\(desktopCanonicalRuntimeBridge.desktopOpenAITtsSpeechEndpoint) answer_text_sha256=\(answerTextSHA256)"
         )
 
         do {
@@ -19686,12 +19894,12 @@ struct DesktopSessionShellView: View {
                 return false
             }
             desktopAppendRuntimeBridgeDebugLog(
-                "desktop openai tts state=TTS_READY tts_provider_id=\(DesktopVoiceProviderLane.ttsProviderID) model=\(speechState.model) voice=\(speechState.voice) answer_text_sha256=\(speechState.answerTextSHA256) audio_sha256=\(speechState.audioSHA256) audio_byte_len=\(speechState.audioByteLen) ai_voice_disclosure=\(speechState.aiVoiceDisclosure)"
+                "\(desktopTraceClockFields()) desktop openai tts state=TTS_READY tts_provider_id=\(DesktopVoiceProviderLane.ttsProviderID) model=\(speechState.model) voice=\(speechState.voice) answer_text_sha256=\(speechState.answerTextSHA256) audio_sha256=\(speechState.audioSHA256) audio_byte_len=\(speechState.audioByteLen) ai_voice_disclosure=\(speechState.aiVoiceDisclosure)"
             )
             desktopAuthoritativeReplyPlaybackState = desktopAuthoritativeReplyPlaybackController
                 .playOpenAITTS(speechState, expectedToken: token)
             desktopAppendRuntimeBridgeDebugLog(
-                "desktop openai tts state=PLAYING_OPENAI tts_provider_id=\(DesktopVoiceProviderLane.ttsProviderID) fallback_used=false request=\(speechState.requestID)"
+                "\(desktopTraceClockFields()) desktop openai tts state=PLAYING_OPENAI tts_provider_id=\(DesktopVoiceProviderLane.ttsProviderID) fallback_used=false request=\(speechState.requestID)"
             )
             if desktopAuthoritativeReplyPlaybackState.phase != .speaking {
                 releaseDesktopOpenAITtsSelfEchoGateAfterCooldown(reason: "playback_not_started")
@@ -19721,7 +19929,8 @@ struct DesktopSessionShellView: View {
 
     private func desktopCurrentAudioEvidenceContext() -> DesktopAudioEvidenceContext {
         DesktopAudioEvidenceContext(
-            ttsPlaybackActiveAtCaptureStart: desktopAuthoritativeReplyPlaybackState.phase == .speaking,
+            ttsPlaybackActiveAtCaptureStart: desktopAuthoritativeReplyPlaybackState.phase == .speaking
+                || desktopOpenAITtsSelfEchoGateActive,
             ttsPlaybackStartedNS: desktopOpenAITtsPlaybackMostRecentStartedNS,
             lastTtsPlaybackEndedNS: desktopOpenAITtsPlaybackLastEndedNS,
             ttsPlaybackReferenceText: desktopOpenAITtsPlaybackReferenceText
@@ -19754,26 +19963,41 @@ struct DesktopSessionShellView: View {
         desktopOpenAITtsSelfEchoGateGeneration &+= 1
         desktopOpenAITtsSelfEchoGateActive = true
         desktopAppendRuntimeBridgeDebugLog(
-            "desktop voice self echo gate active=true reason=\(boundedFailureLogToken(reason)) capture_mode=evidence_gated_duplex"
+            "\(desktopTraceClockFields()) desktop voice self echo gate active=true reason=\(boundedFailureLogToken(reason)) capture_mode=evidence_gated_duplex"
         )
-        desktopAttemptResumeComposerVoiceMode()
     }
 
     private func releaseDesktopOpenAITtsSelfEchoGateAfterCooldown(reason: String) {
         desktopOpenAITtsSelfEchoGateGeneration &+= 1
+        let releaseGeneration = desktopOpenAITtsSelfEchoGateGeneration
         guard desktopAuthoritativeReplyPlaybackState.phase != .speaking,
               desktopAuthoritativeReplyPlaybackState.phase != .requesting else {
             return
         }
 
-        desktopOpenAITtsSelfEchoGateActive = false
         desktopAppendRuntimeBridgeDebugLog(
-            "desktop voice self echo gate active=false reason=\(boundedFailureLogToken(reason)) release=immediate"
+            "\(desktopTraceClockFields()) desktop voice self echo gate release scheduled reason=\(boundedFailureLogToken(reason)) release=post_tts_echo_tail_guard delay_ms=450"
         )
 
         if desktopComposerVoiceModeAwaitingReplyPlaybackCompletion || desktopComposerVoiceModeEnabled {
             desktopComposerVoiceModeAwaitingReplyPlaybackCompletion = false
+            desktopAppendRuntimeBridgeDebugLog(
+                "\(desktopTraceClockFields()) desktop voice composer rearm immediate reason=post_tts_echo_tail_guard_preview_only"
+            )
             desktopAttemptResumeComposerVoiceMode()
+        }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + desktopOpenAITtsSelfEchoTailReleaseDelay) {
+            guard desktopOpenAITtsSelfEchoGateGeneration == releaseGeneration,
+                  desktopAuthoritativeReplyPlaybackState.phase != .speaking,
+                  desktopAuthoritativeReplyPlaybackState.phase != .requesting else {
+                return
+            }
+
+            desktopOpenAITtsSelfEchoGateActive = false
+            desktopAppendRuntimeBridgeDebugLog(
+                "\(desktopTraceClockFields()) desktop voice self echo gate active=false reason=\(boundedFailureLogToken(reason)) release=post_tts_echo_tail_guard"
+            )
         }
     }
 
@@ -20574,6 +20798,46 @@ struct DesktopSessionShellView: View {
     }
 
     @MainActor
+    private func recoverDesktopWakeListenerAfterTransientFailureIfNeeded() async {
+        guard desktopWakeListenerController.listenerState == .failed,
+              let failureID = desktopWakeListenerController.failedRequest?.id,
+              desktopWakeListenerFailureIsRecoverableForAutoRestart(failureID),
+              desktopControlledWakeEnabled,
+              scenePhase == .active,
+              desktopWakeListenerController.pendingRequest == nil,
+              lastStagedWakeTriggeredVoiceTurnRequestState == nil,
+              !desktopComposerVoiceModeEnabled,
+              !desktopComposerVoiceModeAwaitingReplyPlaybackCompletion,
+              !desktopRealtimeTranscriptionStartInFlight,
+              !desktopOpenAITtsSelfEchoGateActive,
+              desktopAuthoritativeReplyPlaybackState.phase != .speaking,
+              desktopAuthoritativeReplyPlaybackState.phase != .requesting,
+              !explicitVoiceController.isListening,
+              explicitVoiceController.pendingRequest == nil,
+              desktopTypedTurnPendingRequest == nil else {
+            return
+        }
+
+        desktopAppendRuntimeBridgeDebugLog(
+            "desktop wake listener transient failure recovered reason=controlled_wake_auto_restart failure_id=\(boundedFailureLogToken(failureID))"
+        )
+        desktopWakeListenerController.haltCaptureSession()
+        desktopWakeAutoStartAttemptedPromptID = nil
+        desktopWakeAutoStartSuppressedPromptID = nil
+    }
+
+    private func desktopWakeListenerFailureIsRecoverableForAutoRestart(_ failureID: String) -> Bool {
+        switch failureID {
+        case "failed_wake_listener_realtime_connection",
+             "failed_wake_listener_realtime_timeout",
+             "failed_wake_listener_realtime_session_duration":
+            return true
+        default:
+            return false
+        }
+    }
+
+    @MainActor
     private func submitDesktopWakeProfileAvailabilityRefresh(
         promptState: DesktopWakeProfileAvailabilityPromptState
     ) async {
@@ -20938,99 +21202,112 @@ struct DesktopSessionShellView: View {
             cancelOpenAITtsPlaybackForNewTurn(reason: "explicit_voice_runtime_dispatch_started")
 
             let outcomeState = await desktopCanonicalRuntimeBridge.dispatchPreparedExplicitVoiceRequest(ingressContext)
+            desktopAppendRuntimeBridgeDebugLog(
+                "\(desktopTraceClockFields()) explicit voice dispatch outcome id=\(pendingRequest.id) phase=\(outcomeState.phase.rawValue) next_move=\(outcomeState.nextMove ?? "not_provided") reason=\(outcomeState.reasonCode ?? "not_provided")"
+            )
             guard explicitVoiceController.pendingRequest?.id == pendingRequest.id else {
                 return
             }
 
             desktopCanonicalRuntimeOutcomeState = outcomeState
-        desktopSubmittedUserContinuityPreviewState = DesktopSubmittedUserContinuityPreviewState(
-            requestID: pendingRequest.id,
-            inputMode: .explicitVoice,
-            text: pendingRequest.transcript
-        )
-        desktopPersistSubmittedUserContinuityIfNeeded(
-            requestID: pendingRequest.id,
-            inputMode: .explicitVoice,
-            text: pendingRequest.transcript,
-            conversationKey: conversationKey
-        )
-        desktopSubmittedUserContinuityPreviewState = nil
-        if outcomeState.phase == .completed {
-            desktopAuthoritativeReplyRenderState = DesktopAuthoritativeReplyRenderState(
-                title: "Cloud-authored authoritative reply",
-                summary: outcomeState.authoritativeResponseText == nil
-                        ? "The canonical runtime completed without reply text for this bounded explicit voice turn."
-                        : "Read-only canonical reply text from the completed runtime dispatch is now visible here while the shell remains explicitly non-authoritative.",
-                    authoritativeResponseText: outcomeState.authoritativeResponseText
-                )
-                desktopAuthoritativeReplyProvenanceRenderState = DesktopAuthoritativeReplyProvenanceRenderState(
-                    title: "Cloud-authored authoritative reply provenance",
-                    summary: outcomeState.authoritativeResponseProvenance == nil
-                        ? "The canonical runtime completed without provenance for this bounded explicit voice turn."
-                        : "Read-only canonical provenance from the completed runtime dispatch is now visible here while the shell remains explicitly non-authoritative.",
-                    authoritativeResponseProvenance: outcomeState.authoritativeResponseProvenance,
-                    sources: outcomeState.authoritativeResponseProvenance?.sources.map {
-                        DesktopAuthoritativeReplyProvenanceRenderState.Source(
-                            title: $0.title,
-                            url: $0.url
-                        )
-                    } ?? [],
-                    sourceChips: outcomeState.sourceChips.map {
-                        DesktopAuthoritativeReplyProvenanceRenderState.SourceChip(
-                            sourceID: $0.sourceID,
-                            label: $0.label,
-                            domain: $0.domain,
-                            clickableSourcePageURL: $0.clickableSourcePageURL,
-                            accessibilityLabel: $0.accessibilityLabel
-                        )
-                    },
-                    imageCards: outcomeState.imageCards.map {
-                        DesktopAuthoritativeReplyProvenanceRenderState.ImageCard(
-                            imageID: $0.imageID,
-                            imageKind: $0.imageKind,
-                            approvedAssetRef: $0.approvedAssetRef,
-                            displayImageURL: $0.displayImageURL,
-                            caption: $0.caption,
-                            altText: $0.altText,
-                            sourceLabel: $0.sourceLabel,
-                            sourceDomain: $0.sourceDomain,
-                            clickableSourcePageURL: $0.clickableSourcePageURL,
-                            accessibilityOpenLabel: $0.accessibilityOpenLabel
-                        )
-                    },
-                    sourceLinkCitationCards: outcomeState.sourceLinkCitationCards.map {
-                        DesktopAuthoritativeReplyProvenanceRenderState.SourceLinkCitationCard(
-                            cardID: $0.cardID,
-                            provider: $0.provider,
-                            sourceTitle: $0.sourceTitle,
-                            sourceDomain: $0.sourceDomain,
-                            sourcePageURL: $0.sourcePageURL,
-                            clickableSourcePageURL: $0.clickableSourcePageURL,
-                            attributionText: $0.attributionText
-                        )
-                    },
-                    retrievedAtLabel: formatAuthoritativeReplyRetrievedAt(
-                        outcomeState.authoritativeResponseProvenance?.retrievedAt
-                    ),
-                    cacheStatusLabel: outcomeState.authoritativeResponseProvenance?.cacheStatus
-                )
-                desktopPersistAuthoritativeReplyIfNeeded(
+            let runtimeIgnoredUnsafeVoiceTranscript =
+                desktopRuntimeIgnoredUnsafeVoiceTranscript(outcomeState)
+            if !runtimeIgnoredUnsafeVoiceTranscript {
+                desktopSubmittedUserContinuityPreviewState = DesktopSubmittedUserContinuityPreviewState(
                     requestID: pendingRequest.id,
-                    text: outcomeState.authoritativeResponseText,
+                    inputMode: .explicitVoice,
+                    text: pendingRequest.transcript
+                )
+                desktopPersistSubmittedUserContinuityIfNeeded(
+                    requestID: pendingRequest.id,
+                    inputMode: .explicitVoice,
+                    text: pendingRequest.transcript,
                     conversationKey: conversationKey
                 )
-                if outcomeState.authoritativeResponseText?
-                    .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
-                    _ = await playExplicitVoiceAuthoritativeReply(outcomeState: outcomeState)
-                    shouldAwaitVoiceModeReplyPlaybackCompletion =
-                        desktopComposerVoiceModeEnabled
-                        && desktopAuthoritativeReplyPlaybackState.phase == .speaking
+            }
+            desktopSubmittedUserContinuityPreviewState = nil
+            if outcomeState.phase == .completed {
+                if runtimeIgnoredUnsafeVoiceTranscript {
+                    desktopAuthoritativeReplyRenderState = nil
+                    desktopAuthoritativeReplyProvenanceRenderState = nil
+                    explicitVoiceController.clearTransientTranscriptPreview()
                 } else {
-                    desktopPersistMissingReplyMessageIfNeeded(
+                    desktopAuthoritativeReplyRenderState = DesktopAuthoritativeReplyRenderState(
+                        title: "Cloud-authored authoritative reply",
+                        summary: outcomeState.authoritativeResponseText == nil
+                                ? "The canonical runtime completed without reply text for this bounded explicit voice turn."
+                                : "Read-only canonical reply text from the completed runtime dispatch is now visible here while the shell remains explicitly non-authoritative.",
+                        authoritativeResponseText: outcomeState.authoritativeResponseText
+                    )
+                    desktopAuthoritativeReplyProvenanceRenderState = DesktopAuthoritativeReplyProvenanceRenderState(
+                        title: "Cloud-authored authoritative reply provenance",
+                        summary: outcomeState.authoritativeResponseProvenance == nil
+                            ? "The canonical runtime completed without provenance for this bounded explicit voice turn."
+                            : "Read-only canonical provenance from the completed runtime dispatch is now visible here while the shell remains explicitly non-authoritative.",
+                        authoritativeResponseProvenance: outcomeState.authoritativeResponseProvenance,
+                        sources: outcomeState.authoritativeResponseProvenance?.sources.map {
+                            DesktopAuthoritativeReplyProvenanceRenderState.Source(
+                                title: $0.title,
+                                url: $0.url
+                            )
+                        } ?? [],
+                        sourceChips: outcomeState.sourceChips.map {
+                            DesktopAuthoritativeReplyProvenanceRenderState.SourceChip(
+                                sourceID: $0.sourceID,
+                                label: $0.label,
+                                domain: $0.domain,
+                                clickableSourcePageURL: $0.clickableSourcePageURL,
+                                accessibilityLabel: $0.accessibilityLabel
+                            )
+                        },
+                        imageCards: outcomeState.imageCards.map {
+                            DesktopAuthoritativeReplyProvenanceRenderState.ImageCard(
+                                imageID: $0.imageID,
+                                imageKind: $0.imageKind,
+                                approvedAssetRef: $0.approvedAssetRef,
+                                displayImageURL: $0.displayImageURL,
+                                caption: $0.caption,
+                                altText: $0.altText,
+                                sourceLabel: $0.sourceLabel,
+                                sourceDomain: $0.sourceDomain,
+                                clickableSourcePageURL: $0.clickableSourcePageURL,
+                                accessibilityOpenLabel: $0.accessibilityOpenLabel
+                            )
+                        },
+                        sourceLinkCitationCards: outcomeState.sourceLinkCitationCards.map {
+                            DesktopAuthoritativeReplyProvenanceRenderState.SourceLinkCitationCard(
+                                cardID: $0.cardID,
+                                provider: $0.provider,
+                                sourceTitle: $0.sourceTitle,
+                                sourceDomain: $0.sourceDomain,
+                                sourcePageURL: $0.sourcePageURL,
+                                clickableSourcePageURL: $0.clickableSourcePageURL,
+                                attributionText: $0.attributionText
+                            )
+                        },
+                        retrievedAtLabel: formatAuthoritativeReplyRetrievedAt(
+                            outcomeState.authoritativeResponseProvenance?.retrievedAt
+                        ),
+                        cacheStatusLabel: outcomeState.authoritativeResponseProvenance?.cacheStatus
+                    )
+                    desktopPersistAuthoritativeReplyIfNeeded(
                         requestID: pendingRequest.id,
-                        inputMode: .explicitVoice,
+                        text: outcomeState.authoritativeResponseText,
                         conversationKey: conversationKey
                     )
+                    if outcomeState.authoritativeResponseText?
+                        .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
+                        _ = await playExplicitVoiceAuthoritativeReply(outcomeState: outcomeState)
+                        shouldAwaitVoiceModeReplyPlaybackCompletion =
+                            desktopComposerVoiceModeEnabled
+                            && desktopAuthoritativeReplyPlaybackState.phase == .speaking
+                    } else {
+                        desktopPersistMissingReplyMessageIfNeeded(
+                            requestID: pendingRequest.id,
+                            inputMode: .explicitVoice,
+                            conversationKey: conversationKey
+                        )
+                    }
                 }
             } else {
                 desktopAuthoritativeReplyRenderState = nil
@@ -21047,9 +21324,17 @@ struct DesktopSessionShellView: View {
             clearComposerDraftIfItOnlyMirrorsVoiceTranscript(pendingRequest.transcript)
             explicitVoiceController.clearPendingPreparedVoiceTurn()
             if shouldAwaitVoiceModeReplyPlaybackCompletion {
+                desktopComposerVoiceModeAwaitingReplyPlaybackCompletion = true
+                prepareDesktopRealtimeTranscriptionSessionIfNeeded(
+                    reason: "post_answer_await_tts_idle"
+                )
+                desktopAppendRuntimeBridgeDebugLog(
+                    "\(desktopTraceClockFields()) desktop composer voice rearm deferred reason=await_tts_idle next_move=\(outcomeState.nextMove ?? "not_provided")"
+                )
+            } else {
                 desktopComposerVoiceModeAwaitingReplyPlaybackCompletion = false
+                desktopAttemptResumeComposerVoiceMode()
             }
-            desktopAttemptResumeComposerVoiceMode()
         } catch {
             desktopCanonicalRuntimeOutcomeState = .failed(
                 preparedRequestID: pendingRequest.id,
@@ -21098,7 +21383,9 @@ struct DesktopSessionShellView: View {
         let conversationKey = desktopForegroundConversationHistoryKey
 
         do {
-            desktopAppendRuntimeBridgeDebugLog("wake dispatch start id=\(pendingRequest.id)")
+            desktopAppendRuntimeBridgeDebugLog(
+                "\(desktopTraceClockFields()) wake dispatch start id=\(pendingRequest.id)"
+            )
             let ingressContext = try desktopCanonicalRuntimeBridge
                 .desktopWakeTriggeredVoiceIngressRequestBuilder(
                     pendingRequest,
@@ -21108,7 +21395,7 @@ struct DesktopSessionShellView: View {
                     pinnedContextRefs: desktopForegroundVoiceTurnSelectedPinnedContextRefs
                 )
             desktopAppendRuntimeBridgeDebugLog(
-                "wake dispatch built ingress id=\(pendingRequest.id) endpoint=\(ingressContext.endpoint)"
+                "\(desktopTraceClockFields()) wake dispatch built ingress id=\(pendingRequest.id) endpoint=\(ingressContext.endpoint)"
             )
             lastStagedWakeTriggeredVoiceTurnRequestState = pendingRequest
             desktopWakeListenerController.markDispatching()
@@ -21125,87 +21412,99 @@ struct DesktopSessionShellView: View {
             let outcomeState = await desktopCanonicalRuntimeBridge
                 .dispatchPreparedWakeTriggeredVoiceRequest(ingressContext)
             desktopAppendRuntimeBridgeDebugLog(
-                "wake dispatch outcome id=\(pendingRequest.id) phase=\(outcomeState.phase.rawValue) next_move=\(outcomeState.nextMove ?? "not_provided") reason=\(outcomeState.reasonCode ?? "not_provided")"
+                "\(desktopTraceClockFields()) wake dispatch outcome id=\(pendingRequest.id) phase=\(outcomeState.phase.rawValue) next_move=\(outcomeState.nextMove ?? "not_provided") reason=\(outcomeState.reasonCode ?? "not_provided")"
             )
             guard desktopWakeListenerController.pendingRequest?.id == pendingRequest.id else {
                 return
             }
 
+            let runtimeIgnoredUnsafeVoiceTranscript =
+                desktopRuntimeIgnoredUnsafeVoiceTranscript(outcomeState)
             let shouldStartPostWakeInstructionListening =
-                pendingRequest.transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                (
+                    pendingRequest.transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    || runtimeIgnoredUnsafeVoiceTranscript
+                )
                     && outcomeState.nextMove == "listening_window_open"
             desktopCanonicalRuntimeOutcomeState = outcomeState
-            desktopPersistSubmittedUserContinuityIfNeeded(
-                requestID: pendingRequest.id,
-                inputMode: .explicitVoice,
-                text: pendingRequest.transcript,
-                conversationKey: conversationKey
-            )
-            if outcomeState.phase == .completed {
-                desktopAuthoritativeReplyRenderState = DesktopAuthoritativeReplyRenderState(
-                    title: "Cloud-authored authoritative reply",
-                    summary: outcomeState.authoritativeResponseText == nil
-                        ? "The canonical runtime completed without reply text for this bounded wake-triggered voice turn."
-                        : "Read-only canonical reply text from the completed wake-triggered runtime dispatch is now visible here while the shell remains explicitly non-authoritative.",
-                    authoritativeResponseText: outcomeState.authoritativeResponseText
-                )
-                desktopAuthoritativeReplyProvenanceRenderState = DesktopAuthoritativeReplyProvenanceRenderState(
-                    title: "Cloud-authored authoritative reply provenance",
-                    summary: outcomeState.authoritativeResponseProvenance == nil
-                        ? "The canonical runtime completed without provenance for this bounded wake-triggered voice turn."
-                        : "Read-only canonical provenance from the completed wake-triggered runtime dispatch is now visible here while the shell remains explicitly non-authoritative.",
-                    authoritativeResponseProvenance: outcomeState.authoritativeResponseProvenance,
-                    sources: outcomeState.authoritativeResponseProvenance?.sources.map {
-                        DesktopAuthoritativeReplyProvenanceRenderState.Source(
-                            title: $0.title,
-                            url: $0.url
-                        )
-                    } ?? [],
-                    sourceChips: outcomeState.sourceChips.map {
-                        DesktopAuthoritativeReplyProvenanceRenderState.SourceChip(
-                            sourceID: $0.sourceID,
-                            label: $0.label,
-                            domain: $0.domain,
-                            clickableSourcePageURL: $0.clickableSourcePageURL,
-                            accessibilityLabel: $0.accessibilityLabel
-                        )
-                    },
-                    imageCards: outcomeState.imageCards.map {
-                        DesktopAuthoritativeReplyProvenanceRenderState.ImageCard(
-                            imageID: $0.imageID,
-                            imageKind: $0.imageKind,
-                            approvedAssetRef: $0.approvedAssetRef,
-                            displayImageURL: $0.displayImageURL,
-                            caption: $0.caption,
-                            altText: $0.altText,
-                            sourceLabel: $0.sourceLabel,
-                            sourceDomain: $0.sourceDomain,
-                            clickableSourcePageURL: $0.clickableSourcePageURL,
-                            accessibilityOpenLabel: $0.accessibilityOpenLabel
-                        )
-                    },
-                    sourceLinkCitationCards: outcomeState.sourceLinkCitationCards.map {
-                        DesktopAuthoritativeReplyProvenanceRenderState.SourceLinkCitationCard(
-                            cardID: $0.cardID,
-                            provider: $0.provider,
-                            sourceTitle: $0.sourceTitle,
-                            sourceDomain: $0.sourceDomain,
-                            sourcePageURL: $0.sourcePageURL,
-                            clickableSourcePageURL: $0.clickableSourcePageURL,
-                            attributionText: $0.attributionText
-                        )
-                    },
-                    retrievedAtLabel: formatAuthoritativeReplyRetrievedAt(
-                        outcomeState.authoritativeResponseProvenance?.retrievedAt
-                    ),
-                    cacheStatusLabel: outcomeState.authoritativeResponseProvenance?.cacheStatus
-                )
-                desktopPersistAuthoritativeReplyIfNeeded(
+            if !runtimeIgnoredUnsafeVoiceTranscript {
+                desktopPersistSubmittedUserContinuityIfNeeded(
                     requestID: pendingRequest.id,
-                    text: outcomeState.authoritativeResponseText,
+                    inputMode: .explicitVoice,
+                    text: pendingRequest.transcript,
                     conversationKey: conversationKey
                 )
-                _ = await playExplicitVoiceAuthoritativeReply(outcomeState: outcomeState)
+            }
+            if outcomeState.phase == .completed {
+                if runtimeIgnoredUnsafeVoiceTranscript {
+                    desktopAuthoritativeReplyRenderState = nil
+                    desktopAuthoritativeReplyProvenanceRenderState = nil
+                } else {
+                    desktopAuthoritativeReplyRenderState = DesktopAuthoritativeReplyRenderState(
+                        title: "Cloud-authored authoritative reply",
+                        summary: outcomeState.authoritativeResponseText == nil
+                            ? "The canonical runtime completed without reply text for this bounded wake-triggered voice turn."
+                            : "Read-only canonical reply text from the completed wake-triggered runtime dispatch is now visible here while the shell remains explicitly non-authoritative.",
+                        authoritativeResponseText: outcomeState.authoritativeResponseText
+                    )
+                    desktopAuthoritativeReplyProvenanceRenderState = DesktopAuthoritativeReplyProvenanceRenderState(
+                        title: "Cloud-authored authoritative reply provenance",
+                        summary: outcomeState.authoritativeResponseProvenance == nil
+                            ? "The canonical runtime completed without provenance for this bounded wake-triggered voice turn."
+                            : "Read-only canonical provenance from the completed wake-triggered runtime dispatch is now visible here while the shell remains explicitly non-authoritative.",
+                        authoritativeResponseProvenance: outcomeState.authoritativeResponseProvenance,
+                        sources: outcomeState.authoritativeResponseProvenance?.sources.map {
+                            DesktopAuthoritativeReplyProvenanceRenderState.Source(
+                                title: $0.title,
+                                url: $0.url
+                            )
+                        } ?? [],
+                        sourceChips: outcomeState.sourceChips.map {
+                            DesktopAuthoritativeReplyProvenanceRenderState.SourceChip(
+                                sourceID: $0.sourceID,
+                                label: $0.label,
+                                domain: $0.domain,
+                                clickableSourcePageURL: $0.clickableSourcePageURL,
+                                accessibilityLabel: $0.accessibilityLabel
+                            )
+                        },
+                        imageCards: outcomeState.imageCards.map {
+                            DesktopAuthoritativeReplyProvenanceRenderState.ImageCard(
+                                imageID: $0.imageID,
+                                imageKind: $0.imageKind,
+                                approvedAssetRef: $0.approvedAssetRef,
+                                displayImageURL: $0.displayImageURL,
+                                caption: $0.caption,
+                                altText: $0.altText,
+                                sourceLabel: $0.sourceLabel,
+                                sourceDomain: $0.sourceDomain,
+                                clickableSourcePageURL: $0.clickableSourcePageURL,
+                                accessibilityOpenLabel: $0.accessibilityOpenLabel
+                            )
+                        },
+                        sourceLinkCitationCards: outcomeState.sourceLinkCitationCards.map {
+                            DesktopAuthoritativeReplyProvenanceRenderState.SourceLinkCitationCard(
+                                cardID: $0.cardID,
+                                provider: $0.provider,
+                                sourceTitle: $0.sourceTitle,
+                                sourceDomain: $0.sourceDomain,
+                                sourcePageURL: $0.sourcePageURL,
+                                clickableSourcePageURL: $0.clickableSourcePageURL,
+                                attributionText: $0.attributionText
+                            )
+                        },
+                        retrievedAtLabel: formatAuthoritativeReplyRetrievedAt(
+                            outcomeState.authoritativeResponseProvenance?.retrievedAt
+                        ),
+                        cacheStatusLabel: outcomeState.authoritativeResponseProvenance?.cacheStatus
+                    )
+                    desktopPersistAuthoritativeReplyIfNeeded(
+                        requestID: pendingRequest.id,
+                        text: outcomeState.authoritativeResponseText,
+                        conversationKey: conversationKey
+                    )
+                    _ = await playExplicitVoiceAuthoritativeReply(outcomeState: outcomeState)
+                }
             } else {
                 desktopAuthoritativeReplyRenderState = nil
                 desktopAuthoritativeReplyProvenanceRenderState = nil

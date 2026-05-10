@@ -7856,24 +7856,36 @@ impl AdapterRuntime {
             if committed_voice_ph1c_gate_used {
                 if let Some(ph1c) = ph1c_live_outcome.as_ref() {
                     if let Ph1cResponse::TranscriptReject(reject) = &ph1c.response {
-                        let response_text = ph1c_voice_retry_response_text(
-                            request.audio_capture_ref.as_ref(),
-                            user_text_final.as_deref(),
-                        );
-                        self.record_transcript_updates(
-                            &mut store,
-                            now,
-                            correlation_id,
-                            turn_id,
-                            &actor_user_id,
-                            Some(&runtime_device_id),
-                            session_turn_state.session_id_for_commits,
-                            user_text_partial.clone(),
-                            user_text_final.clone(),
-                            None,
-                            Some(response_text.clone()),
-                        )
-                        .map_err(post_session_error)?;
+                        let ignored_unsafe_transcript =
+                            committed_voice_reject_should_ignore_user_surface(
+                                user_text_final.as_deref(),
+                                request.audio_capture_ref.as_ref(),
+                                reject.reason_code,
+                            );
+                        let response_text = if ignored_unsafe_transcript {
+                            String::new()
+                        } else {
+                            ph1c_voice_retry_response_text(
+                                request.audio_capture_ref.as_ref(),
+                                user_text_final.as_deref(),
+                            )
+                        };
+                        if !ignored_unsafe_transcript {
+                            self.record_transcript_updates(
+                                &mut store,
+                                now,
+                                correlation_id,
+                                turn_id,
+                                &actor_user_id,
+                                Some(&runtime_device_id),
+                                session_turn_state.session_id_for_commits,
+                                user_text_partial.clone(),
+                                user_text_final.clone(),
+                                None,
+                                Some(response_text.clone()),
+                            )
+                            .map_err(post_session_error)?;
+                        }
                         self.emit_ph1c_gold_capture_and_learning(
                             &mut store,
                             now,
@@ -7911,7 +7923,11 @@ impl AdapterRuntime {
                         .map_err(post_session_error)?;
                         let response = VoiceTurnAdapterResponse {
                             status: "ok".to_string(),
-                            outcome: "CLARIFY".to_string(),
+                            outcome: if ignored_unsafe_transcript {
+                                "IGNORED".to_string()
+                            } else {
+                                "CLARIFY".to_string()
+                            },
                             session_id: runtime_execution_envelope
                                 .session_id
                                 .clone()
@@ -7923,14 +7939,25 @@ impl AdapterRuntime {
                             session_attach_outcome: runtime_execution_envelope
                                 .session_attach_outcome,
                             failure_class: None,
-                            reason: Some(
-                                "voice transcript rejected before runtime entry".to_string(),
-                            ),
-                            next_move: "clarify".to_string(),
+                            reason: Some(if ignored_unsafe_transcript {
+                                "voice transcript rejected as unsafe noise before runtime entry"
+                                    .to_string()
+                            } else {
+                                "voice transcript rejected before runtime entry".to_string()
+                            }),
+                            next_move: if ignored_unsafe_transcript {
+                                "listening_window_open".to_string()
+                            } else {
+                                "clarify".to_string()
+                            },
                             response_text: response_text.clone(),
                             reason_code: reject.reason_code.0.to_string(),
                             provenance: None,
-                            tts_text: response_text,
+                            tts_text: if ignored_unsafe_transcript {
+                                String::new()
+                            } else {
+                                response_text
+                            },
                             source_chips: Vec::new(),
                             source_cards: Vec::new(),
                             image_cards: Vec::new(),
@@ -7939,17 +7966,19 @@ impl AdapterRuntime {
                             trace_id: None,
                             deep_research: None,
                         };
-                        if let Some(trace) = h410_build_public_brain_trace(
-                            &request_for_journal,
-                            user_text_final.as_deref(),
-                            None,
-                            None,
-                            None,
-                            &response.response_text,
-                            None,
-                        ) {
-                            self.record_public_brain_trace(trace)
-                                .map_err(post_session_error)?;
+                        if !ignored_unsafe_transcript {
+                            if let Some(trace) = h410_build_public_brain_trace(
+                                &request_for_journal,
+                                user_text_final.as_deref(),
+                                None,
+                                None,
+                                None,
+                                &response.response_text,
+                                None,
+                            ) {
+                                self.record_public_brain_trace(trace)
+                                    .map_err(post_session_error)?;
+                            }
                         }
                         return Ok(response);
                     }
@@ -20150,6 +20179,12 @@ fn committed_voice_unsafe_transcript_reason(
     capture: &VoiceTurnAudioCaptureRef,
 ) -> Option<(ReasonCodeId, Ph1cRetryAdvice)> {
     let trimmed = transcript_text.trim();
+    if committed_voice_punctuation_or_symbol_fragment(trimmed) {
+        return Some((
+            ph1c_reason_codes::STT_FAIL_LOW_SEMANTIC_CONFIDENCE,
+            Ph1cRetryAdvice::Repeat,
+        ));
+    }
     if committed_voice_single_short_unsafe_token(trimmed) {
         return Some((
             ph1c_reason_codes::STT_FAIL_LOW_CONFIDENCE,
@@ -20157,6 +20192,12 @@ fn committed_voice_unsafe_transcript_reason(
         ));
     }
     if committed_voice_cjk_noise_or_filler_fragment(trimmed) {
+        return Some((
+            ph1c_reason_codes::STT_FAIL_LOW_SEMANTIC_CONFIDENCE,
+            Ph1cRetryAdvice::Repeat,
+        ));
+    }
+    if committed_voice_non_actionable_cjk_with_weak_language_evidence(trimmed, capture) {
         return Some((
             ph1c_reason_codes::STT_FAIL_LOW_SEMANTIC_CONFIDENCE,
             Ph1cRetryAdvice::Repeat,
@@ -20175,6 +20216,44 @@ fn committed_voice_unsafe_transcript_reason(
         ));
     }
     None
+}
+
+fn committed_voice_reject_should_ignore_user_surface(
+    transcript_text: Option<&str>,
+    capture: Option<&VoiceTurnAudioCaptureRef>,
+    reason_code: ReasonCodeId,
+) -> bool {
+    let transcript_text = transcript_text.unwrap_or_default().trim();
+    if transcript_text.is_empty() {
+        return true;
+    }
+    if committed_voice_punctuation_or_symbol_fragment(transcript_text) {
+        return true;
+    }
+    if reason_code == ph1c_reason_codes::STT_FAIL_LOW_CONFIDENCE
+        && committed_voice_single_short_unsafe_token(transcript_text)
+    {
+        return true;
+    }
+    if reason_code == ph1c_reason_codes::STT_FAIL_LOW_SEMANTIC_CONFIDENCE
+        && committed_voice_cjk_noise_or_filler_fragment(transcript_text)
+    {
+        return true;
+    }
+    if reason_code == ph1c_reason_codes::STT_FAIL_LOW_SEMANTIC_CONFIDENCE
+        && capture.is_some_and(|capture| {
+            committed_voice_non_actionable_cjk_with_weak_language_evidence(transcript_text, capture)
+        })
+    {
+        return true;
+    }
+    if capture.is_some_and(|capture| {
+        capture.capture_degraded == Some(true) || capture.stream_gap_detected == Some(true)
+    }) {
+        return reason_code == ph1c_reason_codes::STT_FAIL_LOW_CONFIDENCE
+            || reason_code == ph1c_reason_codes::STT_FAIL_LOW_SEMANTIC_CONFIDENCE;
+    }
+    false
 }
 
 fn committed_voice_incomplete_final_transcript(
@@ -20208,6 +20287,17 @@ fn committed_voice_incomplete_final_transcript(
     committed_voice_extra_partial_has_continuation(extra)
         || extra.split_whitespace().count() >= 2
         || extra.chars().any(is_cjk_char_for_build1c)
+}
+
+fn committed_voice_punctuation_or_symbol_fragment(transcript_text: &str) -> bool {
+    let compact: String = transcript_text
+        .chars()
+        .filter(|ch| !ch.is_whitespace())
+        .collect();
+    !compact.is_empty()
+        && !compact
+            .chars()
+            .any(|ch| ch.is_alphanumeric() || is_cjk_char_for_build1c(ch))
 }
 
 fn committed_voice_ends_with_continuation_cue(normalized_text: &str) -> bool {
@@ -20270,17 +20360,91 @@ fn committed_voice_cjk_noise_or_filler_fragment(transcript_text: &str) -> bool {
         .chars()
         .filter(|ch| committed_voice_cjk_filler_char(*ch))
         .count();
-    let ascii_alpha_count = compact
-        .chars()
-        .filter(|ch| ch.is_ascii_alphabetic())
-        .count();
+    let latin_tokens: Vec<String> = compact
+        .split(|ch: char| !ch.is_ascii_alphabetic() && ch != '\'')
+        .filter(|token| !token.is_empty())
+        .map(|token| token.to_ascii_lowercase())
+        .collect();
+    let ascii_alpha_count: usize = latin_tokens
+        .iter()
+        .map(|token| token.chars().filter(|ch| ch.is_ascii_alphabetic()).count())
+        .sum();
     let non_filler_cjk_count = cjk_count.saturating_sub(filler_count);
+
+    if cjk_count <= 4 && ascii_alpha_count == 0 {
+        return true;
+    }
 
     if cjk_count >= 4 && filler_count * 100 >= cjk_count * 80 {
         return true;
     }
 
-    cjk_count <= 2 && non_filler_cjk_count == 0 && ascii_alpha_count <= 2
+    cjk_count <= 4
+        && non_filler_cjk_count == 0
+        && (ascii_alpha_count <= 2
+            || (!latin_tokens.is_empty()
+                && latin_tokens
+                    .iter()
+                    .all(|token| committed_voice_latin_filler_artifact_token(token))))
+}
+
+fn committed_voice_non_actionable_cjk_with_weak_language_evidence(
+    transcript_text: &str,
+    capture: &VoiceTurnAudioCaptureRef,
+) -> bool {
+    let compact: String = transcript_text
+        .chars()
+        .filter(|ch| !ch.is_whitespace() && !ch.is_ascii_punctuation())
+        .collect();
+    if compact.is_empty() || !compact.chars().any(is_cjk_char_for_build1c) {
+        return false;
+    }
+    if committed_voice_has_actionable_cjk_intent(&compact) {
+        return false;
+    }
+    let locale = capture
+        .locale_tag
+        .as_deref()
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase();
+    if locale.starts_with("zh") {
+        return false;
+    }
+    let cjk_count = compact
+        .chars()
+        .filter(|ch| is_cjk_char_for_build1c(*ch))
+        .count();
+    let evidence_confidence = bp_to_confidence(capture.vad_confidence_bp, 0.0)
+        .min(bp_to_confidence(capture.acoustic_confidence_bp, 0.0))
+        .min(bp_to_confidence(capture.speech_likeness_bp, 0.0))
+        .min(bp_to_confidence(capture.echo_safe_confidence_bp, 0.0))
+        .min(bp_to_confidence(capture.nearfield_confidence_bp, 0.0));
+    let weak_language_evidence = capture.capture_degraded.unwrap_or(false)
+        || capture.stream_gap_detected.unwrap_or(false)
+        || capture.aec_unstable.unwrap_or(false)
+        || evidence_confidence < 0.96;
+    cjk_count > 0 && weak_language_evidence
+}
+
+fn committed_voice_latin_filler_artifact_token(token: &str) -> bool {
+    matches!(
+        token,
+        "ah" | "eh"
+            | "er"
+            | "hm"
+            | "hmm"
+            | "huh"
+            | "ok"
+            | "okay"
+            | "sure"
+            | "uh"
+            | "um"
+            | "umm"
+            | "yeah"
+            | "yep"
+            | "yup"
+    )
 }
 
 fn committed_voice_cjk_filler_char(ch: char) -> bool {
@@ -20322,6 +20486,10 @@ fn committed_voice_has_actionable_cjk_intent(text: &str) -> bool {
         "请",
         "回答",
         "翻译",
+        "你好",
+        "谢谢",
+        "早上好",
+        "晚上好",
         "纽约",
         "东京",
     ]
@@ -37479,20 +37647,18 @@ mod tests {
 
         let out = runtime
             .run_voice_turn(req)
-            .expect("voice-like CJK filler noise should clarify");
+            .expect("voice-like CJK filler noise should be ignored");
         assert_eq!(out.status, "ok");
-        assert_eq!(out.outcome, "CLARIFY");
+        assert_eq!(out.outcome, "IGNORED");
+        assert_eq!(out.next_move, "listening_window_open");
         assert_eq!(
             out.reason_code,
             ph1c_reason_codes::STT_FAIL_LOW_SEMANTIC_CONFIDENCE
                 .0
                 .to_string()
         );
-        assert!(
-            out.response_text.contains("语音转写"),
-            "CJK filler should ask for a voice retry: {}",
-            out.response_text
-        );
+        assert!(out.response_text.is_empty());
+        assert!(out.tts_text.is_empty());
         assert!(
             runtime.ingress.debug_last_agent_input_packet().is_none(),
             "CJK filler noise must stop before PH1.LANG/PH1.X runtime entry"
@@ -37516,16 +37682,546 @@ mod tests {
 
         let out = runtime
             .run_voice_turn(req)
-            .expect("voice-like mixed filler noise should clarify");
+            .expect("voice-like mixed filler noise should be ignored");
         assert_eq!(out.status, "ok");
-        assert_eq!(out.outcome, "CLARIFY");
+        assert_eq!(out.outcome, "IGNORED");
+        assert_eq!(out.next_move, "listening_window_open");
         assert_eq!(
             out.reason_code,
             ph1c_reason_codes::STT_FAIL_LOW_SEMANTIC_CONFIDENCE
                 .0
                 .to_string()
         );
+        assert!(out.response_text.is_empty());
+        assert!(out.tts_text.is_empty());
         assert!(runtime.ingress.debug_last_agent_input_packet().is_none());
+    }
+
+    #[test]
+    fn adapter_false_transcript_mixed_script_noise_rejected() {
+        let runtime = AdapterRuntime::default();
+        let mut req = base_request();
+        mark_request_as_live_desktop_capture_for_h417_tests(&mut req);
+        req.correlation_id = 420_101;
+        req.turn_id = 420_101;
+        req.user_text_final = Some("Sure呀".to_string());
+        if let Some(capture) = req.audio_capture_ref.as_mut() {
+            capture.locale_tag = Some("en-US".to_string());
+            capture.acoustic_confidence_bp = Some(9_000);
+            capture.vad_confidence_bp = Some(9_000);
+            capture.speech_likeness_bp = Some(9_000);
+        }
+
+        let out = runtime
+            .run_voice_turn(req)
+            .expect("mixed-script noise artifact should be ignored");
+        assert_eq!(out.status, "ok");
+        assert_eq!(out.outcome, "IGNORED");
+        assert_eq!(out.next_move, "listening_window_open");
+        assert_eq!(
+            out.reason_code,
+            ph1c_reason_codes::STT_FAIL_LOW_SEMANTIC_CONFIDENCE
+                .0
+                .to_string()
+        );
+        assert!(out.response_text.is_empty());
+        assert!(out.tts_text.is_empty());
+        assert!(out.source_chips.is_empty());
+        assert!(runtime.ingress.debug_last_agent_input_packet().is_none());
+    }
+
+    #[test]
+    fn adapter_false_transcript_punctuation_rejected() {
+        let runtime = AdapterRuntime::default();
+        let mut req = base_request();
+        mark_request_as_live_desktop_capture_for_h417_tests(&mut req);
+        req.correlation_id = 420_102;
+        req.turn_id = 420_102;
+        req.user_text_final = Some(".".to_string());
+        if let Some(capture) = req.audio_capture_ref.as_mut() {
+            capture.locale_tag = Some("en-US".to_string());
+            capture.acoustic_confidence_bp = Some(9_000);
+            capture.vad_confidence_bp = Some(9_000);
+            capture.speech_likeness_bp = Some(9_000);
+        }
+
+        let out = runtime
+            .run_voice_turn(req)
+            .expect("punctuation-only noise artifact should be ignored");
+        assert_eq!(out.status, "ok");
+        assert_eq!(out.outcome, "IGNORED");
+        assert_eq!(out.next_move, "listening_window_open");
+        assert_eq!(
+            out.reason_code,
+            ph1c_reason_codes::STT_FAIL_LOW_SEMANTIC_CONFIDENCE
+                .0
+                .to_string()
+        );
+        assert!(out.response_text.is_empty());
+        assert!(out.tts_text.is_empty());
+        assert!(runtime.ingress.debug_last_agent_input_packet().is_none());
+    }
+
+    #[test]
+    fn adapter_false_transcript_filler_rejected() {
+        let runtime = AdapterRuntime::default();
+        let mut req = base_request();
+        mark_request_as_live_desktop_capture_for_h417_tests(&mut req);
+        req.correlation_id = 420_103;
+        req.turn_id = 420_103;
+        req.user_text_final = Some("uh".to_string());
+        if let Some(capture) = req.audio_capture_ref.as_mut() {
+            capture.locale_tag = Some("en-US".to_string());
+            capture.acoustic_confidence_bp = Some(9_000);
+            capture.vad_confidence_bp = Some(9_000);
+            capture.speech_likeness_bp = Some(9_000);
+        }
+
+        let out = runtime
+            .run_voice_turn(req)
+            .expect("one-token filler artifact should be ignored");
+        assert_eq!(out.status, "ok");
+        assert_eq!(out.outcome, "IGNORED");
+        assert_eq!(out.next_move, "listening_window_open");
+        assert_eq!(
+            out.reason_code,
+            ph1c_reason_codes::STT_FAIL_LOW_CONFIDENCE.0.to_string()
+        );
+        assert!(out.response_text.is_empty());
+        assert!(out.tts_text.is_empty());
+        assert!(runtime.ingress.debug_last_agent_input_packet().is_none());
+    }
+
+    #[test]
+    fn adapter_false_transcript_short_cjk_noise_rejected() {
+        let runtime = AdapterRuntime::default();
+        let mut req = base_request();
+        mark_request_as_live_desktop_capture_for_h417_tests(&mut req);
+        req.correlation_id = 420_109;
+        req.turn_id = 420_109;
+        req.user_text_final = Some("咳咳".to_string());
+        if let Some(capture) = req.audio_capture_ref.as_mut() {
+            capture.locale_tag = Some("en-US".to_string());
+            capture.acoustic_confidence_bp = Some(9_000);
+            capture.vad_confidence_bp = Some(9_000);
+            capture.speech_likeness_bp = Some(9_000);
+        }
+
+        let out = runtime
+            .run_voice_turn(req)
+            .expect("short non-actionable CJK noise should be ignored");
+        assert_eq!(out.status, "ok");
+        assert_eq!(out.outcome, "IGNORED");
+        assert_eq!(out.next_move, "listening_window_open");
+        assert_eq!(
+            out.reason_code,
+            ph1c_reason_codes::STT_FAIL_LOW_SEMANTIC_CONFIDENCE
+                .0
+                .to_string()
+        );
+        assert!(out.response_text.is_empty());
+        assert!(out.tts_text.is_empty());
+        assert!(runtime.ingress.debug_last_agent_input_packet().is_none());
+    }
+
+    #[test]
+    fn adapter_false_transcript_cjk_cough_description_rejected() {
+        let runtime = AdapterRuntime::default();
+        let mut req = base_request();
+        mark_request_as_live_desktop_capture_for_h417_tests(&mut req);
+        req.correlation_id = 420_111;
+        req.turn_id = 420_111;
+        req.user_text_final = Some("咳了一声".to_string());
+        if let Some(capture) = req.audio_capture_ref.as_mut() {
+            capture.locale_tag = Some("en-US".to_string());
+            capture.acoustic_confidence_bp = Some(9_000);
+            capture.vad_confidence_bp = Some(9_000);
+            capture.speech_likeness_bp = Some(9_000);
+        }
+
+        let out = runtime
+            .run_voice_turn(req)
+            .expect("short non-actionable CJK cough description should be ignored");
+        assert_eq!(out.status, "ok");
+        assert_eq!(out.outcome, "IGNORED");
+        assert_eq!(out.next_move, "listening_window_open");
+        assert_eq!(
+            out.reason_code,
+            ph1c_reason_codes::STT_FAIL_LOW_SEMANTIC_CONFIDENCE
+                .0
+                .to_string()
+        );
+        assert!(out.response_text.is_empty());
+        assert!(out.tts_text.is_empty());
+        assert!(runtime.ingress.debug_last_agent_input_packet().is_none());
+    }
+
+    #[test]
+    fn adapter_false_transcript_short_cjk_ack_rejected() {
+        let runtime = AdapterRuntime::default();
+        let mut req = base_request();
+        mark_request_as_live_desktop_capture_for_h417_tests(&mut req);
+        req.correlation_id = 420_110;
+        req.turn_id = 420_110;
+        req.user_text_final = Some("好吧".to_string());
+        if let Some(capture) = req.audio_capture_ref.as_mut() {
+            capture.locale_tag = Some("en-US".to_string());
+            capture.acoustic_confidence_bp = Some(9_000);
+            capture.vad_confidence_bp = Some(9_000);
+            capture.speech_likeness_bp = Some(9_000);
+        }
+
+        let out = runtime
+            .run_voice_turn(req)
+            .expect("short non-actionable CJK acknowledgement should be ignored");
+        assert_eq!(out.status, "ok");
+        assert_eq!(out.outcome, "IGNORED");
+        assert_eq!(out.next_move, "listening_window_open");
+        assert_eq!(
+            out.reason_code,
+            ph1c_reason_codes::STT_FAIL_LOW_SEMANTIC_CONFIDENCE
+                .0
+                .to_string()
+        );
+        assert!(out.response_text.is_empty());
+        assert!(out.tts_text.is_empty());
+        assert!(runtime.ingress.debug_last_agent_input_packet().is_none());
+    }
+
+    #[test]
+    fn adapter_false_transcript_cough_noise_cjk_hallucination_rejected() {
+        let runtime = AdapterRuntime::default();
+        let mut req = base_request();
+        mark_request_as_live_desktop_capture_for_h417_tests(&mut req);
+        req.correlation_id = 420_112;
+        req.turn_id = 420_112;
+        req.user_text_final = Some("我们明天见面。".to_string());
+        if let Some(capture) = req.audio_capture_ref.as_mut() {
+            capture.locale_tag = Some("en-US".to_string());
+            capture.acoustic_confidence_bp = Some(9_000);
+            capture.vad_confidence_bp = Some(9_000);
+            capture.speech_likeness_bp = Some(9_000);
+            capture.echo_safe_confidence_bp = Some(9_200);
+            capture.nearfield_confidence_bp = Some(8_300);
+            capture.capture_degraded = Some(false);
+            capture.stream_gap_detected = Some(false);
+        }
+
+        let out = runtime
+            .run_voice_turn(req)
+            .expect("short non-actionable CJK hallucination should be ignored");
+        assert_eq!(out.status, "ok");
+        assert_eq!(out.outcome, "IGNORED");
+        assert_eq!(out.next_move, "listening_window_open");
+        assert_eq!(
+            out.reason_code,
+            ph1c_reason_codes::STT_FAIL_LOW_SEMANTIC_CONFIDENCE
+                .0
+                .to_string()
+        );
+        assert!(out.response_text.is_empty());
+        assert!(out.tts_text.is_empty());
+        assert!(runtime.ingress.debug_last_agent_input_packet().is_none());
+    }
+
+    #[test]
+    fn adapter_false_transcript_noise_rejected_does_not_switch_language() {
+        let runtime = AdapterRuntime::default();
+        let mut req = base_request();
+        mark_request_as_live_desktop_capture_for_h417_tests(&mut req);
+        req.correlation_id = 420_113;
+        req.turn_id = 420_113;
+        req.user_text_final = Some("他们已经离开。".to_string());
+        if let Some(capture) = req.audio_capture_ref.as_mut() {
+            capture.locale_tag = Some("en-US".to_string());
+            capture.acoustic_confidence_bp = Some(9_000);
+            capture.vad_confidence_bp = Some(9_000);
+            capture.speech_likeness_bp = Some(9_000);
+            capture.echo_safe_confidence_bp = Some(9_200);
+            capture.nearfield_confidence_bp = Some(8_300);
+            capture.capture_degraded = Some(false);
+            capture.stream_gap_detected = Some(false);
+        }
+
+        let out = runtime
+            .run_voice_turn(req)
+            .expect("weak-evidence CJK noise must not switch conversation language");
+        assert_eq!(out.status, "ok");
+        assert_eq!(out.outcome, "IGNORED");
+        assert_eq!(out.next_move, "listening_window_open");
+        assert!(out.response_text.is_empty());
+        assert!(out.tts_text.is_empty());
+        assert!(runtime.ingress.debug_last_agent_input_packet().is_none());
+    }
+
+    #[test]
+    fn adapter_false_transcript_cough_noise_cjk_latin_statement_rejected() {
+        let runtime = AdapterRuntime::default();
+        let mut req = base_request();
+        mark_request_as_live_desktop_capture_for_h417_tests(&mut req);
+        req.correlation_id = 420_114;
+        req.turn_id = 420_114;
+        req.user_text_final = Some("我正在学习Python编程。".to_string());
+        if let Some(capture) = req.audio_capture_ref.as_mut() {
+            capture.locale_tag = Some("en-US".to_string());
+            capture.acoustic_confidence_bp = Some(9_000);
+            capture.vad_confidence_bp = Some(9_000);
+            capture.speech_likeness_bp = Some(9_000);
+            capture.echo_safe_confidence_bp = Some(9_200);
+            capture.nearfield_confidence_bp = Some(8_300);
+            capture.capture_degraded = Some(false);
+            capture.stream_gap_detected = Some(false);
+        }
+
+        let out = runtime
+            .run_voice_turn(req)
+            .expect("weak-evidence mixed CJK/Latin statement should be ignored");
+        assert_eq!(out.status, "ok");
+        assert_eq!(out.outcome, "IGNORED");
+        assert_eq!(out.next_move, "listening_window_open");
+        assert!(out.response_text.is_empty());
+        assert!(out.tts_text.is_empty());
+        assert!(runtime.ingress.debug_last_agent_input_packet().is_none());
+    }
+
+    #[test]
+    fn adapter_false_transcript_long_non_actionable_cjk_with_weak_evidence_rejected() {
+        let runtime = AdapterRuntime::default();
+        let mut req = base_request();
+        mark_request_as_live_desktop_capture_for_h417_tests(&mut req);
+        req.correlation_id = 420_115;
+        req.turn_id = 420_115;
+        req.user_text_final = Some("Python是一门非常适合初学者的语言。".to_string());
+        if let Some(capture) = req.audio_capture_ref.as_mut() {
+            capture.locale_tag = Some("en-US".to_string());
+            capture.acoustic_confidence_bp = Some(9_000);
+            capture.vad_confidence_bp = Some(9_000);
+            capture.speech_likeness_bp = Some(9_000);
+            capture.echo_safe_confidence_bp = Some(9_200);
+            capture.nearfield_confidence_bp = Some(8_300);
+            capture.capture_degraded = Some(false);
+            capture.stream_gap_detected = Some(false);
+        }
+
+        let out = runtime
+            .run_voice_turn(req)
+            .expect("weak-evidence non-actionable CJK statement should be ignored");
+        assert_eq!(out.status, "ok");
+        assert_eq!(out.outcome, "IGNORED");
+        assert_eq!(out.next_move, "listening_window_open");
+        assert!(out.response_text.is_empty());
+        assert!(out.tts_text.is_empty());
+        assert!(runtime.ingress.debug_last_agent_input_packet().is_none());
+    }
+
+    #[test]
+    fn adapter_false_transcript_valid_cjk_latin_request_still_dispatches() {
+        let runtime = AdapterRuntime::default();
+        let mut req = base_request();
+        mark_request_as_live_desktop_capture_for_h417_tests(&mut req);
+        req.correlation_id = 420_116;
+        req.turn_id = 420_116;
+        req.user_text_final = Some("请解释Python编程。".to_string());
+        if let Some(capture) = req.audio_capture_ref.as_mut() {
+            capture.locale_tag = Some("en-US".to_string());
+            capture.acoustic_confidence_bp = Some(9_000);
+            capture.vad_confidence_bp = Some(9_000);
+            capture.speech_likeness_bp = Some(9_000);
+            capture.echo_safe_confidence_bp = Some(9_200);
+            capture.nearfield_confidence_bp = Some(8_300);
+            capture.capture_degraded = Some(false);
+            capture.stream_gap_detected = Some(false);
+        }
+
+        let out = runtime
+            .run_voice_turn(req)
+            .expect("actionable mixed CJK/Latin request should dispatch");
+        assert_eq!(out.status, "ok");
+        assert_ne!(out.outcome, "IGNORED");
+        assert!(runtime.ingress.debug_last_agent_input_packet().is_some());
+    }
+
+    #[test]
+    fn adapter_false_transcript_valid_english_still_dispatches() {
+        let runtime = AdapterRuntime::default();
+        let mut req = base_request();
+        mark_request_as_live_desktop_capture_for_h417_tests(&mut req);
+        req.correlation_id = 420_104;
+        req.turn_id = 420_104;
+        req.user_text_final = Some("Is it raining in New York right now?".to_string());
+        if let Some(capture) = req.audio_capture_ref.as_mut() {
+            capture.locale_tag = Some("en-US".to_string());
+            capture.acoustic_confidence_bp = Some(9_000);
+            capture.vad_confidence_bp = Some(9_000);
+            capture.speech_likeness_bp = Some(9_000);
+        }
+
+        let out = runtime
+            .run_voice_turn(req)
+            .expect("valid English voice transcript should dispatch");
+        assert_eq!(out.status, "ok");
+        assert_ne!(out.outcome, "IGNORED");
+        assert!(runtime.ingress.debug_last_agent_input_packet().is_some());
+    }
+
+    #[test]
+    fn adapter_false_transcript_valid_english_correction_still_dispatches() {
+        let runtime = AdapterRuntime::default();
+        let mut req = base_request();
+        mark_request_as_live_desktop_capture_for_h417_tests(&mut req);
+        req.correlation_id = 420_105;
+        req.turn_id = 420_105;
+        req.user_text_final = Some("I said Sydney.".to_string());
+        if let Some(capture) = req.audio_capture_ref.as_mut() {
+            capture.locale_tag = Some("en-US".to_string());
+            capture.acoustic_confidence_bp = Some(9_000);
+            capture.vad_confidence_bp = Some(9_000);
+            capture.speech_likeness_bp = Some(9_000);
+        }
+
+        let out = runtime
+            .run_voice_turn(req)
+            .expect("valid English correction should dispatch");
+        assert_eq!(out.status, "ok");
+        assert_ne!(out.outcome, "IGNORED");
+        assert!(runtime.ingress.debug_last_agent_input_packet().is_some());
+    }
+
+    #[test]
+    fn adapter_false_transcript_valid_chinese_still_dispatches() {
+        let runtime = AdapterRuntime::default();
+        let mut req = base_request();
+        mark_request_as_live_desktop_capture_for_h417_tests(&mut req);
+        req.correlation_id = 420_106;
+        req.turn_id = 420_106;
+        req.user_text_final = Some("现在东京几点？".to_string());
+        if let Some(capture) = req.audio_capture_ref.as_mut() {
+            capture.locale_tag = Some("en-US".to_string());
+            capture.acoustic_confidence_bp = Some(9_000);
+            capture.vad_confidence_bp = Some(9_000);
+            capture.speech_likeness_bp = Some(9_000);
+        }
+
+        let out = runtime
+            .run_voice_turn(req)
+            .expect("valid Chinese voice transcript should dispatch");
+        assert_eq!(out.status, "ok");
+        assert_eq!(out.outcome, "FINAL_TOOL");
+        assert!(out.response_text.contains("东京现在是"));
+        assert!(runtime.ingress.debug_last_agent_input_packet().is_some());
+    }
+
+    #[test]
+    fn desktop_post_tts_echo_tail_rejected_does_not_reply() {
+        let runtime = AdapterRuntime::default();
+        let mut req = base_request();
+        mark_request_as_live_desktop_capture_for_h417_tests(&mut req);
+        req.correlation_id = 421_101;
+        req.turn_id = 421_101;
+        req.user_text_final = Some(".".to_string());
+        if let Some(capture) = req.audio_capture_ref.as_mut() {
+            capture.tts_playback_active = Some(false);
+            capture.capture_degraded = Some(true);
+            capture.stream_gap_detected = Some(false);
+            capture.aec_unstable = Some(true);
+            capture.echo_safe_confidence_bp = Some(1_000);
+            capture.nearfield_confidence_bp = None;
+        }
+
+        let out = runtime
+            .run_voice_turn(req)
+            .expect("post-TTS echo tail artifact should be ignored");
+        assert_eq!(out.status, "ok");
+        assert_eq!(out.outcome, "IGNORED");
+        assert_eq!(out.next_move, "listening_window_open");
+        assert_eq!(
+            out.reason_code,
+            ph1c_reason_codes::STT_FAIL_LOW_SEMANTIC_CONFIDENCE
+                .0
+                .to_string()
+        );
+        assert!(out.response_text.is_empty());
+        assert!(out.tts_text.is_empty());
+        assert!(runtime.ingress.debug_last_agent_input_packet().is_none());
+    }
+
+    #[test]
+    fn desktop_post_tts_echo_tail_rejected_clears_preview_surface() {
+        let runtime = AdapterRuntime::default();
+        let mut req = base_request();
+        mark_request_as_live_desktop_capture_for_h417_tests(&mut req);
+        req.correlation_id = 421_102;
+        req.turn_id = 421_102;
+        req.user_text_final = Some("um".to_string());
+        if let Some(capture) = req.audio_capture_ref.as_mut() {
+            capture.tts_playback_active = Some(false);
+            capture.capture_degraded = Some(true);
+            capture.stream_gap_detected = Some(true);
+            capture.echo_safe_confidence_bp = Some(1_000);
+            capture.nearfield_confidence_bp = None;
+        }
+
+        let out = runtime
+            .run_voice_turn(req)
+            .expect("post-TTS filler artifact should be ignored");
+        assert_eq!(out.status, "ok");
+        assert_eq!(out.outcome, "IGNORED");
+        assert_eq!(out.next_move, "listening_window_open");
+        assert!(out.response_text.is_empty());
+        assert!(out.tts_text.is_empty());
+        assert!(out.source_chips.is_empty());
+        assert!(runtime.ingress.debug_last_agent_input_packet().is_none());
+    }
+
+    #[test]
+    fn desktop_post_tts_rearm_after_rejected_echo_is_fast() {
+        let runtime = AdapterRuntime::default();
+        let mut req = base_request();
+        mark_request_as_live_desktop_capture_for_h417_tests(&mut req);
+        req.correlation_id = 421_103;
+        req.turn_id = 421_103;
+        req.user_text_final = Some("e呀".to_string());
+        if let Some(capture) = req.audio_capture_ref.as_mut() {
+            capture.tts_playback_active = Some(false);
+            capture.capture_degraded = Some(true);
+            capture.stream_gap_detected = Some(true);
+            capture.echo_safe_confidence_bp = Some(1_000);
+            capture.nearfield_confidence_bp = None;
+        }
+
+        let out = runtime
+            .run_voice_turn(req)
+            .expect("post-TTS mixed filler artifact should be ignored");
+        assert_eq!(out.status, "ok");
+        assert_eq!(out.outcome, "IGNORED");
+        assert_eq!(out.next_move, "listening_window_open");
+        assert!(out.response_text.is_empty());
+        assert!(out.tts_text.is_empty());
+        assert!(runtime.ingress.debug_last_agent_input_packet().is_none());
+    }
+
+    #[test]
+    fn desktop_post_tts_valid_english_still_dispatches() {
+        let runtime = AdapterRuntime::default();
+        let mut req = base_request();
+        mark_request_as_live_desktop_capture_for_h417_tests(&mut req);
+        req.correlation_id = 421_104;
+        req.turn_id = 421_104;
+        req.user_text_final = Some("What is the time in Tokyo?".to_string());
+        if let Some(capture) = req.audio_capture_ref.as_mut() {
+            capture.tts_playback_active = Some(false);
+            capture.capture_degraded = Some(false);
+            capture.stream_gap_detected = Some(false);
+            capture.echo_safe_confidence_bp = Some(9_800);
+            capture.nearfield_confidence_bp = Some(9_300);
+        }
+
+        let out = runtime
+            .run_voice_turn(req)
+            .expect("post-TTS real English speech should dispatch");
+        assert_eq!(out.status, "ok");
+        assert_ne!(out.outcome, "IGNORED");
+        assert!(runtime.ingress.debug_last_agent_input_packet().is_some());
     }
 
     #[test]
