@@ -170,6 +170,11 @@ struct TtsRequestLimiterState {
     per_session: BTreeMap<String, u64>,
 }
 
+#[derive(Debug, Clone)]
+struct TtsRequestLimiterReservation {
+    session_key: String,
+}
+
 #[derive(Debug, Clone, Copy, Default)]
 struct QuotaWindowCounter {
     window_start_ms: u64,
@@ -909,18 +914,27 @@ async fn run_desktop_openai_tts_speech(
     if let Err(reason) = speakable_openai_tts_text(&bounded_text) {
         return desktop_openai_tts_error_response(StatusCode::FORBIDDEN, &request, &reason);
     }
-    if let Err(reason) = enforce_openai_tts_request_bounds(&state.tts_request_limiter, &request) {
-        return desktop_openai_tts_error_response(
-            StatusCode::TOO_MANY_REQUESTS,
-            &request,
-            reason.as_str(),
-        );
-    }
-
     let model = bounded_openai_tts_model(None);
     let voice = bounded_openai_tts_voice(request.voice.as_deref());
     let format = bounded_openai_tts_format(request.format.as_deref());
     let answer_text_sha256 = sha256_hex(bounded_text.as_bytes());
+    let limiter_reservation = match enforce_openai_tts_request_bounds(
+        &state.tts_request_limiter,
+        &request,
+        &answer_text_sha256,
+        &voice,
+        &format,
+    ) {
+        Ok(reservation) => reservation,
+        Err(reason) => {
+            return desktop_openai_tts_error_response(
+                StatusCode::TOO_MANY_REQUESTS,
+                &request,
+                reason.as_str(),
+            )
+        }
+    };
+
     match request_openai_tts_speech(&bounded_text, &model, &voice, &format) {
         Ok(audio) => {
             let audio_byte_len = audio.len() as u64;
@@ -958,12 +972,115 @@ async fn run_desktop_openai_tts_speech(
             };
             (StatusCode::OK, Json(response)).into_response()
         }
-        Err(reason) => desktop_openai_tts_error_response(
-            StatusCode::SERVICE_UNAVAILABLE,
-            &request,
-            reason.as_str(),
-        ),
+        Err(reason) => {
+            release_openai_tts_failed_reservation(&state.tts_request_limiter, &limiter_reservation);
+            desktop_openai_tts_error_response(
+                StatusCode::SERVICE_UNAVAILABLE,
+                &request,
+                reason.as_str(),
+            )
+        }
     }
+}
+
+fn reserve_openai_tts_request_count(
+    limiter: &mut TtsRequestLimiterState,
+    session_key: String,
+    turn_key: String,
+    max_per_turn: u64,
+    max_per_session: u64,
+) -> Result<TtsRequestLimiterReservation, String> {
+    let turn_count = limiter.per_turn.entry(turn_key).or_insert(0);
+    if *turn_count >= max_per_turn {
+        return Err("openai_tts_max_requests_per_turn_exceeded".to_string());
+    }
+    let session_count = limiter.per_session.entry(session_key.clone()).or_insert(0);
+    if *session_count >= max_per_session {
+        return Err("openai_tts_max_requests_per_session_exceeded".to_string());
+    }
+    *turn_count += 1;
+    *session_count += 1;
+    Ok(TtsRequestLimiterReservation { session_key })
+}
+
+fn openai_tts_turn_limiter_key(
+    request: &DesktopOpenAiTtsSpeechRequest,
+    answer_text_sha256: &str,
+    voice: &str,
+    format: &str,
+) -> String {
+    let base = request
+        .turn_id
+        .as_ref()
+        .map(|turn_id| format!("turn:{turn_id}"))
+        .or_else(|| {
+            request
+                .request_id
+                .as_ref()
+                .map(|request_id| format!("request:{request_id}"))
+        })
+        .unwrap_or_else(|| format!("correlation:{}", request.correlation_id));
+    format!("{base}|answer:{answer_text_sha256}|voice:{voice}|format:{format}")
+}
+
+fn openai_tts_session_limiter_key(request: &DesktopOpenAiTtsSpeechRequest) -> String {
+    request
+        .session_id
+        .as_ref()
+        .map(|session_id| format!("session:{session_id}"))
+        .unwrap_or_else(|| format!("device:{}", request.device_id))
+}
+
+fn release_openai_tts_failed_reservation(
+    limiter: &Arc<Mutex<TtsRequestLimiterState>>,
+    reservation: &TtsRequestLimiterReservation,
+) {
+    let Ok(mut limiter) = limiter.lock() else {
+        return;
+    };
+    if let Some(session_count) = limiter.per_session.get_mut(&reservation.session_key) {
+        *session_count = session_count.saturating_sub(1);
+        if *session_count == 0 {
+            limiter.per_session.remove(&reservation.session_key);
+        }
+    }
+}
+
+fn enforce_openai_tts_request_bounds(
+    limiter: &Arc<Mutex<TtsRequestLimiterState>>,
+    request: &DesktopOpenAiTtsSpeechRequest,
+    answer_text_sha256: &str,
+    voice: &str,
+    format: &str,
+) -> Result<TtsRequestLimiterReservation, String> {
+    let max_per_turn = parse_u64_env("SELENE_DESKTOP_OPENAI_TTS_MAX_REQUESTS_PER_TURN", 1, 1, 5);
+    let max_per_session = parse_u64_env(
+        "SELENE_DESKTOP_OPENAI_TTS_MAX_REQUESTS_PER_SESSION",
+        30,
+        1,
+        200,
+    );
+    let turn_key = openai_tts_turn_limiter_key(request, answer_text_sha256, voice, format);
+    let session_key = openai_tts_session_limiter_key(request);
+    let mut limiter = limiter
+        .lock()
+        .map_err(|_| "openai_tts_request_limiter_lock_poisoned".to_string())?;
+    reserve_openai_tts_request_count(
+        &mut limiter,
+        session_key,
+        turn_key,
+        max_per_turn,
+        max_per_session,
+    )
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    let digest = Sha256::digest(bytes);
+    let mut out = String::with_capacity(digest.len() * 2);
+    for byte in digest {
+        out.push_str(&format!("{byte:02x}"));
+    }
+    out
 }
 
 async fn run_invite_click(
@@ -1973,58 +2090,6 @@ fn request_openai_tts_speech(
     Ok(output.stdout)
 }
 
-fn enforce_openai_tts_request_bounds(
-    limiter: &Arc<Mutex<TtsRequestLimiterState>>,
-    request: &DesktopOpenAiTtsSpeechRequest,
-) -> Result<(), String> {
-    let max_per_turn = parse_u64_env("SELENE_DESKTOP_OPENAI_TTS_MAX_REQUESTS_PER_TURN", 1, 1, 5);
-    let max_per_session = parse_u64_env(
-        "SELENE_DESKTOP_OPENAI_TTS_MAX_REQUESTS_PER_SESSION",
-        30,
-        1,
-        200,
-    );
-    let turn_key = request
-        .turn_id
-        .as_ref()
-        .map(|turn_id| format!("turn:{turn_id}"))
-        .or_else(|| {
-            request
-                .request_id
-                .as_ref()
-                .map(|request_id| format!("request:{request_id}"))
-        })
-        .unwrap_or_else(|| format!("correlation:{}", request.correlation_id));
-    let session_key = request
-        .session_id
-        .as_ref()
-        .map(|session_id| format!("session:{session_id}"))
-        .unwrap_or_else(|| format!("device:{}", request.device_id));
-    let mut limiter = limiter
-        .lock()
-        .map_err(|_| "openai_tts_request_limiter_lock_poisoned".to_string())?;
-    let turn_count = limiter.per_turn.entry(turn_key).or_insert(0);
-    if *turn_count >= max_per_turn {
-        return Err("openai_tts_max_requests_per_turn_exceeded".to_string());
-    }
-    *turn_count += 1;
-    let session_count = limiter.per_session.entry(session_key).or_insert(0);
-    if *session_count >= max_per_session {
-        return Err("openai_tts_max_requests_per_session_exceeded".to_string());
-    }
-    *session_count += 1;
-    Ok(())
-}
-
-fn sha256_hex(bytes: &[u8]) -> String {
-    let digest = Sha256::digest(bytes);
-    let mut out = String::with_capacity(digest.len() * 2);
-    for byte in digest {
-        out.push_str(&format!("{byte:02x}"));
-    }
-    out
-}
-
 fn runtime_execution_envelope_from_voice_turn_request(
     request: &VoiceTurnAdapterRequest,
     request_id: &str,
@@ -2654,25 +2719,37 @@ mod tests {
         content_type: &'static str,
         body: Vec<u8>,
     ) -> MockOpenAiSpeechServer {
+        spawn_mock_openai_speech_server_sequence(vec![(status, content_type, body)])
+    }
+
+    // Test-only mock provider for /v1/audio/speech. It simulates TTS limiter
+    // and provider-failure cases without calling OpenAI; production paths still
+    // call request_openai_tts_speech or fail safely. Remove these mock-backed
+    // limiter tests if live provider reliability coverage supersedes them.
+    fn spawn_mock_openai_speech_server_sequence(
+        responses: Vec<(u16, &'static str, Vec<u8>)>,
+    ) -> MockOpenAiSpeechServer {
         let listener =
             TcpListener::bind("127.0.0.1:0").expect("mock OpenAI speech listener should bind");
         let address = listener.local_addr().expect("mock OpenAI speech address");
         let (request_tx, request_rx) = mpsc::channel();
         let join = thread::spawn(move || {
-            let Ok((mut stream, _)) = listener.accept() else {
-                return;
-            };
-            let mut buffer = [0_u8; 8192];
-            let request_len = stream.read(&mut buffer).unwrap_or(0);
-            let request_text = String::from_utf8_lossy(&buffer[..request_len]).to_string();
-            let _ = request_tx.send(request_text);
-            let mut response = format!(
-                "HTTP/1.1 {status} OK\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-                body.len()
-            )
-            .into_bytes();
-            response.extend_from_slice(&body);
-            let _ = stream.write_all(&response);
+            for (status, content_type, body) in responses {
+                let Ok((mut stream, _)) = listener.accept() else {
+                    return;
+                };
+                let mut buffer = [0_u8; 8192];
+                let request_len = stream.read(&mut buffer).unwrap_or(0);
+                let request_text = String::from_utf8_lossy(&buffer[..request_len]).to_string();
+                let _ = request_tx.send(request_text);
+                let mut response = format!(
+                    "HTTP/1.1 {status} OK\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                )
+                .into_bytes();
+                response.extend_from_slice(&body);
+                let _ = stream.write_all(&response);
+            }
         });
         MockOpenAiSpeechServer {
             url: format!("http://{address}/v1/audio/speech"),
@@ -4310,6 +4387,403 @@ mod tests {
             body.safe_failure_reason.as_deref(),
             Some("openai_tts_max_requests_per_turn_exceeded")
         );
+        mock.join.join().expect("mock provider thread should join");
+        let _ = fs::remove_file(vault_path);
+        let _ = fs::remove_file(key_path);
+    }
+
+    #[tokio::test]
+    async fn desktop_openai_tts_limiter_allows_next_turn_audio() {
+        let _guard = realtime_env_lock();
+        let permanent_key = "sk-test-permanent-key-never-exposed";
+        let mock = spawn_mock_openai_speech_server_sequence(vec![
+            (200, "audio/mpeg", b"first-turn-audio".to_vec()),
+            (200, "audio/mpeg", b"second-turn-audio".to_vec()),
+        ]);
+        let (vault_path, key_path) =
+            isolated_realtime_vault_path("tts-next-turn", &[("openai_api_key", permanent_key)]);
+        let vault_path_text = vault_path
+            .to_str()
+            .expect("test vault path should be valid UTF-8")
+            .to_string();
+        let _unset_openai = ScopedEnvVar::unset("OPENAI_API_KEY");
+        let _vault_scope = ScopedEnvVar::set("SELENE_DEVICE_VAULT_PATH", &vault_path_text);
+        let _endpoint_scope = ScopedEnvVar::set("OPENAI_AUDIO_SPEECH_URL", &mock.url);
+
+        let state = test_state_with_config(IngressSecurityConfig::from_env());
+        let first_request = base_openai_tts_speech_request();
+        let mut second_request = base_openai_tts_speech_request();
+        second_request.turn_id = Some("43".to_string());
+        second_request.request_id = Some("voice_turn_request_tts_test_2".to_string());
+        second_request.response_text = "Selene runtime second final answer.".to_string();
+        let now_ms = system_time_now_ms();
+        let first_headers = security_headers(
+            Some(bearer_for(
+                &first_request.actor_user_id,
+                &first_request.device_id,
+            )),
+            "req-tts-next-1",
+            "idem-tts-next-1",
+            now_ms,
+            "nonce-tts-next-1",
+        );
+        let first_response =
+            run_desktop_openai_tts_speech(State(state.clone()), first_headers, Json(first_request))
+                .await;
+        assert_eq!(first_response.status(), StatusCode::OK);
+        let first_body: DesktopOpenAiTtsSpeechResponse = decode_json_response(first_response).await;
+        assert_eq!(first_body.audio_byte_len, b"first-turn-audio".len() as u64);
+
+        let second_headers = security_headers(
+            Some(bearer_for(
+                &second_request.actor_user_id,
+                &second_request.device_id,
+            )),
+            "req-tts-next-2",
+            "idem-tts-next-2",
+            now_ms + 1,
+            "nonce-tts-next-2",
+        );
+        let second_response =
+            run_desktop_openai_tts_speech(State(state), second_headers, Json(second_request)).await;
+        assert_eq!(second_response.status(), StatusCode::OK);
+        let second_body: DesktopOpenAiTtsSpeechResponse =
+            decode_json_response(second_response).await;
+        assert_eq!(
+            second_body.audio_byte_len,
+            b"second-turn-audio".len() as u64
+        );
+
+        let first_provider_request = mock
+            .request_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("first provider request should arrive");
+        assert!(first_provider_request.contains("POST /v1/audio/speech"));
+        let second_provider_request = mock
+            .request_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("second provider request should arrive");
+        assert!(second_provider_request.contains("Selene runtime second final answer."));
+        mock.join.join().expect("mock provider thread should join");
+        let _ = fs::remove_file(vault_path);
+        let _ = fs::remove_file(key_path);
+    }
+
+    #[tokio::test]
+    async fn desktop_openai_tts_limiter_allows_distinct_answer_text_when_turn_id_reused() {
+        let _guard = realtime_env_lock();
+        let permanent_key = "sk-test-permanent-key-never-exposed";
+        let mock = spawn_mock_openai_speech_server_sequence(vec![
+            (200, "audio/mpeg", b"first-reused-turn-audio".to_vec()),
+            (200, "audio/mpeg", b"second-reused-turn-audio".to_vec()),
+        ]);
+        let (vault_path, key_path) = isolated_realtime_vault_path(
+            "tts-reused-turn-id",
+            &[("openai_api_key", permanent_key)],
+        );
+        let vault_path_text = vault_path
+            .to_str()
+            .expect("test vault path should be valid UTF-8")
+            .to_string();
+        let _unset_openai = ScopedEnvVar::unset("OPENAI_API_KEY");
+        let _vault_scope = ScopedEnvVar::set("SELENE_DEVICE_VAULT_PATH", &vault_path_text);
+        let _endpoint_scope = ScopedEnvVar::set("OPENAI_AUDIO_SPEECH_URL", &mock.url);
+
+        let state = test_state_with_config(IngressSecurityConfig::from_env());
+        let first_request = base_openai_tts_speech_request();
+        let mut second_request = base_openai_tts_speech_request();
+        second_request.response_text =
+            "A different runtime answer under a reused turn id.".to_string();
+        second_request.request_id = Some("voice_turn_request_tts_reused_2".to_string());
+        let now_ms = system_time_now_ms();
+        let first_headers = security_headers(
+            Some(bearer_for(
+                &first_request.actor_user_id,
+                &first_request.device_id,
+            )),
+            "req-tts-reused-1",
+            "idem-tts-reused-1",
+            now_ms,
+            "nonce-tts-reused-1",
+        );
+        let first_response =
+            run_desktop_openai_tts_speech(State(state.clone()), first_headers, Json(first_request))
+                .await;
+        assert_eq!(first_response.status(), StatusCode::OK);
+
+        let second_headers = security_headers(
+            Some(bearer_for(
+                &second_request.actor_user_id,
+                &second_request.device_id,
+            )),
+            "req-tts-reused-2",
+            "idem-tts-reused-2",
+            now_ms + 1,
+            "nonce-tts-reused-2",
+        );
+        let second_response =
+            run_desktop_openai_tts_speech(State(state), second_headers, Json(second_request)).await;
+        assert_eq!(second_response.status(), StatusCode::OK);
+        let second_body: DesktopOpenAiTtsSpeechResponse =
+            decode_json_response(second_response).await;
+        assert_eq!(
+            second_body.audio_byte_len,
+            b"second-reused-turn-audio".len() as u64
+        );
+        let _ = mock
+            .request_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("first provider request should arrive");
+        let second_provider_request = mock
+            .request_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("second provider request should arrive");
+        assert!(second_provider_request.contains("A different runtime answer"));
+        mock.join.join().expect("mock provider thread should join");
+        let _ = fs::remove_file(vault_path);
+        let _ = fs::remove_file(key_path);
+    }
+
+    #[tokio::test]
+    async fn desktop_openai_tts_limiter_duplicate_same_turn_does_not_poison_session() {
+        let _guard = realtime_env_lock();
+        let permanent_key = "sk-test-permanent-key-never-exposed";
+        let mock = spawn_mock_openai_speech_server_sequence(vec![
+            (200, "audio/mpeg", b"first-turn-audio".to_vec()),
+            (200, "audio/mpeg", b"later-turn-audio".to_vec()),
+        ]);
+        let (vault_path, key_path) = isolated_realtime_vault_path(
+            "tts-duplicate-does-not-poison",
+            &[("openai_api_key", permanent_key)],
+        );
+        let vault_path_text = vault_path
+            .to_str()
+            .expect("test vault path should be valid UTF-8")
+            .to_string();
+        let _unset_openai = ScopedEnvVar::unset("OPENAI_API_KEY");
+        let _vault_scope = ScopedEnvVar::set("SELENE_DEVICE_VAULT_PATH", &vault_path_text);
+        let _endpoint_scope = ScopedEnvVar::set("OPENAI_AUDIO_SPEECH_URL", &mock.url);
+
+        let state = test_state_with_config(IngressSecurityConfig::from_env());
+        let first_request = base_openai_tts_speech_request();
+        let duplicate_request = base_openai_tts_speech_request();
+        let mut later_request = base_openai_tts_speech_request();
+        later_request.turn_id = Some("43".to_string());
+        later_request.request_id = Some("voice_turn_request_tts_later".to_string());
+        later_request.response_text = "Selene runtime later final answer.".to_string();
+        let now_ms = system_time_now_ms();
+        let first_headers = security_headers(
+            Some(bearer_for(
+                &first_request.actor_user_id,
+                &first_request.device_id,
+            )),
+            "req-tts-dup-1",
+            "idem-tts-dup-1",
+            now_ms,
+            "nonce-tts-dup-1",
+        );
+        let first_response =
+            run_desktop_openai_tts_speech(State(state.clone()), first_headers, Json(first_request))
+                .await;
+        assert_eq!(first_response.status(), StatusCode::OK);
+
+        let duplicate_headers = security_headers(
+            Some(bearer_for(
+                &duplicate_request.actor_user_id,
+                &duplicate_request.device_id,
+            )),
+            "req-tts-dup-2",
+            "idem-tts-dup-2",
+            now_ms + 1,
+            "nonce-tts-dup-2",
+        );
+        let duplicate_response = run_desktop_openai_tts_speech(
+            State(state.clone()),
+            duplicate_headers,
+            Json(duplicate_request),
+        )
+        .await;
+        assert_eq!(duplicate_response.status(), StatusCode::TOO_MANY_REQUESTS);
+        let duplicate_body: DesktopOpenAiTtsSpeechResponse =
+            decode_json_response(duplicate_response).await;
+        assert_eq!(
+            duplicate_body.safe_failure_reason.as_deref(),
+            Some("openai_tts_max_requests_per_turn_exceeded")
+        );
+
+        let later_headers = security_headers(
+            Some(bearer_for(
+                &later_request.actor_user_id,
+                &later_request.device_id,
+            )),
+            "req-tts-dup-3",
+            "idem-tts-dup-3",
+            now_ms + 2,
+            "nonce-tts-dup-3",
+        );
+        let later_response =
+            run_desktop_openai_tts_speech(State(state), later_headers, Json(later_request)).await;
+        assert_eq!(later_response.status(), StatusCode::OK);
+        let later_body: DesktopOpenAiTtsSpeechResponse = decode_json_response(later_response).await;
+        assert_eq!(later_body.audio_byte_len, b"later-turn-audio".len() as u64);
+        let _ = mock
+            .request_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("first provider request should arrive");
+        let later_provider_request = mock
+            .request_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("later provider request should arrive");
+        assert!(later_provider_request.contains("Selene runtime later final answer."));
+        mock.join.join().expect("mock provider thread should join");
+        let _ = fs::remove_file(vault_path);
+        let _ = fs::remove_file(key_path);
+    }
+
+    #[tokio::test]
+    async fn desktop_openai_tts_limiter_failed_request_does_not_block_future_turn() {
+        let _guard = realtime_env_lock();
+        let permanent_key = "sk-test-permanent-key-never-exposed";
+        let mock = spawn_mock_openai_speech_server_sequence(vec![
+            (
+                503,
+                "application/json",
+                br#"{"error":"temporary"}"#.to_vec(),
+            ),
+            (200, "audio/mpeg", b"recovered-turn-audio".to_vec()),
+        ]);
+        let (vault_path, key_path) = isolated_realtime_vault_path(
+            "tts-failed-request-release",
+            &[("openai_api_key", permanent_key)],
+        );
+        let vault_path_text = vault_path
+            .to_str()
+            .expect("test vault path should be valid UTF-8")
+            .to_string();
+        let _unset_openai = ScopedEnvVar::unset("OPENAI_API_KEY");
+        let _vault_scope = ScopedEnvVar::set("SELENE_DEVICE_VAULT_PATH", &vault_path_text);
+        let _endpoint_scope = ScopedEnvVar::set("OPENAI_AUDIO_SPEECH_URL", &mock.url);
+        let _session_limit_scope =
+            ScopedEnvVar::set("SELENE_DESKTOP_OPENAI_TTS_MAX_REQUESTS_PER_SESSION", "1");
+
+        let state = test_state_with_config(IngressSecurityConfig::from_env());
+        let first_request = base_openai_tts_speech_request();
+        let mut recovered_request = base_openai_tts_speech_request();
+        recovered_request.turn_id = Some("43".to_string());
+        recovered_request.request_id = Some("voice_turn_request_tts_recovered".to_string());
+        recovered_request.response_text = "Recovered runtime final answer.".to_string();
+        let now_ms = system_time_now_ms();
+        let first_headers = security_headers(
+            Some(bearer_for(
+                &first_request.actor_user_id,
+                &first_request.device_id,
+            )),
+            "req-tts-fail-release-1",
+            "idem-tts-fail-release-1",
+            now_ms,
+            "nonce-tts-fail-release-1",
+        );
+        let first_response =
+            run_desktop_openai_tts_speech(State(state.clone()), first_headers, Json(first_request))
+                .await;
+        assert_eq!(first_response.status(), StatusCode::SERVICE_UNAVAILABLE);
+
+        let recovered_headers = security_headers(
+            Some(bearer_for(
+                &recovered_request.actor_user_id,
+                &recovered_request.device_id,
+            )),
+            "req-tts-fail-release-2",
+            "idem-tts-fail-release-2",
+            now_ms + 1,
+            "nonce-tts-fail-release-2",
+        );
+        let recovered_response =
+            run_desktop_openai_tts_speech(State(state), recovered_headers, Json(recovered_request))
+                .await;
+        assert_eq!(recovered_response.status(), StatusCode::OK);
+        let recovered_body: DesktopOpenAiTtsSpeechResponse =
+            decode_json_response(recovered_response).await;
+        assert_eq!(
+            recovered_body.audio_byte_len,
+            b"recovered-turn-audio".len() as u64
+        );
+        let _ = mock
+            .request_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("failed provider request should arrive");
+        let recovered_provider_request = mock
+            .request_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("recovered provider request should arrive");
+        assert!(recovered_provider_request.contains("Recovered runtime final answer."));
+        mock.join.join().expect("mock provider thread should join");
+        let _ = fs::remove_file(vault_path);
+        let _ = fs::remove_file(key_path);
+    }
+
+    #[tokio::test]
+    async fn desktop_openai_tts_limiter_session_cap_still_blocks_excess() {
+        let _guard = realtime_env_lock();
+        let permanent_key = "sk-test-permanent-key-never-exposed";
+        let mock = spawn_mock_openai_speech_server(200, "audio/mpeg", b"first-turn-audio".to_vec());
+        let (vault_path, key_path) =
+            isolated_realtime_vault_path("tts-session-cap", &[("openai_api_key", permanent_key)]);
+        let vault_path_text = vault_path
+            .to_str()
+            .expect("test vault path should be valid UTF-8")
+            .to_string();
+        let _unset_openai = ScopedEnvVar::unset("OPENAI_API_KEY");
+        let _vault_scope = ScopedEnvVar::set("SELENE_DEVICE_VAULT_PATH", &vault_path_text);
+        let _endpoint_scope = ScopedEnvVar::set("OPENAI_AUDIO_SPEECH_URL", &mock.url);
+        let _session_limit_scope =
+            ScopedEnvVar::set("SELENE_DESKTOP_OPENAI_TTS_MAX_REQUESTS_PER_SESSION", "1");
+
+        let state = test_state_with_config(IngressSecurityConfig::from_env());
+        let first_request = base_openai_tts_speech_request();
+        let mut second_request = base_openai_tts_speech_request();
+        second_request.turn_id = Some("43".to_string());
+        second_request.request_id = Some("voice_turn_request_tts_session_cap_2".to_string());
+        second_request.response_text = "Session cap second final answer.".to_string();
+        let now_ms = system_time_now_ms();
+        let first_headers = security_headers(
+            Some(bearer_for(
+                &first_request.actor_user_id,
+                &first_request.device_id,
+            )),
+            "req-tts-session-cap-1",
+            "idem-tts-session-cap-1",
+            now_ms,
+            "nonce-tts-session-cap-1",
+        );
+        let first_response =
+            run_desktop_openai_tts_speech(State(state.clone()), first_headers, Json(first_request))
+                .await;
+        assert_eq!(first_response.status(), StatusCode::OK);
+
+        let second_headers = security_headers(
+            Some(bearer_for(
+                &second_request.actor_user_id,
+                &second_request.device_id,
+            )),
+            "req-tts-session-cap-2",
+            "idem-tts-session-cap-2",
+            now_ms + 1,
+            "nonce-tts-session-cap-2",
+        );
+        let second_response =
+            run_desktop_openai_tts_speech(State(state), second_headers, Json(second_request)).await;
+        assert_eq!(second_response.status(), StatusCode::TOO_MANY_REQUESTS);
+        let body: DesktopOpenAiTtsSpeechResponse = decode_json_response(second_response).await;
+        assert_eq!(
+            body.safe_failure_reason.as_deref(),
+            Some("openai_tts_max_requests_per_session_exceeded")
+        );
+        let provider_request = mock
+            .request_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("first provider request should arrive");
+        assert!(provider_request.contains("POST /v1/audio/speech"));
         mock.join.join().expect("mock provider thread should join");
         let _ = fs::remove_file(vault_path);
         let _ = fs::remove_file(key_path);
