@@ -8142,10 +8142,12 @@ impl AdapterRuntime {
                 }
             }
             if !skip_identity_prompt_for_guest_lane {
+                let voice_capture_turn = request.audio_capture_ref.is_some();
                 let continuing_speech_prompt_reason =
                     if continuing_speech_identity_prompt_session_surface(
                         session_turn_state.session_attach_outcome,
-                    ) {
+                    ) && voice_capture_turn
+                    {
                         continuing_speech_identity_prompt_reason(user_text_final.as_deref())
                     } else {
                         None
@@ -20559,7 +20561,11 @@ fn committed_voice_reject_should_ignore_user_surface(
     if reason_code == ph1c_reason_codes::STT_FAIL_LOW_CONFIDENCE
         && committed_voice_single_short_unsafe_token(transcript_text)
     {
-        return true;
+        let token = transcript_text
+            .trim_matches(|ch: char| ch.is_whitespace() || ch.is_ascii_punctuation())
+            .to_ascii_lowercase();
+        return committed_voice_latin_filler_artifact_token(&token)
+            || capture.is_some_and(committed_voice_capture_has_unstable_or_degraded_evidence);
     }
     if reason_code == ph1c_reason_codes::STT_FAIL_LOW_SEMANTIC_CONFIDENCE
         && committed_voice_cjk_noise_or_filler_fragment(transcript_text)
@@ -20728,6 +20734,9 @@ fn committed_voice_non_actionable_cjk_with_weak_language_evidence(
     if committed_voice_has_actionable_cjk_intent(&compact) {
         return false;
     }
+    if committed_voice_has_actionable_latin_intent(&transcript_text.to_ascii_lowercase()) {
+        return false;
+    }
     let locale = capture
         .locale_tag
         .as_deref()
@@ -20751,6 +20760,16 @@ fn committed_voice_non_actionable_cjk_with_weak_language_evidence(
         || capture.aec_unstable.unwrap_or(false)
         || evidence_confidence < 0.96;
     cjk_count > 0 && weak_language_evidence
+}
+
+fn committed_voice_capture_has_unstable_or_degraded_evidence(
+    capture: &VoiceTurnAudioCaptureRef,
+) -> bool {
+    capture.capture_degraded.unwrap_or(false)
+        || capture.stream_gap_detected.unwrap_or(false)
+        || capture.aec_unstable.unwrap_or(false)
+        || bp_to_confidence(capture.echo_safe_confidence_bp, 0.0) < 0.80
+        || bp_to_confidence(capture.nearfield_confidence_bp, 1.0) < 0.80
 }
 
 fn committed_voice_latin_filler_artifact_token(token: &str) -> bool {
@@ -25689,8 +25708,10 @@ mod tests {
     #[test]
     fn at_adapter_01_valid_ios_request_forwards() {
         let runtime = AdapterRuntime::default();
+        let mut req = base_request();
+        req.user_text_final = Some("Summarize adapter readiness.".to_string());
         let out = runtime
-            .run_voice_turn(base_request())
+            .run_voice_turn(req)
             .expect("valid request must succeed");
         assert_eq!(out.status, "ok");
         assert_eq!(out.outcome, "FINAL");
@@ -28978,6 +28999,7 @@ mod tests {
         request.correlation_id = 31_012;
         request.turn_id = 41_012;
         request.device_turn_sequence = Some(7);
+        request.user_text_final = Some("Summarize adapter retry handling.".to_string());
         seed_identity_and_device_for_request(&runtime, &request);
 
         let first = runtime
@@ -33543,8 +33565,10 @@ mod tests {
             true,
         )
         .expect("runtime with persistence must construct");
+        let mut first_req = base_request();
+        first_req.user_text_final = Some("Summarize adapter journal persistence.".to_string());
         let out = runtime_one
-            .run_voice_turn(base_request())
+            .run_voice_turn(first_req)
             .expect("first runtime request must succeed");
         assert_eq!(out.status, "ok");
 
@@ -33565,6 +33589,7 @@ mod tests {
         let mut req = base_request();
         req.turn_id = 20_002;
         req.now_ns = Some(4);
+        req.user_text_final = Some("Summarize adapter journal persistence again.".to_string());
         let out_two = runtime_two
             .run_voice_turn(req)
             .expect("second runtime request must succeed");
@@ -35229,6 +35254,8 @@ mod tests {
             req.device_id = Some(device_id.to_string());
             if trigger == "WAKE_WORD" {
                 seed_wake_enrollment_complete_for_request(&runtime, &mut req, "at_adapter_21");
+            } else {
+                req.user_text_final = Some("Summarize adapter platform parity.".to_string());
             }
             let out = runtime
                 .run_voice_turn(req)
@@ -35307,6 +35334,7 @@ mod tests {
     fn at_adapter_33_ph1c_live_bootstrap_gold_capture_and_telemetry_are_always_on() {
         let runtime = AdapterRuntime::default();
         let mut req = base_request();
+        mark_request_as_live_desktop_capture_for_h417_tests(&mut req);
         req.turn_id = 20_333;
         req.now_ns = Some(33_003);
         req.user_text_partial = None;
