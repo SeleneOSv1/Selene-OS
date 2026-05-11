@@ -1,6 +1,6 @@
 #![forbid(unsafe_code)]
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use selene_kernel_contracts::ph1_voice_id::Ph1VoiceIdResponse;
 use selene_kernel_contracts::ph1m::{
@@ -9,14 +9,15 @@ use selene_kernel_contracts::ph1m::{
     MemoryExposureLevel, MemoryGraphEdgeInput, MemoryGraphNodeInput, MemoryHintEntry,
     MemoryItemTag, MemoryKey, MemoryLayer, MemoryLedgerEvent, MemoryLedgerEventKind,
     MemoryMetricPayload, MemoryProposedItem, MemoryProvenance, MemoryProvenanceTier,
-    MemoryResumeAction, MemoryResumeDeliveryMode, MemoryResumeTier, MemoryRetentionMode,
-    MemorySafeSummaryItem, MemorySensitivityFlag, MemorySuppressionRule, MemorySuppressionRuleKind,
-    MemorySuppressionTargetType, MemoryUsePolicy, PendingWorkItem, Ph1mContextBundleBuildRequest,
-    Ph1mContextBundleBuildResponse, Ph1mEmotionalThreadUpdateRequest,
-    Ph1mEmotionalThreadUpdateResponse, Ph1mForgetRequest, Ph1mForgetResponse,
-    Ph1mGraphUpdateRequest, Ph1mGraphUpdateResponse, Ph1mHintBundleBuildRequest,
-    Ph1mHintBundleBuildResponse, Ph1mMetricsEmitRequest, Ph1mMetricsEmitResponse,
-    Ph1mProposeRequest, Ph1mProposeResponse, Ph1mRecallRequest, Ph1mRecallResponse,
+    MemoryRecentArchiveMatch, MemoryResumeAction, MemoryResumeDeliveryMode, MemoryResumeTier,
+    MemoryRetentionMode, MemorySafeSummaryItem, MemorySensitivityFlag, MemorySuppressionRule,
+    MemorySuppressionRuleKind, MemorySuppressionTargetType, MemoryUsePolicy, PendingWorkItem,
+    Ph1mContextBundleBuildRequest, Ph1mContextBundleBuildResponse,
+    Ph1mEmotionalThreadUpdateRequest, Ph1mEmotionalThreadUpdateResponse, Ph1mForgetRequest,
+    Ph1mForgetResponse, Ph1mGraphUpdateRequest, Ph1mGraphUpdateResponse,
+    Ph1mHintBundleBuildRequest, Ph1mHintBundleBuildResponse, Ph1mMetricsEmitRequest,
+    Ph1mMetricsEmitResponse, Ph1mProposeRequest, Ph1mProposeResponse, Ph1mRecallRequest,
+    Ph1mRecallResponse, Ph1mRecentArchiveRecallRequest, Ph1mRecentArchiveRecallResponse,
     Ph1mResumeSelectRequest, Ph1mResumeSelectResponse, Ph1mRetentionModeSetRequest,
     Ph1mRetentionModeSetResponse, Ph1mSafeSummaryRequest, Ph1mSafeSummaryResponse,
     Ph1mSuppressionSetRequest, Ph1mSuppressionSetResponse, Ph1mThreadDigestUpsertRequest,
@@ -51,6 +52,8 @@ pub mod reason_codes {
     pub const M_GRAPH_UPDATED: ReasonCodeId = ReasonCodeId(0x4D00_0014);
     pub const M_RETENTION_MODE_UPDATED: ReasonCodeId = ReasonCodeId(0x4D00_0015);
     pub const M_CLARIFY_REQUIRED: ReasonCodeId = ReasonCodeId(0x4D00_0016);
+    pub const M_RECENT_ARCHIVE_RECALL_READY: ReasonCodeId = ReasonCodeId(0x4D00_0017);
+    pub const M_RECENT_ARCHIVE_RECALL_EMPTY: ReasonCodeId = ReasonCodeId(0x4D00_0018);
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -100,6 +103,103 @@ struct ThreadEntry {
     unresolved: bool,
     last_updated_at: MonotonicTimeNs,
     use_count: u32,
+}
+
+const NS_PER_MS: u64 = 1_000_000;
+const DAY_MS: u64 = 24 * 60 * 60 * 1000;
+
+fn recent_archive_query_terms(text: &str) -> BTreeSet<String> {
+    let mut terms = BTreeSet::new();
+    let mut current = String::new();
+    for ch in text.chars() {
+        if ch.is_ascii_alphanumeric() {
+            current.push(ch.to_ascii_lowercase());
+        } else if !current.is_empty() {
+            push_recent_archive_term(&mut terms, &current);
+            current.clear();
+        }
+    }
+    if !current.is_empty() {
+        push_recent_archive_term(&mut terms, &current);
+    }
+    terms
+}
+
+fn push_recent_archive_term(terms: &mut BTreeSet<String>, term: &str) {
+    if term.len() < 3 {
+        return;
+    }
+    if matches!(
+        term,
+        "what"
+            | "did"
+            | "discuss"
+            | "yesterday"
+            | "about"
+            | "find"
+            | "where"
+            | "talked"
+            | "show"
+            | "from"
+            | "earlier"
+            | "continue"
+            | "with"
+            | "the"
+            | "was"
+            | "were"
+            | "and"
+            | "for"
+            | "our"
+            | "this"
+            | "that"
+            | "recent"
+            | "memory"
+    ) {
+        return;
+    }
+    terms.insert(term.to_string());
+}
+
+fn recent_archive_time_window(req: &Ph1mRecentArchiveRecallRequest) -> (u64, u64) {
+    let requested_window_ns = req.window_ms.saturating_mul(NS_PER_MS);
+    if req.query_text.to_ascii_lowercase().contains("yesterday") {
+        let end = req.now.0.saturating_sub(DAY_MS.saturating_mul(NS_PER_MS));
+        let start = req
+            .now
+            .0
+            .saturating_sub(DAY_MS.saturating_mul(2).saturating_mul(NS_PER_MS))
+            .max(req.now.0.saturating_sub(requested_window_ns));
+        return (start, end);
+    }
+    (req.now.0.saturating_sub(requested_window_ns), req.now.0)
+}
+
+fn recent_archive_excerpt(thread: &ThreadEntry, query_terms: &BTreeSet<String>) -> String {
+    let selected = thread
+        .summary_bullets
+        .iter()
+        .find(|bullet| {
+            let bullet_terms = recent_archive_query_terms(bullet);
+            query_terms.iter().any(|term| bullet_terms.contains(term))
+        })
+        .or_else(|| thread.summary_bullets.first())
+        .map(String::as_str)
+        .unwrap_or(thread.thread_title.as_str());
+    truncate_chars(selected, 512)
+}
+
+fn recent_archive_match_reason(overlap: &[String]) -> String {
+    let joined = overlap
+        .iter()
+        .take(8)
+        .cloned()
+        .collect::<Vec<_>>()
+        .join(", ");
+    truncate_chars(&format!("matched terms: {joined}"), 192)
+}
+
+fn truncate_chars(text: &str, max_chars: usize) -> String {
+    text.chars().take(max_chars).collect()
 }
 
 #[derive(Debug, Clone)]
@@ -378,6 +478,90 @@ impl Ph1mRuntime {
         }
 
         Ph1mRecallResponse::v1(out, None)
+    }
+
+    pub fn recent_archive_recall(
+        &self,
+        req: &Ph1mRecentArchiveRecallRequest,
+    ) -> Result<Ph1mRecentArchiveRecallResponse, ContractViolation> {
+        req.validate()?;
+
+        if !self.identity_ok(&req.speaker_assertion) {
+            return Ph1mRecentArchiveRecallResponse::v1(
+                vec![],
+                reason_codes::M_REJECT_UNKNOWN_SPEAKER,
+            );
+        }
+
+        if req.policy_context_ref.privacy_mode {
+            return Ph1mRecentArchiveRecallResponse::v1(vec![], reason_codes::M_POLICY_BLOCKED);
+        }
+
+        let query_terms = recent_archive_query_terms(&req.query_text);
+        if query_terms.is_empty() {
+            return Ph1mRecentArchiveRecallResponse::v1(
+                vec![],
+                reason_codes::M_RECENT_ARCHIVE_RECALL_EMPTY,
+            );
+        }
+        let (window_start, window_end) = recent_archive_time_window(req);
+        let mut matches = Vec::new();
+
+        for thread in self.threads.values() {
+            if thread.last_updated_at.0 < window_start || thread.last_updated_at.0 > window_end {
+                continue;
+            }
+            if self.is_suppressed(
+                MemorySuppressionTargetType::ThreadId,
+                &thread.thread_id,
+                MemorySuppressionRuleKind::DoNotMention,
+            ) {
+                continue;
+            }
+
+            let mut corpus_terms = recent_archive_query_terms(&thread.thread_title);
+            for bullet in &thread.summary_bullets {
+                corpus_terms.extend(recent_archive_query_terms(bullet));
+            }
+            let overlap = query_terms
+                .iter()
+                .filter(|term| corpus_terms.contains(*term))
+                .cloned()
+                .collect::<Vec<_>>();
+            if overlap.is_empty() {
+                continue;
+            }
+
+            let score = overlap
+                .len()
+                .saturating_mul(10)
+                .saturating_add((thread.pinned as usize) * 2)
+                .saturating_add((thread.unresolved as usize).min(1))
+                .min(u16::MAX as usize) as u16;
+            matches.push(MemoryRecentArchiveMatch::v1(
+                format!("thread:{}", thread.thread_id),
+                Some(thread.thread_id.clone()),
+                thread.last_updated_at,
+                recent_archive_excerpt(thread, &query_terms),
+                recent_archive_match_reason(&overlap),
+                score.max(1),
+            )?);
+        }
+
+        matches.sort_by(|a, b| {
+            b.score
+                .cmp(&a.score)
+                .then_with(|| b.matched_at.0.cmp(&a.matched_at.0))
+                .then_with(|| a.archive_ref_id.cmp(&b.archive_ref_id))
+        });
+        matches.truncate(req.max_matches as usize);
+
+        let reason_code = if matches.is_empty() {
+            reason_codes::M_RECENT_ARCHIVE_RECALL_EMPTY
+        } else {
+            reason_codes::M_RECENT_ARCHIVE_RECALL_READY
+        };
+        Ph1mRecentArchiveRecallResponse::v1(matches, reason_code)
     }
 
     pub fn forget(
@@ -1394,9 +1578,9 @@ mod tests {
         MemorySuppressionRuleKind, MemorySuppressionTargetType, MemoryThreadDigest,
         PendingWorkItem, PendingWorkStatus, Ph1mContextBundleBuildRequest,
         Ph1mEmotionalThreadUpdateRequest, Ph1mGraphUpdateRequest, Ph1mMetricsEmitRequest,
-        Ph1mResumeSelectRequest, Ph1mRetentionModeSetRequest, Ph1mSafeSummaryRequest,
-        Ph1mSuppressionSetRequest, Ph1mThreadDigestUpsertRequest, MEMORY_RESUME_HOT_WINDOW_MS,
-        MEMORY_RESUME_WARM_WINDOW_MS,
+        Ph1mRecentArchiveRecallRequest, Ph1mResumeSelectRequest, Ph1mRetentionModeSetRequest,
+        Ph1mSafeSummaryRequest, Ph1mSuppressionSetRequest, Ph1mThreadDigestUpsertRequest,
+        MEMORY_RESUME_HOT_WINDOW_MS, MEMORY_RESUME_WARM_WINDOW_MS,
     };
     use selene_kernel_contracts::ph1m::{MemoryProvenance, MemoryValue};
     use selene_kernel_contracts::ReasonCodeId;
@@ -1772,6 +1956,155 @@ mod tests {
     }
 
     #[test]
+    fn recent_archive_recall_by_topic_uses_72h_window() {
+        let mut rt = Ph1mRuntime::new(Ph1mConfig::mvp_v1());
+        let now = MonotonicTimeNs(ms_to_ns(96 * 60 * 60 * 1000));
+        let in_window = MemoryThreadDigest::v1(
+            "thread_active_session_context".to_string(),
+            "Active session context repair".to_string(),
+            vec![
+                "We decided active session context belongs to PH1.X and adapter, not PH1.M."
+                    .to_string(),
+                "Sydney and London are same-session follow-ups.".to_string(),
+            ],
+            false,
+            false,
+            MonotonicTimeNs(now.0.saturating_sub(ms_to_ns(30 * 60 * 60 * 1000))),
+            3,
+        )
+        .unwrap();
+        let out_of_window = MemoryThreadDigest::v1(
+            "thread_old_context".to_string(),
+            "Old active session context note".to_string(),
+            vec!["This older note should not be returned by recent recall.".to_string()],
+            false,
+            false,
+            MonotonicTimeNs(now.0.saturating_sub(ms_to_ns(90 * 60 * 60 * 1000))),
+            1,
+        )
+        .unwrap();
+        for (digest, key) in [
+            (in_window, "idem_recent_in"),
+            (out_of_window, "idem_recent_out"),
+        ] {
+            rt.thread_digest_upsert(
+                &Ph1mThreadDigestUpsertRequest::v1(
+                    now,
+                    speaker_ok(),
+                    policy_ok(),
+                    MemoryRetentionMode::Default,
+                    digest,
+                    key.to_string(),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        }
+
+        let out = rt
+            .recent_archive_recall(
+                &Ph1mRecentArchiveRecallRequest::v1(
+                    now,
+                    speaker_ok(),
+                    policy_ok(),
+                    "What did we decide about active session context?".to_string(),
+                    MEMORY_RESUME_HOT_WINDOW_MS,
+                    4,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+
+        assert_eq!(out.matches.len(), 1);
+        assert_eq!(
+            out.matches[0].thread_id.as_deref(),
+            Some("thread_active_session_context")
+        );
+        assert!(out.matches[0].excerpt_text.contains("PH1.X"));
+        assert_eq!(out.reason_code, reason_codes::M_RECENT_ARCHIVE_RECALL_READY);
+    }
+
+    #[test]
+    fn recent_archive_yesterday_uses_fixed_clock_range() {
+        let mut rt = Ph1mRuntime::new(Ph1mConfig::mvp_v1());
+        let now = MonotonicTimeNs(ms_to_ns(120 * 60 * 60 * 1000));
+        let yesterday = MemoryThreadDigest::v1(
+            "thread_yesterday_continuity".to_string(),
+            "Continuous conversation yesterday".to_string(),
+            vec!["We discussed continuous conversation and session continuity.".to_string()],
+            false,
+            false,
+            MonotonicTimeNs(now.0.saturating_sub(ms_to_ns(30 * 60 * 60 * 1000))),
+            2,
+        )
+        .unwrap();
+        let today = MemoryThreadDigest::v1(
+            "thread_today_continuity".to_string(),
+            "Continuous conversation today".to_string(),
+            vec!["This current-day note must not satisfy a yesterday query.".to_string()],
+            false,
+            false,
+            MonotonicTimeNs(now.0.saturating_sub(ms_to_ns(3 * 60 * 60 * 1000))),
+            2,
+        )
+        .unwrap();
+        for (digest, key) in [(yesterday, "idem_yesterday"), (today, "idem_today")] {
+            rt.thread_digest_upsert(
+                &Ph1mThreadDigestUpsertRequest::v1(
+                    now,
+                    speaker_ok(),
+                    policy_ok(),
+                    MemoryRetentionMode::Default,
+                    digest,
+                    key.to_string(),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        }
+
+        let out = rt
+            .recent_archive_recall(
+                &Ph1mRecentArchiveRecallRequest::v1(
+                    now,
+                    speaker_ok(),
+                    policy_ok(),
+                    "What did we discuss yesterday about continuous conversation?".to_string(),
+                    MEMORY_RESUME_HOT_WINDOW_MS,
+                    4,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+
+        assert_eq!(out.matches.len(), 1);
+        assert_eq!(
+            out.matches[0].thread_id.as_deref(),
+            Some("thread_yesterday_continuity")
+        );
+    }
+
+    #[test]
+    fn recent_archive_recall_blocks_unknown_speaker() {
+        let rt = Ph1mRuntime::new(Ph1mConfig::mvp_v1());
+        let out = rt
+            .recent_archive_recall(
+                &Ph1mRecentArchiveRecallRequest::v1(
+                    MonotonicTimeNs(ms_to_ns(10 * 60 * 60 * 1000)),
+                    speaker_unknown(),
+                    policy_ok(),
+                    "What did we decide about active session context?".to_string(),
+                    MEMORY_RESUME_HOT_WINDOW_MS,
+                    4,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        assert!(out.matches.is_empty());
+        assert_eq!(out.reason_code, reason_codes::M_REJECT_UNKNOWN_SPEAKER);
+    }
+
+    #[test]
     fn resume_hot_window_auto_loads_with_72h_policy() {
         let mut rt = Ph1mRuntime::new(Ph1mConfig::mvp_v1());
         let hot_delta_ns = ms_to_ns(MEMORY_RESUME_HOT_WINDOW_MS.saturating_sub(1));
@@ -2137,7 +2470,10 @@ mod tests {
             )
             .unwrap();
 
-        assert_eq!(out.selected_thread_id.as_deref(), Some("thread_high_use_older"));
+        assert_eq!(
+            out.selected_thread_id.as_deref(),
+            Some("thread_high_use_older")
+        );
         assert_eq!(out.resume_tier, Some(MemoryResumeTier::Warm));
         assert_eq!(out.resume_action, MemoryResumeAction::Suggest);
     }
@@ -2217,7 +2553,10 @@ mod tests {
             )
             .unwrap();
 
-        assert_eq!(out.selected_thread_id.as_deref(), Some("thread_low_use_newer"));
+        assert_eq!(
+            out.selected_thread_id.as_deref(),
+            Some("thread_low_use_newer")
+        );
         assert_eq!(out.resume_tier, Some(MemoryResumeTier::Warm));
         assert_eq!(out.resume_action, MemoryResumeAction::Suggest);
     }

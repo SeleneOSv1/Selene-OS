@@ -55,7 +55,8 @@ use selene_engines::ph1w::{
     WakeConfig as EngineWakeConfig, WakeStepInput,
 };
 use selene_kernel_contracts::ph1_voice_id::{
-    DeviceTrustLevel, IdentityTierV2, Ph1VoiceIdRequest, Ph1VoiceIdResponse, SpeakerId, UserId,
+    DeviceTrustLevel, DiarizationSegment, IdentityTierV2, Ph1VoiceIdRequest, Ph1VoiceIdResponse,
+    SpeakerAssertionOk, SpeakerId, SpeakerLabel, UserId,
 };
 use selene_kernel_contracts::ph1art::{
     ArtifactScopeType, ArtifactStatus, ArtifactType, ArtifactVersion,
@@ -103,7 +104,9 @@ use selene_kernel_contracts::ph1lang::{
 };
 use selene_kernel_contracts::ph1learn::{LearnSignalType, WakeLearnSignalV1, WakeLearnTrigger};
 use selene_kernel_contracts::ph1link::{AppPlatform, TokenId};
-use selene_kernel_contracts::ph1m::MemoryResumeTier;
+use selene_kernel_contracts::ph1m::{
+    MemoryResumeTier, Ph1mRecentArchiveRecallRequest, MEMORY_RESUME_HOT_WINDOW_MS,
+};
 use selene_kernel_contracts::ph1n::{
     Chat as Ph1nChat, Clarify as Ph1nClarify, FieldKey, IntentType, Ph1nRequest, Ph1nResponse,
     SensitivityLevel, TranscriptHash,
@@ -8334,6 +8337,97 @@ impl AdapterRuntime {
             let h384_explicit_deep_research = user_text_final
                 .as_deref()
                 .is_some_and(h384_explicit_deep_research_request);
+            if let Some(captured_text) = user_text_final.as_deref() {
+                if ph1m_recent_archive_recall_query(captured_text) {
+                    let recall_request = Ph1mRecentArchiveRecallRequest::v1(
+                        now,
+                        ph1m_actor_recent_recall_assertion(&actor_user_id)
+                            .map_err(post_session_error)?,
+                        PolicyContextRef::v1(false, false, SafetyTier::Standard),
+                        captured_text.to_string(),
+                        MEMORY_RESUME_HOT_WINDOW_MS,
+                        4,
+                    )
+                    .map_err(|err| {
+                        post_session_error(format!(
+                            "invalid recent archive recall request: {err:?}"
+                        ))
+                    })?;
+                    let recall_response =
+                        selene_os::ph1m::recent_archive_recall_from_repo(&*store, &recall_request)
+                            .map_err(|err| {
+                                post_session_error(format!("recent archive recall failed: {err:?}"))
+                            })?;
+                    let response_text = ph1m_recent_archive_recall_answer(&recall_response);
+                    self.record_transcript_updates(
+                        &mut store,
+                        now,
+                        correlation_id,
+                        turn_id,
+                        &actor_user_id,
+                        Some(&runtime_device_id),
+                        session_turn_state.session_id_for_commits,
+                        user_text_partial.clone(),
+                        user_text_final.clone(),
+                        selene_text_partial.clone(),
+                        selene_text_final.clone().or(Some(response_text.clone())),
+                    )
+                    .map_err(post_session_error)?;
+                    finalize_session_turn_record(
+                        &mut store,
+                        now,
+                        correlation_id,
+                        turn_id,
+                        &runtime_device_id,
+                        session_turn_state.session_id_for_commits,
+                        Some(&base_thread_state),
+                        session_turn_state.device_turn_sequence,
+                        &runtime_execution_envelope.idempotency_key,
+                        &self.runtime_node_id,
+                        self.session_lease_ttl_ms,
+                    )
+                    .map_err(post_session_error)?;
+                    let response = VoiceTurnAdapterResponse {
+                        status: "ok".to_string(),
+                        outcome: "FINAL".to_string(),
+                        session_id: runtime_execution_envelope
+                            .session_id
+                            .clone()
+                            .map(session_id_to_string),
+                        turn_id: Some(runtime_execution_envelope.turn_id.0),
+                        session_state: Some(session_state_to_api_value(
+                            session_turn_state.session_snapshot.session_state,
+                        )),
+                        session_attach_outcome: runtime_execution_envelope.session_attach_outcome,
+                        failure_class: None,
+                        reason: None,
+                        next_move: "respond".to_string(),
+                        response_text: response_text.clone(),
+                        reason_code: if recall_response.matches.is_empty() {
+                            "PH1M_RECENT_ARCHIVE_RECALL_EMPTY".to_string()
+                        } else {
+                            "PH1M_RECENT_ARCHIVE_RECALL_READY".to_string()
+                        },
+                        provenance: None,
+                        tts_text: response_text,
+                        source_chips: Vec::new(),
+                        source_cards: Vec::new(),
+                        image_cards: Vec::new(),
+                        answer_class: Some("memory_recent_archive_recall".to_string()),
+                        metadata_safe_for_user: true,
+                        trace_id: None,
+                        deep_research: None,
+                    };
+                    cache_authoritative_turn_response(
+                        &self.session_retry_cache,
+                        &actor_user_id,
+                        &runtime_execution_envelope.idempotency_key,
+                        &response,
+                    )
+                    .map_err(post_session_error)?;
+                    return Ok(response);
+                }
+            }
             if !h384_explicit_deep_research {
                 if let Some((captured_text, h411_response)) =
                     user_text_final.as_deref().and_then(|text| {
@@ -12870,6 +12964,85 @@ fn forget_latest_weather_place(
         .map_err(|_| "weather_context_state_poisoned".to_string())?;
     guard.remove(&weather_context_scope_key(actor_user_id, thread_key));
     Ok(())
+}
+
+fn ph1m_recent_archive_recall_query(text: &str) -> bool {
+    let normalized = text
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() {
+                ch.to_ascii_lowercase()
+            } else {
+                ' '
+            }
+        })
+        .collect::<String>();
+    let compact = normalized.split_whitespace().collect::<Vec<_>>().join(" ");
+    let asks_history = compact.contains("what did we discuss")
+        || compact.contains("what did we decide")
+        || compact.contains("find what we")
+        || compact.contains("find where we")
+        || compact.contains("show me where")
+        || compact.contains("what was the blocker")
+        || compact.contains("continue the");
+    let memory_subject = compact.contains("discuss")
+        || compact.contains("decide")
+        || compact.contains("decided")
+        || compact.contains("talked")
+        || compact.contains("blocker")
+        || compact.contains("plan")
+        || compact.contains("earlier")
+        || compact.contains("yesterday");
+    asks_history && memory_subject
+}
+
+fn ph1m_actor_recent_recall_assertion(
+    actor_user_id: &UserId,
+) -> Result<Ph1VoiceIdResponse, String> {
+    let speaker_id = SpeakerId::new(format!(
+        "actor_recall_{}",
+        stable_hash_hex_16(actor_user_id.as_str())
+    ))
+    .map_err(|err| format!("invalid recent recall speaker id: {err:?}"))?;
+    let segment = DiarizationSegment::v1(
+        MonotonicTimeNs(0),
+        MonotonicTimeNs(1),
+        Some(SpeakerLabel::speaker_a()),
+    )
+    .map_err(|err| format!("invalid recent recall diarization segment: {err:?}"))?;
+    Ok(Ph1VoiceIdResponse::SpeakerAssertionOk(
+        SpeakerAssertionOk::v1(
+            speaker_id,
+            Some(actor_user_id.clone()),
+            vec![segment],
+            SpeakerLabel::speaker_a(),
+        )
+        .map_err(|err| format!("invalid recent recall speaker assertion: {err:?}"))?,
+    ))
+}
+
+fn ph1m_recent_archive_recall_answer(
+    response: &selene_kernel_contracts::ph1m::Ph1mRecentArchiveRecallResponse,
+) -> String {
+    let Some(first) = response.matches.first() else {
+        return "I found no matching recent archive item in the last 72 hours.".to_string();
+    };
+    let thread_ref = first
+        .thread_id
+        .as_deref()
+        .map(|thread_id| format!("thread {thread_id}"))
+        .unwrap_or_else(|| first.archive_ref_id.clone());
+    let mut answer = format!(
+        "I found a recent discussion from {thread_ref} at {}: {}",
+        first.matched_at.0, first.excerpt_text
+    );
+    if let Some(second) = response.matches.get(1) {
+        answer.push_str(&format!(
+            " I also found {}: {}",
+            second.archive_ref_id, second.excerpt_text
+        ));
+    }
+    truncate_text_chars(&answer, 900)
 }
 
 fn weather_place_from_response_summary(summary: &str) -> Option<String> {
@@ -22914,8 +23087,8 @@ mod tests {
     };
     use selene_kernel_contracts::ph1m::{
         MemoryConfidence, MemoryConsent, MemoryKey, MemoryLayer, MemoryLedgerEvent,
-        MemoryLedgerEventKind, MemoryProvenance, MemorySensitivityFlag, MemoryUsePolicy,
-        MemoryValue,
+        MemoryLedgerEventKind, MemoryProvenance, MemoryRetentionMode, MemorySensitivityFlag,
+        MemoryThreadDigest, MemoryUsePolicy, MemoryValue,
     };
     use selene_kernel_contracts::ph1n::FieldKey;
     use selene_kernel_contracts::ph1onb::{
@@ -36849,6 +37022,212 @@ mod tests {
                     "new session should not inherit old pending weather slot"
                 );
             },
+        );
+    }
+
+    fn seed_recent_archive_digest_for_adapter_test(
+        runtime: &AdapterRuntime,
+        thread_id: &str,
+        thread_title: &str,
+        summary_bullets: Vec<String>,
+        last_updated_at: MonotonicTimeNs,
+    ) {
+        let actor_user_id = UserId::new("tenant_a:user_adapter_test").unwrap();
+        let mut store = runtime.store.lock().expect("store lock should succeed");
+        if store.get_identity(&actor_user_id).is_none() {
+            store
+                .insert_identity(IdentityRecord::v1(
+                    actor_user_id.clone(),
+                    None,
+                    None,
+                    MonotonicTimeNs(1),
+                    IdentityStatus::Active,
+                ))
+                .unwrap();
+        }
+        let digest = MemoryThreadDigest::v1(
+            thread_id.to_string(),
+            thread_title.to_string(),
+            summary_bullets,
+            false,
+            false,
+            last_updated_at,
+            2,
+        )
+        .unwrap();
+        store
+            .ph1m_thread_digest_upsert_commit(
+                &actor_user_id,
+                MemoryRetentionMode::Default,
+                digest,
+                selene_storage::ph1f::MemoryThreadEventKind::ThreadDigestUpsert,
+                ReasonCodeId(0x4D00_0009),
+                format!("adapter_recent_archive_seed_{thread_id}"),
+            )
+            .unwrap();
+    }
+
+    fn run_recent_archive_typed_recall_on_thread(
+        runtime: &AdapterRuntime,
+        thread_key: &str,
+        turn_id: u64,
+        now_ns: u64,
+        query: &str,
+    ) -> VoiceTurnAdapterResponse {
+        let mut req = base_request();
+        req.correlation_id = 720_000_u64.saturating_add(turn_id);
+        req.turn_id = turn_id;
+        req.device_turn_sequence = Some(turn_id);
+        req.now_ns = Some(now_ns);
+        req.thread_key = Some(thread_key.to_string());
+        req.app_platform = "DESKTOP".to_string();
+        req.audio_capture_ref = None;
+        req.user_text_final = Some(query.to_string());
+        runtime
+            .run_voice_turn(req)
+            .expect("recent archive typed recall should complete")
+    }
+
+    #[test]
+    fn recent_archive_recall_by_topic_returns_traceable_thread_digest() {
+        let runtime = AdapterRuntime::default();
+        const HOUR_NS: u64 = 60 * 60 * 1_000_000_000;
+        let now = 96 * HOUR_NS;
+        seed_recent_archive_digest_for_adapter_test(
+            &runtime,
+            "thread_active_session_context_decision",
+            "Active session context decision",
+            vec![
+                "We decided active session context belongs to PH1.X plus the adapter bridge, while PH1.M stays out of Sydney/London follow-ups.".to_string(),
+            ],
+            MonotonicTimeNs(now.saturating_sub(30 * HOUR_NS)),
+        );
+        let before = {
+            let store = runtime.store.lock().expect("store lock should succeed");
+            (
+                store.memory_ledger_rows().len(),
+                store.ph1m_thread_ledger_rows().len(),
+            )
+        };
+
+        let out = run_recent_archive_typed_recall_on_thread(
+            &runtime,
+            "recent-archive-topic",
+            720_001,
+            now,
+            "What did we decide about active session context?",
+        );
+
+        assert_eq!(out.status, "ok");
+        assert_eq!(
+            out.answer_class.as_deref(),
+            Some("memory_recent_archive_recall")
+        );
+        assert!(out.response_text.contains("recent discussion"));
+        assert!(out
+            .response_text
+            .contains("thread_active_session_context_decision"));
+        assert!(out.response_text.contains("PH1.X"));
+        let store = runtime.store.lock().expect("store lock should succeed");
+        assert_eq!(
+            (
+                store.memory_ledger_rows().len(),
+                store.ph1m_thread_ledger_rows().len()
+            ),
+            before,
+            "archive recall must not write durable memory or mutate thread digests"
+        );
+    }
+
+    #[test]
+    fn recent_archive_recall_yesterday_uses_fixed_clock_not_wall_clock() {
+        let runtime = AdapterRuntime::default();
+        const HOUR_NS: u64 = 60 * 60 * 1_000_000_000;
+        let now = 120 * HOUR_NS;
+        seed_recent_archive_digest_for_adapter_test(
+            &runtime,
+            "thread_yesterday_continuous_conversation",
+            "Continuous conversation yesterday",
+            vec![
+                "We discussed continuous conversation and active session continuity yesterday."
+                    .to_string(),
+            ],
+            MonotonicTimeNs(now.saturating_sub(30 * HOUR_NS)),
+        );
+        seed_recent_archive_digest_for_adapter_test(
+            &runtime,
+            "thread_today_continuous_conversation",
+            "Continuous conversation today",
+            vec!["This current-day thread should not satisfy yesterday recall.".to_string()],
+            MonotonicTimeNs(now.saturating_sub(3 * HOUR_NS)),
+        );
+
+        let out = run_recent_archive_typed_recall_on_thread(
+            &runtime,
+            "recent-archive-yesterday",
+            720_011,
+            now,
+            "What did we discuss yesterday about continuous conversation?",
+        );
+
+        assert!(out
+            .response_text
+            .contains("thread_yesterday_continuous_conversation"));
+        assert!(!out
+            .response_text
+            .contains("thread_today_continuous_conversation"));
+    }
+
+    #[test]
+    fn recent_archive_recall_does_not_pollute_active_context_after_answer() {
+        let runtime = AdapterRuntime::default();
+        const HOUR_NS: u64 = 60 * 60 * 1_000_000_000;
+        let now = 96 * HOUR_NS;
+        seed_recent_archive_digest_for_adapter_test(
+            &runtime,
+            "thread_historical_weather_sydney",
+            "Historical Sydney weather discussion",
+            vec![
+                "Historical archive mentions Sydney weather, but it is not current active context."
+                    .to_string(),
+            ],
+            MonotonicTimeNs(now.saturating_sub(30 * HOUR_NS)),
+        );
+
+        let recall = run_recent_archive_typed_recall_on_thread(
+            &runtime,
+            "recent-archive-no-active-pollution",
+            720_021,
+            now,
+            "What did we discuss about Sydney weather?",
+        );
+        assert_eq!(
+            recall.answer_class.as_deref(),
+            Some("memory_recent_archive_recall")
+        );
+        assert!(recall.response_text.contains("Historical archive"));
+
+        let followup = run_recent_archive_typed_recall_on_thread(
+            &runtime,
+            "recent-archive-no-active-pollution",
+            720_022,
+            now.saturating_add(1),
+            "Sydney.",
+        );
+        assert_eq!(followup.status, "ok");
+        assert!(
+            !followup.response_text.starts_with("Sydney is")
+                && !followup.response_text.contains("°C"),
+            "archive recall must not become a current pending weather slot: {}",
+            followup.response_text
+        );
+        let packet = runtime
+            .ingress
+            .debug_last_agent_input_packet()
+            .expect("post-recall follow-up should use live PH1.X input");
+        assert!(
+            packet.memory_candidates.is_empty(),
+            "archive recall must not inject PH1.M candidates into active context"
         );
     }
 

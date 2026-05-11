@@ -12,6 +12,7 @@ pub const MEMORY_UNRESOLVED_DECAY_WINDOW_MS: u64 = 90 * 24 * 60 * 60 * 1000;
 pub const MEMORY_CONTEXT_BUNDLE_MAX_BYTES: u32 = 32 * 1024;
 pub const MEMORY_CONTEXT_BUNDLE_MAX_ATOMS: u8 = 20;
 pub const MEMORY_CONTEXT_BUNDLE_MAX_EXCERPTS: u8 = 2;
+pub const MEMORY_RECENT_ARCHIVE_RECALL_MAX_MATCHES: u8 = 8;
 pub const MEMORY_SAFE_SUMMARY_MAX_BYTES: u16 = 1024;
 pub const MEMORY_SAFE_SUMMARY_MAX_ITEMS: u8 = 10;
 
@@ -714,6 +715,209 @@ impl Validate for MemoryArchiveExcerpt {
             return Err(ContractViolation::InvalidValue {
                 field: "memory_archive_excerpt.excerpt_text",
                 reason: "must be <= 512 chars",
+            });
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MemoryRecentArchiveMatch {
+    pub schema_version: SchemaVersion,
+    pub archive_ref_id: String,
+    pub thread_id: Option<String>,
+    pub matched_at: MonotonicTimeNs,
+    pub excerpt_text: String,
+    pub match_reason: String,
+    pub score: u16,
+}
+
+impl MemoryRecentArchiveMatch {
+    pub fn v1(
+        archive_ref_id: String,
+        thread_id: Option<String>,
+        matched_at: MonotonicTimeNs,
+        excerpt_text: String,
+        match_reason: String,
+        score: u16,
+    ) -> Result<Self, ContractViolation> {
+        let m = Self {
+            schema_version: PH1M_CONTRACT_VERSION,
+            archive_ref_id,
+            thread_id,
+            matched_at,
+            excerpt_text,
+            match_reason,
+            score,
+        };
+        m.validate()?;
+        Ok(m)
+    }
+}
+
+impl Validate for MemoryRecentArchiveMatch {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        if self.archive_ref_id.trim().is_empty() {
+            return Err(ContractViolation::InvalidValue {
+                field: "memory_recent_archive_match.archive_ref_id",
+                reason: "must not be empty",
+            });
+        }
+        if self.archive_ref_id.len() > 128 {
+            return Err(ContractViolation::InvalidValue {
+                field: "memory_recent_archive_match.archive_ref_id",
+                reason: "must be <= 128 chars",
+            });
+        }
+        if let Some(thread_id) = &self.thread_id {
+            if thread_id.trim().is_empty() {
+                return Err(ContractViolation::InvalidValue {
+                    field: "memory_recent_archive_match.thread_id",
+                    reason: "must not be empty when provided",
+                });
+            }
+            if thread_id.len() > 128 {
+                return Err(ContractViolation::InvalidValue {
+                    field: "memory_recent_archive_match.thread_id",
+                    reason: "must be <= 128 chars",
+                });
+            }
+        }
+        if self.excerpt_text.trim().is_empty() {
+            return Err(ContractViolation::InvalidValue {
+                field: "memory_recent_archive_match.excerpt_text",
+                reason: "must not be empty",
+            });
+        }
+        if self.excerpt_text.len() > 512 {
+            return Err(ContractViolation::InvalidValue {
+                field: "memory_recent_archive_match.excerpt_text",
+                reason: "must be <= 512 chars",
+            });
+        }
+        if self.match_reason.trim().is_empty() {
+            return Err(ContractViolation::InvalidValue {
+                field: "memory_recent_archive_match.match_reason",
+                reason: "must not be empty",
+            });
+        }
+        if self.match_reason.len() > 192 {
+            return Err(ContractViolation::InvalidValue {
+                field: "memory_recent_archive_match.match_reason",
+                reason: "must be <= 192 chars",
+            });
+        }
+        if self.score == 0 {
+            return Err(ContractViolation::InvalidValue {
+                field: "memory_recent_archive_match.score",
+                reason: "must be > 0",
+            });
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Ph1mRecentArchiveRecallRequest {
+    pub schema_version: SchemaVersion,
+    pub now: MonotonicTimeNs,
+    pub speaker_assertion: Ph1VoiceIdResponse,
+    pub policy_context_ref: PolicyContextRef,
+    pub query_text: String,
+    pub window_ms: u64,
+    pub max_matches: u8,
+}
+
+impl Ph1mRecentArchiveRecallRequest {
+    pub fn v1(
+        now: MonotonicTimeNs,
+        speaker_assertion: Ph1VoiceIdResponse,
+        policy_context_ref: PolicyContextRef,
+        query_text: String,
+        window_ms: u64,
+        max_matches: u8,
+    ) -> Result<Self, ContractViolation> {
+        let r = Self {
+            schema_version: PH1M_CONTRACT_VERSION,
+            now,
+            speaker_assertion,
+            policy_context_ref,
+            query_text,
+            window_ms,
+            max_matches,
+        };
+        r.validate()?;
+        Ok(r)
+    }
+}
+
+impl Validate for Ph1mRecentArchiveRecallRequest {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        if self.query_text.trim().is_empty() {
+            return Err(ContractViolation::InvalidValue {
+                field: "ph1m_recent_archive_recall_request.query_text",
+                reason: "must not be empty",
+            });
+        }
+        if self.query_text.len() > 512 {
+            return Err(ContractViolation::InvalidValue {
+                field: "ph1m_recent_archive_recall_request.query_text",
+                reason: "must be <= 512 chars",
+            });
+        }
+        if self.window_ms == 0 || self.window_ms > MEMORY_RESUME_WARM_WINDOW_MS {
+            return Err(ContractViolation::InvalidValue {
+                field: "ph1m_recent_archive_recall_request.window_ms",
+                reason: "must be within 1..=MEMORY_RESUME_WARM_WINDOW_MS",
+            });
+        }
+        if self.max_matches == 0 || self.max_matches > MEMORY_RECENT_ARCHIVE_RECALL_MAX_MATCHES {
+            return Err(ContractViolation::InvalidValue {
+                field: "ph1m_recent_archive_recall_request.max_matches",
+                reason: "must be within 1..=MEMORY_RECENT_ARCHIVE_RECALL_MAX_MATCHES",
+            });
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Ph1mRecentArchiveRecallResponse {
+    pub schema_version: SchemaVersion,
+    pub matches: Vec<MemoryRecentArchiveMatch>,
+    pub reason_code: ReasonCodeId,
+}
+
+impl Ph1mRecentArchiveRecallResponse {
+    pub fn v1(
+        matches: Vec<MemoryRecentArchiveMatch>,
+        reason_code: ReasonCodeId,
+    ) -> Result<Self, ContractViolation> {
+        let r = Self {
+            schema_version: PH1M_CONTRACT_VERSION,
+            matches,
+            reason_code,
+        };
+        r.validate()?;
+        Ok(r)
+    }
+}
+
+impl Validate for Ph1mRecentArchiveRecallResponse {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        if self.matches.len() > MEMORY_RECENT_ARCHIVE_RECALL_MAX_MATCHES as usize {
+            return Err(ContractViolation::InvalidValue {
+                field: "ph1m_recent_archive_recall_response.matches",
+                reason: "must be <= MEMORY_RECENT_ARCHIVE_RECALL_MAX_MATCHES",
+            });
+        }
+        for item in &self.matches {
+            item.validate()?;
+        }
+        if self.reason_code.0 == 0 {
+            return Err(ContractViolation::InvalidValue {
+                field: "ph1m_recent_archive_recall_response.reason_code",
+                reason: "must be > 0",
             });
         }
         Ok(())

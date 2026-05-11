@@ -9,10 +9,11 @@ use selene_kernel_contracts::ph1m::{
     Ph1mForgetResponse, Ph1mGraphUpdateRequest, Ph1mGraphUpdateResponse,
     Ph1mHintBundleBuildRequest, Ph1mHintBundleBuildResponse, Ph1mMetricsEmitRequest,
     Ph1mMetricsEmitResponse, Ph1mProposeRequest, Ph1mProposeResponse, Ph1mRecallRequest,
-    Ph1mRecallResponse, Ph1mResumeSelectRequest, Ph1mResumeSelectResponse,
-    Ph1mRetentionModeSetRequest, Ph1mRetentionModeSetResponse, Ph1mSafeSummaryRequest,
-    Ph1mSafeSummaryResponse, Ph1mSuppressionSetRequest, Ph1mSuppressionSetResponse,
-    Ph1mThreadDigestUpsertRequest, Ph1mThreadDigestUpsertResponse,
+    Ph1mRecallResponse, Ph1mRecentArchiveRecallRequest, Ph1mRecentArchiveRecallResponse,
+    Ph1mResumeSelectRequest, Ph1mResumeSelectResponse, Ph1mRetentionModeSetRequest,
+    Ph1mRetentionModeSetResponse, Ph1mSafeSummaryRequest, Ph1mSafeSummaryResponse,
+    Ph1mSuppressionSetRequest, Ph1mSuppressionSetResponse, Ph1mThreadDigestUpsertRequest,
+    Ph1mThreadDigestUpsertResponse,
 };
 use selene_kernel_contracts::{ContractViolation, MonotonicTimeNs, ReasonCodeId, Validate};
 use selene_storage::ph1f::{MemoryThreadEventKind, StorageError};
@@ -59,6 +60,7 @@ pub enum MemoryOperation {
     RetentionModeSet(Ph1mRetentionModeSetRequest),
     ThreadDigestUpsert(Ph1mThreadDigestUpsertRequest),
     ResumeSelect(Ph1mResumeSelectRequest),
+    RecentArchiveRecall(Ph1mRecentArchiveRecallRequest),
 }
 
 impl Validate for MemoryOperation {
@@ -77,6 +79,7 @@ impl Validate for MemoryOperation {
             MemoryOperation::RetentionModeSet(req) => req.validate(),
             MemoryOperation::ThreadDigestUpsert(req) => req.validate(),
             MemoryOperation::ResumeSelect(req) => req.validate(),
+            MemoryOperation::RecentArchiveRecall(req) => req.validate(),
         }
     }
 }
@@ -128,6 +131,7 @@ pub enum MemoryTurnOutput {
     RetentionModeSet(Ph1mRetentionModeSetResponse),
     ThreadDigestUpsert(Ph1mThreadDigestUpsertResponse),
     ResumeSelect(Ph1mResumeSelectResponse),
+    RecentArchiveRecall(Ph1mRecentArchiveRecallResponse),
 }
 
 impl Validate for MemoryTurnOutput {
@@ -146,6 +150,7 @@ impl Validate for MemoryTurnOutput {
             MemoryTurnOutput::RetentionModeSet(resp) => resp.validate(),
             MemoryTurnOutput::ThreadDigestUpsert(resp) => resp.validate(),
             MemoryTurnOutput::ResumeSelect(resp) => resp.validate(),
+            MemoryTurnOutput::RecentArchiveRecall(resp) => resp.validate(),
         }
     }
 }
@@ -266,6 +271,7 @@ fn operation_user_id(operation: &MemoryOperation) -> Result<UserId, StorageError
         MemoryOperation::RetentionModeSet(req) => user_id_from_assertion(&req.speaker_assertion),
         MemoryOperation::ThreadDigestUpsert(req) => user_id_from_assertion(&req.speaker_assertion),
         MemoryOperation::ResumeSelect(req) => user_id_from_assertion(&req.speaker_assertion),
+        MemoryOperation::RecentArchiveRecall(req) => user_id_from_assertion(&req.speaker_assertion),
     }
 }
 
@@ -356,7 +362,10 @@ pub fn persist_memory_forwarded_outcome<R: Ph1MRepo>(
         | (MemoryOperation::HintBundleBuild(_), MemoryTurnOutput::HintBundleBuild(_))
         | (MemoryOperation::ContextBundleBuild(_), MemoryTurnOutput::ContextBundleBuild(_))
         | (MemoryOperation::SafeSummary(_), MemoryTurnOutput::SafeSummary(_))
-        | (MemoryOperation::ResumeSelect(_), MemoryTurnOutput::ResumeSelect(_)) => Ok(false),
+        | (MemoryOperation::ResumeSelect(_), MemoryTurnOutput::ResumeSelect(_))
+        | (MemoryOperation::RecentArchiveRecall(_), MemoryTurnOutput::RecentArchiveRecall(_)) => {
+            Ok(false)
+        }
         (MemoryOperation::Forget(_), MemoryTurnOutput::Forget(resp)) => {
             if !resp.forgotten {
                 return Ok(false);
@@ -476,12 +485,14 @@ fn replay_retention_mode_response_truth_from_repo<R: Ph1MRepo>(
     };
 
     let user_id = operation_user_id(&input.operation)?;
-    let row = repo.ph1m_retention_preference_row(&user_id).ok_or_else(|| {
-        storage_contract_error(
-            "ph1m.persistence.retention_mode_set",
-            "retention preference row must exist after persistence",
-        )
-    })?;
+    let row = repo
+        .ph1m_retention_preference_row(&user_id)
+        .ok_or_else(|| {
+            storage_contract_error(
+                "ph1m.persistence.retention_mode_set",
+                "retention preference row must exist after persistence",
+            )
+        })?;
     let replayed = Ph1mRetentionModeSetResponse::v1(
         row.memory_retention_mode,
         row.updated_at,
@@ -544,6 +555,10 @@ pub trait Ph1MemoryEngine {
         &mut self,
         req: &Ph1mResumeSelectRequest,
     ) -> Result<Ph1mResumeSelectResponse, ContractViolation>;
+    fn recent_archive_recall(
+        &mut self,
+        req: &Ph1mRecentArchiveRecallRequest,
+    ) -> Result<Ph1mRecentArchiveRecallResponse, ContractViolation>;
 }
 
 impl Ph1MemoryEngine for selene_engines::ph1m::Ph1mRuntime {
@@ -630,6 +645,13 @@ impl Ph1MemoryEngine for selene_engines::ph1m::Ph1mRuntime {
         req: &Ph1mResumeSelectRequest,
     ) -> Result<Ph1mResumeSelectResponse, ContractViolation> {
         selene_engines::ph1m::Ph1mRuntime::resume_select(self, req)
+    }
+
+    fn recent_archive_recall(
+        &mut self,
+        req: &Ph1mRecentArchiveRecallRequest,
+    ) -> Result<Ph1mRecentArchiveRecallResponse, ContractViolation> {
+        selene_engines::ph1m::Ph1mRuntime::recent_archive_recall(self, req)
     }
 }
 
@@ -984,6 +1006,29 @@ where
                 )?;
                 Ok(MemoryWiringOutcome::Forwarded(bundle))
             }
+            MemoryOperation::RecentArchiveRecall(req) => {
+                let resp = match self.engine.recent_archive_recall(req) {
+                    Ok(resp) => resp,
+                    Err(_) => {
+                        return Ok(MemoryWiringOutcome::Refused(MemoryWiringRefuse::v1(
+                            reason_codes::PH1_M_INTERNAL_PIPELINE_ERROR,
+                            "memory recent archive recall pipeline failed".to_string(),
+                        )?));
+                    }
+                };
+                if resp.validate().is_err() {
+                    return Ok(MemoryWiringOutcome::Refused(MemoryWiringRefuse::v1(
+                        reason_codes::PH1_M_VALIDATION_FAILED,
+                        "invalid memory recent archive recall response contract".to_string(),
+                    )?));
+                }
+                let bundle = MemoryForwardBundle::v1(
+                    input.correlation_id,
+                    input.turn_id,
+                    MemoryTurnOutput::RecentArchiveRecall(resp),
+                )?;
+                Ok(MemoryWiringOutcome::Forwarded(bundle))
+            }
         }
     }
 
@@ -998,6 +1043,46 @@ where
         let _ = persist_memory_forwarded_outcome(repo, input, &outcome)?;
         replay_retention_mode_response_truth_from_repo(repo, input, outcome)
     }
+}
+
+pub fn recent_archive_recall_from_repo<R: Ph1MRepo>(
+    repo: &R,
+    req: &Ph1mRecentArchiveRecallRequest,
+) -> Result<Ph1mRecentArchiveRecallResponse, StorageError> {
+    req.validate().map_err(StorageError::ContractViolation)?;
+    let user_id = match user_id_from_assertion(&req.speaker_assertion) {
+        Ok(user_id) => user_id,
+        Err(_) => {
+            return Ph1mRecentArchiveRecallResponse::v1(
+                vec![],
+                selene_engines::ph1m::reason_codes::M_REJECT_UNKNOWN_SPEAKER,
+            )
+            .map_err(StorageError::ContractViolation);
+        }
+    };
+    let mut runtime =
+        selene_engines::ph1m::Ph1mRuntime::new(selene_engines::ph1m::Ph1mConfig::mvp_v1());
+    for record in repo.ph1m_thread_current_rows_for_user(&user_id) {
+        let replay_key = format!(
+            "recent_archive_replay_{}",
+            record.digest.thread_id.chars().take(80).collect::<String>()
+        );
+        let upsert = Ph1mThreadDigestUpsertRequest::v1(
+            req.now,
+            req.speaker_assertion.clone(),
+            req.policy_context_ref.clone(),
+            record.memory_retention_mode,
+            record.digest.clone(),
+            replay_key,
+        )
+        .map_err(StorageError::ContractViolation)?;
+        runtime
+            .thread_digest_upsert(&upsert)
+            .map_err(StorageError::ContractViolation)?;
+    }
+    runtime
+        .recent_archive_recall(req)
+        .map_err(StorageError::ContractViolation)
 }
 
 #[cfg(test)]
@@ -1020,9 +1105,9 @@ mod tests {
         Ph1mContextBundleBuildResponse, Ph1mEmotionalThreadUpdateRequest,
         Ph1mEmotionalThreadUpdateResponse, Ph1mGraphUpdateRequest, Ph1mGraphUpdateResponse,
         Ph1mHintBundleBuildRequest, Ph1mHintBundleBuildResponse, Ph1mMetricsEmitRequest,
-        Ph1mMetricsEmitResponse, Ph1mRetentionModeSetRequest, Ph1mRetentionModeSetResponse,
-        Ph1mSafeSummaryRequest, Ph1mSafeSummaryResponse, Ph1mSuppressionSetRequest,
-        Ph1mSuppressionSetResponse,
+        Ph1mMetricsEmitResponse, Ph1mRecentArchiveRecallRequest, Ph1mRecentArchiveRecallResponse,
+        Ph1mRetentionModeSetRequest, Ph1mRetentionModeSetResponse, Ph1mSafeSummaryRequest,
+        Ph1mSafeSummaryResponse, Ph1mSuppressionSetRequest, Ph1mSuppressionSetResponse,
     };
     use selene_kernel_contracts::{MonotonicTimeNs, ReasonCodeId};
     use selene_storage::ph1f::{IdentityRecord, IdentityStatus, Ph1fStore};
@@ -1044,6 +1129,7 @@ mod tests {
         retention_mode_set_response: Result<Ph1mRetentionModeSetResponse, ContractViolation>,
         thread_digest_upsert_response: Result<Ph1mThreadDigestUpsertResponse, ContractViolation>,
         resume_select_response: Result<Ph1mResumeSelectResponse, ContractViolation>,
+        recent_archive_recall_response: Result<Ph1mRecentArchiveRecallResponse, ContractViolation>,
     }
 
     impl Ph1MemoryEngine for MockMemoryEngine {
@@ -1136,6 +1222,13 @@ mod tests {
             _req: &Ph1mResumeSelectRequest,
         ) -> Result<Ph1mResumeSelectResponse, ContractViolation> {
             self.resume_select_response.clone()
+        }
+
+        fn recent_archive_recall(
+            &mut self,
+            _req: &Ph1mRecentArchiveRecallRequest,
+        ) -> Result<Ph1mRecentArchiveRecallResponse, ContractViolation> {
+            self.recent_archive_recall_response.clone()
         }
     }
 
@@ -1286,6 +1379,18 @@ mod tests {
             false,
             3,
             None,
+        )
+        .unwrap()
+    }
+
+    fn base_recent_archive_recall_request() -> Ph1mRecentArchiveRecallRequest {
+        Ph1mRecentArchiveRecallRequest::v1(
+            MonotonicTimeNs(ms_to_ns(96 * 60 * 60 * 1000)),
+            speaker_ok(),
+            policy_ok(),
+            "What did we decide about active session context?".to_string(),
+            selene_kernel_contracts::ph1m::MEMORY_RESUME_HOT_WINDOW_MS,
+            4,
         )
         .unwrap()
     }
@@ -1631,6 +1736,11 @@ mod tests {
                     ReasonCodeId(0x4D00_000A),
                 )
                 .unwrap()),
+                recent_archive_recall_response: Ok(Ph1mRecentArchiveRecallResponse::v1(
+                    vec![],
+                    selene_engines::ph1m::reason_codes::M_RECENT_ARCHIVE_RECALL_EMPTY,
+                )
+                .unwrap()),
             },
         )
         .unwrap()
@@ -1783,6 +1893,11 @@ mod tests {
                     ReasonCodeId(0x4D00_000A),
                 )
                 .unwrap()),
+                recent_archive_recall_response: Ok(Ph1mRecentArchiveRecallResponse::v1(
+                    vec![],
+                    selene_engines::ph1m::reason_codes::M_RECENT_ARCHIVE_RECALL_EMPTY,
+                )
+                .unwrap()),
             },
         )
         .unwrap();
@@ -1881,6 +1996,89 @@ mod tests {
             },
             _ => panic!("expected forwarded resume select"),
         }
+    }
+
+    #[test]
+    fn at_m_39_recent_archive_recall_forwarded_without_persistence_write() {
+        let mut w = wiring(true);
+        let mut store = seeded_store_for_known_user();
+        let before = (
+            store.ph1m_memory_ledger_rows().len(),
+            store.ph1m_thread_ledger_rows().len(),
+        );
+        let input = MemoryTurnInput::v1(
+            CorrelationId(7940),
+            TurnId(8940),
+            MemoryOperation::RecentArchiveRecall(base_recent_archive_recall_request()),
+        )
+        .unwrap();
+        let outcome = w.run_turn_and_persist(&mut store, &input).unwrap();
+        match outcome {
+            MemoryWiringOutcome::Forwarded(bundle) => match bundle.output {
+                MemoryTurnOutput::RecentArchiveRecall(resp) => assert!(resp.matches.is_empty()),
+                _ => panic!("expected recent archive recall output"),
+            },
+            _ => panic!("expected forwarded recent archive recall"),
+        }
+        assert_eq!(
+            (
+                store.ph1m_memory_ledger_rows().len(),
+                store.ph1m_thread_ledger_rows().len()
+            ),
+            before,
+            "recent archive recall must be read-only"
+        );
+    }
+
+    #[test]
+    fn at_m_40_recent_archive_recall_from_repo_uses_current_thread_digest_without_mutation() {
+        let mut store = seeded_store_for_known_user();
+        let now = MonotonicTimeNs(ms_to_ns(96 * 60 * 60 * 1000));
+        let digest = MemoryThreadDigest::v1(
+            "thread_memory_archive_boundary".to_string(),
+            "Memory archive boundary".to_string(),
+            vec![
+                "We decided active session context stays in PH1.X and recent archive recall stays in PH1.M."
+                    .to_string(),
+            ],
+            false,
+            false,
+            MonotonicTimeNs(now.0.saturating_sub(ms_to_ns(30 * 60 * 60 * 1000))),
+            2,
+        )
+        .unwrap();
+        store
+            .ph1m_thread_digest_upsert_commit_row(
+                &UserId::new("user").unwrap(),
+                MemoryRetentionMode::Default,
+                digest,
+                MemoryThreadEventKind::ThreadDigestUpsert,
+                ReasonCodeId(0x4D00_0009),
+                "recent_archive_repo_seed".to_string(),
+            )
+            .unwrap();
+        let before = (
+            store.ph1m_memory_ledger_rows().len(),
+            store.ph1m_thread_ledger_rows().len(),
+        );
+
+        let out = recent_archive_recall_from_repo(&store, &base_recent_archive_recall_request())
+            .expect("recent archive recall should read repo digest");
+
+        assert_eq!(out.matches.len(), 1);
+        assert_eq!(
+            out.matches[0].thread_id.as_deref(),
+            Some("thread_memory_archive_boundary")
+        );
+        assert!(out.matches[0].excerpt_text.contains("PH1.X"));
+        assert_eq!(
+            (
+                store.ph1m_memory_ledger_rows().len(),
+                store.ph1m_thread_ledger_rows().len()
+            ),
+            before,
+            "repo recall must not mutate memory/archive rows"
+        );
     }
 
     #[test]
@@ -2012,17 +2210,19 @@ mod tests {
         let resolved_seed_input = MemoryTurnInput::v1(
             CorrelationId(7936),
             TurnId(8936),
-            MemoryOperation::ThreadDigestUpsert(thread_digest_upsert_request_at_with_contract_flags(
-                now,
-                last_updated,
-                "thread_alpha_resolved",
-                shared_title,
-                shared_summary.clone(),
-                false,
-                false,
-                7,
-                "idem_resume_alpha_resolved",
-            )),
+            MemoryOperation::ThreadDigestUpsert(
+                thread_digest_upsert_request_at_with_contract_flags(
+                    now,
+                    last_updated,
+                    "thread_alpha_resolved",
+                    shared_title,
+                    shared_summary.clone(),
+                    false,
+                    false,
+                    7,
+                    "idem_resume_alpha_resolved",
+                ),
+            ),
         )
         .unwrap();
         w.run_turn(&resolved_seed_input).unwrap();
@@ -2030,17 +2230,19 @@ mod tests {
         let unresolved_seed_input = MemoryTurnInput::v1(
             CorrelationId(7937),
             TurnId(8937),
-            MemoryOperation::ThreadDigestUpsert(thread_digest_upsert_request_at_with_contract_flags(
-                now,
-                last_updated,
-                "thread_unresolved_warm",
-                shared_title,
-                shared_summary,
-                false,
-                true,
-                7,
-                "idem_resume_unresolved_warm",
-            )),
+            MemoryOperation::ThreadDigestUpsert(
+                thread_digest_upsert_request_at_with_contract_flags(
+                    now,
+                    last_updated,
+                    "thread_unresolved_warm",
+                    shared_title,
+                    shared_summary,
+                    false,
+                    true,
+                    7,
+                    "idem_resume_unresolved_warm",
+                ),
+            ),
         )
         .unwrap();
         w.run_turn(&unresolved_seed_input).unwrap();
@@ -2093,17 +2295,19 @@ mod tests {
         let high_use_seed_input = MemoryTurnInput::v1(
             CorrelationId(7946),
             TurnId(8946),
-            MemoryOperation::ThreadDigestUpsert(thread_digest_upsert_request_at_with_contract_flags(
-                now,
-                MonotonicTimeNs(now.0.saturating_sub(ms_to_ns(older_warm_age_ms))),
-                "thread_high_use_older",
-                shared_title,
-                shared_summary.clone(),
-                false,
-                false,
-                9,
-                "idem_real_runtime_high_use_older",
-            )),
+            MemoryOperation::ThreadDigestUpsert(
+                thread_digest_upsert_request_at_with_contract_flags(
+                    now,
+                    MonotonicTimeNs(now.0.saturating_sub(ms_to_ns(older_warm_age_ms))),
+                    "thread_high_use_older",
+                    shared_title,
+                    shared_summary.clone(),
+                    false,
+                    false,
+                    9,
+                    "idem_real_runtime_high_use_older",
+                ),
+            ),
         )
         .unwrap();
         w.run_turn(&high_use_seed_input).unwrap();
@@ -2111,17 +2315,19 @@ mod tests {
         let lower_use_seed_input = MemoryTurnInput::v1(
             CorrelationId(7947),
             TurnId(8947),
-            MemoryOperation::ThreadDigestUpsert(thread_digest_upsert_request_at_with_contract_flags(
-                now,
-                MonotonicTimeNs(now.0.saturating_sub(ms_to_ns(newer_warm_age_ms))),
-                "thread_low_use_newer",
-                shared_title,
-                shared_summary,
-                false,
-                false,
-                1,
-                "idem_real_runtime_low_use_newer",
-            )),
+            MemoryOperation::ThreadDigestUpsert(
+                thread_digest_upsert_request_at_with_contract_flags(
+                    now,
+                    MonotonicTimeNs(now.0.saturating_sub(ms_to_ns(newer_warm_age_ms))),
+                    "thread_low_use_newer",
+                    shared_title,
+                    shared_summary,
+                    false,
+                    false,
+                    1,
+                    "idem_real_runtime_low_use_newer",
+                ),
+            ),
         )
         .unwrap();
         w.run_turn(&lower_use_seed_input).unwrap();
@@ -2157,17 +2363,19 @@ mod tests {
         let high_use_seed_input = MemoryTurnInput::v1(
             CorrelationId(7949),
             TurnId(8949),
-            MemoryOperation::ThreadDigestUpsert(thread_digest_upsert_request_at_with_contract_flags(
-                now,
-                MonotonicTimeNs(now.0.saturating_sub(ms_to_ns(older_warm_age_ms))),
-                "thread_high_use_older",
-                shared_title,
-                shared_summary.clone(),
-                false,
-                false,
-                9,
-                "idem_real_runtime_default_high_use_older",
-            )),
+            MemoryOperation::ThreadDigestUpsert(
+                thread_digest_upsert_request_at_with_contract_flags(
+                    now,
+                    MonotonicTimeNs(now.0.saturating_sub(ms_to_ns(older_warm_age_ms))),
+                    "thread_high_use_older",
+                    shared_title,
+                    shared_summary.clone(),
+                    false,
+                    false,
+                    9,
+                    "idem_real_runtime_default_high_use_older",
+                ),
+            ),
         )
         .unwrap();
         w.run_turn(&high_use_seed_input).unwrap();
@@ -2175,17 +2383,19 @@ mod tests {
         let lower_use_seed_input = MemoryTurnInput::v1(
             CorrelationId(7950),
             TurnId(8950),
-            MemoryOperation::ThreadDigestUpsert(thread_digest_upsert_request_at_with_contract_flags(
-                now,
-                MonotonicTimeNs(now.0.saturating_sub(ms_to_ns(newer_warm_age_ms))),
-                "thread_low_use_newer",
-                shared_title,
-                shared_summary,
-                false,
-                false,
-                1,
-                "idem_real_runtime_default_low_use_newer",
-            )),
+            MemoryOperation::ThreadDigestUpsert(
+                thread_digest_upsert_request_at_with_contract_flags(
+                    now,
+                    MonotonicTimeNs(now.0.saturating_sub(ms_to_ns(newer_warm_age_ms))),
+                    "thread_low_use_newer",
+                    shared_title,
+                    shared_summary,
+                    false,
+                    false,
+                    1,
+                    "idem_real_runtime_default_low_use_newer",
+                ),
+            ),
         )
         .unwrap();
         w.run_turn(&lower_use_seed_input).unwrap();
@@ -2198,7 +2408,10 @@ mod tests {
         .unwrap();
         let resp = forwarded_resume_select_response(w.run_turn(&resume_input).unwrap());
 
-        assert_eq!(resp.selected_thread_id, Some("thread_low_use_newer".to_string()));
+        assert_eq!(
+            resp.selected_thread_id,
+            Some("thread_low_use_newer".to_string())
+        );
         assert_eq!(resp.resume_tier, Some(MemoryResumeTier::Warm));
         assert_eq!(resp.resume_action, MemoryResumeAction::Suggest);
     }
@@ -2284,18 +2497,20 @@ mod tests {
         let propose_input = MemoryTurnInput::v1(
             CorrelationId(7945),
             TurnId(8945),
-            MemoryOperation::Propose(Ph1mProposeRequest::v1(
-                MonotonicTimeNs(61),
-                speaker_unknown(),
-                policy_ok(),
-                vec![proposed_item_with_confidence(
-                    "preferred_name",
-                    "John",
-                    MemoryConfidence::High,
-                    "My name is John",
-                )],
-            )
-            .unwrap()),
+            MemoryOperation::Propose(
+                Ph1mProposeRequest::v1(
+                    MonotonicTimeNs(61),
+                    speaker_unknown(),
+                    policy_ok(),
+                    vec![proposed_item_with_confidence(
+                        "preferred_name",
+                        "John",
+                        MemoryConfidence::High,
+                        "My name is John",
+                    )],
+                )
+                .unwrap(),
+            ),
         )
         .unwrap();
 
@@ -2311,7 +2526,10 @@ mod tests {
         assert_eq!(resp.decisions.len(), 1);
         let decision = &resp.decisions[0];
         assert_eq!(decision.status, MemoryCommitStatus::Rejected);
-        assert_eq!(decision.reason_code, selene_engines::ph1m::reason_codes::M_REJECT_UNKNOWN_SPEAKER);
+        assert_eq!(
+            decision.reason_code,
+            selene_engines::ph1m::reason_codes::M_REJECT_UNKNOWN_SPEAKER
+        );
         assert_eq!(decision.consent_prompt, None);
     }
 
@@ -2321,18 +2539,20 @@ mod tests {
         let propose_input = MemoryTurnInput::v1(
             CorrelationId(7946),
             TurnId(8946),
-            MemoryOperation::Propose(Ph1mProposeRequest::v1(
-                MonotonicTimeNs(62),
-                speaker_ok(),
-                policy_privacy_mode(),
-                vec![proposed_item_with_confidence(
-                    "preferred_name",
-                    "John",
-                    MemoryConfidence::High,
-                    "My name is John",
-                )],
-            )
-            .unwrap()),
+            MemoryOperation::Propose(
+                Ph1mProposeRequest::v1(
+                    MonotonicTimeNs(62),
+                    speaker_ok(),
+                    policy_privacy_mode(),
+                    vec![proposed_item_with_confidence(
+                        "preferred_name",
+                        "John",
+                        MemoryConfidence::High,
+                        "My name is John",
+                    )],
+                )
+                .unwrap(),
+            ),
         )
         .unwrap();
 
@@ -2348,7 +2568,10 @@ mod tests {
         assert_eq!(resp.decisions.len(), 1);
         let decision = &resp.decisions[0];
         assert_eq!(decision.status, MemoryCommitStatus::Rejected);
-        assert_eq!(decision.reason_code, selene_engines::ph1m::reason_codes::M_POLICY_BLOCKED);
+        assert_eq!(
+            decision.reason_code,
+            selene_engines::ph1m::reason_codes::M_POLICY_BLOCKED
+        );
         assert_eq!(decision.consent_prompt, None);
     }
 
@@ -2359,22 +2582,24 @@ mod tests {
         let suppression_input = MemoryTurnInput::v1(
             CorrelationId(7947),
             TurnId(8947),
-            MemoryOperation::SuppressionSet(Ph1mSuppressionSetRequest::v1(
-                MonotonicTimeNs(63),
-                speaker_ok(),
-                policy_ok(),
-                MemorySuppressionRule::v1(
-                    MemorySuppressionTargetType::TopicKey,
-                    "preferred_name".to_string(),
-                    MemorySuppressionRuleKind::DoNotStore,
-                    true,
-                    ReasonCodeId(101),
+            MemoryOperation::SuppressionSet(
+                Ph1mSuppressionSetRequest::v1(
                     MonotonicTimeNs(63),
+                    speaker_ok(),
+                    policy_ok(),
+                    MemorySuppressionRule::v1(
+                        MemorySuppressionTargetType::TopicKey,
+                        "preferred_name".to_string(),
+                        MemorySuppressionRuleKind::DoNotStore,
+                        true,
+                        ReasonCodeId(101),
+                        MonotonicTimeNs(63),
+                    )
+                    .unwrap(),
+                    "idem_sup_store".to_string(),
                 )
                 .unwrap(),
-                "idem_sup_store".to_string(),
-            )
-            .unwrap()),
+            ),
         )
         .unwrap();
         w.run_turn(&suppression_input).unwrap();
@@ -2382,18 +2607,20 @@ mod tests {
         let propose_input = MemoryTurnInput::v1(
             CorrelationId(7948),
             TurnId(8948),
-            MemoryOperation::Propose(Ph1mProposeRequest::v1(
-                MonotonicTimeNs(64),
-                speaker_ok(),
-                policy_ok(),
-                vec![proposed_item_with_confidence(
-                    "preferred_name",
-                    "John",
-                    MemoryConfidence::High,
-                    "My name is John",
-                )],
-            )
-            .unwrap()),
+            MemoryOperation::Propose(
+                Ph1mProposeRequest::v1(
+                    MonotonicTimeNs(64),
+                    speaker_ok(),
+                    policy_ok(),
+                    vec![proposed_item_with_confidence(
+                        "preferred_name",
+                        "John",
+                        MemoryConfidence::High,
+                        "My name is John",
+                    )],
+                )
+                .unwrap(),
+            ),
         )
         .unwrap();
 
@@ -2409,7 +2636,10 @@ mod tests {
         assert_eq!(resp.decisions.len(), 1);
         let decision = &resp.decisions[0];
         assert_eq!(decision.status, MemoryCommitStatus::Rejected);
-        assert_eq!(decision.reason_code, selene_engines::ph1m::reason_codes::M_POLICY_BLOCKED);
+        assert_eq!(
+            decision.reason_code,
+            selene_engines::ph1m::reason_codes::M_POLICY_BLOCKED
+        );
         assert_eq!(decision.consent_prompt, None);
     }
 
@@ -2918,7 +3148,10 @@ mod tests {
         let MemoryTurnOutput::RetentionModeSet(resp) = &bundle.output else {
             panic!("expected retention mode set output");
         };
-        assert_eq!(resp.memory_retention_mode, MemoryRetentionMode::RememberEverything);
+        assert_eq!(
+            resp.memory_retention_mode,
+            MemoryRetentionMode::RememberEverything
+        );
 
         let persisted = persist_memory_forwarded_outcome(&mut store, &input, &outcome).unwrap();
         assert!(persisted);
@@ -3003,7 +3236,10 @@ mod tests {
         let MemoryTurnOutput::RetentionModeSet(resp) = &bundle.output else {
             panic!("expected retention mode set output");
         };
-        assert_eq!(resp.memory_retention_mode, MemoryRetentionMode::RememberEverything);
+        assert_eq!(
+            resp.memory_retention_mode,
+            MemoryRetentionMode::RememberEverything
+        );
         assert_eq!(
             store
                 .ph1m_retention_preference_row(&UserId::new("user").unwrap())
@@ -3097,12 +3333,17 @@ mod tests {
         assert_eq!(after_retry.updated_at, MonotonicTimeNs(72));
         assert_eq!(after_retry.idempotency_key, Some("ret_idem_1".to_string()));
 
-        let overwrite_outcome = w.run_turn_and_persist(&mut store, &overwrite_input).unwrap();
+        let overwrite_outcome = w
+            .run_turn_and_persist(&mut store, &overwrite_input)
+            .unwrap();
         let MemoryWiringOutcome::Forwarded(_) = &overwrite_outcome else {
             panic!("expected forwarded retention mode set overwrite outcome");
         };
         let after_overwrite = store.ph1m_retention_preference_row(&user_id).unwrap();
-        assert_eq!(after_overwrite.memory_retention_mode, MemoryRetentionMode::Default);
+        assert_eq!(
+            after_overwrite.memory_retention_mode,
+            MemoryRetentionMode::Default
+        );
         assert_eq!(after_overwrite.updated_at, MonotonicTimeNs(74));
         assert_eq!(
             after_overwrite.idempotency_key,
@@ -3174,7 +3415,10 @@ mod tests {
             after_first.reason_code,
             selene_engines::ph1m::reason_codes::M_RETENTION_MODE_UPDATED
         );
-        assert_eq!(after_first.idempotency_key, Some("ret_replay_1".to_string()));
+        assert_eq!(
+            after_first.idempotency_key,
+            Some("ret_replay_1".to_string())
+        );
 
         let retry_outcome = w.run_turn_and_persist(&mut store, &retry_input).unwrap();
         let MemoryWiringOutcome::Forwarded(retry_bundle) = &retry_outcome else {
@@ -3192,7 +3436,10 @@ mod tests {
             retry_resp.reason_code,
             selene_engines::ph1m::reason_codes::M_RETENTION_MODE_UPDATED
         );
-        assert_ne!(retry_resp.memory_retention_mode, MemoryRetentionMode::Default);
+        assert_ne!(
+            retry_resp.memory_retention_mode,
+            MemoryRetentionMode::Default
+        );
         assert_ne!(retry_resp.effective_at, MonotonicTimeNs(76));
         let after_retry = store.ph1m_retention_preference_row(&user_id).unwrap();
         assert_eq!(
@@ -3204,7 +3451,10 @@ mod tests {
             after_retry.reason_code,
             selene_engines::ph1m::reason_codes::M_RETENTION_MODE_UPDATED
         );
-        assert_eq!(after_retry.idempotency_key, Some("ret_replay_1".to_string()));
+        assert_eq!(
+            after_retry.idempotency_key,
+            Some("ret_replay_1".to_string())
+        );
     }
 
     #[test]
@@ -3276,14 +3526,19 @@ mod tests {
             Some("ret_overwrite_resp_1".to_string())
         );
 
-        let overwrite_outcome = w.run_turn_and_persist(&mut store, &overwrite_input).unwrap();
+        let overwrite_outcome = w
+            .run_turn_and_persist(&mut store, &overwrite_input)
+            .unwrap();
         let MemoryWiringOutcome::Forwarded(overwrite_bundle) = &overwrite_outcome else {
             panic!("expected forwarded retention mode set overwrite outcome");
         };
         let MemoryTurnOutput::RetentionModeSet(overwrite_resp) = &overwrite_bundle.output else {
             panic!("expected retention mode set overwrite output");
         };
-        assert_eq!(overwrite_resp.memory_retention_mode, MemoryRetentionMode::Default);
+        assert_eq!(
+            overwrite_resp.memory_retention_mode,
+            MemoryRetentionMode::Default
+        );
         assert_eq!(overwrite_resp.effective_at, MonotonicTimeNs(78));
         assert_eq!(
             overwrite_resp.reason_code,
@@ -3295,7 +3550,10 @@ mod tests {
         );
         assert_ne!(overwrite_resp.effective_at, MonotonicTimeNs(77));
         let after_overwrite = store.ph1m_retention_preference_row(&user_id).unwrap();
-        assert_eq!(after_overwrite.memory_retention_mode, MemoryRetentionMode::Default);
+        assert_eq!(
+            after_overwrite.memory_retention_mode,
+            MemoryRetentionMode::Default
+        );
         assert_eq!(after_overwrite.updated_at, MonotonicTimeNs(78));
         assert_eq!(
             after_overwrite.reason_code,
@@ -3401,22 +3659,20 @@ mod tests {
                 None,
             )
             .unwrap()],
-            vec![
-                MemoryLedgerEvent::v1(
-                    MemoryLedgerEventKind::Updated,
-                    MonotonicTimeNs(32),
-                    memory_key.clone(),
-                    Some(MemoryValue::v1("Benji".to_string(), None).unwrap()),
-                    Some("Call me Benji".to_string()),
-                    MemoryProvenance::v1(None, None).unwrap(),
-                    MemoryLayer::LongTerm,
-                    MemorySensitivityFlag::Low,
-                    MemoryConfidence::High,
-                    MemoryConsent::ExplicitRemember,
-                    selene_engines::ph1m::reason_codes::M_UPDATED,
-                )
-                .unwrap(),
-            ],
+            vec![MemoryLedgerEvent::v1(
+                MemoryLedgerEventKind::Updated,
+                MonotonicTimeNs(32),
+                memory_key.clone(),
+                Some(MemoryValue::v1("Benji".to_string(), None).unwrap()),
+                Some("Call me Benji".to_string()),
+                MemoryProvenance::v1(None, None).unwrap(),
+                MemoryLayer::LongTerm,
+                MemorySensitivityFlag::Low,
+                MemoryConfidence::High,
+                MemoryConsent::ExplicitRemember,
+                selene_engines::ph1m::reason_codes::M_UPDATED,
+            )
+            .unwrap()],
         )
         .unwrap();
         let outcome = MemoryWiringOutcome::Forwarded(

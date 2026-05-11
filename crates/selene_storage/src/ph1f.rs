@@ -4760,6 +4760,16 @@ impl Ph1fStore {
             .get(&(user_id.clone(), thread_id.to_string()))
     }
 
+    pub fn ph1m_thread_current_rows_for_user(
+        &self,
+        user_id: &UserId,
+    ) -> Vec<&MemoryThreadCurrentRecord> {
+        self.memory_threads_current
+            .iter()
+            .filter_map(|((uid, _), record)| if uid == user_id { Some(record) } else { None })
+            .collect()
+    }
+
     pub fn ph1m_thread_ref_rows_for_thread(
         &self,
         user_id: &UserId,

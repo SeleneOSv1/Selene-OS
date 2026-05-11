@@ -2025,6 +2025,11 @@ pub trait Ph1MRepo {
         thread_id: &str,
     ) -> Option<&MemoryThreadCurrentRecord>;
 
+    fn ph1m_thread_current_rows_for_user(
+        &self,
+        user_id: &UserId,
+    ) -> Vec<&MemoryThreadCurrentRecord>;
+
     fn ph1m_upsert_thread_refs(
         &mut self,
         user_id: &UserId,
@@ -5298,6 +5303,13 @@ impl Ph1MRepo for Ph1fStore {
         thread_id: &str,
     ) -> Option<&MemoryThreadCurrentRecord> {
         Ph1fStore::ph1m_thread_current_row(self, user_id, thread_id)
+    }
+
+    fn ph1m_thread_current_rows_for_user(
+        &self,
+        user_id: &UserId,
+    ) -> Vec<&MemoryThreadCurrentRecord> {
+        Ph1fStore::ph1m_thread_current_rows_for_user(self, user_id)
     }
 
     fn ph1m_upsert_thread_refs(
