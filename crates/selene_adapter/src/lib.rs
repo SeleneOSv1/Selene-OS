@@ -36114,7 +36114,10 @@ mod tests {
     fn h362_ambiguous_time_queries_clarify_without_identity_gate_or_web_dump() {
         for (query, expected) in [
             ("what is the time in Portugal", "mainland Portugal/Lisbon"),
-            ("what is the time in United States", "Do you mean"),
+            (
+                "what is the time in United States",
+                "Which city or local place",
+            ),
             ("what is the time in Springfield", "Springfield, Illinois"),
         ] {
             let out = h362_run_desktop_typed_time_query(query);
@@ -36126,7 +36129,10 @@ mod tests {
                 out.response_text
             );
             assert!(
-                out.response_text.contains("Do you mean"),
+                out.response_text.contains("Do you mean")
+                    || out
+                        .response_text
+                        .contains("Which city or local place should I use?"),
                 "{}",
                 out.response_text
             );
@@ -36134,6 +36140,8 @@ mod tests {
             assert!(!out.response_text.contains("Sources:"));
             assert!(!out.response_text.contains("Retrieved at (unix_ms):"));
             assert!(!out.response_text.contains("Current local time in"));
+            assert!(!out.response_text.contains("America/"));
+            assert!(!out.response_text.contains("IANA"));
         }
     }
 
@@ -36189,7 +36197,10 @@ mod tests {
         assert_eq!(out.outcome, "FINAL_TOOL");
         assert!(
             out.response_text.contains("Do you mean")
-                || out.response_text.contains("Which place do you mean?"),
+                || out.response_text.contains("Which place do you mean?")
+                || out
+                    .response_text
+                    .contains("Which city or local place should I use?"),
             "{}",
             out.response_text
         );
@@ -36202,6 +36213,7 @@ mod tests {
         assert!(!out
             .response_text
             .contains("governance state is out of sync"));
+        assert!(!out.response_text.contains("IANA"));
         assert!(!out.response_text.contains("Sources:"));
         assert!(!out.response_text.contains("Retrieved at (unix_ms):"));
     }
@@ -36233,7 +36245,7 @@ mod tests {
             363_001,
             "what is the time in Spain",
         );
-        assert_h363_clean_time_clarification(&clarify, "Europe/Madrid");
+        assert_h363_clean_time_clarification(&clarify, "Which city or local place");
         let answer = h363_run_desktop_typed_time_query_on_thread(
             &runtime,
             "h363-spain-madrid",
@@ -36252,7 +36264,7 @@ mod tests {
             363_011,
             "what is the time in Spain",
         );
-        assert_h363_clean_time_clarification(&clarify, "Atlantic/Canary");
+        assert_h363_clean_time_clarification(&clarify, "Which city or local place");
         let answer = h363_run_desktop_typed_time_query_on_thread(
             &runtime,
             "h363-spain-canary",
@@ -36313,7 +36325,8 @@ mod tests {
                 turn_id,
                 "what is the time in United States",
             );
-            assert_h363_clean_time_clarification(&clarify, "America/");
+            assert_h363_clean_time_clarification(&clarify, "Which city or local place");
+            assert!(!clarify.response_text.contains("America/"));
             let answer = h363_run_desktop_typed_time_query_on_thread(
                 &runtime,
                 thread_key,
@@ -36337,7 +36350,9 @@ mod tests {
                 turn_id,
                 "what is the time in Australia",
             );
-            assert_h363_clean_time_clarification(&clarify, "Australia/");
+            assert_h363_clean_time_clarification(&clarify, "Which city or local place");
+            assert!(!clarify.response_text.contains("Australia/"));
+            assert!(!clarify.response_text.contains("Antarctica/"));
             let answer = h363_run_desktop_typed_time_query_on_thread(
                 &runtime,
                 thread_key,
@@ -36947,6 +36962,71 @@ mod tests {
                     "Sydney slot fill must not require PH1.M recall candidates"
                 );
             },
+        );
+    }
+
+    #[test]
+    fn active_session_context_time_australia_sydney_fills_pending_slot_and_clears() {
+        let runtime = AdapterRuntime::default();
+        let thread_key = "active-session-time-australia-sydney";
+        let before_memory = {
+            let store = runtime.store.lock().expect("store lock should succeed");
+            (
+                store.memory_ledger_rows().len(),
+                store.ph1m_thread_ledger_rows().len(),
+            )
+        };
+
+        let clarify = h363_run_desktop_typed_time_query_on_thread(
+            &runtime,
+            thread_key,
+            363_301,
+            "What's the time in Australia?",
+        );
+        assert_h363_clean_time_clarification(&clarify, "Which city or local place");
+        assert!(!clarify.response_text.contains("Australia/"));
+        assert!(!clarify.response_text.contains("Antarctica/"));
+
+        let answer =
+            h363_run_desktop_typed_time_query_on_thread(&runtime, thread_key, 363_302, "Sydney.");
+        assert_h363_clean_time_answer(&answer, "Sydney");
+
+        let actor_user_id = UserId::new("tenant_a:user_adapter_test").unwrap();
+        let store = runtime.store.lock().expect("store lock should succeed");
+        let current = store
+            .ph1x_thread_state_current_row(&actor_user_id, thread_key)
+            .expect("active session thread state should persist");
+        assert!(
+            current.thread_state.pending.is_none(),
+            "pending time place clarification should clear after Sydney resolves"
+        );
+        assert!(
+            current.thread_state.resume_buffer.is_none(),
+            "time clarification resume buffer should clear after Sydney resolves"
+        );
+        assert_eq!(
+            current
+                .thread_state
+                .last_turn_context
+                .as_ref()
+                .map(|context| context.route_class),
+            Some(LastTurnRouteClass::ToolTime)
+        );
+        assert_eq!(
+            (
+                store.memory_ledger_rows().len(),
+                store.ph1m_thread_ledger_rows().len()
+            ),
+            before_memory,
+            "same-session time place slot fill must not write or require PH1.M durable memory"
+        );
+        let packet = runtime
+            .ingress
+            .debug_last_agent_input_packet()
+            .expect("Sydney time follow-up should reach PH1.X through adapter runtime");
+        assert!(
+            packet.memory_candidates.is_empty(),
+            "Sydney time slot fill must not require PH1.M recall candidates"
         );
     }
 

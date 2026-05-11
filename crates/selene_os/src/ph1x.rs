@@ -1039,7 +1039,8 @@ impl Ph1xRuntime {
             deterministic_time_clarification_answer_id(req),
             Some(DETERMINISTIC_TIME_CLARIFICATION_TOPIC.to_string()),
             question.clone(),
-            "Awaiting a place, city, country, region, or IANA timezone for the pending deterministic time query.".to_string(),
+            "Awaiting a place, city, country, or region for the pending deterministic time query."
+                .to_string(),
             MonotonicTimeNs(
                 req.now
                     .0
@@ -1054,7 +1055,7 @@ impl Ph1xRuntime {
             vec![
                 "A city, e.g. Madrid".to_string(),
                 "A region, e.g. Canary Islands".to_string(),
-                "An IANA timezone, e.g. America/New_York".to_string(),
+                "A local place, e.g. Hobart".to_string(),
             ],
             vec![FieldKey::Place],
             delivery_base,
@@ -3123,21 +3124,18 @@ fn retry_message_for_failure(rc: ReasonCodeId, fail_detail: Option<&str>) -> Str
             if let Some(alternatives) = detail
                 .split_once("alternatives=")
                 .map(|(_, alternatives)| alternatives)
-                .map(time_clarification_options)
+                .map(time_clarification_prompt_for_alternatives)
                 .filter(|options| !options.is_empty())
             {
-                return format!(
-                    "That place has more than one timezone. Do you mean {}?",
-                    alternatives
-                );
+                return alternatives;
             }
-            return "That location has more than one timezone. Please ask with a specific city or IANA timezone.".to_string();
+            return "That location has more than one timezone. Please ask with a specific city or local place.".to_string();
         }
         if detail.contains("missing_time_location") {
             return "Which place do you mean?".to_string();
         }
         if detail.contains("unsupported_time_location") {
-            return "I can't resolve that location yet. Please ask with a supported city, country, or IANA timezone.".to_string();
+            return "I can't resolve that location yet. Please ask with a supported city, country, or local place.".to_string();
         }
     }
     if rc == selene_engines::ph1e::reason_codes::E_FAIL_PROVIDER_MISSING_CONFIG {
@@ -3172,6 +3170,18 @@ fn safe_tool_fail_detail(raw: Option<&str>) -> Option<String> {
     Some(bounded)
 }
 
+fn time_clarification_prompt_for_alternatives(raw: &str) -> String {
+    let options = time_clarification_options(raw);
+    if options.is_empty() {
+        return String::new();
+    }
+    if time_clarification_alternatives_are_technical(raw) {
+        return "That place has more than one timezone. Which city or local place should I use?"
+            .to_string();
+    }
+    format!("That place has more than one timezone. Do you mean {options}?")
+}
+
 fn time_clarification_options(raw: &str) -> String {
     let mut options: Vec<String> = raw
         .split('|')
@@ -3187,6 +3197,33 @@ fn time_clarification_options(raw: &str) -> String {
         [first, second] => format!("{first} or {second}"),
         [first, second, third, ..] => format!("{first}, {second}, or {third}"),
     }
+}
+
+fn time_clarification_alternatives_are_technical(raw: &str) -> bool {
+    raw.split('|')
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .any(time_clarification_alternative_is_technical)
+}
+
+fn time_clarification_alternative_is_technical(value: &str) -> bool {
+    let candidate = value
+        .split_once(" (")
+        .map(|(zone, _)| zone)
+        .unwrap_or(value)
+        .trim();
+    let Some((area, place)) = candidate.split_once('/') else {
+        return false;
+    };
+    !area.contains(char::is_whitespace)
+        && !place.trim().is_empty()
+        && area
+            .chars()
+            .next()
+            .is_some_and(|first| first.is_ascii_uppercase())
+        && candidate
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '/' | '_' | '-' | '+'))
 }
 
 fn weather_clarification_options(options: &[String]) -> String {
@@ -5404,6 +5441,21 @@ mod tests {
         );
         assert!(!text.contains("raw"));
         assert!(!text.contains("Retrieved at"));
+    }
+
+    #[test]
+    fn h362_time_ambiguity_hides_technical_timezone_ids_for_user_clarification() {
+        let text = retry_message_for_failure(
+            selene_engines::ph1e::reason_codes::E_FAIL_QUERY_PARSE,
+            Some("ambiguous_time_location alternatives=Australia/Lord_Howe (Lord Howe Island)|Antarctica/Macquarie (Macquarie Island)|Australia/Hobart (Tasmania)"),
+        );
+        assert_eq!(
+            text,
+            "That place has more than one timezone. Which city or local place should I use?"
+        );
+        assert!(!text.contains("Australia/"));
+        assert!(!text.contains("Antarctica/"));
+        assert!(!text.contains("IANA"));
     }
 
     #[test]
