@@ -8326,10 +8326,17 @@ impl AdapterRuntime {
                 &thread_key,
             )
             .map_err(post_session_error)?;
-            let h380_understanding_text = user_text_final.as_deref().map(|text| {
-                h380_selene_name_canonical_text_for_assistant_address(text)
-                    .unwrap_or_else(|| text.to_string())
-            });
+            let active_context_followup_rewrite = deterministic_active_context_followup_query(
+                &base_thread_state,
+                user_text_final.as_deref(),
+            );
+            let h380_understanding_text = active_context_followup_rewrite
+                .as_deref()
+                .or(user_text_final.as_deref())
+                .map(|text| {
+                    h380_selene_name_canonical_text_for_assistant_address(text)
+                        .unwrap_or_else(|| text.to_string())
+                });
             let h380_understanding = h380_understanding_text.as_deref().map(|text| {
                 h380_understand_committed_turn(text, base_thread_state.last_turn_context.as_ref())
             });
@@ -8430,7 +8437,7 @@ impl AdapterRuntime {
                     return Ok(response);
                 }
             }
-            if !h384_explicit_deep_research {
+            if active_context_followup_rewrite.is_none() && !h384_explicit_deep_research {
                 if let Some((captured_text, h411_response)) =
                     user_text_final.as_deref().and_then(|text| {
                         h411_public_discourse_response(text, &h411_discourse_frame_before)
@@ -8511,7 +8518,10 @@ impl AdapterRuntime {
                     base_thread_state.last_turn_context.as_ref(),
                 )
             };
-            if h380_nlp_rewrite.is_none() && !h384_explicit_deep_research {
+            if active_context_followup_rewrite.is_none()
+                && h380_nlp_rewrite.is_none()
+                && !h384_explicit_deep_research
+            {
                 if let Some(response_text) = h380_understanding.as_ref().and_then(|packet| {
                     h381_h380_live_response_text(
                         packet,
@@ -8579,21 +8589,16 @@ impl AdapterRuntime {
                 &base_thread_state,
                 user_text_final.as_deref(),
             );
-            let nlp_transcript_text = h380_nlp_rewrite
+            let nlp_transcript_text = active_context_followup_rewrite
+                .or(h380_nlp_rewrite)
                 .or_else(|| {
-                    deterministic_public_clarification_followup_query(
-                        &base_thread_state,
+                    if committed_turn_followup.is_some() {
+                        return None;
+                    }
+                    deterministic_weather_context_followup_query(
+                        weather_context_place.as_deref(),
                         user_text_final.as_deref(),
                     )
-                    .or_else(|| {
-                        if committed_turn_followup.is_some() {
-                            return None;
-                        }
-                        deterministic_weather_context_followup_query(
-                            weather_context_place.as_deref(),
-                            user_text_final.as_deref(),
-                        )
-                    })
                 })
                 .or_else(|| user_text_final.clone());
             let (nlp_output, language_packet) = build_nlp_output_for_voice_turn(
@@ -12762,6 +12767,94 @@ fn deterministic_public_clarification_followup_query(
         )),
         _ => None,
     }
+}
+
+fn deterministic_active_context_followup_query(
+    thread_state: &ThreadState,
+    transcript_text: Option<&str>,
+) -> Option<String> {
+    deterministic_public_clarification_followup_query(thread_state, transcript_text).or_else(|| {
+        let text = transcript_text?.trim();
+        if text.is_empty() || text.len() > 128 {
+            return None;
+        }
+        if text.contains('?')
+            || text.contains('？')
+            || classify_h379_committed_turn_followup(thread_state, Some(text)).is_some()
+        {
+            return None;
+        }
+        let lower = normalize_h379_followup_text(text);
+        if lower.contains("time")
+            || lower.contains("weather")
+            || lower.contains("temperature")
+            || lower.contains("forecast")
+            || lower.contains('?')
+        {
+            return None;
+        }
+        let last_turn_context = thread_state.last_turn_context.as_ref()?;
+        let place = h380_bare_place_followup_location(text)?;
+        match last_turn_context.route_class {
+            LastTurnRouteClass::ToolTime => Some(format!("what is the time in {place}")),
+            LastTurnRouteClass::ToolWeather => Some(format!("what is the weather in {place}")),
+            _ => None,
+        }
+    })
+}
+
+fn h380_bare_place_followup_location(text: &str) -> Option<String> {
+    if text.contains('?') || text.contains('？') {
+        return None;
+    }
+    let normalized = normalize_h379_followup_text(text);
+    if normalized.starts_with("what about ")
+        || normalized.starts_with("same for ")
+        || normalized.starts_with("same question ")
+        || normalized.starts_with("and ")
+    {
+        return None;
+    }
+    let tokens = normalized.split_whitespace().collect::<Vec<_>>();
+    if tokens.is_empty() || tokens.len() > 4 {
+        return None;
+    }
+    if tokens.iter().any(|token| {
+        matches!(
+            *token,
+            "a" | "an"
+                | "and"
+                | "are"
+                | "can"
+                | "did"
+                | "do"
+                | "does"
+                | "explain"
+                | "hello"
+                | "here"
+                | "hi"
+                | "is"
+                | "it"
+                | "me"
+                | "my"
+                | "no"
+                | "not"
+                | "okay"
+                | "please"
+                | "same"
+                | "that"
+                | "the"
+                | "there"
+                | "this"
+                | "with"
+                | "yes"
+                | "yet"
+                | "you"
+        )
+    }) {
+        return None;
+    }
+    h380_clean_contextual_place_candidate(text)
 }
 
 fn deterministic_weather_context_followup_query(
@@ -20525,6 +20618,12 @@ fn committed_voice_unsafe_transcript_reason(
             Ph1cRetryAdvice::Repeat,
         ));
     }
+    if committed_voice_short_cjk_fragment_with_english_capture(trimmed, capture) {
+        return Some((
+            ph1c_reason_codes::STT_FAIL_LOW_SEMANTIC_CONFIDENCE,
+            Ph1cRetryAdvice::Repeat,
+        ));
+    }
     if committed_voice_non_actionable_cjk_with_weak_language_evidence(trimmed, capture) {
         return Some((
             ph1c_reason_codes::STT_FAIL_LOW_SEMANTIC_CONFIDENCE,
@@ -20569,6 +20668,13 @@ fn committed_voice_reject_should_ignore_user_surface(
     }
     if reason_code == ph1c_reason_codes::STT_FAIL_LOW_SEMANTIC_CONFIDENCE
         && committed_voice_cjk_noise_or_filler_fragment(transcript_text)
+    {
+        return true;
+    }
+    if reason_code == ph1c_reason_codes::STT_FAIL_LOW_SEMANTIC_CONFIDENCE
+        && capture.is_some_and(|capture| {
+            committed_voice_short_cjk_fragment_with_english_capture(transcript_text, capture)
+        })
     {
         return true;
     }
@@ -20718,6 +20824,39 @@ fn committed_voice_cjk_noise_or_filler_fragment(transcript_text: &str) -> bool {
                 && latin_tokens
                     .iter()
                     .all(|token| committed_voice_latin_filler_artifact_token(token))))
+}
+
+fn committed_voice_short_cjk_fragment_with_english_capture(
+    transcript_text: &str,
+    capture: &VoiceTurnAudioCaptureRef,
+) -> bool {
+    let compact: String = transcript_text
+        .chars()
+        .filter(|ch| !ch.is_whitespace() && !ch.is_ascii_punctuation())
+        .collect();
+    if compact.is_empty()
+        || compact.chars().any(|ch| ch.is_ascii_alphabetic())
+        || !compact.chars().any(is_cjk_char_for_build1c)
+    {
+        return false;
+    }
+    let cjk_count = compact
+        .chars()
+        .filter(|ch| is_cjk_char_for_build1c(*ch))
+        .count();
+    if cjk_count == 0 || cjk_count > 4 {
+        return false;
+    }
+    let locale = capture
+        .locale_tag
+        .as_deref()
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase();
+    if locale.starts_with("zh") {
+        return false;
+    }
+    true
 }
 
 fn committed_voice_non_actionable_cjk_with_weak_language_evidence(
@@ -36165,6 +36304,25 @@ mod tests {
             .expect("desktop deterministic time request should complete or clarify cleanly")
     }
 
+    fn h363_run_desktop_voice_like_time_query_on_thread(
+        runtime: &AdapterRuntime,
+        thread_key: &str,
+        turn_id: u64,
+        query: &str,
+    ) -> VoiceTurnAdapterResponse {
+        let mut req = base_request();
+        mark_request_as_live_desktop_capture_for_h417_tests(&mut req);
+        req.correlation_id = 363_000;
+        req.turn_id = turn_id;
+        req.device_turn_sequence = Some(turn_id);
+        req.now_ns = Some(turn_id);
+        req.thread_key = Some(thread_key.to_string());
+        req.user_text_final = Some(query.to_string());
+        runtime.run_voice_turn(req).expect(
+            "desktop voice-like deterministic time request should complete or clarify cleanly",
+        )
+    }
+
     fn assert_h363_clean_time_answer(out: &VoiceTurnAdapterResponse, place: &str) {
         assert_eq!(out.status, "ok");
         assert!(
@@ -36392,6 +36550,29 @@ mod tests {
             packet.memory_candidates.is_empty(),
             "active time follow-up must not require PH1.M recall candidates"
         );
+    }
+
+    #[test]
+    fn active_session_context_voice_like_bare_place_inherits_time_intent() {
+        let runtime = AdapterRuntime::default();
+        let thread_key = "active-session-voice-bare-place-time";
+        let seed = h363_run_desktop_voice_like_time_query_on_thread(
+            &runtime,
+            thread_key,
+            363_231,
+            "What's the time in Sydney?",
+        );
+        assert_h363_clean_time_answer(&seed, "Sydney");
+
+        let followup = h363_run_desktop_voice_like_time_query_on_thread(
+            &runtime,
+            thread_key,
+            363_232,
+            "New York.",
+        );
+        assert_h363_clean_time_answer(&followup, "New York");
+        assert!(!followup.response_text.contains("vibrant"));
+        assert!(!followup.response_text.contains("landmarks"));
     }
 
     #[test]
@@ -36676,6 +36857,25 @@ mod tests {
         runtime
             .run_voice_turn(req)
             .expect("desktop deterministic weather request should complete or clarify cleanly")
+    }
+
+    fn h364_run_desktop_voice_like_weather_query_on_thread(
+        runtime: &AdapterRuntime,
+        thread_key: &str,
+        turn_id: u64,
+        query: &str,
+    ) -> VoiceTurnAdapterResponse {
+        let mut req = base_request();
+        mark_request_as_live_desktop_capture_for_h417_tests(&mut req);
+        req.correlation_id = 364_000;
+        req.turn_id = turn_id;
+        req.device_turn_sequence = Some(turn_id);
+        req.now_ns = Some(turn_id);
+        req.thread_key = Some(thread_key.to_string());
+        req.user_text_final = Some(query.to_string());
+        runtime.run_voice_turn(req).expect(
+            "desktop voice-like deterministic weather request should complete or clarify cleanly",
+        )
     }
 
     fn assert_h364_clean_weather_clarification(out: &VoiceTurnAdapterResponse, expected: &str) {
@@ -37028,6 +37228,27 @@ mod tests {
             packet.memory_candidates.is_empty(),
             "Sydney time slot fill must not require PH1.M recall candidates"
         );
+    }
+
+    #[test]
+    fn active_session_context_voice_like_time_australia_sydney_fills_pending_slot() {
+        let runtime = AdapterRuntime::default();
+        let thread_key = "active-session-voice-time-australia-sydney";
+
+        let clarify = h363_run_desktop_voice_like_time_query_on_thread(
+            &runtime,
+            thread_key,
+            363_321,
+            "What's the time in Australia?",
+        );
+        assert_h363_clean_time_clarification(&clarify, "Which city or local place");
+        assert!(!clarify.response_text.contains("Australia/"));
+        assert!(!clarify.response_text.contains("Antarctica/"));
+
+        let answer = h363_run_desktop_voice_like_time_query_on_thread(
+            &runtime, thread_key, 363_322, "Sydney.",
+        );
+        assert_h363_clean_time_answer(&answer, "Sydney");
     }
 
     #[test]
@@ -37769,6 +37990,57 @@ mod tests {
                     .contains("multi-day forecast lane"));
                 assert!(!rain_forecast.response_text.contains("Comunidad de Madrid"));
                 assert!(!rain_forecast.response_text.contains("provider_payload"));
+            },
+        );
+    }
+
+    #[test]
+    fn active_session_context_voice_like_spain_madrid_fills_weather_slot_before_public_chat() {
+        let endpoint = h373_spawn_tomorrow_weather_endpoint_sequence(vec![
+            r#"{
+            "data": {
+                "time": "2026-04-25T03:00:00Z",
+                "values": {
+                    "temperature": 16.6,
+                    "humidity": 42,
+                    "windSpeed": 2.8,
+                    "weatherCode": 1000
+                }
+            },
+            "location": {
+                "name": "Comunidad de Madrid"
+            }
+        }"#,
+        ]);
+        with_isolated_device_vault(
+            "active-session-voice-spain-madrid-weather",
+            &[],
+            &[
+                ("SELENE_REALTIME_TOMORROW_IO_ENDPOINT", endpoint.as_str()),
+                (
+                    "SELENE_REALTIME_TOMORROW_IO_API_KEY",
+                    "active-session-secret",
+                ),
+                ("SELENE_REALTIME_WEATHER_API_KEY", " "),
+                ("SELENE_REALTIME_PROXY_MODE", "off"),
+            ],
+            || {
+                let runtime = AdapterRuntime::default();
+                let thread_key = "active-session-voice-spain-madrid-weather";
+                let clarify = h364_run_desktop_voice_like_weather_query_on_thread(
+                    &runtime,
+                    thread_key,
+                    364_331,
+                    "And what's the weather like in Spain?",
+                );
+                assert_h364_clean_weather_clarification(&clarify, "Madrid, Spain");
+
+                let madrid = h364_run_desktop_voice_like_weather_query_on_thread(
+                    &runtime, thread_key, 364_332, "Madrid.",
+                );
+                assert_eq!(madrid.response_text, "Madrid is 16.6°C and clear.");
+                assert!(!madrid.response_text.contains("capital of Spain"));
+                assert!(!madrid.response_text.contains("Prado Museum"));
             },
         );
     }
@@ -38756,6 +39028,42 @@ mod tests {
         let out = runtime
             .run_voice_turn(req)
             .expect("short non-actionable CJK cough description should be ignored");
+        assert_eq!(out.status, "ok");
+        assert_eq!(out.outcome, "IGNORED");
+        assert_eq!(out.next_move, "listening_window_open");
+        assert_eq!(
+            out.reason_code,
+            ph1c_reason_codes::STT_FAIL_LOW_SEMANTIC_CONFIDENCE
+                .0
+                .to_string()
+        );
+        assert!(out.response_text.is_empty());
+        assert!(out.tts_text.is_empty());
+        assert!(runtime.ingress.debug_last_agent_input_packet().is_none());
+    }
+
+    #[test]
+    fn adapter_false_transcript_short_actionable_cjk_hallucination_rejected() {
+        let runtime = AdapterRuntime::default();
+        let mut req = base_request();
+        mark_request_as_live_desktop_capture_for_h417_tests(&mut req);
+        req.correlation_id = 420_117;
+        req.turn_id = 420_117;
+        req.user_text_final = Some("可以".to_string());
+        if let Some(capture) = req.audio_capture_ref.as_mut() {
+            capture.locale_tag = Some("en-US".to_string());
+            capture.acoustic_confidence_bp = Some(9_000);
+            capture.vad_confidence_bp = Some(9_000);
+            capture.speech_likeness_bp = Some(9_000);
+            capture.echo_safe_confidence_bp = Some(9_200);
+            capture.nearfield_confidence_bp = Some(9_300);
+            capture.capture_degraded = Some(false);
+            capture.stream_gap_detected = Some(false);
+        }
+
+        let out = runtime
+            .run_voice_turn(req)
+            .expect("short CJK cough hallucination should be ignored");
         assert_eq!(out.status, "ok");
         assert_eq!(out.outcome, "IGNORED");
         assert_eq!(out.next_move, "listening_window_open");

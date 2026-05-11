@@ -1750,7 +1750,7 @@ private struct DesktopAuthoritativeReplyPlaybackState: Equatable {
         phase: .idle,
         title: "Authoritative reply playback idle",
         summary: "Playback remains available only for cloud-authored reply text that is already visible in the bounded reply surface.",
-        detail: "OpenAI TTS playback only. Local platform speech synthesis is disabled, and this shell remains explicitly non-authoritative without transcript mutation, wake parity, or autonomous-unlock capability."
+        detail: "OpenAI TTS playback is preferred. Native macOS speech may be used only as bounded playback for already-rendered runtime reply text when OpenAI TTS is unavailable; this shell remains explicitly non-authoritative without transcript mutation, wake parity, or autonomous-unlock capability."
     )
 
     static func speaking(authoritativeResponseText: String) -> DesktopAuthoritativeReplyPlaybackState {
@@ -1781,12 +1781,21 @@ private struct DesktopAuthoritativeReplyPlaybackState: Equatable {
         )
     }
 
+    static func playingNativeMacOSTTS(answerTextSHA256: String, fallbackReason: String) -> DesktopAuthoritativeReplyPlaybackState {
+        DesktopAuthoritativeReplyPlaybackState(
+            phase: .speaking,
+            title: "Native macOS fallback reply playback active",
+            summary: "Playing local speech for the already-rendered Selene runtime answer after OpenAI TTS was unavailable.",
+            detail: "PLAYING_NATIVE_MACOS_TTS answer_text_sha256=\(answerTextSHA256) openai_tts_unavailable_reason=\(boundedFailureLogToken(fallbackReason)) native_macos_tts=true fallback_counted_as_success=true local_reply_synthesis=false"
+        )
+    }
+
     static func ttsUnavailable(reason: String) -> DesktopAuthoritativeReplyPlaybackState {
         DesktopAuthoritativeReplyPlaybackState(
             phase: .failed,
             title: "OpenAI TTS reply playback unavailable",
-            summary: "Reply playback requires OpenAI TTS. Local platform speech synthesis is disabled.",
-            detail: "OPENAI_TTS_REQUIRED reason=\(boundedFailureLogToken(reason)) native_macos_tts=false fallback_counted_as_success=false"
+            summary: "Reply playback is unavailable because OpenAI TTS did not return audio and native macOS fallback could not start.",
+            detail: "OPENAI_TTS_UNAVAILABLE reason=\(boundedFailureLogToken(reason)) native_macos_tts_attempted=true fallback_counted_as_success=false"
         )
     }
 
@@ -1827,10 +1836,11 @@ private struct DesktopOpenAITtsPlaybackToken: Equatable {
 }
 
 @MainActor
-private final class DesktopAuthoritativeReplyPlaybackController: NSObject, ObservableObject, AVAudioPlayerDelegate {
+private final class DesktopAuthoritativeReplyPlaybackController: NSObject, ObservableObject, AVAudioPlayerDelegate, AVSpeechSynthesizerDelegate {
     @Published private(set) var playbackState: DesktopAuthoritativeReplyPlaybackState = .idle
 
     private var openAIAudioPlayer: AVAudioPlayer?
+    private var nativeSpeechSynthesizer: AVSpeechSynthesizer?
     private var activeOpenAITtsToken: DesktopOpenAITtsPlaybackToken?
     private var stopWasRequested = false
 
@@ -1975,6 +1985,51 @@ private final class DesktopAuthoritativeReplyPlaybackController: NSObject, Obser
     }
 
     @discardableResult
+    func playNativeMacOSTTSFallback(
+        authoritativeResponseText: String?,
+        answerTextSHA256: String,
+        fallbackReason: String
+    ) -> DesktopAuthoritativeReplyPlaybackState {
+        guard let authoritativeResponseText else {
+            let failedState = DesktopAuthoritativeReplyPlaybackState.failed(
+                summary: "Playback is unavailable because no cloud-authored reply text is present.",
+                detail: "This shell fails closed when canonical runtime reply text is missing and does not fabricate local speech content."
+            )
+            playbackState = failedState
+            return failedState
+        }
+
+        let trimmed = authoritativeResponseText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            let failedState = DesktopAuthoritativeReplyPlaybackState.failed(
+                summary: "Playback is unavailable because the reply text is empty.",
+                detail: "This shell fails closed when canonical runtime reply text is empty and does not synthesize substitute content."
+            )
+            playbackState = failedState
+            return failedState
+        }
+
+        stopAnyPlayback()
+        stopWasRequested = false
+        activeOpenAITtsToken = nil
+
+        let synthesizer = AVSpeechSynthesizer()
+        let utterance = AVSpeechUtterance(string: trimmed)
+        utterance.rate = AVSpeechUtteranceDefaultSpeechRate
+        utterance.volume = 1.0
+        synthesizer.delegate = self
+        nativeSpeechSynthesizer = synthesizer
+        synthesizer.speak(utterance)
+
+        let playingState = DesktopAuthoritativeReplyPlaybackState.playingNativeMacOSTTS(
+            answerTextSHA256: answerTextSHA256,
+            fallbackReason: fallbackReason
+        )
+        playbackState = playingState
+        return playingState
+    }
+
+    @discardableResult
     func stop() -> DesktopAuthoritativeReplyPlaybackState {
         stopWasRequested = true
         stopAnyPlayback()
@@ -1996,6 +2051,13 @@ private final class DesktopAuthoritativeReplyPlaybackController: NSObject, Obser
             openAIAudioPlayer.stop()
         }
         openAIAudioPlayer = nil
+        if let nativeSpeechSynthesizer {
+            nativeSpeechSynthesizer.delegate = nil
+            if nativeSpeechSynthesizer.isSpeaking {
+                nativeSpeechSynthesizer.stopSpeaking(at: .immediate)
+            }
+        }
+        nativeSpeechSynthesizer = nil
     }
 
     nonisolated func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
@@ -2024,6 +2086,43 @@ private final class DesktopAuthoritativeReplyPlaybackController: NSObject, Obser
                 summary: "OpenAI TTS reply playback could not decode the returned audio.",
                 detail: "PLAYBACK_FAILED fallback_counted_as_success=false"
             )
+        }
+    }
+
+    nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
+        Task { @MainActor in
+            guard nativeSpeechSynthesizer === synthesizer else {
+                return
+            }
+            synthesizer.delegate = nil
+            nativeSpeechSynthesizer = nil
+            activeOpenAITtsToken = nil
+            if stopWasRequested {
+                stopWasRequested = false
+                playbackState = .stopped()
+            } else {
+                playbackState = .completed()
+            }
+        }
+    }
+
+    nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance) {
+        Task { @MainActor in
+            guard nativeSpeechSynthesizer === synthesizer else {
+                return
+            }
+            synthesizer.delegate = nil
+            nativeSpeechSynthesizer = nil
+            activeOpenAITtsToken = nil
+            if stopWasRequested {
+                stopWasRequested = false
+                playbackState = .stopped()
+            } else {
+                playbackState = .failed(
+                    summary: "Native macOS TTS fallback ended before completion.",
+                    detail: "NATIVE_MACOS_TTS_FAILED fallback_counted_as_success=false local_reply_synthesis=false"
+                )
+            }
         }
     }
 
@@ -19847,14 +19946,24 @@ struct DesktopSessionShellView: View {
         desktopOpenAITtsPlaybackReferenceText = authoritativeResponseText
 
         guard DesktopOpenAITtsFeatureFlag.isEnabled else {
+            desktopOpenAITtsPlaybackGeneration &+= 1
+            let answerTextSHA256 = desktopSessionSHA256Hex(Data(authoritativeResponseText.utf8))
+            beginDesktopOpenAITtsSelfEchoGate(reason: "native_macos_tts_fallback_feature_flag_off")
             desktopAppendRuntimeBridgeDebugLog(
-                "desktop openai tts unavailable reason=feature_flag_off native_macos_tts=false"
+                "desktop openai tts unavailable reason=feature_flag_off native_macos_tts=true fallback_attempted=true"
             )
             desktopAuthoritativeReplyPlaybackState = desktopAuthoritativeReplyPlaybackController
-                .failClosedWithoutNativePlayback(
+                .playNativeMacOSTTSFallback(
                     authoritativeResponseText: authoritativeResponseText,
+                    answerTextSHA256: answerTextSHA256,
                     fallbackReason: "feature_flag_off"
                 )
+            desktopAppendRuntimeBridgeDebugLog(
+                "\(desktopTraceClockFields()) desktop native macos tts fallback phase=\(desktopAuthoritativeReplyPlaybackState.phase.rawValue) reason=feature_flag_off fallback_counted_as_success=\(desktopAuthoritativeReplyPlaybackState.phase == .speaking)"
+            )
+            if desktopAuthoritativeReplyPlaybackState.phase != .speaking {
+                releaseDesktopOpenAITtsSelfEchoGateAfterCooldown(reason: "native_tts_fallback_failed_feature_flag_off")
+            }
             return desktopAuthoritativeReplyPlaybackState.phase == .speaking
         }
 
@@ -19915,15 +20024,21 @@ struct DesktopSessionShellView: View {
             }
             let fallbackReason = boundedFailureLogToken(error.localizedDescription)
             desktopAppendRuntimeBridgeDebugLog(
-                "desktop openai tts unavailable reason=\(fallbackReason) native_macos_tts=false fallback_counted_as_success=false"
+                "desktop openai tts unavailable reason=\(fallbackReason) native_macos_tts=true fallback_attempted=true"
             )
             desktopAuthoritativeReplyPlaybackState = desktopAuthoritativeReplyPlaybackController
-                .failClosedWithoutNativePlayback(
+                .playNativeMacOSTTSFallback(
                     authoritativeResponseText: authoritativeResponseText,
+                    answerTextSHA256: answerTextSHA256,
                     fallbackReason: fallbackReason
                 )
-            releaseDesktopOpenAITtsSelfEchoGateAfterCooldown(reason: "request_failed")
-            return false
+            desktopAppendRuntimeBridgeDebugLog(
+                "\(desktopTraceClockFields()) desktop native macos tts fallback phase=\(desktopAuthoritativeReplyPlaybackState.phase.rawValue) reason=\(fallbackReason) fallback_counted_as_success=\(desktopAuthoritativeReplyPlaybackState.phase == .speaking)"
+            )
+            if desktopAuthoritativeReplyPlaybackState.phase != .speaking {
+                releaseDesktopOpenAITtsSelfEchoGateAfterCooldown(reason: "request_failed")
+            }
+            return desktopAuthoritativeReplyPlaybackState.phase == .speaking
         }
     }
 
