@@ -13221,7 +13221,11 @@ mod tests {
                     openai_api_key: None,
                     openai_responses_url: "https://api.openai.com/v1/responses".to_string(),
                     openai_model: "gpt-4o-mini".to_string(),
+                    google_geocode_api_key: None,
                     google_time_zone_api_key: None,
+                    google_geocode_url: "https://maps.googleapis.com/maps/api/geocode/json"
+                        .to_string(),
+                    google_geocode_fixture_json: None,
                     google_time_zone_url: "https://maps.googleapis.com/maps/api/timezone/json".to_string(),
                     google_time_zone_fixture_json: None,
                     timezonedb_api_key: None,
@@ -13266,7 +13270,11 @@ mod tests {
                     openai_api_key: None,
                     openai_responses_url: "https://api.openai.com/v1/responses".to_string(),
                     openai_model: "gpt-4o-mini".to_string(),
+                    google_geocode_api_key: None,
                     google_time_zone_api_key: None,
+                    google_geocode_url: "https://maps.googleapis.com/maps/api/geocode/json"
+                        .to_string(),
+                    google_geocode_fixture_json: None,
                     google_time_zone_url: "https://maps.googleapis.com/maps/api/timezone/json".to_string(),
                     google_time_zone_fixture_json: None,
                     timezonedb_api_key: None,

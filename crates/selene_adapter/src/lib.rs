@@ -36207,6 +36207,43 @@ mod tests {
             .expect("desktop deterministic time request should complete or clarify cleanly")
     }
 
+    fn h_place_resolution_barcelona_geocode_fixture() -> &'static str {
+        r#"{"status":"OK","results":[{"formatted_address":"Barcelona, Spain","geometry":{"location":{"lat":41.3874,"lng":2.1686}}}]}"#
+    }
+
+    fn h_place_resolution_madrid_timezone_fixture() -> &'static str {
+        r#"{"status":"OK","timeZoneId":"Europe/Madrid"}"#
+    }
+
+    fn with_h_place_resolution_fixtures<T>(label: &str, f: impl FnOnce() -> T) -> T {
+        with_isolated_device_vault(
+            label,
+            &[
+                (
+                    "google_geocode_api_key",
+                    "place-resolution-geocode-fixture-key",
+                ),
+                (
+                    "google_time_zone_api_key",
+                    "place-resolution-timezone-fixture-key",
+                ),
+            ],
+            &[
+                (
+                    "GOOGLE_GEOCODE_FIXTURE_JSON",
+                    h_place_resolution_barcelona_geocode_fixture(),
+                ),
+                (
+                    "GOOGLE_TIME_ZONE_FIXTURE_JSON",
+                    h_place_resolution_madrid_timezone_fixture(),
+                ),
+                ("GOOGLE_GEOCODE_URL", "http://127.0.0.1:9/geocode"),
+                ("GOOGLE_TIME_ZONE_URL", "http://127.0.0.1:9/timezone"),
+            ],
+            f,
+        )
+    }
+
     #[test]
     fn h362_time_in_germany_returns_clean_public_answer_without_identity_gate() {
         let out = h362_run_desktop_typed_time_query("what is the time in Germany");
@@ -36257,6 +36294,8 @@ mod tests {
                 "what is the time in United States",
                 "Which city or local place",
             ),
+            ("what is the time in Spain", "Which city or local place"),
+            ("what is the time in Australia", "Which city or local place"),
             ("what is the time in Springfield", "Springfield, Illinois"),
         ] {
             let out = h362_run_desktop_typed_time_query(query);
@@ -36280,6 +36319,9 @@ mod tests {
             assert!(!out.response_text.contains("Retrieved at (unix_ms):"));
             assert!(!out.response_text.contains("Current local time in"));
             assert!(!out.response_text.contains("America/"));
+            assert!(!out.response_text.contains("Australia/"));
+            assert!(!out.response_text.contains("Antarctica/"));
+            assert!(!out.response_text.contains("Europe/Madrid"));
             assert!(!out.response_text.contains("IANA"));
         }
     }
@@ -36380,6 +36422,44 @@ mod tests {
     fn h363_single_timezone_city_time_answers_directly() {
         let out = h362_run_desktop_typed_time_query("what is the time in New York");
         assert_h363_clean_time_answer(&out, "New York");
+    }
+
+    #[test]
+    fn global_place_resolution_barcelona_time_uses_geocode_fixture() {
+        with_h_place_resolution_fixtures("global-place-resolution-barcelona-time", || {
+            let out = h362_run_desktop_typed_time_query("what is the time in Barcelona");
+            assert_h363_clean_time_answer(&out, "Barcelona, Spain");
+            assert!(!out.response_text.contains("Europe/Madrid"));
+            assert!(!out.response_text.contains("I can't resolve"));
+        });
+    }
+
+    #[test]
+    fn global_place_resolution_spain_barcelona_followup_uses_same_thread_slot() {
+        with_h_place_resolution_fixtures(
+            "global-place-resolution-spain-barcelona-followup",
+            || {
+                let runtime = AdapterRuntime::default();
+                let thread_key = "global-place-resolution-spain-barcelona";
+                let clarify = h363_run_desktop_typed_time_query_on_thread(
+                    &runtime,
+                    thread_key,
+                    363_301,
+                    "what is the time in Spain",
+                );
+                assert_h363_clean_time_clarification(&clarify, "Which city or local place");
+                assert!(!clarify.response_text.contains("Europe/Madrid"));
+
+                let answer = h363_run_desktop_typed_time_query_on_thread(
+                    &runtime,
+                    thread_key,
+                    363_302,
+                    "Barcelona.",
+                );
+                assert_h363_clean_time_answer(&answer, "Barcelona, Spain");
+                assert!(!answer.response_text.contains("I can't resolve"));
+            },
+        );
     }
 
     #[test]

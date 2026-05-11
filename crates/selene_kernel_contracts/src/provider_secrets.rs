@@ -10,6 +10,7 @@ pub enum ProviderSecretId {
     OpenAIApiKey,
     GoogleSttApiKey,
     GoogleTtsApiKey,
+    GoogleGeocodeApiKey,
     GoogleTimeZoneApiKey,
     TimeZoneDbApiKey,
     AzureSpeechKey,
@@ -27,6 +28,7 @@ impl ProviderSecretId {
             Self::OpenAIApiKey => "openai_api_key",
             Self::GoogleSttApiKey => "google_stt_api_key",
             Self::GoogleTtsApiKey => "google_tts_api_key",
+            Self::GoogleGeocodeApiKey => "google_geocode_api_key",
             Self::GoogleTimeZoneApiKey => "google_time_zone_api_key",
             Self::TimeZoneDbApiKey => "timezonedb_api_key",
             Self::AzureSpeechKey => "azure_speech_key",
@@ -44,6 +46,7 @@ impl ProviderSecretId {
             Self::OpenAIApiKey,
             Self::GoogleSttApiKey,
             Self::GoogleTtsApiKey,
+            Self::GoogleGeocodeApiKey,
             Self::GoogleTimeZoneApiKey,
             Self::TimeZoneDbApiKey,
             Self::AzureSpeechKey,
@@ -62,6 +65,9 @@ impl ProviderSecretId {
             "openai_api_key" => Some(Self::OpenAIApiKey),
             "google_stt_api_key" => Some(Self::GoogleSttApiKey),
             "google_tts_api_key" => Some(Self::GoogleTtsApiKey),
+            "google_geocode_api_key" | "google_geocoding_api_key" => {
+                Some(Self::GoogleGeocodeApiKey)
+            }
             "google_time_zone_api_key" | "google_timezone_api_key" => {
                 Some(Self::GoogleTimeZoneApiKey)
             }

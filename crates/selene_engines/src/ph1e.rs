@@ -588,7 +588,10 @@ pub struct Ph1eProviderConfig {
     pub openai_api_key: Option<String>,
     pub openai_responses_url: String,
     pub openai_model: String,
+    pub google_geocode_api_key: Option<String>,
     pub google_time_zone_api_key: Option<String>,
+    pub google_geocode_url: String,
+    pub google_geocode_fixture_json: Option<String>,
     pub google_time_zone_url: String,
     pub google_time_zone_fixture_json: Option<String>,
     pub timezonedb_api_key: Option<String>,
@@ -618,11 +621,16 @@ impl Ph1eProviderConfig {
                 .unwrap_or_else(|_| "https://api.openai.com/v1/responses".to_string()),
             openai_model: env::var("OPENAI_WEB_FALLBACK_MODEL")
                 .unwrap_or_else(|_| "gpt-4o-mini".to_string()),
+            google_geocode_api_key: None,
             google_time_zone_api_key: None,
+            google_geocode_url: env::var("GOOGLE_GEOCODE_URL").unwrap_or_else(|_| {
+                "https://maps.googleapis.com/maps/api/geocode/json".to_string()
+            }),
+            google_geocode_fixture_json: env::var("GOOGLE_GEOCODE_FIXTURE_JSON").ok(),
             google_time_zone_url: env::var("GOOGLE_TIME_ZONE_URL").unwrap_or_else(|_| {
                 "https://maps.googleapis.com/maps/api/timezone/json".to_string()
             }),
-            google_time_zone_fixture_json: None,
+            google_time_zone_fixture_json: env::var("GOOGLE_TIME_ZONE_FIXTURE_JSON").ok(),
             timezonedb_api_key: None,
             timezonedb_url: env::var("TIMEZONEDB_URL")
                 .unwrap_or_else(|_| "https://api.timezonedb.com/v2.1/get-time-zone".to_string()),
@@ -1730,6 +1738,15 @@ impl Ph1eRuntime {
             .or_else(|| self.resolve_secret_from_vault(ProviderSecretId::GoogleTimeZoneApiKey))
     }
 
+    fn resolve_google_geocode_api_key(&self) -> Option<String> {
+        self.provider_config
+            .google_geocode_api_key
+            .clone()
+            .and_then(trim_non_empty)
+            .or_else(|| self.resolve_secret_from_vault(ProviderSecretId::GoogleGeocodeApiKey))
+            .or_else(|| self.resolve_google_time_zone_api_key())
+    }
+
     fn resolve_timezonedb_api_key(&self) -> Option<String> {
         self.provider_config
             .timezonedb_api_key
@@ -1875,6 +1892,7 @@ impl Ph1eRuntime {
         current_time_result_for_query_with_provider_config(
             query,
             &self.provider_config,
+            self.resolve_google_geocode_api_key(),
             self.resolve_google_time_zone_api_key(),
             self.resolve_timezonedb_api_key(),
             timeout_ms,
@@ -9233,6 +9251,13 @@ struct TimeLocation {
     zone: String,
     display_label: String,
     geo: Option<GeoPoint>,
+    requires_provider_timezone: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct GeocodedPlace {
+    display_label: String,
+    geo: GeoPoint,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -9253,36 +9278,19 @@ struct TimeComputation {
 fn current_time_result_for_query_with_provider_config(
     query: &str,
     provider_config: &Ph1eProviderConfig,
+    google_geocode_api_key: Option<String>,
     google_api_key: Option<String>,
     timezonedb_api_key: Option<String>,
     timeout_ms: u32,
 ) -> Result<TimeComputation, ToolFailPayload> {
     match resolve_time_location_for_query(query) {
-        TimeLocationResolution::Resolved(location) => {
-            let provider_resolution = resolve_time_zone_id_with_provider_ladder(
-                &location,
-                provider_config,
-                google_api_key.as_deref(),
-                timezonedb_api_key.as_deref(),
-                timeout_ms,
-            );
-            let zone = provider_resolution
-                .zone
-                .as_deref()
-                .unwrap_or(location.zone.as_str());
-            let local_time_iso =
-                current_time_iso_for_zone_and_label(zone, location.display_label.as_str())
-                    .ok_or_else(|| {
-                        ToolFailPayload::with_detail(
-                            reason_codes::E_FAIL_PROVIDER_UPSTREAM,
-                            format!("provider=system_tz error=timezone_unavailable zone={zone}"),
-                        )
-                    })?;
-            Ok(TimeComputation {
-                local_time_iso,
-                provider_hint: provider_resolution.provider_hint,
-            })
-        }
+        TimeLocationResolution::Resolved(location) => current_time_computation_for_location(
+            &location,
+            provider_config,
+            google_api_key.as_deref(),
+            timezonedb_api_key.as_deref(),
+            timeout_ms,
+        ),
         TimeLocationResolution::DefaultUtc => Ok(TimeComputation {
             local_time_iso: current_utc_time_iso(SystemTime::now()),
             provider_hint: "system_utc".to_string(),
@@ -9298,11 +9306,65 @@ fn current_time_result_for_query_with_provider_config(
                 alternatives.join("|")
             ),
         )),
-        TimeLocationResolution::Unsupported => Err(ToolFailPayload::with_detail(
-            reason_codes::E_FAIL_QUERY_PARSE,
-            "unsupported_time_location".to_string(),
-        )),
+        TimeLocationResolution::Unsupported => {
+            if let Some(location) = resolve_time_location_with_geocode(
+                query,
+                provider_config,
+                google_geocode_api_key.as_deref(),
+                timeout_ms,
+            ) {
+                current_time_computation_for_location(
+                    &location,
+                    provider_config,
+                    google_api_key.as_deref(),
+                    timezonedb_api_key.as_deref(),
+                    timeout_ms,
+                )
+            } else {
+                Err(ToolFailPayload::with_detail(
+                    reason_codes::E_FAIL_QUERY_PARSE,
+                    "unsupported_time_location".to_string(),
+                ))
+            }
+        }
     }
+}
+
+fn current_time_computation_for_location(
+    location: &TimeLocation,
+    provider_config: &Ph1eProviderConfig,
+    google_api_key: Option<&str>,
+    timezonedb_api_key: Option<&str>,
+    timeout_ms: u32,
+) -> Result<TimeComputation, ToolFailPayload> {
+    let provider_resolution = resolve_time_zone_id_with_provider_ladder(
+        location,
+        provider_config,
+        google_api_key,
+        timezonedb_api_key,
+        timeout_ms,
+    );
+    let zone = provider_resolution
+        .zone
+        .as_deref()
+        .or_else(|| (!location.requires_provider_timezone).then_some(location.zone.as_str()))
+        .ok_or_else(|| {
+            ToolFailPayload::with_detail(
+                reason_codes::E_FAIL_PROVIDER_UPSTREAM,
+                "provider=place_resolution error=timezone_unavailable".to_string(),
+            )
+        })?;
+    let local_time_iso = current_time_iso_for_zone_and_label(zone, location.display_label.as_str())
+        .ok_or_else(|| {
+            ToolFailPayload::with_detail(
+                reason_codes::E_FAIL_PROVIDER_UPSTREAM,
+                format!("provider=system_tz error=timezone_unavailable zone={zone}"),
+            )
+        })?;
+    Ok(TimeComputation {
+        local_time_iso,
+        provider_hint: provider_resolution.provider_hint,
+    })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -9337,7 +9399,11 @@ fn resolve_time_zone_id_with_provider_ladder(
         ) {
             return TimeProviderResolution {
                 zone: Some(zone),
-                provider_hint: "google_time_zone".to_string(),
+                provider_hint: if location.requires_provider_timezone {
+                    "google_geocode+google_time_zone".to_string()
+                } else {
+                    "google_time_zone".to_string()
+                },
             };
         }
     }
@@ -9354,14 +9420,22 @@ fn resolve_time_zone_id_with_provider_ladder(
         ) {
             return TimeProviderResolution {
                 zone: Some(zone),
-                provider_hint: "timezonedb".to_string(),
+                provider_hint: if location.requires_provider_timezone {
+                    "google_geocode+timezonedb".to_string()
+                } else {
+                    "timezonedb".to_string()
+                },
             };
         }
     }
 
     TimeProviderResolution {
-        zone: Some(location.zone.clone()),
-        provider_hint: "system_tzdb".to_string(),
+        zone: (!location.requires_provider_timezone).then_some(location.zone.clone()),
+        provider_hint: if location.requires_provider_timezone {
+            "place_resolution_timezone_unavailable".to_string()
+        } else {
+            "system_tzdb".to_string()
+        },
     }
 }
 
@@ -9411,6 +9485,93 @@ fn run_google_time_zone_lookup(
         .ok_or_else(|| ProviderCallError::new("google_time_zone", "timezone_missing", None))
 }
 
+fn resolve_time_location_with_geocode(
+    query: &str,
+    provider_config: &Ph1eProviderConfig,
+    google_api_key: Option<&str>,
+    timeout_ms: u32,
+) -> Option<TimeLocation> {
+    let api_key = google_api_key?;
+    let place_text = extract_time_place_text(query)?;
+    let geocoded = run_google_geocode_lookup(
+        provider_config.google_geocode_url.as_str(),
+        api_key,
+        place_text.as_str(),
+        timeout_ms,
+        provider_config.user_agent.as_str(),
+        &provider_config.proxy_config,
+        provider_config.google_geocode_fixture_json.as_deref(),
+    )
+    .ok()?;
+    Some(TimeLocation {
+        zone: String::new(),
+        display_label: geocoded.display_label,
+        geo: Some(geocoded.geo),
+        requires_provider_timezone: true,
+    })
+}
+
+fn run_google_geocode_lookup(
+    endpoint: &str,
+    api_key: &str,
+    place_text: &str,
+    timeout_ms: u32,
+    user_agent: &str,
+    proxy_config: &Ph1eProxyConfig,
+    fixture_json: Option<&str>,
+) -> Result<GeocodedPlace, ProviderCallError> {
+    let body = if let Some(fixture) = fixture_json {
+        serde_json::from_str::<Value>(fixture)
+            .map_err(|_| ProviderCallError::new("google_geocode", "json_parse", None))?
+    } else {
+        let agent = build_http_agent(timeout_ms, user_agent, proxy_config)
+            .map_err(|_| ProviderCallError::new("google_geocode", "config_invalid", None))?;
+        let response = agent
+            .get(endpoint)
+            .set("Accept", "application/json")
+            .query("address", place_text)
+            .query("key", api_key)
+            .call()
+            .map_err(|e| provider_error_from_ureq("google_geocode", e))?;
+        serde_json::from_reader(response.into_reader())
+            .map_err(|_| ProviderCallError::new("google_geocode", "json_parse", None))?
+    };
+
+    let status = body
+        .get("status")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    if status != "OK" {
+        return Err(ProviderCallError::new(
+            "google_geocode",
+            "status_not_ok",
+            None,
+        ));
+    }
+    let first = body
+        .get("results")
+        .and_then(Value::as_array)
+        .and_then(|results| results.first())
+        .ok_or_else(|| ProviderCallError::new("google_geocode", "result_missing", None))?;
+    let lat = first
+        .pointer("/geometry/location/lat")
+        .and_then(Value::as_f64)
+        .ok_or_else(|| ProviderCallError::new("google_geocode", "latitude_missing", None))?;
+    let lon = first
+        .pointer("/geometry/location/lng")
+        .and_then(Value::as_f64)
+        .ok_or_else(|| ProviderCallError::new("google_geocode", "longitude_missing", None))?;
+    let geo = geo_point_from_decimal(lat, lon)
+        .ok_or_else(|| ProviderCallError::new("google_geocode", "coordinates_invalid", None))?;
+    let display_label = first
+        .get("formatted_address")
+        .and_then(Value::as_str)
+        .and_then(trim_non_empty_str)
+        .unwrap_or(place_text)
+        .to_string();
+    Ok(GeocodedPlace { display_label, geo })
+}
+
 fn run_timezonedb_lookup(
     endpoint: &str,
     api_key: &str,
@@ -9456,6 +9617,7 @@ fn run_timezonedb_lookup(
 
 fn resolve_time_location_for_query(query: &str) -> TimeLocationResolution {
     let normalized = normalize_location_text(query);
+    let extracted_place_text = extract_time_place_text(query);
     if is_missing_time_location_query(query) {
         return TimeLocationResolution::MissingLocation;
     }
@@ -9469,6 +9631,7 @@ fn resolve_time_location_for_query(query: &str) -> TimeLocationResolution {
             zone: "UTC".to_string(),
             display_label: "UTC".to_string(),
             geo: None,
+            requires_provider_timezone: false,
         });
     }
 
@@ -9485,6 +9648,7 @@ fn resolve_time_location_for_query(query: &str) -> TimeLocationResolution {
             zone: zone.zone.clone(),
             display_label: time_zone_display_label(zone.zone.as_str()),
             geo: zone.geo,
+            requires_provider_timezone: false,
         });
     }
 
@@ -9502,6 +9666,7 @@ fn resolve_time_location_for_query(query: &str) -> TimeLocationResolution {
             zone: city_matches[0].zone.clone(),
             display_label: zone_terminal_component(&city_matches[0].zone),
             geo: city_matches[0].geo,
+            requires_provider_timezone: false,
         });
     }
     if city_matches.len() > 1 {
@@ -9511,7 +9676,13 @@ fn resolve_time_location_for_query(query: &str) -> TimeLocationResolution {
     let countries = country_code_names();
     let mut country_matches: Vec<(&str, &str)> = countries
         .iter()
-        .filter(|(_, name)| contains_location_phrase(&normalized, &normalize_location_text(name)))
+        .filter(|(_, name)| {
+            if let Some(place_text) = extracted_place_text.as_deref() {
+                place_text_exactly_matches_country(place_text, name)
+            } else {
+                contains_location_phrase(&normalized, &normalize_location_text(name))
+            }
+        })
         .map(|(code, name)| (code.as_str(), name.as_str()))
         .collect();
     country_matches.sort_by(|a, b| b.1.len().cmp(&a.1.len()));
@@ -9526,6 +9697,7 @@ fn resolve_time_location_for_query(query: &str) -> TimeLocationResolution {
                 zone: matching_zones[0].zone.clone(),
                 display_label: (*_name).to_string(),
                 geo: matching_zones[0].geo,
+                requires_provider_timezone: false,
             });
         }
         if matching_zones.len() > 1 {
@@ -9534,6 +9706,7 @@ fn resolve_time_location_for_query(query: &str) -> TimeLocationResolution {
                     zone: single_zone.zone.clone(),
                     display_label: (*_name).to_string(),
                     geo: single_zone.geo,
+                    requires_provider_timezone: false,
                 });
             }
             return TimeLocationResolution::Ambiguous(alternatives_for_country_entries(
@@ -9962,6 +10135,7 @@ fn explicit_time_location_alias(normalized_query: &str) -> Option<TimeLocation> 
                     lat_micro,
                     lon_micro,
                 }),
+                requires_provider_timezone: false,
             });
         }
     }
@@ -10023,8 +10197,71 @@ fn microdegrees_to_decimal_string(value: i32) -> String {
     format!("{sign}{}.{:06}", absolute / 1_000_000, absolute % 1_000_000)
 }
 
+fn geo_point_from_decimal(lat: f64, lon: f64) -> Option<GeoPoint> {
+    if !lat.is_finite()
+        || !lon.is_finite()
+        || !(-90.0..=90.0).contains(&lat)
+        || !(-180.0..=180.0).contains(&lon)
+    {
+        return None;
+    }
+    Some(GeoPoint {
+        lat_micro: (lat * 1_000_000.0).round() as i32,
+        lon_micro: (lon * 1_000_000.0).round() as i32,
+    })
+}
+
 fn zone_terminal_component(zone: &str) -> String {
     zone.rsplit('/').next().unwrap_or(zone).replace('_', " ")
+}
+
+fn extract_time_place_text(query: &str) -> Option<String> {
+    let trimmed = query.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let lower = trimmed.to_ascii_lowercase();
+    for marker in [
+        "what time is it in ",
+        "what's the time in ",
+        "what is the time in ",
+        "current time in ",
+        "local time in ",
+        "time in ",
+    ] {
+        if let Some(index) = lower.rfind(marker) {
+            return clean_extracted_time_place_text(&trimmed[index + marker.len()..]);
+        }
+    }
+    None
+}
+
+fn clean_extracted_time_place_text(raw: &str) -> Option<String> {
+    let mut out = raw
+        .trim()
+        .trim_matches(|ch: char| matches!(ch, '?' | '!' | '.' | ':' | ';' | ',' | '"' | '\''))
+        .trim()
+        .to_string();
+    for suffix in [" right now", " now", " please", " today"] {
+        let lower = out.to_ascii_lowercase();
+        if lower.ends_with(suffix) {
+            out.truncate(out.len().saturating_sub(suffix.len()));
+            out = out
+                .trim()
+                .trim_matches(|ch: char| matches!(ch, '?' | '!' | '.' | ':' | ';' | ','))
+                .trim()
+                .to_string();
+        }
+    }
+    trim_non_empty(out)
+}
+
+fn place_text_exactly_matches_country(place_text: &str, country_name: &str) -> bool {
+    let place = normalize_location_text(place_text);
+    let country = normalize_location_text(country_name);
+    let place = place.trim();
+    let country = country.trim();
+    !place.is_empty() && (place == country || place == format!("the {country}"))
 }
 
 fn normalize_location_text(raw: &str) -> String {
@@ -10662,7 +10899,10 @@ mod tests {
             openai_api_key: None,
             openai_responses_url: "https://api.openai.com/v1/responses".to_string(),
             openai_model: "gpt-4o-mini".to_string(),
+            google_geocode_api_key: None,
             google_time_zone_api_key: None,
+            google_geocode_url: "https://maps.googleapis.com/maps/api/geocode/json".to_string(),
+            google_geocode_fixture_json: None,
             google_time_zone_url: "https://maps.googleapis.com/maps/api/timezone/json".to_string(),
             google_time_zone_fixture_json: None,
             timezonedb_api_key: None,
@@ -10676,6 +10916,50 @@ mod tests {
             },
             url_fetch_fixture_html: Some(fixture.url_fetch_fixture_html.clone()),
         }
+    }
+
+    fn provider_config_for_place_resolution(
+        geocode_fixture_json: Option<&str>,
+        time_zone_fixture_json: Option<&str>,
+    ) -> Ph1eProviderConfig {
+        Ph1eProviderConfig {
+            brave_api_key: None,
+            brave_web_url: "https://api.search.brave.com/res/v1/web/search".to_string(),
+            brave_news_url: "https://api.search.brave.com/res/v1/news/search".to_string(),
+            brave_image_url: BRAVE_IMAGE_DEFAULT_URL.to_string(),
+            brave_web_fixture_json: None,
+            brave_news_fixture_json: None,
+            brave_image_fixture_json: None,
+            openai_api_key: None,
+            openai_responses_url: "https://api.openai.com/v1/responses".to_string(),
+            openai_model: "gpt-4o-mini".to_string(),
+            google_geocode_api_key: geocode_fixture_json
+                .map(|_| "google-geocode-fixture-key".to_string()),
+            google_time_zone_api_key: time_zone_fixture_json
+                .map(|_| "google-time-zone-fixture-key".to_string()),
+            google_geocode_url: "http://127.0.0.1:9/geocode".to_string(),
+            google_geocode_fixture_json: geocode_fixture_json.map(str::to_string),
+            google_time_zone_url: "http://127.0.0.1:9/timezone".to_string(),
+            google_time_zone_fixture_json: time_zone_fixture_json.map(str::to_string),
+            timezonedb_api_key: None,
+            timezonedb_url: "http://127.0.0.1:9/timezonedb".to_string(),
+            timezonedb_fixture_json: None,
+            user_agent: "selene-ph1e-test/1.0".to_string(),
+            proxy_config: Ph1eProxyConfig {
+                mode: Ph1eProxyMode::Off,
+                http_proxy_url: None,
+                https_proxy_url: None,
+            },
+            url_fetch_fixture_html: None,
+        }
+    }
+
+    fn barcelona_geocode_fixture() -> &'static str {
+        r#"{"status":"OK","results":[{"formatted_address":"Barcelona, Spain","geometry":{"location":{"lat":41.3874,"lng":2.1686}}}]}"#
+    }
+
+    fn madrid_time_zone_fixture() -> &'static str {
+        r#"{"status":"OK","timeZoneId":"Europe/Madrid"}"#
     }
 
     #[test]
@@ -10787,7 +11071,10 @@ mod tests {
                 openai_api_key: None,
                 openai_responses_url: "https://api.openai.com/v1/responses".to_string(),
                 openai_model: "gpt-4o-mini".to_string(),
+                google_geocode_api_key: None,
                 google_time_zone_api_key: Some("google-fixture-key".to_string()),
+                google_geocode_url: "https://maps.googleapis.com/maps/api/geocode/json".to_string(),
+                google_geocode_fixture_json: None,
                 google_time_zone_url: "https://maps.googleapis.com/maps/api/timezone/json"
                     .to_string(),
                 google_time_zone_fixture_json: Some(
@@ -10843,7 +11130,10 @@ mod tests {
                 openai_api_key: None,
                 openai_responses_url: "https://api.openai.com/v1/responses".to_string(),
                 openai_model: "gpt-4o-mini".to_string(),
+                google_geocode_api_key: None,
                 google_time_zone_api_key: Some("google-fixture-key".to_string()),
+                google_geocode_url: "https://maps.googleapis.com/maps/api/geocode/json".to_string(),
+                google_geocode_fixture_json: None,
                 google_time_zone_url: "https://maps.googleapis.com/maps/api/timezone/json"
                     .to_string(),
                 google_time_zone_fixture_json: Some(r#"{"status":"REQUEST_DENIED"}"#.to_string()),
@@ -10883,6 +11173,84 @@ mod tests {
             }
             other => panic!("expected time result, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn place_resolution_barcelona_time_uses_geocode_before_timezone_lookup() {
+        let rt = Ph1eRuntime::new_with_provider_config(
+            Ph1eConfig::mvp_v1(),
+            provider_config_for_place_resolution(
+                Some(barcelona_geocode_fixture()),
+                Some(madrid_time_zone_fixture()),
+            ),
+        );
+        let out = rt.run(&req(
+            ToolName::Time,
+            "what is the time in Barcelona",
+            false,
+            false,
+        ));
+        assert_eq!(out.tool_status, ToolStatus::Ok, "{out:?}");
+        assert_eq!(
+            out.source_metadata
+                .as_ref()
+                .and_then(|meta| meta.provider_hint.as_deref()),
+            Some("google_geocode+google_time_zone")
+        );
+        match out.tool_result.expect("time result should be present") {
+            ToolResult::Time { local_time_iso } => {
+                assert!(local_time_iso.contains("[Europe/Madrid|Barcelona, Spain]"));
+            }
+            other => panic!("expected time result, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn place_resolution_spain_barcelona_does_not_collapse_to_country_ambiguity() {
+        let rt = Ph1eRuntime::new_with_provider_config(
+            Ph1eConfig::mvp_v1(),
+            provider_config_for_place_resolution(
+                Some(barcelona_geocode_fixture()),
+                Some(madrid_time_zone_fixture()),
+            ),
+        );
+        let out = rt.run(&req(
+            ToolName::Time,
+            "what's the time in Spain, Barcelona?",
+            false,
+            false,
+        ));
+        assert_eq!(out.tool_status, ToolStatus::Ok, "{out:?}");
+        let detail = out.fail_detail.as_deref().unwrap_or_default();
+        assert!(!detail.contains("ambiguous_time_location"), "{detail}");
+        match out.tool_result.expect("time result should be present") {
+            ToolResult::Time { local_time_iso } => {
+                assert!(local_time_iso.contains("[Europe/Madrid|Barcelona, Spain]"));
+            }
+            other => panic!("expected time result, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn place_resolution_provider_off_does_not_hardcode_barcelona() {
+        let rt = Ph1eRuntime::new_with_provider_config(
+            Ph1eConfig::mvp_v1(),
+            provider_config_for_place_resolution(None, None),
+        );
+        let out = rt.run(&req(
+            ToolName::Time,
+            "what is the time in Barcelona",
+            false,
+            false,
+        ));
+        assert_eq!(out.tool_status, ToolStatus::Fail);
+        assert_eq!(out.reason_code, reason_codes::E_FAIL_QUERY_PARSE);
+        assert!(out
+            .fail_detail
+            .as_deref()
+            .unwrap_or_default()
+            .contains("unsupported_time_location"));
+        assert!(out.tool_result.is_none());
     }
 
     #[test]
@@ -14378,7 +14746,11 @@ mod tests {
                     openai_api_key: None,
                     openai_responses_url: "https://api.openai.com/v1/responses".to_string(),
                     openai_model: "gpt-4o-mini".to_string(),
+                    google_geocode_api_key: None,
                     google_time_zone_api_key: None,
+                    google_geocode_url: "https://maps.googleapis.com/maps/api/geocode/json"
+                        .to_string(),
+                    google_geocode_fixture_json: None,
                     google_time_zone_url: "https://maps.googleapis.com/maps/api/timezone/json"
                         .to_string(),
                     google_time_zone_fixture_json: None,
@@ -14462,7 +14834,11 @@ mod tests {
                     openai_api_key: None,
                     openai_responses_url: "https://api.openai.com/v1/responses".to_string(),
                     openai_model: "gpt-4o-mini".to_string(),
+                    google_geocode_api_key: None,
                     google_time_zone_api_key: None,
+                    google_geocode_url: "https://maps.googleapis.com/maps/api/geocode/json"
+                        .to_string(),
+                    google_geocode_fixture_json: None,
                     google_time_zone_url: "https://maps.googleapis.com/maps/api/timezone/json"
                         .to_string(),
                     google_time_zone_fixture_json: None,
@@ -14512,7 +14888,11 @@ mod tests {
                     openai_api_key: Some("test_openai_key".to_string()),
                     openai_responses_url: "http://127.0.0.1:9/v1/responses".to_string(),
                     openai_model: "gpt-4o-mini".to_string(),
+                    google_geocode_api_key: None,
                     google_time_zone_api_key: None,
+                    google_geocode_url: "https://maps.googleapis.com/maps/api/geocode/json"
+                        .to_string(),
+                    google_geocode_fixture_json: None,
                     google_time_zone_url: "https://maps.googleapis.com/maps/api/timezone/json"
                         .to_string(),
                     google_time_zone_fixture_json: None,
@@ -14749,7 +15129,10 @@ mod tests {
             openai_api_key: None,
             openai_responses_url: "https://api.openai.com/v1/responses".to_string(),
             openai_model: "gpt-4o-mini".to_string(),
+            google_geocode_api_key: None,
             google_time_zone_api_key: None,
+            google_geocode_url: "https://maps.googleapis.com/maps/api/geocode/json".to_string(),
+            google_geocode_fixture_json: None,
             google_time_zone_url: "https://maps.googleapis.com/maps/api/timezone/json".to_string(),
             google_time_zone_fixture_json: None,
             timezonedb_api_key: None,
@@ -14791,7 +15174,10 @@ mod tests {
             openai_api_key: None,
             openai_responses_url: "https://api.openai.com/v1/responses".to_string(),
             openai_model: "gpt-4o-mini".to_string(),
+            google_geocode_api_key: None,
             google_time_zone_api_key: None,
+            google_geocode_url: "https://maps.googleapis.com/maps/api/geocode/json".to_string(),
+            google_geocode_fixture_json: None,
             google_time_zone_url: "https://maps.googleapis.com/maps/api/timezone/json".to_string(),
             google_time_zone_fixture_json: None,
             timezonedb_api_key: None,
@@ -14885,7 +15271,11 @@ mod tests {
                     openai_api_key: Some("stage7-openai-fallback-key".to_string()),
                     openai_responses_url: "http://127.0.0.1:9/v1/responses".to_string(),
                     openai_model: "gpt-4o-mini".to_string(),
+                    google_geocode_api_key: None,
                     google_time_zone_api_key: None,
+                    google_geocode_url: "https://maps.googleapis.com/maps/api/geocode/json"
+                        .to_string(),
+                    google_geocode_fixture_json: None,
                     google_time_zone_url: "https://maps.googleapis.com/maps/api/timezone/json"
                         .to_string(),
                     google_time_zone_fixture_json: None,
