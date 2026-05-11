@@ -10227,6 +10227,7 @@ fn extract_time_place_text(query: &str) -> Option<String> {
         "what is the time in ",
         "current time in ",
         "local time in ",
+        "the time in ",
         "time in ",
     ] {
         if let Some(index) = lower.rfind(marker) {
@@ -10962,6 +10963,14 @@ mod tests {
         r#"{"status":"OK","timeZoneId":"Europe/Madrid"}"#
     }
 
+    fn melbourne_geocode_fixture() -> &'static str {
+        r#"{"status":"OK","results":[{"formatted_address":"Melbourne, Australia","geometry":{"location":{"lat":-37.8136,"lng":144.9631}}}]}"#
+    }
+
+    fn melbourne_time_zone_fixture() -> &'static str {
+        r#"{"status":"OK","timeZoneId":"Australia/Melbourne"}"#
+    }
+
     #[test]
     fn at_e_01_policy_blocks_web_search_in_privacy_mode() {
         let rt = Ph1eRuntime::new(Ph1eConfig::mvp_v1());
@@ -11206,6 +11215,43 @@ mod tests {
     }
 
     #[test]
+    fn place_resolution_melbourne_natural_time_uses_timezone_provider_without_fallback() {
+        let rt = Ph1eRuntime::new_with_provider_config(
+            Ph1eConfig::mvp_v1(),
+            provider_config_for_place_resolution(
+                Some(melbourne_geocode_fixture()),
+                Some(melbourne_time_zone_fixture()),
+            ),
+        );
+        let out = rt.run(&req(
+            ToolName::Time,
+            "I'd like to know the time in Melbourne.",
+            false,
+            false,
+        ));
+        assert_eq!(out.tool_status, ToolStatus::Ok, "{out:?}");
+        assert_eq!(
+            out.source_metadata
+                .as_ref()
+                .and_then(|meta| meta.provider_hint.as_deref()),
+            Some("google_time_zone")
+        );
+        match out.tool_result.expect("time result should be present") {
+            ToolResult::Time { local_time_iso } => {
+                assert!(
+                    local_time_iso.contains("[Australia/Melbourne|Melbourne]"),
+                    "{local_time_iso}"
+                );
+                assert!(
+                    local_time_iso.contains("+10:00") || local_time_iso.contains("+11:00"),
+                    "Melbourne time must carry a local Australian offset: {local_time_iso}"
+                );
+            }
+            other => panic!("expected time result, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn place_resolution_spain_barcelona_does_not_collapse_to_country_ambiguity() {
         let rt = Ph1eRuntime::new_with_provider_config(
             Ph1eConfig::mvp_v1(),
@@ -11251,6 +11297,40 @@ mod tests {
             .unwrap_or_default()
             .contains("unsupported_time_location"));
         assert!(out.tool_result.is_none());
+    }
+
+    #[test]
+    fn place_resolution_provider_off_melbourne_uses_system_tzdb_without_fake_offset() {
+        let rt = Ph1eRuntime::new_with_provider_config(
+            Ph1eConfig::mvp_v1(),
+            provider_config_for_place_resolution(None, None),
+        );
+        let out = rt.run(&req(
+            ToolName::Time,
+            "what time is it in Melbourne",
+            false,
+            false,
+        ));
+        assert_eq!(out.tool_status, ToolStatus::Ok, "{out:?}");
+        assert_eq!(
+            out.source_metadata
+                .as_ref()
+                .and_then(|meta| meta.provider_hint.as_deref()),
+            Some("system_tzdb")
+        );
+        match out.tool_result.expect("time result should be present") {
+            ToolResult::Time { local_time_iso } => {
+                assert!(
+                    local_time_iso.contains("[Australia/Melbourne|Melbourne]"),
+                    "{local_time_iso}"
+                );
+                assert!(
+                    local_time_iso.contains("+10:00") || local_time_iso.contains("+11:00"),
+                    "Melbourne time must carry a local Australian offset: {local_time_iso}"
+                );
+            }
+            other => panic!("expected time result, got {other:?}"),
+        }
     }
 
     #[test]

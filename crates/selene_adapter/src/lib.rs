@@ -2304,6 +2304,15 @@ fn h380_understand_committed_turn(
         };
 
     let mut slots_present = h380_slots_present(lower, raw_user_text);
+    if (final_route == H380Route::WeatherLookup || final_route == H380Route::TimeLookup)
+        && !slots_present
+            .iter()
+            .any(|slot| slot.starts_with("location:"))
+    {
+        if let Some(place) = h380_lookup_place_candidate_for_route(raw_user_text, final_route) {
+            slots_present.push(format!("location:{place}"));
+        }
+    }
     let mut slots_missing = Vec::new();
     let mut slots_repaired = Vec::new();
     if (final_route == H380Route::WeatherLookup || final_route == H380Route::TimeLookup)
@@ -2975,20 +2984,69 @@ fn h380_slots_present(lower: &str, original: &str) -> Vec<String> {
 
 fn h380_contextual_place_followup_location(text: &str) -> Option<String> {
     let normalized = normalize_h379_followup_text(text);
+    if normalized.ends_with(" too") || normalized.ends_with(" as well") {
+        return h380_clean_contextual_place_candidate(&normalized);
+    }
     let candidate = [
         "what about ",
         "same for ",
         "same question for ",
         "same question in ",
         "and ",
+        "also ",
     ]
     .iter()
     .find_map(|prefix| normalized.strip_prefix(prefix))?;
     h380_clean_contextual_place_candidate(candidate)
 }
 
+fn h380_lookup_place_candidate_for_route(text: &str, route: H380Route) -> Option<String> {
+    h380_contextual_place_followup_location(text).or_else(|| match route {
+        H380Route::TimeLookup => h380_explicit_lookup_place_candidate(
+            text,
+            &[
+                "what time is it in ",
+                "what's the time in ",
+                "what is the time in ",
+                "current time in ",
+                "local time in ",
+                "the time in ",
+                "time in ",
+            ],
+        ),
+        H380Route::WeatherLookup => h380_explicit_lookup_place_candidate(
+            text,
+            &[
+                "what's the weather like in ",
+                "what is the weather like in ",
+                "weather like in ",
+                "weather in ",
+                "weather for ",
+                "forecast in ",
+                "forecast for ",
+                "conditions in ",
+                "outside in ",
+            ],
+        ),
+        _ => None,
+    })
+}
+
+fn h380_explicit_lookup_place_candidate(text: &str, markers: &[&str]) -> Option<String> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let lower = trimmed.to_ascii_lowercase();
+    markers.iter().find_map(|marker| {
+        lower.rfind(marker).and_then(|index| {
+            h380_clean_contextual_place_candidate(&trimmed[index + marker.len()..])
+        })
+    })
+}
+
 fn h380_clean_contextual_place_candidate(candidate: &str) -> Option<String> {
-    let cleaned = candidate
+    let mut cleaned = candidate
         .chars()
         .map(|ch| {
             if ch.is_alphanumeric() || ch.is_whitespace() || matches!(ch, '/' | '-' | '\'' | ',') {
@@ -3001,6 +3059,30 @@ fn h380_clean_contextual_place_candidate(candidate: &str) -> Option<String> {
         .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ");
+    loop {
+        let lower = cleaned.to_ascii_lowercase();
+        let Some(stripped) = lower
+            .strip_prefix("in ")
+            .or_else(|| lower.strip_prefix("for "))
+            .or_else(|| lower.strip_prefix("at "))
+        else {
+            break;
+        };
+        let offset = cleaned.len().saturating_sub(stripped.len());
+        cleaned = cleaned[offset..].trim().to_string();
+    }
+    loop {
+        let lower = cleaned.to_ascii_lowercase();
+        let Some(suffix) = [" too", " as well", " also"]
+            .iter()
+            .copied()
+            .find(|suffix| lower.ends_with(suffix))
+        else {
+            break;
+        };
+        cleaned.truncate(cleaned.len().saturating_sub(suffix.len()));
+        cleaned = cleaned.trim().to_string();
+    }
     if cleaned.is_empty() || cleaned.len() > 96 {
         return None;
     }
@@ -3021,6 +3103,24 @@ fn h380_clean_contextual_place_candidate(candidate: &str) -> Option<String> {
             "weather"
                 | "forecast"
                 | "temperature"
+                | "rain"
+                | "raining"
+                | "rainy"
+                | "snow"
+                | "snowing"
+                | "snowy"
+                | "storm"
+                | "storms"
+                | "stormy"
+                | "wind"
+                | "windy"
+                | "humidity"
+                | "humid"
+                | "sun"
+                | "sunny"
+                | "clear"
+                | "cloud"
+                | "cloudy"
                 | "time"
                 | "proof"
                 | "source"
@@ -12812,6 +12912,7 @@ fn h380_bare_place_followup_location(text: &str) -> Option<String> {
         || normalized.starts_with("same for ")
         || normalized.starts_with("same question ")
         || normalized.starts_with("and ")
+        || normalized.starts_with("also ")
     {
         return None;
     }
@@ -13470,6 +13571,7 @@ fn h379_user_safe_provider_name(provider_hint: Option<&str>) -> Option<&'static 
     match provider_hint {
         Some("tomorrow_io_weather") => Some("Tomorrow.io"),
         Some("weatherapi_weather") => Some("WeatherAPI"),
+        Some("google_geocode+google_time_zone") => Some("Google Geocoding and Time Zone"),
         Some("google_time_zone") => Some("Google Time Zone"),
         Some("timezonedb") => Some("TimeZoneDB"),
         Some("system_tzdb") => Some("system time zone data"),
@@ -36215,7 +36317,20 @@ mod tests {
         r#"{"status":"OK","timeZoneId":"Europe/Madrid"}"#
     }
 
-    fn with_h_place_resolution_fixtures<T>(label: &str, f: impl FnOnce() -> T) -> T {
+    fn h_place_resolution_melbourne_geocode_fixture() -> &'static str {
+        r#"{"status":"OK","results":[{"formatted_address":"Melbourne, Australia","geometry":{"location":{"lat":-37.8136,"lng":144.9631}}}]}"#
+    }
+
+    fn h_place_resolution_melbourne_timezone_fixture() -> &'static str {
+        r#"{"status":"OK","timeZoneId":"Australia/Melbourne"}"#
+    }
+
+    fn with_h_place_resolution_fixture_json<T>(
+        label: &str,
+        geocode_fixture_json: &'static str,
+        time_zone_fixture_json: &'static str,
+        f: impl FnOnce() -> T,
+    ) -> T {
         with_isolated_device_vault(
             label,
             &[
@@ -36229,17 +36344,29 @@ mod tests {
                 ),
             ],
             &[
-                (
-                    "GOOGLE_GEOCODE_FIXTURE_JSON",
-                    h_place_resolution_barcelona_geocode_fixture(),
-                ),
-                (
-                    "GOOGLE_TIME_ZONE_FIXTURE_JSON",
-                    h_place_resolution_madrid_timezone_fixture(),
-                ),
+                ("GOOGLE_GEOCODE_FIXTURE_JSON", geocode_fixture_json),
+                ("GOOGLE_TIME_ZONE_FIXTURE_JSON", time_zone_fixture_json),
                 ("GOOGLE_GEOCODE_URL", "http://127.0.0.1:9/geocode"),
                 ("GOOGLE_TIME_ZONE_URL", "http://127.0.0.1:9/timezone"),
             ],
+            f,
+        )
+    }
+
+    fn with_h_place_resolution_fixtures<T>(label: &str, f: impl FnOnce() -> T) -> T {
+        with_h_place_resolution_fixture_json(
+            label,
+            h_place_resolution_barcelona_geocode_fixture(),
+            h_place_resolution_madrid_timezone_fixture(),
+            f,
+        )
+    }
+
+    fn with_h_melbourne_place_resolution_fixtures<T>(label: &str, f: impl FnOnce() -> T) -> T {
+        with_h_place_resolution_fixture_json(
+            label,
+            h_place_resolution_melbourne_geocode_fixture(),
+            h_place_resolution_melbourne_timezone_fixture(),
             f,
         )
     }
@@ -36432,6 +36559,29 @@ mod tests {
             assert!(!out.response_text.contains("Europe/Madrid"));
             assert!(!out.response_text.contains("I can't resolve"));
         });
+    }
+
+    #[test]
+    fn global_place_resolution_melbourne_natural_time_uses_time_tool_without_fallback() {
+        with_h_melbourne_place_resolution_fixtures(
+            "global-place-resolution-melbourne-natural-time",
+            || {
+                let out =
+                    h362_run_desktop_typed_time_query("I'd like to know the time in Melbourne.");
+                assert_h363_clean_time_answer(&out, "Melbourne");
+                assert!(!out.response_text.contains("UTC+10"));
+                assert!(!out.response_text.contains("check a reliable source"));
+                assert!(!out.response_text.contains("I can't resolve"));
+            },
+        );
+    }
+
+    #[test]
+    fn global_place_resolution_provider_off_melbourne_uses_system_tzdb_without_fake_offset() {
+        let out = h362_run_desktop_typed_time_query("What time is it in Melbourne?");
+        assert_h363_clean_time_answer(&out, "Melbourne");
+        assert!(!out.response_text.contains("UTC+10"));
+        assert!(!out.response_text.contains("check a reliable source"));
     }
 
     #[test]
@@ -36630,6 +36780,42 @@ mod tests {
             packet.memory_candidates.is_empty(),
             "active time follow-up must not require PH1.M recall candidates"
         );
+    }
+
+    #[test]
+    fn active_session_context_time_bare_followup_variants_inherit_time_intent() {
+        for (idx, phrase) in [
+            "and London",
+            "London",
+            "London too",
+            "also London",
+            "same for London",
+            "what about in London",
+        ]
+        .iter()
+        .enumerate()
+        {
+            let runtime = AdapterRuntime::default();
+            let thread_key = format!("active-session-time-followup-variant-{idx}");
+            let seed = h363_run_desktop_typed_time_query_on_thread(
+                &runtime,
+                &thread_key,
+                363_240 + (idx as u64 * 2),
+                "What's the time in New York?",
+            );
+            assert_h363_clean_time_answer(&seed, "New York");
+
+            let followup = h363_run_desktop_typed_time_query_on_thread(
+                &runtime,
+                &thread_key,
+                363_241 + (idx as u64 * 2),
+                phrase,
+            );
+            assert_h363_clean_time_answer(&followup, "London");
+            assert!(!followup.response_text.contains("weather"));
+            assert!(!followup.response_text.contains("landmarks"));
+            assert!(!followup.response_text.contains("more context"));
+        }
     }
 
     #[test]
