@@ -1327,7 +1327,8 @@ private struct DesktopAudioEvidenceAccumulator {
             captureStartNS: captureStartNS,
             captureEndNS: captureEndNS
         )
-        let finalTranscriptMatchesTtsEcho = evidenceContext.transcriptMatchesTtsReference(finalTranscript)
+        let finalTranscriptMatchesTtsEcho =
+            ttsEchoRiskForSpeech && evidenceContext.transcriptMatchesTtsReference(finalTranscript)
         let streamGapDetected = maxInterBufferGapNS > 750_000_000 || audioBufferCount == 0
         let rms = appendedAudioBytes == 0 ? 0 : sqrt(accumulatedMeanSquare / Double(Swift.max(appendedAudioBytes / 2, 1)))
         let peakRatio = Double(peakSampleMagnitude) / 32_768.0

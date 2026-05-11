@@ -37288,6 +37288,66 @@ mod tests {
     }
 
     #[test]
+    fn h364_spain_canary_islands_voice_followup_completes_same_thread() {
+        let endpoint = h361_spawn_tomorrow_weather_endpoint(
+            r#"{
+                "data": {
+                    "time": "2026-04-25T03:00:00Z",
+                    "values": {
+                        "temperature": 21.7,
+                        "humidity": 55,
+                        "windSpeed": 3.0,
+                        "weatherCode": 1000
+                    }
+                },
+                "location": {
+                    "name": "Canary Islands"
+                }
+            }"#,
+        );
+        with_isolated_device_vault(
+            "h364-weather-spain-canary-voice",
+            &[],
+            &[
+                ("SELENE_REALTIME_TOMORROW_IO_ENDPOINT", endpoint.as_str()),
+                ("SELENE_REALTIME_TOMORROW_IO_API_KEY", "h364-secret"),
+                ("SELENE_REALTIME_WEATHER_API_KEY", " "),
+                ("SELENE_REALTIME_PROXY_MODE", "off"),
+            ],
+            || {
+                let runtime = AdapterRuntime::default();
+                let thread_key = "h364-weather-spain-canary-voice";
+                let clarify = h364_run_desktop_typed_weather_query_on_thread(
+                    &runtime,
+                    thread_key,
+                    364_031,
+                    "what is the weather in Spain",
+                );
+                assert_h364_clean_weather_clarification(&clarify, "Las Palmas");
+
+                let answer = h364_run_desktop_voice_like_weather_query_on_thread(
+                    &runtime,
+                    thread_key,
+                    364_032,
+                    "Canary Islands",
+                );
+                assert_h364_clean_weather_answer(&answer, "Canary Islands");
+                assert!(answer.response_text.contains("21.7°C"));
+
+                let actor_user_id = UserId::new("tenant_a:user_adapter_test").unwrap();
+                let store = runtime.store.lock().expect("store lock should succeed");
+                let current = store
+                    .ph1x_thread_state_current_row(&actor_user_id, thread_key)
+                    .expect("weather follow-up thread state should persist");
+                assert!(
+                    current.thread_state.pending.is_none(),
+                    "pending Spain weather clarification should clear after voice follow-up resolves"
+                );
+            },
+        );
+    }
+
+    #[test]
     fn h364_springfield_weather_followup_completes_same_thread() {
         let endpoint = h361_spawn_tomorrow_weather_endpoint(
             r#"{
