@@ -105,7 +105,8 @@ use selene_kernel_contracts::ph1lang::{
 use selene_kernel_contracts::ph1learn::{LearnSignalType, WakeLearnSignalV1, WakeLearnTrigger};
 use selene_kernel_contracts::ph1link::{AppPlatform, TokenId};
 use selene_kernel_contracts::ph1m::{
-    MemoryResumeTier, Ph1mRecentArchiveRecallRequest, MEMORY_RESUME_HOT_WINDOW_MS,
+    MemoryResumeTier, MemoryRetentionMode, MemoryThreadDigest, Ph1mRecentArchiveRecallRequest,
+    MEMORY_RESUME_HOT_WINDOW_MS,
 };
 use selene_kernel_contracts::ph1n::{
     Chat as Ph1nChat, Clarify as Ph1nClarify, FieldKey, IntentType, Ph1nRequest, Ph1nResponse,
@@ -5506,6 +5507,7 @@ impl AdapterRuntime {
         user_text_final: Option<String>,
         selene_text_partial: Option<String>,
         selene_text_final: Option<String>,
+        update_recent_archive_digest: bool,
     ) -> Result<(), String> {
         if let Some(text) = user_text_partial {
             self.push_transcript_partial_event(
@@ -5567,6 +5569,15 @@ impl AdapterRuntime {
                 AdapterTranscriptSource::Ph1Write,
             )?;
         }
+        if update_recent_archive_digest {
+            update_recent_archive_digest_from_conversation_ledger(
+                store,
+                now,
+                actor_user_id,
+                session_id,
+                turn_id,
+            )?;
+        }
         Ok(())
     }
 
@@ -5593,6 +5604,7 @@ impl AdapterRuntime {
             update.user_text_final.map(str::to_string),
             None,
             update.selene_text_final.map(str::to_string),
+            update.response.answer_class.as_deref() != Some("memory_recent_archive_recall"),
         )
     }
 
@@ -8090,6 +8102,7 @@ impl AdapterRuntime {
                                 user_text_final.clone(),
                                 None,
                                 Some(response_text.clone()),
+                                false,
                             )
                             .map_err(post_session_error)?;
                         }
@@ -8218,6 +8231,7 @@ impl AdapterRuntime {
                             user_text_final.clone(),
                             None,
                             Some(response.response_text.clone()),
+                            false,
                         )
                         .map_err(post_session_error)?;
                         finalize_session_turn_record(
@@ -8301,6 +8315,7 @@ impl AdapterRuntime {
                                         user_text_final.clone(),
                                         None,
                                         Some(response.response_text.clone()),
+                                        false,
                                     )
                                     .map_err(post_session_error)?;
                                     finalize_session_turn_record(
@@ -8480,6 +8495,7 @@ impl AdapterRuntime {
                         user_text_final.clone(),
                         selene_text_partial.clone(),
                         selene_text_final.clone().or(Some(response_text.clone())),
+                        false,
                     )
                     .map_err(post_session_error)?;
                     finalize_session_turn_record(
@@ -8848,6 +8864,10 @@ impl AdapterRuntime {
                 eprintln!("selene_adapter read-only incident emission failed: {err}");
             }
             let h410_captured_final_for_trace = user_text_final.clone();
+            let update_recent_archive_digest = recent_archive_digest_should_update_for_runtime_turn(
+                user_text_final.as_deref(),
+                &execution_outcome,
+            );
             self.record_transcript_updates(
                 &mut store,
                 now,
@@ -8862,6 +8882,7 @@ impl AdapterRuntime {
                 selene_text_final
                     .or(typed_public_deterministic_answer_text)
                     .or(ph1d_public_answer_text),
+                update_recent_archive_digest,
             )
             .map_err(post_session_error)?;
             if let Some(ph1c) = ph1c_live_outcome.as_ref() {
@@ -13176,6 +13197,18 @@ fn ph1m_recent_archive_recall_query(text: &str) -> bool {
     let compact = normalized.split_whitespace().collect::<Vec<_>>().join(" ");
     let asks_history = compact.contains("what did we discuss")
         || compact.contains("what did we decide")
+        || compact.contains("do you remember")
+        || compact.contains("you remember what")
+        || compact.contains("you remember where")
+        || compact.contains("you remember when")
+        || compact.contains("you remember we")
+        || compact.contains("what were we discussing")
+        || compact.contains("what were we talking about")
+        || compact.contains("we were discussing")
+        || compact.contains("we were talking about")
+        || compact.contains("were we discussing")
+        || compact.contains("were we talking about")
+        || compact.contains("don t remember")
         || compact.contains("find what we")
         || compact.contains("find where we")
         || compact.contains("show me where")
@@ -13184,7 +13217,10 @@ fn ph1m_recent_archive_recall_query(text: &str) -> bool {
     let memory_subject = compact.contains("discuss")
         || compact.contains("decide")
         || compact.contains("decided")
+        || compact.contains("discussing")
         || compact.contains("talked")
+        || compact.contains("talking")
+        || compact.contains("remember")
         || compact.contains("blocker")
         || compact.contains("plan")
         || compact.contains("earlier")
@@ -17482,6 +17518,132 @@ fn append_transcript_final_conversation_turn(
         .append_conversation_turn(input)
         .map_err(storage_error_to_string)?;
     Ok(())
+}
+
+fn update_recent_archive_digest_from_conversation_ledger(
+    store: &mut Ph1fStore,
+    now: MonotonicTimeNs,
+    actor_user_id: &UserId,
+    session_id: Option<SessionId>,
+    turn_id: TurnId,
+) -> Result<(), String> {
+    let Some(session_id) = session_id else {
+        return Ok(());
+    };
+    let rows = store
+        .conversation_ledger()
+        .iter()
+        .filter(|row| {
+            row.user_id == *actor_user_id
+                && row.session_id == Some(session_id)
+                && row.privacy_scope == PrivacyScope::PublicChat
+                && row.tombstone_of_conversation_turn_id.is_none()
+        })
+        .map(|row| (row.role, row.text.clone()))
+        .collect::<Vec<_>>();
+    if rows.is_empty() {
+        return Ok(());
+    }
+
+    let thread_id = recent_archive_thread_id_for_session(session_id);
+    let thread_title = recent_archive_thread_title_from_rows(&rows);
+    let summary_bullets = recent_archive_summary_bullets_from_rows(&rows);
+    let use_count = u32::try_from(rows.len().min(1_000_000)).unwrap_or(1_000_000);
+    let digest = MemoryThreadDigest::v1(
+        thread_id.clone(),
+        thread_title,
+        summary_bullets,
+        false,
+        false,
+        now,
+        use_count,
+    )
+    .map_err(|err| format!("invalid recent archive thread digest: {err:?}"))?;
+    let digest_idempotency_key = sanitize_idempotency_token(&format!(
+        "adapter_recent_archive_digest:{}:{}",
+        session_id.0, turn_id.0
+    ));
+    store
+        .ph1m_thread_digest_upsert_commit(
+            actor_user_id,
+            MemoryRetentionMode::Default,
+            digest,
+            selene_storage::ph1f::MemoryThreadEventKind::ThreadDigestUpsert,
+            selene_engines::ph1m::reason_codes::M_THREAD_DIGEST_UPSERTED,
+            digest_idempotency_key,
+        )
+        .map_err(storage_error_to_string)?;
+    store
+        .ph1m_upsert_thread_refs_for_user_turn_with_session(actor_user_id, &thread_id, turn_id, now)
+        .map_err(storage_error_to_string)?;
+    Ok(())
+}
+
+fn recent_archive_digest_should_update_for_runtime_turn(
+    user_text_final: Option<&str>,
+    execution_outcome: &AppVoiceTurnExecutionOutcome,
+) -> bool {
+    user_text_final.is_some()
+        && execution_outcome.next_move == AppVoiceTurnNextMove::Respond
+        && execution_outcome.dispatch_outcome.is_none()
+        && execution_outcome.tool_response.is_none()
+}
+
+fn recent_archive_thread_id_for_session(session_id: SessionId) -> String {
+    format!("session_{}", session_id.0)
+}
+
+fn recent_archive_thread_title_from_rows(rows: &[(ConversationRole, String)]) -> String {
+    let title_seed = rows
+        .iter()
+        .find(|(role, text)| *role == ConversationRole::User && !text.trim().is_empty())
+        .or_else(|| rows.iter().find(|(_, text)| !text.trim().is_empty()))
+        .map(|(_, text)| text.trim())
+        .unwrap_or("Recent conversation");
+    let title = format!("Recent conversation: {title_seed}");
+    truncate_utf8_bytes(&title, 256)
+}
+
+fn recent_archive_summary_bullets_from_rows(rows: &[(ConversationRole, String)]) -> Vec<String> {
+    let mut latest = rows
+        .iter()
+        .rev()
+        .filter_map(|(role, text)| {
+            let text = text.trim();
+            if text.is_empty() {
+                return None;
+            }
+            Some(format!(
+                "{}: {}",
+                match role {
+                    ConversationRole::User => "User",
+                    ConversationRole::Selene => "Selene",
+                },
+                truncate_utf8_bytes(text, 232)
+            ))
+        })
+        .take(3)
+        .collect::<Vec<_>>();
+    latest.reverse();
+    if latest.is_empty() {
+        vec!["Recent conversation turn was recorded.".to_string()]
+    } else {
+        latest
+    }
+}
+
+fn truncate_utf8_bytes(value: &str, max_bytes: usize) -> String {
+    if value.len() <= max_bytes {
+        return value.to_string();
+    }
+    let mut out = String::new();
+    for ch in value.chars() {
+        if out.len().saturating_add(ch.len_utf8()) > max_bytes {
+            break;
+        }
+        out.push(ch);
+    }
+    out
 }
 
 fn storage_error_to_string(err: StorageError) -> String {
@@ -37844,6 +38006,27 @@ mod tests {
             .expect("recent archive typed recall should complete")
     }
 
+    fn run_recent_archive_live_seed_turn_on_thread(
+        runtime: &AdapterRuntime,
+        thread_key: &str,
+        turn_id: u64,
+        now_ns: u64,
+        text: &str,
+    ) -> VoiceTurnAdapterResponse {
+        let mut req = base_request();
+        req.correlation_id = 721_000_u64.saturating_add(turn_id);
+        req.turn_id = turn_id;
+        req.device_turn_sequence = Some(turn_id);
+        req.now_ns = Some(now_ns);
+        req.thread_key = Some(thread_key.to_string());
+        req.app_platform = "DESKTOP".to_string();
+        req.audio_capture_ref = None;
+        req.user_text_final = Some(text.to_string());
+        runtime
+            .run_voice_turn(req)
+            .expect("recent archive live seed turn should complete")
+    }
+
     #[test]
     fn recent_archive_recall_by_topic_returns_traceable_thread_digest() {
         let runtime = AdapterRuntime::default();
@@ -37984,6 +38167,67 @@ mod tests {
         assert!(
             packet.memory_candidates.is_empty(),
             "archive recall must not inject PH1.M candidates into active context"
+        );
+    }
+
+    #[test]
+    fn recent_archive_recall_indexes_live_conversation_turns_without_manual_seed() {
+        let runtime = AdapterRuntime::default();
+        const HOUR_NS: u64 = 60 * 60 * 1_000_000_000;
+        let now = 96 * HOUR_NS;
+        let seed = run_recent_archive_live_seed_turn_on_thread(
+            &runtime,
+            "recent-archive-live-seed",
+            721_001,
+            now,
+            "For this smoke test, active session context belongs to PH1.X and adapter, not PH1.M.",
+        );
+        assert_eq!(seed.status, "ok");
+        let actor_user_id = UserId::new("tenant_a:user_adapter_test").unwrap();
+        let before_recall =
+            {
+                let store = runtime.store.lock().expect("store lock should succeed");
+                assert!(store
+                    .conversation_ledger()
+                    .iter()
+                    .any(|row| row.text.contains("active session context belongs to PH1.X")));
+                assert!(
+                store
+                    .ph1m_thread_current_rows_for_user(&actor_user_id)
+                    .iter()
+                    .any(|row| row.digest.summary_bullets.iter().any(|bullet| bullet
+                        .contains("active session context belongs to PH1.X"))),
+                "live conversation turns should update the existing PH1.M thread digest surface"
+            );
+                (
+                    store.memory_ledger_rows().len(),
+                    store.ph1m_thread_ledger_rows().len(),
+                )
+            };
+
+        let recall = run_recent_archive_typed_recall_on_thread(
+            &runtime,
+            "recent-archive-live-seed",
+            721_002,
+            now.saturating_add(HOUR_NS),
+            "You don't remember we were discussing active session context?",
+        );
+
+        assert_eq!(recall.status, "ok");
+        assert_eq!(
+            recall.answer_class.as_deref(),
+            Some("memory_recent_archive_recall")
+        );
+        assert!(recall.response_text.contains("active session context"));
+        assert!(recall.response_text.contains("PH1.X"));
+        let store = runtime.store.lock().expect("store lock should succeed");
+        assert_eq!(
+            (
+                store.memory_ledger_rows().len(),
+                store.ph1m_thread_ledger_rows().len()
+            ),
+            before_recall,
+            "recall reads must not write durable memory or mutate thread digests"
         );
     }
 
