@@ -20714,6 +20714,12 @@ fn committed_voice_unsafe_transcript_reason(
             Ph1cRetryAdvice::Repeat,
         ));
     }
+    if committed_voice_single_wake_like_token(trimmed) {
+        return Some((
+            ph1c_reason_codes::STT_FAIL_LOW_SEMANTIC_CONFIDENCE,
+            Ph1cRetryAdvice::Repeat,
+        ));
+    }
     if committed_voice_cjk_noise_or_filler_fragment(trimmed) {
         return Some((
             ph1c_reason_codes::STT_FAIL_LOW_SEMANTIC_CONFIDENCE,
@@ -20770,6 +20776,11 @@ fn committed_voice_reject_should_ignore_user_surface(
     }
     if reason_code == ph1c_reason_codes::STT_FAIL_LOW_SEMANTIC_CONFIDENCE
         && committed_voice_cjk_noise_or_filler_fragment(transcript_text)
+    {
+        return true;
+    }
+    if reason_code == ph1c_reason_codes::STT_FAIL_LOW_SEMANTIC_CONFIDENCE
+        && committed_voice_single_wake_like_token(transcript_text)
     {
         return true;
     }
@@ -20879,6 +20890,97 @@ fn committed_voice_single_short_unsafe_token(transcript_text: &str) -> bool {
         return false;
     }
     token.chars().filter(|ch| ch.is_ascii_alphabetic()).count() <= 4
+}
+
+fn committed_voice_single_wake_like_token(transcript_text: &str) -> bool {
+    let words: Vec<String> = transcript_text
+        .trim()
+        .split(|ch: char| !ch.is_ascii_alphabetic())
+        .filter(|word| !word.is_empty())
+        .map(|word| word.to_ascii_lowercase())
+        .collect();
+    let [word] = words.as_slice() else {
+        return false;
+    };
+    committed_voice_wake_like_token_matches(word, "selene")
+}
+
+fn committed_voice_wake_like_token_matches(token: &str, canonical_wake: &str) -> bool {
+    let candidate = committed_voice_wake_phonetic_token(token);
+    let canonical = committed_voice_wake_phonetic_token(canonical_wake);
+    if candidate.is_empty() || canonical.is_empty() {
+        return false;
+    }
+    if candidate == canonical {
+        return true;
+    }
+    let candidate_len = candidate.chars().count();
+    let canonical_len = canonical.chars().count();
+    if candidate_len < canonical_len.saturating_sub(2).max(4)
+        || candidate_len > canonical_len + 2
+        || candidate.chars().next() != canonical.chars().next()
+    {
+        return false;
+    }
+
+    let candidate_skeleton = committed_voice_wake_consonant_skeleton(&candidate);
+    let canonical_skeleton = committed_voice_wake_consonant_skeleton(&canonical);
+    let skeleton_matches = candidate_skeleton == canonical_skeleton
+        || (candidate_len >= 5
+            && candidate_skeleton.chars().count() >= 2
+            && canonical_skeleton.starts_with(&candidate_skeleton));
+    if !skeleton_matches {
+        return false;
+    }
+
+    committed_voice_bounded_edit_distance(&candidate, &canonical, 3) <= 3
+}
+
+fn committed_voice_wake_phonetic_token(token: &str) -> String {
+    let mut chars = token.chars();
+    let Some(first) = chars.next() else {
+        return String::new();
+    };
+    let mut out = String::new();
+    out.push(if first == 'c' { 's' } else { first });
+    out.extend(chars);
+    out
+}
+
+fn committed_voice_wake_consonant_skeleton(token: &str) -> String {
+    committed_voice_wake_phonetic_token(token)
+        .chars()
+        .filter(|ch| !matches!(ch, 'a' | 'e' | 'i' | 'o' | 'u' | 'y'))
+        .collect()
+}
+
+fn committed_voice_bounded_edit_distance(lhs: &str, rhs: &str, max_distance: usize) -> usize {
+    let lhs_chars: Vec<char> = lhs.chars().collect();
+    let rhs_chars: Vec<char> = rhs.chars().collect();
+    if lhs_chars.len().abs_diff(rhs_chars.len()) > max_distance {
+        return max_distance + 1;
+    }
+
+    let mut previous_row: Vec<usize> = (0..=rhs_chars.len()).collect();
+    for (lhs_index, lhs_char) in lhs_chars.iter().enumerate() {
+        let mut current_row = vec![lhs_index + 1];
+        let mut row_minimum = lhs_index + 1;
+        for (rhs_index, rhs_char) in rhs_chars.iter().enumerate() {
+            let substitution_cost = usize::from(lhs_char != rhs_char);
+            let insertion = current_row[rhs_index] + 1;
+            let deletion = previous_row[rhs_index + 1] + 1;
+            let substitution = previous_row[rhs_index] + substitution_cost;
+            let value = insertion.min(deletion).min(substitution);
+            current_row.push(value);
+            row_minimum = row_minimum.min(value);
+        }
+        if row_minimum > max_distance {
+            return max_distance + 1;
+        }
+        previous_row = current_row;
+    }
+
+    previous_row.last().copied().unwrap_or(max_distance + 1)
 }
 
 fn committed_voice_cjk_noise_or_filler_fragment(transcript_text: &str) -> bool {
@@ -21057,7 +21159,6 @@ fn committed_voice_cjk_filler_char(ch: char) -> bool {
 
 fn committed_voice_has_actionable_cjk_intent(text: &str) -> bool {
     [
-        "现在",
         "几点",
         "天气",
         "告诉",
@@ -39497,6 +39598,78 @@ mod tests {
         assert_eq!(out.status, "ok");
         assert_eq!(out.outcome, "IGNORED");
         assert_eq!(out.next_move, "listening_window_open");
+        assert!(out.response_text.is_empty());
+        assert!(out.tts_text.is_empty());
+        assert!(runtime.ingress.debug_last_agent_input_packet().is_none());
+    }
+
+    #[test]
+    fn adapter_false_transcript_background_cjk_now_statement_rejected() {
+        let runtime = AdapterRuntime::default();
+        let mut req = base_request();
+        mark_request_as_live_desktop_capture_for_h417_tests(&mut req);
+        req.correlation_id = 420_113_1;
+        req.turn_id = 420_113_1;
+        req.user_text_final = Some("我现在有点累".to_string());
+        if let Some(capture) = req.audio_capture_ref.as_mut() {
+            capture.locale_tag = Some("en-US".to_string());
+            capture.acoustic_confidence_bp = Some(9_000);
+            capture.vad_confidence_bp = Some(9_000);
+            capture.speech_likeness_bp = Some(9_000);
+            capture.echo_safe_confidence_bp = Some(9_200);
+            capture.nearfield_confidence_bp = Some(8_300);
+            capture.capture_degraded = Some(false);
+            capture.stream_gap_detected = Some(false);
+        }
+
+        let out = runtime
+            .run_voice_turn(req)
+            .expect("background CJK now statement should be ignored");
+        assert_eq!(out.status, "ok");
+        assert_eq!(out.outcome, "IGNORED");
+        assert_eq!(out.next_move, "listening_window_open");
+        assert_eq!(
+            out.reason_code,
+            ph1c_reason_codes::STT_FAIL_LOW_SEMANTIC_CONFIDENCE
+                .0
+                .to_string()
+        );
+        assert!(out.response_text.is_empty());
+        assert!(out.tts_text.is_empty());
+        assert!(runtime.ingress.debug_last_agent_input_packet().is_none());
+    }
+
+    #[test]
+    fn adapter_false_transcript_single_wake_like_token_rejected() {
+        let runtime = AdapterRuntime::default();
+        let mut req = base_request();
+        mark_request_as_live_desktop_capture_for_h417_tests(&mut req);
+        req.correlation_id = 420_113_3;
+        req.turn_id = 420_113_3;
+        req.user_text_final = Some("Selai.".to_string());
+        if let Some(capture) = req.audio_capture_ref.as_mut() {
+            capture.locale_tag = Some("en-US".to_string());
+            capture.acoustic_confidence_bp = Some(9_000);
+            capture.vad_confidence_bp = Some(9_000);
+            capture.speech_likeness_bp = Some(9_000);
+            capture.echo_safe_confidence_bp = Some(9_200);
+            capture.nearfield_confidence_bp = Some(8_300);
+            capture.capture_degraded = Some(false);
+            capture.stream_gap_detected = Some(false);
+        }
+
+        let out = runtime
+            .run_voice_turn(req)
+            .expect("single wake-like STT token should be ignored");
+        assert_eq!(out.status, "ok");
+        assert_eq!(out.outcome, "IGNORED");
+        assert_eq!(out.next_move, "listening_window_open");
+        assert_eq!(
+            out.reason_code,
+            ph1c_reason_codes::STT_FAIL_LOW_SEMANTIC_CONFIDENCE
+                .0
+                .to_string()
+        );
         assert!(out.response_text.is_empty());
         assert!(out.tts_text.is_empty());
         assert!(runtime.ingress.debug_last_agent_input_packet().is_none());

@@ -226,6 +226,110 @@ private struct WakePrefixMatch {
     let transcriptRemainder: String
 }
 
+private func normalizedWakeRecognitionToken(_ rawValue: String) -> String {
+    let foldedValue = rawValue
+        .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: Locale(identifier: "en_US_POSIX"))
+        .lowercased()
+    var normalizedValue = ""
+    for scalar in foldedValue.unicodeScalars {
+        if CharacterSet.letters.contains(scalar) {
+            normalizedValue.unicodeScalars.append(scalar)
+        }
+    }
+    return normalizedValue
+}
+
+private func wakeRecognitionPhoneticToken(_ normalizedToken: String) -> String {
+    guard let firstScalar = normalizedToken.unicodeScalars.first else {
+        return normalizedToken
+    }
+    var phoneticToken = normalizedToken
+    if firstScalar == UnicodeScalar("c") {
+        phoneticToken.removeFirst()
+        phoneticToken = "s" + phoneticToken
+    }
+    return phoneticToken
+}
+
+private func wakeRecognitionConsonantSkeleton(_ normalizedToken: String) -> String {
+    let phoneticToken = wakeRecognitionPhoneticToken(normalizedToken)
+    let vowelScalars = Set("aeiouy".unicodeScalars)
+    var skeleton = ""
+    for scalar in phoneticToken.unicodeScalars {
+        if !vowelScalars.contains(scalar) {
+            skeleton.unicodeScalars.append(scalar)
+        }
+    }
+    return skeleton
+}
+
+private func boundedWakeRecognitionEditDistance(
+    _ lhs: String,
+    _ rhs: String,
+    maxDistance: Int
+) -> Int {
+    let lhsScalars = Array(lhs.unicodeScalars)
+    let rhsScalars = Array(rhs.unicodeScalars)
+    if abs(lhsScalars.count - rhsScalars.count) > maxDistance {
+        return maxDistance + 1
+    }
+
+    var previousRow = Array(0...rhsScalars.count)
+    for (lhsIndex, lhsScalar) in lhsScalars.enumerated() {
+        var currentRow = [lhsIndex + 1]
+        var rowMinimum = lhsIndex + 1
+        for (rhsIndex, rhsScalar) in rhsScalars.enumerated() {
+            let substitutionCost = lhsScalar == rhsScalar ? 0 : 1
+            let insertion = currentRow[rhsIndex] + 1
+            let deletion = previousRow[rhsIndex + 1] + 1
+            let substitution = previousRow[rhsIndex] + substitutionCost
+            let value = min(insertion, deletion, substitution)
+            currentRow.append(value)
+            rowMinimum = min(rowMinimum, value)
+        }
+        if rowMinimum > maxDistance {
+            return maxDistance + 1
+        }
+        previousRow = currentRow
+    }
+    return previousRow.last ?? maxDistance + 1
+}
+
+private func boundedWakeRecognitionTokenMatches(_ normalizedToken: String, wakeTriggerPhrase: String) -> Bool {
+    let canonicalWakeToken = normalizedWakeRecognitionToken(wakeTriggerPhrase)
+    guard !canonicalWakeToken.isEmpty else {
+        return false
+    }
+    let candidateToken = wakeRecognitionPhoneticToken(normalizedToken)
+    let canonicalToken = wakeRecognitionPhoneticToken(canonicalWakeToken)
+    if candidateToken == canonicalToken {
+        return true
+    }
+    guard candidateToken.count >= Swift.max(4, canonicalToken.count - 2),
+          candidateToken.count <= canonicalToken.count + 2,
+          candidateToken.first == canonicalToken.first else {
+        return false
+    }
+
+    let candidateSkeleton = wakeRecognitionConsonantSkeleton(candidateToken)
+    let canonicalSkeleton = wakeRecognitionConsonantSkeleton(canonicalToken)
+    let skeletonMatches = candidateSkeleton == canonicalSkeleton
+        || (
+            candidateToken.count >= 5
+            && candidateSkeleton.count >= 2
+            && canonicalSkeleton.hasPrefix(candidateSkeleton)
+        )
+    guard skeletonMatches else {
+        return false
+    }
+
+    return boundedWakeRecognitionEditDistance(
+        candidateToken,
+        canonicalToken,
+        maxDistance: 3
+    ) <= 3
+}
+
 private func boundedWakePrefixMatch(
     in rawTranscript: String,
     wakeTriggerPhrase: String = "Selene"
@@ -236,30 +340,26 @@ private func boundedWakePrefixMatch(
     }
 
     let normalizedWakeTriggerPhrase = wakeTriggerPhrase.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !normalizedWakeTriggerPhrase.isEmpty,
-          trimmedTranscript.count >= normalizedWakeTriggerPhrase.count else {
+    guard !normalizedWakeTriggerPhrase.isEmpty else {
         return nil
     }
 
-    let prefixEndIndex = trimmedTranscript.index(
-        trimmedTranscript.startIndex,
-        offsetBy: normalizedWakeTriggerPhrase.count
-    )
-    let candidatePrefix = String(trimmedTranscript[..<prefixEndIndex])
-    let boundedWakePrefixVariants = [
-        normalizedWakeTriggerPhrase,
-        "Celine",
-    ]
-    guard boundedWakePrefixVariants.contains(where: { variant in
-        candidatePrefix.compare(
-            variant,
-            options: [.caseInsensitive, .diacriticInsensitive]
-        ) == .orderedSame
-    }) else {
+    let candidateTokenEndIndex = trimmedTranscript.firstIndex { character in
+        !character.unicodeScalars.allSatisfy { scalar in
+            CharacterSet.letters.contains(scalar)
+        }
+    } ?? trimmedTranscript.endIndex
+    let candidateToken = String(trimmedTranscript[..<candidateTokenEndIndex])
+    let normalizedCandidateToken = normalizedWakeRecognitionToken(candidateToken)
+    guard !normalizedCandidateToken.isEmpty,
+          boundedWakeRecognitionTokenMatches(
+            normalizedCandidateToken,
+            wakeTriggerPhrase: normalizedWakeTriggerPhrase
+          ) else {
         return nil
     }
 
-    let suffix = String(trimmedTranscript[prefixEndIndex...])
+    let suffix = String(trimmedTranscript[candidateTokenEndIndex...])
     guard let firstScalar = suffix.unicodeScalars.first else {
         return WakePrefixMatch(
             detectionText: normalizedWakeTriggerPhrase,
@@ -1147,6 +1247,52 @@ struct DesktopVoiceTurnAudioCaptureRefState: Equatable {
     let timingBufferDepthMSMilli: UInt32
     let timingUnderruns: UInt64
     let timingOverruns: UInt64
+
+    func withWakeDetectionCarrier(
+        detectionText: String,
+        detectionConfidenceBP: UInt16
+    ) -> DesktopVoiceTurnAudioCaptureRefState {
+        DesktopVoiceTurnAudioCaptureRefState(
+            streamID: streamID,
+            preRollBufferID: preRollBufferID,
+            tStartNS: tStartNS,
+            tEndNS: tEndNS,
+            tCandidateStartNS: tCandidateStartNS,
+            tConfirmedNS: tConfirmedNS,
+            localeTag: localeTag,
+            deviceRoute: deviceRoute,
+            selectedMic: selectedMic,
+            selectedSpeaker: selectedSpeaker,
+            ttsPlaybackActive: ttsPlaybackActive,
+            detectionText: detectionText,
+            detectionConfidenceBP: detectionConfidenceBP,
+            vadConfidenceBP: vadConfidenceBP,
+            acousticConfidenceBP: acousticConfidenceBP,
+            prosodyConfidenceBP: prosodyConfidenceBP,
+            speechLikenessBP: speechLikenessBP,
+            echoSafeConfidenceBP: echoSafeConfidenceBP,
+            nearfieldConfidenceBP: nearfieldConfidenceBP,
+            captureDegraded: captureDegraded,
+            streamGapDetected: streamGapDetected,
+            aecUnstable: aecUnstable,
+            deviceChanged: deviceChanged,
+            snrDBMilli: snrDBMilli,
+            clippingRatioBP: clippingRatioBP,
+            echoDelayMSMilli: echoDelayMSMilli,
+            packetLossBP: packetLossBP,
+            doubleTalkBP: doubleTalkBP,
+            erleDBMilli: erleDBMilli,
+            deviceFailures24H: deviceFailures24H,
+            deviceRecoveries24H: deviceRecoveries24H,
+            deviceMeanRecoveryMS: deviceMeanRecoveryMS,
+            deviceReliabilityBP: deviceReliabilityBP,
+            timingJitterMSMilli: timingJitterMSMilli,
+            timingDriftPPMMilli: timingDriftPPMMilli,
+            timingBufferDepthMSMilli: timingBufferDepthMSMilli,
+            timingUnderruns: timingUnderruns,
+            timingOverruns: timingOverruns
+        )
+    }
 }
 
 private enum DesktopAudioEvidenceClass: String, Equatable {
@@ -3757,6 +3903,48 @@ private final class DesktopWakeListenerController: ObservableObject {
 
     func markDispatching() {
         listenerState = .dispatching
+    }
+
+    func stageWakeTriggeredVoiceTurnFromExplicitCapture(
+        transcript: String,
+        audioCaptureRefState: DesktopVoiceTurnAudioCaptureRefState
+    ) -> Bool {
+        guard pendingRequest == nil,
+              let prefixMatch = boundedWakePrefixMatch(in: transcript, wakeTriggerPhrase: wakeTriggerPhrase) else {
+            return false
+        }
+
+        let boundedTranscript = prefixMatch.transcriptRemainder
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard boundedTranscript.utf8.count <= maxVoiceTurnBytes else {
+            listenerState = .failed
+            activePromptStateID = nil
+            recordFailure(
+                id: "failed_wake_listener_transcript_validation",
+                title: "Failed wake-triggered voice request",
+                summary: "The bounded post-wake transcript exceeded 16384 UTF-8 bytes before any canonical runtime dispatch occurred.",
+                detail: "Failure visibility only; retry a shorter foreground wake utterance through the same bounded wake-listener surface. No authoritative transcript turn was appended locally."
+            )
+            return true
+        }
+
+        let deviceTurnSequence = nextDeviceTurnSequence()
+        transcriptPreview = boundedTranscript
+        pendingRequest = WakeTriggeredVoiceTurnRequestState(
+            id: "desktop_wake_turn_request_\(deviceTurnSequence)",
+            deviceTurnSequence: deviceTurnSequence,
+            transcript: boundedTranscript,
+            byteCount: boundedTranscript.utf8.count,
+            wakeTriggerPhrase: wakeTriggerPhrase,
+            audioCaptureRefState: audioCaptureRefState.withWakeDetectionCarrier(
+                detectionText: prefixMatch.detectionText,
+                detectionConfidenceBP: 10_000
+            )
+        )
+        listenerState = .wakeRequestStaged
+        activePromptStateID = nil
+        return true
     }
 
     func updateActiveAudioEvidenceContext(_ evidenceContext: DesktopAudioEvidenceContext) {
@@ -7191,6 +7379,7 @@ struct DesktopSessionShellView: View {
     @State private var desktopToolRequestFailedRequest: InterruptContinuityResponseFailureState?
     @State private var desktopLastGeneratedTypedTurnSequence: UInt64 = 0
     @State private var lastStagedWakeTriggeredVoiceTurnRequestState: WakeTriggeredVoiceTurnRequestState?
+    @State private var desktopWakeTriggeredDispatchInFlightRequestID: String?
     @State private var desktopWakeAutoStartAttemptedPromptID: String?
     @State private var desktopWakeAutoStartSuppressedPromptID: String?
     @State private var desktopPresentedSecondaryPanel: DesktopShellSecondaryPanel?
@@ -20942,7 +21131,8 @@ struct DesktopSessionShellView: View {
         switch failureID {
         case "failed_wake_listener_realtime_connection",
              "failed_wake_listener_realtime_timeout",
-             "failed_wake_listener_realtime_session_duration":
+             "failed_wake_listener_realtime_session_duration",
+             "failed_wake_listener_openai_realtime_stt_unavailable":
             return true
         default:
             return false
@@ -21297,6 +21487,33 @@ struct DesktopSessionShellView: View {
         var shouldAwaitVoiceModeReplyPlaybackCompletion = false
 
         do {
+            if let wakePrefixMatch = boundedWakePrefixMatch(
+                in: pendingRequest.transcript,
+                wakeTriggerPhrase: "Selene"
+            ),
+                wakePrefixMatch.transcriptRemainder
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                    .isEmpty {
+                await handleLifecycleOnlyWakeFromExplicitCapture(
+                    requestID: pendingRequest.id,
+                    transcript: pendingRequest.transcript
+                )
+                return
+            }
+
+            if desktopWakeListenerController.stageWakeTriggeredVoiceTurnFromExplicitCapture(
+                transcript: pendingRequest.transcript,
+                audioCaptureRefState: pendingRequest.audioCaptureRefState
+            ) {
+                desktopAppendRuntimeBridgeDebugLog(
+                    "\(desktopTraceClockFields()) explicit voice wake transcript routed_to=wake_triggered_bridge id=\(pendingRequest.id)"
+                )
+                clearComposerDraftIfItOnlyMirrorsVoiceTranscript(pendingRequest.transcript)
+                await dispatchPreparedWakeTriggeredVoiceRequestIfNeeded()
+                explicitVoiceController.clearPendingPreparedVoiceTurn()
+                return
+            }
+
             let ingressContext = try desktopCanonicalRuntimeBridge.desktopExplicitVoiceIngressRequestBuilder(
                 pendingRequest,
                 threadKey: desktopForegroundVoiceTurnMatchingSelectedThreadKey,
@@ -21491,6 +21708,16 @@ struct DesktopSessionShellView: View {
         guard let pendingRequest = desktopWakeListenerController.pendingRequest else {
             return
         }
+        guard desktopWakeTriggeredDispatchInFlightRequestID != pendingRequest.id else {
+            return
+        }
+
+        desktopWakeTriggeredDispatchInFlightRequestID = pendingRequest.id
+        defer {
+            if desktopWakeTriggeredDispatchInFlightRequestID == pendingRequest.id {
+                desktopWakeTriggeredDispatchInFlightRequestID = nil
+            }
+        }
 
         let conversationKey = desktopForegroundConversationHistoryKey
 
@@ -21537,7 +21764,10 @@ struct DesktopSessionShellView: View {
                     pendingRequest.transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                     || runtimeIgnoredUnsafeVoiceTranscript
                 )
-                    && outcomeState.nextMove == "listening_window_open"
+                    && (
+                        outcomeState.nextMove == "listening_window_open"
+                        || outcomeState.phase != .completed
+                    )
             desktopCanonicalRuntimeOutcomeState = outcomeState
             if !runtimeIgnoredUnsafeVoiceTranscript {
                 desktopPersistSubmittedUserContinuityIfNeeded(
@@ -21653,7 +21883,28 @@ struct DesktopSessionShellView: View {
             desktopAuthoritativeReplyPlaybackState = .idle
             desktopWakeListenerController.clearPendingPreparedWakeTurn()
             lastStagedWakeTriggeredVoiceTurnRequestState = nil
+            if pendingRequest.transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                startPostWakeInstructionListeningAfterGreeting()
+            }
         }
+    }
+
+    @MainActor
+    private func handleLifecycleOnlyWakeFromExplicitCapture(
+        requestID: String,
+        transcript: String
+    ) async {
+        desktopAppendRuntimeBridgeDebugLog(
+            "\(desktopTraceClockFields()) explicit voice bare wake consumed_as=lifecycle_only id=\(requestID)"
+        )
+        desktopAppendRuntimeBridgeDebugLog(
+            "\(desktopTraceClockFields()) explicit voice bare wake silent_rearm=true id=\(requestID)"
+        )
+        desktopComposerVoiceModeEnabled = true
+        desktopComposerVoiceModeAwaitingReplyPlaybackCompletion = false
+        clearComposerDraftIfItOnlyMirrorsVoiceTranscript(transcript)
+        explicitVoiceController.clearPendingPreparedVoiceTurn()
+        startPostWakeInstructionListeningAfterGreeting()
     }
 
     @MainActor
