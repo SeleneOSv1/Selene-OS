@@ -1298,6 +1298,19 @@ pub struct AdapterHealthResponse {
     pub outcome: String,
     pub reason: Option<String>,
     pub sync: AdapterSyncHealth,
+    pub provenance: Option<AdapterProcessProvenance>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct AdapterProcessProvenance {
+    pub process_id: u32,
+    pub bind: Option<String>,
+    pub repo_root: Option<String>,
+    pub repo_head: Option<String>,
+    pub managed_by: Option<String>,
+    pub desktop_app_process_id: Option<u32>,
+    pub desktop_app_bundle_path: Option<String>,
+    pub desktop_app_executable_path: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -4991,6 +5004,7 @@ impl AdapterRuntime {
                 queue,
                 improvement,
             },
+            provenance: None,
         })
     }
 
@@ -26206,6 +26220,7 @@ mod tests {
                 },
                 improvement: AdapterImprovementCounters::default(),
             },
+            provenance: None,
         }
     }
 

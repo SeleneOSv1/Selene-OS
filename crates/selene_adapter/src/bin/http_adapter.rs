@@ -19,16 +19,17 @@ use axum::{
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use selene_adapter::{
     app_ui_assets, build_runtime_execution_envelope_for_voice_turn_request, AdapterHealthResponse,
-    AdapterRuntime, AdapterSyncHealth, InviteLinkOpenAdapterRequest, InviteLinkOpenAdapterResponse,
-    OnboardingContinueAdapterRequest, OnboardingContinueAdapterResponse,
-    PublicBrainTraceReportResponse, SessionAttachAdapterRequest, SessionAttachAdapterResponse,
-    SessionPostureEvidenceAdapterRequest, SessionPostureEvidenceAdapterResponse,
-    SessionRecentListAdapterRequest, SessionRecentListAdapterResponse,
-    SessionRecoverAdapterRequest, SessionRecoverAdapterResponse, SessionResumeAdapterRequest,
-    SessionResumeAdapterResponse, UiChatTranscriptResponse, UiHealthChecksResponse,
-    UiHealthDetailFilter, UiHealthDetailResponse, UiHealthReportQueryRequest,
-    UiHealthReportQueryResponse, UiHealthSummary, UiHealthTimelinePaging, VoiceTurnAdapterRequest,
-    VoiceTurnAdapterResponse, VoiceTurnIngressError, WakeProfileAvailabilityRefreshAdapterRequest,
+    AdapterProcessProvenance, AdapterRuntime, AdapterSyncHealth, InviteLinkOpenAdapterRequest,
+    InviteLinkOpenAdapterResponse, OnboardingContinueAdapterRequest,
+    OnboardingContinueAdapterResponse, PublicBrainTraceReportResponse, SessionAttachAdapterRequest,
+    SessionAttachAdapterResponse, SessionPostureEvidenceAdapterRequest,
+    SessionPostureEvidenceAdapterResponse, SessionRecentListAdapterRequest,
+    SessionRecentListAdapterResponse, SessionRecoverAdapterRequest, SessionRecoverAdapterResponse,
+    SessionResumeAdapterRequest, SessionResumeAdapterResponse, UiChatTranscriptResponse,
+    UiHealthChecksResponse, UiHealthDetailFilter, UiHealthDetailResponse,
+    UiHealthReportQueryRequest, UiHealthReportQueryResponse, UiHealthSummary,
+    UiHealthTimelinePaging, VoiceTurnAdapterRequest, VoiceTurnAdapterResponse,
+    VoiceTurnIngressError, WakeProfileAvailabilityRefreshAdapterRequest,
     WakeProfileAvailabilityRefreshAdapterResponse,
 };
 use selene_engines::device_vault;
@@ -416,7 +417,10 @@ async fn healthz(
         }
     };
     match runtime.health_report(None) {
-        Ok(response) => (StatusCode::OK, Json(response)),
+        Ok(mut response) => {
+            response.provenance = Some(adapter_process_provenance());
+            (StatusCode::OK, Json(response))
+        }
         Err(reason) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(health_error_response(reason)),
@@ -430,7 +434,29 @@ fn health_error_response(reason: String) -> AdapterHealthResponse {
         outcome: "UNHEALTHY".to_string(),
         reason: Some(reason),
         sync: AdapterSyncHealth::default(),
+        provenance: Some(adapter_process_provenance()),
     }
+}
+
+fn adapter_process_provenance() -> AdapterProcessProvenance {
+    AdapterProcessProvenance {
+        process_id: std::process::id(),
+        bind: non_empty_env("SELENE_HTTP_BIND"),
+        repo_root: non_empty_env("SELENE_DESKTOP_REPO_ROOT"),
+        repo_head: non_empty_env("SELENE_DESKTOP_REPO_HEAD"),
+        managed_by: non_empty_env("SELENE_DESKTOP_ADAPTER_MANAGED_BY"),
+        desktop_app_process_id: non_empty_env("SELENE_DESKTOP_APP_PROCESS_ID")
+            .and_then(|value| value.parse::<u32>().ok()),
+        desktop_app_bundle_path: non_empty_env("SELENE_DESKTOP_APP_BUNDLE_PATH"),
+        desktop_app_executable_path: non_empty_env("SELENE_DESKTOP_APP_EXECUTABLE_PATH"),
+    }
+}
+
+fn non_empty_env(key: &str) -> Option<String> {
+    env::var(key)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
 }
 
 async fn ui_health_checks(
@@ -3834,6 +3860,49 @@ mod tests {
         assert!(prompt.contains("Preserve code-switching"));
         assert!(prompt.contains("Do not translate"));
         assert!(!prompt.contains("English only"));
+    }
+
+    #[test]
+    fn desktop_adapter_health_provenance_reports_desktop_owner() {
+        let _env_lock = realtime_env_lock();
+        let _bind = ScopedEnvVar::set("SELENE_HTTP_BIND", "127.0.0.1:18765");
+        let _repo_root = ScopedEnvVar::set("SELENE_DESKTOP_REPO_ROOT", "/tmp/selene-current-repo");
+        let _repo_head = ScopedEnvVar::set("SELENE_DESKTOP_REPO_HEAD", "abc123");
+        let _managed_by = ScopedEnvVar::set(
+            "SELENE_DESKTOP_ADAPTER_MANAGED_BY",
+            "SeleneMacDesktopRuntimeBridge",
+        );
+        let _app_pid = ScopedEnvVar::set("SELENE_DESKTOP_APP_PROCESS_ID", "4242");
+        let _bundle = ScopedEnvVar::set(
+            "SELENE_DESKTOP_APP_BUNDLE_PATH",
+            "/tmp/SeleneMacDesktop.app",
+        );
+        let _executable = ScopedEnvVar::set(
+            "SELENE_DESKTOP_APP_EXECUTABLE_PATH",
+            "/tmp/SeleneMacDesktop.app/Contents/MacOS/SeleneMacDesktop",
+        );
+
+        let provenance = adapter_process_provenance();
+
+        assert_eq!(provenance.bind.as_deref(), Some("127.0.0.1:18765"));
+        assert_eq!(
+            provenance.repo_root.as_deref(),
+            Some("/tmp/selene-current-repo")
+        );
+        assert_eq!(provenance.repo_head.as_deref(), Some("abc123"));
+        assert_eq!(
+            provenance.managed_by.as_deref(),
+            Some("SeleneMacDesktopRuntimeBridge")
+        );
+        assert_eq!(provenance.desktop_app_process_id, Some(4242));
+        assert_eq!(
+            provenance.desktop_app_bundle_path.as_deref(),
+            Some("/tmp/SeleneMacDesktop.app")
+        );
+        assert_eq!(
+            provenance.desktop_app_executable_path.as_deref(),
+            Some("/tmp/SeleneMacDesktop.app/Contents/MacOS/SeleneMacDesktop")
+        );
     }
 
     #[tokio::test]

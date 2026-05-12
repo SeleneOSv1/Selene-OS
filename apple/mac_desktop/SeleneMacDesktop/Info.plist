@@ -20,10 +20,12 @@
 	<string>$(MARKETING_VERSION)</string>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
-	<key>LSMinimumSystemVersion</key>
-		<string>$(MACOSX_DEPLOYMENT_TARGET)</string>
-		<key>NSMicrophoneUsageDescription</key>
-		<string>Selene uses the microphone only when you explicitly start a bounded voice turn in the foreground session surface.</string>
+		<key>LSMinimumSystemVersion</key>
+			<string>$(MACOSX_DEPLOYMENT_TARGET)</string>
+			<key>NSQuitAlwaysKeepsWindows</key>
+			<false/>
+			<key>NSMicrophoneUsageDescription</key>
+			<string>Selene uses the microphone only when you explicitly start a bounded voice turn in the foreground session surface.</string>
 		<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
 </dict>

@@ -1,3 +1,4 @@
+import AppKit
 import Combine
 import CryptoKit
 import Foundation
@@ -4426,6 +4427,35 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
         let pullErrorCount: UInt64
     }
 
+    private struct AdapterHealthResponsePayload: Decodable {
+        let status: String
+        let outcome: String
+        let reason: String?
+        let provenance: AdapterProcessProvenancePayload?
+    }
+
+    private struct AdapterProcessProvenancePayload: Decodable {
+        let processID: UInt32
+        let bind: String?
+        let repoRoot: String?
+        let repoHead: String?
+        let managedBy: String?
+        let desktopAppProcessID: UInt32?
+        let desktopAppBundlePath: String?
+        let desktopAppExecutablePath: String?
+
+        enum CodingKeys: String, CodingKey {
+            case processID = "process_id"
+            case bind
+            case repoRoot = "repo_root"
+            case repoHead = "repo_head"
+            case managedBy = "managed_by"
+            case desktopAppProcessID = "desktop_app_process_id"
+            case desktopAppBundlePath = "desktop_app_bundle_path"
+            case desktopAppExecutablePath = "desktop_app_executable_path"
+        }
+    }
+
     private struct VoiceTurnIngressErrorPayload: Decodable {
         let failureClass: String
         let reasonCode: String
@@ -4766,15 +4796,18 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
 
     private let adapterBaseURL: URL
     private let repoRootURL: URL
+    private let repoHead: String?
     private let actorUserID: String
     private let tenantID: String?
     private let deviceID: String
     private let urlSession: URLSession
     private var managedAdapterProcess: Process?
     private var managedAdapterLogHandle: FileHandle?
+    private var applicationWillTerminateObserver: NSObjectProtocol?
 
     init(processInfo: ProcessInfo = .processInfo) {
         self.repoRootURL = Self.resolveRepoRoot(processInfo: processInfo)
+        self.repoHead = Self.resolveRepoHead(repoRootURL: self.repoRootURL)
         self.adapterBaseURL = Self.resolveAdapterBaseURL(processInfo: processInfo)
         self.actorUserID = Self.resolveActorUserID(processInfo: processInfo)
         self.tenantID = Self.resolveTenantID(processInfo: processInfo)
@@ -4784,9 +4817,19 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
         configuration.timeoutIntervalForRequest = 15
         configuration.timeoutIntervalForResource = 15
         self.urlSession = URLSession(configuration: configuration)
+        self.applicationWillTerminateObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.willTerminateNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.stopManagedAdapter()
+        }
     }
 
     deinit {
+        if let applicationWillTerminateObserver {
+            NotificationCenter.default.removeObserver(applicationWillTerminateObserver)
+        }
         stopManagedAdapter()
     }
 
@@ -9158,9 +9201,20 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
         deviceID
     }
 
+    private enum AdapterHealthCheckResult {
+        case currentOwner
+        case unavailable
+        case wrongOwner(String)
+    }
+
     private func ensureAdapterAvailable() async throws {
-        if await adapterHealthCheck() {
+        switch await adapterHealthCheck() {
+        case .currentOwner:
             return
+        case .wrongOwner(let reason):
+            throw BridgeError.adapterUnavailable(reason)
+        case .unavailable:
+            break
         }
 
         if let managedAdapterProcess, managedAdapterProcess.isRunning {
@@ -9175,8 +9229,14 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
         try startManagedAdapterIfNeeded()
 
         for _ in 0..<120 {
-            if await adapterHealthCheck() {
+            switch await adapterHealthCheck() {
+            case .currentOwner:
                 return
+            case .wrongOwner(let reason):
+                stopManagedAdapter()
+                throw BridgeError.adapterUnavailable(reason)
+            case .unavailable:
+                break
             }
 
             if let managedAdapterProcess, !managedAdapterProcess.isRunning {
@@ -9216,6 +9276,14 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
         environment["SELENE_HTTP_BIND"] = bindValue
         environment["SELENE_ADAPTER_SYNC_WORKER_ENABLED"] = "true"
         environment["SELENE_ADAPTER_LEGACY_JOURNAL_REPLAY_ENABLED"] = "false"
+        environment["SELENE_DESKTOP_ADAPTER_MANAGED_BY"] = "SeleneMacDesktopRuntimeBridge"
+        environment["SELENE_DESKTOP_APP_PROCESS_ID"] = String(ProcessInfo.processInfo.processIdentifier)
+        environment["SELENE_DESKTOP_APP_BUNDLE_PATH"] = Self.currentAppBundlePath()
+        environment["SELENE_DESKTOP_APP_EXECUTABLE_PATH"] = Self.currentAppExecutablePath()
+        environment["SELENE_DESKTOP_REPO_ROOT"] = repoRootURL.resolvingSymlinksInPath().standardizedFileURL.path
+        if let repoHead {
+            environment["SELENE_DESKTOP_REPO_HEAD"] = repoHead
+        }
         environment["SELENE_DESKTOP_CONTROLLED_WAKE_BOOTSTRAP_ENABLED"] = "true"
         environment["SELENE_DESKTOP_CONTROLLED_WAKE_BOOTSTRAP_ACTOR_USER_ID"] = actorUserID
         environment["SELENE_DESKTOP_CONTROLLED_WAKE_BOOTSTRAP_DEVICE_ID"] = deviceID
@@ -9338,19 +9406,76 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
         return pathComponents.joined(separator: ":")
     }
 
-    private func adapterHealthCheck() async -> Bool {
+    private func adapterHealthCheck() async -> AdapterHealthCheckResult {
         let healthURL = adapterBaseURL.appendingPathComponent("healthz")
         var request = URLRequest(url: healthURL)
         request.httpMethod = "GET"
         request.timeoutInterval = 2
 
         do {
-            let (_, response) = try await urlSession.data(for: request)
+            let (data, response) = try await urlSession.data(for: request)
             let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
-            return statusCode == 200
+            guard statusCode == 200 else {
+                return .unavailable
+            }
+
+            let health = try JSONDecoder().decode(AdapterHealthResponsePayload.self, from: data)
+            return validateAdapterHealthProvenance(health)
         } catch {
-            return false
+            return .unavailable
         }
+    }
+
+    private func validateAdapterHealthProvenance(
+        _ health: AdapterHealthResponsePayload
+    ) -> AdapterHealthCheckResult {
+        guard health.status == "ok", health.outcome == "HEALTHY" else {
+            return .unavailable
+        }
+
+        guard let provenance = health.provenance else {
+            return .wrongOwner(
+                "existing adapter at \(adapterBaseURL.absoluteString) is missing desktop provenance; refusing to attach or launch a duplicate adapter"
+            )
+        }
+
+        let expectedProcessID = UInt32(ProcessInfo.processInfo.processIdentifier)
+        guard provenance.desktopAppProcessID == expectedProcessID else {
+            return .wrongOwner(
+                "existing adapter at \(adapterBaseURL.absoluteString) belongs to desktop process \(provenance.desktopAppProcessID.map(String.init) ?? "unknown"), not current process \(expectedProcessID)"
+            )
+        }
+
+        let expectedBundlePath = Self.currentAppBundlePath()
+        guard provenance.desktopAppBundlePath == expectedBundlePath else {
+            return .wrongOwner(
+                "existing adapter at \(adapterBaseURL.absoluteString) belongs to bundle \(provenance.desktopAppBundlePath ?? "unknown"), not current bundle \(expectedBundlePath)"
+            )
+        }
+
+        let expectedExecutablePath = Self.currentAppExecutablePath()
+        guard provenance.desktopAppExecutablePath == expectedExecutablePath else {
+            return .wrongOwner(
+                "existing adapter at \(adapterBaseURL.absoluteString) belongs to executable \(provenance.desktopAppExecutablePath ?? "unknown"), not current executable \(expectedExecutablePath)"
+            )
+        }
+
+        let expectedRepoRoot = repoRootURL.resolvingSymlinksInPath().standardizedFileURL.path
+        guard provenance.repoRoot == expectedRepoRoot else {
+            return .wrongOwner(
+                "existing adapter at \(adapterBaseURL.absoluteString) belongs to repo \(provenance.repoRoot ?? "unknown"), not current repo \(expectedRepoRoot)"
+            )
+        }
+
+        if let repoHead {
+            guard provenance.repoHead == repoHead else {
+                return .wrongOwner(
+                    "existing adapter at \(adapterBaseURL.absoluteString) belongs to repo head \(provenance.repoHead ?? "unknown"), not current head \(repoHead)"
+                )
+            }
+        }
+
+        return .currentOwner
     }
 
     private static func resolveActorUserID(processInfo: ProcessInfo) -> String {
@@ -9392,6 +9517,39 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
             .deletingLastPathComponent()
             .deletingLastPathComponent()
             .deletingLastPathComponent()
+    }
+
+    private static func resolveRepoHead(repoRootURL: URL) -> String? {
+        let gitDirectoryURL = repoRootURL.appendingPathComponent(".git", isDirectory: true)
+        let headURL = gitDirectoryURL.appendingPathComponent("HEAD")
+        guard let headText = try? String(contentsOf: headURL, encoding: .utf8)
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+              !headText.isEmpty else {
+            return nil
+        }
+
+        if headText.hasPrefix("ref:") {
+            let refName = headText.dropFirst(4).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !refName.isEmpty else {
+                return nil
+            }
+            let refURL = gitDirectoryURL.appendingPathComponent(refName)
+            return try? String(contentsOf: refURL, encoding: .utf8)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
+        return headText
+    }
+
+    private static func currentAppBundlePath() -> String {
+        Bundle.main.bundleURL.resolvingSymlinksInPath().standardizedFileURL.path
+    }
+
+    private static func currentAppExecutablePath() -> String {
+        Bundle.main.executableURL?
+            .resolvingSymlinksInPath()
+            .standardizedFileURL
+            .path ?? ""
     }
 
     private static func systemTimeNowMS() -> UInt64 {
