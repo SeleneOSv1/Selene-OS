@@ -4219,6 +4219,7 @@ mod tests {
         let serialized = serde_json::to_string(&body).expect("response should serialize");
         assert!(!serialized.contains("sk-"));
         assert!(body.audio_base64.is_none());
+        assert!(body.fallback_allowed);
         let _ = fs::remove_file(vault_path);
         let _ = fs::remove_file(key_path);
     }
@@ -4286,6 +4287,7 @@ mod tests {
             body.safe_failure_reason.as_deref(),
             Some("openai_tts_request_failed")
         );
+        assert!(body.fallback_allowed);
         let serialized = serde_json::to_string(&body).expect("response should serialize");
         for forbidden in [
             permanent_key,

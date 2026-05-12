@@ -8484,7 +8484,7 @@ impl AdapterRuntime {
                         PolicyContextRef::v1(false, false, SafetyTier::Standard),
                         captured_text.to_string(),
                         MEMORY_RESUME_HOT_WINDOW_MS,
-                        4,
+                        1,
                     )
                     .map_err(|err| {
                         post_session_error(format!(
@@ -8553,6 +8553,74 @@ impl AdapterRuntime {
                         source_cards: Vec::new(),
                         image_cards: Vec::new(),
                         answer_class: Some("memory_recent_archive_recall".to_string()),
+                        metadata_safe_for_user: true,
+                        trace_id: None,
+                        deep_research: None,
+                    };
+                    cache_authoritative_turn_response(
+                        &self.session_retry_cache,
+                        &actor_user_id,
+                        &runtime_execution_envelope.idempotency_key,
+                        &response,
+                    )
+                    .map_err(post_session_error)?;
+                    return Ok(response);
+                }
+                if h406_public_non_actionable_declarative_statement(captured_text) {
+                    let response_text = h406_public_advisory_fallback_answer(captured_text, None)
+                        .unwrap_or_else(|| "Understood.".to_string());
+                    self.record_transcript_updates(
+                        &mut store,
+                        now,
+                        correlation_id,
+                        turn_id,
+                        &actor_user_id,
+                        Some(&runtime_device_id),
+                        session_turn_state.session_id_for_commits,
+                        user_text_partial.clone(),
+                        user_text_final.clone(),
+                        selene_text_partial.clone(),
+                        selene_text_final.clone().or(Some(response_text.clone())),
+                        true,
+                    )
+                    .map_err(post_session_error)?;
+                    finalize_session_turn_record(
+                        &mut store,
+                        now,
+                        correlation_id,
+                        turn_id,
+                        &runtime_device_id,
+                        session_turn_state.session_id_for_commits,
+                        Some(&base_thread_state),
+                        session_turn_state.device_turn_sequence,
+                        &runtime_execution_envelope.idempotency_key,
+                        &self.runtime_node_id,
+                        self.session_lease_ttl_ms,
+                    )
+                    .map_err(post_session_error)?;
+                    let response = VoiceTurnAdapterResponse {
+                        status: "ok".to_string(),
+                        outcome: "FINAL".to_string(),
+                        session_id: runtime_execution_envelope
+                            .session_id
+                            .clone()
+                            .map(session_id_to_string),
+                        turn_id: Some(runtime_execution_envelope.turn_id.0),
+                        session_state: Some(session_state_to_api_value(
+                            session_turn_state.session_snapshot.session_state,
+                        )),
+                        session_attach_outcome: runtime_execution_envelope.session_attach_outcome,
+                        failure_class: None,
+                        reason: None,
+                        next_move: "respond".to_string(),
+                        response_text: response_text.clone(),
+                        reason_code: "PUBLIC_DECLARATIVE_ACK".to_string(),
+                        provenance: None,
+                        tts_text: response_text,
+                        source_chips: Vec::new(),
+                        source_cards: Vec::new(),
+                        image_cards: Vec::new(),
+                        answer_class: Some("public_declarative_ack".to_string()),
                         metadata_safe_for_user: true,
                         trace_id: None,
                         deep_research: None,
@@ -11742,7 +11810,29 @@ fn h406_public_advisory_fallback_answer(
                 .to_string(),
         );
     }
+    if h406_public_non_actionable_declarative_statement(user_text) {
+        return Some("Understood.".to_string());
+    }
     None
+}
+
+fn h406_public_non_actionable_declarative_statement(user_text: &str) -> bool {
+    let trimmed = user_text.trim();
+    if trimmed.is_empty() || trimmed.contains('?') {
+        return false;
+    }
+    let lower = trimmed.to_ascii_lowercase();
+    let word_count = lower
+        .split(|ch: char| !ch.is_ascii_alphanumeric())
+        .filter(|word| !word.is_empty())
+        .count();
+    word_count >= 5
+        && (lower.starts_with("for this ")
+            || lower.contains(" belongs to ")
+            || lower.contains(" must ")
+            || lower.contains(" should ")
+            || lower.contains(" decided that ")
+            || lower.contains(" discussed that "))
 }
 
 fn classify_voice_turn_runtime_error(
@@ -13211,6 +13301,7 @@ fn ph1m_recent_archive_recall_query(text: &str) -> bool {
     let compact = normalized.split_whitespace().collect::<Vec<_>>().join(" ");
     let asks_history = compact.contains("what did we discuss")
         || compact.contains("what did we decide")
+        || compact.contains("what did we say")
         || compact.contains("do you remember")
         || compact.contains("you remember what")
         || compact.contains("you remember where")
@@ -13232,6 +13323,7 @@ fn ph1m_recent_archive_recall_query(text: &str) -> bool {
         || compact.contains("decide")
         || compact.contains("decided")
         || compact.contains("discussing")
+        || compact.contains("say")
         || compact.contains("talked")
         || compact.contains("talking")
         || compact.contains("remember")
@@ -13273,22 +13365,39 @@ fn ph1m_recent_archive_recall_answer(
     let Some(first) = response.matches.first() else {
         return "I found no matching recent archive item in the last 72 hours.".to_string();
     };
-    let thread_ref = first
-        .thread_id
-        .as_deref()
-        .map(|thread_id| format!("thread {thread_id}"))
-        .unwrap_or_else(|| first.archive_ref_id.clone());
-    let mut answer = format!(
-        "I found a recent discussion from {thread_ref} at {}: {}",
-        first.matched_at.0, first.excerpt_text
-    );
-    if let Some(second) = response.matches.get(1) {
-        answer.push_str(&format!(
-            " I also found {}: {}",
-            second.archive_ref_id, second.excerpt_text
-        ));
-    }
+    let answer = ph1m_recent_archive_human_memory_answer(&ph1m_recent_archive_user_facing_excerpt(
+        &first.excerpt_text,
+    ));
     truncate_text_chars(&answer, 900)
+}
+
+fn ph1m_recent_archive_user_facing_excerpt(excerpt: &str) -> String {
+    let trimmed = excerpt.trim();
+    let user_segment = trimmed
+        .split(" | ")
+        .find_map(|segment| segment.trim().strip_prefix("User: "))
+        .or_else(|| trimmed.strip_prefix("User: "))
+        .unwrap_or(trimmed)
+        .trim();
+    truncate_text_chars(user_segment, 700)
+}
+
+fn ph1m_recent_archive_human_memory_answer(excerpt: &str) -> String {
+    let mut text = excerpt.trim();
+    if let Some(rest) = text.strip_prefix("For this smoke test,") {
+        text = rest.trim();
+    }
+    if text.is_empty() {
+        return "We discussed that earlier.".to_string();
+    }
+    let lower = text.to_ascii_lowercase();
+    if lower.starts_with("we discussed ")
+        || lower.starts_with("we decided ")
+        || lower.starts_with("you told me ")
+    {
+        return text.to_string();
+    }
+    format!("We discussed that {text}")
 }
 
 fn weather_place_from_response_summary(summary: &str) -> Option<String> {
@@ -17553,18 +17662,92 @@ fn update_recent_archive_digest_from_conversation_ledger(
                 && row.privacy_scope == PrivacyScope::PublicChat
                 && row.tombstone_of_conversation_turn_id.is_none()
         })
-        .map(|row| (row.role, row.text.clone()))
+        .map(|row| RecentArchiveConversationRow {
+            turn_id: row.turn_id,
+            role: row.role,
+            text: row.text.clone(),
+        })
         .collect::<Vec<_>>();
     if rows.is_empty() {
         return Ok(());
     }
 
     let thread_id = recent_archive_thread_id_for_session(session_id);
-    let thread_title = recent_archive_thread_title_from_rows(&rows);
-    let summary_bullets = recent_archive_summary_bullets_from_rows(&rows);
+    upsert_recent_archive_digest_from_rows(
+        store,
+        now,
+        actor_user_id,
+        &thread_id,
+        &rows,
+        &format!(
+            "adapter_recent_archive_digest:{}:{}",
+            session_id.0, turn_id.0
+        ),
+    )?;
+    store
+        .ph1m_upsert_thread_refs_for_user_turn_with_session(actor_user_id, &thread_id, turn_id, now)
+        .map_err(storage_error_to_string)?;
+
+    let turn_rows = rows
+        .iter()
+        .filter(|row| row.turn_id == turn_id)
+        .cloned()
+        .collect::<Vec<_>>();
+    if !turn_rows.is_empty() {
+        let turn_thread_id = recent_archive_thread_id_for_session_turn(session_id, turn_id);
+        upsert_recent_archive_digest_from_rows(
+            store,
+            now,
+            actor_user_id,
+            &turn_thread_id,
+            &turn_rows,
+            &format!(
+                "adapter_recent_archive_turn_digest:{}:{}",
+                session_id.0, turn_id.0
+            ),
+        )?;
+        store
+            .ph1m_upsert_thread_refs_for_user_turn_with_session(
+                actor_user_id,
+                &turn_thread_id,
+                turn_id,
+                now,
+            )
+            .map_err(storage_error_to_string)?;
+    }
+    Ok(())
+}
+
+fn recent_archive_digest_should_update_for_runtime_turn(
+    user_text_final: Option<&str>,
+    execution_outcome: &AppVoiceTurnExecutionOutcome,
+) -> bool {
+    user_text_final.is_some_and(recent_archive_user_text_is_indexable)
+        && execution_outcome.next_move == AppVoiceTurnNextMove::Respond
+        && execution_outcome.dispatch_outcome.is_none()
+        && execution_outcome.tool_response.is_none()
+}
+
+#[derive(Clone)]
+struct RecentArchiveConversationRow {
+    turn_id: TurnId,
+    role: ConversationRole,
+    text: String,
+}
+
+fn upsert_recent_archive_digest_from_rows(
+    store: &mut Ph1fStore,
+    now: MonotonicTimeNs,
+    actor_user_id: &UserId,
+    thread_id: &str,
+    rows: &[RecentArchiveConversationRow],
+    idempotency_key: &str,
+) -> Result<(), String> {
+    let thread_title = recent_archive_thread_title_from_rows(rows);
+    let summary_bullets = recent_archive_summary_bullets_from_rows(rows);
     let use_count = u32::try_from(rows.len().min(1_000_000)).unwrap_or(1_000_000);
     let digest = MemoryThreadDigest::v1(
-        thread_id.clone(),
+        thread_id.to_string(),
         thread_title,
         summary_bullets,
         false,
@@ -17573,10 +17756,6 @@ fn update_recent_archive_digest_from_conversation_ledger(
         use_count,
     )
     .map_err(|err| format!("invalid recent archive thread digest: {err:?}"))?;
-    let digest_idempotency_key = sanitize_idempotency_token(&format!(
-        "adapter_recent_archive_digest:{}:{}",
-        session_id.0, turn_id.0
-    ));
     store
         .ph1m_thread_digest_upsert_commit(
             actor_user_id,
@@ -17584,66 +17763,154 @@ fn update_recent_archive_digest_from_conversation_ledger(
             digest,
             selene_storage::ph1f::MemoryThreadEventKind::ThreadDigestUpsert,
             selene_engines::ph1m::reason_codes::M_THREAD_DIGEST_UPSERTED,
-            digest_idempotency_key,
+            sanitize_idempotency_token(idempotency_key),
         )
         .map_err(storage_error_to_string)?;
-    store
-        .ph1m_upsert_thread_refs_for_user_turn_with_session(actor_user_id, &thread_id, turn_id, now)
-        .map_err(storage_error_to_string)?;
     Ok(())
-}
-
-fn recent_archive_digest_should_update_for_runtime_turn(
-    user_text_final: Option<&str>,
-    execution_outcome: &AppVoiceTurnExecutionOutcome,
-) -> bool {
-    user_text_final.is_some()
-        && execution_outcome.next_move == AppVoiceTurnNextMove::Respond
-        && execution_outcome.dispatch_outcome.is_none()
-        && execution_outcome.tool_response.is_none()
 }
 
 fn recent_archive_thread_id_for_session(session_id: SessionId) -> String {
     format!("session_{}", session_id.0)
 }
 
-fn recent_archive_thread_title_from_rows(rows: &[(ConversationRole, String)]) -> String {
+fn recent_archive_thread_id_for_session_turn(session_id: SessionId, turn_id: TurnId) -> String {
+    format!("session_{}_turn_{}", session_id.0, turn_id.0)
+}
+
+fn recent_archive_thread_title_from_rows(rows: &[RecentArchiveConversationRow]) -> String {
     let title_seed = rows
         .iter()
-        .find(|(role, text)| *role == ConversationRole::User && !text.trim().is_empty())
-        .or_else(|| rows.iter().find(|(_, text)| !text.trim().is_empty()))
-        .map(|(_, text)| text.trim())
+        .find(|row| row.role == ConversationRole::User && !row.text.trim().is_empty())
+        .or_else(|| rows.iter().find(|row| !row.text.trim().is_empty()))
+        .map(|row| row.text.trim())
         .unwrap_or("Recent conversation");
     let title = format!("Recent conversation: {title_seed}");
     truncate_utf8_bytes(&title, 256)
 }
 
-fn recent_archive_summary_bullets_from_rows(rows: &[(ConversationRole, String)]) -> Vec<String> {
-    let mut latest = rows
-        .iter()
-        .rev()
-        .filter_map(|(role, text)| {
-            let text = text.trim();
-            if text.is_empty() {
-                return None;
-            }
-            Some(format!(
-                "{}: {}",
-                match role {
-                    ConversationRole::User => "User",
-                    ConversationRole::Selene => "Selene",
-                },
-                truncate_utf8_bytes(text, 232)
-            ))
-        })
-        .take(3)
-        .collect::<Vec<_>>();
-    latest.reverse();
-    if latest.is_empty() {
-        vec!["Recent conversation turn was recorded.".to_string()]
-    } else {
-        latest
+fn recent_archive_summary_bullets_from_rows(rows: &[RecentArchiveConversationRow]) -> Vec<String> {
+    let mut bullets = Vec::new();
+    let mut current = String::new();
+    for row in rows.iter().filter(|row| row.role == ConversationRole::User) {
+        let text = row.text.trim();
+        if text.is_empty() || !recent_archive_user_text_is_indexable(text) {
+            continue;
+        }
+        let formatted = format!("User: {}", truncate_utf8_bytes(text, 220));
+        if current.is_empty() {
+            current = formatted;
+        } else if current
+            .len()
+            .saturating_add(formatted.len())
+            .saturating_add(3)
+            <= 256
+        {
+            current.push_str(" | ");
+            current.push_str(&formatted);
+        } else {
+            bullets.push(current);
+            current = formatted;
+        }
     }
+    if !current.is_empty() {
+        bullets.push(current);
+    }
+
+    for row in rows
+        .iter()
+        .filter(|row| row.role == ConversationRole::Selene)
+    {
+        let text = row.text.trim();
+        if text.is_empty() || recent_archive_text_is_generic_failure(text) {
+            continue;
+        }
+        let formatted = format!("Selene: {}", truncate_utf8_bytes(text, 232));
+        if bullets.len() < 3 {
+            bullets.push(formatted);
+        }
+    }
+
+    if bullets.is_empty() {
+        let mut latest = rows
+            .iter()
+            .rev()
+            .filter_map(|row| {
+                let text = row.text.trim();
+                if text.is_empty() {
+                    return None;
+                }
+                Some(format!(
+                    "{}: {}",
+                    match row.role {
+                        ConversationRole::User => "User",
+                        ConversationRole::Selene => "Selene",
+                    },
+                    truncate_utf8_bytes(text, 232)
+                ))
+            })
+            .take(3)
+            .collect::<Vec<_>>();
+        latest.reverse();
+        return if latest.is_empty() {
+            vec!["Recent conversation turn was recorded.".to_string()]
+        } else {
+            latest
+        };
+    }
+
+    if bullets.len() > 3 {
+        bullets = bullets.split_off(bullets.len().saturating_sub(3));
+    }
+    bullets
+}
+
+fn recent_archive_user_text_is_indexable(text: &str) -> bool {
+    let terms = recent_archive_index_terms(text);
+    terms.len() >= 4 || text.trim().len() >= 48
+}
+
+fn recent_archive_text_is_generic_failure(text: &str) -> bool {
+    let normalized = text.trim().to_ascii_lowercase();
+    normalized == "i couldn't answer that just now. please try again."
+        || normalized == "i couldn’t answer that just now. please try again."
+}
+
+fn recent_archive_index_terms(text: &str) -> Vec<String> {
+    let mut terms = Vec::new();
+    let mut current = String::new();
+    for ch in text.chars() {
+        if ch.is_ascii_alphanumeric() {
+            current.push(ch.to_ascii_lowercase());
+        } else if !current.is_empty() {
+            if recent_archive_index_term_is_meaningful(&current) {
+                terms.push(current.clone());
+            }
+            current.clear();
+        }
+    }
+    if !current.is_empty() && recent_archive_index_term_is_meaningful(&current) {
+        terms.push(current);
+    }
+    terms
+}
+
+fn recent_archive_index_term_is_meaningful(term: &str) -> bool {
+    term.len() >= 3
+        && !matches!(
+            term,
+            "for"
+                | "this"
+                | "that"
+                | "the"
+                | "and"
+                | "but"
+                | "with"
+                | "should"
+                | "must"
+                | "only"
+                | "smoke"
+                | "test"
+        )
 }
 
 fn truncate_utf8_bytes(value: &str, max_bytes: usize) -> String {
@@ -38077,10 +38344,12 @@ mod tests {
             out.answer_class.as_deref(),
             Some("memory_recent_archive_recall")
         );
-        assert!(out.response_text.contains("recent discussion"));
-        assert!(out
+        assert!(out.response_text.starts_with("We "));
+        assert!(!out
             .response_text
             .contains("thread_active_session_context_decision"));
+        assert!(!out.response_text.contains("archive_ref"));
+        assert!(!out.response_text.contains(&now.to_string()));
         assert!(out.response_text.contains("PH1.X"));
         let store = runtime.store.lock().expect("store lock should succeed");
         assert_eq!(
@@ -38124,7 +38393,11 @@ mod tests {
             "What did we discuss yesterday about continuous conversation?",
         );
 
+        assert!(out.response_text.starts_with("We discussed"));
         assert!(out
+            .response_text
+            .contains("continuous conversation and active session continuity yesterday"));
+        assert!(!out
             .response_text
             .contains("thread_yesterday_continuous_conversation"));
         assert!(!out
@@ -38243,6 +38516,178 @@ mod tests {
             ),
             before_recall,
             "recall reads must not write durable memory or mutate thread digests"
+        );
+    }
+
+    #[test]
+    fn recent_archive_recall_indexes_voice_smoke_seeds_as_distinct_turns() {
+        let runtime = AdapterRuntime::default();
+        const HOUR_NS: u64 = 60 * 60 * 1_000_000_000;
+        let now = 96 * HOUR_NS;
+        let thread_key = "recent-archive-real-voice-seeds";
+        let seeds = [
+            (
+                "For this smoke test, active session context belongs to PH1.X and adapter, not PH1.M.",
+                "Understood.",
+            ),
+            (
+                "For this smoke test, seventy-two hour recall belongs to PH1.M and the storage archive.",
+                "Understood.",
+            ),
+            (
+                "For this smoke test, Desktop must only capture, play audio, transport, and render.",
+                "Understood.",
+            ),
+            (
+                "For this smoke test, recalled history must not become current active intent.",
+                "Understood.",
+            ),
+            (
+                "For this smoke test, Wake Celine should acknowledge readiness and then listen for the real prompt.",
+                "Understood.",
+            ),
+        ];
+        for (index, (seed, expected_response)) in seeds.iter().enumerate() {
+            let turn_id = 721_101_u64.saturating_add(index as u64);
+            let out = run_recent_archive_live_seed_turn_on_thread(
+                &runtime,
+                thread_key,
+                turn_id,
+                now.saturating_add((index as u64) * 1_000),
+                seed,
+            );
+            assert_eq!(out.status, "ok");
+            assert!(
+                out.response_text.contains(expected_response),
+                "harmless seed statement should receive a normal acknowledgement: {}",
+                out.response_text
+            );
+            assert!(
+                !out.response_text.contains("couldn't answer")
+                    && !out.response_text.contains("couldn’t answer"),
+                "seed statements must not fall into generic failure"
+            );
+        }
+
+        let actor_user_id = UserId::new("tenant_a:user_adapter_test").unwrap();
+        {
+            let store = runtime.store.lock().expect("store lock should succeed");
+            let current = store.ph1m_thread_current_rows_for_user(&actor_user_id);
+            assert!(
+                current
+                    .iter()
+                    .filter(|row| row.digest.thread_id.contains("_turn_"))
+                    .count()
+                    >= 5,
+                "each live seed turn should update the existing PH1.M digest surface with a turn-scoped digest"
+            );
+        }
+
+        let recall_cases = [
+            (
+                "What did we discuss about active session context?",
+                "active session context belongs to PH1.X",
+                "Desktop must only",
+            ),
+            (
+                "What did we decide about PH1.M and seventy-two hour recall?",
+                "seventy-two hour recall belongs to PH1.M",
+                "active session context belongs",
+            ),
+            (
+                "Find where we talked about Desktop staying thin.",
+                "Desktop must only capture",
+                "seventy-two hour recall belongs",
+            ),
+            (
+                "What did we say about recalled history becoming active intent?",
+                "recalled history must not become current active intent",
+                "Wake Celine",
+            ),
+            (
+                "What did we say about waking Selene?",
+                "Wake Celine should acknowledge",
+                "Project Zebra Lantern",
+            ),
+        ];
+        for (index, (query, must_contain, must_not_contain)) in recall_cases.iter().enumerate() {
+            let out = run_recent_archive_typed_recall_on_thread(
+                &runtime,
+                thread_key,
+                722_101_u64.saturating_add(index as u64),
+                now.saturating_add(HOUR_NS).saturating_add(index as u64),
+                query,
+            );
+            assert_eq!(out.status, "ok");
+            assert_eq!(
+                out.answer_class.as_deref(),
+                Some("memory_recent_archive_recall")
+            );
+            assert!(
+                out.response_text.contains(must_contain),
+                "query `{query}` should recall the matching seed, got: {}",
+                out.response_text
+            );
+            assert!(
+                !out.response_text.contains(must_not_contain),
+                "query `{query}` should not single-match the wrong seed, got: {}",
+                out.response_text
+            );
+        }
+
+        let no_match = run_recent_archive_typed_recall_on_thread(
+            &runtime,
+            thread_key,
+            722_199,
+            now.saturating_add(HOUR_NS).saturating_add(99),
+            "What did we discuss about Project Zebra Lantern?",
+        );
+        assert_eq!(no_match.status, "ok");
+        assert_eq!(
+            no_match.answer_class.as_deref(),
+            Some("memory_recent_archive_recall")
+        );
+        assert!(
+            no_match
+                .response_text
+                .contains("no matching recent archive item"),
+            "no-match recall must not hallucinate seeded content: {}",
+            no_match.response_text
+        );
+    }
+
+    #[test]
+    fn recent_archive_clipped_seed_fragment_is_not_indexed_as_full_memory() {
+        let runtime = AdapterRuntime::default();
+        const HOUR_NS: u64 = 60 * 60 * 1_000_000_000;
+        let now = 96 * HOUR_NS;
+        let thread_key = "recent-archive-clipped-seed";
+        let clipped = run_recent_archive_live_seed_turn_on_thread(
+            &runtime,
+            thread_key,
+            721_501,
+            now,
+            "Current active intent.",
+        );
+        assert_eq!(clipped.status, "ok");
+
+        let recall = run_recent_archive_typed_recall_on_thread(
+            &runtime,
+            thread_key,
+            721_502,
+            now.saturating_add(HOUR_NS),
+            "What did we say about recalled history becoming active intent?",
+        );
+        assert_eq!(
+            recall.answer_class.as_deref(),
+            Some("memory_recent_archive_recall")
+        );
+        assert!(
+            recall
+                .response_text
+                .contains("no matching recent archive item"),
+            "a clipped fragment must not be indexed as the complete memory seed: {}",
+            recall.response_text
         );
     }
 

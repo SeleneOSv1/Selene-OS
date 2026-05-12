@@ -13,6 +13,7 @@
 			B10000000000000000000019 /* DesktopLiveVoiceE2EProofView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000001A /* DesktopLiveVoiceE2EProofView.swift */; };
 			B1000000000000000000001B /* DesktopControlledWakeModeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000001C /* DesktopControlledWakeModeView.swift */; };
 			B10000000000000000000015 /* AppIcon.icns in Resources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000016 /* AppIcon.icns */; };
+			B1000000000000000000001D /* AppIconListening.icns in Resources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000001E /* AppIconListening.icns */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -24,6 +25,7 @@
 			B10000000000000000000005 /* SeleneMacDesktop.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = SeleneMacDesktop.app; sourceTree = BUILT_PRODUCTS_DIR; };
 			B10000000000000000000006 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 			B10000000000000000000016 /* AppIcon.icns */ = {isa = PBXFileReference; lastKnownFileType = image.icns; path = Resources/AppIcon.icns; sourceTree = "<group>"; };
+			B1000000000000000000001E /* AppIconListening.icns */ = {isa = PBXFileReference; lastKnownFileType = image.icns; path = Resources/AppIconListening.icns; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -55,6 +57,7 @@
 					B1000000000000000000001C /* DesktopControlledWakeModeView.swift */,
 					B10000000000000000000006 /* Info.plist */,
 					B10000000000000000000016 /* AppIcon.icns */,
+					B1000000000000000000001E /* AppIconListening.icns */,
 				);
 				path = SeleneMacDesktop;
 				sourceTree = "<group>";
@@ -126,6 +129,7 @@
 				buildActionMask = 2147483647;
 				files = (
 					B10000000000000000000015 /* AppIcon.icns in Resources */,
+					B1000000000000000000001D /* AppIconListening.icns in Resources */,
 				);
 				runOnlyForDeploymentPostprocessing = 0;
 			};

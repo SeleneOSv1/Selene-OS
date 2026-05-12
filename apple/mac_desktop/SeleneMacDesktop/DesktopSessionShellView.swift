@@ -164,6 +164,150 @@ private enum DesktopVoiceProviderLane {
     static let ttsProviderID = "openai_tts_primary"
 }
 
+@MainActor
+private final class DesktopDockIconPulseController: ObservableObject {
+    private var originalIcon: NSImage?
+    private var frames: [NSImage] = []
+    private var frameIndex = 0
+    private var timer: Timer?
+
+    func setPulsing(_ pulsing: Bool) {
+        if pulsing {
+            startPulsing()
+        } else {
+            stopPulsing()
+        }
+    }
+
+    func startPulsing() {
+        guard timer == nil else {
+            return
+        }
+        originalIcon = NSApplication.shared.applicationIconImage?.copy() as? NSImage
+        let baseIcon = listeningDockIconImage()
+            ?? originalIcon
+            ?? NSApplication.shared.applicationIconImage
+            ?? fallbackDockIconImage()
+        let frameCount = 48
+        frames = (0..<frameCount).map { renderDockIconPulseFrame(index: $0, frameCount: frameCount, baseIcon: baseIcon) }
+        frameIndex = 0
+        NSApplication.shared.applicationIconImage = frames.first
+        let timer = Timer.scheduledTimer(withTimeInterval: 1.0 / 18.0, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                self?.advanceFrame()
+            }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        self.timer = timer
+    }
+
+    func stopPulsing() {
+        timer?.invalidate()
+        timer = nil
+        frameIndex = 0
+        if let originalIcon {
+            NSApplication.shared.applicationIconImage = originalIcon
+        }
+        originalIcon = nil
+    }
+
+    private func advanceFrame() {
+        guard !frames.isEmpty else {
+            return
+        }
+        frameIndex = (frameIndex + 1) % frames.count
+        NSApplication.shared.applicationIconImage = frames[frameIndex]
+    }
+
+    private func renderDockIconPulseFrame(index: Int, frameCount: Int, baseIcon: NSImage) -> NSImage {
+        let size: CGFloat = 512
+        let image = NSImage(size: NSSize(width: size, height: size))
+        image.lockFocus()
+        NSGraphicsContext.current?.imageInterpolation = .high
+
+        let rect = NSRect(x: 0, y: 0, width: size, height: size)
+        baseIcon.draw(
+            in: rect,
+            from: NSRect(origin: .zero, size: baseIcon.size),
+            operation: .sourceOver,
+            fraction: 1.0
+        )
+
+        let phase = Double(index) / Double(frameCount)
+        let pulse = (sin(phase * Double.pi * 4.0 - Double.pi / 2.0) + 1.0) / 2.0
+        let sweepProgress = phase < 0.5 ? phase * 2.0 : (1.0 - phase) * 2.0
+        let wordPulseRect = NSRect(x: size * 0.04, y: size * 0.30, width: size * 0.92, height: size * 0.40)
+        let wordPulsePath = NSBezierPath(
+            roundedRect: wordPulseRect,
+            xRadius: size * 0.12,
+            yRadius: size * 0.12
+        )
+        NSGraphicsContext.saveGraphicsState()
+        wordPulsePath.addClip()
+        baseIcon.draw(
+            in: rect,
+            from: NSRect(origin: .zero, size: baseIcon.size),
+            operation: .plusLighter,
+            fraction: CGFloat(0.04 + 0.14 * pulse)
+        )
+
+        let sweepWidth = size * 0.10
+        let sweepX = size * (-0.24 + 1.48 * sweepProgress)
+        let sweepRect = NSRect(
+            x: sweepX,
+            y: wordPulseRect.minY,
+            width: sweepWidth,
+            height: wordPulseRect.height
+        )
+        let sweepPath = NSBezierPath(
+            roundedRect: sweepRect,
+            xRadius: sweepWidth * 0.5,
+            yRadius: sweepWidth * 0.5
+        )
+        NSGraphicsContext.saveGraphicsState()
+        sweepPath.addClip()
+        baseIcon.draw(
+            in: rect,
+            from: NSRect(origin: .zero, size: baseIcon.size),
+            operation: .plusLighter,
+            fraction: 0.86
+        )
+        NSGradient(colors: [
+            NSColor(calibratedRed: 0.40, green: 0.78, blue: 1.0, alpha: 0.00),
+            NSColor(calibratedRed: 0.70, green: 0.93, blue: 1.0, alpha: 0.08),
+            NSColor(calibratedRed: 1.0, green: 1.0, blue: 1.0, alpha: 0.18),
+            NSColor(calibratedRed: 0.45, green: 0.82, blue: 1.0, alpha: 0.06),
+            NSColor(calibratedRed: 0.40, green: 0.78, blue: 1.0, alpha: 0.00),
+        ])?.draw(in: sweepRect, angle: 0)
+        NSGraphicsContext.restoreGraphicsState()
+        NSGraphicsContext.restoreGraphicsState()
+
+        image.unlockFocus()
+        return image
+    }
+
+    private func listeningDockIconImage() -> NSImage? {
+        guard let iconURL = Bundle.main.url(forResource: "AppIconListening", withExtension: "icns") else {
+            return nil
+        }
+        return NSImage(contentsOf: iconURL)
+    }
+
+    private func fallbackDockIconImage() -> NSImage {
+        let size: CGFloat = 512
+        let image = NSImage(size: NSSize(width: size, height: size))
+        image.lockFocus()
+        NSColor(calibratedRed: 0.01, green: 0.02, blue: 0.12, alpha: 1.0).setFill()
+        NSBezierPath(
+            roundedRect: NSRect(x: 0, y: 0, width: size, height: size),
+            xRadius: size * 0.20,
+            yRadius: size * 0.20
+        ).fill()
+        image.unlockFocus()
+        return image
+    }
+}
+
 private func boundedAudioCaptureToken(
     _ rawValue: String?,
     fallback: String,
@@ -1897,7 +2041,7 @@ private struct DesktopAuthoritativeReplyPlaybackState: Equatable {
         phase: .idle,
         title: "Authoritative reply playback idle",
         summary: "Playback remains available only for cloud-authored reply text that is already visible in the bounded reply surface.",
-        detail: "OpenAI TTS playback is preferred. Native macOS speech may be used only as bounded playback for already-rendered runtime reply text when OpenAI TTS is unavailable; this shell remains explicitly non-authoritative without transcript mutation, wake parity, or autonomous-unlock capability."
+        detail: "OpenAI TTS is requested first through the runtime bridge. Native macOS speech may be used only as bounded playback for already-rendered runtime reply text when the runtime TTS response allows fallback; this shell remains explicitly non-authoritative without transcript mutation, wake parity, or autonomous-unlock capability."
     )
 
     static func speaking(authoritativeResponseText: String) -> DesktopAuthoritativeReplyPlaybackState {
@@ -1928,21 +2072,21 @@ private struct DesktopAuthoritativeReplyPlaybackState: Equatable {
         )
     }
 
-    static func playingNativeMacOSTTS(answerTextSHA256: String, fallbackReason: String) -> DesktopAuthoritativeReplyPlaybackState {
-        DesktopAuthoritativeReplyPlaybackState(
-            phase: .speaking,
-            title: "Native macOS fallback reply playback active",
-            summary: "Playing local speech for the already-rendered Selene runtime answer after OpenAI TTS was unavailable.",
-            detail: "PLAYING_NATIVE_MACOS_TTS answer_text_sha256=\(answerTextSHA256) openai_tts_unavailable_reason=\(boundedFailureLogToken(fallbackReason)) native_macos_tts=true fallback_counted_as_success=true local_reply_synthesis=false"
-        )
-    }
-
     static func ttsUnavailable(reason: String) -> DesktopAuthoritativeReplyPlaybackState {
         DesktopAuthoritativeReplyPlaybackState(
             phase: .failed,
             title: "OpenAI TTS reply playback unavailable",
-            summary: "Reply playback is unavailable because OpenAI TTS did not return audio and native macOS fallback could not start.",
-            detail: "OPENAI_TTS_UNAVAILABLE reason=\(boundedFailureLogToken(reason)) native_macos_tts_attempted=true fallback_counted_as_success=false"
+            summary: "Reply playback is unavailable because OpenAI TTS did not return audio and the runtime path did not allow fallback playback.",
+            detail: "OPENAI_TTS_UNAVAILABLE reason=\(boundedFailureLogToken(reason)) native_macos_tts_attempted=false runtime_fallback_allowed=false fallback_counted_as_success=false"
+        )
+    }
+
+    static func playingNativeMacOSTTS(answerTextSHA256: String, fallbackReason: String) -> DesktopAuthoritativeReplyPlaybackState {
+        DesktopAuthoritativeReplyPlaybackState(
+            phase: .speaking,
+            title: "Runtime-allowed Apple fallback reply playback active",
+            summary: "Playing local speech for the already-rendered Selene runtime answer after the OpenAI TTS runtime path allowed fallback.",
+            detail: "PLAYING_NATIVE_MACOS_TTS answer_text_sha256=\(answerTextSHA256) openai_tts_unavailable_reason=\(boundedFailureLogToken(fallbackReason)) native_macos_tts=true runtime_fallback_allowed=true fallback_counted_as_success=true local_reply_synthesis=false"
         )
     }
 
@@ -2132,7 +2276,7 @@ private final class DesktopAuthoritativeReplyPlaybackController: NSObject, Obser
     }
 
     @discardableResult
-    func playNativeMacOSTTSFallback(
+    func playRuntimeAllowedNativeMacOSTTSFallback(
         authoritativeResponseText: String?,
         answerTextSHA256: String,
         fallbackReason: String
@@ -2266,8 +2410,8 @@ private final class DesktopAuthoritativeReplyPlaybackController: NSObject, Obser
                 playbackState = .stopped()
             } else {
                 playbackState = .failed(
-                    summary: "Native macOS TTS fallback ended before completion.",
-                    detail: "NATIVE_MACOS_TTS_FAILED fallback_counted_as_success=false local_reply_synthesis=false"
+                    summary: "Runtime-allowed Apple fallback TTS ended before completion.",
+                    detail: "NATIVE_MACOS_TTS_FAILED runtime_fallback_allowed=true fallback_counted_as_success=false local_reply_synthesis=false"
                 )
             }
         }
@@ -7309,6 +7453,7 @@ struct DesktopSessionShellView: View {
     @StateObject private var desktopWakeListenerController = DesktopWakeListenerController()
     @StateObject private var desktopCanonicalRuntimeBridge = DesktopCanonicalRuntimeBridge()
     @StateObject private var desktopAuthoritativeReplyPlaybackController = DesktopAuthoritativeReplyPlaybackController()
+    @StateObject private var desktopDockIconPulseController = DesktopDockIconPulseController()
     @State private var desktopRealtimeTranscriptionStartInFlight = false
     @State private var desktopRealtimeTranscriptionStartGeneration: UInt64 = 0
     @State private var desktopRealtimeTranscriptionPrepareInFlight = false
@@ -7371,6 +7516,7 @@ struct DesktopSessionShellView: View {
     @State private var desktopSidebarRenameDraft: String = ""
     @State private var desktopSelectedPersistedConversationKey: String?
     @State private var desktopDraftConversationKey: String?
+    @State private var desktopVoiceConversationThreadKey: String = "desktop_continuous_voice"
     @State private var desktopComposerAttachmentSelections: [DesktopComposerAttachmentSelection] = []
     @State private var desktopComposerVoiceModeEnabled: Bool = false
     @State private var desktopComposerVoiceModeAwaitingReplyPlaybackCompletion: Bool = false
@@ -7455,6 +7601,9 @@ struct DesktopSessionShellView: View {
             desktopAppendRuntimeBridgeDebugLog(
                 "desktop wake listener state subscriber observed state=\(listenerState.rawValue)"
             )
+            desktopDockIconPulseController.setPulsing(
+                listenerState.isActiveForMicrophone || explicitVoiceController.isListening
+            )
             Task { @MainActor in
                 await recoverDesktopWakeListenerAfterTransientFailureIfNeeded()
                 await synchronizeDesktopWakeListenerLifecycleState()
@@ -7484,6 +7633,9 @@ struct DesktopSessionShellView: View {
             await synchronizeDesktopWakeListenerLifecycleState()
         }
         .task(id: explicitVoiceController.isListening) {
+            desktopDockIconPulseController.setPulsing(
+                explicitVoiceController.isListening || desktopWakeListenerController.listenerState.isActiveForMicrophone
+            )
             await synchronizeDesktopWakeListenerLifecycleState()
         }
         .task(id: explicitVoiceController.pendingRequest?.id) {
@@ -7837,7 +7989,15 @@ struct DesktopSessionShellView: View {
 
     private func desktopStartNewChatFromSidebar() {
         desktopTypedTurnDraft = ""
+        desktopTypedTurnPendingRequest = nil
+        desktopTypedTurnDispatchInFlightRequestID = nil
+        desktopTypedTurnFailedRequest = nil
+        desktopSubmittedUserContinuityPreviewState = nil
+        desktopCanonicalRuntimeOutcomeState = nil
+        desktopAuthoritativeReplyRenderState = nil
+        desktopAuthoritativeReplyProvenanceRenderState = nil
         desktopComposerAttachmentSelections = []
+        desktopVoiceConversationThreadKey = "desktop_continuous_voice::\(UUID().uuidString)"
         desktopDraftConversationKey = "conversation::draft::\(UUID().uuidString)"
         desktopSelectedPersistedConversationKey = nil
         selectedObservedSessionSurfaceID = nil
@@ -7929,6 +8089,13 @@ struct DesktopSessionShellView: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
+                    desktopSidebarActionRow(
+                        title: "New conversation",
+                        systemImage: "square.and.pencil"
+                    ) {
+                        desktopStartNewChatFromSidebar()
+                    }
+
                     desktopSidebarActionRow(
                         title: "Search chats",
                         systemImage: "magnifyingglass"
@@ -9504,7 +9671,7 @@ struct DesktopSessionShellView: View {
     }
 
     private var desktopNormalContinuousVoiceThreadKey: String {
-        "desktop_continuous_voice"
+        desktopVoiceConversationThreadKey
     }
 
     private var desktopPersistedTimelineEntriesForForegroundConversation: [DesktopConversationTimelineEntryState] {
@@ -20071,7 +20238,7 @@ struct DesktopSessionShellView: View {
     }
 
     @MainActor
-    private func playExplicitVoiceAuthoritativeReply(
+    private func playRuntimeAuthoritativeReply(
         outcomeState: DesktopCanonicalRuntimeOutcomeState
     ) async -> Bool {
         guard let authoritativeResponseText = outcomeState.authoritativeResponseText?
@@ -20134,24 +20301,19 @@ struct DesktopSessionShellView: View {
 
         guard DesktopOpenAITtsFeatureFlag.isEnabled else {
             desktopOpenAITtsPlaybackGeneration &+= 1
-            let answerTextSHA256 = desktopSessionSHA256Hex(Data(authoritativeResponseText.utf8))
-            beginDesktopOpenAITtsSelfEchoGate(reason: "native_macos_tts_fallback_feature_flag_off")
             desktopAppendRuntimeBridgeDebugLog(
-                "desktop openai tts unavailable reason=feature_flag_off native_macos_tts=true fallback_attempted=true"
+                "desktop openai tts unavailable reason=feature_flag_off native_macos_tts=false fallback_attempted=false"
             )
             desktopAuthoritativeReplyPlaybackState = desktopAuthoritativeReplyPlaybackController
-                .playNativeMacOSTTSFallback(
+                .failClosedWithoutNativePlayback(
                     authoritativeResponseText: authoritativeResponseText,
-                    answerTextSHA256: answerTextSHA256,
                     fallbackReason: "feature_flag_off"
                 )
             desktopAppendRuntimeBridgeDebugLog(
-                "\(desktopTraceClockFields()) desktop native macos tts fallback phase=\(desktopAuthoritativeReplyPlaybackState.phase.rawValue) reason=feature_flag_off fallback_counted_as_success=\(desktopAuthoritativeReplyPlaybackState.phase == .speaking)"
+                "\(desktopTraceClockFields()) desktop openai tts failed_closed phase=\(desktopAuthoritativeReplyPlaybackState.phase.rawValue) reason=feature_flag_off native_macos_tts=false fallback_counted_as_success=false"
             )
-            if desktopAuthoritativeReplyPlaybackState.phase != .speaking {
-                releaseDesktopOpenAITtsSelfEchoGateAfterCooldown(reason: "native_tts_fallback_failed_feature_flag_off")
-            }
-            return desktopAuthoritativeReplyPlaybackState.phase == .speaking
+            releaseDesktopOpenAITtsSelfEchoGateAfterCooldown(reason: "openai_tts_feature_flag_off")
+            return false
         }
 
         beginDesktopOpenAITtsSelfEchoGate(reason: "openai_tts_request_start")
@@ -20201,6 +20363,43 @@ struct DesktopSessionShellView: View {
                 releaseDesktopOpenAITtsSelfEchoGateAfterCooldown(reason: "playback_not_started")
             }
             return desktopAuthoritativeReplyPlaybackState.phase == .speaking
+        } catch let ttsFailure as DesktopOpenAITtsSpeechFailure {
+            guard desktopOpenAITtsPlaybackGeneration == playbackGeneration else {
+                desktopAppendRuntimeBridgeDebugLog(
+                    "desktop openai tts request failure absorbed reason=newer_turn_started"
+                )
+                releaseDesktopOpenAITtsSelfEchoGateAfterCooldown(reason: "request_failure_absorbed")
+                return false
+            }
+            let fallbackReason = boundedFailureLogToken(ttsFailure.reason)
+            desktopAppendRuntimeBridgeDebugLog(
+                "desktop openai tts unavailable reason=\(fallbackReason) runtime_fallback_allowed=\(ttsFailure.fallbackAllowed)"
+            )
+            if ttsFailure.fallbackAllowed {
+                desktopAuthoritativeReplyPlaybackState = desktopAuthoritativeReplyPlaybackController
+                    .playRuntimeAllowedNativeMacOSTTSFallback(
+                        authoritativeResponseText: authoritativeResponseText,
+                        answerTextSHA256: answerTextSHA256,
+                        fallbackReason: fallbackReason
+                    )
+                desktopAppendRuntimeBridgeDebugLog(
+                    "\(desktopTraceClockFields()) desktop native macos tts fallback phase=\(desktopAuthoritativeReplyPlaybackState.phase.rawValue) reason=\(fallbackReason) runtime_fallback_allowed=true fallback_counted_as_success=\(desktopAuthoritativeReplyPlaybackState.phase == .speaking)"
+                )
+                if desktopAuthoritativeReplyPlaybackState.phase != .speaking {
+                    releaseDesktopOpenAITtsSelfEchoGateAfterCooldown(reason: "runtime_allowed_native_tts_fallback_failed")
+                }
+                return desktopAuthoritativeReplyPlaybackState.phase == .speaking
+            }
+            desktopAuthoritativeReplyPlaybackState = desktopAuthoritativeReplyPlaybackController
+                .failClosedWithoutNativePlayback(
+                    authoritativeResponseText: authoritativeResponseText,
+                    fallbackReason: fallbackReason
+                )
+            desktopAppendRuntimeBridgeDebugLog(
+                "\(desktopTraceClockFields()) desktop openai tts failed_closed phase=\(desktopAuthoritativeReplyPlaybackState.phase.rawValue) reason=\(fallbackReason) runtime_fallback_allowed=false native_macos_tts=false fallback_counted_as_success=false"
+            )
+            releaseDesktopOpenAITtsSelfEchoGateAfterCooldown(reason: "openai_tts_request_failed")
+            return false
         } catch {
             guard desktopOpenAITtsPlaybackGeneration == playbackGeneration else {
                 desktopAppendRuntimeBridgeDebugLog(
@@ -20211,21 +20410,18 @@ struct DesktopSessionShellView: View {
             }
             let fallbackReason = boundedFailureLogToken(error.localizedDescription)
             desktopAppendRuntimeBridgeDebugLog(
-                "desktop openai tts unavailable reason=\(fallbackReason) native_macos_tts=true fallback_attempted=true"
+                "desktop openai tts unavailable reason=\(fallbackReason) runtime_fallback_allowed=false"
             )
             desktopAuthoritativeReplyPlaybackState = desktopAuthoritativeReplyPlaybackController
-                .playNativeMacOSTTSFallback(
+                .failClosedWithoutNativePlayback(
                     authoritativeResponseText: authoritativeResponseText,
-                    answerTextSHA256: answerTextSHA256,
                     fallbackReason: fallbackReason
                 )
             desktopAppendRuntimeBridgeDebugLog(
-                "\(desktopTraceClockFields()) desktop native macos tts fallback phase=\(desktopAuthoritativeReplyPlaybackState.phase.rawValue) reason=\(fallbackReason) fallback_counted_as_success=\(desktopAuthoritativeReplyPlaybackState.phase == .speaking)"
+                "\(desktopTraceClockFields()) desktop openai tts failed_closed phase=\(desktopAuthoritativeReplyPlaybackState.phase.rawValue) reason=\(fallbackReason) runtime_fallback_allowed=false native_macos_tts=false fallback_counted_as_success=false"
             )
-            if desktopAuthoritativeReplyPlaybackState.phase != .speaking {
-                releaseDesktopOpenAITtsSelfEchoGateAfterCooldown(reason: "request_failed")
-            }
-            return desktopAuthoritativeReplyPlaybackState.phase == .speaking
+            releaseDesktopOpenAITtsSelfEchoGateAfterCooldown(reason: "openai_tts_request_failed")
+            return false
         }
     }
 
@@ -21626,7 +21822,7 @@ struct DesktopSessionShellView: View {
                     )
                     if outcomeState.authoritativeResponseText?
                         .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
-                        _ = await playExplicitVoiceAuthoritativeReply(outcomeState: outcomeState)
+                        _ = await playRuntimeAuthoritativeReply(outcomeState: outcomeState)
                         shouldAwaitVoiceModeReplyPlaybackCompletion =
                             desktopComposerVoiceModeEnabled
                             && desktopAuthoritativeReplyPlaybackState.phase == .speaking
@@ -21845,7 +22041,7 @@ struct DesktopSessionShellView: View {
                         text: outcomeState.authoritativeResponseText,
                         conversationKey: conversationKey
                     )
-                    _ = await playExplicitVoiceAuthoritativeReply(outcomeState: outcomeState)
+                    _ = await playRuntimeAuthoritativeReply(outcomeState: outcomeState)
                 }
             } else {
                 desktopAuthoritativeReplyRenderState = nil
@@ -22042,6 +22238,8 @@ struct DesktopSessionShellView: View {
                         inputMode: .typed,
                         conversationKey: conversationKey
                     )
+                } else {
+                    _ = await playRuntimeAuthoritativeReply(outcomeState: outcomeState)
                 }
             } else {
                 desktopAuthoritativeReplyRenderState = nil

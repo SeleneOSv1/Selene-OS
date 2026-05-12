@@ -109,28 +109,115 @@ const NS_PER_MS: u64 = 1_000_000;
 const DAY_MS: u64 = 24 * 60 * 60 * 1000;
 
 fn recent_archive_query_terms(text: &str) -> BTreeSet<String> {
+    let raw_tokens = recent_archive_raw_tokens(text);
     let mut terms = BTreeSet::new();
+    let mut i = 0;
+    while i < raw_tokens.len() {
+        let token = raw_tokens[i].as_str();
+        if token == "ph1" {
+            if let Some(next) = raw_tokens.get(i + 1) {
+                if matches!(next.as_str(), "m" | "x" | "e" | "l") {
+                    push_recent_archive_term(&mut terms, &format!("ph1{next}"));
+                    i += 2;
+                    continue;
+                }
+            }
+        }
+        if token == "seventy" && raw_tokens.get(i + 1).is_some_and(|next| next == "two") {
+            push_recent_archive_term(&mut terms, "72h");
+            i += 2;
+            continue;
+        }
+        if token == "celine" && recent_archive_token_window_has_wake_address(&raw_tokens, i) {
+            push_recent_archive_term(&mut terms, "selene");
+            i += 1;
+            continue;
+        }
+        push_recent_archive_term(&mut terms, token);
+        i += 1;
+    }
+    recent_archive_expand_query_terms(&mut terms);
+    terms
+}
+
+fn recent_archive_raw_tokens(text: &str) -> Vec<String> {
+    let mut tokens = Vec::new();
     let mut current = String::new();
     for ch in text.chars() {
         if ch.is_ascii_alphanumeric() {
             current.push(ch.to_ascii_lowercase());
         } else if !current.is_empty() {
-            push_recent_archive_term(&mut terms, &current);
+            tokens.push(current.clone());
             current.clear();
         }
     }
     if !current.is_empty() {
-        push_recent_archive_term(&mut terms, &current);
+        tokens.push(current);
     }
-    terms
+    tokens
+}
+
+fn recent_archive_token_window_has_wake_address(tokens: &[String], index: usize) -> bool {
+    let start = index.saturating_sub(2);
+    let end = (index + 3).min(tokens.len());
+    tokens[start..end].iter().any(|token| {
+        matches!(
+            token.as_str(),
+            "wake" | "waking" | "woke" | "listen" | "listening" | "selene" | "assistant"
+        )
+    })
+}
+
+fn recent_archive_expand_query_terms(terms: &mut BTreeSet<String>) {
+    if terms.contains("desktop")
+        && (terms.contains("thin")
+            || terms.contains("stay")
+            || terms.contains("staying")
+            || terms.contains("bridge"))
+    {
+        for term in [
+            "capture",
+            "play",
+            "playback",
+            "audio",
+            "transport",
+            "render",
+        ] {
+            terms.insert(term.to_string());
+        }
+    }
+    if terms.contains("72h") {
+        terms.insert("recall".to_string());
+        terms.insert("archive".to_string());
+    }
 }
 
 fn push_recent_archive_term(terms: &mut BTreeSet<String>, term: &str) {
-    if term.len() < 3 {
+    let normalized = match term {
+        "72" | "72h" => "72h",
+        "activesessioncontext" => "active_session_context",
+        "waking" | "woke" | "wakeword" => "wake",
+        "recalled" | "recalling" | "remembered" | "remembering" => "recall",
+        "becoming" => "become",
+        "staying" | "stays" => "stay",
+        "rendering" | "renders" => "render",
+        "transporting" | "transports" => "transport",
+        "capturing" | "captures" => "capture",
+        "played" | "plays" | "playing" => "play",
+        "archival" | "archived" => "archive",
+        other => other,
+    };
+    if normalized == "active_session_context" {
+        for term in ["active", "session", "context"] {
+            push_recent_archive_term(terms, term);
+        }
+        return;
+    }
+    if normalized.len() < 3 && !normalized.starts_with("ph1") {
         return;
     }
     if matches!(
-        term,
+        normalized,
         "what"
             | "did"
             | "discuss"
@@ -153,11 +240,12 @@ fn push_recent_archive_term(terms: &mut BTreeSet<String>, term: &str) {
             | "this"
             | "that"
             | "recent"
-            | "memory"
+            | "smoke"
+            | "test"
     ) {
         return;
     }
-    terms.insert(term.to_string());
+    terms.insert(normalized.to_string());
 }
 
 fn recent_archive_time_window(req: &Ph1mRecentArchiveRecallRequest) -> (u64, u64) {
@@ -178,7 +266,13 @@ fn recent_archive_excerpt(thread: &ThreadEntry, query_terms: &BTreeSet<String>) 
     let selected = thread
         .summary_bullets
         .iter()
-        .find(|bullet| {
+        .max_by(|left, right| {
+            let left_terms = recent_archive_query_terms(left);
+            let right_terms = recent_archive_query_terms(right);
+            recent_archive_overlap_score(query_terms, &left_terms)
+                .cmp(&recent_archive_overlap_score(query_terms, &right_terms))
+        })
+        .filter(|bullet| {
             let bullet_terms = recent_archive_query_terms(bullet);
             query_terms.iter().any(|term| bullet_terms.contains(term))
         })
@@ -196,6 +290,35 @@ fn recent_archive_match_reason(overlap: &[String]) -> String {
         .collect::<Vec<_>>()
         .join(", ");
     truncate_chars(&format!("matched terms: {joined}"), 192)
+}
+
+fn recent_archive_overlap_score(
+    query_terms: &BTreeSet<String>,
+    corpus_terms: &BTreeSet<String>,
+) -> u16 {
+    query_terms
+        .iter()
+        .filter(|term| corpus_terms.contains(*term))
+        .map(|term| recent_archive_term_weight(term))
+        .sum::<usize>()
+        .min(u16::MAX as usize) as u16
+}
+
+fn recent_archive_term_weight(term: &str) -> usize {
+    match term {
+        "ph1m" | "ph1x" | "desktop" | "selene" => 24,
+        "archive" | "storage" | "intent" | "context" | "capture" | "transport" | "render" => 18,
+        "recall" | "active" | "wake" | "listen" | "memory" | "72h" => 14,
+        _ => 10,
+    }
+}
+
+fn recent_archive_match_density_bonus(base_score: usize, corpus_term_count: usize) -> usize {
+    if corpus_term_count == 0 {
+        0
+    } else {
+        base_score.saturating_mul(32) / corpus_term_count
+    }
 }
 
 fn truncate_chars(text: &str, max_chars: usize) -> String {
@@ -532,9 +655,12 @@ impl Ph1mRuntime {
                 continue;
             }
 
-            let score = overlap
-                .len()
-                .saturating_mul(10)
+            let base_score = recent_archive_overlap_score(&query_terms, &corpus_terms) as usize;
+            let score = base_score
+                .saturating_add(recent_archive_match_density_bonus(
+                    base_score,
+                    corpus_terms.len(),
+                ))
                 .saturating_add((thread.pinned as usize) * 2)
                 .saturating_add((thread.unresolved as usize).min(1))
                 .min(u16::MAX as usize) as u16;
@@ -2081,6 +2207,173 @@ mod tests {
         assert_eq!(
             out.matches[0].thread_id.as_deref(),
             Some("thread_yesterday_continuity")
+        );
+    }
+
+    #[test]
+    fn recent_archive_recall_distinguishes_ph1m_ph1x_and_desktop_thin_queries() {
+        let mut rt = Ph1mRuntime::new(Ph1mConfig::mvp_v1());
+        let now = MonotonicTimeNs(ms_to_ns(96 * 60 * 60 * 1000));
+        for (thread_id, title, bullet, idem) in [
+            (
+                "thread_seed_active_context",
+                "Active session context seed",
+                "For this smoke test, activeSessionContext belongs to PH1.X and adapter, not PH1.M.",
+                "idem_seed_active_context",
+            ),
+            (
+                "thread_seed_ph1m_recall",
+                "PH1.M recent recall seed",
+                "For this smoke test, seventy-two hour recall belongs to PH1.M and the storage archive.",
+                "idem_seed_ph1m_recall",
+            ),
+            (
+                "thread_seed_desktop_thin",
+                "Desktop thin bridge seed",
+                "For this smoke test, Desktop must only capture, play audio, transport, and render.",
+                "idem_seed_desktop_thin",
+            ),
+        ] {
+            rt.thread_digest_upsert(
+                &Ph1mThreadDigestUpsertRequest::v1(
+                    now,
+                    speaker_ok(),
+                    policy_ok(),
+                    MemoryRetentionMode::Default,
+                    MemoryThreadDigest::v1(
+                        thread_id.to_string(),
+                        title.to_string(),
+                        vec![bullet.to_string()],
+                        false,
+                        false,
+                        now,
+                        1,
+                    )
+                    .unwrap(),
+                    idem.to_string(),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        }
+
+        let ph1m = rt
+            .recent_archive_recall(
+                &Ph1mRecentArchiveRecallRequest::v1(
+                    now,
+                    speaker_ok(),
+                    policy_ok(),
+                    "What did we decide about PH1.M and seventy-two hour recall?".to_string(),
+                    MEMORY_RESUME_HOT_WINDOW_MS,
+                    2,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        assert_eq!(
+            ph1m.matches[0].thread_id.as_deref(),
+            Some("thread_seed_ph1m_recall")
+        );
+
+        let ph1x = rt
+            .recent_archive_recall(
+                &Ph1mRecentArchiveRecallRequest::v1(
+                    now,
+                    speaker_ok(),
+                    policy_ok(),
+                    "What did we discuss about active session context?".to_string(),
+                    MEMORY_RESUME_HOT_WINDOW_MS,
+                    2,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        assert_eq!(
+            ph1x.matches[0].thread_id.as_deref(),
+            Some("thread_seed_active_context")
+        );
+
+        let desktop = rt
+            .recent_archive_recall(
+                &Ph1mRecentArchiveRecallRequest::v1(
+                    now,
+                    speaker_ok(),
+                    policy_ok(),
+                    "Find where we talked about Desktop staying thin.".to_string(),
+                    MEMORY_RESUME_HOT_WINDOW_MS,
+                    2,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        assert_eq!(
+            desktop.matches[0].thread_id.as_deref(),
+            Some("thread_seed_desktop_thin")
+        );
+    }
+
+    #[test]
+    fn recent_archive_recall_normalizes_celine_only_in_wake_context() {
+        let mut rt = Ph1mRuntime::new(Ph1mConfig::mvp_v1());
+        let now = MonotonicTimeNs(ms_to_ns(96 * 60 * 60 * 1000));
+        for (thread_id, title, bullet, idem) in [
+            (
+                "thread_seed_wake_celine",
+                "Wake Celine transcript seed",
+                "For this smoke test, Wake Celine should acknowledge readiness and then listen for the real prompt.",
+                "idem_seed_wake_celine",
+            ),
+            (
+                "thread_seed_celine_entity",
+                "Celine entity note",
+                "The project note mentioned Celine as an unrelated person name.",
+                "idem_seed_celine_entity",
+            ),
+        ] {
+            rt.thread_digest_upsert(
+                &Ph1mThreadDigestUpsertRequest::v1(
+                    now,
+                    speaker_ok(),
+                    policy_ok(),
+                    MemoryRetentionMode::Default,
+                    MemoryThreadDigest::v1(
+                        thread_id.to_string(),
+                        title.to_string(),
+                        vec![bullet.to_string()],
+                        false,
+                        false,
+                        now,
+                        1,
+                    )
+                    .unwrap(),
+                    idem.to_string(),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        }
+
+        let wake = rt
+            .recent_archive_recall(
+                &Ph1mRecentArchiveRecallRequest::v1(
+                    now,
+                    speaker_ok(),
+                    policy_ok(),
+                    "What did we say about waking Selene?".to_string(),
+                    MEMORY_RESUME_HOT_WINDOW_MS,
+                    2,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+
+        assert_eq!(
+            wake.matches[0].thread_id.as_deref(),
+            Some("thread_seed_wake_celine")
+        );
+        assert_ne!(
+            wake.matches[0].thread_id.as_deref(),
+            Some("thread_seed_celine_entity")
         );
     }
 

@@ -98,6 +98,15 @@ struct DesktopOpenAITtsSpeechState: Equatable {
     let audioData: Data
 }
 
+struct DesktopOpenAITtsSpeechFailure: LocalizedError {
+    let reason: String
+    let fallbackAllowed: Bool
+
+    var errorDescription: String? {
+        "OpenAI TTS speech request failed closed with reason `\(reason)`"
+    }
+}
+
 struct DesktopCanonicalRuntimeOutcomeState: Identifiable, Equatable {
     enum Phase: String, Equatable {
         case dispatching = "dispatching"
@@ -5548,8 +5557,9 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
               let audioSHA256 = payloadResponse.audioSHA256,
               let answerTextSHA256 = payloadResponse.answerTextSHA256 else {
             let reason = payloadResponse.safeFailureReason ?? "openai_tts_speech_failed"
-            throw BridgeError.transportFailed(
-                "OpenAI TTS speech request failed closed with reason `\(reason)`"
+            throw DesktopOpenAITtsSpeechFailure(
+                reason: reason,
+                fallbackAllowed: payloadResponse.fallbackAllowed
             )
         }
 
