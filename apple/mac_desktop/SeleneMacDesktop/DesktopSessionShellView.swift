@@ -2599,7 +2599,6 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
             protocols: [
                 "realtime",
                 "openai-insecure-api-key.\(session.clientSecret)",
-                "openai-beta.realtime-v1",
             ]
         )
         realtimeWebSocketTask = websocketTask
@@ -2842,7 +2841,6 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
                     protocols: [
                         "realtime",
                         "openai-insecure-api-key.\(session.clientSecret)",
-                        "openai-beta.realtime-v1",
                     ]
                 )
                 realtimeWebSocketTask = websocketTask
@@ -3899,7 +3897,6 @@ private final class DesktopWakeListenerController: ObservableObject {
                 protocols: [
                     "realtime",
                     "openai-insecure-api-key.\(session.clientSecret)",
-                    "openai-beta.realtime-v1",
                 ]
             )
             realtimeWebSocketTask = websocketTask

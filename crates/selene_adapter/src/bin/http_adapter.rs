@@ -1889,7 +1889,7 @@ fn mint_openai_realtime_transcription_session(
         .ok()
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| "https://api.openai.com/v1/realtime/transcription_sessions".to_string());
+        .unwrap_or_else(|| "https://api.openai.com/v1/realtime/client_secrets".to_string());
     let timeout_secs = parse_u64_env(
         "SELENE_DESKTOP_REALTIME_TRANSCRIPTION_TOKEN_TIMEOUT_SECS",
         8,
@@ -1897,21 +1897,35 @@ fn mint_openai_realtime_transcription_session(
         30,
     );
     let body = serde_json::json!({
-        "input_audio_format": "pcm16",
-        "input_audio_transcription": {
-            "model": model,
-            "prompt": openai_realtime_transcription_prompt()
+        "expires_after": {
+            "anchor": "created_at",
+            "seconds": 600
         },
-        "turn_detection": {
-            "type": "server_vad",
-            "threshold": 0.5,
-            "prefix_padding_ms": 300,
-            "silence_duration_ms": silence_duration_ms.min(10_000).max(300)
-        },
-        "input_audio_noise_reduction": {
-            "type": "near_field"
-        },
-        "include": []
+        "session": {
+            "type": "transcription",
+            "audio": {
+                "input": {
+                    "format": {
+                        "type": "audio/pcm",
+                        "rate": 24_000
+                    },
+                    "transcription": {
+                        "model": model,
+                        "prompt": openai_realtime_transcription_prompt()
+                    },
+                    "turn_detection": {
+                        "type": "server_vad",
+                        "threshold": 0.5,
+                        "prefix_padding_ms": 300,
+                        "silence_duration_ms": silence_duration_ms.min(10_000).max(300)
+                    },
+                    "noise_reduction": {
+                        "type": "near_field"
+                    }
+                }
+            },
+            "include": []
+        }
     });
     let body = serde_json::to_string(&body)
         .map_err(|_| "realtime_transcription_token_payload_encoding_failed".to_string())?;
@@ -1927,8 +1941,6 @@ fn mint_openai_realtime_transcription_session(
         .arg(format!("Authorization: Bearer {api_key}"))
         .arg("-H")
         .arg("Content-Type: application/json")
-        .arg("-H")
-        .arg("OpenAI-Beta: realtime=v1")
         .arg("--data")
         .arg(body)
         .stdout(Stdio::piped())
@@ -1941,22 +1953,53 @@ fn mint_openai_realtime_transcription_session(
     let value: serde_json::Value = serde_json::from_slice(&output.stdout)
         .map_err(|_| "realtime_transcription_token_response_decode_failed".to_string())?;
     let client_secret = value
-        .get("client_secret")
-        .and_then(|secret| secret.get("value"))
+        .get("value")
         .and_then(|value| value.as_str())
+        .or_else(|| {
+            value
+                .get("client_secret")
+                .and_then(|secret| secret.get("value"))
+                .and_then(|value| value.as_str())
+        })
+        .or_else(|| {
+            value
+                .get("session")
+                .and_then(|session| session.get("client_secret"))
+                .and_then(|secret| secret.get("value"))
+                .and_then(|value| value.as_str())
+        })
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToString::to_string)
         .ok_or_else(|| "realtime_transcription_token_missing_client_secret".to_string())?;
     let session_id = value
-        .get("id")
+        .get("session")
+        .and_then(|session| session.get("id"))
         .and_then(|value| value.as_str())
+        .or_else(|| value.get("id").and_then(|value| value.as_str()))
         .map(ToString::to_string);
     let expires_at = value
-        .get("client_secret")
-        .and_then(|secret| secret.get("expires_at"))
+        .get("expires_at")
         .and_then(|value| value.as_u64())
-        .or_else(|| value.get("expires_at").and_then(|value| value.as_u64()));
+        .or_else(|| {
+            value
+                .get("client_secret")
+                .and_then(|secret| secret.get("expires_at"))
+                .and_then(|value| value.as_u64())
+        })
+        .or_else(|| {
+            value
+                .get("session")
+                .and_then(|session| session.get("client_secret"))
+                .and_then(|secret| secret.get("expires_at"))
+                .and_then(|value| value.as_u64())
+        })
+        .or_else(|| {
+            value
+                .get("session")
+                .and_then(|session| session.get("expires_at"))
+                .and_then(|value| value.as_u64())
+        });
     Ok(MintedRealtimeTranscriptionSession {
         session_id,
         client_secret,
@@ -2702,7 +2745,7 @@ mod tests {
             let _ = stream.write_all(response.as_bytes());
         });
         MockRealtimeSessionServer {
-            url: format!("http://{address}/v1/realtime/transcription_sessions"),
+            url: format!("http://{address}/v1/realtime/client_secrets"),
             request_rx,
             join,
         }
@@ -3944,24 +3987,30 @@ mod tests {
         let mock = spawn_mock_realtime_session_server(
             200,
             serde_json::json!({
-                "id": "sess_realtime_transcription_test",
-                "object": "realtime.transcription_session",
-                "type": "transcription",
-                "input_audio_format": "pcm16",
-                "input_audio_transcription": {
-                    "model": "gpt-4o-transcribe"
-                },
-                "turn_detection": {
-                    "type": "server_vad",
-                    "threshold": 0.5,
-                    "prefix_padding_ms": 300,
-                    "silence_duration_ms": 1200
-                },
-                "client_secret": {
-                    "value": "ek_test_realtime_transcription_client_secret",
-                    "expires_at": 1770000000
-                },
-                "expires_at": 1770000000
+                "value": "ek_test_realtime_transcription_client_secret",
+                "expires_at": 1770000000,
+                "session": {
+                    "id": "sess_realtime_transcription_test",
+                    "object": "realtime.transcription_session",
+                    "type": "transcription",
+                    "audio": {
+                        "input": {
+                            "format": {
+                                "type": "audio/pcm",
+                                "rate": 24000
+                            },
+                            "transcription": {
+                                "model": "gpt-4o-transcribe"
+                            },
+                            "turn_detection": {
+                                "type": "server_vad",
+                                "threshold": 0.5,
+                                "prefix_padding_ms": 300,
+                                "silence_duration_ms": 1200
+                            }
+                        }
+                    }
+                }
             }),
         );
         let (vault_path, key_path) =
@@ -4014,13 +4063,20 @@ mod tests {
             .request_rx
             .recv_timeout(Duration::from_secs(2))
             .expect("mock provider should receive request");
-        assert!(request_text.contains("POST /v1/realtime/transcription_sessions"));
-        assert!(request_text.contains("\"input_audio_format\":\"pcm16\""));
+        assert!(request_text.contains("POST /v1/realtime/client_secrets"));
+        assert!(request_text.contains("\"expires_after\""));
+        assert!(request_text.contains("\"anchor\":\"created_at\""));
+        assert!(request_text.contains("\"seconds\":600"));
+        assert!(request_text.contains("\"type\":\"transcription\""));
+        assert!(request_text.contains("\"format\""));
+        assert!(request_text.contains("\"type\":\"audio/pcm\""));
+        assert!(request_text.contains("\"rate\":24000"));
         assert!(request_text.contains("\"model\":\"gpt-4o-transcribe\""));
         assert!(request_text.contains("Auto-detect Chinese, English, and mixed Chinese/English"));
         assert!(request_text.contains("Preserve code-switching"));
         assert!(request_text.contains("Do not translate"));
-        assert!(request_text.contains("\"input_audio_noise_reduction\":{\"type\":\"near_field\"}"));
+        assert!(request_text.contains("\"noise_reduction\":{\"type\":\"near_field\"}"));
+        assert!(!request_text.contains("OpenAI-Beta"));
         assert!(!request_text.contains("\"language\""));
         mock.join.join().expect("mock provider thread should join");
         let _ = fs::remove_file(vault_path);
