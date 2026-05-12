@@ -1196,6 +1196,252 @@ Editing existing files requires explicit file-scope approval from JD.
 
 If approval is unclear: stop and ask.
 
+Existing Capability Reuse and No Duplicate Implementation Law
+
+Before Codex creates any new implementation, process, runtime owner, adapter path, Desktop lifecycle path, session/listening loop, state machine, router, provider path, memory path, authority path, tool path, or bridge, Codex must first search current repo truth for an existing or similar capability.
+
+Required discovery before implementation:
+
+search exact and related symbols
+
+identify current owner files
+
+identify current runtime path
+
+identify current tests
+
+identify current ledger/proof status
+
+classify whether the existing path is active, partial, dead, wrong-owner, or legacy-compatible
+
+explain why reuse, extension, or repair is not sufficient before creating anything new
+
+Default rule:
+
+Reuse or repair the existing owner first.
+
+Creating a new parallel implementation is forbidden unless same-task repo truth proves no existing owner/path can lawfully support the task, and JD explicitly approves the new owner/path.
+
+Hard stop:
+
+If Codex finds an existing similar implementation, owner, loop, process, route, state machine, or provider path, Codex must stop before creating a duplicate and report:
+
+EXISTING_OWNER_REUSE_REQUIRED
+
+Codex must include:
+
+existing owner file/path
+
+existing symbols
+
+why it appears related
+
+whether it should be reused, repaired, or extended
+
+what approval is needed if a new parallel path is still proposed
+
+Forbidden without explicit JD approval:
+
+duplicate app process owner
+
+duplicate managed adapter launcher
+
+duplicate wake/listening loop
+
+duplicate session lifecycle owner
+
+duplicate runtime bridge
+
+duplicate PH1.X active-context path
+
+duplicate PH1.M memory/recall path
+
+duplicate PH1.E/tool-routing path
+
+duplicate provider path
+
+duplicate authority/simulation path
+
+duplicate Desktop semantic workaround
+
+replacing existing working code with a new path because it is easier
+
+creating a new fallback path to hide a failure in the original path
+
+Desktop-specific rule:
+
+Desktop must reuse the existing Desktop lifecycle, capture, playback, transport, render, and runtime bridge owners.
+
+Desktop may fix:
+
+app singleton behavior
+
+adapter process lifecycle
+
+microphone capture
+
+listening/re-arm state
+
+TTS playback/completion
+
+transcript transport
+
+rendering accepted runtime output
+
+Desktop must not create or duplicate:
+
+semantic intent logic
+
+slot filling
+
+memory recall/write/propose
+
+PH1.X active context decisions
+
+PH1.E tool routing
+
+provider calls
+
+protected execution
+
+authority decisions
+
+Failure-reporting rule:
+
+Codex must not cover a failed real-app proof with vague wording or claim success from tests when the real app path failed.
+
+If real-app proof fails, Codex must say:
+
+REAL_APP_PROOF_FAILED
+
+Then classify the root owner:
+
+Desktop lifecycle/capture/playback/transport
+
+adapter/runtime bridge
+
+PH1.X active context
+
+PH1.M memory/recall
+
+PH1.E tool/provider route
+
+PH1.L session boundary
+
+provider/network
+
+unknown/unproven
+
+Codex must not continue implementation until the failure is reconciled or JD approves the next repair.
+
+Final report requirement:
+
+Every implementation final report must include an Existing Capability Reuse Proof:
+
+searches run
+
+existing owners found
+
+reused/extended owner
+
+confirmation no duplicate owner/path/process was created
+
+if a new path was created, exact JD approval and repo evidence proving no existing owner was sufficient
+
+Desktop Current-App Provenance and Single Canonical App Law
+
+Before any Desktop app proof, live voice proof, manual smoke, xcodebuild proof, or native UI test, Codex must prove that the app being opened is the current app built from the current repo HEAD.
+
+Codex must not test an old app bundle, stale DerivedData app, old /Applications copy, duplicate Desktop process, or duplicate managed adapter process.
+
+Required before Desktop smoke:
+
+1. Prove current repo:
+
+pwd
+
+git rev-parse HEAD
+
+git status --short
+
+2. Prove Desktop build source:
+
+exact xcodebuild command used
+
+exact app bundle path launched
+
+whether app came from DerivedData, repo build output, or installed Applications path
+
+3. Prove no stale app is running:
+
+list Selene Desktop processes
+
+close/kill stale duplicate Selene Desktop app instances where safe
+
+ensure only one current Selene Desktop app instance is active
+
+4. Prove no stale managed adapter is running:
+
+check local adapter process/port owner
+
+do not launch a second adapter if one is already active
+
+attach to existing correct adapter only if ownership/version is proven
+
+otherwise stop and report
+
+5. After any Desktop code change:
+
+rebuild the Desktop app
+
+close the old running app
+
+launch the newly built app
+
+prove the launched app path matches the fresh build
+
+restart/reopen before live smoke
+
+Hard stop conditions:
+
+If Codex cannot prove the app under test is the current build, stop and report:
+
+STALE_DESKTOP_APP_INSTANCE_UNPROVEN
+
+If more than one Desktop app instance is active, stop and report:
+
+MULTIPLE_DESKTOP_APP_INSTANCES_FOUND
+
+If more than one managed adapter/runtime owner is active, stop and report:
+
+MULTIPLE_ADAPTER_RUNTIME_OWNERS_FOUND
+
+If the app path points to an old bundle or unknown bundle, stop and report:
+
+WRONG_DESKTOP_APP_BUNDLE_UNDER_TEST
+
+Final report requirement:
+
+Every Desktop/live-app proof must include:
+
+current HEAD
+
+xcodebuild result if Desktop changed
+
+exact app bundle path launched
+
+process count before and after launch
+
+adapter process/port owner proof
+
+confirmation stale app instances were closed
+
+confirmation stale adapter instances were not used
+
+confirmation live smoke was run against the current build
+
+Codex must not claim real Desktop proof unless the current app binary and single-instance runtime ownership are proven.
+
 Spine Lock
 
 The following high-risk core areas are immutable without explicit JD approval:
