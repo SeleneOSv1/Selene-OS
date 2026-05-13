@@ -2,6 +2,7 @@ import AppKit
 import Foundation
 import AVFoundation
 import CryptoKit
+import Speech
 import SwiftUI
 
 private func desktopAppendRuntimeBridgeDebugLog(_ message: String) {
@@ -4046,66 +4047,33 @@ private final class DesktopWakeListenerController: ObservableObject {
 
     private let wakeTriggerPhrase = "Selene"
     private let maxVoiceTurnBytes = 16_384
-    private let wakeAutoCommitAfterDetectionDelay: TimeInterval = 1.1
     private let audioEngine = AVAudioEngine()
-    private let realtimeAudioQueue = DispatchQueue(label: "selene.desktop.wake-realtime-transcription.audio")
-    private let realtimeURLSession = URLSession(configuration: .ephemeral)
+    private let audioEvidenceQueue = DispatchQueue(label: "selene.desktop.local-wake.audio-evidence")
+    private let localWakeRecognizer = SFSpeechRecognizer(locale: Locale(identifier: "en-US"))
     private var hasInputTap = false
     private var lastGeneratedDeviceTurnSequence: UInt64 = 0
     private var activeCaptureContext: CaptureSessionTransportContext?
-    private var wakeAutoCommitAfterDetectionWorkItem: DispatchWorkItem?
-    private var realtimeSession: DesktopRealtimeTranscriptionSessionState?
-    private var realtimeWebSocketTask: URLSessionWebSocketTask?
-    private var realtimeOutputFormat: AVAudioFormat?
-    private var realtimeAudioConverter: AVAudioConverter?
-    private var realtimePartialTranscript = ""
-    private var realtimeCommittedTranscript = ""
-    private var realtimeCaptureStopNS: UInt64?
-    private var realtimeCompletionTimeoutWorkItem: DispatchWorkItem?
-    private var realtimeMaxSessionDurationWorkItem: DispatchWorkItem?
-    private var realtimeSpeechStartedNS: UInt64?
-    private var realtimeFirstDeltaNS: UInt64?
-    private var realtimeAudioEvidenceAccumulator = DesktopAudioEvidenceAccumulator()
+    private var audioEvidenceAccumulator = DesktopAudioEvidenceAccumulator()
+    private var localWakeRecognitionRequest: SFSpeechAudioBufferRecognitionRequest?
+    private var localWakeRecognitionTask: SFSpeechRecognitionTask?
+    private var localWakeOutputFormat: AVAudioFormat?
+    private var localWakeAudioConverter: AVAudioConverter?
+    private var localWakePartialTranscript = ""
+    private var localWakeCommittedTranscript = ""
+    private var localWakeSpeechStartedNS: UInt64?
+    private var localWakeFirstDeltaNS: UInt64?
+    private var localWakeFirstAudioFrameLogged = false
+    private var localWakeCandidateToken: String?
+    private var localWakeCandidateFirstNS: UInt64?
+    private var localWakeCandidateObservationCount = 0
 
     init(locale: Locale? = nil) {
         _ = locale
         refreshPermissionState()
     }
 
-    func startListening(promptState: DesktopWakeListenerPromptState) {
-        failedRequest = nil
-
-        guard !listenerState.isActiveForMicrophone else {
-            return
-        }
-
-        guard pendingRequest == nil else {
-            listenerState = .failed
-            recordFailure(
-                id: "failed_wake_listener_pending_request",
-                title: "Failed wake listener start",
-                summary: "A later bounded wake-listener session could not begin while the current wake-triggered voice request is already awaiting canonical handoff.",
-                detail: "Foreground wake listening remains bounded and single-request only. This shell does not queue another local wake request, invent local session continuity, or fabricate assistant output."
-            )
-            return
-        }
-
-        transcriptPreview = ""
-        activePromptStateID = promptState.id
-        refreshPermissionState()
-        listenerState = .failed
-        activePromptStateID = nil
-        recordFailure(
-            id: "failed_wake_listener_non_openai_stt_disabled",
-            title: "Failed wake listener start",
-            summary: "Foreground wake listening requires the approved realtime transcription path.",
-            detail: "Local platform speech recognition is disabled. No local wake transcript, hidden capture, or wake-triggered dispatch was created."
-        )
-    }
-
-    func startRealtimeListening(
+    func startListening(
         promptState: DesktopWakeListenerPromptState,
-        session: DesktopRealtimeTranscriptionSessionState,
         evidenceContext: DesktopAudioEvidenceContext
     ) {
         failedRequest = nil
@@ -4142,34 +4110,35 @@ private final class DesktopWakeListenerController: ObservableObject {
                         id: "failed_wake_listener_microphone_permission",
                         title: "Failed wake listener start",
                         summary: "Microphone permission is required before foreground wake listening can begin.",
-                        detail: "Permission visibility only; no wake behavior, background capture, local transcript authority, or provider fallback was introduced."
+                        detail: "The Desktop shell did not open the local wake listener, did not send pre-wake audio to a remote provider, and did not fabricate a wake-triggered voice turn."
                     )
                     return
                 }
 
-                self.beginRealtimeTranscriptionCapture(session: session, evidenceContext: evidenceContext)
+                self.requestTranscriptionPermissionIfNeeded { [weak self] speechGranted in
+                    guard let self else {
+                        return
+                    }
+
+                    DispatchQueue.main.async {
+                        self.refreshPermissionState()
+                        guard speechGranted else {
+                            self.listenerState = .failed
+                            self.activePromptStateID = nil
+                            self.recordFailure(
+                                id: "failed_wake_listener_speech_permission",
+                                title: "Failed wake listener start",
+                                summary: "Local on-device speech recognition permission is required before pre-wake wake listening can begin.",
+                                detail: "The Desktop shell did not open OpenAI realtime, did not stream pre-wake audio remotely, and did not fabricate a wake-triggered voice turn."
+                            )
+                            return
+                        }
+
+                        self.beginLocalWakeCapture(evidenceContext: evidenceContext)
+                    }
+                }
             }
         }
-    }
-
-    func failOpenAIRealtimeWakeUnavailable(
-        promptState: DesktopWakeListenerPromptState,
-        id: String,
-        summary: String,
-        detail: String
-    ) {
-        teardownRecognitionSession()
-        failedRequest = nil
-        pendingRequest = nil
-        transcriptPreview = ""
-        activePromptStateID = promptState.id
-        listenerState = .failed
-        recordFailure(
-            id: id,
-            title: "Failed wake listener start",
-            summary: summary,
-            detail: detail
-        )
     }
 
     func stopListening() {
@@ -4248,41 +4217,309 @@ private final class DesktopWakeListenerController: ObservableObject {
         self.activeCaptureContext = activeCaptureContext
     }
 
-    private func beginCaptureSession() {
+    private func beginLocalWakeCapture(evidenceContext: DesktopAudioEvidenceContext) {
         failedRequest = nil
         teardownRecognitionSession()
         refreshPermissionState()
-        listenerState = .failed
-        activePromptStateID = nil
-        recordFailure(
-            id: "failed_wake_listener_non_openai_stt_disabled",
-            title: "Failed wake listener start",
-            summary: "Foreground wake listening requires the approved realtime transcription path.",
-            detail: "Local platform speech recognition is disabled. No local wake transcript, hidden capture, or wake-triggered dispatch was created."
-        )
-    }
 
-    private func prepareWakeTriggeredVoiceTurnIfDetected(_ transcript: String) {
-        guard listenerState == .listening,
-              pendingRequest == nil,
-              let prefixMatch = boundedWakePrefixMatch(in: transcript, wakeTriggerPhrase: wakeTriggerPhrase) else {
+        guard let recognizer = localWakeRecognizer, recognizer.isAvailable else {
+            listenerState = .failed
+            activePromptStateID = nil
+            recordFailure(
+                id: "failed_wake_listener_local_recognizer_unavailable",
+                title: "Failed wake listener start",
+                summary: "The approved local wake detector is unavailable on this Mac.",
+                detail: "Pre-wake OpenAI realtime/STT was not opened, no pre-wake audio was sent remotely, and the shell failed closed before any wake-triggered request was created."
+            )
             return
         }
 
-        let boundedTranscript = prefixMatch.transcriptRemainder.trimmingCharacters(in: .whitespacesAndNewlines)
+        if #available(macOS 10.15, *) {
+            guard recognizer.supportsOnDeviceRecognition else {
+                listenerState = .failed
+                activePromptStateID = nil
+                recordFailure(
+                    id: "failed_wake_listener_local_on_device_unavailable",
+                    title: "Failed wake listener start",
+                    summary: "The approved local wake detector cannot run fully on-device on this Mac.",
+                    detail: "Pre-wake OpenAI realtime/STT was not opened, no pre-wake audio was sent remotely, and the shell failed closed rather than using a remote wake provider."
+                )
+                return
+            }
+        } else {
+            listenerState = .failed
+            activePromptStateID = nil
+            recordFailure(
+                id: "failed_wake_listener_local_on_device_unsupported",
+                title: "Failed wake listener start",
+                summary: "This macOS version does not expose the required on-device local wake detector.",
+                detail: "Pre-wake OpenAI realtime/STT was not opened, no pre-wake audio was sent remotely, and the shell failed closed before any wake-triggered request was created."
+            )
+            return
+        }
 
-        guard boundedTranscript.utf8.count <= maxVoiceTurnBytes else {
+        let recognitionRequest = SFSpeechAudioBufferRecognitionRequest()
+        recognitionRequest.shouldReportPartialResults = true
+        if #available(macOS 10.15, *) {
+            recognitionRequest.requiresOnDeviceRecognition = true
+        }
+
+        do {
+            let captureContext = Self.makeCaptureSessionTransportContext(evidenceContext: evidenceContext)
+            audioEvidenceQueue.sync {
+                audioEvidenceAccumulator.reset(captureStartNS: captureContext.tStartNS)
+            }
+            let inputNode = audioEngine.inputNode
+            let inputFormat = inputNode.outputFormat(forBus: 0)
+            guard let outputFormat = AVAudioFormat(
+                commonFormat: .pcmFormatInt16,
+                sampleRate: 24_000,
+                channels: 1,
+                interleaved: false
+            ),
+            let converter = AVAudioConverter(from: inputFormat, to: outputFormat) else {
+                listenerState = .failed
+                activePromptStateID = nil
+                recordFailure(
+                    id: "failed_wake_listener_local_audio_format",
+                    title: "Failed wake listener start",
+                    summary: "The microphone audio format could not be converted into the local wake evidence stream.",
+                    detail: "Pre-wake OpenAI realtime/STT was not opened, no pre-wake audio was sent remotely, and no wake-triggered request was fabricated."
+                )
+                return
+            }
+
+            localWakeRecognitionRequest = recognitionRequest
+            localWakeOutputFormat = outputFormat
+            localWakeAudioConverter = converter
+            localWakePartialTranscript = ""
+            localWakeCommittedTranscript = ""
+            localWakeSpeechStartedNS = nil
+            localWakeFirstDeltaNS = nil
+            localWakeFirstAudioFrameLogged = false
+            localWakeCandidateToken = nil
+            localWakeCandidateFirstNS = nil
+            localWakeCandidateObservationCount = 0
+            transcriptPreview = ""
+            activeCaptureContext = captureContext
+
+            localWakeRecognitionTask = recognizer.recognitionTask(
+                with: recognitionRequest
+            ) { [weak self] result, error in
+                self?.handleLocalWakeRecognitionResult(result, error: error)
+            }
+
+            inputNode.installTap(onBus: 0, bufferSize: 2_048, format: inputFormat) { [weak self] buffer, _ in
+                recognitionRequest.append(buffer)
+                self?.appendLocalWakeAudioEvidenceBuffer(buffer, inputFormat: inputFormat)
+            }
+            hasInputTap = true
+
+            audioEngine.prepare()
+            try audioEngine.start()
+            listenerState = .listening
+            desktopAppendRuntimeBridgeDebugLog(
+                "\(desktopTraceClockFields()) desktop local wake capture_ready=true provider=openai_prewake=false remote_stt=false remote_audio=false ph1w_authority=pending"
+            )
+        } catch {
             teardownRecognitionSession()
             listenerState = .failed
             activePromptStateID = nil
             recordFailure(
-                id: "failed_wake_listener_transcript_validation",
-                title: "Failed wake-triggered voice request",
-                summary: "The bounded post-wake transcript exceeded 16384 UTF-8 bytes before any canonical runtime dispatch occurred.",
-                detail: "Failure visibility only; retry a shorter foreground wake utterance through the same bounded wake-listener surface. No authoritative transcript turn was appended locally."
+                id: "failed_wake_listener_local_capture_start",
+                title: "Failed wake listener start",
+                summary: "The local wake capture session could not start from this Desktop surface.",
+                detail: "Pre-wake OpenAI realtime/STT was not opened, no pre-wake audio was sent remotely, and no wake-triggered request was fabricated. Detail: \(error.localizedDescription)"
             )
+        }
+    }
+
+    private func handleLocalWakeRecognitionResult(
+        _ result: SFSpeechRecognitionResult?,
+        error: Error?
+    ) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self,
+                  self.localWakeRecognitionTask != nil,
+                  self.listenerState == .listening,
+                  self.pendingRequest == nil else {
+                return
+            }
+
+            if let result {
+                let transcript = result.bestTranscription.formattedString
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !transcript.isEmpty else {
+                    return
+                }
+
+                if self.localWakeFirstDeltaNS == nil {
+                    self.localWakeFirstDeltaNS = Swift.max(DispatchTime.now().uptimeNanoseconds, 1)
+                }
+                self.localWakePartialTranscript = transcript
+                self.transcriptPreview = transcript
+                desktopAppendRuntimeBridgeDebugLog(
+                    "\(desktopTraceClockFields()) desktop local wake transcript partial_chars=\(transcript.count) provider=openai_prewake=false remote_stt=false ph1w_authority=pending"
+                )
+
+                guard let prefixMatch = boundedWakePrefixMatch(
+                    in: transcript,
+                    wakeTriggerPhrase: self.wakeTriggerPhrase
+                ) else {
+                    self.localWakeCandidateToken = nil
+                    self.localWakeCandidateFirstNS = nil
+                    self.localWakeCandidateObservationCount = 0
+                    return
+                }
+
+                guard prefixMatch.transcriptRemainder.isEmpty else {
+                    self.localWakeCandidateToken = nil
+                    self.localWakeCandidateFirstNS = nil
+                    self.localWakeCandidateObservationCount = 0
+                    desktopAppendRuntimeBridgeDebugLog(
+                        "\(desktopTraceClockFields()) desktop local wake final rejected reason=non_activation_only_remainder chars=\(transcript.count) provider=openai_prewake=false remote_stt=false ph1w_authority=pending"
+                    )
+                    return
+                }
+
+                let confidenceBP = Self.localWakeRecognitionConfidenceBP(result)
+                guard confidenceBP >= 3_500 else {
+                    desktopAppendRuntimeBridgeDebugLog(
+                        "\(desktopTraceClockFields()) desktop local wake final rejected reason=low_confidence confidence_bp=\(confidenceBP) provider=openai_prewake=false remote_stt=false ph1w_authority=pending"
+                    )
+                    return
+                }
+
+                let candidateToken = normalizedWakeRecognitionToken(prefixMatch.detectionText)
+                let nowNS = Swift.max(DispatchTime.now().uptimeNanoseconds, 1)
+                if self.localWakeCandidateToken == candidateToken {
+                    self.localWakeCandidateObservationCount += 1
+                } else {
+                    self.localWakeCandidateToken = candidateToken
+                    self.localWakeCandidateFirstNS = nowNS
+                    self.localWakeCandidateObservationCount = 1
+                }
+                let stableForNS = nowNS.saturatingSubtract(self.localWakeCandidateFirstNS ?? nowNS)
+                guard result.isFinal
+                        || (
+                            self.localWakeCandidateObservationCount >= 2
+                            && stableForNS >= 180_000_000
+                        ) else {
+                    desktopAppendRuntimeBridgeDebugLog(
+                        "\(desktopTraceClockFields()) desktop local wake candidate pending observations=\(self.localWakeCandidateObservationCount) stable_for_ns=\(stableForNS) confidence_bp=\(confidenceBP) provider=openai_prewake=false remote_stt=false ph1w_authority=pending"
+                    )
+                    return
+                }
+
+                self.localWakeCommittedTranscript = prefixMatch.detectionText
+                desktopAppendRuntimeBridgeDebugLog(
+                    "\(desktopTraceClockFields()) desktop local wake detected final=\(result.isFinal) observations=\(self.localWakeCandidateObservationCount) stable_for_ns=\(stableForNS) chars=\(transcript.count) confidence_bp=\(confidenceBP) provider=openai_prewake=false remote_audio=false ph1w_authority=pending"
+                )
+                self.prepareWakeTriggeredVoiceTurnIfDetected(
+                    prefixMatch: prefixMatch,
+                    confidenceBP: confidenceBP
+                )
+                return
+            }
+
+            if let error {
+                self.teardownRecognitionSession()
+                self.listenerState = .failed
+                self.activePromptStateID = nil
+                self.recordFailure(
+                    id: "failed_wake_listener_local_recognition_error",
+                    title: "Failed wake listener start",
+                    summary: "The approved local wake detector returned an error before wake could be accepted.",
+                    detail: "Pre-wake OpenAI realtime/STT was not opened and no pre-wake audio was sent remotely. Detail: \(error.localizedDescription)"
+                )
+            }
+        }
+    }
+
+    private static func localWakeRecognitionConfidenceBP(_ result: SFSpeechRecognitionResult) -> UInt16 {
+        let segmentConfidences = result.bestTranscription.segments
+            .map(\.confidence)
+            .filter { $0.isFinite && $0 > 0 }
+        guard !segmentConfidences.isEmpty else {
+            return 7_000
+        }
+
+        let meanConfidence = segmentConfidences.reduce(Float(0), +) / Float(segmentConfidences.count)
+        let boundedConfidence = Swift.max(Float(0), Swift.min(meanConfidence, Float(1)))
+        return UInt16((boundedConfidence * 10_000).rounded())
+    }
+
+    private func appendLocalWakeAudioEvidenceBuffer(
+        _ buffer: AVAudioPCMBuffer,
+        inputFormat: AVAudioFormat
+    ) {
+        audioEvidenceQueue.async { [weak self] in
+            guard let self,
+                  let outputFormat = self.localWakeOutputFormat,
+                  let converter = self.localWakeAudioConverter else {
+                return
+            }
+
+            let inputFrameCapacity = AVAudioFrameCount(
+                Double(buffer.frameLength) * outputFormat.sampleRate / inputFormat.sampleRate
+            ) + 1
+            guard let convertedBuffer = AVAudioPCMBuffer(
+                pcmFormat: outputFormat,
+                frameCapacity: inputFrameCapacity
+            ) else {
+                return
+            }
+
+            var conversionError: NSError?
+            var consumed = false
+            let status = converter.convert(to: convertedBuffer, error: &conversionError) { _, outStatus in
+                if consumed {
+                    outStatus.pointee = .noDataNow
+                    return nil
+                }
+
+                consumed = true
+                outStatus.pointee = .haveData
+                return buffer
+            }
+
+            guard status != .error,
+                  conversionError == nil,
+                  convertedBuffer.frameLength > 0 else {
+                return
+            }
+
+            let observedNS = Swift.max(DispatchTime.now().uptimeNanoseconds, 1)
+            if self.localWakeSpeechStartedNS == nil {
+                self.localWakeSpeechStartedNS = observedNS
+            }
+
+            let frameCount = Int(convertedBuffer.frameLength)
+            self.audioEvidenceAccumulator.recordInt16AudioBuffer(
+                convertedBuffer,
+                byteCount: frameCount * MemoryLayout<Int16>.size,
+                observedNS: observedNS
+            )
+
+            if !self.localWakeFirstAudioFrameLogged {
+                self.localWakeFirstAudioFrameLogged = true
+                desktopAppendRuntimeBridgeDebugLog(
+                    "\(desktopTraceClockFields()) desktop local wake first_audio_frame bytes=\(frameCount * MemoryLayout<Int16>.size) provider=openai_prewake=false remote_audio=false"
+                )
+            }
+        }
+    }
+
+    private func prepareWakeTriggeredVoiceTurnIfDetected(
+        prefixMatch: WakePrefixMatch,
+        confidenceBP: UInt16
+    ) {
+        guard listenerState == .listening,
+              pendingRequest == nil else {
             return
         }
+
+        let boundedTranscript = ""
 
         let captureStopNS = Swift.max(DispatchTime.now().uptimeNanoseconds, 1)
         endCaptureInput()
@@ -4290,7 +4527,7 @@ private final class DesktopWakeListenerController: ObservableObject {
         guard let audioCaptureRefState = preparedAudioCaptureRefState(
             captureStopNS: captureStopNS,
             detectionText: prefixMatch.detectionText,
-            detectionConfidenceBP: 10_000
+            detectionConfidenceBP: confidenceBP
         ) else {
             completeStoppedCaptureSession()
             listenerState = .failed
@@ -4318,489 +4555,7 @@ private final class DesktopWakeListenerController: ObservableObject {
         completeStoppedCaptureSession()
     }
 
-    private func beginRealtimeTranscriptionCapture(
-        session: DesktopRealtimeTranscriptionSessionState,
-        evidenceContext: DesktopAudioEvidenceContext
-    ) {
-        failedRequest = nil
-        teardownRecognitionSession()
-        refreshPermissionState()
-        realtimeSession = session
-        realtimePartialTranscript = ""
-        realtimeCommittedTranscript = ""
-        realtimeCaptureStopNS = nil
-        realtimeSpeechStartedNS = nil
-        realtimeFirstDeltaNS = nil
-        transcriptPreview = ""
-
-        guard let websocketURL = URL(string: session.websocketURL) else {
-            teardownRealtimeTranscriptionSession()
-            listenerState = .failed
-            activePromptStateID = nil
-            recordFailure(
-                id: "failed_wake_listener_realtime_websocket_url",
-                title: "Failed wake listener start",
-                summary: "The realtime transcription WebSocket URL was not valid.",
-                detail: "Token/session failure visibility only; the shell did not expose provider payloads, retain audio, or fabricate local wake output."
-            )
-            return
-        }
-
-        do {
-            let captureContext = Self.makeCaptureSessionTransportContext(evidenceContext: evidenceContext)
-            realtimeAudioQueue.sync {
-                realtimeAudioEvidenceAccumulator.reset(captureStartNS: captureContext.tStartNS)
-            }
-            let inputNode = audioEngine.inputNode
-            let inputFormat = inputNode.outputFormat(forBus: 0)
-            guard let outputFormat = AVAudioFormat(
-                commonFormat: .pcmFormatInt16,
-                sampleRate: 24_000,
-                channels: 1,
-                interleaved: false
-            ),
-            let converter = AVAudioConverter(from: inputFormat, to: outputFormat) else {
-                teardownRealtimeTranscriptionSession()
-                listenerState = .failed
-                activePromptStateID = nil
-                recordFailure(
-                    id: "failed_wake_listener_realtime_audio_format",
-                    title: "Failed wake listener start",
-                    summary: "The microphone audio format could not be converted into the required realtime transcription PCM16 stream.",
-                    detail: "Failure visibility only; no raw audio was retained and no fallback success is counted as realtime wake success."
-                )
-                return
-            }
-
-            let websocketTask = realtimeURLSession.webSocketTask(
-                with: websocketURL,
-                protocols: [
-                    "realtime",
-                    "openai-insecure-api-key.\(session.clientSecret)",
-                ]
-            )
-            realtimeWebSocketTask = websocketTask
-            realtimeOutputFormat = outputFormat
-            realtimeAudioConverter = converter
-            activeCaptureContext = captureContext
-
-            websocketTask.resume()
-            receiveRealtimeTranscriptionEvents()
-
-            inputNode.installTap(onBus: 0, bufferSize: 2_048, format: inputFormat) { [weak self] buffer, _ in
-                self?.appendRealtimeAudioBuffer(buffer, inputFormat: inputFormat)
-            }
-            hasInputTap = true
-
-            audioEngine.prepare()
-            try audioEngine.start()
-            listenerState = .listening
-            desktopAppendRuntimeBridgeDebugLog(
-                "\(desktopTraceClockFields()) openai wake realtime transcription capture_ready=true stt_provider_id=\(DesktopVoiceProviderLane.sttProviderID) flag=\(DesktopRealtimeTranscriptionFeatureFlag.name) model=\(session.transcriptionModel) language_hint_policy=\(session.languageHintPolicy) request=\(session.requestID)"
-            )
-            scheduleRealtimeMaxSessionDuration(session.maxSessionDurationMS)
-        } catch {
-            teardownRecognitionSession()
-            listenerState = .failed
-            activePromptStateID = nil
-            recordFailure(
-                id: "failed_wake_listener_realtime_capture_start",
-                title: "Failed wake listener start",
-                summary: "The realtime transcription capture session could not start from this foreground wake surface.",
-                detail: "Capture start failed without exposing provider payloads or retaining audio. Detail: \(error.localizedDescription)"
-            )
-        }
-    }
-
-    private func appendRealtimeAudioBuffer(
-        _ buffer: AVAudioPCMBuffer,
-        inputFormat: AVAudioFormat
-    ) {
-        realtimeAudioQueue.async { [weak self] in
-            guard let self,
-                  let converter = self.realtimeAudioConverter,
-                  let outputFormat = self.realtimeOutputFormat,
-                  self.realtimeWebSocketTask != nil else {
-                return
-            }
-
-            let ratio = outputFormat.sampleRate / Swift.max(inputFormat.sampleRate, 1)
-            let frameCapacity = AVAudioFrameCount(
-                Swift.max(1, Double(buffer.frameLength) * ratio + 128)
-            )
-            guard let outputBuffer = AVAudioPCMBuffer(
-                pcmFormat: outputFormat,
-                frameCapacity: frameCapacity
-            ) else {
-                return
-            }
-
-            var conversionError: NSError?
-            var suppliedInput = false
-            let status = converter.convert(to: outputBuffer, error: &conversionError) { _, outStatus in
-                if suppliedInput {
-                    outStatus.pointee = .noDataNow
-                    return nil
-                }
-
-                suppliedInput = true
-                outStatus.pointee = .haveData
-                return buffer
-            }
-
-            guard status != .error,
-                  outputBuffer.frameLength > 0,
-                  let channelData = outputBuffer.int16ChannelData else {
-                return
-            }
-
-            let byteCount = Int(outputBuffer.frameLength) * MemoryLayout<Int16>.size
-            self.realtimeAudioEvidenceAccumulator.recordInt16AudioBuffer(
-                outputBuffer,
-                byteCount: byteCount,
-                observedNS: Swift.max(DispatchTime.now().uptimeNanoseconds, 1)
-            )
-            let audioData = Data(bytes: channelData[0], count: byteCount)
-            self.sendRealtimeTranscriptionEvent([
-                "type": "input_audio_buffer.append",
-                "audio": audioData.base64EncodedString()
-            ])
-        }
-    }
-
-    private func sendRealtimeTranscriptionEvent(_ event: [String: Any]) {
-        guard let websocketTask = realtimeWebSocketTask,
-              JSONSerialization.isValidJSONObject(event),
-              let data = try? JSONSerialization.data(withJSONObject: event),
-              let message = String(data: data, encoding: .utf8) else {
-            return
-        }
-
-        websocketTask.send(.string(message)) { error in
-            if error != nil {
-                desktopAppendRuntimeBridgeDebugLog(
-                    "openai wake realtime transcription send failure redacted=true"
-                )
-            }
-        }
-    }
-
-    private func receiveRealtimeTranscriptionEvents() {
-        guard let websocketTask = realtimeWebSocketTask else {
-            return
-        }
-
-        websocketTask.receive { [weak self] result in
-            guard let self else {
-                return
-            }
-
-            switch result {
-            case .success(let message):
-                switch message {
-                case .string(let text):
-                    self.handleRealtimeTranscriptionEvent(text)
-                case .data(let data):
-                    if let text = String(data: data, encoding: .utf8) {
-                        self.handleRealtimeTranscriptionEvent(text)
-                    }
-                @unknown default:
-                    break
-                }
-                if self.realtimeWebSocketTask === websocketTask {
-                    self.receiveRealtimeTranscriptionEvents()
-                }
-            case .failure:
-                DispatchQueue.main.async {
-                    guard self.realtimeWebSocketTask === websocketTask,
-                          self.pendingRequest == nil else {
-                        return
-                    }
-
-                    desktopAppendRuntimeBridgeDebugLog(
-                        "openai wake realtime transcription receive failure redacted=true"
-                    )
-                    self.listenerState = .failed
-                    self.activePromptStateID = nil
-                    self.recordFailure(
-                        id: "failed_wake_listener_realtime_connection",
-                        title: "Failed wake listener start",
-                        summary: "Realtime transcription connection failed before a committed wake transcript was available.",
-                        detail: "Failure visibility only; provider internals were redacted and no fallback wake success was counted."
-                    )
-                    self.teardownRecognitionSession()
-                }
-            }
-        }
-    }
-
-    private func handleRealtimeTranscriptionEvent(_ text: String) {
-        guard let data = text.data(using: .utf8),
-              let rawObject = try? JSONSerialization.jsonObject(with: data),
-              let object = rawObject as? [String: Any],
-              let eventType = object["type"] as? String else {
-            return
-        }
-
-        desktopAppendRuntimeBridgeDebugLog(
-            "openai wake realtime transcription event type=\(boundedFailureLogToken(eventType))"
-        )
-
-        if eventType == "transcription_session.created" || eventType == "session.created" {
-            desktopAppendRuntimeBridgeDebugLog(
-                "\(desktopTraceClockFields()) openai wake realtime transcription session created observed=true"
-            )
-            return
-        }
-
-        if eventType == "transcription_session.updated" || eventType == "session.updated" {
-            desktopAppendRuntimeBridgeDebugLog(
-                "openai wake realtime transcription session updated observed=true"
-            )
-            return
-        }
-
-        if eventType == "input_audio_buffer.speech_started" {
-            DispatchQueue.main.async {
-                if self.realtimeSpeechStartedNS == nil {
-                    self.realtimeSpeechStartedNS = DispatchTime.now().uptimeNanoseconds
-                    desktopAppendRuntimeBridgeDebugLog(
-                        "\(desktopTraceClockFields()) openai wake realtime transcription speech_started observed=true"
-                    )
-                }
-            }
-            return
-        }
-
-        if eventType == "conversation.item.input_audio_transcription.delta",
-           let delta = object["delta"] as? String,
-           !delta.isEmpty {
-            DispatchQueue.main.async {
-                if self.realtimeFirstDeltaNS == nil {
-                    self.realtimeFirstDeltaNS = DispatchTime.now().uptimeNanoseconds
-                    desktopAppendRuntimeBridgeDebugLog(
-                        "\(desktopTraceClockFields()) openai wake realtime transcription first_delta observed=true"
-                    )
-                }
-                self.realtimePartialTranscript += delta
-                self.transcriptPreview = self.realtimePartialTranscript
-                self.scheduleAutoCommitAfterWakeIfNeeded(using: self.realtimePartialTranscript)
-            }
-            return
-        }
-
-        if eventType == "conversation.item.input_audio_transcription.completed",
-           let transcript = object["transcript"] as? String {
-            DispatchQueue.main.async {
-                self.completeRealtimeTranscription(with: transcript)
-            }
-            return
-        }
-
-        if eventType == "conversation.item.input_audio_transcription.failed" {
-            let error = object["error"] as? [String: Any]
-            let code = (error?["code"] as? String)
-                .map { boundedFailureLogToken($0) } ?? "unavailable"
-            let param = (error?["param"] as? String)
-                .map { boundedFailureLogToken($0) } ?? "unavailable"
-            desktopAppendRuntimeBridgeDebugLog(
-                "openai wake realtime transcription failed event observed=true code=\(code) param=\(param) redacted=true"
-            )
-            DispatchQueue.main.async {
-                self.listenerState = .failed
-                self.activePromptStateID = nil
-                self.recordFailure(
-                    id: "failed_wake_listener_realtime_provider_transcription",
-                    title: "Failed wake listener start",
-                    summary: "Realtime transcription failed closed before a committed wake transcript was available.",
-                    detail: "Transcription failure details were redacted. No runtime execution, local wake output, or raw provider payload was exposed."
-                )
-                self.teardownRecognitionSession()
-            }
-            return
-        }
-
-        if eventType == "error" {
-            let error = object["error"] as? [String: Any]
-            let code = (error?["code"] as? String)
-                .map { boundedFailureLogToken($0) } ?? "unavailable"
-            let param = (error?["param"] as? String)
-                .map { boundedFailureLogToken($0) } ?? "unavailable"
-            desktopAppendRuntimeBridgeDebugLog(
-                "openai wake realtime transcription error event observed=true code=\(code) param=\(param) redacted=true"
-            )
-            DispatchQueue.main.async {
-                self.listenerState = .failed
-                self.activePromptStateID = nil
-                self.recordFailure(
-                    id: "failed_wake_listener_realtime_provider_error",
-                    title: "Failed wake listener start",
-                    summary: "Realtime transcription failed closed before a committed wake transcript was available.",
-                    detail: "Provider error details were redacted. No raw provider payload, audio archive, or local wake lane was exposed."
-                )
-                self.teardownRecognitionSession()
-            }
-            return
-        }
-
-        if eventType == "input_audio_buffer.committed" {
-            desktopAppendRuntimeBridgeDebugLog(
-                "\(desktopTraceClockFields()) openai wake realtime transcription audio_committed observed=true"
-            )
-        }
-    }
-
-    private func stopRealtimeTranscriptionCaptureAndCommit() {
-        guard listenerState.isActiveForMicrophone else {
-            recordFailure(
-                id: "failed_wake_listener_realtime_not_listening",
-                title: "Failed wake-triggered voice request",
-                summary: "Realtime transcription was not actively listening when wake commit was requested.",
-                detail: "Foreground wake production remains bounded and user-visible."
-            )
-            return
-        }
-
-        realtimeCaptureStopNS = Swift.max(DispatchTime.now().uptimeNanoseconds, 1)
-        endCaptureInput()
-        sendRealtimeTranscriptionEvent(["type": "input_audio_buffer.commit"])
-        scheduleRealtimeCompletionTimeout()
-        desktopAppendRuntimeBridgeDebugLog(
-            "openai wake realtime transcription commit sent=true partial_chars=\(realtimePartialTranscript.count)"
-        )
-    }
-
-    private func completeRealtimeTranscription(with transcript: String) {
-        cancelRealtimeCompletionTimeout()
-        let trimmedTranscript = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedTranscript.isEmpty else {
-            listenerState = .failed
-            activePromptStateID = nil
-            recordFailure(
-                id: "failed_wake_listener_realtime_empty_transcript",
-                title: "Failed wake-triggered voice request",
-                summary: "OpenAI realtime transcription completed without usable wake transcript text.",
-                detail: "Failure visibility only; no runtime execution, tool call, or local wake output was triggered."
-            )
-            teardownRecognitionSession()
-            return
-        }
-
-        guard trimmedTranscript.utf8.count <= maxVoiceTurnBytes + wakeTriggerPhrase.utf8.count + 8 else {
-            listenerState = .failed
-            activePromptStateID = nil
-            recordFailure(
-                id: "failed_wake_listener_realtime_transcript_validation",
-                title: "Failed wake-triggered voice request",
-                summary: "The realtime transcription result exceeded the bounded wake listener transcript limit.",
-                detail: "Failure visibility only; retry a shorter wake utterance. No final runtime dispatch was triggered."
-            )
-            teardownRecognitionSession()
-            return
-        }
-
-        realtimeCommittedTranscript = trimmedTranscript
-        transcriptPreview = trimmedTranscript
-        desktopAppendRuntimeBridgeDebugLog(
-            "\(desktopTraceClockFields()) openai wake realtime transcription completed final_chars=\(trimmedTranscript.count) wake_prefix_match=\(boundedWakePrefixMatch(in: trimmedTranscript, wakeTriggerPhrase: wakeTriggerPhrase) != nil)"
-        )
-        prepareWakeTriggeredVoiceTurnIfDetected(trimmedTranscript)
-        desktopAppendRuntimeBridgeDebugLog(
-            "openai wake realtime transcription post_prepare pending=\(pendingRequest != nil) listener_state=\(listenerState.rawValue)"
-        )
-        if pendingRequest == nil, listenerState != .failed {
-            listenerState = .idle
-            activePromptStateID = nil
-            teardownRecognitionSession()
-        }
-    }
-
-    private func scheduleAutoCommitAfterWakeIfNeeded(using transcript: String) {
-        let trimmedTranscript = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard listenerState == .listening,
-              pendingRequest == nil,
-              boundedWakePrefixMatch(in: trimmedTranscript, wakeTriggerPhrase: wakeTriggerPhrase) != nil else {
-            cancelAutoCommitAfterWake()
-            return
-        }
-
-        cancelAutoCommitAfterWake()
-        let workItem = DispatchWorkItem { [weak self] in
-            guard let self,
-                  self.listenerState == .listening,
-                  self.pendingRequest == nil,
-                  self.transcriptPreview.trimmingCharacters(in: .whitespacesAndNewlines) == trimmedTranscript else {
-                return
-            }
-
-            self.stopRealtimeTranscriptionCaptureAndCommit()
-        }
-        wakeAutoCommitAfterDetectionWorkItem = workItem
-        DispatchQueue.main.asyncAfter(
-            deadline: .now() + wakeAutoCommitAfterDetectionDelay,
-            execute: workItem
-        )
-    }
-
-    private func cancelAutoCommitAfterWake() {
-        wakeAutoCommitAfterDetectionWorkItem?.cancel()
-        wakeAutoCommitAfterDetectionWorkItem = nil
-    }
-
-    private func scheduleRealtimeCompletionTimeout() {
-        cancelRealtimeCompletionTimeout()
-        let workItem = DispatchWorkItem { [weak self] in
-            guard let self,
-                  self.pendingRequest == nil,
-                  self.realtimeWebSocketTask != nil else {
-                return
-            }
-
-            self.listenerState = .failed
-            self.activePromptStateID = nil
-            self.recordFailure(
-                id: "failed_wake_listener_realtime_timeout",
-                title: "Failed wake-triggered voice request",
-                summary: "Realtime transcription timed out before a committed wake transcript was available.",
-                detail: "Timeout handling is bounded and deterministic. No raw audio was retained and no local wake lane was used."
-            )
-            self.teardownRecognitionSession()
-        }
-        realtimeCompletionTimeoutWorkItem = workItem
-        DispatchQueue.main.asyncAfter(deadline: .now() + 6.0, execute: workItem)
-    }
-
-    private func cancelRealtimeCompletionTimeout() {
-        realtimeCompletionTimeoutWorkItem?.cancel()
-        realtimeCompletionTimeoutWorkItem = nil
-    }
-
-    private func scheduleRealtimeMaxSessionDuration(_ durationMS: UInt64) {
-        realtimeMaxSessionDurationWorkItem?.cancel()
-        let workItem = DispatchWorkItem { [weak self] in
-            guard let self,
-                  self.listenerState.isActiveForMicrophone,
-                  self.realtimeWebSocketTask != nil else {
-                return
-            }
-
-            self.listenerState = .failed
-            self.activePromptStateID = nil
-            self.recordFailure(
-                id: "failed_wake_listener_realtime_session_duration",
-                title: "Failed wake listener start",
-                summary: "Realtime transcription reached its bounded session duration before wake commit.",
-                detail: "The session was closed deterministically to prevent runaway cost or stuck capture."
-            )
-            self.teardownRecognitionSession()
-        }
-        realtimeMaxSessionDurationWorkItem = workItem
-        let boundedDelay = TimeInterval(Swift.max(5_000, Swift.min(durationMS, 300_000))) / 1_000
-        DispatchQueue.main.asyncAfter(deadline: .now() + boundedDelay, execute: workItem)
-    }
-
     private func endCaptureInput() {
-        cancelAutoCommitAfterWake()
         if audioEngine.isRunning {
             audioEngine.stop()
         }
@@ -4815,7 +4570,7 @@ private final class DesktopWakeListenerController: ObservableObject {
     private func teardownRecognitionSession() {
         endCaptureInput()
         activeCaptureContext = nil
-        teardownRealtimeTranscriptionSession()
+        teardownLocalWakeRecognitionSession()
     }
 
     private func nextDeviceTurnSequence() -> UInt64 {
@@ -4827,25 +4582,26 @@ private final class DesktopWakeListenerController: ObservableObject {
 
     private func completeStoppedCaptureSession() {
         activeCaptureContext = nil
-        teardownRealtimeTranscriptionSession()
+        teardownLocalWakeRecognitionSession()
     }
 
-    private func teardownRealtimeTranscriptionSession() {
-        cancelRealtimeCompletionTimeout()
-        realtimeMaxSessionDurationWorkItem?.cancel()
-        realtimeMaxSessionDurationWorkItem = nil
-        realtimeWebSocketTask?.cancel(with: .normalClosure, reason: nil)
-        realtimeWebSocketTask = nil
-        realtimeSession = nil
-        realtimeAudioConverter = nil
-        realtimeOutputFormat = nil
-        realtimePartialTranscript = ""
-        realtimeCommittedTranscript = ""
-        realtimeCaptureStopNS = nil
-        realtimeSpeechStartedNS = nil
-        realtimeFirstDeltaNS = nil
-        realtimeAudioQueue.sync {
-            realtimeAudioEvidenceAccumulator = DesktopAudioEvidenceAccumulator()
+    private func teardownLocalWakeRecognitionSession() {
+        localWakeRecognitionRequest?.endAudio()
+        localWakeRecognitionTask?.cancel()
+        localWakeRecognitionRequest = nil
+        localWakeRecognitionTask = nil
+        localWakeAudioConverter = nil
+        localWakeOutputFormat = nil
+        localWakePartialTranscript = ""
+        localWakeCommittedTranscript = ""
+        localWakeSpeechStartedNS = nil
+        localWakeFirstDeltaNS = nil
+        localWakeFirstAudioFrameLogged = false
+        localWakeCandidateToken = nil
+        localWakeCandidateFirstNS = nil
+        localWakeCandidateObservationCount = 0
+        audioEvidenceQueue.sync {
+            audioEvidenceAccumulator = DesktopAudioEvidenceAccumulator()
         }
     }
 
@@ -4877,7 +4633,16 @@ private final class DesktopWakeListenerController: ObservableObject {
     }
 
     private func requestTranscriptionPermissionIfNeeded(completion: @escaping (Bool) -> Void) {
-        completion(false)
+        switch Self.currentTranscriptionPermission() {
+        case .granted:
+            completion(true)
+        case .denied, .restricted, .unavailable:
+            completion(false)
+        case .notRequested:
+            SFSpeechRecognizer.requestAuthorization { status in
+                completion(status == .authorized)
+            }
+        }
     }
 
     private static func currentMicrophonePermission() -> VoicePermissionState {
@@ -4896,7 +4661,18 @@ private final class DesktopWakeListenerController: ObservableObject {
     }
 
     private static func currentTranscriptionPermission() -> VoicePermissionState {
-        .unavailable
+        switch SFSpeechRecognizer.authorizationStatus() {
+        case .authorized:
+            return .granted
+        case .denied:
+            return .denied
+        case .restricted:
+            return .restricted
+        case .notDetermined:
+            return .notRequested
+        @unknown default:
+            return .unavailable
+        }
     }
 
     private static func preferredLocale() -> Locale {
@@ -4955,18 +4731,19 @@ private final class DesktopWakeListenerController: ObservableObject {
             return nil
         }
 
-        let finalTranscriptPresent = !realtimeCommittedTranscript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let finalTranscriptPresent = !localWakeCommittedTranscript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             || !detectionText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        let partialTranscriptPresent = !realtimePartialTranscript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let partialTranscriptPresent = !localWakePartialTranscript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             || !transcriptPreview.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        let evidenceSnapshot = realtimeAudioQueue.sync {
-            realtimeAudioEvidenceAccumulator.snapshot(
+        let evidenceSnapshot = audioEvidenceQueue.sync {
+            audioEvidenceAccumulator.snapshot(
                 captureStartNS: tStartNS,
                 captureEndNS: tEndNS,
                 finalTranscript: detectionText,
                 finalTranscriptPresent: finalTranscriptPresent,
                 partialTranscriptPresent: partialTranscriptPresent,
-                speechStartNS: realtimeSpeechStartedNS ?? realtimeFirstDeltaNS,
+                speechStartNS: localWakeSpeechStartedNS
+                    ?? localWakeFirstDeltaNS,
                 evidenceContext: activeCaptureContext.evidenceContext
             )
         }
@@ -21880,10 +21657,7 @@ struct DesktopSessionShellView: View {
 
     private func desktopWakeListenerFailureIsRecoverableForAutoRestart(_ failureID: String) -> Bool {
         switch failureID {
-        case "failed_wake_listener_realtime_connection",
-             "failed_wake_listener_realtime_timeout",
-             "failed_wake_listener_realtime_session_duration",
-             "failed_wake_listener_openai_realtime_stt_unavailable":
+        case "failed_wake_listener_local_recognition_error":
             return true
         default:
             return false
@@ -22510,15 +22284,15 @@ struct DesktopSessionShellView: View {
 
             let runtimeIgnoredUnsafeVoiceTranscript =
                 desktopRuntimeIgnoredUnsafeVoiceTranscript(outcomeState)
+            let wakeAcceptedListeningWindow =
+                outcomeState.phase == .completed
+                && outcomeState.nextMove == "listening_window_open"
             let shouldStartPostWakeInstructionListening =
-                (
+                wakeAcceptedListeningWindow
+                && (
                     pendingRequest.transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                     || runtimeIgnoredUnsafeVoiceTranscript
                 )
-                    && (
-                        outcomeState.nextMove == "listening_window_open"
-                        || outcomeState.phase != .completed
-                    )
             desktopCanonicalRuntimeOutcomeState = outcomeState
             if !runtimeIgnoredUnsafeVoiceTranscript {
                 desktopPersistSubmittedUserContinuityIfNeeded(
@@ -22614,6 +22388,13 @@ struct DesktopSessionShellView: View {
             lastStagedWakeTriggeredVoiceTurnRequestState = nil
             if shouldStartPostWakeInstructionListening {
                 startPostWakeInstructionListeningAfterGreeting()
+            } else if !wakeAcceptedListeningWindow
+                        && pendingRequest.transcript
+                            .trimmingCharacters(in: .whitespacesAndNewlines)
+                            .isEmpty {
+                desktopAppendRuntimeBridgeDebugLog(
+                    "\(desktopTraceClockFields()) desktop post-wake instruction listening blocked reason=ph1w_wake_not_accepted phase=\(outcomeState.phase.rawValue) next_move=\(outcomeState.nextMove ?? "not_provided") runtime_reason=\(outcomeState.reasonCode ?? "not_provided")"
+                )
             }
         } catch {
             desktopAppendRuntimeBridgeDebugLog(
@@ -22634,9 +22415,9 @@ struct DesktopSessionShellView: View {
             desktopAuthoritativeReplyPlaybackState = .idle
             desktopWakeListenerController.clearPendingPreparedWakeTurn()
             lastStagedWakeTriggeredVoiceTurnRequestState = nil
-            if pendingRequest.transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                startPostWakeInstructionListeningAfterGreeting()
-            }
+            desktopAppendRuntimeBridgeDebugLog(
+                "\(desktopTraceClockFields()) desktop post-wake instruction listening blocked reason=wake_dispatch_error_no_ph1w_acceptance"
+            )
         }
     }
 
@@ -22903,47 +22684,13 @@ struct DesktopSessionShellView: View {
         desktopAuthoritativeReplyPlaybackController.reset()
         desktopAuthoritativeReplyPlaybackState = .idle
         lastStagedWakeTriggeredVoiceTurnRequestState = nil
-        let featureFlagEnabled = DesktopRealtimeTranscriptionFeatureFlag.isEnabled
         desktopAppendRuntimeBridgeDebugLog(
-            "desktop wake realtime transcription flag name=\(DesktopRealtimeTranscriptionFeatureFlag.name) enabled=\(featureFlagEnabled)"
+            "\(desktopTraceClockFields()) desktop local wake privacy boundary start provider=openai_prewake=false remote_stt=false remote_audio=false ph1w_authority=pending"
         )
-        guard featureFlagEnabled else {
-            desktopWakeListenerController.failOpenAIRealtimeWakeUnavailable(
-                promptState: promptState,
-                id: "failed_wake_listener_openai_realtime_stt_disabled",
-                summary: "Controlled Desktop wake requires the approved OpenAI realtime STT runtime surface.",
-                detail: "The native wake listener did not fall back to Apple STT, local STT, CLI proof runners, provider shortcuts, or a second wake engine."
-            )
-            return
-        }
-
-        Task { @MainActor in
-            do {
-                let session = try await desktopCanonicalRuntimeBridge
-                    .createDesktopRealtimeTranscriptionSession(
-                        featureFlagName: DesktopRealtimeTranscriptionFeatureFlag.name,
-                        featureFlagEnabled: true
-                    )
-                desktopAppendRuntimeBridgeDebugLog(
-                    "desktop wake realtime transcription token mint ok request=\(session.requestID) endpoint=\(session.endpoint) model=\(session.transcriptionModel) language_hint_policy=\(session.languageHintPolicy)"
-                )
-                desktopWakeListenerController.startRealtimeListening(
-                    promptState: promptState,
-                    session: session,
-                    evidenceContext: desktopCurrentAudioEvidenceContext()
-                )
-            } catch {
-                desktopAppendRuntimeBridgeDebugLog(
-                    "desktop wake realtime transcription unavailable reason=token_mint_failure redacted=true"
-                )
-                desktopWakeListenerController.failOpenAIRealtimeWakeUnavailable(
-                    promptState: promptState,
-                    id: "failed_wake_listener_openai_realtime_stt_unavailable",
-                    summary: "The approved OpenAI realtime STT wake session could not be created.",
-                    detail: "Token/session creation failed closed without provider payload exposure, Apple STT fallback, CLI proof-runner runtime, or local wake output fabrication."
-                )
-            }
-        }
+        desktopWakeListenerController.startListening(
+            promptState: promptState,
+            evidenceContext: desktopCurrentAudioEvidenceContext()
+        )
     }
 
     private func nextDesktopTypedTurnSequence() -> UInt64 {
