@@ -7580,6 +7580,9 @@ struct DesktopSessionShellView: View {
                 )
                 desktopAttemptResumeComposerVoiceModeAfterUnsafeEvidenceRejection()
             }
+            desktopAttemptResumeComposerVoiceModeAfterTransientRealtimeFailureIfNeeded(
+                explicitVoiceController.failedRequest?.id
+            )
             await synchronizeDesktopWakeListenerLifecycleState()
         }
         .onReceive(desktopWakeListenerController.$pendingRequest) { pendingRequest in
@@ -7662,7 +7665,24 @@ struct DesktopSessionShellView: View {
             await synchronizeDesktopSessionPostureEvidenceRuntimeOutcomeState()
         }
         .task(id: scenePhase) {
+            if scenePhase != .active {
+                desktopYieldInstructionCaptureToWakeListenerForHiddenScreen(
+                    reason: "scene_phase_not_active"
+                )
+            }
             await synchronizeDesktopWakeListenerLifecycleState()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didHideNotification)) { _ in
+            desktopYieldInstructionCaptureToWakeListenerForHiddenScreen(reason: "app_hidden")
+            Task { @MainActor in
+                await synchronizeDesktopWakeListenerLifecycleState()
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didMiniaturizeNotification)) { _ in
+            desktopYieldInstructionCaptureToWakeListenerForHiddenScreen(reason: "window_miniaturized")
+            Task { @MainActor in
+                await synchronizeDesktopWakeListenerLifecycleState()
+            }
         }
         .onReceive(desktopAuthoritativeReplyPlaybackController.$playbackState) { playbackState in
             desktopAuthoritativeReplyPlaybackState = playbackState
@@ -10020,6 +10040,27 @@ struct DesktopSessionShellView: View {
         }
     }
 
+    private func desktopYieldInstructionCaptureToWakeListenerForHiddenScreen(reason: String) {
+        guard desktopComposerVoiceModeEnabled
+            || explicitVoiceController.isListening
+            || desktopRealtimeTranscriptionStartInFlight
+            || desktopRealtimeTranscriptionPrepareInFlight
+            || desktopPreparedRealtimeTranscriptionSession != nil else {
+            return
+        }
+
+        desktopAppendRuntimeBridgeDebugLog(
+            "\(desktopTraceClockFields()) desktop hidden-screen wake handoff reason=\(boundedFailureLogToken(reason))"
+        )
+        desktopComposerVoiceModeEnabled = false
+        desktopComposerVoiceModeAwaitingReplyPlaybackCompletion = false
+        cancelDesktopRealtimeTranscriptionStartIfNeeded()
+        cancelDesktopRealtimeTranscriptionPrepareIfNeeded(reason: reason)
+        if explicitVoiceController.isListening {
+            explicitVoiceController.discardCurrentVoiceTurn()
+        }
+    }
+
     private func desktopAttemptResumeComposerVoiceMode() {
         guard desktopComposerVoiceModeEnabled,
               !explicitVoiceController.isListening,
@@ -10149,7 +10190,35 @@ struct DesktopSessionShellView: View {
                 desktopAppendRuntimeBridgeDebugLog(
                     "\(desktopTraceClockFields()) desktop realtime transcription prewarm unavailable reason=token_mint_failure redacted=true requested_reason=\(boundedFailureLogToken(reason))"
                 )
+                scheduleDesktopComposerVoiceModeResumeAfterPrewarmFailureIfNeeded(reason: reason)
             }
+        }
+    }
+
+    private func scheduleDesktopComposerVoiceModeResumeAfterPrewarmFailureIfNeeded(reason: String) {
+        let boundedReason = boundedFailureLogToken(reason)
+        let isPostReplyRearm = boundedReason.hasPrefix("post_wake_instruction")
+            || boundedReason.hasPrefix("post_answer")
+        guard isPostReplyRearm else {
+            return
+        }
+
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 250_000_000)
+            guard desktopComposerVoiceModeEnabled,
+                  !explicitVoiceController.isListening,
+                  explicitVoiceController.pendingRequest == nil,
+                  desktopAuthoritativeReplyPlaybackState.phase != .speaking,
+                  desktopAuthoritativeReplyPlaybackState.phase != .requesting,
+                  !desktopOpenAITtsSelfEchoGateActive else {
+                return
+            }
+
+            desktopComposerVoiceModeAwaitingReplyPlaybackCompletion = false
+            desktopAppendRuntimeBridgeDebugLog(
+                "\(desktopTraceClockFields()) desktop realtime transcription prewarm recovery resume reason=\(boundedReason)"
+            )
+            desktopAttemptResumeComposerVoiceMode()
         }
     }
 
@@ -10163,6 +10232,40 @@ struct DesktopSessionShellView: View {
             "desktop unsafe voice evidence rearm immediate reason=post_tts_echo_tail_guard_remains_preview_only"
         )
         desktopAttemptResumeComposerVoiceMode()
+    }
+
+    private func desktopAttemptResumeComposerVoiceModeAfterTransientRealtimeFailureIfNeeded(
+        _ failureID: String?
+    ) {
+        guard let failureID,
+              desktopComposerVoiceModeEnabled,
+              [
+                  "failed_realtime_transcription_connection",
+                  "failed_realtime_transcription_provider_transcription",
+                  "failed_realtime_transcription_provider_error",
+                  "failed_realtime_transcription_timeout",
+                  "failed_realtime_transcription_session_duration",
+              ].contains(failureID) else {
+            return
+        }
+
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 250_000_000)
+            guard explicitVoiceController.failedRequest?.id == failureID,
+                  desktopComposerVoiceModeEnabled,
+                  !explicitVoiceController.isListening,
+                  explicitVoiceController.pendingRequest == nil,
+                  desktopAuthoritativeReplyPlaybackState.phase != .speaking,
+                  desktopAuthoritativeReplyPlaybackState.phase != .requesting,
+                  !desktopOpenAITtsSelfEchoGateActive else {
+                return
+            }
+
+            desktopAppendRuntimeBridgeDebugLog(
+                "\(desktopTraceClockFields()) desktop realtime transcription transient failure rearm reason=\(boundedFailureLogToken(failureID))"
+            )
+            desktopAttemptResumeComposerVoiceMode()
+        }
     }
 
     private func presentDesktopMeetingRecordingUnavailable() {
@@ -11252,8 +11355,13 @@ struct DesktopSessionShellView: View {
         )
     }
 
+    private var desktopWakeListenerMayRunForCurrentAppLifecycle: Bool {
+        // A hidden or minimized window is still the same live Desktop session.
+        scenePhase == .active || NSApplication.shared.isRunning
+    }
+
     private var desktopWakeAutoStartEligiblePromptState: DesktopWakeListenerPromptState? {
-        guard scenePhase == .active,
+        guard desktopWakeListenerMayRunForCurrentAppLifecycle,
               let promptState = desktopWakeListenerPromptState,
               !desktopComposerVoiceModeEnabled,
               !desktopComposerVoiceModeAwaitingReplyPlaybackCompletion,
@@ -21202,7 +21310,7 @@ struct DesktopSessionShellView: View {
             return
         }
 
-        guard scenePhase == .active else {
+        guard desktopWakeListenerMayRunForCurrentAppLifecycle else {
             if desktopWakeListenerController.listenerState.isActiveForMicrophone
                 || (desktopWakeListenerController.pendingRequest != nil && !wakeDispatchInFlight)
                 || (lastStagedWakeTriggeredVoiceTurnRequestState != nil && !wakeDispatchInFlight) {
@@ -21257,7 +21365,7 @@ struct DesktopSessionShellView: View {
     @MainActor
     private func synchronizeDesktopWakeAutoStartState() {
         guard desktopControlledWakeEnabled,
-              scenePhase == .active,
+              desktopWakeListenerMayRunForCurrentAppLifecycle,
               let promptState = desktopWakeListenerPromptState else {
             desktopWakeAutoStartAttemptedPromptID = nil
             desktopWakeAutoStartSuppressedPromptID = nil
@@ -21300,7 +21408,7 @@ struct DesktopSessionShellView: View {
               let failureID = desktopWakeListenerController.failedRequest?.id,
               desktopWakeListenerFailureIsRecoverableForAutoRestart(failureID),
               desktopControlledWakeEnabled,
-              scenePhase == .active,
+              desktopWakeListenerMayRunForCurrentAppLifecycle,
               desktopWakeListenerController.pendingRequest == nil,
               lastStagedWakeTriggeredVoiceTurnRequestState == nil,
               !desktopComposerVoiceModeEnabled,

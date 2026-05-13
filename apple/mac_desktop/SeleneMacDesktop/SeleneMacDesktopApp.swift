@@ -26,6 +26,13 @@ final class SeleneMacDesktopAppDelegate: NSObject, NSApplicationDelegate, NSWind
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        NSApplication.shared.setActivationPolicy(.regular)
+        DispatchQueue.main.async { [weak self] in
+            self?.showMainWindow()
+        }
+    }
+
+    func applicationDidBecomeActive(_ notification: Notification) {
         DispatchQueue.main.async { [weak self] in
             self?.showMainWindow()
         }
@@ -40,7 +47,12 @@ final class SeleneMacDesktopAppDelegate: NSObject, NSApplicationDelegate, NSWind
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
-        true
+        false
+    }
+
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        sender.orderOut(nil)
+        return false
     }
 
     func windowWillClose(_ notification: Notification) {
@@ -61,6 +73,9 @@ final class SeleneMacDesktopAppDelegate: NSObject, NSApplicationDelegate, NSWind
         if let existingWindow = NSApplication.shared.windows.first(where: { window in
             window.identifier?.rawValue == "selene-main" || window.title == "Selene"
         }) {
+            existingWindow.identifier = NSUserInterfaceItemIdentifier("selene-main")
+            existingWindow.isReleasedWhenClosed = false
+            existingWindow.delegate = self
             existingWindow.makeKeyAndOrderFront(nil)
             mainWindow = existingWindow
             NSApplication.shared.activate(ignoringOtherApps: true)
@@ -75,6 +90,7 @@ final class SeleneMacDesktopAppDelegate: NSObject, NSApplicationDelegate, NSWind
         )
         window.title = "Selene"
         window.identifier = NSUserInterfaceItemIdentifier("selene-main")
+        window.isReleasedWhenClosed = false
         window.contentView = NSHostingView(rootView: DesktopSessionShellView())
         window.delegate = self
         window.center()
@@ -137,10 +153,9 @@ struct SeleneMacDesktopApp: App {
     private var appDelegate
 
     var body: some Scene {
-        WindowGroup("Selene", id: "selene-main") {
-            DesktopSessionShellView()
+        Settings {
+            EmptyView()
         }
-        .defaultSize(width: 1220, height: 760)
         .commands {
             CommandGroup(replacing: .newItem) {}
         }
