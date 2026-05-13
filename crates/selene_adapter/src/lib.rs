@@ -21568,6 +21568,7 @@ fn committed_voice_latin_filler_artifact_token(token: &str) -> bool {
             | "huh"
             | "ok"
             | "okay"
+            | "so"
             | "sure"
             | "uh"
             | "um"
@@ -26669,6 +26670,62 @@ mod tests {
             err.contains("wake_rejected"),
             "expected wake_rejected from PH1.W alignment gate, got {err}"
         );
+    }
+
+    #[test]
+    fn desktop_wake_usable_clipping_metric_does_not_bypass_ph1w_or_poison_evidence() {
+        let (runtime, mut req) = stage34m_activation_only_wake_request("desktop_usable_clip");
+        if let Some(capture) = req.audio_capture_ref.as_mut() {
+            capture.capture_degraded = Some(false);
+            capture.stream_gap_detected = Some(false);
+            capture.clipping_ratio_bp = Some(1_000);
+            capture.vad_confidence_bp = Some(8_800);
+            capture.acoustic_confidence_bp = Some(8_500);
+            capture.speech_likeness_bp = Some(8_700);
+            capture.echo_safe_confidence_bp = Some(9_200);
+            capture.nearfield_confidence_bp = Some(8_300);
+        }
+
+        let out = runtime
+            .run_voice_turn(req)
+            .expect("usable wake evidence must still flow through PH1.W");
+
+        assert_wake_greeting_handoff_response(&out);
+        let store = runtime.store.lock().expect("store lock must not poison");
+        assert!(store
+            .ph1w_get_runtime_events()
+            .iter()
+            .any(|row| row.accepted));
+    }
+
+    #[test]
+    fn desktop_wake_degraded_capture_still_fails_closed_in_ph1w() {
+        let (runtime, mut req) = stage34m_activation_only_wake_request("desktop_degraded_capture");
+        if let Some(capture) = req.audio_capture_ref.as_mut() {
+            capture.capture_degraded = Some(true);
+            capture.stream_gap_detected = Some(false);
+            capture.detection_text = Some("Selene".to_string());
+            capture.detection_confidence_bp = Some(9_600);
+            capture.vad_confidence_bp = Some(8_800);
+            capture.acoustic_confidence_bp = Some(8_500);
+            capture.speech_likeness_bp = Some(8_700);
+            capture.echo_safe_confidence_bp = Some(9_200);
+            capture.nearfield_confidence_bp = Some(8_300);
+        }
+
+        let err = runtime
+            .run_voice_turn(req)
+            .expect_err("degraded wake evidence must still reject through PH1.W");
+
+        assert!(
+            err.contains("wake_rejected"),
+            "expected wake_rejected from PH1.W degraded capture gate, got {err}"
+        );
+        let store = runtime.store.lock().expect("store lock must not poison");
+        assert!(store
+            .ph1w_get_runtime_events()
+            .iter()
+            .any(|row| !row.accepted));
     }
 
     fn stage34m_activation_only_wake_request(
@@ -40097,6 +40154,38 @@ mod tests {
         let out = runtime
             .run_voice_turn(req)
             .expect("one-token filler artifact should be ignored");
+        assert_eq!(out.status, "ok");
+        assert_eq!(out.outcome, "IGNORED");
+        assert_eq!(out.next_move, "listening_window_open");
+        assert_eq!(
+            out.reason_code,
+            ph1c_reason_codes::STT_FAIL_LOW_CONFIDENCE.0.to_string()
+        );
+        assert!(out.response_text.is_empty());
+        assert!(out.tts_text.is_empty());
+        assert!(runtime.ingress.debug_last_agent_input_packet().is_none());
+    }
+
+    #[test]
+    fn adapter_false_transcript_so_cough_fragment_rejected() {
+        let runtime = AdapterRuntime::default();
+        let mut req = base_request();
+        mark_request_as_live_desktop_capture_for_h417_tests(&mut req);
+        req.correlation_id = 420_118;
+        req.turn_id = 420_118;
+        req.user_text_final = Some("So".to_string());
+        if let Some(capture) = req.audio_capture_ref.as_mut() {
+            capture.locale_tag = Some("en-US".to_string());
+            capture.acoustic_confidence_bp = Some(9_000);
+            capture.vad_confidence_bp = Some(9_000);
+            capture.speech_likeness_bp = Some(9_000);
+            capture.capture_degraded = Some(false);
+            capture.stream_gap_detected = Some(false);
+        }
+
+        let out = runtime
+            .run_voice_turn(req)
+            .expect("one-token cough filler artifact should be ignored");
         assert_eq!(out.status, "ok");
         assert_eq!(out.outcome, "IGNORED");
         assert_eq!(out.next_move, "listening_window_open");

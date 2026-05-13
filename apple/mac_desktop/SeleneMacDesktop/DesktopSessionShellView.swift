@@ -170,7 +170,9 @@ private enum DesktopAvailabilityStatusKind: String, Equatable {
     case wakeListening = "wake_listening"
     case activeListening = "active_listening"
     case thinkingProcessing = "thinking_processing"
+    case ttsPreparing = "tts_preparing"
     case speaking = "speaking"
+    case fallbackSpeaking = "fallback_speaking"
     case mutedNotListening = "muted_not_listening"
     case errorDegraded = "error_degraded"
     case hiddenAvailable = "hidden_available"
@@ -186,8 +188,12 @@ private enum DesktopAvailabilityStatusKind: String, Equatable {
             return "Capturing"
         case .thinkingProcessing:
             return "Thinking"
+        case .ttsPreparing:
+            return "Preparing voice"
         case .speaking:
             return "Speaking"
+        case .fallbackSpeaking:
+            return "Fallback voice"
         case .mutedNotListening:
             return "Muted / not listening"
         case .errorDegraded:
@@ -209,8 +215,12 @@ private enum DesktopAvailabilityStatusKind: String, Equatable {
             return "waveform.path"
         case .thinkingProcessing:
             return "brain.head.profile"
+        case .ttsPreparing:
+            return "speaker.wave.2.fill"
         case .speaking:
             return "bubble.left.and.bubble.right.fill"
+        case .fallbackSpeaking:
+            return "speaker.wave.2.fill"
         case .mutedNotListening:
             return "mic.slash.fill"
         case .errorDegraded:
@@ -232,11 +242,13 @@ private enum DesktopAvailabilityStatusKind: String, Equatable {
             return .purple
         case .thinkingProcessing:
             return .orange
+        case .ttsPreparing:
+            return .blue
         case .hiddenAvailable:
             return .green
         case .mutedNotListening:
             return .gray
-        case .errorDegraded:
+        case .fallbackSpeaking, .errorDegraded:
             return .yellow
         case .unavailableFailClosed:
             return .gray
@@ -247,23 +259,23 @@ private enum DesktopAvailabilityStatusKind: String, Equatable {
         switch self {
         case .mutedNotListening, .unavailableFailClosed:
             return "Off"
-        case .idleAvailable, .wakeListening, .activeListening, .thinkingProcessing, .speaking, .errorDegraded,
-             .hiddenAvailable:
+        case .idleAvailable, .wakeListening, .activeListening, .thinkingProcessing, .ttsPreparing, .speaking,
+             .fallbackSpeaking, .errorDegraded, .hiddenAvailable:
             return "On"
         }
     }
 
     var dockBadgeLabel: String? {
         switch self {
-        case .idleAvailable, .wakeListening, .activeListening, .thinkingProcessing, .speaking, .errorDegraded,
-             .hiddenAvailable, .mutedNotListening, .unavailableFailClosed:
+        case .idleAvailable, .wakeListening, .activeListening, .thinkingProcessing, .ttsPreparing, .speaking,
+             .fallbackSpeaking, .errorDegraded, .hiddenAvailable, .mutedNotListening, .unavailableFailClosed:
             return availabilityBadgeLabel
         }
     }
 
     var shouldPulseDockIcon: Bool {
         switch self {
-        case .wakeListening, .activeListening, .thinkingProcessing, .speaking:
+        case .wakeListening, .activeListening, .thinkingProcessing, .ttsPreparing, .speaking, .fallbackSpeaking:
             return true
         case .idleAvailable, .mutedNotListening, .errorDegraded, .hiddenAvailable, .unavailableFailClosed:
             return false
@@ -1772,7 +1784,6 @@ private struct DesktopAudioEvidenceAccumulator {
         let rms = appendedAudioBytes == 0 ? 0 : sqrt(accumulatedMeanSquare / Double(Swift.max(appendedAudioBytes / 2, 1)))
         let peakRatio = Double(peakSampleMagnitude) / 32_768.0
         let audibleEnergy = peakRatio >= 0.015 || rms >= 0.006
-        let clipped = peakRatio >= 0.98
 
         let evidenceClass: DesktopAudioEvidenceClass
         if finalTranscriptMatchesTtsEcho {
@@ -1797,7 +1808,8 @@ private struct DesktopAudioEvidenceAccumulator {
             evidenceClass: evidenceClass,
             ttsPlaybackActive: ttsPlaybackActive,
             streamGapDetected: streamGapDetected,
-            captureDegraded: streamGapDetected || clipped || matchesUnsafeEvidence(evidenceClass),
+            // Peak clipping is carried as PH1.K evidence; it must not poison otherwise valid wake speech.
+            captureDegraded: streamGapDetected || matchesUnsafeEvidence(evidenceClass),
             aecUnstable: ttsEchoRiskForSpeech,
             audibleEnergyDetected: audibleEnergy,
             peakRatio: peakRatio,
@@ -3979,7 +3991,7 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
         }
 
         desktopAppendRuntimeBridgeDebugLog(
-            "\(desktopTraceClockFields()) desktop audio evidence class=\(evidenceSnapshot.evidenceClass.rawValue) tts_active=\(evidenceSnapshot.ttsPlaybackActive) stream_gap=\(evidenceSnapshot.streamGapDetected) capture_degraded=\(evidenceSnapshot.captureDegraded) buffers=\(evidenceSnapshot.audioBufferCount)"
+            "\(desktopTraceClockFields()) desktop audio evidence class=\(evidenceSnapshot.evidenceClass.rawValue) tts_active=\(evidenceSnapshot.ttsPlaybackActive) stream_gap=\(evidenceSnapshot.streamGapDetected) capture_degraded=\(evidenceSnapshot.captureDegraded) clipping_ratio_bp=\(evidenceSnapshot.clippingRatioBP) buffers=\(evidenceSnapshot.audioBufferCount)"
         )
 
         return DesktopVoiceTurnAudioCaptureRefState(
@@ -4749,7 +4761,7 @@ private final class DesktopWakeListenerController: ObservableObject {
         }
 
         desktopAppendRuntimeBridgeDebugLog(
-            "desktop wake audio evidence class=\(evidenceSnapshot.evidenceClass.rawValue) tts_active=\(evidenceSnapshot.ttsPlaybackActive) stream_gap=\(evidenceSnapshot.streamGapDetected) capture_degraded=\(evidenceSnapshot.captureDegraded) buffers=\(evidenceSnapshot.audioBufferCount)"
+            "desktop wake audio evidence class=\(evidenceSnapshot.evidenceClass.rawValue) tts_active=\(evidenceSnapshot.ttsPlaybackActive) stream_gap=\(evidenceSnapshot.streamGapDetected) capture_degraded=\(evidenceSnapshot.captureDegraded) clipping_ratio_bp=\(evidenceSnapshot.clippingRatioBP) buffers=\(evidenceSnapshot.audioBufferCount)"
         )
 
         return DesktopVoiceTurnAudioCaptureRefState(
@@ -10133,13 +10145,16 @@ struct DesktopSessionShellView: View {
         }
 
         Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 250_000_000)
+            try? await Task.sleep(nanoseconds: 650_000_000)
             guard desktopComposerVoiceModeEnabled,
                   !explicitVoiceController.isListening,
                   explicitVoiceController.pendingRequest == nil,
                   desktopAuthoritativeReplyPlaybackState.phase != .speaking,
                   desktopAuthoritativeReplyPlaybackState.phase != .requesting,
                   !desktopOpenAITtsSelfEchoGateActive else {
+                desktopAppendRuntimeBridgeDebugLog(
+                    "\(desktopTraceClockFields()) desktop realtime transcription prewarm recovery skipped reason=\(boundedReason)"
+                )
                 return
             }
 
@@ -11415,14 +11430,71 @@ struct DesktopSessionShellView: View {
             )
         }
 
-        if desktopAuthoritativeReplyPlaybackState.phase == .speaking {
+        let playbackState = desktopAuthoritativeReplyPlaybackState
+        let playbackUsesRuntimeAllowedFallback = playbackState.detail.contains("PLAYING_NATIVE_MACOS_TTS")
+
+        if playbackState.phase == .failed {
             return snapshot(
-                .speaking,
-                detail: "Selene is playing the final runtime reply through the approved playback path.",
+                .errorDegraded,
+                detail: "OpenAI TTS is unavailable and no runtime-approved playback path is currently active.",
                 extraEvidenceRows: [
                     DesktopAvailabilityEvidenceRow(
                         label: "tts_policy",
                         value: DesktopVoiceProviderLane.ttsProviderID
+                    ),
+                    DesktopAvailabilityEvidenceRow(
+                        label: "tts_state",
+                        value: "failed"
+                    ),
+                    DesktopAvailabilityEvidenceRow(
+                        label: "fallback",
+                        value: "not_playing"
+                    ),
+                ]
+            )
+        }
+
+        if playbackState.phase == .requesting {
+            return snapshot(
+                .ttsPreparing,
+                detail: "Runtime answer text is ready; OpenAI TTS is preparing Selene's voice.",
+                extraEvidenceRows: [
+                    DesktopAvailabilityEvidenceRow(
+                        label: "tts_policy",
+                        value: DesktopVoiceProviderLane.ttsProviderID
+                    ),
+                    DesktopAvailabilityEvidenceRow(
+                        label: "tts_state",
+                        value: "requesting"
+                    ),
+                    DesktopAvailabilityEvidenceRow(
+                        label: "runtime_answer",
+                        value: "ready"
+                    ),
+                ]
+            )
+        }
+
+        if playbackState.phase == .speaking {
+            return snapshot(
+                playbackUsesRuntimeAllowedFallback ? .fallbackSpeaking : .speaking,
+                detail: playbackUsesRuntimeAllowedFallback
+                    ? "Selene is speaking the final runtime answer through a runtime-approved Apple fallback after OpenAI TTS failed."
+                    : "Selene is playing the final runtime reply through OpenAI TTS.",
+                extraEvidenceRows: [
+                    DesktopAvailabilityEvidenceRow(
+                        label: "tts_policy",
+                        value: playbackUsesRuntimeAllowedFallback
+                            ? "runtime_allowed_native_fallback"
+                            : DesktopVoiceProviderLane.ttsProviderID
+                    ),
+                    DesktopAvailabilityEvidenceRow(
+                        label: "tts_state",
+                        value: playbackUsesRuntimeAllowedFallback ? "fallback_playing" : "openai_playing"
+                    ),
+                    DesktopAvailabilityEvidenceRow(
+                        label: "fallback",
+                        value: playbackUsesRuntimeAllowedFallback ? "apple_native" : "none"
                     ),
                 ]
             )
@@ -11435,12 +11507,11 @@ struct DesktopSessionShellView: View {
             )
         }
 
-        if desktopAuthoritativeReplyPlaybackState.phase == .requesting
-            || desktopAvailabilityRuntimeBusy
+        if desktopAvailabilityRuntimeBusy
             || desktopWakeListenerController.listenerState == .dispatching {
             return snapshot(
                 .thinkingProcessing,
-                detail: "A committed turn or runtime playback request is resolving."
+                detail: "A committed turn is still resolving before final answer text is ready."
             )
         }
 
@@ -20652,6 +20723,7 @@ struct DesktopSessionShellView: View {
         desktopOpenAITtsPlaybackGeneration &+= 1
         let playbackGeneration = desktopOpenAITtsPlaybackGeneration
         let answerTextSHA256 = desktopSessionSHA256Hex(Data(authoritativeResponseText.utf8))
+        let ttsRequestStartedNS = Swift.max(DispatchTime.now().uptimeNanoseconds, 1)
         let token = DesktopOpenAITtsPlaybackToken(
             ttsRequestID: nil,
             sessionID: sessionID,
@@ -20662,7 +20734,7 @@ struct DesktopSessionShellView: View {
         desktopAuthoritativeReplyPlaybackState = desktopAuthoritativeReplyPlaybackController
             .prepareOpenAITTS(authoritativeResponseText: authoritativeResponseText, token: token)
         desktopAppendRuntimeBridgeDebugLog(
-            "\(desktopTraceClockFields()) desktop openai tts state=TTS_REQUESTING tts_provider_id=\(DesktopVoiceProviderLane.ttsProviderID) endpoint=\(desktopCanonicalRuntimeBridge.desktopOpenAITtsSpeechEndpoint) answer_text_sha256=\(answerTextSHA256)"
+            "\(desktopTraceClockFields()) desktop openai tts state=TTS_REQUESTING runtime_thinking=false tts_request_pending=true answer_ready=true tts_provider_id=\(DesktopVoiceProviderLane.ttsProviderID) endpoint=\(desktopCanonicalRuntimeBridge.desktopOpenAITtsSpeechEndpoint) answer_text_sha256=\(answerTextSHA256)"
         )
 
         do {
@@ -20683,13 +20755,17 @@ struct DesktopSessionShellView: View {
                 releaseDesktopOpenAITtsSelfEchoGateAfterCooldown(reason: "stale_audio_discarded")
                 return false
             }
+            let ttsReadyNS = Swift.max(DispatchTime.now().uptimeNanoseconds, 1)
+            let ttsLatencyMS = ttsReadyNS > ttsRequestStartedNS
+                ? (ttsReadyNS - ttsRequestStartedNS) / 1_000_000
+                : 0
             desktopAppendRuntimeBridgeDebugLog(
-                "\(desktopTraceClockFields()) desktop openai tts state=TTS_READY tts_provider_id=\(DesktopVoiceProviderLane.ttsProviderID) model=\(speechState.model) voice=\(speechState.voice) answer_text_sha256=\(speechState.answerTextSHA256) audio_sha256=\(speechState.audioSHA256) audio_byte_len=\(speechState.audioByteLen) ai_voice_disclosure=\(speechState.aiVoiceDisclosure)"
+                "\(desktopTraceClockFields()) desktop openai tts state=TTS_READY latency_ms=\(ttsLatencyMS) tts_provider_id=\(DesktopVoiceProviderLane.ttsProviderID) model=\(speechState.model) voice=\(speechState.voice) answer_text_sha256=\(speechState.answerTextSHA256) audio_sha256=\(speechState.audioSHA256) audio_byte_len=\(speechState.audioByteLen) ai_voice_disclosure=\(speechState.aiVoiceDisclosure)"
             )
             desktopAuthoritativeReplyPlaybackState = desktopAuthoritativeReplyPlaybackController
                 .playOpenAITTS(speechState, expectedToken: token)
             desktopAppendRuntimeBridgeDebugLog(
-                "\(desktopTraceClockFields()) desktop openai tts state=PLAYING_OPENAI tts_provider_id=\(DesktopVoiceProviderLane.ttsProviderID) fallback_used=false request=\(speechState.requestID)"
+                "\(desktopTraceClockFields()) desktop openai tts state=PLAYING_OPENAI playback_started=\(desktopAuthoritativeReplyPlaybackState.phase == .speaking) tts_provider_id=\(DesktopVoiceProviderLane.ttsProviderID) fallback_used=false request=\(speechState.requestID)"
             )
             if desktopAuthoritativeReplyPlaybackState.phase != .speaking {
                 releaseDesktopOpenAITtsSelfEchoGateAfterCooldown(reason: "playback_not_started")
@@ -20703,9 +20779,13 @@ struct DesktopSessionShellView: View {
                 releaseDesktopOpenAITtsSelfEchoGateAfterCooldown(reason: "request_failure_absorbed")
                 return false
             }
+            let ttsFailedNS = Swift.max(DispatchTime.now().uptimeNanoseconds, 1)
+            let ttsLatencyMS = ttsFailedNS > ttsRequestStartedNS
+                ? (ttsFailedNS - ttsRequestStartedNS) / 1_000_000
+                : 0
             let fallbackReason = boundedFailureLogToken(ttsFailure.reason)
             desktopAppendRuntimeBridgeDebugLog(
-                "desktop openai tts unavailable reason=\(fallbackReason) runtime_fallback_allowed=\(ttsFailure.fallbackAllowed)"
+                "desktop openai tts unavailable latency_ms=\(ttsLatencyMS) reason=\(fallbackReason) runtime_fallback_allowed=\(ttsFailure.fallbackAllowed)"
             )
             if ttsFailure.fallbackAllowed {
                 desktopAuthoritativeReplyPlaybackState = desktopAuthoritativeReplyPlaybackController
@@ -20715,7 +20795,7 @@ struct DesktopSessionShellView: View {
                         fallbackReason: fallbackReason
                     )
                 desktopAppendRuntimeBridgeDebugLog(
-                    "\(desktopTraceClockFields()) desktop native macos tts fallback phase=\(desktopAuthoritativeReplyPlaybackState.phase.rawValue) reason=\(fallbackReason) runtime_fallback_allowed=true fallback_counted_as_success=\(desktopAuthoritativeReplyPlaybackState.phase == .speaking)"
+                    "\(desktopTraceClockFields()) desktop native macos tts fallback phase=\(desktopAuthoritativeReplyPlaybackState.phase.rawValue) reason=\(fallbackReason) runtime_fallback_allowed=true fallback_used=true fallback_counted_as_success=\(desktopAuthoritativeReplyPlaybackState.phase == .speaking)"
                 )
                 if desktopAuthoritativeReplyPlaybackState.phase != .speaking {
                     releaseDesktopOpenAITtsSelfEchoGateAfterCooldown(reason: "runtime_allowed_native_tts_fallback_failed")
@@ -20740,9 +20820,13 @@ struct DesktopSessionShellView: View {
                 releaseDesktopOpenAITtsSelfEchoGateAfterCooldown(reason: "request_failure_absorbed")
                 return false
             }
+            let ttsFailedNS = Swift.max(DispatchTime.now().uptimeNanoseconds, 1)
+            let ttsLatencyMS = ttsFailedNS > ttsRequestStartedNS
+                ? (ttsFailedNS - ttsRequestStartedNS) / 1_000_000
+                : 0
             let fallbackReason = boundedFailureLogToken(error.localizedDescription)
             desktopAppendRuntimeBridgeDebugLog(
-                "desktop openai tts unavailable reason=\(fallbackReason) runtime_fallback_allowed=false"
+                "desktop openai tts unavailable latency_ms=\(ttsLatencyMS) reason=\(fallbackReason) runtime_fallback_allowed=false"
             )
             desktopAuthoritativeReplyPlaybackState = desktopAuthoritativeReplyPlaybackController
                 .failClosedWithoutNativePlayback(
@@ -20827,6 +20911,19 @@ struct DesktopSessionShellView: View {
             desktopAppendRuntimeBridgeDebugLog(
                 "\(desktopTraceClockFields()) desktop voice self echo gate active=false reason=\(boundedFailureLogToken(reason)) release=post_tts_echo_tail_guard"
             )
+
+            guard desktopComposerVoiceModeEnabled,
+                  !explicitVoiceController.isListening,
+                  explicitVoiceController.pendingRequest == nil,
+                  desktopAuthoritativeReplyPlaybackState.phase != .speaking,
+                  desktopAuthoritativeReplyPlaybackState.phase != .requesting else {
+                return
+            }
+
+            desktopAppendRuntimeBridgeDebugLog(
+                "\(desktopTraceClockFields()) desktop voice composer rearm after_echo_gate_release reason=\(boundedFailureLogToken(reason))"
+            )
+            desktopAttemptResumeComposerVoiceMode()
         }
     }
 

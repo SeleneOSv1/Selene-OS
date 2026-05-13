@@ -2111,6 +2111,10 @@ fn speakable_openai_tts_text(text: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn desktop_openai_tts_timeout_secs() -> u64 {
+    parse_u64_env("SELENE_DESKTOP_OPENAI_TTS_TIMEOUT_SECS", 6, 1, 60)
+}
+
 fn request_openai_tts_speech(
     response_text: &str,
     model: &str,
@@ -2123,7 +2127,7 @@ fn request_openai_tts_speech(
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
         .unwrap_or_else(|| "https://api.openai.com/v1/audio/speech".to_string());
-    let timeout_secs = parse_u64_env("SELENE_DESKTOP_OPENAI_TTS_TIMEOUT_SECS", 12, 1, 60);
+    let timeout_secs = desktop_openai_tts_timeout_secs();
     let body = serde_json::json!({
         "model": model,
         "input": response_text,
@@ -2738,6 +2742,22 @@ mod tests {
                 std::env::remove_var(self.key);
             }
         }
+    }
+
+    #[test]
+    fn desktop_openai_tts_timeout_default_avoids_long_silent_thinking() {
+        let _guard = realtime_env_lock();
+        let _timeout_scope = ScopedEnvVar::unset("SELENE_DESKTOP_OPENAI_TTS_TIMEOUT_SECS");
+
+        assert_eq!(desktop_openai_tts_timeout_secs(), 6);
+    }
+
+    #[test]
+    fn desktop_openai_tts_timeout_keeps_existing_bounded_override() {
+        let _guard = realtime_env_lock();
+        let _timeout_scope = ScopedEnvVar::set("SELENE_DESKTOP_OPENAI_TTS_TIMEOUT_SECS", "11");
+
+        assert_eq!(desktop_openai_tts_timeout_secs(), 11);
     }
 
     struct MockRealtimeSessionServer {
