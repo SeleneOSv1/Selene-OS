@@ -180,17 +180,17 @@ private enum DesktopAvailabilityStatusKind: String, Equatable {
         case .idleAvailable:
             return "Available"
         case .wakeListening:
-            return "Wake listening"
-        case .activeListening:
             return "Listening"
+        case .activeListening:
+            return "Capturing"
         case .thinkingProcessing:
             return "Thinking"
         case .speaking:
             return "Speaking"
         case .mutedNotListening:
-            return "Wake off"
+            return "Muted / not listening"
         case .errorDegraded:
-            return "Needs attention"
+            return "Degraded / error"
         case .hiddenAvailable:
             return "Hidden, available"
         case .unavailableFailClosed:
@@ -201,63 +201,62 @@ private enum DesktopAvailabilityStatusKind: String, Equatable {
     var systemImage: String {
         switch self {
         case .idleAvailable:
-            return "checkmark.circle.fill"
+            return "dot.radiowaves.left.and.right"
         case .wakeListening:
-            return "ear.badge.waveform"
+            return "waveform"
         case .activeListening:
-            return "waveform.circle.fill"
+            return "waveform.path"
         case .thinkingProcessing:
-            return "hourglass.circle.fill"
+            return "brain.head.profile"
         case .speaking:
-            return "speaker.wave.2.circle.fill"
+            return "bubble.left.and.bubble.right.fill"
         case .mutedNotListening:
-            return "mic.slash.circle.fill"
+            return "mic.slash.fill"
         case .errorDegraded:
             return "exclamationmark.triangle.fill"
         case .hiddenAvailable:
-            return "dock.rectangle"
+            return "eye.fill"
         case .unavailableFailClosed:
-            return "xmark.octagon.fill"
+            return "icloud.slash.fill"
         }
     }
 
     var tint: Color {
         switch self {
-        case .idleAvailable, .hiddenAvailable:
-            return .green
-        case .wakeListening, .activeListening, .speaking:
-            return .accentColor
+        case .idleAvailable, .speaking:
+            return .blue
+        case .wakeListening:
+            return .red
+        case .activeListening:
+            return .purple
         case .thinkingProcessing:
             return .orange
+        case .hiddenAvailable:
+            return .green
         case .mutedNotListening:
-            return .secondary
+            return .gray
         case .errorDegraded:
             return .yellow
         case .unavailableFailClosed:
-            return .red
+            return .gray
+        }
+    }
+
+    var availabilityBadgeLabel: String {
+        switch self {
+        case .mutedNotListening, .unavailableFailClosed:
+            return "Off"
+        case .idleAvailable, .wakeListening, .activeListening, .thinkingProcessing, .speaking, .errorDegraded,
+             .hiddenAvailable:
+            return "On"
         }
     }
 
     var dockBadgeLabel: String? {
         switch self {
-        case .idleAvailable:
-            return nil
-        case .wakeListening:
-            return "Wake"
-        case .activeListening:
-            return "Listen"
-        case .thinkingProcessing:
-            return "..."
-        case .speaking:
-            return "Talk"
-        case .mutedNotListening:
-            return "Off"
-        case .errorDegraded:
-            return "!"
-        case .hiddenAvailable:
-            return "On"
-        case .unavailableFailClosed:
-            return "X"
+        case .idleAvailable, .wakeListening, .activeListening, .thinkingProcessing, .speaking, .errorDegraded,
+             .hiddenAvailable, .mutedNotListening, .unavailableFailClosed:
+            return availabilityBadgeLabel
         }
     }
 
@@ -16631,11 +16630,30 @@ struct DesktopSessionShellView: View {
         let tint = snapshot.kind.tint
 
         return VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .firstTextBaseline, spacing: 10) {
-                Image(systemName: snapshot.kind.systemImage)
-                    .foregroundStyle(tint)
-                    .imageScale(.medium)
-                    .frame(width: 18)
+            HStack(alignment: .center, spacing: 10) {
+                ZStack(alignment: .topTrailing) {
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(tint.opacity(0.13))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                .stroke(tint.opacity(0.34), lineWidth: 1)
+                        )
+
+                    Image(systemName: snapshot.kind.systemImage)
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(tint)
+                        .frame(width: 34, height: 34)
+
+                    Text(snapshot.kind.availabilityBadgeLabel)
+                        .font(.system(size: 8, weight: .bold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 2)
+                        .background(tint.gradient)
+                        .clipShape(Capsule())
+                        .offset(x: 5, y: -5)
+                }
+                .frame(width: 34, height: 34)
 
                 Text(snapshot.kind.label)
                     .font(.subheadline.weight(.semibold))
