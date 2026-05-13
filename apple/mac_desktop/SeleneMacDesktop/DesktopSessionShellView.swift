@@ -164,12 +164,140 @@ private enum DesktopVoiceProviderLane {
     static let ttsProviderID = "openai_tts_primary"
 }
 
+private enum DesktopAvailabilityStatusKind: String, Equatable {
+    case idleAvailable = "idle_available"
+    case wakeListening = "wake_listening"
+    case activeListening = "active_listening"
+    case thinkingProcessing = "thinking_processing"
+    case speaking = "speaking"
+    case mutedNotListening = "muted_not_listening"
+    case errorDegraded = "error_degraded"
+    case hiddenAvailable = "hidden_available"
+    case unavailableFailClosed = "unavailable_fail_closed"
+
+    var label: String {
+        switch self {
+        case .idleAvailable:
+            return "Available"
+        case .wakeListening:
+            return "Wake listening"
+        case .activeListening:
+            return "Listening"
+        case .thinkingProcessing:
+            return "Thinking"
+        case .speaking:
+            return "Speaking"
+        case .mutedNotListening:
+            return "Wake off"
+        case .errorDegraded:
+            return "Needs attention"
+        case .hiddenAvailable:
+            return "Hidden, available"
+        case .unavailableFailClosed:
+            return "Unavailable"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .idleAvailable:
+            return "checkmark.circle.fill"
+        case .wakeListening:
+            return "ear.badge.waveform"
+        case .activeListening:
+            return "waveform.circle.fill"
+        case .thinkingProcessing:
+            return "hourglass.circle.fill"
+        case .speaking:
+            return "speaker.wave.2.circle.fill"
+        case .mutedNotListening:
+            return "mic.slash.circle.fill"
+        case .errorDegraded:
+            return "exclamationmark.triangle.fill"
+        case .hiddenAvailable:
+            return "dock.rectangle"
+        case .unavailableFailClosed:
+            return "xmark.octagon.fill"
+        }
+    }
+
+    var tint: Color {
+        switch self {
+        case .idleAvailable, .hiddenAvailable:
+            return .green
+        case .wakeListening, .activeListening, .speaking:
+            return .accentColor
+        case .thinkingProcessing:
+            return .orange
+        case .mutedNotListening:
+            return .secondary
+        case .errorDegraded:
+            return .yellow
+        case .unavailableFailClosed:
+            return .red
+        }
+    }
+
+    var dockBadgeLabel: String? {
+        switch self {
+        case .idleAvailable:
+            return nil
+        case .wakeListening:
+            return "Wake"
+        case .activeListening:
+            return "Listen"
+        case .thinkingProcessing:
+            return "..."
+        case .speaking:
+            return "Talk"
+        case .mutedNotListening:
+            return "Off"
+        case .errorDegraded:
+            return "!"
+        case .hiddenAvailable:
+            return "On"
+        case .unavailableFailClosed:
+            return "X"
+        }
+    }
+
+    var shouldPulseDockIcon: Bool {
+        switch self {
+        case .wakeListening, .activeListening, .thinkingProcessing, .speaking:
+            return true
+        case .idleAvailable, .mutedNotListening, .errorDegraded, .hiddenAvailable, .unavailableFailClosed:
+            return false
+        }
+    }
+}
+
+private struct DesktopAvailabilityEvidenceRow: Identifiable, Equatable {
+    let label: String
+    let value: String
+
+    var id: String {
+        "\(label)=\(value)"
+    }
+}
+
+private struct DesktopAvailabilityStatusSnapshot: Equatable {
+    let kind: DesktopAvailabilityStatusKind
+    let detail: String
+    let evidenceRows: [DesktopAvailabilityEvidenceRow]
+
+    var id: String {
+        ([kind.rawValue, detail] + evidenceRows.flatMap { [$0.label, $0.value] })
+            .joined(separator: "|")
+    }
+}
+
 @MainActor
 private final class DesktopDockIconPulseController: ObservableObject {
     private var originalIcon: NSImage?
     private var frames: [NSImage] = []
     private var frameIndex = 0
     private var timer: Timer?
+    private var appliedAvailabilityStatusID: String?
 
     func setPulsing(_ pulsing: Bool) {
         if pulsing {
@@ -177,6 +305,27 @@ private final class DesktopDockIconPulseController: ObservableObject {
         } else {
             stopPulsing()
         }
+    }
+
+    func applyAvailabilityStatus(_ snapshot: DesktopAvailabilityStatusSnapshot) {
+        guard appliedAvailabilityStatusID != snapshot.id else {
+            return
+        }
+
+        appliedAvailabilityStatusID = snapshot.id
+        setPulsing(snapshot.kind.shouldPulseDockIcon)
+        NSApplication.shared.dockTile.badgeLabel = snapshot.kind.dockBadgeLabel
+        NSApplication.shared.dockTile.display()
+        desktopAppendRuntimeBridgeDebugLog(
+            "desktop availability status kind=\(snapshot.kind.rawValue) detail=\(boundedFailureLogToken(snapshot.detail))"
+        )
+    }
+
+    func clearAvailabilityStatus() {
+        appliedAvailabilityStatusID = nil
+        setPulsing(false)
+        NSApplication.shared.dockTile.badgeLabel = nil
+        NSApplication.shared.dockTile.display()
     }
 
     func startPulsing() {
@@ -7568,6 +7717,9 @@ struct DesktopSessionShellView: View {
         ) {
             desktopSidebarRenameSheet
         }
+        .task(id: desktopAvailabilityStatusSnapshot.id) {
+            synchronizeDesktopAvailabilityStatus()
+        }
         .task(id: explicitVoiceController.pendingRequest?.id) {
             await dispatchPreparedExplicitVoiceRequestIfNeeded()
             await synchronizeDesktopWakeListenerLifecycleState()
@@ -7604,9 +7756,7 @@ struct DesktopSessionShellView: View {
             desktopAppendRuntimeBridgeDebugLog(
                 "desktop wake listener state subscriber observed state=\(listenerState.rawValue)"
             )
-            desktopDockIconPulseController.setPulsing(
-                listenerState.isActiveForMicrophone || explicitVoiceController.isListening
-            )
+            synchronizeDesktopAvailabilityStatus()
             Task { @MainActor in
                 await recoverDesktopWakeListenerAfterTransientFailureIfNeeded()
                 await synchronizeDesktopWakeListenerLifecycleState()
@@ -7636,9 +7786,7 @@ struct DesktopSessionShellView: View {
             await synchronizeDesktopWakeListenerLifecycleState()
         }
         .task(id: explicitVoiceController.isListening) {
-            desktopDockIconPulseController.setPulsing(
-                explicitVoiceController.isListening || desktopWakeListenerController.listenerState.isActiveForMicrophone
-            )
+            synchronizeDesktopAvailabilityStatus()
             await synchronizeDesktopWakeListenerLifecycleState()
         }
         .task(id: explicitVoiceController.pendingRequest?.id) {
@@ -7670,16 +7818,19 @@ struct DesktopSessionShellView: View {
                     reason: "scene_phase_not_active"
                 )
             }
+            synchronizeDesktopAvailabilityStatus()
             await synchronizeDesktopWakeListenerLifecycleState()
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didHideNotification)) { _ in
             desktopYieldInstructionCaptureToWakeListenerForHiddenScreen(reason: "app_hidden")
+            synchronizeDesktopAvailabilityStatus()
             Task { @MainActor in
                 await synchronizeDesktopWakeListenerLifecycleState()
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didMiniaturizeNotification)) { _ in
             desktopYieldInstructionCaptureToWakeListenerForHiddenScreen(reason: "window_miniaturized")
+            synchronizeDesktopAvailabilityStatus()
             Task { @MainActor in
                 await synchronizeDesktopWakeListenerLifecycleState()
             }
@@ -7690,6 +7841,7 @@ struct DesktopSessionShellView: View {
                 "\(desktopTraceClockFields()) desktop openai tts playback phase=\(playbackState.phase.rawValue)"
             )
             updateDesktopOpenAITtsPlaybackEvidenceClock(playbackState)
+            synchronizeDesktopAvailabilityStatus()
             if playbackState.phase != .speaking,
                playbackState.phase != .requesting,
                (desktopOpenAITtsSelfEchoGateActive
@@ -7702,6 +7854,7 @@ struct DesktopSessionShellView: View {
             desktopWakeListenerController.haltCaptureSession()
             desktopCanonicalRuntimeBridge.stopManagedAdapter()
             desktopAuthoritativeReplyPlaybackController.reset()
+            desktopDockIconPulseController.clearAvailabilityStatus()
         }
         .onOpenURL { url in
             if let context = DesktopOnboardingEntryContext(url: url) {
@@ -11358,6 +11511,208 @@ struct DesktopSessionShellView: View {
     private var desktopWakeListenerMayRunForCurrentAppLifecycle: Bool {
         // A hidden or minimized window is still the same live Desktop session.
         scenePhase == .active || NSApplication.shared.isRunning
+    }
+
+    private var desktopAvailabilityWindowHiddenOrMinimized: Bool {
+        if NSApplication.shared.isHidden {
+            return true
+        }
+
+        let visibleWindows = NSApplication.shared.windows.filter { window in
+            window.isVisible && !window.isMiniaturized
+        }
+        return visibleWindows.isEmpty
+    }
+
+    private var desktopAvailabilityHasUnavailablePermission: Bool {
+        let blockedMicrophonePermissionValues: Set<String> = [
+            VoicePermissionState.denied.rawValue,
+            VoicePermissionState.restricted.rawValue,
+            VoicePermissionState.unavailable.rawValue,
+        ]
+        let blockedTranscriptionPermissionValues: Set<String> = [
+            VoicePermissionState.denied.rawValue,
+            VoicePermissionState.restricted.rawValue,
+        ]
+        let microphonePermissionValues = [
+            explicitVoiceController.microphonePermission.rawValue,
+            desktopWakeListenerController.microphonePermission.rawValue,
+        ]
+        let transcriptionPermissionValues = [
+            explicitVoiceController.transcriptionPermission.rawValue,
+            desktopWakeListenerController.transcriptionPermission.rawValue,
+        ]
+
+        return microphonePermissionValues.contains {
+            blockedMicrophonePermissionValues.contains($0)
+        } || transcriptionPermissionValues.contains {
+            blockedTranscriptionPermissionValues.contains($0)
+        }
+    }
+
+    private var desktopAvailabilityFailureDetail: String? {
+        if desktopAuthoritativeReplyPlaybackState.phase == .failed {
+            return desktopAuthoritativeReplyPlaybackState.summary
+        }
+
+        if let failedRequest = explicitVoiceController.failedRequest {
+            return failedRequest.summary
+        }
+
+        if let failedRequest = desktopWakeListenerController.failedRequest {
+            return failedRequest.summary
+        }
+
+        if let failedRequest = desktopTypedTurnFailedRequest {
+            return failedRequest.summary
+        }
+
+        if let failedRequest = desktopSearchRequestFailedRequest {
+            return failedRequest.summary
+        }
+
+        if let failedRequest = desktopToolRequestFailedRequest {
+            return failedRequest.summary
+        }
+
+        if let failedRequest = interruptResponseFailedRequest {
+            return failedRequest.summary
+        }
+
+        if desktopWakeListenerController.listenerState == .failed {
+            return "Wake listener failed closed before another capture can be staged."
+        }
+
+        return nil
+    }
+
+    private var desktopAvailabilityRuntimeBusy: Bool {
+        desktopCanonicalRuntimeOutcomeState?.phase == .dispatching
+            || desktopWakeTriggeredDispatchInFlightRequestID != nil
+            || desktopTypedTurnDispatchInFlightRequestID != nil
+            || desktopTypedTurnPendingRequest != nil
+            || explicitVoiceController.pendingRequest != nil
+            || desktopWakeListenerController.pendingRequest != nil
+            || lastStagedWakeTriggeredVoiceTurnRequestState != nil
+    }
+
+    private var desktopAvailabilityStatusSnapshot: DesktopAvailabilityStatusSnapshot {
+        let baseEvidenceRows = [
+            DesktopAvailabilityEvidenceRow(
+                label: "runtime",
+                value: desktopReadyTimeHandoffIsActive ? "ready" : "pre_ready"
+            ),
+            DesktopAvailabilityEvidenceRow(
+                label: "wake",
+                value: desktopWakeListenerController.listenerState.rawValue
+            ),
+            DesktopAvailabilityEvidenceRow(
+                label: "capture",
+                value: explicitVoiceController.isListening ? "explicit_listening" : "idle"
+            ),
+            DesktopAvailabilityEvidenceRow(
+                label: "playback",
+                value: desktopAuthoritativeReplyPlaybackState.phase.rawValue
+            ),
+            DesktopAvailabilityEvidenceRow(
+                label: "window",
+                value: desktopAvailabilityWindowHiddenOrMinimized ? "hidden_or_minimized" : "visible"
+            ),
+        ]
+
+        func snapshot(
+            _ kind: DesktopAvailabilityStatusKind,
+            detail: String,
+            extraEvidenceRows: [DesktopAvailabilityEvidenceRow] = []
+        ) -> DesktopAvailabilityStatusSnapshot {
+            DesktopAvailabilityStatusSnapshot(
+                kind: kind,
+                detail: detail,
+                evidenceRows: baseEvidenceRows + extraEvidenceRows
+            )
+        }
+
+        if desktopAvailabilityHasUnavailablePermission {
+            return snapshot(
+                .unavailableFailClosed,
+                detail: "A microphone permission is denied, restricted, or unavailable, or transcription permission is denied or restricted."
+            )
+        }
+
+        if desktopAuthoritativeReplyPlaybackState.phase == .speaking {
+            return snapshot(
+                .speaking,
+                detail: "Selene is playing the final runtime reply through the approved playback path.",
+                extraEvidenceRows: [
+                    DesktopAvailabilityEvidenceRow(
+                        label: "tts_policy",
+                        value: DesktopVoiceProviderLane.ttsProviderID
+                    ),
+                ]
+            )
+        }
+
+        if explicitVoiceController.isListening {
+            return snapshot(
+                .activeListening,
+                detail: "Desktop is capturing one bounded user voice turn for runtime handoff."
+            )
+        }
+
+        if desktopAuthoritativeReplyPlaybackState.phase == .requesting
+            || desktopAvailabilityRuntimeBusy
+            || desktopWakeListenerController.listenerState == .dispatching {
+            return snapshot(
+                .thinkingProcessing,
+                detail: "A committed turn or runtime playback request is resolving."
+            )
+        }
+
+        if let failureDetail = desktopAvailabilityFailureDetail {
+            return snapshot(
+                .errorDegraded,
+                detail: failureDetail
+            )
+        }
+
+        if desktopAvailabilityWindowHiddenOrMinimized,
+           desktopWakeListenerMayRunForCurrentAppLifecycle,
+           desktopWakeListenerPromptState != nil {
+            return snapshot(
+                .hiddenAvailable,
+                detail: "The visible window is hidden or minimized while the same Desktop session remains available."
+            )
+        }
+
+        if desktopWakeListenerController.listenerState.isActiveForMicrophone {
+            return snapshot(
+                .wakeListening,
+                detail: "Desktop is listening only for the wake entry handoff."
+            )
+        }
+
+        if !desktopControlledWakeEnabled {
+            return snapshot(
+                .mutedNotListening,
+                detail: "Controlled wake is off; Desktop is running but not wake-listening."
+            )
+        }
+
+        guard desktopWakeListenerPromptState != nil else {
+            return snapshot(
+                .unavailableFailClosed,
+                detail: "Wake listener prompt state is not available, so Desktop cannot truthfully claim wake availability."
+            )
+        }
+
+        return snapshot(
+            .idleAvailable,
+            detail: "Selene is running with no active capture, runtime dispatch, or playback."
+        )
+    }
+
+    private func synchronizeDesktopAvailabilityStatus() {
+        desktopDockIconPulseController.applyAvailabilityStatus(desktopAvailabilityStatusSnapshot)
     }
 
     private var desktopWakeAutoStartEligiblePromptState: DesktopWakeListenerPromptState? {
@@ -15337,6 +15692,15 @@ struct DesktopSessionShellView: View {
 
     private var desktopEvidenceFirstConversationPane: some View {
         VStack(spacing: 0) {
+            desktopAvailabilityStatusStrip(desktopAvailabilityStatusSnapshot)
+                .padding(.horizontal, 28)
+                .padding(.top, 18)
+                .padding(.bottom, 12)
+                .background(Color(nsColor: .windowBackgroundColor))
+
+            Divider()
+                .overlay(Color.primary.opacity(0.05))
+
             ScrollView {
                 desktopConversationReadyCanvas(
                     title: "Selene",
@@ -15373,6 +15737,15 @@ struct DesktopSessionShellView: View {
             && desktopForegroundSelectionShowsCurrentDominantSurface
 
         return VStack(spacing: 0) {
+            desktopAvailabilityStatusStrip(desktopAvailabilityStatusSnapshot)
+                .padding(.horizontal, 28)
+                .padding(.top, 18)
+                .padding(.bottom, 12)
+                .background(Color(nsColor: .windowBackgroundColor))
+
+            Divider()
+                .overlay(Color.primary.opacity(0.05))
+
             ScrollViewReader { scrollProxy in
                 ScrollView {
                     desktopConversationPrimaryPane(state)
@@ -16250,6 +16623,62 @@ struct DesktopSessionShellView: View {
             .padding(.vertical, 8)
             .background(Color.accentColor.opacity(0.14))
             .clipShape(Capsule())
+    }
+
+    private func desktopAvailabilityStatusStrip(
+        _ snapshot: DesktopAvailabilityStatusSnapshot
+    ) -> some View {
+        let tint = snapshot.kind.tint
+
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                Image(systemName: snapshot.kind.systemImage)
+                    .foregroundStyle(tint)
+                    .imageScale(.medium)
+                    .frame(width: 18)
+
+                Text(snapshot.kind.label)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Color.primary)
+                    .lineLimit(1)
+
+                Spacer(minLength: 12)
+
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 6) {
+                        ForEach(Array(snapshot.evidenceRows.prefix(5))) { row in
+                            Text("\(row.label)=\(row.value)")
+                                .font(.caption2.monospaced())
+                                .foregroundStyle(Color.primary.opacity(0.72))
+                                .lineLimit(1)
+                                .padding(.horizontal, 7)
+                                .padding(.vertical, 4)
+                                .background(Color.primary.opacity(0.045))
+                                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                        }
+                    }
+                }
+                .frame(maxWidth: 420)
+            }
+
+            Text(snapshot.detail)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(tint.opacity(0.08))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(tint.opacity(0.24), lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Selene availability \(snapshot.kind.label)")
+        .accessibilityValue(snapshot.detail)
     }
 
     private func desktopConversationShouldSuppressDedicatedAuthoritativeReplyTextEntry(
